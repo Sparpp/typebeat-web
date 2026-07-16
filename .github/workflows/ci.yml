@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      # SUBMODULE_TOKEN: fine-grained PAT with read-only Contents on Sparpp/typebeat-web,
+      # Sparpp/type-beat, and Sparpp/type-beat-assets (all private). checkout uses it for the
+      # main repo and both submodules.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # typebeat.Game requires the typebeat.Game.Resources package, which is too large to keep
+      # in git (116 MB). Pack it from the assets submodule at exactly the version the game
+      # demands, into the local feed declared in nuget.config.
+      - name: Pack typebeat.Game.Resources into local feed
+        run: |
+          VER=$(grep -oP '(?<=Include="typebeat.Game.Resources" Version=")[^"]+' external/typebeat-osu/typebeat.Game/typebeat.Game.csproj)
+          echo "game requires typebeat.Game.Resources $VER"
+          dotnet pack external/type-beat-assets/typebeat.Game.Resources/typebeat.Game.Resources.csproj \
+            -c Release -o external/packages -p:PackageVersion="$VER" -p:Version="$VER"
+          ls -la external/packages
+
+      - name: Build
+        run: dotnet build typebeat-web.slnx -c Release
+
+      - name: Unit tests
+        run: dotnet test tests/Typebeat.Web.Tests -c Release --no-build
+
+      # ServerFixture connects to localhost:5432 as postgres/postgres and creates its own
+      # typebeat_wirecompat database — matches the service container above.
+      - name: Wire-compat tests (against the client's own DTOs)
+        run: dotnet test tests/Typebeat.WireCompat -c Release --no-build
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency: production-deploy
+
+    steps:
+      - uses: actions/checkout@v4
+        # no submodules: the image builds only src/Typebeat.Web; deploy ships the repo tree
+        # minus external/ (see tar below), and deploy/.env on the box is never overwritten
+        # because it is git-ignored and therefore absent from the checkout.
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cp deploy/known_hosts ~/.ssh/known_hosts
+
+      - name: Ship source to server
+        run: |
+          tar czf - --exclude=.git --exclude=external . \
+            | ssh -i ~/.ssh/deploy_key root@46.62.142.5 'tar xzf - -C /opt/typebeat-web'
+
+      # Gate: build the image BEFORE touching the running container, so a broken build
+      # never takes production down (learned the hard way).
+      - name: Build image on server
+        run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web && ./deploy/up.sh build app'
+
+      - name: Swap container
+        run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web && ./deploy/up.sh up -d app'
+
+      - name: Health check
+        run: |
+          sleep 5
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -q ok
+          echo "healthy"

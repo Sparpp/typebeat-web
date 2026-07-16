@@ -46,8 +46,18 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Typebeat.Web\Typebeat.Web.csproj" />
-    <!-- Becomes a git submodule path in CI. -->
-    <ProjectReference Include="..\..\..\typebeat-osu\typebeat.Game\typebeat.Game.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- Local dev prefers the LIVE sibling checkout of the game repo, so wire drift surfaces
+         the moment client code changes. CI has no sibling and falls back to the pinned
+         external/typebeat-osu submodule. -->
+    <TypebeatGameProject Condition="Exists('..\..\..\typebeat-osu\typebeat.Game\typebeat.Game.csproj')">..\..\..\typebeat-osu\typebeat.Game\typebeat.Game.csproj</TypebeatGameProject>
+    <TypebeatGameProject Condition="'$(TypebeatGameProject)' == ''">..\..\external\typebeat-osu\typebeat.Game\typebeat.Game.csproj</TypebeatGameProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(TypebeatGameProject)" />
   </ItemGroup>
 
 </Project>

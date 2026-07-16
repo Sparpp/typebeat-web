@@ -5,3 +5,4 @@
 .git
 deploy/.env
 tests
+external

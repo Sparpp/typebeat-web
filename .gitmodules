@@ -1,0 +1,6 @@
+[submodule "external/typebeat-osu"]
+	path = external/typebeat-osu
+	url = https://github.com/Sparpp/type-beat.git
+[submodule "external/type-beat-assets"]
+	path = external/type-beat-assets
+	url = https://github.com/Sparpp/type-beat-assets.git
