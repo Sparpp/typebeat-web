@@ -44,7 +44,10 @@ jobs:
       # demands, into the local feed declared in nuget.config.
       - name: Pack typebeat.Game.Resources into local feed
         run: |
-          VER=$(grep -oP '(?<=Include="typebeat.Game.Resources" Version=")[^"]+' external/typebeat-osu/typebeat.Game/typebeat.Game.csproj)
+          # sed, not grep -P: portable across locales, and guard against an empty match —
+          # an empty -p:Version fails the pack with an opaque MSB4044.
+          VER=$(sed -n 's/.*Include="typebeat.Game.Resources" Version="\([^"]*\)".*/\1/p' external/typebeat-osu/typebeat.Game/typebeat.Game.csproj)
+          if [ -z "$VER" ]; then echo "::error::could not extract typebeat.Game.Resources version from the game csproj"; exit 1; fi
           echo "game requires typebeat.Game.Resources $VER"
           dotnet pack external/type-beat-assets/typebeat.Game.Resources/typebeat.Game.Resources.csproj \
             -c Release -o external/packages -p:PackageVersion="$VER" -p:Version="$VER"
