@@ -97,6 +97,18 @@ public sealed class TokenService(Db db)
             new { hash });
     }
 
+    /// <summary>
+    /// Revokes the single token row holding this access token (website logout). A no-op for
+    /// unknown tokens; never touches the user's other sessions.
+    /// </summary>
+    public async Task RevokeByAccessTokenAsync(string accessToken)
+    {
+        byte[] hash = Hash(accessToken);
+
+        await using var conn = await db.OpenAsync();
+        await conn.ExecuteAsync("UPDATE oauth_tokens SET revoked_at = now() WHERE access_hash = @hash AND revoked_at IS NULL", new { hash });
+    }
+
     public async Task RevokeAllForUserAsync(long userId)
     {
         await using var conn = await db.OpenAsync();

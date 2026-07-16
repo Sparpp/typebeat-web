@@ -1,7 +1,4 @@
-using System.Text.RegularExpressions;
-using Dapper;
 using Newtonsoft.Json;
-using Npgsql;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
 using Typebeat.Web.Wire;
@@ -25,6 +22,10 @@ namespace Typebeat.Web.Endpoints;
 /// The other error path the client understands is a top-level <c>{"error":"..."}</c> (or
 /// <c>{"url":"..."}</c> redirect); we use the standard {"error":...} envelope for the
 /// non-validation rejections (bad User-Agent, rate limit, malformed request).
+///
+/// Validation and creation logic live in <see cref="AccountValidation"/> /
+/// <see cref="AccountCreation"/>, shared with the website's /register form; only the wire
+/// envelope is owned here.
 /// </summary>
 public static class RegistrationEndpoints
 {
@@ -34,11 +35,6 @@ public static class RegistrationEndpoints
     /// NOT a security control. Wrong UA -> 403 {"error":...}.
     /// </summary>
     private const string client_user_agent = "type!beat";
-
-    // Permissive superset of osu's username charset: letters, digits, space, and _ - [ ].
-    // Deliberately does NOT enforce osu's finer rules (no mixed space/underscore, no
-    // leading/trailing space) — kept permissive for M1; tighten later if abuse shows up.
-    private static readonly Regex username_charset = new(@"^[A-Za-z0-9 _\-\[\]]+$", RegexOptions.Compiled);
 
     public static void Map(IEndpointRouteBuilder app)
     {
@@ -61,117 +57,27 @@ public static class RegistrationEndpoints
             string email = form["user[user_email]"].ToString().Trim();
             string password = form["user[password]"].ToString();
 
-            var usernameErrors = new List<string>(ValidateUsername(username));
-            var emailErrors = new List<string>(ValidateEmail(email));
-            var passwordErrors = new List<string>(ValidatePassword(password, username));
+            var result = await AccountCreation.CreateAsync(db, passwords, username, email, password);
 
-            await using var conn = await db.OpenAsync();
-
-            // Uniqueness is checked per-field only when the field is otherwise well-formed, so
-            // "is already taken" never stacks on top of a "malformed" error. citext columns make
-            // both comparisons case-insensitive.
-            if (usernameErrors.Count == 0 &&
-                await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username = @username)", new { username }))
-                usernameErrors.Add("Username is already taken.");
-
-            if (emailErrors.Count == 0 &&
-                await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM users WHERE email = @email)", new { email }))
-                emailErrors.Add("Email address is already in use.");
-
-            if (usernameErrors.Count > 0 || emailErrors.Count > 0 || passwordErrors.Count > 0)
-                return WireJson.Ok(BuildFormError(usernameErrors, emailErrors, passwordErrors), StatusCodes.Status422UnprocessableEntity);
-
-            long id;
-            try
-            {
-                // verified_at stays NULL (email verification is a later milestone);
-                // country_code defaults to 'XX' until GeoIP lands.
-                id = await conn.ExecuteScalarAsync<long>(
-                    """
-                    INSERT INTO users (username, email, password_hash)
-                    VALUES (@username, @email, @hash)
-                    RETURNING id
-                    """,
-                    new { username, email, hash = passwords.Hash(password) });
-            }
-            catch (PostgresException pg) when (pg.SqlState == PostgresErrorCodes.UniqueViolation)
-            {
-                // Lost a race between the EXISTS check and the INSERT — map the violated
-                // constraint back to its field and re-emit as a form_error.
-                if (pg.ConstraintName is not null && pg.ConstraintName.Contains("email"))
-                    emailErrors.Add("Email address is already in use.");
-                else
-                    usernameErrors.Add("Username is already taken.");
-
-                return WireJson.Ok(BuildFormError(usernameErrors, emailErrors, passwordErrors), StatusCodes.Status422UnprocessableEntity);
-            }
-
-            await conn.ExecuteAsync("INSERT INTO user_stats (user_id) VALUES (@id)", new { id });
+            if (!result.Succeeded)
+                return WireJson.Ok(BuildFormError(result.UsernameErrors, result.EmailErrors, result.PasswordErrors), StatusCodes.Status422UnprocessableEntity);
 
             // The client ignores the success body (CreateAccount returns null on any 2xx), but
             // we return a minimal, sane user object rather than an empty 200.
-            return WireJson.Ok(new CreatedUser { Id = id, Username = username }, StatusCodes.Status200OK);
+            return WireJson.Ok(new CreatedUser { Id = result.UserId!.Value, Username = username }, StatusCodes.Status200OK);
         });
     }
 
-    // ---- Pure validation (static + DB-free so RegistrationValidationTest can exercise them) ----
+    // ---- Validation forwards (rules live in AccountValidation, shared with the website) ----
 
     /// <summary>Username: 3–15 chars, restricted charset. Returns human-readable errors (empty = valid).</summary>
-    public static IReadOnlyList<string> ValidateUsername(string username)
-    {
-        var errors = new List<string>();
-
-        if (string.IsNullOrWhiteSpace(username))
-        {
-            errors.Add("Username is required.");
-            return errors;
-        }
-
-        if (username.Length < 3 || username.Length > 15)
-            errors.Add("Username must be between 3 and 15 characters.");
-
-        if (!username_charset.IsMatch(username))
-            errors.Add("Username may only contain letters, digits, spaces, and the characters _ - [ ].");
-
-        return errors;
-    }
+    public static IReadOnlyList<string> ValidateUsername(string username) => AccountValidation.ValidateUsername(username);
 
     /// <summary>Email: syntactically valid (single @, dotted domain, no spaces). Returns errors (empty = valid).</summary>
-    public static IReadOnlyList<string> ValidateEmail(string email)
-    {
-        var errors = new List<string>();
-
-        if (string.IsNullOrWhiteSpace(email))
-        {
-            errors.Add("Email address is required.");
-            return errors;
-        }
-
-        if (!LooksLikeEmail(email))
-            errors.Add("Please enter a valid email address.");
-
-        return errors;
-    }
+    public static IReadOnlyList<string> ValidateEmail(string email) => AccountValidation.ValidateEmail(email);
 
     /// <summary>Password: >= 8 chars and not equal (case-insensitively) to the username. Returns errors (empty = valid).</summary>
-    public static IReadOnlyList<string> ValidatePassword(string password, string username)
-    {
-        var errors = new List<string>();
-
-        if (string.IsNullOrEmpty(password))
-        {
-            errors.Add("Password is required.");
-            return errors;
-        }
-
-        if (password.Length < 8)
-            errors.Add("Password must be at least 8 characters.");
-
-        if (!string.IsNullOrEmpty(username) && string.Equals(password, username, StringComparison.OrdinalIgnoreCase))
-            errors.Add("Password must not match your username.");
-
-        return errors;
-    }
+    public static IReadOnlyList<string> ValidatePassword(string password, string username) => AccountValidation.ValidatePassword(password, username);
 
     /// <summary>
     /// Wraps per-field error lists in the exact envelope the client deserializes:
@@ -194,31 +100,6 @@ public static class RegistrationEndpoints
                 }
             }
         };
-
-    private static bool LooksLikeEmail(string email)
-    {
-        if (email.Contains(' '))
-            return false;
-
-        int at = email.IndexOf('@');
-        if (at <= 0 || at != email.LastIndexOf('@'))
-            return false;
-
-        string domain = email[(at + 1)..];
-        if (domain.Length == 0 || domain.StartsWith('.') || domain.EndsWith('.') || !domain.Contains('.'))
-            return false;
-
-        try
-        {
-            // MailAddress is lenient; require it to round-trip to the exact input.
-            var parsed = new System.Net.Mail.MailAddress(email);
-            return parsed.Address == email;
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
-    }
 
     // ---- Wire DTOs (explicit [JsonProperty] on every member; Newtonsoft via WireJson) ----
 
