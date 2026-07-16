@@ -1,12 +1,40 @@
+using Dapper;
+using Typebeat.Web.Data;
+
 namespace Typebeat.Web.Pages;
 
 /// <summary>
-/// Interim landing page (Phase A): hero + layout plumbing only. Phase B replaces the content
-/// with the full neon-karaoke landing (live stats line, newest-maps strip) per the M3 spec.
+/// Landing page: neon-karaoke hero (slogan pair, live stats line, Download/Sign up CTAs)
+/// plus a "newest maps" strip of up to 8 public sets rendered with the shared card partial.
 /// </summary>
-public sealed class IndexModel : TypebeatPageModel
+public sealed class IndexModel(Db db) : TypebeatPageModel
 {
-    public void OnGet()
+    public long Players { get; private set; }
+    public long ScoresToday { get; private set; }
+    public long Maps { get; private set; }
+
+    public IReadOnlyList<BeatmapsetCardModel> NewestSets { get; private set; } = [];
+
+    public async Task OnGetAsync()
     {
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        // One cheap round trip for the whole stats line.
+        (Players, ScoresToday, Maps) = await conn.QuerySingleAsync<(long, long, long)>(
+            """
+            SELECT (SELECT count(*) FROM users)                                          AS players,
+                   (SELECT count(*) FROM scores WHERE ended_at >= date_trunc('day', now())) AS scoresToday,
+                   (SELECT count(*) FROM beatmapsets WHERE status = 'public')            AS maps
+            """);
+
+        NewestSets = (await conn.QueryAsync<BeatmapsetCardModel>(
+            BeatmapsetCardSql.Select +
+            """
+
+            WHERE s.status = 'public'
+            ORDER BY s.submitted_at DESC, s.id DESC
+            LIMIT 8
+            """,
+            new { viewerId = CurrentUser?.Id ?? 0 })).ToList();
     }
 }

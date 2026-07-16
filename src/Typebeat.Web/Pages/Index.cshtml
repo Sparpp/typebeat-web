@@ -1,15 +1,50 @@
 @page
+@using System.Globalization
 @model IndexModel
+@{
+    ViewData["MetaDescription"] = "type!beat is a free rhythm game played on your keyboard: "
+        + "the lyrics are the notes. Download for Windows, grab community maps and chase the leaderboards.";
+}
 
 <section class="hero">
-    <h1 class="hero-title"><span class="wordmark">type!beat</span></h1>
-    <p class="hero-sub">The lyric-typing rhythm game. Words drop with the music &mdash; keep up with your keyboard.</p>
+    <p class="hero-stats">
+        <strong>@Model.Players.ToString("N0", CultureInfo.InvariantCulture)</strong> registered players &middot;
+        <strong>@Model.ScoresToday.ToString("N0", CultureInfo.InvariantCulture)</strong> scores set today &middot;
+        <strong>@Model.Maps.ToString("N0", CultureInfo.InvariantCulture)</strong> maps available
+    </p>
+    <h1 class="hero-title">type to the <span class="grad-text">beat</span>.</h1>
+    <p class="hero-sub">
+        The lyrics are the notes. They drop with the music &mdash; your keyboard does the rest.
+    </p>
     <div class="hero-actions">
         <a class="btn btn-primary btn-big" href="/download">Download for Windows</a>
-        <a class="btn btn-ghost btn-big" href="/beatmapsets">Browse beatmaps</a>
+        @if (Model.CurrentUser is null)
+        {
+            <a class="btn btn-ghost btn-big" href="/register">Sign up</a>
+        }
     </div>
-    @if (Model.CurrentUser is null)
+    <p class="hero-note">Free to play &middot; Windows 10+ &middot; maps made by players, for players</p>
+</section>
+
+<section class="landing-newest">
+    <div class="landing-newest__head">
+        <h2>newest maps</h2>
+        <a class="btn btn-ghost btn-small" href="/beatmapsets">browse all maps</a>
+    </div>
+    @if (Model.NewestSets.Count > 0)
     {
-        <p class="hero-note">New here? <a href="/register">Create an account</a> to get on the leaderboards.</p>
+        <div class="card-grid">
+            @foreach (var set in Model.NewestSets)
+            {
+                <partial name="_BeatmapsetCard" model="set" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="empty-state">
+            <h3>No maps yet</h3>
+            <p>The stage is empty and the mic is live &mdash; fire up the in-game editor and submit the first one.</p>
+        </div>
     }
 </section>

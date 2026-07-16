@@ -1,0 +1,71 @@
+@page "/beatmapsets"
+@model Typebeat.Web.Pages.Beatmapsets.ListingModel
+@{
+    ViewData["Title"] = "Beatmaps";
+    ViewData["MetaDescription"] = "Browse and download lyric-typing beatmaps for type!beat — "
+        + "search by title, artist, mapper or tags.";
+}
+
+<h1>Beatmaps</h1>
+
+<form method="get" action="/beatmapsets" class="listing-search" role="search">
+    <input class="input" type="search" name="q" value="@Model.Query"
+           placeholder="search by title, artist, mapper or tags&hellip;" aria-label="Search beatmaps" />
+    @if (Model.Sort != "newest")
+    {
+        <input type="hidden" name="s" value="@Model.Sort" />
+    }
+    @if (Model.StatusFilter != "any")
+    {
+        <input type="hidden" name="status" value="@Model.StatusFilter" />
+    }
+    <button type="submit" class="btn btn-primary">Search</button>
+</form>
+
+<div class="listing-filters">
+    <div class="filter-row">
+        <span class="filter-label">Status</span>
+        <a class="filter-pill @(Model.StatusFilter == "any" ? "is-active" : "")" href="@Model.BuildUrl(status: "any")">Any</a>
+        <a class="filter-pill @(Model.StatusFilter == "ranked" ? "is-active" : "")" href="@Model.BuildUrl(status: "ranked")">Ranked</a>
+    </div>
+    <div class="filter-row">
+        <span class="filter-label">Sort</span>
+        <a class="filter-pill @(Model.Sort == "newest" ? "is-active" : "")" href="@Model.BuildUrl(sort: "newest")">Newest</a>
+        <a class="filter-pill @(Model.Sort == "plays" ? "is-active" : "")" href="@Model.BuildUrl(sort: "plays")">Most played</a>
+        <a class="filter-pill @(Model.Sort == "favs" ? "is-active" : "")" href="@Model.BuildUrl(sort: "favs")">Most favourited</a>
+    </div>
+</div>
+
+@if (Model.Sets.Count > 0)
+{
+    <div class="card-grid">
+        @foreach (var set in Model.Sets)
+        {
+            <partial name="_BeatmapsetCard" model="set" />
+        }
+    </div>
+
+    @if (Model.NextPageUrl is not null)
+    {
+        <div class="show-more">
+            <a class="btn btn-ghost" href="@Model.NextPageUrl">show more</a>
+        </div>
+    }
+}
+else
+{
+    <div class="empty-state">
+        <h3>&hellip;and the crowd goes silent.</h3>
+        <p>
+            No maps matched that.
+            @if (Model.Query.Length > 0)
+            {
+                <text>Try fewer words, or </text><a href="/beatmapsets">browse everything</a><text>.</text>
+            }
+            else
+            {
+                <text>Fire up the in-game editor and put the first one on stage.</text>
+            }
+        </p>
+    </div>
+}
