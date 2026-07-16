@@ -1,4 +1,5 @@
 using Typebeat.Web.Auth;
+using Typebeat.Web.Data;
 using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
@@ -18,9 +19,14 @@ public static class MeEndpoints
         app.MapGet("/api/v2/me/{ruleset}", Handle).RequireBearer();
     }
 
-    private static IResult Handle(HttpContext ctx)
+    private static async Task<IResult> Handle(HttpContext ctx, Db db)
     {
         var user = ctx.AuthedUser();
+
+        // The game client fetches /me at every connect, which makes it the natural "last seen
+        // in game" signal — same throttled touch the website's cookie auth applies.
+        await LastVisit.TouchAsync(db, user.Id, ctx.RequestAborted);
+
         return WireJson.Ok(UserWire.Me(user, ctx.Request.Scheme, ctx.Request.Host.Value ?? string.Empty));
     }
 }

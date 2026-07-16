@@ -70,9 +70,11 @@ public static class StubEndpoints
             Results.Bytes(Convert.FromBase64String(default_avatar_png_base64), "image/png"));
     }
 
-    // 64x64 solid #ff66aa PNG (valid IHDR/IDAT/IEND, zlib-compressed). Deterministically generated.
+    // 64x64 solid PNG in the design system's violet #7a3ff2 (valid IHDR/IDAT/IEND,
+    // zlib-compressed). Deterministically generated. The original build-out used osu's
+    // signature pink, which is off-limits trade dress anywhere user-visible.
     private const string default_avatar_png_base64 =
-        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAT0lEQVR42u3PQQkAAAgEsEtrOEtqBN/C" +
-        "YAWWqX4tAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgJXYAESjvHh" +
-        "/JHhdwAAAABJRU5ErkJggg==";
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAe0lEQVR4nO3PUQkAIBTAQJu9XsY2gSH8OITBAtzWnvN1" +
+        "iwsa0IIGtKABLWhACxrQgga0oAEtaEALGtCCBrSgAS1oQAsa0IIGtKABLWhACxrQgga0oAEtaEALGtCCBrSgAS1oQAsa" +
+        "0IIGtKABLWhACxrQgga0oIHxiJeBC2uMsYdARYnQAAAAAElFTkSuQmCC";
 }

@@ -82,9 +82,11 @@ public static class BeatmapsetCardSql
         FROM beatmapsets s
         JOIN users u ON u.id = s.owner_id
         LEFT JOIN LATERAL (
+            -- filename IS NOT NULL = the diff is live in the current version; dropped diffs and
+            -- freshly-allocated blank rows (never deleted, scores FK) must not drive the chips.
             SELECT max(b.difficulty_rating) AS stars, max(b.wpm) AS wpm
             FROM beatmaps b
-            WHERE b.set_id = s.id
+            WHERE b.set_id = s.id AND b.filename IS NOT NULL
         ) d ON true
         """;
 }

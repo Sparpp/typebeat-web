@@ -49,12 +49,14 @@ public sealed class LoginModel(Db db, PasswordService passwords, TokenService to
         UserRow? user;
         await using (var conn = await db.OpenAsync(HttpContext.RequestAborted))
         {
-            // The login box accepts username or email, like the game client (citext columns).
+            // The login box accepts username or email, like the game client. The casts matter:
+            // a bare text parameter against a citext column resolves the comparison as text=text
+            // (case-SENSITIVE); casting the parameter keeps citext's case-insensitive operator.
             user = await conn.QuerySingleOrDefaultAsync<UserRow>(
                 """
                 SELECT id, password_hash AS passwordHash, restricted
                 FROM users
-                WHERE username = @login OR email = @login
+                WHERE username = @login::citext OR email = @login::citext
                 """,
                 new { login });
         }

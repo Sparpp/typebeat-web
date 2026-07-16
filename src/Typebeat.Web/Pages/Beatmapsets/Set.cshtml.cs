@@ -70,7 +70,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                    b.wpm::double precision AS Wpm,
                    b.difficulty_rating     AS Stars
             FROM beatmaps b
-            WHERE b.set_id = @id
+            WHERE b.set_id = @id AND b.filename IS NOT NULL
             ORDER BY b.difficulty_rating DESC, b.id ASC
             LIMIT 1
             """,
