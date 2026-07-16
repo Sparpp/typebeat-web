@@ -1,0 +1,10 @@
+Self-hosted webfonts (latin subsets, variable weight), downloaded from Google Fonts:
+
+  baloo2-latin-wght.woff2  — "Baloo 2" (weights 400-800)
+      Copyright 2019 The Baloo 2 Project Authors (https://github.com/EkType/Baloo2)
+
+  nunito-latin-wght.woff2  — "Nunito" (weights 300-900)
+      Copyright 2014 The Nunito Project Authors (https://github.com/googlefonts/nunito)
+
+Both are licensed under the SIL Open Font License, Version 1.1:
+https://openfontlicense.org
