@@ -60,13 +60,8 @@ public static class StubEndpoints
         // unconditionally at login (LocalUserState); a 404 logs a failing request every session.
         app.MapGet("/api/v2/blocks", () => WireJson.Ok(Array.Empty<object>())).RequireBearer();
 
-        // GET /api/v2/me/beatmapset-favourites -> GetMyFavouriteBeatmapSetsResponse { beatmapset_ids }.
-        // Also fetched at login. This literal route out-specifies MeEndpoints' "me/{ruleset}", which
-        // would otherwise swallow it and hand back the /me payload.
-        app.MapGet("/api/v2/me/beatmapset-favourites", () => WireJson.Ok(new
-        {
-            beatmapset_ids = Array.Empty<int>(),
-        })).RequireBearer();
+        // GET /api/v2/me/beatmapset-favourites moved to BeatmapsetEndpoints (M3): it now reads
+        // the favourites table for real instead of returning the empty stub.
 
         // Static default avatar referenced by UserWire.AvatarUrl. Unauthenticated: the client's
         // texture loader fetches images without a bearer token. A 64x64 solid PNG generated at

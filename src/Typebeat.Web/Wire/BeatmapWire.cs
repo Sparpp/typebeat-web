@@ -57,8 +57,15 @@ public sealed class APIBeatmapResponse
     [JsonProperty("last_updated")]
     public required DateTimeOffset LastUpdated { get; init; }
 
-    [JsonProperty("beatmapset")]
-    public required APIBeatmapSetResponse Beatmapset { get; init; }
+    // playcount (no underscore — osu-web's historical name, mirrored by APIBeatmap.PlayCount).
+    [JsonProperty("playcount")]
+    public int PlayCount { get; init; }
+
+    // Nullable: beatmaps nested inside a beatmapset response omit the back-reference, KEY AND
+    // ALL (osu-web's shape; NullValueHandling.Ignore overrides the settings-level Include so
+    // null never reaches the wire). The lookup endpoint always sets it.
+    [JsonProperty("beatmapset", NullValueHandling = NullValueHandling.Ignore)]
+    public APIBeatmapSetResponse? Beatmapset { get; init; }
 }
 
 /// <summary>
@@ -99,6 +106,49 @@ public sealed class APIBeatmapSetResponse
 
     [JsonProperty("last_updated")]
     public required DateTimeOffset LastUpdated { get; init; }
+
+    // ---- Fields below were added for GET /api/v2/beatmapsets/{id} (M3). They are optional
+    //      with client-default values so the import-lookup path above keeps emitting them
+    //      harmlessly (APIBeatmapSet binds by name; absent/default values are inert). ----
+
+    [JsonProperty("title_unicode")]
+    public string TitleUnicode { get; init; } = string.Empty;
+
+    [JsonProperty("artist_unicode")]
+    public string ArtistUnicode { get; init; } = string.Empty;
+
+    [JsonProperty("source")]
+    public string Source { get; init; } = string.Empty;
+
+    [JsonProperty("tags")]
+    public string Tags { get; init; } = string.Empty;
+
+    // Empty string (never null) when no preview exists: the client's APIBeatmapSet.Preview
+    // defaults to string.Empty and its consumers use IsNullOrEmpty-style checks.
+    [JsonProperty("preview_url")]
+    public string PreviewUrl { get; init; } = string.Empty;
+
+    [JsonProperty("has_favourited")]
+    public bool HasFavourited { get; init; }
+
+    [JsonProperty("play_count")]
+    public int PlayCount { get; init; }
+
+    [JsonProperty("favourite_count")]
+    public int FavouriteCount { get; init; }
+
+    // The client's APIBeatmapSet.BPM is a plain double; 0 = unknown (fresh set, no package yet).
+    [JsonProperty("bpm")]
+    public double Bpm { get; init; }
+
+    [JsonProperty("video")]
+    public bool HasVideo { get; init; }
+
+    // Null on the nested-inside-a-beatmap variant (lookup), where the key must be OMITTED:
+    // the client's APIBeatmapSet.Beatmaps defaults to an empty array and an explicit JSON null
+    // would overwrite it with null under Newtonsoft. The set GET emits the real list.
+    [JsonProperty("beatmaps", NullValueHandling = NullValueHandling.Ignore)]
+    public IReadOnlyList<APIBeatmapResponse>? Beatmaps { get; init; }
 }
 
 /// <summary>
@@ -136,4 +186,29 @@ public sealed class BeatmapCovers
         List = url,
         List2x = url,
     };
+
+    /// <summary>The self-hosted fallback image (served by MediaEndpoints, generated in-process).</summary>
+    public const string DefaultCoverPath = "/img/default-cover.jpg";
+
+    /// <summary>
+    /// Builds the covers block for a set. <paramref name="coverKey"/> is the PREFIX stored in
+    /// <c>beatmapsets.cover_key</c> (<c>covers/{setId}/{versionNo}</c>) — each variant appends
+    /// <c>/{name}.jpg</c>, matching the objects CoverGenerator wrote and the MediaEndpoints
+    /// route that serves them. Null (no cover generated) falls back to the placeholder.
+    /// </summary>
+    public static BeatmapCovers FromCoverKey(string urlBase, string? coverKey)
+    {
+        if (string.IsNullOrEmpty(coverKey))
+            return Placeholder(urlBase + DefaultCoverPath);
+
+        return new BeatmapCovers
+        {
+            Cover = $"{urlBase}/{coverKey}/cover.jpg",
+            Cover2x = $"{urlBase}/{coverKey}/cover@2x.jpg",
+            Card = $"{urlBase}/{coverKey}/card.jpg",
+            Card2x = $"{urlBase}/{coverKey}/card@2x.jpg",
+            List = $"{urlBase}/{coverKey}/list.jpg",
+            List2x = $"{urlBase}/{coverKey}/list@2x.jpg",
+        };
+    }
 }

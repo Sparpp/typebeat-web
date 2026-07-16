@@ -101,6 +101,49 @@ public class BeatmapWireShapeTest
     }
 
     [Test]
+    public void BeatmapSet_M3Fields_HaveExactPropertyNames_AndNullListsAreOmitted()
+    {
+        var json = Serialize();
+        var set = (JObject)json["beatmapset"]!;
+
+        Assert.Multiple(() =>
+        {
+            // The APIBeatmapSet additions for GET /api/v2/beatmapsets/{id}; the lookup path
+            // emits their client-default values harmlessly.
+            Assert.That((string)set["title_unicode"]!, Is.EqualTo(""));
+            Assert.That((string)set["artist_unicode"]!, Is.EqualTo(""));
+            Assert.That((string)set["preview_url"]!, Is.EqualTo(""), "empty string, never null (client default)");
+            Assert.That((bool)set["has_favourited"]!, Is.False);
+            Assert.That((int)set["play_count"]!, Is.EqualTo(0));
+            Assert.That((int)set["favourite_count"]!, Is.EqualTo(0));
+            Assert.That((double)set["bpm"]!, Is.EqualTo(0));
+            Assert.That((bool)set["video"]!, Is.False);
+
+            // Null lists/back-references are OMITTED, not emitted as JSON null: an explicit
+            // null would overwrite the client's non-null array/either-side defaults.
+            Assert.That(set.ContainsKey("beatmaps"), Is.False, "nested set omits 'beatmaps' when unset");
+            Assert.That((int)json["playcount"]!, Is.EqualTo(0));
+        });
+    }
+
+    [Test]
+    public void CoversFromCoverKey_BuildVersionKeyedUrls()
+    {
+        var covers = BeatmapCovers.FromCoverKey("https://host", "covers/7/3");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(covers.Card, Is.EqualTo("https://host/covers/7/3/card.jpg"));
+            Assert.That(covers.Card2x, Is.EqualTo("https://host/covers/7/3/card@2x.jpg"));
+            Assert.That(covers.Cover, Is.EqualTo("https://host/covers/7/3/cover.jpg"));
+            Assert.That(covers.List2x, Is.EqualTo("https://host/covers/7/3/list@2x.jpg"));
+        });
+
+        var fallback = BeatmapCovers.FromCoverKey("https://host", null);
+        Assert.That(fallback.Card2x, Is.EqualTo("https://host/img/default-cover.jpg"));
+    }
+
+    [Test]
     public void Covers_HaveExactKeysIncludingRetinaVariants()
     {
         var covers = (JObject)Serialize()["beatmapset"]!["covers"]!;

@@ -57,8 +57,9 @@ public static class BeatmapLookupEndpoints
         if (row is null)
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");
 
-        // Self-hosted placeholder cover — keeps every asset reference on our own host.
-        string coverUrl = $"{ctx.Request.Scheme}://{ctx.Request.Host}/img/default-cover.jpg";
+        // Real covers when the set has them (cover_key is the covers/{setId}/{ver} prefix);
+        // the generated /img/default-cover.jpg otherwise. Always this host, never a ppy CDN.
+        string urlBase = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
 
         return WireJson.Ok(new APIBeatmapResponse
         {
@@ -81,7 +82,7 @@ public static class BeatmapLookupEndpoints
                 Status = ranked_status,
                 Creator = row.Creator,
                 UserId = (int)row.OwnerId,
-                Covers = BeatmapCovers.Placeholder(coverUrl),
+                Covers = BeatmapCovers.FromCoverKey(urlBase, row.CoverKey),
                 SubmittedDate = row.SubmittedAt,
                 // Schema has no dedicated ranked-date column; updated_at (when the set went public)
                 // is the closest anchor. See concerns.
@@ -110,6 +111,7 @@ public static class BeatmapLookupEndpoints
                bs.owner_id        AS ownerId,
                bs.title           AS title,
                bs.artist          AS artist,
+               bs.cover_key       AS coverKey,
                u.username         AS creator,
                bs.submitted_at    AS submittedAt,
                bs.updated_at      AS updatedAt
@@ -137,6 +139,7 @@ public static class BeatmapLookupEndpoints
         long OwnerId,
         string Title,
         string Artist,
+        string? CoverKey,
         string Creator,
         // timestamptz arrives from Npgsql as UTC DateTime — a DateTimeOffset ctor param makes
         // Dapper's constructor matching fail at runtime ("no matching signature").
