@@ -79,10 +79,13 @@ jobs:
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          # tr -d '\r': the secret was pasted from Windows, and CRLF line endings make
-          # OpenSSH fail with "error in libcrypto". Normalize unconditionally.
-          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
+          # The key travels as single-line base64 (DEPLOY_SSH_KEY_B64): multiline private keys
+          # pasted from Windows kept arriving mangled (CRLF/whitespace -> "error in libcrypto").
+          # Base64 is immune to paste-transformations, and we validate the decoded key before
+          # any connection attempt so a bad secret fails loudly here, not as an auth error.
+          echo "${{ secrets.DEPLOY_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null && echo "deploy key parses OK"
           cp deploy/known_hosts ~/.ssh/known_hosts
 
       - name: Ship source to server
