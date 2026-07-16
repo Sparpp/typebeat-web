@@ -1,0 +1,195 @@
+@page "/beatmapsets/{id:long}"
+@using System.Globalization
+@model Typebeat.Web.Pages.Beatmapsets.SetModel
+
+@{
+    string? coverStyle = Model.Set.CoverUrl is null ? null : $"background-image:url('{Model.Set.CoverUrl}')";
+}
+<section class="set-header @(Model.Set.CoverUrl is null ? "set-header--nocover" : "")" style="@coverStyle">
+    <div class="set-header__scrim">
+        <div class="set-header__main">
+            <div class="set-header__badges">
+                <span class="pill @Model.Set.PillClass">@Model.Set.StatusLabel</span>
+                <span class="set-header__counter" title="play count"><span aria-hidden="true">&#9654;</span> @Model.Set.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span>
+                <span class="set-header__counter" title="favourites"><span aria-hidden="true">&#9825;</span> @Model.Set.FavouriteCount.ToString("N0", CultureInfo.InvariantCulture)</span>
+                <span class="set-header__counter" title="downloads"><span aria-hidden="true">&#8595;</span> @Model.Set.DownloadCount.ToString("N0", CultureInfo.InvariantCulture)</span>
+            </div>
+            <h1 class="set-header__title">@Model.Set.Title</h1>
+            <div class="set-header__artist">by @Model.Set.Artist</div>
+            <div class="set-header__mapper">
+                mapped by <a href="/users/@Model.Set.OwnerId">@Model.Set.Creator</a>
+            </div>
+            <div class="set-header__dates faint">
+                submitted @Model.Set.SubmittedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
+                &middot; updated @Model.Set.UpdatedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
+            </div>
+            <div class="set-header__actions">
+                <a class="btn btn-primary btn-big" href="/beatmapsets/@Model.Set.Id/download">Download</a>
+                @if (Model.CurrentUser is not null)
+                {
+                    <form method="post" asp-page-handler="Favourite" asp-route-id="@Model.Set.Id">
+                        <button type="submit" class="btn btn-ghost fav-btn @(Model.Set.IsFavourited ? "is-on" : "")">
+                            @(Model.Set.IsFavourited ? "♥ Favourited" : "♡ Favourite")
+                        </button>
+                    </form>
+                }
+                else
+                {
+                    <a class="btn btn-ghost" href="/login" title="Sign in to favourite">&#9825; Favourite</a>
+                }
+                @if (Model.Set.PreviewUrl is not null)
+                {
+                    <button type="button" class="preview-btn preview-btn--big" data-preview="@Model.Set.PreviewUrl"
+                            aria-label="Play preview"></button>
+                }
+            </div>
+            <details class="report-box" @(Model.Reported ? "open" : null)>
+                <summary>Report this beatmap</summary>
+                @if (Model.Reported)
+                {
+                    <p class="report-box__thanks">Thanks &mdash; your report is in. A human will look at it.</p>
+                }
+                else
+                {
+                    <form method="post" asp-page-handler="Report" asp-route-id="@Model.Set.Id">
+                        <div class="field">
+                            <label for="report-reason">What's wrong with it?</label>
+                            <textarea class="input" id="report-reason" name="reason" rows="3" required
+                                      maxlength="4000" placeholder="stolen map, broken timing, rule-breaking content&hellip;"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-ghost btn-small">Send report</button>
+                    </form>
+                }
+            </details>
+        </div>
+        <aside class="set-stats">
+            <h3 class="card-title">Map stats</h3>
+            @if (Model.Diff is not null)
+            {
+                <div class="stat-row"><span class="stat-row__label">Length</span><span class="stat-row__value">@SetModel.FormatLength(Model.Diff.TotalLengthS)</span></div>
+                @if (Model.Diff.WordCount is int words)
+                {
+                    <div class="stat-row"><span class="stat-row__label">Words</span><span class="stat-row__value">@words.ToString("N0", CultureInfo.InvariantCulture)</span></div>
+                }
+                @if (Model.Diff.CharCount is int chars)
+                {
+                    <div class="stat-row"><span class="stat-row__label">Characters</span><span class="stat-row__value">@chars.ToString("N0", CultureInfo.InvariantCulture)</span></div>
+                }
+                @if (Model.Set.Bpm is double bpm)
+                {
+                    <div class="stat-row"><span class="stat-row__label">BPM</span><span class="stat-row__value">@bpm.ToString("0.#", CultureInfo.InvariantCulture)</span></div>
+                }
+                <div class="stat-row">
+                    <span class="stat-row__label">@(Model.Diff.Wpm is double w ? $"{w.ToString("0", CultureInfo.InvariantCulture)} WPM" : "WPM")</span>
+                    <span class="stat-row__value">&#9733; @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
+                </div>
+                <div class="meter" role="img" aria-label="difficulty @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture) of 10 stars">
+                    <div class="meter__fill" style="width:@Math.Clamp(Model.Diff.Stars / 10 * 100, 0, 100).ToString("0.#", CultureInfo.InvariantCulture)%"></div>
+                </div>
+            }
+            else
+            {
+                <p class="muted">No difficulty data yet.</p>
+            }
+        </aside>
+    </div>
+</section>
+
+<section class="set-body">
+    @if (Model.Set.Description.Length > 0)
+    {
+        @* Plain text by design: default Razor encoding + pre-line = XSS-safe line breaks. *@
+        <div class="set-description">@Model.Set.Description</div>
+    }
+    @if (Model.Set.TagList.Any() || Model.Set.Source.Length > 0)
+    {
+        <div class="tag-chips">
+            @if (Model.Set.Source.Length > 0)
+            {
+                <span class="chip"><span class="chip-label">source</span><span class="chip-value">@Model.Set.Source</span></span>
+            }
+            @foreach (string tag in Model.Set.TagList)
+            {
+                <a class="pill pill--accent" href="/beatmapsets?q=@Uri.EscapeDataString(tag)">@tag</a>
+            }
+        </div>
+    }
+</section>
+
+<section class="set-leaderboard">
+    <h2>Leaderboard</h2>
+    @if (Model.Scores.Count == 0)
+    {
+        <div class="empty-state">
+            <h3>No scores yet</h3>
+            <p>Nobody has typed this one &mdash; the #1 spot is wide open.</p>
+        </div>
+    }
+    else
+    {
+        var top = Model.Scores[0];
+        <div class="podium">
+            <span class="podium__rank">#1</span>
+            <span class="avatar-fallback" aria-hidden="true">@top.Username[..1]</span>
+            <div class="podium__who">
+                <a class="podium__name" href="/users/@top.UserId">@top.Username</a>
+                <div class="faint">@top.EndedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</div>
+            </div>
+            <div class="podium__stats">
+                <div class="podium-stat"><span class="podium-stat__label">Total score</span><span class="podium-stat__value">@top.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Accuracy</span><span class="podium-stat__value">@SetModel.FormatAccuracy(top.Accuracy)</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Max combo</span><span class="podium-stat__value">@top.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Perfect</span><span class="podium-stat__value">@top.Perfect</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Good</span><span class="podium-stat__value">@top.Good</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Ok</span><span class="podium-stat__value">@top.Ok</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Miss</span><span class="podium-stat__value">@top.Miss</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Grade</span><span class="podium-stat__value grade @SetModel.GradeClass(top.Rank)">@SetModel.GradeLabel(top.Rank)</span></div>
+                @if (top.Mods.Length > 0)
+                {
+                    <div class="podium-stat"><span class="podium-stat__label">Mods</span><span class="podium-stat__value">@top.Mods</span></div>
+                }
+            </div>
+        </div>
+
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>Rank</th>
+                    <th>Grade</th>
+                    <th>Score</th>
+                    <th>Accuracy</th>
+                    <th>Player</th>
+                    <th>Combo</th>
+                    <th>Perfect</th>
+                    <th>Good</th>
+                    <th>Ok</th>
+                    <th>Miss</th>
+                    <th>Mods</th>
+                    <th>Date</th>
+                </tr>
+                </thead>
+                <tbody>
+                @for (int i = 0; i < Model.Scores.Count; i++)
+                {
+                    var score = Model.Scores[i];
+                    <tr>
+                        <td class="num">#@(i + 1)</td>
+                        <td><span class="grade @SetModel.GradeClass(score.Rank)">@SetModel.GradeLabel(score.Rank)</span></td>
+                        <td class="num">@score.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</td>
+                        <td class="num">@SetModel.FormatAccuracy(score.Accuracy)</td>
+                        <td><a href="/users/@score.UserId">@score.Username</a></td>
+                        <td class="num">@score.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</td>
+                        <td class="num">@score.Perfect</td>
+                        <td class="num">@score.Good</td>
+                        <td class="num">@score.Ok</td>
+                        <td class="num">@score.Miss</td>
+                        <td>@score.Mods</td>
+                        <td>@score.EndedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
