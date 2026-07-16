@@ -1078,3 +1078,212 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     font-size: var(--text-lg);
     font-weight: 800;
 }
+
+/* ==========================================================================
+   Phase B3 — user profile page
+   ========================================================================== */
+
+/* ---- Header: cover band + avatar + identity ---- */
+
+.profile-header {
+    margin-bottom: var(--space-5);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--surface);
+}
+
+.profile-cover {
+    height: 140px;
+}
+
+@media (max-width: 560px) {
+    .profile-cover { height: 90px; }
+}
+
+/* preset cover gradients keyed by user id — all violet-led, magenta only as a gradient tail */
+.profile-cover--0 { background: linear-gradient(115deg, #241a4d, var(--violet-deep) 70%, var(--magenta) 130%); }
+.profile-cover--1 { background: linear-gradient(115deg, #131024, #3d3470 55%, var(--violet) 115%); }
+.profile-cover--2 { background: linear-gradient(115deg, #101a3c, #4633a8 60%, var(--violet-bright) 125%); }
+.profile-cover--3 { background: linear-gradient(115deg, #1b1440, #5b2ea6 65%, var(--violet-deep) 110%); }
+
+.profile-header__bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-5);
+}
+
+.profile-avatar {
+    width: 96px;
+    height: 96px;
+    margin-top: -48px; /* overlap the cover's bottom edge by half */
+    border: 3px solid var(--surface);
+    border-radius: var(--radius-md);
+    object-fit: cover;
+    background: var(--surface-2);
+    flex-shrink: 0;
+}
+
+.profile-avatar--fallback {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--grad-primary);
+    color: #fff;
+    font-family: var(--font-display);
+    font-size: var(--text-3xl);
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+@media (max-width: 560px) {
+    .profile-avatar {
+        width: 64px;
+        height: 64px;
+        margin-top: -32px;
+    }
+
+    .profile-avatar--fallback { font-size: var(--text-xl); }
+}
+
+.profile-header__name {
+    margin: 0;
+    font-size: var(--text-2xl);
+}
+
+/* ---- Layout: sections + stats sidebar ---- */
+
+.profile-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: var(--space-5);
+    align-items: start;
+}
+
+@media (max-width: 860px) {
+    .profile-grid { grid-template-columns: 1fr; }
+    .profile-side { order: -1; } /* stats card reads first on small screens, like osu's header */
+}
+
+.profile-section { margin-bottom: var(--space-6); }
+
+.profile-section h2 { margin: 0 0 var(--space-3); }
+
+.profile-empty { margin: 0; }
+
+.profile-section .show-more { margin-top: var(--space-4); }
+
+/* ---- Stats card ---- */
+
+.profile-rank {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: var(--space-3);
+}
+
+.profile-rank__label {
+    color: var(--text-faint);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.profile-rank__value {
+    font-family: var(--font-display);
+    font-size: var(--text-3xl);
+    font-weight: 800;
+    color: var(--violet-bright);
+}
+
+.grade-counts {
+    display: flex;
+    justify-content: space-between;
+    margin-top: var(--space-4);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--line);
+}
+
+.grade-count {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 32px;
+}
+
+.grade-count__num {
+    font-family: var(--font-display);
+    font-weight: 700;
+    color: var(--text-muted);
+}
+
+/* ---- Score rows (Best / Recent / Most played lists) ---- */
+
+.score-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.score-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+}
+
+.score-row:hover { border-color: var(--line-bright); }
+
+.score-row__thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.score-row__thumb img,
+.score-row__thumb .cover-fallback {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.score-row__map {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+    font-weight: 700;
+}
+
+.score-row__map:hover { color: var(--violet-bright); }
+
+.score-row__artist {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+.score-row__acc,
+.score-row__score,
+.score-row__plays {
+    font-family: var(--font-display);
+    white-space: nowrap;
+}
+
+.score-row__mods {
+    color: var(--violet-bright);
+    font-size: var(--text-sm);
+    white-space: nowrap;
+}
+
+.score-row__date { white-space: nowrap; }
+
+@media (max-width: 560px) {
+    .score-row__date, .score-row__acc { display: none; }
+}

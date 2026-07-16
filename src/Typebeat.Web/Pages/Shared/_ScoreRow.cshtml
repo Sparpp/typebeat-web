@@ -1,0 +1,25 @@
+@using System.Globalization
+@model ScoreRowModel
+<div class="score-row">
+    <div class="score-row__thumb">
+        @if (Model.CoverUrl is not null)
+        {
+            <img src="@Model.CoverUrl" alt="" loading="lazy" />
+        }
+        else
+        {
+            <div class="cover-fallback" aria-hidden="true"></div>
+        }
+    </div>
+    <a class="score-row__map" href="/beatmapsets/@Model.SetId" title="@Model.Title [@Model.Artist]">
+        @Model.Title <span class="score-row__artist">[@Model.Artist]</span>
+    </a>
+    <span class="grade @Model.GradeClass">@Model.GradeLabel</span>
+    <span class="score-row__acc">@((Model.Accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
+    @if (Model.Mods.Length > 0)
+    {
+        <span class="score-row__mods">@Model.Mods</span>
+    }
+    <span class="score-row__score">@Model.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span>
+    <span class="score-row__date faint">@Model.Date.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</span>
+</div>

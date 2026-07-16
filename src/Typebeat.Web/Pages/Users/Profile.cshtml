@@ -1,0 +1,160 @@
+@page "/users/{idOrName}"
+@using System.Globalization
+@model Typebeat.Web.Pages.Users.ProfileModel
+
+<section class="profile-header">
+    <div class="profile-cover profile-cover--@(Model.ProfileUser.Id % ProfileModel.CoverPresetCount)" aria-hidden="true"></div>
+    <div class="profile-header__bar">
+        @if (Model.ProfileUser.AvatarUrl is string avatarUrl)
+        {
+            <img class="profile-avatar" src="@avatarUrl" alt="" />
+        }
+        else
+        {
+            <span class="profile-avatar profile-avatar--fallback" aria-hidden="true">@Model.ProfileUser.Username[..1]</span>
+        }
+        <div class="profile-header__who">
+            <h1 class="profile-header__name">@Model.ProfileUser.Username</h1>
+            <div class="profile-header__dates faint">
+                Joined @Model.ProfileUser.CreatedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
+                &middot; Last seen @ProfileModel.LastSeenLabel(Model.ProfileUser.LastVisit)
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="profile-grid">
+    <div class="profile-main">
+        <section class="profile-section">
+            <h2>Best scores</h2>
+            @if (Model.BestScores.Count == 0)
+            {
+                <p class="profile-empty muted">No scores yet &mdash; the keyboard is waiting.</p>
+            }
+            else
+            {
+                <div class="score-list">
+                    @foreach (var row in Model.BestScores)
+                    {
+                        <partial name="_ScoreRow" model="row" />
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="profile-section">
+            <h2>Recent scores</h2>
+            @if (Model.RecentScores.Count == 0)
+            {
+                <p class="profile-empty muted">Nothing typed lately.</p>
+            }
+            else
+            {
+                <div class="score-list">
+                    @foreach (var row in Model.RecentScores)
+                    {
+                        <partial name="_ScoreRow" model="row" />
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="profile-section">
+            <h2>Most played</h2>
+            @if (Model.MostPlayed.Count == 0)
+            {
+                <p class="profile-empty muted">No plays on record yet.</p>
+            }
+            else
+            {
+                <div class="score-list">
+                    @foreach (var row in Model.MostPlayed)
+                    {
+                        <div class="score-row">
+                            <div class="score-row__thumb">
+                                @if (row.CoverUrl is not null)
+                                {
+                                    <img src="@row.CoverUrl" alt="" loading="lazy" />
+                                }
+                                else
+                                {
+                                    <div class="cover-fallback" aria-hidden="true"></div>
+                                }
+                            </div>
+                            <a class="score-row__map" href="/beatmapsets/@row.SetId" title="@row.Title [@row.Artist]">
+                                @row.Title <span class="score-row__artist">[@row.Artist]</span>
+                            </a>
+                            <span class="score-row__plays">@row.Plays.ToString("N0", CultureInfo.InvariantCulture) plays</span>
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="profile-section">
+            <h2>Maps</h2>
+            @if (Model.Maps.Count == 0)
+            {
+                <p class="profile-empty muted">No maps uploaded yet.</p>
+            }
+            else
+            {
+                <div class="card-grid">
+                    @foreach (var set in Model.Maps)
+                    {
+                        <partial name="_BeatmapsetCard" model="set" />
+                    }
+                </div>
+                @if (Model.HasMoreMaps)
+                {
+                    <div class="show-more">
+                        <a class="btn btn-ghost" href="/beatmapsets?q=@Uri.EscapeDataString(Model.ProfileUser.Username)">show all maps</a>
+                    </div>
+                }
+            }
+        </section>
+
+        <section class="profile-section">
+            <h2>Favourites</h2>
+            @if (Model.Favourites.Count == 0)
+            {
+                <p class="profile-empty muted">No favourites yet.</p>
+            }
+            else
+            {
+                <div class="card-grid">
+                    @foreach (var set in Model.Favourites)
+                    {
+                        <partial name="_BeatmapsetCard" model="set" />
+                    }
+                </div>
+                @if (Model.HasMoreFavourites)
+                {
+                    <p class="profile-empty faint">Showing the latest @Model.Favourites.Count favourites.</p>
+                }
+            }
+        </section>
+    </div>
+
+    <aside class="profile-side">
+        <div class="card profile-stats">
+            <h3 class="card-title">Player stats</h3>
+            <div class="profile-rank">
+                <span class="profile-rank__label">Global rank</span>
+                <span class="profile-rank__value">@(Model.GlobalRank is long rank ? "#" + rank.ToString("N0", CultureInfo.InvariantCulture) : "Unranked")</span>
+            </div>
+            <div class="stat-row"><span class="stat-row__label">Total score</span><span class="stat-row__value">@Model.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>
+            <div class="stat-row"><span class="stat-row__label">Play count</span><span class="stat-row__value">@Model.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
+            <div class="stat-row"><span class="stat-row__label">Play time</span><span class="stat-row__value">@ProfileModel.FormatPlayTime(Model.PlayTimeS)</span></div>
+            <div class="stat-row"><span class="stat-row__label">Accuracy</span><span class="stat-row__value">@(Model.Accuracy is double acc ? (acc * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%" : "—")</span></div>
+            <div class="grade-counts" title="per-map best grades">
+                <div class="grade-count"><span class="grade grade--ss">SS</span><span class="grade-count__num">@Model.Grades.Ss</span></div>
+                <div class="grade-count"><span class="grade grade--s">S</span><span class="grade-count__num">@Model.Grades.S</span></div>
+                <div class="grade-count"><span class="grade grade--a">A</span><span class="grade-count__num">@Model.Grades.A</span></div>
+                <div class="grade-count"><span class="grade grade--b">B</span><span class="grade-count__num">@Model.Grades.B</span></div>
+                <div class="grade-count"><span class="grade grade--c">C</span><span class="grade-count__num">@Model.Grades.C</span></div>
+                <div class="grade-count"><span class="grade grade--d">D</span><span class="grade-count__num">@Model.Grades.D</span></div>
+            </div>
+        </div>
+    </aside>
+</div>
