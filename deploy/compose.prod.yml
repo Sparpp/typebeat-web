@@ -30,6 +30,11 @@ services:
       TYPEBEAT_SENTRY_DSN: "${TYPEBEAT_SENTRY_DSN:-}"
       # Normally unset; briefly "true" only while verifying Sentry capture.
       TYPEBEAT_ENABLE_DEBUG_THROW: "${TYPEBEAT_ENABLE_DEBUG_THROW:-}"
+      # Uploaded beatmap packages/covers/previews (IFileStore root). Lives on the appdata
+      # volume so container swaps keep the files; deploy/backup.sh tars it nightly.
+      TYPEBEAT_FILE_ROOT: "/data"
+    volumes:
+      - appdata:/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,3 +60,4 @@ volumes:
   caddy_data:
   caddy_config:
   pgdata:
+  appdata:

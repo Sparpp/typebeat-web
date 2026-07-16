@@ -9,10 +9,12 @@ RUN mkdir -p external/packages \
     && dotnet publish src/Typebeat.Web/Typebeat.Web.csproj -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
-# Npgsql probes for Kerberos support at startup; without the lib it logs a loud (harmless)
-# error on every boot. We use password auth, but clean logs are worth one small package.
+# libgssapi-krb5-2: Npgsql probes for Kerberos support at startup; without the lib it logs a
+# loud (harmless) error on every boot. We use password auth, but clean logs are worth it.
+# ffmpeg: PreviewGenerator shells out to it to clip 30 s beatmap previews at upload time (its
+# absence degrades to "no preview", silently). --no-install-recommends keeps the image lean.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    && apt-get install -y --no-install-recommends libgssapi-krb5-2 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app .

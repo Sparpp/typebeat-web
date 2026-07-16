@@ -53,6 +53,12 @@ jobs:
             -c Release -o external/packages -p:PackageVersion="$VER" -p:Version="$VER"
           ls -la external/packages
 
+      # PreviewGenerator (and the BSS upload flow) shell out to ffmpeg; the tests self-skip or
+      # degrade without it, so install it to actually exercise the preview path (matches the
+      # runtime image, which apt-installs ffmpeg too).
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Build
         run: dotnet build typebeat-web.slnx -c Release
 
