@@ -5,6 +5,8 @@ using Typebeat.Web;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
 using Typebeat.Web.Endpoints;
+using Typebeat.Web.Packages;
+using Typebeat.Web.Storage;
 using Typebeat.Web.Wire;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -36,6 +38,13 @@ builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(connectionString));
 builder.Services.AddSingleton<Db>(sp => new Db(sp.GetRequiredService<NpgsqlDataSource>()));
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<PasswordService>();
+
+// Upload/package pipeline (M3). File root: TYPEBEAT_FILE_ROOT (prod: the /data volume; dev
+// default ./data). Everything under it is content-addressed or set-scoped — see StoreKeys.
+builder.Services.AddSingleton<IFileStore>(_ => LocalFileStore.FromConfiguration(builder.Configuration));
+builder.Services.AddSingleton<CoverGenerator>();
+builder.Services.AddSingleton<PreviewGenerator>();
+builder.Services.AddSingleton<PackageIngest>();
 
 // The website (M3): server-rendered Razor Pages under Pages/, HTML only — every APIv2/BSS JSON
 // response keeps going through WireJson (Newtonsoft), untouched by this. AddRazorPages also
