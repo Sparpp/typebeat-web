@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Stage C wire-compat harness. A net10 test project that boots the real server via
+    WebApplicationFactory<Program> and deserializes its raw JSON responses with the GAME
+    CLIENT'S OWN DTO types (typebeat.Game, net8.0) using Newtonsoft (the same primitive the
+    client's OsuJsonWebRequest uses). Contract drift between server and client therefore breaks
+    a test here instead of production.
+
+    A net10 test project referencing a net8 library is supported. The typebeat.Game reference
+    (relative path today; a git submodule in CI) drags in osu.Framework et al. — expected and
+    fine for a test project. typebeat.Game is built with its OWN Directory.Build.props (it lives
+    in the typebeat-osu tree), so none of its analyzer/nullable settings leak into this project.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Test packages: versions from tests/Typebeat.Web.Tests, except NUnit which is bumped from
+         4.3.2 to 4.5.1 to clear the transitive floor typebeat.Game imposes (it PackageReferences
+         NUnit >= 4.5.1; keeping 4.3.2 is an NU1605 downgrade error). -->
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.0" />
+    <PackageReference Include="NUnit" Version="4.5.1" />
+    <PackageReference Include="NUnit.Analyzers" Version="4.7.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
+
+    <!-- In-process host for real HTTP calls through the server pipeline. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
+
+    <!-- Direct DB access for fixture create/seed. (Also flows transitively from Typebeat.Web.) -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="NUnit.Framework" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Typebeat.Web\Typebeat.Web.csproj" />
+    <!-- Becomes a git submodule path in CI. -->
+    <ProjectReference Include="..\..\..\typebeat-osu\typebeat.Game\typebeat.Game.csproj" />
+  </ItemGroup>
+
+</Project>

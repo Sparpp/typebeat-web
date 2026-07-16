@@ -1,0 +1,145 @@
+using Dapper;
+using Typebeat.Web.Auth;
+using Typebeat.Web.Data;
+using Typebeat.Web.Wire;
+
+namespace Typebeat.Web.Endpoints;
+
+/// <summary>
+/// GET /api/v2/beatmaps/lookup — the client's import-time metadata lookup
+/// (typebeat.Game.Beatmaps.APIBeatmapMetadataSource via GetBeatmapRequest, Target
+/// "beatmaps/lookup"). The request carries up to three query params, added only when set:
+///   checksum = the local .osu MD5 (primary identity), id = OnlineID, filename = the .osu path.
+///
+/// We resolve by checksum first (so the echoed checksum equals the client's local hash and
+/// MatchesOnlineVersion holds), then by id. filename-only lookups have no column to resolve
+/// against in our schema, so they 404 — which the client handles gracefully: a Failed request
+/// leaves onlineMetadata null and the map is simply treated as not-online (no logout, no crash).
+///
+/// Only public sets are visible, and every returned map reports a "ranked" status so leaderboards
+/// unblock (see APIBeatmapResponse for the full status rationale). Authed: the client always runs
+/// lookups through the API, so RequireBearer.
+/// </summary>
+public static class BeatmapLookupEndpoints
+{
+    public static void Map(IEndpointRouteBuilder app)
+    {
+        app.MapGet("/api/v2/beatmaps/lookup", HandleAsync).RequireBearer();
+    }
+
+    private static async Task<IResult> HandleAsync(HttpContext ctx, Db db)
+    {
+        string? checksum = trimmed(ctx.Request.Query["checksum"]);
+        // filename is accepted (the client sends it) but our schema stores no per-map path, so it
+        // is not a resolvable key on its own — present only so an id/checksum-less call still 404s.
+        _ = trimmed(ctx.Request.Query["filename"]);
+
+        bool hasId = int.TryParse(ctx.Request.Query["id"], out int id) && id > 0;
+
+        // Resolve by checksum first, then by online id. Neither present → nothing to look up.
+        LookupRow? row;
+        await using (var conn = await db.OpenAsync(ctx.RequestAborted))
+        {
+            if (checksum is not null)
+            {
+                row = await conn.QuerySingleOrDefaultAsync<LookupRow>(baseQuery + "AND b.checksum_md5 = @checksum", new { checksum });
+            }
+            else if (hasId)
+            {
+                row = await conn.QuerySingleOrDefaultAsync<LookupRow>(baseQuery + "AND b.id = @id", new { id });
+            }
+            else
+            {
+                row = null;
+            }
+        }
+
+        if (row is null)
+            return WireJson.Error(StatusCodes.Status404NotFound, "not found");
+
+        // Self-hosted placeholder cover — keeps every asset reference on our own host.
+        string coverUrl = $"{ctx.Request.Scheme}://{ctx.Request.Host}/img/default-cover.jpg";
+
+        return WireJson.Ok(new APIBeatmapResponse
+        {
+            Id = (int)row.BeatmapId,
+            BeatmapsetId = (int)row.BeatmapSetId,
+            ModeInt = row.RulesetId,
+            Status = ranked_status,
+            Checksum = row.Checksum,
+            UserId = (int)row.OwnerId,
+            DifficultyRating = row.DifficultyRating,
+            TotalLength = row.TotalLengthSeconds,
+            HitLength = row.DrainLengthSeconds,
+            Version = row.Version,
+            LastUpdated = row.UpdatedAt,
+            Beatmapset = new APIBeatmapSetResponse
+            {
+                Id = (int)row.BeatmapSetId,
+                Title = row.Title,
+                Artist = row.Artist,
+                Status = ranked_status,
+                Creator = row.Creator,
+                UserId = (int)row.OwnerId,
+                Covers = BeatmapCovers.Placeholder(coverUrl),
+                SubmittedDate = row.SubmittedAt,
+                // Schema has no dedicated ranked-date column; updated_at (when the set went public)
+                // is the closest anchor. See concerns.
+                RankedDate = row.UpdatedAt,
+                LastUpdated = row.UpdatedAt,
+            },
+        });
+    }
+
+    // Locally-imported public maps report a ranked-family status: required for the client to stamp
+    // the status onto the realm model and for leaderboards to fetch (Status must be > Pending).
+    private const string ranked_status = "ranked";
+
+    // Only public sets are visible. The predicate is completed by the caller with the identity clause.
+    private const string baseQuery =
+        """
+        SELECT b.id               AS beatmapId,
+               b.set_id           AS beatmapSetId,
+               b.ruleset_id       AS rulesetId,
+               b.checksum_md5     AS checksum,
+               b.total_length_s   AS totalLengthSeconds,
+               b.drain_length_s   AS drainLengthSeconds,
+               b.difficulty_rating AS difficultyRating,
+               b.version_name     AS version,
+               bs.id              AS setId,
+               bs.owner_id        AS ownerId,
+               bs.title           AS title,
+               bs.artist          AS artist,
+               u.username         AS creator,
+               bs.submitted_at    AS submittedAt,
+               bs.updated_at      AS updatedAt
+        FROM beatmaps b
+        JOIN beatmapsets bs ON bs.id = b.set_id
+        JOIN users u ON u.id = bs.owner_id
+        WHERE bs.status = 'public'
+
+        """;
+
+    private static string? trimmed(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    // snake_case columns aliased to camelCase per the SELECT idiom (see TokenService).
+    private sealed record LookupRow(
+        long BeatmapId,
+        long BeatmapSetId,
+        short RulesetId,
+        string Checksum,
+        double TotalLengthSeconds,
+        double DrainLengthSeconds,
+        double DifficultyRating,
+        string Version,
+        long SetId,
+        long OwnerId,
+        string Title,
+        string Artist,
+        string Creator,
+        // timestamptz arrives from Npgsql as UTC DateTime — a DateTimeOffset ctor param makes
+        // Dapper's constructor matching fail at runtime ("no matching signature").
+        DateTime SubmittedAt,
+        DateTime UpdatedAt);
+}

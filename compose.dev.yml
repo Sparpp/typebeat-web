@@ -1,0 +1,21 @@
+# Local development database. The app itself runs via `dotnet run` (port 5089).
+#   docker compose -f compose.dev.yml up -d
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: typebeat
+      POSTGRES_PASSWORD: typebeat
+      POSTGRES_DB: typebeat
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U typebeat"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Typebeat.Web/Typebeat.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Typebeat.Web.Tests/Typebeat.Web.Tests.csproj" />
+    <Project Path="tests/Typebeat.WireCompat/Typebeat.WireCompat.csproj" />
+  </Folder>
+  <Folder Name="/tools/" />
+  <Folder Name="/tools/admin/">
+    <Project Path="tools/admin/Typebeat.Tools.Admin.csproj" />
+  </Folder>
+  <Folder Name="/tools/seed/">
+    <Project Path="tools/seed/Typebeat.Tools.Seed.csproj" />
+  </Folder>
+</Solution>

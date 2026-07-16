@@ -1,0 +1,13 @@
+# Caddy auto-provisions a Let's Encrypt cert for this name once DNS points at the box.
+# Requires ports 80/443 reachable from the internet (ufw already allows them).
+typebeat.mingda.sh {
+	encode zstd gzip
+
+	# WebSocket upgrade for /ws/notifications is handled transparently by reverse_proxy.
+	reverse_proxy app:8080
+
+	log {
+		output stdout
+		format console
+	}
+}
