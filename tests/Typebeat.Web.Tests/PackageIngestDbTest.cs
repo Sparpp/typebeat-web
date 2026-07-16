@@ -102,8 +102,10 @@ public class PackageIngestDbTest
     {
         await using var conn = await db.OpenAsync();
 
+        // Later milestones append migrations (003+); this test's contract is that 001 and 002
+        // applied in order, not that they are the only ones.
         var applied = (await conn.QueryAsync<string>("SELECT name FROM schema_migrations ORDER BY name")).ToList();
-        Assert.That(applied, Is.EqualTo(new[] { "001_init.sql", "002_website_uploads.sql" }));
+        Assert.That(applied.Take(2), Is.EqualTo(new[] { "001_init.sql", "002_website_uploads.sql" }));
 
         // Spot-check every new column exists (a bad ALTER would have failed MigrateAsync anyway).
         await conn.ExecuteAsync(

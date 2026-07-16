@@ -81,6 +81,13 @@ public class WebsiteFixture
         return (client, cookies);
     }
 
+    /// <summary>
+    /// A client that does NOT follow redirects (no <see cref="RedirectHandler"/>), for asserting
+    /// raw status codes and Location headers (e.g. the /beatmaps/{id} 301).
+    /// </summary>
+    public static HttpClient CreateNoRedirectClient()
+        => factory!.CreateDefaultClient(BaseAddress);
+
     /// <summary>GETs a page and extracts the antiforgery request token from its form markup.</summary>
     public static async Task<string> GetAntiforgeryTokenAsync(HttpClient client, string url)
     {
