@@ -1,0 +1,61 @@
+@using System.Globalization
+@model BeatmapsetCardModel
+@{
+    // Where the favourite POST sends the user back to (listing page keeps its query string).
+    string returnUrl = Context.Request.Path + Context.Request.QueryString;
+    var sessionUser = Context.SessionUser();
+}
+<article class="bset-card" data-set-id="@Model.Id">
+    <div class="bset-card__media">
+        @if (Model.CoverUrl is not null)
+        {
+            <img src="@Model.CoverUrl" alt="" loading="lazy" />
+        }
+        else
+        {
+            <div class="cover-fallback" aria-hidden="true"></div>
+        }
+        @if (Model.PreviewUrl is not null)
+        {
+            <button type="button" class="preview-btn" data-preview="@Model.PreviewUrl"
+                    aria-label="Play preview"></button>
+        }
+    </div>
+    <div class="bset-card__info">
+        <a class="bset-card__title" href="/beatmapsets/@Model.Id" title="@Model.Title">@Model.Title</a>
+        <span class="bset-card__artist" title="@Model.Artist">by @Model.Artist</span>
+        <span class="bset-card__mapper">mapped by <a href="/users/@Model.OwnerId">@Model.Creator</a></span>
+        <span class="bset-card__stats">
+            <span title="play count"><span aria-hidden="true">&#9654;</span> @Model.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span>
+            <span title="favourites"><span aria-hidden="true">&#9825;</span> @Model.FavouriteCount.ToString("N0", CultureInfo.InvariantCulture)</span>
+            <span title="submitted">@Model.Date.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</span>
+        </span>
+        <span class="bset-card__meta">
+            <span class="pill @Model.PillClass">@Model.StatusLabel</span>
+            <span class="chip">
+                <span class="chip-value">&#9733; @Model.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
+                @if (Model.Wpm is double wpm)
+                {
+                    <span class="chip-label">@wpm.ToString("0", CultureInfo.InvariantCulture) WPM</span>
+                }
+            </span>
+        </span>
+    </div>
+    <div class="bset-card__rail">
+        @if (sessionUser is not null)
+        {
+            <form method="post" asp-page="/Beatmapsets/Set" asp-route-id="@Model.Id" asp-page-handler="Favourite">
+                <input type="hidden" name="returnUrl" value="@returnUrl" />
+                <button type="submit" class="rail-btn @(Model.IsFavourited ? "is-on" : "")"
+                        aria-label="@(Model.IsFavourited ? "Remove from favourites" : "Add to favourites")">
+                    @(Model.IsFavourited ? "♥" : "♡")
+                </button>
+            </form>
+        }
+        else
+        {
+            <a class="rail-btn" href="/login" title="Sign in to favourite" aria-label="Sign in to favourite">&#9825;</a>
+        }
+        <a class="rail-btn" href="/beatmapsets/@Model.Id/download" title="Download" aria-label="Download">&#8595;</a>
+    </div>
+</article>

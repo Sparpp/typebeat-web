@@ -1,14 +1,27 @@
 @{
     var sessionUser = Context.SessionUser();
+    string fullTitle = ViewData["Title"] is string title ? $"{title} · type!beat" : "type!beat";
+    string metaDescription = ViewData["MetaDescription"] as string
+        ?? "type!beat — the free lyric-typing rhythm game. The words drop with the music; keep up with your keyboard.";
 }
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>@(ViewData["Title"] is string title ? $"{title} · type!beat" : "type!beat")</title>
+    <title>@fullTitle</title>
+    <meta name="description" content="@metaDescription" />
+    <meta property="og:site_name" content="type!beat" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="@fullTitle" />
+    <meta property="og:description" content="@metaDescription" />
+    @if (ViewData["OgImage"] is string ogImage)
+    {
+        <meta property="og:image" content="@ogImage" />
+    }
     <link rel="icon" href="~/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <script src="~/js/preview-player.js" asp-append-version="true" defer></script>
 </head>
 <body>
 <header class="site-nav">
