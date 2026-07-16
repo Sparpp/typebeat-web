@@ -1,7 +1,12 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY . .
-RUN dotnet publish src/Typebeat.Web/Typebeat.Web.csproj -c Release -o /app
+# nuget.config declares the external/packages local feed (used only by the wire-compat test
+# job to serve the game's resources package). The folder is excluded from this build context
+# (.dockerignore) and from deploy ships — but NuGet hard-fails restore if a declared local
+# source is missing, so materialize it empty.
+RUN mkdir -p external/packages \
+    && dotnet publish src/Typebeat.Web/Typebeat.Web.csproj -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 # Npgsql probes for Kerberos support at startup; without the lib it logs a loud (harmless)
