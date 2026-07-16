@@ -1,0 +1,15 @@
+@page
+@model IndexModel
+
+<section class="hero">
+    <h1 class="hero-title"><span class="wordmark">type!beat</span></h1>
+    <p class="hero-sub">The lyric-typing rhythm game. Words drop with the music &mdash; keep up with your keyboard.</p>
+    <div class="hero-actions">
+        <a class="btn btn-primary btn-big" href="/download">Download for Windows</a>
+        <a class="btn btn-ghost btn-big" href="/beatmapsets">Browse beatmaps</a>
+    </div>
+    @if (Model.CurrentUser is null)
+    {
+        <p class="hero-note">New here? <a href="/register">Create an account</a> to get on the leaderboards.</p>
+    }
+</section>

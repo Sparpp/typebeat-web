@@ -1,0 +1,51 @@
+@{
+    var sessionUser = Context.SessionUser();
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@(ViewData["Title"] is string title ? $"{title} · type!beat" : "type!beat")</title>
+    <link rel="icon" href="~/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+<header class="site-nav">
+    <nav class="container nav-inner">
+        <a class="wordmark" href="/">type!beat</a>
+        <div class="nav-links">
+            <a href="/beatmapsets">Beatmaps</a>
+            <a href="/download">Download</a>
+        </div>
+        <div class="nav-auth">
+            @if (sessionUser is not null)
+            {
+                <a class="user-chip" href="/users/@sessionUser.Id">@sessionUser.Username</a>
+                <form method="post" action="/logout">
+                    @Html.AntiForgeryToken()
+                    <button type="submit" class="btn btn-ghost btn-small">Sign out</button>
+                </form>
+            }
+            else
+            {
+                <a class="btn btn-ghost btn-small" href="/login">Sign in</a>
+            }
+        </div>
+    </nav>
+</header>
+<main class="site-main">
+    <div class="container">
+        @RenderBody()
+    </div>
+</main>
+<footer class="site-footer">
+    <div class="container footer-inner">
+        <a href="https://github.com/Sparpp/typebeat-web">Source</a>
+        <a href="https://stats.uptimerobot.com/E7XRJ7vfer">Server status</a>
+        <a href="/legal/dmca">DMCA</a>
+        <span class="footer-copy">&copy; @DateTime.UtcNow.Year type!beat</span>
+    </div>
+</footer>
+</body>
+</html>

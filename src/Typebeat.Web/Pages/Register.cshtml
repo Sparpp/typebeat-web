@@ -1,0 +1,47 @@
+@page "/register"
+@model RegisterModel
+@{
+    ViewData["Title"] = "Register";
+}
+
+<div class="card auth-card">
+    <h1>Create an account</h1>
+
+    @if (Model.Error is not null)
+    {
+        <div class="alert-error">@Model.Error</div>
+    }
+
+    <form method="post">
+        @Html.AntiForgeryToken()
+        <div class="field">
+            <label asp-for="Username">Username</label>
+            <input class="input" asp-for="Username" autocomplete="username" required />
+            @foreach (string e in Model.UsernameErrors)
+            {
+                <div class="field-error">@e</div>
+            }
+            <div class="field-hint">3&ndash;15 characters: letters, digits, spaces, _ - [ ]</div>
+        </div>
+        <div class="field">
+            <label asp-for="Email">Email</label>
+            <input class="input" asp-for="Email" type="email" autocomplete="email" required />
+            @foreach (string e in Model.EmailErrors)
+            {
+                <div class="field-error">@e</div>
+            }
+        </div>
+        <div class="field">
+            <label asp-for="Password">Password</label>
+            <input class="input" asp-for="Password" type="password" autocomplete="new-password" required />
+            @foreach (string e in Model.PasswordErrors)
+            {
+                <div class="field-error">@e</div>
+            }
+            <div class="field-hint">At least 8 characters.</div>
+        </div>
+        <button type="submit" class="btn btn-primary">Register</button>
+    </form>
+
+    <p class="card-note">Already have an account? <a href="/login">Sign in</a>.</p>
+</div>

@@ -1,0 +1,29 @@
+@page "/login"
+@model LoginModel
+@{
+    ViewData["Title"] = "Sign in";
+}
+
+<div class="card auth-card">
+    <h1>Sign in</h1>
+
+    @if (Model.Error is not null)
+    {
+        <div class="alert-error">@Model.Error</div>
+    }
+
+    <form method="post">
+        @Html.AntiForgeryToken()
+        <div class="field">
+            <label asp-for="Login">Username or email</label>
+            <input class="input" asp-for="Login" autocomplete="username" required />
+        </div>
+        <div class="field">
+            <label asp-for="Password">Password</label>
+            <input class="input" asp-for="Password" type="password" autocomplete="current-password" required />
+        </div>
+        <button type="submit" class="btn btn-primary">Sign in</button>
+    </form>
+
+    <p class="card-note">No account yet? <a href="/register">Register</a>.</p>
+</div>

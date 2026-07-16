@@ -37,6 +37,13 @@ builder.Services.AddSingleton<Db>(sp => new Db(sp.GetRequiredService<NpgsqlDataS
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<PasswordService>();
 
+// The website (M3): server-rendered Razor Pages under Pages/, HTML only — every APIv2/BSS JSON
+// response keeps going through WireJson (Newtonsoft), untouched by this. AddRazorPages also
+// registers antiforgery, which the page pipeline validates on every POST handler (400 on a
+// missing/invalid token); the bearer API endpoints below are unaffected (no cookies, no forms
+// bound via the framework).
+builder.Services.AddRazorPages();
+
 var app = builder.Build();
 
 await app.Services.GetRequiredService<Db>().MigrateAsync(app.Logger);
@@ -61,6 +68,13 @@ if (Flags.IsEnabled(builder.Configuration, "TYPEBEAT_BEHIND_PROXY"))
 
 app.UseWebSockets();
 
+// Website assets (css/fonts/favicon) from wwwroot.
+app.UseStaticFiles();
+
+// Website sessions: resolves the typebeat_session cookie (when present) to an AuthedUser in
+// HttpContext.Items. Bearer-API and anonymous requests pass straight through.
+app.UseSessionCookieAuth();
+
 // Core routes (health, placeholder site, menu content).
 // GET + HEAD: uptime monitors (e.g. UptimeRobot's plain HTTP checks) probe with HEAD, which
 // MapGet alone would 405. The DB round-trip runs for both, so HEAD still proves the full chain.
@@ -70,11 +84,6 @@ app.MapMethods("/health", new[] { HttpMethods.Get, HttpMethods.Head }, async (Db
     await conn.ExecuteScalarAsync<int>("SELECT 1");
     return Results.Text("ok");
 });
-
-app.MapGet("/", () => Results.Content(
-    "<!doctype html><title>type!beat</title><h1>type!beat</h1><p>online services are running.</p>"
-    + "<p><a href=\"https://stats.uptimerobot.com/E7XRJ7vfer\">service status</a></p>",
-    "text/html"));
 
 // The in-game menu banner polls this (repointed from assets.ppy.sh in the client).
 app.MapGet("/menu-content.json", () => WireJson.Ok(new { images = Array.Empty<object>() }));
@@ -95,6 +104,10 @@ StubEndpoints.Map(app);
 NotificationsSocket.Map(app);
 BeatmapLookupEndpoints.Map(app);
 ScoreEndpoints.Map(app);
+
+// The website pages ("/", /login, /register, /legal/dmca, ...). Mapped after the wire modules;
+// none of their routes overlap the API surface.
+app.MapRazorPages();
 
 app.Run();
 
