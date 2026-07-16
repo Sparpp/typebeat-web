@@ -1,3 +1,5 @@
+using Typebeat.Web.Data;
+
 namespace Typebeat.Web.Auth;
 
 /// <summary>
@@ -32,7 +34,13 @@ public static class SessionCookieAuth
                 // Mirror the bearer path (AuthExtensions.ResolveBearerAsync): restricted users
                 // are treated as signed out.
                 if (user is { Restricted: false })
+                {
                     ctx.Items[item_key] = user;
+
+                    // Website page loads keep users.last_visit fresh (throttled; never anonymous
+                    // — this branch only runs for a resolved cookie user).
+                    await LastVisit.TouchAsync(ctx.RequestServices.GetRequiredService<Db>(), user.Id, ctx.RequestAborted);
+                }
             }
 
             await next(ctx);
