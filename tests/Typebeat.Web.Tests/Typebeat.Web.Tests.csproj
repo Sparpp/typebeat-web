@@ -14,6 +14,14 @@
     <PackageReference Include="NUnit" Version="4.3.2" />
     <PackageReference Include="NUnit.Analyzers" Version="4.7.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
+
+    <!-- In-process host for the website tests (Typebeat.Web.Tests.Website namespace); same
+         version as tests/Typebeat.WireCompat. Those tests need local Postgres (they create
+         their own typebeat_webtests database); the pure wire-shape tests above stay DB-free. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
 
   <ItemGroup>
