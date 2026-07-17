@@ -48,6 +48,12 @@ public static class PublicSiteSeed
     /// <summary>Set with cover_key/preview_key populated — cover img + preview button markup.</summary>
     public static long CoveredSetId { get; private set; }
 
+    /// <summary>
+    /// Public set with live diffs but NO set_versions row — the pre-M3 shape migration 004
+    /// backfills. Its pages must hide the Download actions ("available in-game only").
+    /// </summary>
+    public static long PackagelessId { get; private set; }
+
     public static async Task EnsureSeededAsync()
     {
         await gate.WaitAsync();
@@ -131,6 +137,25 @@ public static class PublicSiteSeed
             await InsertScoreAsync(conn, TypistTwoId, LeaderboardBeatmapId, 700_000, 0.9311, 61, "A");
             await InsertScoreAsync(conn, TypistThreeId, LeaderboardBeatmapId, 500_000, 0.8523, 30, "B");
             await InsertScoreAsync(conn, CheatSuspectId, LeaderboardBeatmapId, 999_999_999, 1, 110, "X", ranked: false);
+
+            PackagelessId = await InsertSetAsync(conn,
+                title: "Editor Era Classic", artist: "The Backfilled",
+                submittedOffset: TimeSpan.FromDays(-1));
+
+            await InsertBeatmapAsync(conn, PackagelessId,
+                totalLengthS: 100, stars: 2.5, wpm: 60, wordCount: 90, charCount: 420);
+
+            // Every seeded set EXCEPT the packageless one gets a version row, mirroring sets
+            // that went through the upload pipeline: the set page / card Download actions key
+            // on package existence (the object itself is never streamed by these tests).
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO set_versions (set_id, version_no, package_key)
+                SELECT id, 1, 'packages/' || id || '/1.osz'
+                FROM beatmapsets
+                WHERE owner_id = @mapperId AND id <> @packagelessId
+                """,
+                new { mapperId = MapperId, packagelessId = PackagelessId });
 
             // Same expression the upload write path uses (and migration 002's backfill).
             await conn.ExecuteAsync(

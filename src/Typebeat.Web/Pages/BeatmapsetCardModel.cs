@@ -10,6 +10,8 @@ namespace Typebeat.Web.Pages;
 /// <param name="PreviewUrl">Site-relative 30s preview mp3, or null → no play button.</param>
 /// <param name="Date">submitted_at; timestamptz arrives from Npgsql as UTC DateTime.</param>
 /// <param name="Wpm">Perfect-play words per minute of the hardest difficulty, null when unknown.</param>
+/// <param name="HasPackage">False for pre-M3 sets with no uploaded package: the download rail
+/// icon becomes an inert "available in-game only" hint instead of a dead 404 link.</param>
 public sealed record BeatmapsetCardModel(
     long Id,
     string Title,
@@ -25,7 +27,8 @@ public sealed record BeatmapsetCardModel(
     DateTime Date,
     double Stars,
     double? Wpm,
-    bool IsFavourited)
+    bool IsFavourited,
+    bool HasPackage)
 {
     public string StatusLabel => BeatmapsetDisplay.StatusLabel(Status);
 
@@ -78,7 +81,8 @@ public static class BeatmapsetCardSql
                s.submitted_at     AS Date,
                coalesce(d.stars, 0)      AS Stars,
                d.wpm::double precision   AS Wpm,
-               EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId) AS IsFavourited
+               EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId) AS IsFavourited,
+               EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS HasPackage
         FROM beatmapsets s
         JOIN users u ON u.id = s.owner_id
         LEFT JOIN LATERAL (

@@ -206,6 +206,40 @@ public class SetPageTest
     }
 
     [Test]
+    public async Task PackagelessSet_HidesDownload_ShowsInGameOnlyHint()
+    {
+        // The pre-M3 shape (live diffs, no set_versions): a Download link would 404.
+        using var response = await WebsiteFixture.Client.GetAsync($"/beatmapsets/{PublicSiteSeed.PackagelessId}");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(html, Does.Not.Contain($"/beatmapsets/{PublicSiteSeed.PackagelessId}/download"));
+            Assert.That(html, Does.Contain("available in-game only"));
+
+            // Its diff is live (the migration-004 state), so stats still render.
+            Assert.That(html, Does.Not.Contain("No difficulty data yet"));
+            Assert.That(html, Does.Contain("60 WPM"));
+        });
+    }
+
+    [Test]
+    public async Task PackagelessSet_CardOmitsTheDownloadLink()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync("/beatmapsets?q=Editor%20Era");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(html, Does.Contain($"data-set-id=\"{PublicSiteSeed.PackagelessId}\""));
+            Assert.That(html, Does.Not.Contain($"/beatmapsets/{PublicSiteSeed.PackagelessId}/download"));
+            Assert.That(html, Does.Contain("available in-game only"));
+        });
+    }
+
+    [Test]
     public async Task HiddenAndRemovedSets_Are404_ForAnonymous()
     {
         using var hidden = await WebsiteFixture.Client.GetAsync($"/beatmapsets/{PublicSiteSeed.HiddenId}");

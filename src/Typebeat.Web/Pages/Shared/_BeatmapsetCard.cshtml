@@ -56,6 +56,14 @@
         {
             <a class="rail-btn" href="/login" title="Sign in to favourite" aria-label="Sign in to favourite">&#9825;</a>
         }
-        <a class="rail-btn" href="/beatmapsets/@Model.Id/download" title="Download" aria-label="Download">&#8595;</a>
+        @if (Model.HasPackage)
+        {
+            <a class="rail-btn" href="/beatmapsets/@Model.Id/download" title="Download" aria-label="Download">&#8595;</a>
+        }
+        else
+        {
+            @* Pre-M3 set with no uploaded package: never link a 404. *@
+            <span class="rail-btn rail-btn--disabled" title="available in-game only">&#8595;</span>
+        }
     </div>
 </article>

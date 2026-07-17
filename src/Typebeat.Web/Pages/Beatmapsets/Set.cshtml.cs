@@ -48,7 +48,10 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                    s.bpm::double precision AS Bpm,
                    s.submitted_at     AS SubmittedAt,
                    s.updated_at       AS UpdatedAt,
-                   EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId) AS IsFavourited
+                   EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId) AS IsFavourited,
+                   -- Pre-M3 sets (backfilled by migration 004) have live diffs but no uploaded
+                   -- package: the Download button must not render a dead /download link for them.
+                   EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS HasPackage
             FROM beatmapsets s
             JOIN users u ON u.id = s.owner_id
             WHERE s.id = @id
@@ -206,7 +209,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         long Id, string Title, string Artist, string Source, string Tags, string Description,
         string Status, string Creator, long OwnerId, string? CoverKey, string? PreviewUrl,
         int PlayCount, int FavouriteCount, int DownloadCount, double? Bpm,
-        DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited)
+        DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited, bool HasPackage)
     {
         public string StatusLabel => BeatmapsetDisplay.StatusLabel(Status);
         public string PillClass => BeatmapsetDisplay.PillClass(Status);

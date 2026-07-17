@@ -308,6 +308,18 @@ img { max-width: 100%; }
     font-size: var(--text-lg);
 }
 
+/* Inert stand-in where an action button would be (e.g. "available in-game only"
+   on package-less pre-M3 sets): keeps the layout, refuses the interaction. */
+.btn-unavailable {
+    cursor: default;
+    opacity: .6;
+}
+
+.btn-unavailable:hover {
+    border-color: var(--line-bright);
+    box-shadow: none;
+}
+
 /* ---- Card ---- */
 
 .card {
@@ -710,6 +722,17 @@ img { max-width: 100%; }
 }
 
 .rail-btn.is-on { color: var(--violet-bright); }
+
+/* Package-less pre-M3 sets: the download slot stays (grid alignment) but is inert. */
+.rail-btn--disabled {
+    opacity: .35;
+    cursor: default;
+}
+
+.rail-btn--disabled:hover {
+    color: var(--text-muted);
+    background: transparent;
+}
 
 /* ---- Preview play button (progress ring via conic-gradient + --progress) ---- */
 

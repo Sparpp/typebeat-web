@@ -24,7 +24,18 @@
                 &middot; updated @Model.Set.UpdatedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
             </div>
             <div class="set-header__actions">
-                <a class="btn btn-primary btn-big" href="/beatmapsets/@Model.Set.Id/download">Download</a>
+                @if (Model.Set.HasPackage)
+                {
+                    <a class="btn btn-primary btn-big" href="/beatmapsets/@Model.Set.Id/download">Download</a>
+                }
+                else
+                {
+                    @* Pre-M3 set: live diffs but no uploaded package — a Download link would 404. *@
+                    <span class="btn btn-ghost btn-big btn-unavailable"
+                          title="This map predates website downloads — grab it from the in-game listing.">
+                        available in-game only
+                    </span>
+                }
                 @if (Model.CurrentUser is not null)
                 {
                     <form method="post" asp-page-handler="Favourite" asp-route-id="@Model.Set.Id">
