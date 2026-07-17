@@ -370,7 +370,11 @@ public class BssSubmissionFlowTest
             {
                 Assert.That(cover.StatusCode, Is.EqualTo(HttpStatusCode.OK));
                 Assert.That(cover.Content.Headers.ContentType?.MediaType, Is.EqualTo("image/jpeg"));
-                Assert.That(cover.Headers.CacheControl?.ToString(), Does.Contain("immutable"));
+
+                // Bounded one-day TTL, never immutable: the cover key is not status-keyed, so a
+                // DMCA status flip must become visible to edges/browsers within a day.
+                Assert.That(cover.Headers.CacheControl?.ToString(), Does.Contain("max-age=86400"));
+                Assert.That(cover.Headers.CacheControl?.ToString(), Does.Not.Contain("immutable"));
             });
         }
 

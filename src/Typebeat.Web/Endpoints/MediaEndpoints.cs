@@ -13,7 +13,10 @@ namespace Typebeat.Web.Endpoints;
 /// Serves the upload pipeline's stored media and packages:
 ///
 ///  - GET /covers/{setId}/{version}/{name}.jpg — the CoverGenerator buckets (whitelisted names).
-///    Version-keyed, so cached long + immutable.
+///    Version-keyed but NOT status-keyed: the key never changes when a set is taken down, so
+///    covers get the same bounded one-day TTL as previews (never immutable/1y — an edge- or
+///    browser-cached cover of a DMCA'd set must age out within a day, see the takedown runbook
+///    in deploy/README.md).
 ///  - GET /previews/{setId}.mp3 — the 30 s preview clip, range-request capable (audio seeking).
 ///    NOT version-keyed (the key is stable across re-uploads), so cached one day only.
 ///  - GET /beatmapsets/{id}/download — streams the latest version's assembled package with a
@@ -33,7 +36,13 @@ public static class MediaEndpoints
         "card", "card@2x", "cover", "cover@2x", "list", "list@2x", "slimcover", "slimcover@2x",
     };
 
-    private const string covers_cache_control = "public, max-age=31536000, immutable";
+    // One day for BOTH buckets. Covers must never be immutable/max-age=1y: the cover URL is
+    // version-keyed only and a takedown never bumps the version (BSS blocks re-upload to
+    // 'removed' sets), so a long-lived entry would keep serving infringing artwork from the
+    // Cloudflare edge and from browser caches for up to a year after the origin starts 404ing.
+    // With max-age=86400 a status flip becomes globally visible within a day (plus an immediate
+    // manual Cloudflare purge per the deploy/README.md takedown runbook).
+    private const string covers_cache_control = "public, max-age=86400";
     private const string previews_cache_control = "public, max-age=86400";
 
     public static void Map(IEndpointRouteBuilder app)
