@@ -30,8 +30,9 @@ namespace Typebeat.Web.Endpoints;
 /// additionally requires <c>users.verified_at</c> (manual lever: deploy/verify-user.sh).
 ///
 /// Set/diff lifecycle conventions owned here:
-///  - a fresh set is created with status 'hidden' and flipped to 'public' by its first
-///    successful upload, so empty shells never appear in listings;
+///  - a fresh set is created with status 'hidden' and flipped to 'pending' by its first
+///    successful upload (PackageIngest), so empty shells never appear in listings and new
+///    maps await a reviewer's rank flip;
 ///  - beatmap rows are NEVER deleted (scores FK); a diff dropped from beatmaps_to_keep — or
 ///    absent from an uploaded package — gets <c>filename = NULL</c>, which is the repo-wide
 ///    "not part of the current version" marker (live diffs have <c>filename IS NOT NULL</c>);
