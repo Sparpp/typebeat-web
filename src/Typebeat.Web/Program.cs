@@ -75,10 +75,36 @@ if (Flags.IsEnabled(builder.Configuration, "TYPEBEAT_BEHIND_PROXY"))
     app.UseForwardedHeaders(forwarded);
 }
 
+// Styled error/status pages for the WEBSITE's navigable surface only: GET/HEAD requests
+// outside every wire prefix. Scoped with UseWhen so the wire surfaces — /api/*, /bss/*,
+// /oauth/*, /ws, /health, /menu-content.json, /debug and the game-client registration
+// POST /users (all POSTs are excluded by the method gate) — keep their exact envelopes,
+// status codes and empty bodies (the client string-matches some of them;
+// ApiRegressionGuardTest pins this). Website POST flows (login/favourite/report forms) also
+// keep their raw statuses: re-executing a POST against the GET-only error page would REPLACE
+// e.g. antiforgery's 400 with a 404. For in-scope requests:
+//  - bodyless 4xx/5xx (bare NotFound(), unmatched routes) re-execute through /error/{code}
+//    with the original status preserved;
+//  - unhandled page exceptions render /error/500 (Sentry still captures them via the
+//    IExceptionHandlerFeature its middleware inspects).
+// The explicit UseRouting() below is load-bearing: it keeps route matching DOWNSTREAM of
+// these handlers, so the re-executed /error/{code} path gets routed to the error page (with
+// the implicit start-of-pipeline routing of minimal hosting, re-execution would find the
+// original request's already-resolved endpoint and render nothing).
+app.UseWhen(
+    ctx => (HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method)) && !IsWireRoute(ctx),
+    site =>
+    {
+        site.UseExceptionHandler("/error/500");
+        site.UseStatusCodePagesWithReExecute("/error/{0}");
+    });
+
 app.UseWebSockets();
 
 // Website assets (css/fonts/favicon) from wwwroot.
 app.UseStaticFiles();
+
+app.UseRouting();
 
 // Website sessions: resolves the typebeat_session cookie (when present) to an AuthedUser in
 // HttpContext.Items. Bearer-API and anonymous requests pass straight through.
@@ -126,6 +152,23 @@ MediaEndpoints.Map(app);
 app.MapRazorPages();
 
 app.Run();
+
+// A wire (game-client / API) route: must NEVER be wrapped by the website's styled error
+// pages. Purely path-based; the caller additionally gates on GET/HEAD, which is what keeps
+// the registration POST /users on wire semantics while GET /users/{idOrName} (the website
+// profile) stays styled.
+static bool IsWireRoute(HttpContext ctx)
+{
+    var path = ctx.Request.Path;
+
+    return path.StartsWithSegments("/api")
+           || path.StartsWithSegments("/bss")
+           || path.StartsWithSegments("/oauth")
+           || path.StartsWithSegments("/ws")
+           || path.StartsWithSegments("/health")
+           || path.StartsWithSegments("/debug")
+           || path == "/menu-content.json";
+}
 
 // Exposed for WebApplicationFactory-based tests (wire-compat harness, Stage C).
 public partial class Program;

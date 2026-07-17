@@ -1,0 +1,12 @@
+@page "/error/{code:int}"
+@model Typebeat.Web.Pages.ErrorModel
+
+<section class="hero error-page">
+    <h1 class="hero-title"><span class="grad-text">@Model.Code</span></h1>
+    <p class="hero-sub">@Model.Headline</p>
+    <p class="hero-note">@Model.Detail</p>
+    <div class="hero-actions">
+        <a class="btn btn-primary" href="/">back to the stage</a>
+        <a class="btn btn-ghost" href="/beatmapsets">browse maps</a>
+    </div>
+</section>
