@@ -81,6 +81,19 @@ Verify with `crontab -l`, and after the first scheduled night check
 - Uptime: UptimeRobot keyword monitor on `https://typebeat.mingda.sh/health` (keyword `ok`,
   5-min interval). Public status page: <https://stats.uptimerobot.com/E7XRJ7vfer>.
 
+## Enabling the game-download CTA
+
+The `/download` page shows "coming soon" until both of these are true:
+
+1. The release zip exists in the uploads volume:
+   ```
+   docker cp typebeat-win-x64.zip typebeat-web-app-1:/data/downloads/typebeat-win-x64.zip
+   ```
+   (create the `downloads/` directory first if needed).
+2. `deploy/.env` on the box sets `TYPEBEAT_GAME_DOWNLOAD=typebeat-win-x64.zip`, then
+   `docker compose -f deploy/compose.prod.yml up -d` recreates the app container so the
+   variable (forwarded by compose.prod.yml's environment block) reaches the app.
+
 ## Notes
 
 - The app auto-migrates (`Data/Migrations/*.sql`) and auto-creates the `citext` extension on

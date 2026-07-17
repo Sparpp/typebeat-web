@@ -34,6 +34,11 @@ services:
       # volume so container swaps keep the files; deploy/backup.sh tars it WEEKLY (cron lines
       # in the script header — they are not installed automatically).
       TYPEBEAT_FILE_ROOT: "/data"
+      # Filename of the game-client release zip under {TYPEBEAT_FILE_ROOT}/downloads/ — the
+      # /download page's CTA. Set it in deploy/.env like the other TYPEBEAT_* keys (compose
+      # does NOT forward undeclared host env vars — without this line an .env entry is
+      # silently ignored and the page stays on "coming soon" forever). Empty = coming soon.
+      TYPEBEAT_GAME_DOWNLOAD: "${TYPEBEAT_GAME_DOWNLOAD:-}"
     volumes:
       - appdata:/data
     depends_on:
