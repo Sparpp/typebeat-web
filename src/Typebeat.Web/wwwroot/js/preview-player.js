@@ -5,6 +5,10 @@
 (function () {
     'use strict';
 
+    // Playback level for every preview on the site (0..1). Set to 0.1 — the previews were
+    // uncomfortably loud at the browser default of 1.0, so this is a 90% cut.
+    var PREVIEW_VOLUME = 0.1;
+
     var audio = null;
     var current = null;
 
@@ -39,6 +43,7 @@
 
         current = btn;
         audio = new Audio(btn.dataset.preview);
+        audio.volume = PREVIEW_VOLUME;
 
         audio.addEventListener('timeupdate', function () {
             if (audio && isFinite(audio.duration) && audio.duration > 0)
