@@ -315,6 +315,21 @@ public static class ScoreEndpoints
 
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
+        // A board is served only while its set is currently ranked. Ranked-era scores keep their
+        // scores.ranked flag, so without this a reviewer un-ranking a set would still leak its old
+        // board through the API (the website already hides it). Re-reading status here makes the
+        // Rank/Unrank lever authoritative over the leaderboard in both directions.
+        bool setRanked = await conn.ExecuteScalarAsync<bool>(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM beatmaps b JOIN beatmapsets bs ON bs.id = b.set_id
+                WHERE b.id = @beatmapId AND bs.status = 'ranked')
+            """,
+            new { beatmapId });
+
+        if (!setRanked)
+            return WireJson.Ok(new ScoresCollectionWire { ScoreCount = 0, Scores = [], UserScore = null });
+
         // Best score per user (DISTINCT ON over ix_scores_leaderboard), ranked+passed only, then the
         // global ordering by total score. Failed/unranked scores never appear.
         var rows = (await conn.QueryAsync<LeaderboardRow>(
