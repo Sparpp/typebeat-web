@@ -1,12 +1,21 @@
-# type!beat web style guide — "neon karaoke"
+# type!beat web style guide
+
+> **Theme changed (2026-07-18): the site now uses the "Caret" identity, not "neon karaoke".**
+> Current tokens live in `src/Typebeat.Web/wwwroot/css/site.css` and are described in
+> `docs/design-1b-caret.md`. Identity in one line: **charcoal `#141519` base, a single lime
+> `#c9f24d` accent, JetBrains Mono throughout, a blinking-caret motif; flat (no gradients/glow),
+> ~8px radii.** The accent custom-property NAMES below are unchanged (`--violet*`, `--magenta`)
+> but now hold LIME values, so the component-class reference in this file is still accurate for
+> structure and class names — only the colour/font/gradient descriptions are superseded. The
+> surface/value tables below describe the retired neon palette; read them for layout, not colour.
 
 The single stylesheet is `src/Typebeat.Web/wwwroot/css/site.css`. Everything below is defined
 there as CSS custom properties (tokens) and plain component classes — no build step, no JS
 framework. Dark theme only (`color-scheme: dark`); there is no light variant and pages must not
 assume one.
 
-Identity in one line: **deep indigo/near-black base, violet-first accent with a hot-magenta
-gradient tail, rounded sans type (Baloo 2 display / Nunito body), subtle glow.**
+Identity (retired — see the note above): deep indigo/near-black base, violet-first accent with a
+hot-magenta gradient tail, rounded sans type (Baloo 2 display / Nunito body), subtle glow.
 
 ## Tokens
 
