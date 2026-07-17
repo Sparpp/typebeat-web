@@ -10,7 +10,10 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// Beatmapset page (/beatmapsets/{id}): cover header with scrim, stats box, plain-text
 /// description, tags, and the global leaderboard (top 50 best-per-user, podium for #1).
 /// POST handlers: Favourite (toggle + denormalized counter bump) and Report (reports table).
-/// Hidden sets are visible to their owner only; removed sets are gone (404).
+/// Hidden sets are visible to their owner only. Removed sets 404 for the public but stay
+/// viewable by their owner and by admins (the owner's profile deliberately lists them, and a
+/// DMCA'd mapper deserves to see the Removed pill instead of a dead link; the download
+/// endpoint already granted the owner the same access).
 /// </summary>
 public sealed class SetModel(Db db) : TypebeatPageModel
 {
@@ -58,8 +61,15 @@ public sealed class SetModel(Db db) : TypebeatPageModel
             """,
             new { id, viewerId = CurrentUser?.Id ?? 0 });
 
-        if (set is null || set.Status == "removed" || (set.Status == "hidden" && CurrentUser?.Id != set.OwnerId))
+        bool isOwner = CurrentUser?.Id == set?.OwnerId;
+        bool isAdmin = CurrentUser?.IsAdmin == true;
+
+        if (set is null
+            || (set.Status == "removed" && !isOwner && !isAdmin)
+            || (set.Status == "hidden" && !isOwner))
+        {
             return NotFound();
+        }
 
         Set = set;
 

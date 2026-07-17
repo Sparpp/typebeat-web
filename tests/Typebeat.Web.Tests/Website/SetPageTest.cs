@@ -255,6 +255,91 @@ public class SetPageTest
     }
 
     [Test]
+    public async Task RemovedSet_VisibleToOwnerAndAdmin_404ForEveryoneElse()
+    {
+        const string owner_name = "dmca owner";
+        const string admin_name = "dmca admin";
+        const string password = "hunter2hunter2";
+
+        long setId;
+        string hash = new Typebeat.Web.Auth.PasswordService().Hash(password);
+
+        await using (var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString))
+        {
+            await conn.OpenAsync();
+
+            long ownerId = await conn.ExecuteScalarAsync<long>(
+                """
+                INSERT INTO users (username, email, password_hash, country_code)
+                VALUES (@name, 'dmca.owner@example.com', @hash, 'US')
+                RETURNING id
+                """,
+                new { name = owner_name, hash });
+
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO users (username, email, password_hash, country_code, is_admin)
+                VALUES (@name, 'dmca.admin@example.com', @hash, 'US', true)
+                """,
+                new { name = admin_name, hash });
+
+            setId = await conn.ExecuteScalarAsync<long>(
+                """
+                INSERT INTO beatmapsets (owner_id, title, artist, status)
+                VALUES (@ownerId, 'Taken Down Tune', 'Struck Artist', 'removed')
+                RETURNING id
+                """,
+                new { ownerId });
+        }
+
+        // Anonymous: gone.
+        using (var anonymous = await WebsiteFixture.Client.GetAsync($"/beatmapsets/{setId}"))
+            Assert.That(anonymous.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // A signed-in user who is neither owner nor admin: still gone.
+        using (var client = await SignedInBrowserAsync(WebsiteFixture.SeededUsername, WebsiteFixture.SeededPassword))
+        using (var other = await client.GetAsync($"/beatmapsets/{setId}"))
+            Assert.That(other.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // The owner sees their own removed set, with the status pill making the state obvious.
+        using (var client = await SignedInBrowserAsync(owner_name, password))
+        using (var response = await client.GetAsync($"/beatmapsets/{setId}"))
+        {
+            string html = await response.Content.ReadAsStringAsync();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(html, Does.Contain("Taken Down Tune"));
+                Assert.That(html, Does.Contain(">Removed</span>"));
+            });
+        }
+
+        // Admins see it too (takedown review).
+        using (var client = await SignedInBrowserAsync(admin_name, password))
+        using (var response = await client.GetAsync($"/beatmapsets/{setId}"))
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    /// <summary>A browser client signed in via the real /login form.</summary>
+    private static async Task<HttpClient> SignedInBrowserAsync(string username, string password)
+    {
+        var (client, _) = WebsiteFixture.CreateBrowser();
+
+        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/login");
+
+        using var login = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = token,
+            ["Login"] = username,
+            ["Password"] = password,
+        }));
+
+        Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"login as {username}");
+        return client;
+    }
+
+    [Test]
     public async Task BeatmapId_RedirectsPermanentlyToItsSet()
     {
         using var client = WebsiteFixture.CreateNoRedirectClient();
