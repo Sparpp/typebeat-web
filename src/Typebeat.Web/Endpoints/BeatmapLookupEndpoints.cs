@@ -16,9 +16,10 @@ namespace Typebeat.Web.Endpoints;
 /// against in our schema, so they 404 — which the client handles gracefully: a Failed request
 /// leaves onlineMetadata null and the map is simply treated as not-online (no logout, no crash).
 ///
-/// Only public sets are visible, and every returned map reports a "ranked" status so leaderboards
-/// unblock (see APIBeatmapResponse for the full status rationale). Authed: the client always runs
-/// lookups through the API, so RequireBearer.
+/// Published sets ('pending' or 'ranked') are visible, and the REAL status is reported:
+/// "ranked" unlocks leaderboards client-side, "pending" keeps them locked until a map
+/// reviewer approves the set (migration 005). Authed: the client always runs lookups through
+/// the API, so RequireBearer.
 /// </summary>
 public static class BeatmapLookupEndpoints
 {
@@ -60,13 +61,14 @@ public static class BeatmapLookupEndpoints
         // Real covers when the set has them (cover_key is the covers/{setId}/{ver} prefix);
         // the generated /img/default-cover.jpg otherwise. Always this host, never a ppy CDN.
         string urlBase = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
+        string status = BeatmapsetEndpoints.StatusString(row.Status);
 
         return WireJson.Ok(new APIBeatmapResponse
         {
             Id = (int)row.BeatmapId,
             BeatmapsetId = (int)row.BeatmapSetId,
             ModeInt = row.RulesetId,
-            Status = ranked_status,
+            Status = status,
             Checksum = row.Checksum,
             UserId = (int)row.OwnerId,
             DifficultyRating = row.DifficultyRating,
@@ -79,24 +81,22 @@ public static class BeatmapLookupEndpoints
                 Id = (int)row.BeatmapSetId,
                 Title = row.Title,
                 Artist = row.Artist,
-                Status = ranked_status,
+                Status = status,
                 Creator = row.Creator,
                 UserId = (int)row.OwnerId,
                 Covers = BeatmapCovers.FromCoverKey(urlBase, row.CoverKey),
                 SubmittedDate = row.SubmittedAt,
-                // Schema has no dedicated ranked-date column; updated_at (when the set went public)
-                // is the closest anchor. See concerns.
-                RankedDate = row.UpdatedAt,
+                // Schema has no dedicated ranked-date column; updated_at (when the set was last
+                // touched) is the closest anchor. Pending sets have no ranked date.
+                RankedDate = row.Status == "ranked" ? row.UpdatedAt : null,
                 LastUpdated = row.UpdatedAt,
             },
         });
     }
 
-    // Locally-imported public maps report a ranked-family status: required for the client to stamp
-    // the status onto the realm model and for leaderboards to fetch (Status must be > Pending).
-    private const string ranked_status = "ranked";
-
-    // Only public sets are visible. The predicate is completed by the caller with the identity clause.
+    // Published sets only ('pending' or 'ranked'). The predicate is completed by the caller
+    // with the identity clause. The status column rides along so the response reports the
+    // real state — "pending" is what keeps un-reviewed maps' leaderboards locked client-side.
     private const string baseQuery =
         """
         SELECT b.id               AS beatmapId,
@@ -112,13 +112,14 @@ public static class BeatmapLookupEndpoints
                bs.title           AS title,
                bs.artist          AS artist,
                bs.cover_key       AS coverKey,
+               bs.status          AS status,
                u.username         AS creator,
                bs.submitted_at    AS submittedAt,
                bs.updated_at      AS updatedAt
         FROM beatmaps b
         JOIN beatmapsets bs ON bs.id = b.set_id
         JOIN users u ON u.id = bs.owner_id
-        WHERE bs.status = 'public'
+        WHERE bs.status IN ('pending', 'ranked')
 
         """;
 
@@ -140,6 +141,7 @@ public static class BeatmapLookupEndpoints
         string Title,
         string Artist,
         string? CoverKey,
+        string Status,
         string Creator,
         // timestamptz arrives from Npgsql as UTC DateTime — a DateTimeOffset ctor param makes
         // Dapper's constructor matching fail at runtime ("no matching signature").

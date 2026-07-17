@@ -52,11 +52,17 @@ public static class ScoreEndpoints
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-            "SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS FROM beatmaps WHERE id = @beatmapId",
+            """
+            SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS
+            FROM beatmaps b
+            JOIN beatmapsets bs ON bs.id = b.set_id
+            WHERE b.id = @beatmapId AND bs.status IN ('pending', 'ranked')
+            """,
             new { beatmapId });
 
-        // Beatmap must exist AND the submitted hash must equal the stored final-.osu MD5 (the
-        // beatmap_hash identity contract, 001_init.sql:88-90).
+        // Beatmap must exist on a published set (hidden shells and removed/DMCA'd sets take no
+        // scores) AND the submitted hash must equal the stored final-.osu MD5 (the beatmap_hash
+        // identity contract, 001_init.sql:88-90).
         if (beatmap is null || beatmapHash.Length == 0
             || !string.Equals(beatmap.ChecksumMd5, beatmapHash, StringComparison.OrdinalIgnoreCase))
             return WireJson.Error(status_unprocessable, "invalid or missing beatmap_hash");
@@ -138,6 +144,18 @@ public static class ScoreEndpoints
         if (beatmap is null)
             return WireJson.Error(status_unprocessable, "invalid token");
 
+        // A score ranks only on a reviewer-approved set. Plays on pending maps are accepted
+        // and stored (they show in the player's own history) but never reach a leaderboard —
+        // and the status is re-read here, not trusted from token time, so a set removed or
+        // un-ranked mid-play resolves against its current state.
+        bool setRanked = await conn.ExecuteScalarAsync<bool>(
+            """
+            SELECT bs.status = 'ranked'
+            FROM beatmaps b JOIN beatmapsets bs ON bs.id = b.set_id
+            WHERE b.id = @beatmapId
+            """,
+            new { beatmapId }, tx);
+
         var statistics = submission.Statistics ?? new Dictionary<string, int>();
         var maximumStatistics = submission.MaximumStatistics ?? new Dictionary<string, int>();
 
@@ -161,11 +179,11 @@ public static class ScoreEndpoints
         // is untrustworthy (its judged-only accuracy could overstate the final value).
         bool fullyJudged = recomputed.AccuracyProgress >= 1;
 
-        // Ranked only if it passed with every cell judged, every hard invariant held, the total is
-        // within its ceiling, the play took long enough, and the build is not blocked. Anything else
-        // is stored unranked so it never reaches a leaderboard, but the submission still "succeeds"
-        // from the client's view.
-        bool ranked = passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && !buildBlocked;
+        // Ranked only if the SET is ranked and it passed with every cell judged, every hard
+        // invariant held, the total is within its ceiling, the play took long enough, and the
+        // build is not blocked. Anything else is stored unranked so it never reaches a
+        // leaderboard, but the submission still "succeeds" from the client's view.
+        bool ranked = setRanked && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && !buildBlocked;
 
         // What the player saw: final whole-map accuracy for completed plays, the running
         // (judged-only) accuracy at the moment of failure otherwise. Equal when fully judged.

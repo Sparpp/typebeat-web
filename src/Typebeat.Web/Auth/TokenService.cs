@@ -7,7 +7,11 @@ namespace Typebeat.Web.Auth;
 
 public sealed record TokenPair(string AccessToken, string RefreshToken, long ExpiresInSeconds);
 
-public sealed record AuthedUser(long Id, string Username, string CountryCode, bool IsAdmin, bool Restricted);
+public sealed record AuthedUser(long Id, string Username, string CountryCode, bool IsAdmin, bool Restricted, bool MapReviewer = false)
+{
+    /// <summary>Whether this user can promote pending sets to ranked (and back) on the website.</summary>
+    public bool CanReviewMaps => IsAdmin || MapReviewer;
+}
 
 /// <summary>
 /// Opaque bearer tokens: 32 random bytes, base64url on the wire, SHA-256 hashed at rest.
@@ -87,7 +91,8 @@ public sealed class TokenService(Db db)
 
         return await conn.QuerySingleOrDefaultAsync<AuthedUser>(
             """
-            SELECT u.id, u.username, u.country_code AS countryCode, u.is_admin AS isAdmin, u.restricted
+            SELECT u.id, u.username, u.country_code AS countryCode, u.is_admin AS isAdmin, u.restricted,
+                   u.map_reviewer AS mapReviewer
             FROM oauth_tokens t
             JOIN users u ON u.id = t.user_id
             WHERE t.access_hash = @hash

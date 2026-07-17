@@ -16,7 +16,9 @@ namespace Typebeat.Web.Endpoints;
 ///    { beatmapset_ids: [...] }, read from the favourites table (was an empty stub in M1).
 ///
 /// Status strings bind to the client's BeatmapOnlineStatus by member NAME (see BeatmapWire):
-/// 'public' → "ranked" (leaderboards + MatchesOnlineVersion need a ranked-family status),
+/// 'ranked' → "ranked" (reviewer-approved: leaderboards live, MatchesOnlineVersion satisfied),
+/// 'pending' → "pending" (published upload awaiting review; browsable, no leaderboards —
+/// the client's LeaderboardManager blocks non-ranked-family statuses natively),
 /// 'hidden' → "wip" (owner-only pre-publish state, preselects WIP in the wizard),
 /// 'removed' → "graveyard" (owner-only; submission to it is blocked with a 422 in BSS).
 /// </summary>
@@ -65,7 +67,7 @@ public static class BeatmapsetEndpoints
             """,
             new { setId });
 
-        if (set is null || (set.Status != "public" && requester?.Id != set.OwnerId))
+        if (set is null || (set.Status is not ("ranked" or "pending") && requester?.Id != set.OwnerId))
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");
 
         // Live difficulties only: filename IS NOT NULL ⇔ part of the current version (the
@@ -104,7 +106,7 @@ public static class BeatmapsetEndpoints
             Covers = BeatmapCovers.FromCoverKey(urlBase, set.CoverKey),
             SubmittedDate = set.SubmittedAt,
             // No dedicated ranked-date column; updated_at is the same anchor the lookup uses.
-            RankedDate = set.Status == "public" ? set.UpdatedAt : null,
+            RankedDate = set.Status == "ranked" ? set.UpdatedAt : null,
             LastUpdated = set.UpdatedAt,
             TitleUnicode = set.TitleUnicode,
             ArtistUnicode = set.ArtistUnicode,
@@ -151,7 +153,8 @@ public static class BeatmapsetEndpoints
     /// <summary>DB status → the wire string the client's BeatmapOnlineStatus binds by name.</summary>
     public static string StatusString(string dbStatus) => dbStatus switch
     {
-        "public" => "ranked",
+        "ranked" => "ranked",
+        "pending" => "pending",
         "hidden" => "wip",
         _ => "graveyard",
     };

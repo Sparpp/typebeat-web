@@ -429,8 +429,10 @@ public sealed class PackageIngest(
             "UPDATE beatmaps SET filename = NULL WHERE set_id = @setId AND id <> ALL(@liveIds)",
             new { setId, liveIds });
 
+        // Publication means 'pending', not ranked: leaderboards stay locked until a map
+        // reviewer (or admin) promotes the set from the website (migration 005).
         await conn.ExecuteAsync(
-            "UPDATE beatmapsets SET status = 'public' WHERE id = @setId AND status = 'hidden'",
+            "UPDATE beatmapsets SET status = 'pending' WHERE id = @setId AND status = 'hidden'",
             new { setId });
     }
 
