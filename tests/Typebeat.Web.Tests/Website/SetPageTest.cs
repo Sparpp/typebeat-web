@@ -356,6 +356,56 @@ public class SetPageTest
         });
     }
 
+    [Test]
+    public async Task ScoreId_RedirectsPermanentlyToItsSet()
+    {
+        // The game's leaderboard "Copy Link" copies {WebsiteUrl}/scores/{id} — it must land.
+        long scoreId;
+        long hiddenScoreId;
+
+        await using (var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString))
+        {
+            await conn.OpenAsync();
+
+            scoreId = await conn.ExecuteScalarAsync<long>(
+                "SELECT id FROM scores WHERE beatmap_id = @beatmapId AND ranked ORDER BY total_score DESC LIMIT 1",
+                new { beatmapId = PublicSiteSeed.LeaderboardBeatmapId });
+
+            // A score on a hidden set: the redirect must not leak the set id to the public.
+            long hiddenBeatmapId = await conn.ExecuteScalarAsync<long>(
+                """
+                INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating, filename)
+                VALUES (@setId, 'type!beat', @checksum, 60, 55, 1.5, 'hidden.osu')
+                RETURNING id
+                """,
+                new { setId = PublicSiteSeed.HiddenId, checksum = Guid.NewGuid().ToString("N") });
+
+            hiddenScoreId = await conn.ExecuteScalarAsync<long>(
+                """
+                INSERT INTO scores (user_id, beatmap_id, total_score, accuracy, max_combo, rank, passed, ranked,
+                                    mods, statistics, maximum_statistics)
+                VALUES (@userId, @beatmapId, 100000, 0.9, 10, 'B', true, true, '[]'::jsonb, '{}'::jsonb, '{}'::jsonb)
+                RETURNING id
+                """,
+                new { userId = PublicSiteSeed.TypistOneId, beatmapId = hiddenBeatmapId });
+        }
+
+        using var client = WebsiteFixture.CreateNoRedirectClient();
+
+        using var response = await client.GetAsync($"/scores/{scoreId}");
+        using var unknown = await client.GetAsync("/scores/987654321");
+        using var hidden = await client.GetAsync($"/scores/{hiddenScoreId}");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.MovedPermanently));
+            Assert.That(response.Headers.Location!.OriginalString,
+                Is.EqualTo($"/beatmapsets/{PublicSiteSeed.LeaderboardSetId}"));
+            Assert.That(unknown.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(hidden.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        });
+    }
+
     // ---- helpers ----
 
     private static async Task<string> PostFavouriteAsync(HttpClient client, long setId)
