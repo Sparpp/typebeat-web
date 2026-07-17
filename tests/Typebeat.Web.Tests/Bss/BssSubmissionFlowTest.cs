@@ -166,7 +166,10 @@ public class BssSubmissionFlowTest
         Assert.Multiple(() =>
         {
             Assert.That((long)body["beatmapset_id"]!, Is.EqualTo(setId));
-            Assert.That(body["beatmap_ids"]!, Is.Empty, "no new ids requested");
+            // Upstream contract: beatmap_ids = created + KEPT ids. The client exporter resolves
+            // every kept diff's online id by membership in this list, so a keep-only PUT must
+            // echo the kept ids back (an empty list hard-fails every re-submission at export).
+            Assert.That(body["beatmap_ids"]!.Select(t => (long)t), Is.EquivalentTo(beatmapIds));
         });
 
         // files[] = the latest version manifest the client hash-diffs for its PATCH.

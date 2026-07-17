@@ -166,7 +166,11 @@ public static class BssEndpoints
             return WireJson.Ok(new BssPutBeatmapSetResponse
             {
                 BeatmapsetId = setId,
-                BeatmapIds = newIds,
+                // Upstream contract: created ids followed by the KEPT ids. The client's exporter
+                // resolves every kept diff's online id by membership in this list (and hands the
+                // leftovers to new diffs), so omitting the kept ids hard-fails every re-submission
+                // at the export stage.
+                BeatmapIds = [.. newIds, .. keep],
                 Files = files.Select(f => new BssFileWire { Filename = f.Filename, Sha2Hash = f.Sha256Hex }).ToList(),
             });
         }

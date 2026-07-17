@@ -42,7 +42,12 @@ public sealed class BssPutBeatmapSetResponse
     [JsonProperty("beatmapset_id")]
     public required long BeatmapsetId { get; init; }
 
-    /// <summary>The newly allocated beatmap ids (only the created ones, not the kept ones).</summary>
+    /// <summary>
+    /// ALL beatmap ids in the submitted set: the newly created ones followed by the kept ones
+    /// (osu-server-beatmap-submission appends <c>beatmaps_to_keep</c> before returning). The
+    /// client's exporter resolves every kept diff's online id by membership in this list and
+    /// assigns the leftovers to new diffs, so kept ids MUST be present.
+    /// </summary>
     [JsonProperty("beatmap_ids")]
     public required IReadOnlyList<long> BeatmapIds { get; init; }
 
