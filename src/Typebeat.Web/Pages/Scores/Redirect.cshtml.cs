@@ -18,12 +18,13 @@ public sealed class RedirectModel(Db db) : TypebeatPageModel
     {
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
-        var row = await conn.QuerySingleOrDefaultAsync<(long SetId, string Status, long OwnerId)?>(
+        var row = await conn.QuerySingleOrDefaultAsync<(long SetId, string Status, long OwnerId, bool OwnerRestricted)?>(
             """
-            SELECT s.id AS SetId, s.status AS Status, s.owner_id AS OwnerId
+            SELECT s.id AS SetId, s.status AS Status, s.owner_id AS OwnerId, u.restricted AS OwnerRestricted
             FROM scores sc
             JOIN beatmaps b ON b.id = sc.beatmap_id
             JOIN beatmapsets s ON s.id = b.set_id
+            JOIN users u ON u.id = s.owner_id
             WHERE sc.id = @id
             """,
             new { id });
@@ -34,8 +35,12 @@ public sealed class RedirectModel(Db db) : TypebeatPageModel
         bool isOwner = CurrentUser?.Id == target.OwnerId;
         bool isAdmin = CurrentUser?.IsAdmin == true;
 
-        if ((target.Status == "removed" && !isOwner && !isAdmin) || (target.Status == "hidden" && !isOwner))
+        if ((target.OwnerRestricted && !isOwner)
+            || (target.Status == "removed" && !isOwner && !isAdmin)
+            || (target.Status == "hidden" && !isOwner))
+        {
             return NotFound();
+        }
 
         return RedirectPermanent($"/beatmapsets/{target.SetId}");
     }

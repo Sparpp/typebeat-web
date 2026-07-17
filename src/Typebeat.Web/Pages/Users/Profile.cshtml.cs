@@ -238,11 +238,13 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             maps.RemoveAt(card_section_size);
         Maps = maps;
 
+        // Restricted mappers' sets are delisted site-wide; they drop out of favourite walls too
+        // (their "mapped by" link would 404 for every viewer).
         var favourites = (await conn.QueryAsync<BeatmapsetCardModel>(
             $"""
              {BeatmapsetCardSql.Select}
              JOIN favourites fav ON fav.set_id = s.id AND fav.user_id = @id
-             WHERE s.status = 'public'
+             WHERE s.status = 'public' AND (NOT u.restricted OR s.owner_id = @viewerId)
              ORDER BY fav.created_at DESC, s.id DESC
              LIMIT {card_section_size + 1}
              """,

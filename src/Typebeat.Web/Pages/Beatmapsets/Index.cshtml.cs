@@ -34,7 +34,9 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
         Sort = s is "plays" or "favs" ? s : "newest";
         StatusFilter = status == "ranked" ? "ranked" : "any";
 
-        var where = new StringBuilder("WHERE s.status = 'public'");
+        // Restricted mappers' sets are delisted site-wide (their profiles 404, so every
+        // "mapped by" link would be dead); the owner still finds their own.
+        var where = new StringBuilder("WHERE s.status = 'public' AND (NOT u.restricted OR s.owner_id = @viewerId)");
         var param = new Dapper.DynamicParameters();
         param.Add("viewerId", CurrentUser?.Id ?? 0);
 

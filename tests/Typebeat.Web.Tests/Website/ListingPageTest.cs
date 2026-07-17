@@ -89,8 +89,14 @@ public class ListingPageTest
         await using (var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString))
         {
             await conn.OpenAsync();
+            // Match the listing's visibility: public AND not owned by a restricted mapper
+            // (RestrictedOwnerTest seeds a delisted public set into the same database).
             totalPublic = await conn.ExecuteScalarAsync<int>(
-                "SELECT count(*) FROM beatmapsets WHERE status = 'public'");
+                """
+                SELECT count(*) FROM beatmapsets s
+                JOIN users u ON u.id = s.owner_id
+                WHERE s.status = 'public' AND NOT u.restricted
+                """);
         }
 
         Assert.That(totalPublic, Is.GreaterThan(50), "seed must overflow one page");

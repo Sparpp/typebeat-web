@@ -19,19 +19,23 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
     {
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
-        // One cheap round trip for the whole stats line.
+        // One cheap round trip for the whole stats line. Restricted mappers' sets are invisible
+        // site-wide (mirroring their 404ing profiles), so they don't count either.
         (Players, ScoresToday, Maps) = await conn.QuerySingleAsync<(long, long, long)>(
             """
             SELECT (SELECT count(*) FROM users)                                          AS players,
                    (SELECT count(*) FROM scores WHERE ended_at >= date_trunc('day', now())) AS scoresToday,
-                   (SELECT count(*) FROM beatmapsets WHERE status = 'public')            AS maps
+                   (SELECT count(*)
+                    FROM beatmapsets s
+                    JOIN users u ON u.id = s.owner_id
+                    WHERE s.status = 'public' AND NOT u.restricted)                      AS maps
             """);
 
         NewestSets = (await conn.QueryAsync<BeatmapsetCardModel>(
             BeatmapsetCardSql.Select +
             """
 
-            WHERE s.status = 'public'
+            WHERE s.status = 'public' AND (NOT u.restricted OR s.owner_id = @viewerId)
             ORDER BY s.submitted_at DESC, s.id DESC
             LIMIT 8
             """,

@@ -42,6 +42,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                    s.description      AS Description,
                    s.status           AS Status,
                    u.username::text   AS Creator,
+                   u.restricted       AS OwnerRestricted,
                    s.owner_id         AS OwnerId,
                    s.cover_key        AS CoverKey,
                    CASE WHEN s.preview_key IS NOT NULL THEN '/' || s.preview_key END AS PreviewUrl,
@@ -64,7 +65,10 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         bool isOwner = CurrentUser?.Id == set?.OwnerId;
         bool isAdmin = CurrentUser?.IsAdmin == true;
 
+        // Restricted mappers' sets 404 like their profiles do (owner exempt; in practice a
+        // restricted owner cannot sign in, but the rule is symmetrical with the listings).
         if (set is null
+            || (set.OwnerRestricted && !isOwner)
             || (set.Status == "removed" && !isOwner && !isAdmin)
             || (set.Status == "hidden" && !isOwner))
         {
@@ -217,7 +221,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
 
     public sealed record SetDetails(
         long Id, string Title, string Artist, string Source, string Tags, string Description,
-        string Status, string Creator, long OwnerId, string? CoverKey, string? PreviewUrl,
+        string Status, string Creator, bool OwnerRestricted, long OwnerId, string? CoverKey, string? PreviewUrl,
         int PlayCount, int FavouriteCount, int DownloadCount, double? Bpm,
         DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited, bool HasPackage)
     {
