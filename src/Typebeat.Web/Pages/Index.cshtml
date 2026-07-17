@@ -7,13 +7,9 @@
 }
 
 <section class="hero">
-    <p class="hero-kicker">// the rhythm game for people who type</p>
-    <h1 class="hero-title">type to the b<span class="caret caret--tall" aria-hidden="true"></span><span class="tail">eat</span></h1>
-    <p class="hero-sub">
-        The lyrics are the notes. They drop with the music &mdash; type every word on the grid, hold the combo, or watch it die in public.
-    </p>
+    <p class="hero-kicker">// built from osu!</p>
+    <h1 class="hero-title">type to the b<span class="tail">eat</span></h1>
     <div class="hero-actions">
-        <a class="btn btn-primary btn-big" href="/download">download &mdash; windows</a>
         @if (Model.CurrentUser is null)
         {
             <a class="btn btn-ghost btn-big" href="/register">sign up</a>
@@ -23,7 +19,6 @@
             <a class="btn btn-ghost btn-big" href="/beatmapsets">browse maps</a>
         }
     </div>
-    <p class="hero-note">free to play &middot; windows 10+ &middot; maps made by players, for players</p>
     <p class="hero-stats">
         <span><strong>@Model.Players.ToString("N0", CultureInfo.InvariantCulture)</strong> registered players</span>
         <span><strong>@Model.ScoresToday.ToString("N0", CultureInfo.InvariantCulture)</strong> scores today</span>
