@@ -51,6 +51,31 @@ caches keep serving until you finish all four steps:
 
 Browser caches cannot be purged remotely; the one-day `max-age` bounds them.
 
+## Backups
+
+`deploy/backup.sh` — LOCAL only (offsite/R2 copy is a follow-up):
+
+- `backup.sh db`: compressed `pg_dump`, meant nightly, 14-day retention.
+- `backup.sh appdata`: tar of the `/data` uploads volume, meant WEEKLY, newest 2 tars kept
+  (count-based, so skipped weeks never age out the only copies).
+- Both modes skip (and log) instead of running when the backup filesystem has <10 GB free —
+  the 75 GB disk is shared with Postgres, and a skipped backup beats a wedged database.
+- Assembled per-version download packages are pruned by the server itself (PackageIngest
+  keeps the latest 2 per set; older ones stay reconstructible from the content-addressed
+  blobs), so `/data` does not grow ~2x per re-submission forever.
+
+**Nothing installs the schedule automatically — the box's root crontab starts EMPTY.**
+After the first M3 deploy is up (the appdata job docker-execs into the app container, which
+must mount `/data`), run `crontab -e` as root and add exactly:
+
+```
+17 3 * * *  /opt/typebeat-web/deploy/backup.sh db      >> /var/log/typebeat-backup.log 2>&1
+47 3 * * 0  /opt/typebeat-web/deploy/backup.sh appdata >> /var/log/typebeat-backup.log 2>&1
+```
+
+Verify with `crontab -l`, and after the first scheduled night check
+`/var/log/typebeat-backup.log` for `backup ok:` lines.
+
 ## Monitoring
 
 - Uptime: UptimeRobot keyword monitor on `https://typebeat.mingda.sh/health` (keyword `ok`,

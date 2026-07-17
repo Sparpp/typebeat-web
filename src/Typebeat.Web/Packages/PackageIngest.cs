@@ -373,7 +373,45 @@ public sealed class PackageIngest(
 
         await scope.CommitAsync(ct);
 
+        // ---- disk hygiene (after the commit; best-effort): assembled per-version packages are
+        //      pure derivatives — reassemblable from the content-addressed blobs at any time —
+        //      and downloads only ever serve the LATEST version, so beyond a one-version safety
+        //      margin they are dead weight on the small shared prod disk (~2x amplification of
+        //      every upload, never reclaimed). Pruned HERE rather than in the backup cron
+        //      because the server is the packages' single writer: this path knows the version
+        //      numbers without scraping the store, runs serialized per set (each ingest deletes
+        //      only versions two behind the version it just committed, which no concurrent
+        //      request can be serving as "latest"), and bounds growth at creation time instead
+        //      of once a day. Failures only log — a leftover package is a disk-usage nit, never
+        //      a correctness problem. ----
+
+        await prunePackagesBeyondLatestTwoAsync(setId, versionNo, ct);
+
         return new IngestResult(setId, versionNo, true, package.Files, coverStatus, previewStatus);
+    }
+
+    /// <summary>
+    /// Deletes assembled package objects older than (latest, latest-1). Walks downward and
+    /// stops at the first absent object: earlier ingests already pruned everything below it.
+    /// </summary>
+    private async Task prunePackagesBeyondLatestTwoAsync(long setId, int latestVersionNo, CancellationToken ct)
+    {
+        try
+        {
+            for (int versionNo = latestVersionNo - 2; versionNo >= 1; versionNo--)
+            {
+                string key = StoreKeys.Package(setId, versionNo);
+
+                if (!await fileStore.ObjectExistsAsync(key, ct))
+                    break;
+
+                await fileStore.DeleteObjectAsync(key, ct);
+            }
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            logger.LogWarning(e, "Package pruning failed for set {SetId} (latest v{VersionNo}).", setId, latestVersionNo);
+        }
     }
 
     /// <summary>

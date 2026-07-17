@@ -334,6 +334,38 @@ public class PackageIngestDbTest
         Assert.That(reparsedSet.SetEquals(storedSet), Is.True);
     }
 
+    [Test]
+    [Order(5)]
+    public async Task ThirdVersion_PrunesTheAssembledPackageBeyondLatestTwo()
+    {
+        // Superseded assembled packages are pure derivatives of the content-addressed blobs;
+        // only the latest two survive a version cut (75 GB prod disk, see ingest comment).
+        var entries = new (string, byte[])[]
+        {
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId, previewTime: 2500))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+        };
+
+        var result = await ingestAsync(entries);
+
+        Assert.That(result.VersionNo, Is.EqualTo(3));
+
+        bool latest = await fileStore.ObjectExistsAsync(StoreKeys.Package(setId, 3));
+        bool previous = await fileStore.ObjectExistsAsync(StoreKeys.Package(setId, 2));
+        bool oldest = await fileStore.ObjectExistsAsync(StoreKeys.Package(setId, 1));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(latest, Is.True, "latest package must exist (assembled before commit)");
+            Assert.That(previous, Is.True, "latest-1 is the safety margin and survives");
+            Assert.That(oldest, Is.False, "latest-2 is pruned after the commit");
+        });
+
+        // The blobs behind v1 are untouched — content-addressed storage is never pruned here.
+        foreach (var file in result.Files)
+            Assert.That(await fileStore.BlobExistsAsync(file.Sha256), Is.True, file.Filename);
+    }
+
     private static string readEmbeddedMigration(string name)
     {
         var assembly = typeof(Db).GetTypeInfo().Assembly;
