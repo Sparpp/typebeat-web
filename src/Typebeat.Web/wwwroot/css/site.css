@@ -320,6 +320,18 @@ img { max-width: 100%; }
     box-shadow: none;
 }
 
+/* Destructive ghost (reviewer Unrank): red-lined counterpart of .btn-ghost. */
+.btn-danger {
+    background: transparent;
+    color: var(--bad);
+    border: 1px solid rgba(248, 113, 113, 0.5);
+}
+
+.btn-danger:hover {
+    border-color: var(--bad);
+    box-shadow: 0 0 12px rgba(248, 113, 113, 0.35);
+}
+
 
 /* ---- Card ---- */
 
@@ -921,6 +933,27 @@ img { max-width: 100%; }
     border-color: var(--violet);
     color: var(--violet-bright);
     box-shadow: var(--glow-violet);
+}
+
+/* Reviewer-only Rank/Unrank strip: its own labelled row under the player actions so
+   moderation never reads as part of the ordinary Download/Favourite cluster. */
+.review-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-top: var(--space-4);
+    padding-top: var(--space-3);
+    border-top: 1px dashed var(--line-bright);
+}
+
+.review-controls form { margin: 0; }
+
+.review-controls__label {
+    font-size: var(--text-xs);
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
 }
 
 

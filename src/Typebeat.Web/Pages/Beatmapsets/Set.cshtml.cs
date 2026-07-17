@@ -8,8 +8,10 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 
 /// <summary>
 /// Beatmapset page (/beatmapsets/{id}): cover header with scrim, stats box, plain-text
-/// description, tags, and the global leaderboard (top 50 best-per-user, podium for #1).
-/// POST handlers: Favourite (toggle + denormalized counter bump) and Report (reports table).
+/// description, tags, and the global leaderboard (top 50 best-per-user, podium for #1) —
+/// rendered only on 'ranked' sets; anything else shows a "unlocks when ranked" note instead.
+/// POST handlers: Favourite (toggle + denormalized counter bump), Report (reports table),
+/// and the reviewer-only Rank/Unrank pair (pending ⇄ ranked, nothing else).
 /// Hidden sets are visible to their owner only. Removed sets 404 for the public but stay
 /// viewable by their owner and by admins (the owner's profile deliberately lists them, and a
 /// DMCA'd mapper deserves to see the Removed pill instead of a dead link; the download
@@ -94,8 +96,11 @@ public sealed class SetModel(Db db) : TypebeatPageModel
             new { id });
 
         // Global leaderboard: best ranked+passed score per user across the set's difficulties
-        // (same DISTINCT ON shape as the game-facing endpoint in ScoreEndpoints).
-        Scores = (await conn.QueryAsync<ScoreRow>(
+        // (same DISTINCT ON shape as the game-facing endpoint in ScoreEndpoints). Only ranked
+        // sets have one — pending plays are stored unranked, and the page renders an "unlocks
+        // when ranked" note instead, so don't even run the query for non-ranked sets.
+        if (Set.Status == "ranked")
+            Scores = (await conn.QueryAsync<ScoreRow>(
             """
             SELECT best.id           AS ScoreId,
                    best.user_id      AS UserId,
@@ -121,7 +126,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
             ORDER BY best.total_score DESC, best.id ASC
             LIMIT 50
             """,
-            new { id })).ToList();
+                new { id })).ToList();
 
         ViewData["Title"] = $"{Set.Artist} - {Set.Title}";
         ViewData["MetaDescription"] =
@@ -201,6 +206,43 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         // "true" not "1": the bool handler parameter binds via the default TypeConverter,
         // which rejects numeric strings.
         return Redirect($"/beatmapsets/{id}?reported=true");
+    }
+
+    // ---- reviewer controls (map_reviewer or admin only) ----
+
+    public Task<IActionResult> OnPostRankAsync(long id) => transitionAsync(id, from: "pending", to: "ranked");
+
+    public Task<IActionResult> OnPostUnrankAsync(long id) => transitionAsync(id, from: "ranked", to: "pending");
+
+    /// <summary>
+    /// The only two review transitions are pending → ranked and ranked → pending; hidden and
+    /// removed sets are untouchable from here (takedowns stay an admin-SQL lever). 404 for
+    /// non-reviewers — the same nothing-to-see answer the buttons' absence gives them (the
+    /// site's custom cookie auth has no ASP.NET authentication scheme for Forbid()).
+    /// </summary>
+    private async Task<IActionResult> transitionAsync(long id, string from, string to)
+    {
+        if (CurrentUser?.CanReviewMaps != true)
+            return NotFound();
+
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        int changed = await conn.ExecuteAsync(
+            "UPDATE beatmapsets SET status = @to, updated_at = now() WHERE id = @id AND status = @from",
+            new { id, from, to });
+
+        if (changed == 0)
+        {
+            // Wrong-state POSTs (double-submit, stale tab) are benign: land back on the page,
+            // which shows the current state. Only a nonexistent set is a real 404.
+            bool exists = await conn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS (SELECT 1 FROM beatmapsets WHERE id = @id)", new { id });
+
+            if (!exists)
+                return NotFound();
+        }
+
+        return Redirect($"/beatmapsets/{id}");
     }
 
     // ---- display helpers ----

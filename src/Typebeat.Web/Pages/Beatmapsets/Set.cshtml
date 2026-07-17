@@ -54,6 +54,25 @@
                             aria-label="Play preview"></button>
                 }
             </div>
+            @if (Model.CurrentUser?.CanReviewMaps == true && Model.Set.Status is "pending" or "ranked")
+            {
+                @* Reviewer-only strip, deliberately set apart from the player actions above. *@
+                <div class="review-controls">
+                    <span class="review-controls__label">map review</span>
+                    @if (Model.Set.Status == "pending")
+                    {
+                        <form method="post" asp-page-handler="Rank" asp-route-id="@Model.Set.Id">
+                            <button type="submit" class="btn btn-ghost btn-small">Rank this map</button>
+                        </form>
+                    }
+                    else
+                    {
+                        <form method="post" asp-page-handler="Unrank" asp-route-id="@Model.Set.Id">
+                            <button type="submit" class="btn btn-danger btn-small">Unrank</button>
+                        </form>
+                    }
+                </div>
+            }
             <details class="report-box" @(Model.Reported ? "open" : null)>
                 <summary>Report this beatmap</summary>
                 @if (Model.Reported)
@@ -129,7 +148,15 @@
 
 <section class="set-leaderboard">
     <h2>Leaderboard</h2>
-    @if (Model.Scores.Count == 0)
+    @if (Model.Set.Status != "ranked")
+    {
+        @* Pending (and owner-viewed hidden/removed) sets take plays but rank nothing. *@
+        <div class="empty-state">
+            <h3>Not ranked yet</h3>
+            <p>Leaderboard unlocks when this map is ranked.</p>
+        </div>
+    }
+    else if (Model.Scores.Count == 0)
     {
         <div class="empty-state">
             <h3>No scores yet</h3>
