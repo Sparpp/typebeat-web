@@ -341,6 +341,44 @@ public class BssSubmissionFlowTest
 
     [Test]
     [Order(8)]
+    public async Task RangedContinuations_DoNotInflateTheDownloadCount()
+    {
+        int countBefore = await DownloadCountAsync();
+
+        // A resume / download-manager segment: mid-file range → 206, NOT counted.
+        using (var resume = new HttpRequestMessage(HttpMethod.Get, $"/beatmapsets/{setId}/download"))
+        {
+            resume.Headers.Range = new RangeHeaderValue(100, null);
+
+            using var response = await BssFixture.Client.SendAsync(resume);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.PartialContent));
+        }
+
+        Assert.That(await DownloadCountAsync(), Is.EqualTo(countBefore),
+            "a non-zero-start range is a continuation of an already-counted download");
+
+        // The segment covering the start of the file is the one that counts — exactly once,
+        // so an 8-way segmented download totals one, not eight.
+        using (var first = new HttpRequestMessage(HttpMethod.Get, $"/beatmapsets/{setId}/download"))
+        {
+            first.Headers.Range = new RangeHeaderValue(0, 99);
+
+            using var response = await BssFixture.Client.SendAsync(first);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.PartialContent));
+        }
+
+        Assert.That(await DownloadCountAsync(), Is.EqualTo(countBefore + 1));
+
+        async Task<int> DownloadCountAsync()
+        {
+            await using var conn = await BssFixture.OpenDbAsync();
+            return await conn.ExecuteScalarAsync<int>(
+                "SELECT download_count FROM beatmapsets WHERE id = @setId", new { setId });
+        }
+    }
+
+    [Test]
+    [Order(9)]
     public async Task Favourites_ReadsRealRows()
     {
         await using (var conn = await BssFixture.OpenDbAsync())
@@ -361,7 +399,7 @@ public class BssSubmissionFlowTest
     }
 
     [Test]
-    [Order(9)]
+    [Order(10)]
     public async Task CoverRoutes_ServeJpegs_WithWhitelistAndFallback()
     {
         using (var cover = await BssFixture.Client.GetAsync($"/covers/{setId}/1/card.jpg"))
@@ -393,7 +431,7 @@ public class BssSubmissionFlowTest
     }
 
     [Test]
-    [Order(10)]
+    [Order(11)]
     public async Task PreviewRoute_ServesTheClip_WithRangeSupport()
     {
         if (!PreviewGenerator.IsFfmpegAvailable())

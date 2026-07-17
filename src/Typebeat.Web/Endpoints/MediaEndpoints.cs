@@ -1,4 +1,5 @@
 using Dapper;
+using Microsoft.Extensions.Primitives;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.PixelFormats;
@@ -21,7 +22,8 @@ namespace Typebeat.Web.Endpoints;
 ///    NOT version-keyed (the key is stable across re-uploads), so cached one day only.
 ///  - GET /beatmapsets/{id}/download — streams the latest version's assembled package with a
 ///    "{artist} - {title}.olz" filename, logs to beatmapset_downloads (user_id NULL when
-///    anonymous) and bumps the denormalized counter. Anonymous allowed (spec iron rule 9).
+///    anonymous) and bumps the denormalized counter, once per LOGICAL download (ranged
+///    continuations/resumes are not re-counted). Anonymous allowed (spec iron rule 9).
 ///  - GET /img/default-cover.jpg — the self-hosted fallback the beatmap DTOs reference when a
 ///    set has no generated covers. Generated in-process (neon violet→magenta gradient, the
 ///    design system's --grad-primary) so no binary asset lives in the repo; cached lazily.
@@ -121,17 +123,43 @@ public static class MediaEndpoints
         if (package == null)
             return Results.NotFound();
 
-        await conn.ExecuteAsync(
-            """
-            INSERT INTO beatmapset_downloads (user_id, set_id) VALUES (@userId, @setId);
-            UPDATE beatmapsets SET download_count = download_count + 1 WHERE id = @setId
-            """,
-            new { userId = requester?.Id, setId });
+        // One logical download = one log row + one counter bump. Range processing is enabled
+        // below, so a download manager's 8-way segmented fetch or a browser resume issues many
+        // GETs for ONE download — only the request that covers the start of the file counts
+        // (no Range header, or a range starting at byte 0); continuations and resumes don't.
+        if (countsAsDownload(ctx))
+        {
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO beatmapset_downloads (user_id, set_id) VALUES (@userId, @setId);
+                UPDATE beatmapsets SET download_count = download_count + 1 WHERE id = @setId
+                """,
+                new { userId = requester?.Id, setId });
+        }
 
         // .olz = the game's lazer-style package extension (registered by the client installer).
         string filename = SanitizeFilename($"{row.Artist} - {row.Title}.olz");
 
         return Results.Stream(package, "application/octet-stream", fileDownloadName: filename, enableRangeProcessing: true);
+    }
+
+    /// <summary>
+    /// True when this request represents the start of a logical download: no Range header, an
+    /// unparseable one (ignored by range processing, served as a full 200), or a range starting
+    /// at byte 0. Mid-file continuations (non-zero start) and suffix ranges don't count — they
+    /// are resumes/segments of a download that was already counted.
+    /// </summary>
+    private static bool countsAsDownload(HttpContext ctx)
+    {
+        if (StringValues.IsNullOrEmpty(ctx.Request.Headers.Range))
+            return true;
+
+        var range = ctx.Request.GetTypedHeaders().Range;
+
+        if (range == null)
+            return true; // malformed header: range processing ignores it and streams the full file.
+
+        return range.Ranges.Any(r => r.From == 0);
     }
 
     /// <summary>Public sets are world-readable; hidden/removed media only for the owner.</summary>
