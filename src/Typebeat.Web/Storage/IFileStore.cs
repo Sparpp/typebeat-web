@@ -56,8 +56,9 @@ public static class StoreKeys
 
     public static string Preview(long setId) => $"previews/{setId}.mp3";
 
-    /// <summary>Assembled full package for a set version (stored in <c>set_versions.package_key</c>).</summary>
-    public static string Package(long setId, int versionNo) => $"packages/{setId}/{versionNo}.osz";
+    /// <summary>Assembled full package for a set version (stored in <c>set_versions.package_key</c>);
+    /// <c>.typb</c> is the game's native package extension.</summary>
+    public static string Package(long setId, int versionNo) => $"packages/{setId}/{versionNo}.typb";
 
     /// <summary>Game-client release zips live under <c>downloads/{fileName}</c> (TYPEBEAT_GAME_DOWNLOAD).</summary>
     public static string Download(string fileName) => $"downloads/{fileName}";

@@ -118,7 +118,8 @@ migrations are embedded resources applied at startup in filename order.
   LegacyBeatmapExporter — it drops `[Lyrics]`); `BeatmapSubmissionServiceUrl =
   {root}/bss`.
 - Registry identity rename: `Software\typebeat\Capabilities`, progIds `typebeat.File/.Uri`,
-  scheme `typebeat://` (extensions .osz/.olz unchanged).
+  scheme `typebeat://` (package extension renamed to `.typb` server-side — 2026-07-17; `.osz`
+  stays importable).
 
 ## Conventions & environment
 

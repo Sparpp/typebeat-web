@@ -21,7 +21,7 @@ namespace Typebeat.Web.Endpoints;
 ///  - GET /previews/{setId}.mp3 — the 30 s preview clip, range-request capable (audio seeking).
 ///    NOT version-keyed (the key is stable across re-uploads), so cached one day only.
 ///  - GET /beatmapsets/{id}/download — streams the latest version's assembled package with a
-///    "{artist} - {title}.olz" filename, logs to beatmapset_downloads (user_id NULL when
+///    "{artist} - {title}.typb" filename, logs to beatmapset_downloads (user_id NULL when
 ///    anonymous) and bumps the denormalized counter, once per LOGICAL download (ranged
 ///    continuations/resumes are not re-counted). Anonymous allowed (spec iron rule 9).
 ///  - GET /img/default-cover.jpg — the self-hosted fallback the beatmap DTOs reference when a
@@ -138,8 +138,8 @@ public static class MediaEndpoints
                 new { userId = requester?.Id, setId });
         }
 
-        // .olz = the game's lazer-style package extension (registered by the client installer).
-        string filename = SanitizeFilename($"{row.Artist} - {row.Title}.olz");
+        // .typb = the game's native package extension (registered by the client installer).
+        string filename = SanitizeFilename($"{row.Artist} - {row.Title}.typb");
 
         return Results.Stream(package, "application/octet-stream", fileDownloadName: filename, enableRangeProcessing: true);
     }
@@ -187,7 +187,7 @@ public static class MediaEndpoints
     {
         var invalid = Path.GetInvalidFileNameChars();
         char[] result = name.Select(c => invalid.Contains(c) || char.IsControl(c) ? '_' : c).ToArray();
-        return new string(result).Trim(' ', '.', '_') is { Length: > 0 } sane ? sane : "beatmapset.olz";
+        return new string(result).Trim(' ', '.', '_') is { Length: > 0 } sane ? sane : "beatmapset.typb";
     }
 
     // ---------------------------------------------------------------------------------------------

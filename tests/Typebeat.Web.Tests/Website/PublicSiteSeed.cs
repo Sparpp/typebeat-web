@@ -151,7 +151,7 @@ public static class PublicSiteSeed
             await conn.ExecuteAsync(
                 """
                 INSERT INTO set_versions (set_id, version_no, package_key)
-                SELECT id, 1, 'packages/' || id || '/1.osz'
+                SELECT id, 1, 'packages/' || id || '/1.typb'
                 FROM beatmapsets
                 WHERE owner_id = @mapperId AND id <> @packagelessId
                 """,

@@ -50,7 +50,7 @@ public class RestrictedOwnerTest
         // The set even has a version/package and a favourite from the fixture user — none of
         // which may resurface it.
         await conn.ExecuteAsync(
-            "INSERT INTO set_versions (set_id, version_no, package_key) VALUES (@setId, 1, 'packages/' || @setId || '/1.osz')",
+            "INSERT INTO set_versions (set_id, version_no, package_key) VALUES (@setId, 1, 'packages/' || @setId || '/1.typb')",
             new { setId = restrictedSetId });
 
         await conn.ExecuteAsync(

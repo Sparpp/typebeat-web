@@ -81,7 +81,7 @@ public class Migration004BackfillTest
                 new { ownerId });
 
             await conn.ExecuteAsync(
-                "INSERT INTO set_versions (set_id, version_no, package_key) VALUES (@bssSetId, 1, 'packages/' || @bssSetId || '/1.osz')",
+                "INSERT INTO set_versions (set_id, version_no, package_key) VALUES (@bssSetId, 1, 'packages/' || @bssSetId || '/1.typb')",
                 new { bssSetId });
 
             droppedDiffBeatmapId = await insertBeatmapAsync(conn, bssSetId, "old cut", filename: null);

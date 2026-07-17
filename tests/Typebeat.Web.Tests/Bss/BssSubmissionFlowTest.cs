@@ -139,7 +139,7 @@ public class BssSubmissionFlowTest
         {
             Assert.That(StoredFile($"files/{Sha256Hex(easyOsu)}"), Does.Exist);
             Assert.That(StoredFile($"files/{Sha256Hex(audio)}"), Does.Exist);
-            Assert.That(StoredFile($"packages/{setId}/1.osz"), Does.Exist);
+            Assert.That(StoredFile($"packages/{setId}/1.typb"), Does.Exist);
 
             foreach (string name in new[] { "card", "card@2x", "cover", "cover@2x", "list", "list@2x", "slimcover", "slimcover@2x" })
                 Assert.That(StoredFile($"covers/{setId}/1/{name}.jpg"), Does.Exist, name);
@@ -246,7 +246,7 @@ public class BssSubmissionFlowTest
             Assert.That(filesAfter - filesBefore, Is.EqualTo(1), "unchanged blobs are reused, only the new file inserts");
         }
 
-        Assert.That(StoredFile($"packages/{setId}/2.osz"), Does.Exist);
+        Assert.That(StoredFile($"packages/{setId}/2.typb"), Does.Exist);
     }
 
     [Test]
@@ -313,7 +313,7 @@ public class BssSubmissionFlowTest
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
         string? disposition = response.Content.Headers.ContentDisposition?.ToString();
-        Assert.That(disposition, Does.Contain("Synth Rider - Neon Nights.olz"));
+        Assert.That(disposition, Does.Contain("Synth Rider - Neon Nights.typb"));
 
         // The streamed zip is the reassembled latest version, bit-exact per content identity.
         using var payload = new MemoryStream(await response.Content.ReadAsByteArrayAsync());

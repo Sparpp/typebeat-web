@@ -169,7 +169,7 @@ public class BssDeltaAndConcurrencyTest
             Assert.That(manifest, Is.EquivalentTo(new[] { "map1.osu", "audio.mp3", "bg.JPG" }));
         });
 
-        Assert.That(StoredFile($"packages/{setId}/2.osz"), Does.Exist, "the new version's package was assembled before commit");
+        Assert.That(StoredFile($"packages/{setId}/2.typb"), Does.Exist, "the new version's package was assembled before commit");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -218,8 +218,8 @@ public class BssDeltaAndConcurrencyTest
         // Both versions' packages must exist (a committed version implies a durable package).
         Assert.Multiple(() =>
         {
-            Assert.That(StoredFile($"packages/{setId}/1.osz"), Does.Exist);
-            Assert.That(StoredFile($"packages/{setId}/2.osz"), Does.Exist);
+            Assert.That(StoredFile($"packages/{setId}/1.typb"), Does.Exist);
+            Assert.That(StoredFile($"packages/{setId}/2.typb"), Does.Exist);
         });
 
         // Determine which upload owns the CURRENT version by its manifest, then require the
@@ -263,7 +263,7 @@ public class BssDeltaAndConcurrencyTest
     {
         var (bearer, setId, ids) = await CreateUploadedSetAsync("heal uploader", diffCount: 1);
 
-        string packagePath = StoredFile($"packages/{setId}/1.osz");
+        string packagePath = StoredFile($"packages/{setId}/1.typb");
         Assert.That(packagePath, Does.Exist, "sanity: the first upload assembled its package");
 
         // Simulate a version row whose package object is gone (pre-invariant data / operator
