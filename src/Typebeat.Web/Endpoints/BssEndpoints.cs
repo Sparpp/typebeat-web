@@ -264,10 +264,14 @@ public static class BssEndpoints
         if (manifest.Count == 0)
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "This beatmap set has no uploaded version to patch; upload the full package instead.");
 
-        // Same filename comparison the version manifest itself uses: normalized slashes,
-        // case-insensitive (PackageValidator rejects case-colliding duplicates).
-        var deleted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var changed = new Dictionary<string, IFormFile>(StringComparer.OrdinalIgnoreCase);
+        // EXACT (case-SENSITIVE, slash-normalized) filename semantics, matching the client's
+        // diff: a case-only rename arrives as filesChanged=[bg.JPG] + filesDeleted=[bg.jpg] and
+        // must resolve to the NEW name surviving. Case-insensitive matching here silently
+        // dropped the file (the delete swallowed the replacement). A malformed delta that
+        // leaves case-colliding names in the rebuild is rejected by PackageValidator (422)
+        // rather than resolved by guesswork.
+        var deleted = new HashSet<string>(StringComparer.Ordinal);
+        var changed = new Dictionary<string, IFormFile>(StringComparer.Ordinal);
 
         if (form != null)
         {
@@ -302,11 +306,10 @@ public static class BssEndpoints
                 await blob.CopyToAsync(entryStream, ctx.RequestAborted);
             }
 
+            // Deletes apply to the BASE manifest only; an uploaded replacement always lands
+            // (changed-wins, as upstream) — never let a filesDeleted entry swallow new content.
             foreach (var (filename, file) in changed)
             {
-                if (deleted.Contains(filename))
-                    continue;
-
                 var entry = zip.CreateEntry(filename);
 
                 await using var entryStream = entry.Open();
