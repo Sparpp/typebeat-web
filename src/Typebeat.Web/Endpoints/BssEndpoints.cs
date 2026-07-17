@@ -189,6 +189,11 @@ public static class BssEndpoints
         if (await gateUploadAsync(ctx, db, setId, user) is { } gateError)
             return gateError;
 
+        // Guarded (rather than letting ReadFormAsync throw InvalidOperationException → raw 500):
+        // a missing or non-form Content-Type is a client-shaped request error.
+        if (!ctx.Request.HasFormContentType)
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "The upload body could not be read as multipart/form-data.");
+
         IFormCollection form;
 
         try
@@ -229,15 +234,23 @@ public static class BssEndpoints
         if (await gateUploadAsync(ctx, db, setId, user) is { } gateError)
             return gateError;
 
-        IFormCollection form;
+        // A no-change resubmission arrives with NO body at all: the client's diff is empty and
+        // osu-framework's WebRequest only builds multipart content when it has parts, so there
+        // is no Content-Type to read a form from. Treat any absent/non-form body as an empty
+        // delta — the rebuild below then reproduces the latest version verbatim and the ingest
+        // collapses it into a no-version-cut 204 (never a raw 500 out of ReadFormAsync).
+        IFormCollection? form = null;
 
-        try
+        if (ctx.Request.HasFormContentType)
         {
-            form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
-        }
-        catch (Exception e) when (isClientBodyError(e))
-        {
-            return uploadBodyError(e);
+            try
+            {
+                form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
+            }
+            catch (Exception e) when (isClientBodyError(e))
+            {
+                return uploadBodyError(e);
+            }
         }
 
         // The rebuild base MUST be read inside the per-set critical section: were it read on an
@@ -253,18 +266,24 @@ public static class BssEndpoints
 
         // Same filename comparison the version manifest itself uses: normalized slashes,
         // case-insensitive (PackageValidator rejects case-colliding duplicates).
-        var deleted = new HashSet<string>(
-            form["filesDeleted"].Where(v => !string.IsNullOrEmpty(v)).Select(v => BeatmapPackageParser.NormalizeFilename(v!)),
-            StringComparer.OrdinalIgnoreCase);
-
+        var deleted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var changed = new Dictionary<string, IFormFile>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var file in form.Files.Where(f => f.Name == "filesChanged"))
+        if (form != null)
         {
-            if (string.IsNullOrEmpty(file.FileName))
-                return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "A filesChanged part is missing its archive path (multipart filename).");
+            foreach (string? value in form["filesDeleted"])
+            {
+                if (!string.IsNullOrEmpty(value))
+                    deleted.Add(BeatmapPackageParser.NormalizeFilename(value));
+            }
 
-            changed[BeatmapPackageParser.NormalizeFilename(file.FileName)] = file;
+            foreach (var file in form.Files.Where(f => f.Name == "filesChanged"))
+            {
+                if (string.IsNullOrEmpty(file.FileName))
+                    return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "A filesChanged part is missing its archive path (multipart filename).");
+
+                changed[BeatmapPackageParser.NormalizeFilename(file.FileName)] = file;
+            }
         }
 
         await using var buffer = createTempBuffer();
@@ -405,10 +424,13 @@ public static class BssEndpoints
 
     /// <summary>
     /// Body-read failures the CLIENT caused: Kestrel's over-the-cap abort surfaces as
-    /// BadHttpRequestException (413), malformed multipart as InvalidDataException.
+    /// BadHttpRequestException (413), a malformed multipart body/Content-Type as
+    /// InvalidDataException, and a truncated body (garbage where a boundary should be, or a
+    /// mid-body disconnect) as IOException. All of these must produce the 422 error envelope,
+    /// never a raw 500 — the wizard surfaces the message verbatim.
     /// </summary>
     private static bool isClientBodyError(Exception e)
-        => e is BadHttpRequestException or InvalidDataException;
+        => e is BadHttpRequestException or InvalidDataException or IOException;
 
     private static IResult uploadBodyError(Exception e)
         => e is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge }
