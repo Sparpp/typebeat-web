@@ -32,11 +32,20 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
     {
         Query = (q ?? string.Empty).Trim();
         Sort = s is "plays" or "favs" ? s : "newest";
-        StatusFilter = status == "ranked" ? "ranked" : "any";
+        StatusFilter = status is "ranked" or "pending" ? status : "any";
+
+        // Any = every publicly browsable status ('pending' and 'ranked' both are; hidden and
+        // removed never list). The Ranked/Pending pills narrow to one of the two.
+        string statusPredicate = StatusFilter switch
+        {
+            "ranked" => "s.status = 'ranked'",
+            "pending" => "s.status = 'pending'",
+            _ => "s.status IN ('pending', 'ranked')",
+        };
 
         // Restricted mappers' sets are delisted site-wide (their profiles 404, so every
         // "mapped by" link would be dead); the owner still finds their own.
-        var where = new StringBuilder("WHERE s.status = 'public' AND (NOT u.restricted OR s.owner_id = @viewerId)");
+        var where = new StringBuilder($"WHERE {statusPredicate} AND (NOT u.restricted OR s.owner_id = @viewerId)");
         var param = new Dapper.DynamicParameters();
         param.Add("viewerId", CurrentUser?.Id ?? 0);
 

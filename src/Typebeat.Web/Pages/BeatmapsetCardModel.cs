@@ -38,10 +38,11 @@ public sealed record BeatmapsetCardModel(
 /// <summary>Status wording shared by the card partial and the set page.</summary>
 public static class BeatmapsetDisplay
 {
-    /// <summary>DB status → user-facing word ('public' reads as "Ranked": it has live leaderboards).</summary>
+    /// <summary>DB status → user-facing word ("Ranked" = live leaderboards; "Pending" = published, awaiting review).</summary>
     public static string StatusLabel(string status) => status switch
     {
-        "public" => "Ranked",
+        "ranked" => "Ranked",
+        "pending" => "Pending",
         "hidden" => "Hidden",
         "removed" => "Removed",
         _ => status,
@@ -49,7 +50,7 @@ public static class BeatmapsetDisplay
 
     public static string PillClass(string status) => status switch
     {
-        "public" or "hidden" or "removed" => $"pill--{status}",
+        "ranked" or "pending" or "hidden" or "removed" => $"pill--{status}",
         _ => string.Empty,
     };
 }

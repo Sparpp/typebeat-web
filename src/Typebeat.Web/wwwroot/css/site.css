@@ -320,6 +320,7 @@ img { max-width: 100%; }
     box-shadow: none;
 }
 
+
 /* ---- Card ---- */
 
 .card {
@@ -351,9 +352,16 @@ img { max-width: 100%; }
     color: var(--text-muted);
 }
 
-.pill--public {
+.pill--ranked {
     background: rgba(74, 222, 128, 0.14);
     color: var(--good);
+}
+
+/* Published-but-awaiting-review: violet-muted so it reads "in the pipeline", clearly apart
+   from ranked's green and hidden's amber (both can sit beside it on an owner's profile). */
+.pill--pending {
+    background: rgba(166, 120, 255, 0.16);
+    color: var(--violet-bright);
 }
 
 .pill--hidden {
@@ -914,6 +922,7 @@ img { max-width: 100%; }
     color: var(--violet-bright);
     box-shadow: var(--glow-violet);
 }
+
 
 .report-box {
     margin-top: var(--space-4);

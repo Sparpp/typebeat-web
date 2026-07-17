@@ -5,7 +5,7 @@ namespace Typebeat.Web.Pages;
 
 /// <summary>
 /// Landing page: neon-karaoke hero (slogan pair, live stats line, Download/Sign up CTAs)
-/// plus a "newest maps" strip of up to 8 public sets rendered with the shared card partial.
+/// plus a "newest maps" strip of up to 8 published sets rendered with the shared card partial.
 /// </summary>
 public sealed class IndexModel(Db db) : TypebeatPageModel
 {
@@ -28,14 +28,14 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                    (SELECT count(*)
                     FROM beatmapsets s
                     JOIN users u ON u.id = s.owner_id
-                    WHERE s.status = 'public' AND NOT u.restricted)                      AS maps
+                    WHERE s.status IN ('pending', 'ranked') AND NOT u.restricted)        AS maps
             """);
 
         NewestSets = (await conn.QueryAsync<BeatmapsetCardModel>(
             BeatmapsetCardSql.Select +
             """
 
-            WHERE s.status = 'public' AND (NOT u.restricted OR s.owner_id = @viewerId)
+            WHERE s.status IN ('pending', 'ranked') AND (NOT u.restricted OR s.owner_id = @viewerId)
             ORDER BY s.submitted_at DESC, s.id DESC
             LIMIT 8
             """,

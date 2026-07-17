@@ -148,7 +148,8 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         Grades = new GradeCounts(ss, s, a, b, c, d);
         Accuracy = bestCount > 0 ? accuracySum / bestCount : null;
 
-        // ---- score sections (public sets only: hidden/removed titles must not leak here) ----
+        // ---- score sections (published sets only: hidden/removed titles must not leak here;
+        //      pending sets are browsable, so their plays legitimately show) ----
 
         const string score_row_select =
             """
@@ -176,7 +177,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              ) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE s.status = 'public'
+             WHERE s.status IN ('pending', 'ranked')
              ORDER BY best.total_score DESC, best.id ASC
              LIMIT {score_section_size}
              """,
@@ -195,7 +196,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              ) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE s.status = 'public'
+             WHERE s.status IN ('pending', 'ranked')
              ORDER BY best.ended_at DESC, best.id DESC
              LIMIT {score_section_size}
              """,
@@ -211,7 +212,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              FROM scores sc
              JOIN beatmaps b ON b.id = sc.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE sc.user_id = @id AND s.status = 'public'
+             WHERE sc.user_id = @id AND s.status IN ('pending', 'ranked')
              GROUP BY sc.beatmap_id, s.id, s.title, s.artist, s.cover_key
              ORDER BY count(*) DESC, s.id ASC
              LIMIT {most_played_size}
@@ -220,14 +221,14 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         // ---- card sections ----
 
-        // Owned maps: everyone sees public; the owner also sees their hidden and removed sets
-        // (the card's status pill explains itself).
+        // Owned maps: everyone sees published sets; the owner also sees their hidden and
+        // removed sets (the card's status pill explains itself).
         bool ownProfile = viewerId == id;
 
         var maps = (await conn.QueryAsync<BeatmapsetCardModel>(
             $"""
              {BeatmapsetCardSql.Select}
-             WHERE s.owner_id = @id AND (s.status = 'public' OR @ownProfile)
+             WHERE s.owner_id = @id AND (s.status IN ('pending', 'ranked') OR @ownProfile)
              ORDER BY s.submitted_at DESC, s.id DESC
              LIMIT {card_section_size + 1}
              """,
@@ -244,7 +245,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             $"""
              {BeatmapsetCardSql.Select}
              JOIN favourites fav ON fav.set_id = s.id AND fav.user_id = @id
-             WHERE s.status = 'public' AND (NOT u.restricted OR s.owner_id = @viewerId)
+             WHERE s.status IN ('pending', 'ranked') AND (NOT u.restricted OR s.owner_id = @viewerId)
              ORDER BY fav.created_at DESC, s.id DESC
              LIMIT {card_section_size + 1}
              """,
