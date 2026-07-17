@@ -9,9 +9,12 @@ set -euo pipefail
 PW=$(grep POSTGRES_PASSWORD /opt/typebeat-web/deploy/.env | cut -d= -f2)
 
 # psql's :'u' variable quoting keeps arbitrary usernames (spaces, quotes) safe in the SQL.
+# The query is fed on STDIN, not via -c: psql only performs :'var' interpolation for input
+# read from stdin/-f, never for a -c command string (that path sends the literal ":'u'" to
+# the server and errors). docker exec -i wires our stdin through to psql.
 psql_exec() {
-  docker exec -e PGPASSWORD="$PW" typebeat-web-postgres-1 \
-    psql -U typebeat -d typebeat -v ON_ERROR_STOP=1 -v u="$1" -tAc "$2"
+  printf '%s\n' "$2" | docker exec -e PGPASSWORD="$PW" -i typebeat-web-postgres-1 \
+    psql -U typebeat -d typebeat -v ON_ERROR_STOP=1 -v u="$1" -tA
 }
 
 MATCHED=$(psql_exec "$1" "UPDATE users SET verified_at = now() WHERE username = :'u' AND verified_at IS NULL RETURNING username")
