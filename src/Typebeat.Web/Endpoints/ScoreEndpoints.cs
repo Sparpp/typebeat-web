@@ -280,7 +280,7 @@ public static class ScoreEndpoints
         var response = new MultiplayerScoreWire
         {
             Id = scoreId,
-            User = BuildUser(user.Id, user.Username, user.CountryCode, avatarKey: null),
+            User = BuildUser(ctx, user.Id, user.Username, user.CountryCode, avatarKey: null),
             Rank = rank,
             TotalScore = storedTotal,
             Accuracy = storedAccuracy,
@@ -346,7 +346,7 @@ public static class ScoreEndpoints
             """,
             new { beatmapId, limit })).ToList();
 
-        var scores = rows.Select(r => ToSoloScoreWire(r, beatmapId)).ToList();
+        var scores = rows.Select(r => ToSoloScoreWire(ctx, r, beatmapId)).ToList();
 
         // Total distinct participants (osu-web's score_count reflects the full board, not the page).
         int scoreCount = await conn.ExecuteScalarAsync<int>(
@@ -380,7 +380,7 @@ public static class ScoreEndpoints
         if (callerBest is not null)
         {
             int position = await PositionOf(conn, null, beatmapId, callerBest.TotalScore, callerBest.ScoreId);
-            userScore = new ScoreWithPositionWire { Position = position, Score = ToSoloScoreWire(callerBest, beatmapId) };
+            userScore = new ScoreWithPositionWire { Position = position, Score = ToSoloScoreWire(ctx, callerBest, beatmapId) };
         }
 
         return WireJson.Ok(new ScoresCollectionWire
@@ -430,7 +430,7 @@ public static class ScoreEndpoints
             new { beatmapId, totalScore, scoreId }, tx);
     }
 
-    private static SoloScoreWire ToSoloScoreWire(LeaderboardRow r, long beatmapId) => new()
+    private static SoloScoreWire ToSoloScoreWire(HttpContext ctx, LeaderboardRow r, long beatmapId) => new()
     {
         Id = r.ScoreId,
         BeatmapId = beatmapId,
@@ -446,16 +446,23 @@ public static class ScoreEndpoints
         Statistics = ParseCounts(r.StatisticsJson),
         MaximumStatistics = ParseCounts(r.MaximumStatisticsJson),
         Ranked = true,
-        User = BuildUser(r.UserId, r.Username, r.CountryCode, r.AvatarKey),
+        User = BuildUser(ctx, r.UserId, r.Username, r.CountryCode, r.AvatarKey),
     };
 
-    private static ScoreUserWire BuildUser(long id, string username, string countryCode, string? avatarKey) => new()
+    /// <summary>
+    /// The user object riding on leaderboard rows and the submit response. avatar_url must
+    /// never be null: the client's APIUser falls back to a ppy CDN URL for a null avatar, so
+    /// we always emit an absolute URL on THIS host — the stored avatar_key when the user has
+    /// one, the same self-hosted default the me-payload uses (UserWire.AvatarUrl) otherwise.
+    /// </summary>
+    private static ScoreUserWire BuildUser(HttpContext ctx, long id, string username, string countryCode, string? avatarKey) => new()
     {
         Id = id,
         Username = username,
         CountryCode = countryCode,
-        // Reconciled with the me-stubs UserWire at integration; null when the user has no avatar.
-        AvatarUrl = avatarKey is null ? null : $"/avatars/{avatarKey}",
+        AvatarUrl = avatarKey is null
+            ? UserWire.AvatarUrl(ctx.Request.Scheme, ctx.Request.Host.Value ?? string.Empty)
+            : $"{ctx.Request.Scheme}://{ctx.Request.Host}/{avatarKey}",
     };
 
     private static Dictionary<string, int> ParseCounts(string? json)
