@@ -26,10 +26,10 @@
 <body>
 <header class="site-nav">
     <nav class="container nav-inner">
-        <a class="wordmark" href="/">type!beat</a>
+        <a class="wordmark" href="/"><span class="caret" aria-hidden="true"></span>type<span class="bang">!</span>beat</a>
         <div class="nav-links">
-            <a href="/beatmapsets">Beatmaps</a>
-            <a href="/download">Download</a>
+            <a href="/beatmapsets">beatmaps</a>
+            <a href="/download">download</a>
         </div>
         <div class="nav-auth">
             @if (sessionUser is not null)
@@ -37,12 +37,13 @@
                 <a class="user-chip" href="/users/@sessionUser.Id">@sessionUser.Username</a>
                 <form method="post" action="/logout">
                     @Html.AntiForgeryToken()
-                    <button type="submit" class="btn btn-ghost btn-small">Sign out</button>
+                    <button type="submit" class="btn btn-ghost btn-small">sign out</button>
                 </form>
             }
             else
             {
-                <a class="btn btn-ghost btn-small" href="/login">Sign in</a>
+                <a class="btn btn-ghost btn-small" href="/login">sign in</a>
+                <a class="btn btn-primary btn-small" href="/register">sign up</a>
             }
         </div>
     </nav>

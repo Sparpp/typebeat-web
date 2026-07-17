@@ -23,7 +23,7 @@ public class LandingPageTest
 
             // Live stats line (numbers vary with concurrent tests; labels are the contract).
             Assert.That(html, Does.Contain("registered players"));
-            Assert.That(html, Does.Contain("scores set today"));
+            Assert.That(html, Does.Contain("scores today"));
             Assert.That(html, Does.Contain("maps available"));
 
             // CTA pair for the signed-out state.

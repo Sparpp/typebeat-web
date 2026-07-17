@@ -1,26 +1,23 @@
 /* ==========================================================================
-   type!beat design system — "neon karaoke"
-   Deep indigo/near-black base, violet-dominant accent with a hot-magenta
-   gradient partner, rounded sans type, subtle glow. Dark theme only.
-   Tokens + component classes documented in docs/style-guide.md.
+   type!beat design system — "Caret"
+   Monkeytype-lean minimal: charcoal base, a single lime accent, JetBrains Mono
+   throughout, a blinking-caret motif. Dark theme only. Design imported from the
+   claude.ai/design "1b Caret" direction (docs/design-1b-caret.md).
+
+   NOTE: the accent custom-property names are still --violet* / --magenta from the
+   previous "neon karaoke" theme. They now hold LIME values, so every existing
+   var(--violet-bright) etc. across this file re-skins in place without renaming
+   dozens of references. Read "violet" as "the accent."
    ========================================================================== */
 
 /* ---- Fonts (self-hosted, OFL — see wwwroot/fonts/OFL-NOTICE.txt) ---- */
 
 @font-face {
-    font-family: 'Baloo 2';
+    font-family: 'JetBrains Mono';
     font-style: normal;
     font-weight: 400 800;
     font-display: swap;
-    src: url('/fonts/baloo2-latin-wght.woff2') format('woff2');
-}
-
-@font-face {
-    font-family: 'Nunito';
-    font-style: normal;
-    font-weight: 300 900;
-    font-display: swap;
-    src: url('/fonts/nunito-latin-wght.woff2') format('woff2');
+    src: url('/fonts/jetbrainsmono-latin-wght.woff2') format('woff2');
 }
 
 /* ---- Tokens ---- */
@@ -28,40 +25,45 @@
 :root {
     color-scheme: dark;
 
-    /* base surfaces (deep indigo, never pure black) */
-    --bg: #0c0a16;
-    --bg-raised: #131024;
-    --surface: #181430;
-    --surface-2: #201a40;
-    --line: #2b2450;
-    --line-bright: #3d3470;
+    /* base surfaces (charcoal, never pure black) */
+    --bg: #141519;
+    --bg-raised: #17181e;
+    --surface: #191a20;
+    --surface-2: #1f2027;
+    --line: rgba(233, 234, 228, 0.10);
+    --line-bright: rgba(233, 234, 228, 0.22);
 
     /* text */
-    --text: #ece9ff;
-    --text-muted: #9b93c4;
-    --text-faint: #6c6597;
+    --text: #e9eae4;
+    --text-muted: rgba(233, 234, 228, 0.55);
+    --text-faint: rgba(233, 234, 228, 0.35);
 
-    /* accents — violet is primary; magenta only ever plays second */
-    --violet: #8d5bf7;
-    --violet-deep: #7a3ff2;
-    --violet-bright: #a678ff;
-    --magenta: #e84baf;
+    /* accent — a single lime. The names below are legacy (see header note); all
+       hold shades of the one lime so var() references stay valid and on-brand. */
+    --violet: #c9f24d;
+    --violet-deep: #b0dd39;
+    --violet-bright: #d3f66d;
+    --magenta: #a9d838;
 
-    /* semantic */
-    --good: #4ade80;
-    --warn: #fbbf24;
-    --bad: #f87171;
+    /* readable text colour to sit ON the lime accent (buttons, avatars, badges) */
+    --on-accent: #141519;
 
-    /* violet-dominant gradient: magenta arrives only at the tail */
-    --grad-primary: linear-gradient(115deg, var(--violet-deep) 0%, var(--violet) 55%, var(--magenta) 100%);
+    /* semantic — lime is the positive accent; warm amber + coral for warn/bad */
+    --good: #c9f24d;
+    --warn: #f2c14d;
+    --bad: #ff6a5a;
 
-    /* subtle neon glow */
-    --glow-violet: 0 0 24px rgba(141, 91, 247, 0.30);
-    --glow-magenta: 0 0 24px rgba(232, 75, 175, 0.22);
+    /* "gradient" token kept for fills that reference it — Caret is flat, so this
+       is a near-flat lime (no violet→magenta sweep anymore). */
+    --grad-primary: linear-gradient(90deg, var(--violet-deep), var(--violet));
 
-    /* type */
-    --font-display: 'Baloo 2', 'Nunito', system-ui, -apple-system, 'Segoe UI', sans-serif;
-    --font-body: 'Nunito', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    /* restrained lime glow — hover feedback only, not neon */
+    --glow-violet: 0 0 16px rgba(201, 242, 77, 0.18);
+    --glow-magenta: 0 0 16px rgba(201, 242, 77, 0.14);
+
+    /* type — JetBrains Mono is the whole identity: display, body, numerals */
+    --font-display: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+    --font-body: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
     --text-xs: 0.75rem;
     --text-sm: 0.875rem;
     --text-base: 1rem;
@@ -71,10 +73,10 @@
     --text-3xl: 2.25rem;
     --text-4xl: clamp(2.5rem, 6vw, 3.5rem);
 
-    /* radii */
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 16px;
+    /* radii — sharper than neon (Caret uses ~8px, not pills) */
+    --radius-sm: 5px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
     --radius-full: 999px;
 
     /* spacing */
@@ -100,15 +102,33 @@ body {
     display: flex;
     flex-direction: column;
     background-color: var(--bg);
-    /* faint violet aurora at the top of every page — the "neon" ambience */
-    background-image: radial-gradient(ellipse 80% 40% at 50% -10%, rgba(122, 63, 242, 0.18), transparent 70%);
-    background-repeat: no-repeat;
     color: var(--text);
     font-family: var(--font-body);
     font-size: var(--text-base);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
 }
+
+/* ---- Blinking caret (the identity motif) ---- */
+
+@keyframes tbCaret {
+    0%, 45% { opacity: 1; }
+    50%, 95% { opacity: 0; }
+    100% { opacity: 1; }
+}
+
+/* a lime block that blinks; inline before wordmarks and mid-headline */
+.caret {
+    display: inline-block;
+    width: 0.14em;
+    height: 1em;
+    vertical-align: -0.12em;
+    margin: 0 0.12em 0 0;
+    background: var(--violet);
+    animation: tbCaret 1.1s step-end infinite;
+}
+
+.caret--tall { height: 1.05em; vertical-align: -0.16em; }
 
 h1, h2, h3, h4 {
     font-family: var(--font-display);
@@ -156,7 +176,7 @@ img { max-width: 100%; }
 /* ---- Nav bar ---- */
 
 .site-nav {
-    background: rgba(19, 16, 36, 0.85);
+    background: rgba(20, 21, 25, 0.88);
     backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line);
     position: sticky;
@@ -174,19 +194,27 @@ img { max-width: 100%; }
 }
 
 .wordmark {
+    display: inline-flex;
+    align-items: center;
     font-family: var(--font-display);
-    font-weight: 800;
-    font-size: var(--text-xl);
-    background: var(--grad-primary);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    font-weight: 700;
+    font-size: var(--text-lg);
+    letter-spacing: -0.02em;
+    color: var(--text);
     text-decoration: none;
 }
 
-.wordmark:hover {
-    text-decoration: none;
-    filter: drop-shadow(0 0 8px rgba(141, 91, 247, 0.55));
+/* the "!" in the wordmark carries the accent */
+.wordmark .bang { color: var(--violet); }
+
+.wordmark:hover { text-decoration: none; color: var(--text); }
+
+/* caret block that leads the wordmark (slightly chunkier than the inline caret) */
+.wordmark .caret {
+    width: 0.62ch;
+    height: 1.15em;
+    margin-right: 0.5ch;
+    vertical-align: middle;
 }
 
 .nav-links {
@@ -266,7 +294,7 @@ img { max-width: 100%; }
     gap: var(--space-2);
     padding: var(--space-2) var(--space-5);
     border: none;
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-md);
     font-family: var(--font-display);
     font-size: var(--text-base);
     font-weight: 700;
@@ -278,12 +306,12 @@ img { max-width: 100%; }
 .btn:hover { text-decoration: none; }
 
 .btn-primary {
-    background: var(--grad-primary);
-    color: #fff;
+    background: var(--violet);
+    color: var(--on-accent);
 }
 
 .btn-primary:hover {
-    filter: brightness(1.1);
+    filter: brightness(1.06);
     box-shadow: var(--glow-violet);
 }
 
@@ -369,25 +397,25 @@ img { max-width: 100%; }
     color: var(--good);
 }
 
-/* Published-but-awaiting-review: violet-muted so it reads "in the pipeline", clearly apart
-   from ranked's green and hidden's amber (both can sit beside it on an owner's profile). */
+/* Published-but-awaiting-review: amber so it reads "in the pipeline", clearly apart from
+   ranked's lime and removed's coral (all can sit beside each other on an owner's profile). */
 .pill--pending {
-    background: rgba(166, 120, 255, 0.16);
-    color: var(--violet-bright);
-}
-
-.pill--hidden {
-    background: rgba(251, 191, 36, 0.14);
+    background: rgba(242, 193, 77, 0.16);
     color: var(--warn);
 }
 
+.pill--hidden {
+    background: rgba(233, 234, 228, 0.10);
+    color: var(--text-muted);
+}
+
 .pill--removed {
-    background: rgba(248, 113, 113, 0.14);
+    background: rgba(255, 106, 90, 0.16);
     color: var(--bad);
 }
 
 .pill--accent {
-    background: rgba(141, 91, 247, 0.16);
+    background: rgba(201, 242, 77, 0.16);
     color: var(--violet-bright);
 }
 
@@ -495,7 +523,7 @@ img { max-width: 100%; }
     border-top: 1px solid var(--line);
 }
 
-.table tbody tr:hover { background: rgba(141, 91, 247, 0.06); }
+.table tbody tr:hover { background: rgba(201, 242, 77, 0.06); }
 
 /* ---- Hero (landing) ---- */
 
@@ -504,18 +532,31 @@ img { max-width: 100%; }
     padding-block: var(--space-8) var(--space-7);
 }
 
+/* lime "// ..." comment kicker above the headline */
+.hero-kicker {
+    color: var(--violet);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    margin-bottom: var(--space-5);
+}
+
 .hero-title {
     font-size: var(--text-4xl);
-    font-weight: 800;
-    margin-bottom: var(--space-3);
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    margin-bottom: var(--space-5);
 }
 
 .hero-title .wordmark { font-size: inherit; }
 
+/* the faded tail of the headline word ("b|eat") */
+.hero-title .tail { color: var(--text-faint); }
+
 .hero-sub {
     color: var(--text-muted);
     font-size: var(--text-lg);
-    max-width: 40ch;
+    max-width: 46ch;
     margin: 0 auto var(--space-6);
 }
 
@@ -523,12 +564,12 @@ img { max-width: 100%; }
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: var(--space-4);
+    gap: var(--space-3);
 }
 
 .hero-note {
-    margin-top: var(--space-5);
-    color: var(--text-muted);
+    margin-top: var(--space-4);
+    color: var(--text-faint);
     font-size: var(--text-sm);
 }
 
@@ -582,17 +623,25 @@ img { max-width: 100%; }
 
 /* ---- Landing ---- */
 
+/* Caret stat bar: centered, hairline top+bottom, lime numbers + muted labels */
 .hero-stats {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-4) var(--space-6);
+    margin: var(--space-7) auto 0;
+    padding: var(--space-3) 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
     color: var(--text-muted);
     font-size: var(--text-sm);
     letter-spacing: 0.02em;
-    margin-bottom: var(--space-3);
 }
 
 .hero-stats strong {
     font-family: var(--font-display);
-    font-weight: 800;
-    color: var(--violet-bright);
+    font-weight: 700;
+    color: var(--violet);
 }
 
 .landing-newest { margin-top: var(--space-7); }
@@ -649,17 +698,20 @@ img { max-width: 100%; }
     object-fit: cover;
 }
 
-/* no cover -> neutral violet-family gradient, never a broken img */
+/* no cover -> flat charcoal panel with a faint lime hairline, never a broken img */
 .cover-fallback {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #221a45 0%, #372a66 55%, #4c2f6e 100%);
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px rgba(201, 242, 77, 0.08);
 }
 
 .cover-fallback::after {
-    content: '♪';
-    color: rgba(236, 233, 255, 0.28);
+    content: '_';
+    color: rgba(201, 242, 77, 0.45);
+    font-family: var(--font-display);
+    font-weight: 700;
     font-size: 28px;
 }
 
@@ -765,11 +817,11 @@ img { max-width: 100%; }
     border: none;
     border-radius: 50%;
     cursor: pointer;
-    background: conic-gradient(var(--violet-bright) var(--progress, 0%), rgba(12, 10, 22, 0.55) 0);
+    background: conic-gradient(var(--violet) var(--progress, 0%), rgba(233, 234, 228, 0.14) 0);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #fff;
+    color: var(--text);
     transition: box-shadow 120ms ease;
 }
 
@@ -780,7 +832,7 @@ img { max-width: 100%; }
     position: absolute;
     inset: 3px;
     border-radius: 50%;
-    background: rgba(12, 10, 22, 0.72);
+    background: var(--surface);
 }
 
 .preview-btn::after {
@@ -847,7 +899,7 @@ img { max-width: 100%; }
 }
 
 .filter-pill.is-active {
-    background: rgba(141, 91, 247, 0.16);
+    background: rgba(201, 242, 77, 0.16);
     color: var(--violet-bright);
 }
 
@@ -877,7 +929,8 @@ img { max-width: 100%; }
 }
 
 .set-header--nocover {
-    background: linear-gradient(135deg, #221a45 0%, #372a66 55%, #4c2f6e 100%);
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px rgba(201, 242, 77, 0.06);
 }
 
 .set-header__scrim {
@@ -885,7 +938,7 @@ img { max-width: 100%; }
     grid-template-columns: 1fr 280px;
     gap: var(--space-5);
     padding: var(--space-6);
-    background: linear-gradient(180deg, rgba(12, 10, 22, 0.60) 0%, rgba(12, 10, 22, 0.88) 100%);
+    background: linear-gradient(180deg, rgba(20, 21, 25, 0.62) 0%, rgba(20, 21, 25, 0.90) 100%);
 }
 
 @media (max-width: 760px) {
@@ -976,7 +1029,7 @@ img { max-width: 100%; }
 
 .set-stats {
     align-self: start;
-    background: rgba(19, 16, 36, 0.85);
+    background: rgba(25, 26, 32, 0.85);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
     padding: var(--space-4) var(--space-5);
@@ -1061,8 +1114,8 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     width: 56px;
     height: 56px;
     border-radius: 50%;
-    background: var(--grad-primary);
-    color: #fff;
+    background: var(--violet);
+    color: var(--on-accent);
     font-family: var(--font-display);
     font-size: var(--text-xl);
     font-weight: 800;
@@ -1107,7 +1160,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 }
 
 .grade--ss { color: #ffd75e; }
-.grade--s  { color: #dcd3ff; }
+.grade--s  { color: #e9eae4; }
 .grade--a  { color: var(--good); }
 .grade--b  { color: #5eb3ff; }
 .grade--c  { color: var(--warn); }
@@ -1136,9 +1189,9 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     width: 40px;
     height: 40px;
     margin-bottom: var(--space-3);
-    border-radius: 50%;
-    background: var(--grad-primary);
-    color: #fff;
+    border-radius: var(--radius-md);
+    background: var(--violet);
+    color: var(--on-accent);
     font-family: var(--font-display);
     font-size: var(--text-lg);
     font-weight: 800;
@@ -1166,11 +1219,11 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     .profile-cover { height: 90px; }
 }
 
-/* preset cover gradients keyed by user id — all violet-led, magenta only as a gradient tail */
-.profile-cover--0 { background: linear-gradient(115deg, #241a4d, var(--violet-deep) 70%, var(--magenta) 130%); }
-.profile-cover--1 { background: linear-gradient(115deg, #131024, #3d3470 55%, var(--violet) 115%); }
-.profile-cover--2 { background: linear-gradient(115deg, #101a3c, #4633a8 60%, var(--violet-bright) 125%); }
-.profile-cover--3 { background: linear-gradient(115deg, #1b1440, #5b2ea6 65%, var(--violet-deep) 110%); }
+/* preset cover bands keyed by user id — charcoal with a restrained lime edge, never neon */
+.profile-cover--0 { background: linear-gradient(115deg, #17181e, #1f2027 60%, rgba(201, 242, 77, 0.20) 135%); }
+.profile-cover--1 { background: linear-gradient(115deg, #191a20, #23242b 55%, rgba(201, 242, 77, 0.12) 120%); }
+.profile-cover--2 { background: linear-gradient(115deg, #141519, #1f2027 60%, rgba(201, 242, 77, 0.28) 130%); }
+.profile-cover--3 { background: linear-gradient(115deg, #17181e, #26272e 65%, rgba(176, 221, 57, 0.16) 115%); }
 
 .profile-header__bar {
     display: flex;
@@ -1194,8 +1247,8 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: var(--grad-primary);
-    color: #fff;
+    background: var(--violet);
+    color: var(--on-accent);
     font-family: var(--font-display);
     font-size: var(--text-3xl);
     font-weight: 800;

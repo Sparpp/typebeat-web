@@ -7,23 +7,28 @@
 }
 
 <section class="hero">
-    <p class="hero-stats">
-        <strong>@Model.Players.ToString("N0", CultureInfo.InvariantCulture)</strong> registered players &middot;
-        <strong>@Model.ScoresToday.ToString("N0", CultureInfo.InvariantCulture)</strong> scores set today &middot;
-        <strong>@Model.Maps.ToString("N0", CultureInfo.InvariantCulture)</strong> maps available
-    </p>
-    <h1 class="hero-title">type to the <span class="grad-text">beat</span>.</h1>
+    <p class="hero-kicker">// the rhythm game for people who type</p>
+    <h1 class="hero-title">type to the b<span class="caret caret--tall" aria-hidden="true"></span><span class="tail">eat</span></h1>
     <p class="hero-sub">
-        The lyrics are the notes. They drop with the music &mdash; your keyboard does the rest.
+        The lyrics are the notes. They drop with the music &mdash; type every word on the grid, hold the combo, or watch it die in public.
     </p>
     <div class="hero-actions">
-        <a class="btn btn-primary btn-big" href="/download">Download for Windows</a>
+        <a class="btn btn-primary btn-big" href="/download">download &mdash; windows</a>
         @if (Model.CurrentUser is null)
         {
-            <a class="btn btn-ghost btn-big" href="/register">Sign up</a>
+            <a class="btn btn-ghost btn-big" href="/register">sign up</a>
+        }
+        else
+        {
+            <a class="btn btn-ghost btn-big" href="/beatmapsets">browse maps</a>
         }
     </div>
-    <p class="hero-note">Free to play &middot; Windows 10+ &middot; maps made by players, for players</p>
+    <p class="hero-note">free to play &middot; windows 10+ &middot; maps made by players, for players</p>
+    <p class="hero-stats">
+        <span><strong>@Model.Players.ToString("N0", CultureInfo.InvariantCulture)</strong> registered players</span>
+        <span><strong>@Model.ScoresToday.ToString("N0", CultureInfo.InvariantCulture)</strong> scores today</span>
+        <span><strong>@Model.Maps.ToString("N0", CultureInfo.InvariantCulture)</strong> maps available</span>
+    </p>
 </section>
 
 <section class="landing-newest">

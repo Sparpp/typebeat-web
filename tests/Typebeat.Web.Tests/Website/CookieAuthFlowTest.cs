@@ -33,8 +33,9 @@ public class CookieAuthFlowTest
         {
             Assert.That(html, Does.Contain("user-chip"));
             Assert.That(html, Does.Contain(WebsiteFixture.SeededUsername));
+            // logged-in nav shows the sign-out control (lowercase per the Caret theme)
             Assert.That(html, Does.Contain($"href=\"/users/{WebsiteFixture.SeededUserId}\""));
-            Assert.That(html, Does.Contain("Sign out"));
+            Assert.That(html, Does.Contain("sign out"));
         });
 
         // The cookie carries a raw access token; the API bearer path must agree on who it is.
