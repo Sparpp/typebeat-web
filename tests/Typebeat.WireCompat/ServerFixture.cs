@@ -156,7 +156,7 @@ public class ServerFixture
         SeededBeatmapSetId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmapsets (owner_id, title, artist, status)
-            VALUES (@ownerId, 'Wire Compat', 'Harness', 'public')
+            VALUES (@ownerId, 'Wire Compat', 'Harness', 'ranked')
             RETURNING id
             """,
             new { ownerId = OwnerUserId });

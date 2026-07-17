@@ -1,0 +1,366 @@
+using System.Net;
+using System.Net.Http.Headers;
+using Dapper;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using Npgsql;
+using Typebeat.Web.Auth;
+using Typebeat.Web.Data;
+
+namespace Typebeat.Web.Tests.Website;
+
+/// <summary>
+/// The ranked-by-approval loop end to end, against a dedicated pending set (the shared
+/// <see cref="PublicSiteSeed.PendingId"/> must STAY pending for the listing/set-page tests):
+/// non-reviewers 404 on the Rank/Unrank POSTs; a score submitted while the set is pending
+/// stores unranked and leaves the game-facing leaderboard empty; a reviewer's Rank flip makes
+/// a NEW submission rank and appear (with a self-hosted absolute avatar_url); Unrank returns
+/// the set to pending. Plus the website leaderboard section's ranked-only gate.
+/// </summary>
+[TestFixture]
+[NonParallelizable]
+public class RankedApprovalTest
+{
+    private const string reviewer_name = "map reviewer";
+    private const string reviewer_password = "reviewpass-123456";
+
+    private static long setId;
+    private static long beatmapId;
+    private static string checksum = null!;
+
+    private static long typistId;
+    private static string typistBearer = null!;
+
+    private static NpgsqlDataSource dataSource = null!;
+
+    [OneTimeSetUp]
+    public async Task OneTimeSetUp()
+    {
+        await PublicSiteSeed.EnsureSeededAsync();
+
+        dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        string hash = new PasswordService().Hash(reviewer_password);
+
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO users (username, email, password_hash, country_code, map_reviewer)
+            VALUES (@name, 'map.reviewer@example.com', @hash, 'US', true)
+            """,
+            new { name = reviewer_name, hash });
+
+        typistId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO users (username, email, password_hash, country_code)
+            VALUES ('approval typist', 'approval.typist@example.com', 'x', 'US')
+            RETURNING id
+            """);
+
+        // A real bearer for the game-facing score endpoints (same monolith, same DB).
+        typistBearer = (await new TokenService(new Db(dataSource)).IssueAsync(typistId)).AccessToken;
+
+        // Past submitted_at keeps the seed's newest-sort assertions intact.
+        setId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist, status, submitted_at, updated_at)
+            VALUES (@ownerId, 'Approval Candidate', 'The Reviewed', 'pending',
+                    now() - interval '5 days', now() - interval '5 days')
+            RETURNING id
+            """,
+            new { ownerId = PublicSiteSeed.MapperId });
+
+        // Zero drain length: the 90%-of-drain minimum-play-time gate clears instantly.
+        checksum = Guid.NewGuid().ToString("N");
+
+        beatmapId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating, filename)
+            VALUES (@setId, 'type!beat', @checksum, 60, 0, 2.0, 'map.osu')
+            RETURNING id
+            """,
+            new { setId, checksum });
+    }
+
+    [OneTimeTearDown]
+    public async Task OneTimeTearDown()
+    {
+        if (dataSource != null)
+            await dataSource.DisposeAsync();
+    }
+
+    [Test]
+    [Order(1)]
+    public async Task RankPost_NonReviewer_Is404_AndChangesNothing()
+    {
+        // Signed in, but neither admin nor map_reviewer.
+        using var client = await SignedInBrowserAsync(WebsiteFixture.SeededUsername, WebsiteFixture.SeededPassword);
+        using var response = await PostHandlerAsync(client, "Rank");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // Anonymous fares no better.
+        var (anonymous, _) = WebsiteFixture.CreateBrowser();
+        using var ___ = anonymous;
+        using var anonymousResponse = await PostHandlerAsync(anonymous, "Rank");
+
+        string? status = await StatusAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(anonymousResponse.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(status, Is.EqualTo("pending"));
+        });
+    }
+
+    [Test]
+    [Order(2)]
+    public async Task ScoreOnPendingSet_StoresUnranked_AndRanksNoLeaderboard()
+    {
+        var submitted = await SubmitScoreAsync(totalScore: 1_000_000);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((bool)submitted["ranked"]!, Is.False, "a pending set's play must store unranked");
+            Assert.That(submitted["position"]!.Type, Is.EqualTo(JTokenType.Null));
+        });
+
+        await using (var conn = await dataSource.OpenConnectionAsync())
+        {
+            bool ranked = await conn.ExecuteScalarAsync<bool>(
+                "SELECT ranked FROM scores WHERE id = @id", new { id = (long)submitted["id"]! });
+            Assert.That(ranked, Is.False);
+        }
+
+        var leaderboard = await GetLeaderboardAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((int)leaderboard["score_count"]!, Is.EqualTo(0), "pending sets have no leaderboard");
+            Assert.That((JArray)leaderboard["scores"]!, Is.Empty);
+            Assert.That(leaderboard["user_score"]!.Type, Is.EqualTo(JTokenType.Null));
+        });
+    }
+
+    [Test]
+    [Order(3)]
+    public async Task ReviewerRank_FlipsToRanked_AndNewSubmissionAppears()
+    {
+        using var client = await SignedInBrowserAsync(reviewer_name, reviewer_password);
+
+        // The reviewer sees the Rank control on the pending page (players don't).
+        using (var page = await client.GetAsync($"/beatmapsets/{setId}"))
+        {
+            string html = await page.Content.ReadAsStringAsync();
+            Assert.Multiple(() =>
+            {
+                Assert.That(html, Does.Contain("map review"));
+                Assert.That(html, Does.Contain(">Rank this map</button>"));
+            });
+        }
+
+        using (var response = await PostHandlerAsync(client, "Rank"))
+        {
+            string html = await response.Content.ReadAsStringAsync();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(response.RequestMessage!.RequestUri!.AbsolutePath, Is.EqualTo($"/beatmapsets/{setId}"),
+                    "the POST redirects back to the set page");
+                Assert.That(html, Does.Contain(">Ranked</span>"));
+                Assert.That(html, Does.Contain(">Unrank</button>"), "a ranked set offers Unrank instead");
+            });
+        }
+
+        await using (var conn = await dataSource.OpenConnectionAsync())
+        {
+            var (status, ageSeconds) = await conn.QuerySingleAsync<(string, double)>(
+                "SELECT status, extract(epoch FROM (now() - updated_at)) FROM beatmapsets WHERE id = @setId",
+                new { setId });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(status, Is.EqualTo("ranked"));
+                Assert.That(ageSeconds, Is.LessThan(60), "the rank flip must touch updated_at");
+            });
+        }
+
+        // A NEW submission on the now-ranked set ranks and tops the (one-entry) leaderboard.
+        var submitted = await SubmitScoreAsync(totalScore: 999_990);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((bool)submitted["ranked"]!, Is.True);
+            Assert.That((int)submitted["position"]!, Is.EqualTo(1));
+        });
+
+        var leaderboard = await GetLeaderboardAsync();
+        var scores = (JArray)leaderboard["scores"]!;
+
+        Assert.Multiple(() =>
+        {
+            // Exactly the post-rank score: the pending-era submission stays buried.
+            Assert.That((int)leaderboard["score_count"]!, Is.EqualTo(1));
+            Assert.That(scores, Has.Count.EqualTo(1));
+            Assert.That((long)scores[0]["total_score"]!, Is.EqualTo(999_990));
+            Assert.That((long)scores[0]["user"]!["id"]!, Is.EqualTo(typistId));
+
+            // avatar_url is never null (the client would fall back to a ppy CDN): the
+            // self-hosted default, absolute on this host.
+            Assert.That((string)scores[0]["user"]!["avatar_url"]!,
+                Is.EqualTo("https://localhost/img/default-avatar.png"));
+        });
+    }
+
+    [Test]
+    [Order(4)]
+    public async Task ReviewerUnrank_ReturnsToPending_AndLocksTheLeaderboardAgain()
+    {
+        using var client = await SignedInBrowserAsync(reviewer_name, reviewer_password);
+        using var response = await PostHandlerAsync(client, "Unrank");
+
+        string html = await response.Content.ReadAsStringAsync();
+        string? status = await StatusAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(status, Is.EqualTo("pending"));
+            Assert.That(html, Does.Contain("Leaderboard unlocks when this map is ranked."));
+            Assert.That(html, Does.Contain(">Rank this map</button>"));
+
+            // The ranked-era score keeps its flag, but the set page must not render a podium
+            // for a pending set — the note replaces the whole leaderboard body.
+            Assert.That(html, Does.Not.Contain("podium"));
+        });
+    }
+
+    [Test]
+    public async Task SetPage_LeaderboardSection_RankedOnly()
+    {
+        // The seeded pending set: note instead of a board.
+        using var pendingResponse = await WebsiteFixture.Client.GetAsync($"/beatmapsets/{PublicSiteSeed.PendingId}");
+        string pending = await pendingResponse.Content.ReadAsStringAsync();
+
+        // A ranked set with scores: the board, no note.
+        using var rankedResponse = await WebsiteFixture.Client.GetAsync($"/beatmapsets/{PublicSiteSeed.LeaderboardSetId}");
+        string ranked = await rankedResponse.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pendingResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), "pending sets are publicly viewable");
+            Assert.That(pending, Does.Contain(">Pending</span>"));
+            Assert.That(pending, Does.Contain("Leaderboard unlocks when this map is ranked."));
+            Assert.That(pending, Does.Not.Contain("podium"));
+
+            Assert.That(ranked, Does.Contain("podium"));
+            Assert.That(ranked, Does.Not.Contain("Leaderboard unlocks when this map is ranked."));
+        });
+    }
+
+    // ---- helpers ----
+
+    private static int clientIpCounter;
+
+    private static async Task<HttpClient> SignedInBrowserAsync(string username, string password)
+    {
+        var (client, _) = WebsiteFixture.CreateBrowser();
+
+        // Each browser declares its own client IP (GetClientIp reads CF-Connecting-IP first).
+        // The login limiter is 10 per IP per 5 minutes and the pre-existing suite already
+        // spends that whole budget on the shared "unknown" bucket — these logins must not
+        // push a later fixture's login over the line.
+        client.DefaultRequestHeaders.Add("CF-Connecting-IP", $"10.99.0.{Interlocked.Increment(ref clientIpCounter)}");
+
+        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/login");
+
+        using var login = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = token,
+            ["Login"] = username,
+            ["Password"] = password,
+        }));
+
+        Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"login as {username}");
+        return client;
+    }
+
+    /// <summary>POSTs the Rank/Unrank page handler with a fresh antiforgery token.</summary>
+    private static async Task<HttpResponseMessage> PostHandlerAsync(HttpClient client, string handler)
+    {
+        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, $"/beatmapsets/{setId}");
+
+        return await client.PostAsync($"/beatmapsets/{setId}?handler={handler}",
+            new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["__RequestVerificationToken"] = token,
+            }));
+    }
+
+    private static async Task<string?> StatusAsync()
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<string>(
+            "SELECT status FROM beatmapsets WHERE id = @setId", new { setId });
+    }
+
+    /// <summary>
+    /// Runs the client's two-phase submission (token POST, then the SoloScoreInfo PUT) for a
+    /// clean full-accuracy play and returns the MultiplayerScore response body. 1,000,000 is
+    /// the exact no-mod ceiling for 5/5 greats, so anything at or below it passes the bounds.
+    /// </summary>
+    private static async Task<JObject> SubmitScoreAsync(long totalScore)
+    {
+        long tokenId;
+
+        using (var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v2/beatmaps/{beatmapId}/solo/scores"))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
+            request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["version_hash"] = "approval-test-build",
+                ["beatmap_hash"] = checksum,
+                ["ruleset_id"] = "0",
+            });
+
+            using var response = await WebsiteFixture.Client.SendAsync(request);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "score token");
+
+            tokenId = (long)JObject.Parse(await response.Content.ReadAsStringAsync())["id"]!;
+        }
+
+        using (var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v2/beatmaps/{beatmapId}/solo/scores/{tokenId}"))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
+            request.Content = new StringContent(JsonConvert.SerializeObject(new
+            {
+                passed = true,
+                total_score = totalScore,
+                accuracy = 1.0,
+                max_combo = 5,
+                ruleset_id = 0,
+                rank = "X",
+                statistics = new Dictionary<string, int> { ["great"] = 5 },
+                maximum_statistics = new Dictionary<string, int> { ["great"] = 5 },
+            }), System.Text.Encoding.UTF8, "application/json");
+
+            using var response = await WebsiteFixture.Client.SendAsync(request);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "score submit");
+
+            return JObject.Parse(await response.Content.ReadAsStringAsync());
+        }
+    }
+
+    private static async Task<JObject> GetLeaderboardAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v2/beatmaps/{beatmapId}/scores");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
+
+        using var response = await WebsiteFixture.Client.SendAsync(request);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "leaderboard");
+
+        return JObject.Parse(await response.Content.ReadAsStringAsync());
+    }
+}

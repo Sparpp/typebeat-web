@@ -131,12 +131,51 @@ public class Migration004BackfillTest
     }
 
     [Test]
-    public async Task Migration004_WasAppliedByMigrateAsync()
+    public async Task Migrations_AppliedInOrder_001Through005()
     {
         await using var conn = await dataSource.OpenConnectionAsync();
 
         var applied = (await conn.QueryAsync<string>("SELECT name FROM schema_migrations ORDER BY name")).ToList();
-        Assert.That(applied, Does.Contain("004_prem3_filename_backfill.sql"));
+        Assert.That(applied, Is.EqualTo(new[]
+        {
+            "001_init.sql",
+            "002_website_uploads.sql",
+            "003_anonymous_downloads.sql",
+            "004_prem3_filename_backfill.sql",
+            "005_ranked_approval.sql",
+        }));
+    }
+
+    [Test]
+    public async Task Migration005_GrandfathersPublicRowsToRanked_AndDefaultsToHidden()
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        // Both seeded sets predate 005 with 001's default status 'public' — they were live
+        // with leaderboards, so they must come out 'ranked'.
+        var statuses = (await conn.QueryAsync<string>("SELECT status FROM beatmapsets WHERE title IN ('The Wolf', 'Uploaded Song')")).ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(statuses, Has.Count.EqualTo(2));
+            Assert.That(statuses, Is.All.EqualTo("ranked"));
+        });
+
+        // The new-row default is 'hidden' (a BSS shell before its first upload)…
+        long shellId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist)
+            SELECT id, 'Post 005 Shell', 'The Defaults' FROM users LIMIT 1
+            RETURNING id
+            """);
+
+        string? shellStatus = await conn.ExecuteScalarAsync<string>(
+            "SELECT status FROM beatmapsets WHERE id = @shellId", new { shellId });
+        Assert.That(shellStatus, Is.EqualTo("hidden"));
+
+        // …and 'public' is no longer a legal status at all.
+        Assert.That(
+            async () => await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'public' WHERE id = @shellId", new { shellId }),
+            Throws.Exception.With.Message.Contains("beatmapsets_status_check"));
     }
 
     private static async Task<string?> filenameOf(NpgsqlConnection conn, long beatmapId)

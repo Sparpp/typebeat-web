@@ -63,7 +63,33 @@ public class ListingPageTest
             Assert.That(any, Does.Not.Contain("Removed For Reasons"));
             Assert.That(ranked, Does.Not.Contain("Hidden Gem Nobody"));
             Assert.That(ranked, Does.Not.Contain("Removed For Reasons"));
-            Assert.That(ranked, Does.Contain("data-set-id=")); // the filter still lists public sets
+            Assert.That(ranked, Does.Contain("data-set-id=")); // the filter still lists published sets
+        });
+    }
+
+    [Test]
+    public async Task StatusFilter_SplitsPendingAndRanked_AnyShowsBoth()
+    {
+        string any = await GetHtml("/beatmapsets");
+        string ranked = await GetHtml("/beatmapsets?status=ranked");
+        string pending = await GetHtml("/beatmapsets?status=pending");
+
+        Assert.Multiple(() =>
+        {
+            // Any = both published statuses ('Waiting Room' is recent enough for page 1).
+            Assert.That(any, Does.Contain($"data-set-id=\"{PublicSiteSeed.PendingId}\""));
+            Assert.That(any, Does.Contain($"data-set-id=\"{PublicSiteSeed.FreshId}\""));
+
+            // Pending narrows to pending only…
+            Assert.That(pending, Does.Contain($"data-set-id=\"{PublicSiteSeed.PendingId}\""));
+            Assert.That(pending, Does.Not.Contain($"data-set-id=\"{PublicSiteSeed.FreshId}\""));
+
+            // …and Ranked excludes it.
+            Assert.That(ranked, Does.Not.Contain($"data-set-id=\"{PublicSiteSeed.PendingId}\""));
+            Assert.That(ranked, Does.Contain($"data-set-id=\"{PublicSiteSeed.FreshId}\""));
+
+            // The Pending filter pill renders and marks itself active on its own page.
+            Assert.That(pending, Does.Contain(">Pending</a>"));
         });
     }
 
@@ -89,13 +115,13 @@ public class ListingPageTest
         await using (var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString))
         {
             await conn.OpenAsync();
-            // Match the listing's visibility: public AND not owned by a restricted mapper
-            // (RestrictedOwnerTest seeds a delisted public set into the same database).
+            // Match the listing's visibility: published AND not owned by a restricted mapper
+            // (RestrictedOwnerTest seeds a delisted ranked set into the same database).
             totalPublic = await conn.ExecuteScalarAsync<int>(
                 """
                 SELECT count(*) FROM beatmapsets s
                 JOIN users u ON u.id = s.owner_id
-                WHERE s.status = 'public' AND NOT u.restricted
+                WHERE s.status IN ('pending', 'ranked') AND NOT u.restricted
                 """);
         }
 

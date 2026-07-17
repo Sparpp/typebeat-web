@@ -110,7 +110,7 @@ public class BssSubmissionFlowTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(set.Status, Is.EqualTo("public"), "first successful upload publishes the set");
+            Assert.That(set.Status, Is.EqualTo("pending"), "first successful upload publishes the set as pending (awaiting review)");
             Assert.That(set.Title, Is.EqualTo("Neon Nights"));
             Assert.That(set.Artist, Is.EqualTo("Synth Rider"));
             Assert.That(set.CoverKey, Is.EqualTo($"covers/{setId}/1"));
@@ -266,7 +266,7 @@ public class BssSubmissionFlowTest
             Assert.That((string)set["title"]!, Is.EqualTo("Neon Nights"));
             Assert.That((string)set["title_unicode"]!, Is.EqualTo("Neon Nights"));
             Assert.That((string)set["artist"]!, Is.EqualTo("Synth Rider"));
-            Assert.That((string)set["status"]!, Is.EqualTo("ranked"));
+            Assert.That((string)set["status"]!, Is.EqualTo("pending"), "a fresh upload is pending until a reviewer ranks it");
             Assert.That((string)set["creator"]!, Is.EqualTo(username));
             Assert.That((long)set["user_id"]!, Is.EqualTo(userId));
             Assert.That((int)set["play_count"]!, Is.EqualTo(0));
@@ -297,7 +297,7 @@ public class BssSubmissionFlowTest
         {
             Assert.That((long)easy["id"]!, Is.EqualTo(beatmapIds[0]));
             Assert.That((long)easy["beatmapset_id"]!, Is.EqualTo(setId));
-            Assert.That((string)easy["status"]!, Is.EqualTo("ranked"));
+            Assert.That((string)easy["status"]!, Is.EqualTo("pending"));
             Assert.That((string)easy["checksum"]!, Is.EqualTo(Convert.ToHexStringLower(MD5.HashData(easyOsu))));
             Assert.That((double)easy["difficulty_rating"]!, Is.GreaterThan(0));
             Assert.That(easy["beatmapset"], Is.Null, "nested beatmaps omit the back-reference key entirely");

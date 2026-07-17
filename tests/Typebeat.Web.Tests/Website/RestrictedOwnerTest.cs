@@ -35,7 +35,7 @@ public class RestrictedOwnerTest
         restrictedSetId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmapsets (owner_id, title, artist, status, submitted_at, updated_at)
-            VALUES (@ownerId, 'Restricted Banger', 'Banned Beats', 'public', now() + interval '3 hours', now())
+            VALUES (@ownerId, 'Restricted Banger', 'Banned Beats', 'ranked', now() + interval '3 hours', now())
             RETURNING id
             """,
             new { ownerId = restrictedMapperId });

@@ -32,8 +32,13 @@ public static class PublicSiteSeed
     /// <summary>"Favourite Fingers", favourite_count 999999 — most-favourited sort.</summary>
     public static long MostFavedId { get; private set; }
 
-    /// <summary>"Fresh Drop", newest public set site-wide.</summary>
+    /// <summary>"Fresh Drop", newest published set site-wide.</summary>
     public static long FreshId { get; private set; }
+
+    /// <summary>"Waiting Room", the one seeded 'pending' set — browsable but not ranked, so
+    /// listing filters, profile sections and the set page's locked leaderboard cover both
+    /// published statuses.</summary>
+    public static long PendingId { get; private set; }
 
     /// <summary>Hidden set, submitted "in the future" so it would top every list if leaked.</summary>
     public static long HiddenId { get; private set; }
@@ -97,6 +102,13 @@ public static class PublicSiteSeed
             FreshId = await InsertSetAsync(conn,
                 title: "Fresh Drop", artist: "The Newest",
                 submittedOffset: TimeSpan.FromHours(1));
+
+            PendingId = await InsertSetAsync(conn,
+                title: "Waiting Room", artist: "The Unreviewed",
+                submittedOffset: TimeSpan.FromMinutes(-20), status: "pending");
+
+            await InsertBeatmapAsync(conn, PendingId,
+                totalLengthS: 80, stars: 4.2, wpm: 100, wordCount: 130, charCount: 640);
 
             HiddenId = await InsertSetAsync(conn,
                 title: "Hidden Gem Nobody", artist: "Should Not Appear",
@@ -180,7 +192,7 @@ public static class PublicSiteSeed
 
     private static async Task<long> InsertSetAsync(NpgsqlConnection conn,
         string title, string artist, TimeSpan submittedOffset,
-        string status = "public", string tags = "", string source = "", string description = "",
+        string status = "ranked", string tags = "", string source = "", string description = "",
         int playCount = 0, int favouriteCount = 0, double? bpm = null)
         => await conn.ExecuteScalarAsync<long>(
             """

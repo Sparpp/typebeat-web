@@ -26,7 +26,7 @@ public class ProfilePageTest
     private static long visitorId;
     private static long idlerId;
 
-    private static long starPublicSetId;
+    private static long starRankedSetId;
     private static long starSecondSetId;
     private static long starHiddenSetId;
 
@@ -53,11 +53,14 @@ public class ProfilePageTest
             """,
             new { starId, rivalId });
 
-        starPublicSetId = await InsertSetAsync(conn, starId, "Star Anthem", "The Profile Makers", "public", days: -3);
-        starSecondSetId = await InsertSetAsync(conn, starId, "Star Bside", "The Profile Makers", "public", days: -4);
+        // The B-side is 'pending' (browsable, awaiting review): every profile section — maps,
+        // scores, most played — must treat it like the ranked set. Its seeded ranked=true
+        // scores model a set that took scores while ranked and was later unranked.
+        starRankedSetId = await InsertSetAsync(conn, starId, "Star Anthem", "The Profile Makers", "ranked", days: -3);
+        starSecondSetId = await InsertSetAsync(conn, starId, "Star Bside", "The Profile Makers", "pending", days: -4);
         starHiddenSetId = await InsertSetAsync(conn, starId, "Star Secret Stash", "Should Stay Off", "hidden", days: -3);
 
-        long beatmapA = await InsertBeatmapAsync(conn, starPublicSetId, wpm: 90, stars: 3.6);
+        long beatmapA = await InsertBeatmapAsync(conn, starRankedSetId, wpm: 90, stars: 3.6);
         long beatmapB = await InsertBeatmapAsync(conn, starSecondSetId, wpm: 60, stars: 2.4);
 
         // Map A: best 800k S (95%), a weaker 500k A that per-map-best folding must hide.
@@ -111,9 +114,11 @@ public class ProfilePageTest
             Assert.That(html, Does.Contain("100,000"));
             Assert.That(html, Does.Contain("2 plays"));
 
-            // Maps: own public sets as cards; the hidden set never leaks to anonymous viewers.
-            Assert.That(html, Does.Contain($"data-set-id=\"{starPublicSetId}\""));
+            // Maps: own published sets as cards — the pending B-side included, wearing its
+            // Pending pill; the hidden set never leaks to anonymous viewers.
+            Assert.That(html, Does.Contain($"data-set-id=\"{starRankedSetId}\""));
             Assert.That(html, Does.Contain($"data-set-id=\"{starSecondSetId}\""));
+            Assert.That(html, Does.Contain(">Pending</span>"));
             Assert.That(html, Does.Not.Contain("Star Secret Stash"));
 
             // Favourites: the favourited (covered) seed set renders as a card.
