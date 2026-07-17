@@ -36,8 +36,11 @@ namespace Typebeat.Web.Endpoints;
 ///    absent from an uploaded package — gets <c>filename = NULL</c>, which is the repo-wide
 ///    "not part of the current version" marker (live diffs have <c>filename IS NOT NULL</c>);
 ///  - newly allocated beatmap rows carry a random placeholder checksum until the first upload
-///    overwrites it (checksum_md5 is NOT NULL UNIQUE, and real rows at allocation time keep
-///    PackageIngest's sequence realignment race-free).
+///    overwrites it (checksum_md5 is NOT NULL UNIQUE); every beatmap id comes from nextval at
+///    allocation time, so PackageIngest's explicit-id upserts can never outrun the sequence;
+///  - the upload/patch routes run their whole tail (rebuild-base read → parse → validate →
+///    version cut → artifact publication) inside PackageIngest's per-set ingest scope
+///    (pg_advisory_xact_lock), so concurrent submissions to one set fully serialize.
 /// </summary>
 public static class BssEndpoints
 {
@@ -209,7 +212,10 @@ public static class BssEndpoints
         await using (var source = archive.OpenReadStream())
             await source.CopyToAsync(buffer, ctx.RequestAborted);
 
-        return await parseValidateIngestAsync(buffer, setId, user, db, ingest, ctx.RequestAborted);
+        // Enter the per-set critical section only now that the body is fully buffered.
+        await using var scope = await ingest.BeginSetScopeAsync(setId, ctx.RequestAborted);
+
+        return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, ctx.RequestAborted);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -234,7 +240,13 @@ public static class BssEndpoints
             return uploadBodyError(e);
         }
 
-        var manifest = await ingest.GetLatestVersionFilesAsync(setId, ctx.RequestAborted);
+        // The rebuild base MUST be read inside the per-set critical section: were it read on an
+        // unlocked connection, another submission committing between this read and our version
+        // cut would be silently reverted by a rebuild based on the older manifest. The form is
+        // already buffered above, so the lock is held only for rebuild + parse + ingest.
+        await using var scope = await ingest.BeginSetScopeAsync(setId, ctx.RequestAborted);
+
+        var manifest = await ingest.GetLatestVersionFilesAsync(scope, setId);
 
         if (manifest.Count == 0)
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "This beatmap set has no uploaded version to patch; upload the full package instead.");
@@ -284,7 +296,7 @@ public static class BssEndpoints
             }
         }
 
-        return await parseValidateIngestAsync(buffer, setId, user, db, ingest, ctx.RequestAborted);
+        return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, ctx.RequestAborted);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -327,17 +339,18 @@ public static class BssEndpoints
     }
 
     /// <summary>
-    /// The tail both upload routes share: Parse → Validate (422 on invariant violations) →
-    /// IngestAsync with the SAME seekable stream, then refresh diff liveness and publish a
-    /// hidden set on its first successful version.
+    /// The tail both upload routes share, running entirely inside the caller's per-set ingest
+    /// scope: Parse → Validate (422 on invariant violations) → IngestAsync with the SAME
+    /// seekable stream. Diff-liveness refresh, the publish flip and all artifact publication
+    /// happen inside <see cref="PackageIngest.IngestAsync"/>'s transaction — nothing runs after
+    /// the commit, so a crash at any point leaves either the whole new version or none of it.
     /// </summary>
     private static async Task<IResult> parseValidateIngestAsync(
-        Stream package, long setId, AuthedUser user, Db db, PackageIngest ingest, CancellationToken ct)
+        Stream package, long setId, AuthedUser user, PackageIngest ingest, PackageIngest.SetScope scope, CancellationToken ct)
     {
-        long[] allocatedIds;
-
-        await using (var conn = await db.OpenAsync(ct))
-            allocatedIds = (await conn.QueryAsync<long>("SELECT id FROM beatmaps WHERE set_id = @setId", new { setId })).ToArray();
+        // Read under the scope's lock: the snapshot validation pins embedded ids against.
+        long[] allocatedIds = (await scope.Connection.QueryAsync<long>(
+            "SELECT id FROM beatmaps WHERE set_id = @setId", new { setId })).ToArray();
 
         ParsedPackage parsed;
 
@@ -351,23 +364,7 @@ public static class BssEndpoints
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, e.Message);
         }
 
-        await ingest.IngestAsync(package, parsed, setId, user.Id, ct);
-
-        await using (var conn = await db.OpenAsync(ct))
-        {
-            // Liveness refresh: the uploaded package IS the current version — any diff row not
-            // in it stops being referenced (validated ids ⊆ allocated, so this only ever clears).
-            long[] liveIds = parsed.Difficulties.Select(d => d.BeatmapId!.Value).ToArray();
-
-            await conn.ExecuteAsync(
-                "UPDATE beatmaps SET filename = NULL WHERE set_id = @setId AND id <> ALL(@liveIds)",
-                new { setId, liveIds });
-
-            // First successful upload publishes the set. 'removed' is deliberately not touched.
-            await conn.ExecuteAsync(
-                "UPDATE beatmapsets SET status = 'public' WHERE id = @setId AND status = 'hidden'",
-                new { setId });
-        }
+        await ingest.IngestAsync(scope, package, parsed, setId, user.Id, ct);
 
         return Results.NoContent();
     }

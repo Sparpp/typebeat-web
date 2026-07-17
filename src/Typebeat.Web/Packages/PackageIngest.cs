@@ -20,8 +20,25 @@ namespace Typebeat.Web.Packages;
 ///    beatmap rows upserted by their allocated ids, and the full package zip assembled for the
 ///    website download path.
 ///
-/// Cover/preview generation runs after the version commit and can only degrade the result
-/// (statuses in <see cref="IngestResult"/>), never fail the upload.
+/// Concurrency + crash-safety doctrine (the two invariants everything below hangs off):
+///
+///  1. <b>The whole per-set ingest path is one critical section.</b> Callers enter through
+///     <see cref="BeginSetScopeAsync"/>, which takes <c>pg_advisory_xact_lock</c> on the set id
+///     inside a single transaction. Base-manifest reads (the PATCH rebuild base), the version
+///     cut, beatmap upserts, the diff-liveness refresh, the hidden→public publish flip and all
+///     artifact publication (package/covers/preview + their key updates) happen under that one
+///     lock/transaction, so two submissions to the same set can never interleave — the second
+///     fully observes the first or fully precedes it.
+///  2. <b>A set_versions row is only ever committed with its download package already durable
+///     in the store.</b> The package zip (and covers/preview) are written BEFORE the commit; a
+///     crash or client abort anywhere rolls the version back, leaving only orphaned
+///     content-addressed blobs / versioned objects, which are harmless and simply overwritten
+///     by the next successful attempt at the same version number. The identical-content
+///     fast path additionally re-verifies the package object and reassembles it from
+///     <c>version_files</c> if missing, healing any row created before this invariant existed.
+///
+/// Cover/preview generation failures (ffmpeg missing, bad image, ...) can only degrade the
+/// result (statuses in <see cref="IngestResult"/>), never fail the upload.
 /// </summary>
 public sealed class PackageIngest(
     Db db,
@@ -55,33 +72,86 @@ public sealed class PackageIngest(
         string PreviewStatus);
 
     /// <summary>
-    /// Ingests a parsed + validated package. The caller must have run
-    /// <see cref="PackageValidator.Validate"/> first (this method trusts embedded ids) and must
-    /// pass the same seekable zip stream that was parsed.
+    /// The per-set ingest critical section: one connection + transaction holding
+    /// <c>pg_advisory_xact_lock</c> on the set id, so everything a submission does — reading the
+    /// rebuild-base manifest, cutting the version, publishing artifacts — is serialized against
+    /// every other submission to the same set. Disposal without <see cref="IngestAsync"/> having
+    /// committed rolls everything back (transaction disposal aborts it), which also releases the
+    /// advisory lock.
+    /// </summary>
+    public sealed class SetScope : IAsyncDisposable
+    {
+        /// <summary>
+        /// The scope's connection, for callers that need additional reads inside the same
+        /// critical section (e.g. the allocated-id snapshot validation runs against). Any
+        /// statement executed here joins the scope's open transaction.
+        /// </summary>
+        public NpgsqlConnection Connection { get; }
+
+        internal NpgsqlTransaction Transaction { get; }
+
+        internal SetScope(NpgsqlConnection connection, NpgsqlTransaction transaction)
+        {
+            Connection = connection;
+            Transaction = transaction;
+        }
+
+        internal async Task CommitAsync(CancellationToken ct) => await Transaction.CommitAsync(ct);
+
+        public async ValueTask DisposeAsync()
+        {
+            await Transaction.DisposeAsync(); // rolls back unless committed
+            await Connection.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// Opens the ingest critical section for one set. Blocks until any in-flight submission to
+    /// the same set fully finishes (commit or rollback); different sets don't contend.
+    /// </summary>
+    public async Task<SetScope> BeginSetScopeAsync(long setId, CancellationToken ct = default)
+    {
+        var conn = await db.OpenAsync(ct);
+
+        try
+        {
+            var tx = await conn.BeginTransactionAsync(ct);
+
+            // Namespaced advisory lock (xact-scoped: released at commit/rollback, so a crashed
+            // request can never leak it). hashtextextended keeps the 64-bit key space distinct
+            // from any other advisory-lock user of this database.
+            await conn.ExecuteAsync(
+                "SELECT pg_advisory_xact_lock(hashtextextended('bss-set-ingest:' || @setId::text, 0))",
+                new { setId });
+
+            return new SetScope(conn, tx);
+        }
+        catch
+        {
+            await conn.DisposeAsync();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Ingests a parsed + validated package inside <paramref name="scope"/> and commits it. The
+    /// caller must have run <see cref="PackageValidator.Validate"/> first (this method trusts
+    /// embedded ids) and must pass the same seekable zip stream that was parsed.
     /// </summary>
     public async Task<IngestResult> IngestAsync(
+        SetScope scope,
         Stream packageStream,
         ParsedPackage package,
         long setId,
         long uploaderId,
         CancellationToken ct = default)
     {
-        await using var conn = await db.OpenAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
+        var conn = scope.Connection;
 
-        // Serialize concurrent submissions to one set: version_no assignment and the
-        // latest-version comparison below both race without this lock.
-        var owner = await conn.QuerySingleOrDefaultAsync<(long OwnerId, string Username)>(
-            """
-            SELECT s.owner_id AS OwnerId, u.username::text AS Username
-            FROM beatmapsets s
-            JOIN users u ON u.id = s.owner_id
-            WHERE s.id = @setId
-            FOR UPDATE OF s
-            """,
-            new { setId });
+        long? ownerId = await conn.ExecuteScalarAsync<long?>(
+            "SELECT owner_id FROM beatmapsets WHERE id = @setId", new { setId });
 
-        if (owner == default)
+        if (ownerId == null)
             throw new InvalidOperationException($"Beatmap set {setId} does not exist.");
 
         var latest = await conn.QuerySingleOrDefaultAsync<(long VersionId, int VersionNo)?>(
@@ -102,7 +172,7 @@ public sealed class PackageIngest(
 
         if (latest is { } latestVersion)
         {
-            var current = (await conn.QueryAsync<(byte[] Sha256, long Size, string Filename)>(
+            var currentFiles = (await conn.QueryAsync<(byte[] Sha256, long Size, string Filename)>(
                     """
                     SELECT vf.sha256 AS Sha256, f.size AS Size, vf.filename AS Filename
                     FROM version_files vf
@@ -110,8 +180,10 @@ public sealed class PackageIngest(
                     WHERE vf.version_id = @versionId
                     """,
                     new { versionId = latestVersion.VersionId }))
-                .Select(f => (Convert.ToHexStringLower(f.Sha256), f.Size, f.Filename))
-                .ToHashSet();
+                .Select(f => new PackageFileEntry(f.Sha256, f.Size, f.Filename))
+                .ToList();
+
+            var current = currentFiles.Select(f => (f.Sha256Hex, f.Size, f.Filename)).ToHashSet();
 
             if (current.SetEquals(incoming))
             {
@@ -119,7 +191,22 @@ public sealed class PackageIngest(
                 await conn.ExecuteAsync(
                     "UPDATE beatmapsets SET updated_at = now() WHERE id = @setId",
                     new { setId });
-                await tx.CommitAsync(ct);
+
+                // Still refresh liveness + publish: a retry after an interrupted first upload
+                // lands here and must finish the job (publish the set, settle diff liveness).
+                await refreshLivenessAndPublishAsync(conn, package, setId);
+
+                // Repair path: versions recorded before the assemble-before-commit invariant
+                // existed (or damaged by operator error) can have a package_key with no object
+                // behind it. An identical resubmission is the mapper's natural "it's broken,
+                // re-upload" action, so verify and reassemble from the stored manifest here
+                // rather than letting the download 404 forever.
+                string packageKeyForLatest = StoreKeys.Package(setId, latestVersion.VersionNo);
+
+                if (!await fileStore.ObjectExistsAsync(packageKeyForLatest, ct))
+                    await assemblePackageAsync(packageKeyForLatest, currentFiles, ct);
+
+                await scope.CommitAsync(ct);
 
                 return new IngestResult(setId, latestVersion.VersionNo, false, package.Files, "unchanged", "unchanged");
             }
@@ -257,33 +344,81 @@ public sealed class PackageIngest(
                 });
         }
 
-        // Explicit-id inserts bypass the serial sequence; realign it so future allocations
-        // (nextval) can never collide with an id written here.
-        await conn.ExecuteAsync(
-            "SELECT setval(pg_get_serial_sequence('beatmaps', 'id'), (SELECT COALESCE(MAX(id), 1) FROM beatmaps))");
+        // NOTE: deliberately NO sequence realignment here. The explicit-id upserts above can
+        // only ever reuse ids that PUT /bss/beatmapsets previously allocated via nextval
+        // (PackageValidator pins embedded ids to allocated rows), so the serial sequence is
+        // always already at or past every id written in this transaction. The historical
+        // setval(MAX(id)) "realignment" was removed as actively harmful: setval is
+        // non-transactional and a READ COMMITTED MAX(id) cannot see other transactions'
+        // uncommitted allocations, so under concurrency it could REWIND the sequence and make
+        // later allocations 500 on primary-key collisions.
 
-        await tx.CommitAsync(ct);
+        // ---- diff liveness + publish, still inside the transaction (crossing submissions must
+        //      never NULL a diff the newer current version contains). ----
 
-        // ---- post-commit artifacts: download package, covers, preview. Failures here degrade
-        //      the result but the version is already durable. ----
+        await refreshLivenessAndPublishAsync(conn, package, setId);
+
+        // ---- artifacts: download package, covers, preview — BEFORE the commit, so a version
+        //      row is only ever durable with its package object already in the store (a crash
+        //      or client abort here rolls the version back; orphaned blobs/objects are harmless
+        //      and overwritten by the next attempt at this version number). Cover/preview
+        //      failures are caught and degrade the result; their key updates join this
+        //      transaction, so cover_key/preview_key can never point at artifacts of a version
+        //      that did not commit. ----
 
         await assemblePackageAsync(packageKey, package.Files, ct);
 
         string coverStatus = await generateCoversAsync(conn, package, primary, setId, versionNo, ct);
         string previewStatus = await generatePreviewAsync(conn, package, primary, setId, ct);
 
+        await scope.CommitAsync(ct);
+
         return new IngestResult(setId, versionNo, true, package.Files, coverStatus, previewStatus);
+    }
+
+    /// <summary>
+    /// The uploaded package IS the current version: any diff row not in it stops being live
+    /// (<c>filename = NULL</c> is the repo-wide marker; validated ids ⊆ allocated, so this only
+    /// ever clears rows of this set), and a set still 'hidden' is published by its first
+    /// successful upload ('removed' is deliberately never touched — takedowns are final).
+    /// Runs inside the ingest transaction so crossing submissions serialize with the version cut.
+    /// </summary>
+    private static async Task refreshLivenessAndPublishAsync(NpgsqlConnection conn, ParsedPackage package, long setId)
+    {
+        long[] liveIds = package.Difficulties.Select(d => d.BeatmapId!.Value).ToArray();
+
+        await conn.ExecuteAsync(
+            "UPDATE beatmaps SET filename = NULL WHERE set_id = @setId AND id <> ALL(@liveIds)",
+            new { setId, liveIds });
+
+        await conn.ExecuteAsync(
+            "UPDATE beatmapsets SET status = 'public' WHERE id = @setId AND status = 'hidden'",
+            new { setId });
     }
 
     /// <summary>
     /// The latest version's manifest for a set — the <c>files[]</c> list the BSS PUT response
     /// carries (empty for a set with no versions, which drives the client's replace-vs-patch
-    /// branch). Exposed here so the endpoints module reuses one definition.
+    /// branch). Exposed here so the endpoints module reuses one definition. This overload is a
+    /// point-in-time read on its own connection — do NOT use it as a rebuild base; that's what
+    /// the <see cref="SetScope"/> overload is for.
     /// </summary>
     public async Task<IReadOnlyList<PackageFileEntry>> GetLatestVersionFilesAsync(long setId, CancellationToken ct = default)
     {
         await using var conn = await db.OpenAsync(ct);
+        return await queryLatestVersionFilesAsync(conn, setId);
+    }
 
+    /// <summary>
+    /// The latest version's manifest read INSIDE the ingest critical section — the only safe
+    /// rebuild base for the PATCH overlay: nothing can cut another version between this read
+    /// and the version this scope goes on to commit.
+    /// </summary>
+    public async Task<IReadOnlyList<PackageFileEntry>> GetLatestVersionFilesAsync(SetScope scope, long setId)
+        => await queryLatestVersionFilesAsync(scope.Connection, setId);
+
+    private static async Task<IReadOnlyList<PackageFileEntry>> queryLatestVersionFilesAsync(NpgsqlConnection conn, long setId)
+    {
         var rows = await conn.QueryAsync<(byte[] Sha256, long Size, string Filename)>(
             """
             SELECT vf.sha256 AS Sha256, f.size AS Size, vf.filename AS Filename

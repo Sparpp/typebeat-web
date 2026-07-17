@@ -140,7 +140,8 @@ public class PackageIngestDbTest
 
         PackageValidator.Validate(parsed, setId, [1001L, 1002L], "uploader");
 
-        return await ingest.IngestAsync(zip, parsed, setId, uploaderId);
+        await using var scope = await ingest.BeginSetScopeAsync(setId);
+        return await ingest.IngestAsync(scope, zip, parsed, setId, uploaderId);
     }
 
     [Test]
