@@ -13,8 +13,23 @@ public static class VerificationEmail
 
     public static Content Build(string purpose, string code, int expiryMinutes)
     {
-        string action = purpose == "login" ? "finish signing in" : "confirm your email";
-        string subject = $"Your type!beat code: {code}";
+        string action = purpose switch
+        {
+            "login" => "finish signing in",
+            "reset" => "reset your password",
+            _ => "confirm your email",
+        };
+
+        // A reset gets its own subject and a sharper "ignore this" line: the reassurance that
+        // matters for a reset is specifically that the password does not change unless the code is
+        // used (the message a worried recipient of an unexpected reset email needs to read).
+        string subject = purpose == "reset"
+            ? $"Reset your type!beat password: {code}"
+            : $"Your type!beat code: {code}";
+
+        string ignore = purpose == "reset"
+            ? "If you didn't request a password reset, you can ignore this email — your password won't change."
+            : "If this wasn't you, you can ignore this email — nothing will change.";
 
         string text =
             $"""
@@ -22,18 +37,19 @@ public static class VerificationEmail
 
             Enter it on the website to {action}. The code expires in {expiryMinutes} minutes.
 
-            If this wasn't you, you can ignore this email — nothing will change.
+            {ignore}
             """;
 
         string safeCode = WebUtility.HtmlEncode(code);
         string safeAction = WebUtility.HtmlEncode(action);
+        string safeIgnore = WebUtility.HtmlEncode(ignore);
         string html =
             $"""
             <div style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#141519;max-width:420px;margin:0 auto">
               <p style="font-size:15px;line-height:1.5">Your type!beat verification code is:</p>
               <p style="font-size:32px;font-weight:700;letter-spacing:6px;margin:16px 0">{safeCode}</p>
               <p style="font-size:14px;line-height:1.5;color:#555">Enter it on the website to {safeAction}. The code expires in {expiryMinutes} minutes.</p>
-              <p style="font-size:12px;line-height:1.5;color:#888">If this wasn't you, you can ignore this email — nothing will change.</p>
+              <p style="font-size:12px;line-height:1.5;color:#888">{safeIgnore}</p>
             </div>
             """;
 
