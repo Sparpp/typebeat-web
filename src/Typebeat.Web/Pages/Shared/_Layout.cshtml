@@ -34,6 +34,7 @@
             @if (sessionUser is not null)
             {
                 <a class="user-chip" href="/users/@sessionUser.Id">@sessionUser.Username</a>
+                <a class="btn btn-ghost btn-small" href="/settings">settings</a>
                 <form method="post" action="/logout">
                     @Html.AntiForgeryToken()
                     <button type="submit" class="btn btn-ghost btn-small">sign out</button>

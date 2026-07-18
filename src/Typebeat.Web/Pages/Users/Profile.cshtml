@@ -3,7 +3,14 @@
 @model Typebeat.Web.Pages.Users.ProfileModel
 
 <section class="profile-header">
-    <div class="profile-cover profile-cover--@(Model.ProfileUser.Id % ProfileModel.CoverPresetCount)" aria-hidden="true"></div>
+    @if (Model.ProfileUser.CoverUrl is string coverUrl)
+    {
+        <div class="profile-cover profile-cover--image" style="background-image:url('@coverUrl')" aria-hidden="true"></div>
+    }
+    else
+    {
+        <div class="profile-cover profile-cover--@(Model.ProfileUser.Id % ProfileModel.CoverPresetCount)" aria-hidden="true"></div>
+    }
     <div class="profile-header__bar">
         @if (Model.ProfileUser.AvatarUrl is string avatarUrl)
         {
@@ -20,8 +27,19 @@
                 &middot; Last seen @ProfileModel.LastSeenLabel(Model.ProfileUser.LastVisit)
             </div>
         </div>
+        @if (Model.IsOwnProfile)
+        {
+            <a class="btn btn-ghost btn-small profile-header__edit" href="/settings">edit profile</a>
+        }
     </div>
 </section>
+
+@if (!string.IsNullOrWhiteSpace(Model.ProfileUser.Description))
+{
+    <section class="profile-about card">
+        <p class="profile-about__text">@Model.ProfileUser.Description</p>
+    </section>
+}
 
 <div class="profile-grid">
     <div class="profile-main">

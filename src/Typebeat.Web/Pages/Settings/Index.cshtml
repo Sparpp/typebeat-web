@@ -1,0 +1,94 @@
+@page "/settings"
+@model Typebeat.Web.Pages.Settings.IndexModel
+@{
+    ViewData["Title"] = "Settings";
+}
+
+<section class="settings">
+    <div class="settings__head">
+        <h1>Account settings</h1>
+        @if (Model.CurrentUser is not null)
+        {
+            <a class="btn btn-ghost btn-small" href="/users/@Model.CurrentUser.Id">view profile</a>
+        }
+    </div>
+
+    @if (Model.Notice is not null)
+    {
+        <div class="alert-info">@Model.Notice</div>
+    }
+    @if (Model.Error is not null)
+    {
+        <div class="alert-error">@Model.Error</div>
+    }
+
+    <div class="card settings-card">
+        <h2 class="card-title">Avatar</h2>
+        <div class="settings-media">
+            @if (Model.AvatarUrl is string avatarUrl)
+            {
+                <img class="settings-avatar" src="@avatarUrl" alt="Current avatar" />
+            }
+            else
+            {
+                <span class="settings-avatar settings-avatar--fallback" aria-hidden="true">@(Model.CurrentUser?.Username[..1])</span>
+            }
+            <form method="post" asp-page-handler="Avatar" enctype="multipart/form-data" class="settings-upload">
+                @Html.AntiForgeryToken()
+                <p class="faint">A square image works best (PNG or JPEG, up to 8&nbsp;MB). It's cropped to a square.</p>
+                <input class="input" type="file" name="avatar" accept="image/png,image/jpeg,image/webp" required />
+                <button type="submit" class="btn btn-primary btn-small">Upload avatar</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card settings-card">
+        <h2 class="card-title">Banner</h2>
+        @if (Model.BannerUrl is string bannerUrl)
+        {
+            <img class="settings-banner" src="@bannerUrl" alt="Current banner" />
+        }
+        else
+        {
+            <div class="settings-banner settings-banner--fallback" aria-hidden="true"></div>
+        }
+        <form method="post" asp-page-handler="Banner" enctype="multipart/form-data" class="settings-upload">
+            @Html.AntiForgeryToken()
+            <p class="faint">A wide image works best (3:1, e.g. 1500&times;500). It's cropped to fit.</p>
+            <input class="input" type="file" name="banner" accept="image/png,image/jpeg,image/webp" required />
+            <button type="submit" class="btn btn-primary btn-small">Upload banner</button>
+        </form>
+    </div>
+
+    <div class="card settings-card">
+        <h2 class="card-title">About you</h2>
+        <form method="post" asp-page-handler="Profile">
+            @Html.AntiForgeryToken()
+            <div class="field">
+                <label asp-for="Description">Description</label>
+                <textarea class="input settings-description" asp-for="Description" rows="6"
+                          maxlength="@Typebeat.Web.Pages.Settings.IndexModel.MaxDescriptionLength"
+                          placeholder="Tell other players about yourself&hellip;"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary btn-small">Save profile</button>
+        </form>
+    </div>
+
+    <div class="card settings-card settings-danger">
+        <h2 class="card-title">Delete account</h2>
+        <p class="muted">
+            This permanently erases your personal data &mdash; email, password, avatar, banner,
+            description and country. Your username becomes an anonymous placeholder. Maps you've
+            uploaded stay online (other players' scores depend on them), and your scores remain but
+            are no longer tied to you. <strong>This cannot be undone.</strong>
+        </p>
+        <form method="post" asp-page-handler="Delete" onsubmit="return confirm('Delete your account? This cannot be undone.');">
+            @Html.AntiForgeryToken()
+            <div class="field">
+                <label asp-for="ConfirmUsername">Type your username (<span class="mono">@Model.CurrentUser?.Username</span>) to confirm</label>
+                <input class="input" asp-for="ConfirmUsername" autocomplete="off" autocapitalize="off" spellcheck="false" />
+            </div>
+            <button type="submit" class="btn btn-danger btn-small">Delete my account</button>
+        </form>
+    </div>
+</section>

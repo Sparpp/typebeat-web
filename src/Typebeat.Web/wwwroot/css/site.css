@@ -1437,3 +1437,59 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 @media (max-width: 560px) {
     .score-row__date, .score-row__acc { display: none; }
 }
+
+/* ===================================================================================
+   Account settings (/settings) + profile banner/description
+   =================================================================================== */
+
+.settings { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-5); }
+
+.settings__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.settings__head h1 { margin: 0; }
+
+.settings-card { display: flex; flex-direction: column; gap: var(--space-4); }
+
+.settings-media { display: flex; align-items: flex-start; gap: var(--space-5); flex-wrap: wrap; }
+
+.settings-avatar {
+    width: 96px; height: 96px; flex-shrink: 0;
+    border-radius: var(--radius-md);
+    object-fit: cover;
+    background: var(--surface-2);
+}
+
+.settings-avatar--fallback {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--violet);
+    color: var(--on-accent);
+    font-family: var(--font-display);
+    font-size: var(--text-3xl);
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.settings-upload { display: flex; flex-direction: column; gap: var(--space-3); flex: 1 1 260px; min-width: 240px; }
+.settings-upload p { margin: 0; }
+
+.settings-banner {
+    display: block;
+    width: 100%;
+    aspect-ratio: 3 / 1;
+    object-fit: cover;
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+}
+.settings-banner--fallback { background: linear-gradient(115deg, #141519, #1f2027 60%, rgba(201, 242, 77, 0.20) 130%); }
+
+.settings-description { min-height: 120px; resize: vertical; }
+
+.settings-danger { border-color: rgba(255, 106, 90, 0.40); }
+.settings-danger .card-title { color: var(--bad); }
+
+.mono { color: var(--violet); }
+
+/* Profile: an uploaded banner replaces the preset gradient band; the "about" box holds the bio. */
+.profile-cover--image { background-size: cover; background-position: center; }
+.profile-header__edit { margin-left: auto; align-self: center; }
+.profile-about { margin-top: var(--space-4); }
+.profile-about__text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-muted); }

@@ -71,12 +71,14 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         var user = await conn.QuerySingleOrDefaultAsync<UserHeader>(
             """
-            SELECT u.id         AS Id,
+            SELECT u.id          AS Id,
                    u.username::text AS Username,
-                   u.avatar_key AS AvatarKey,
-                   u.created_at AS CreatedAt,
-                   u.last_visit AS LastVisit,
-                   u.restricted AS Restricted
+                   u.avatar_key  AS AvatarKey,
+                   u.cover_key   AS CoverKey,
+                   u.description AS Description,
+                   u.created_at  AS CreatedAt,
+                   u.last_visit  AS LastVisit,
+                   u.restricted  AS Restricted
             FROM users u
             WHERE u.id = @id
             """,
@@ -298,11 +300,14 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
     }
 
     public sealed record UserHeader(
-        long Id, string Username, string? AvatarKey, DateTime CreatedAt, DateTime? LastVisit, bool Restricted)
+        long Id, string Username, string? AvatarKey, string? CoverKey, string Description,
+        DateTime CreatedAt, DateTime? LastVisit, bool Restricted)
     {
-        /// <summary>Served media key when set someday; null → initial-letter fallback (the API's
-        /// current default-avatar PNG is deliberately not used here — wrong hue for the site).</summary>
+        /// <summary>Uploaded avatar (settings page), or null → initial-letter fallback.</summary>
         public string? AvatarUrl => AvatarKey is null ? null : $"/{AvatarKey}";
+
+        /// <summary>Uploaded banner (settings page), or null → the preset gradient cover band.</summary>
+        public string? CoverUrl => CoverKey is null ? null : $"/{CoverKey}";
     }
 
     public sealed record GradeCounts(int Ss, int S, int A, int B, int C, int D);

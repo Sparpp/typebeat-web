@@ -131,7 +131,7 @@ public class Migration004BackfillTest
     }
 
     [Test]
-    public async Task Migrations_AppliedInOrder_001Through006()
+    public async Task Migrations_AppliedInOrder_001Through007()
     {
         await using var conn = await dataSource.OpenConnectionAsync();
 
@@ -144,6 +144,7 @@ public class Migration004BackfillTest
             "004_prem3_filename_backfill.sql",
             "005_ranked_approval.sql",
             "006_email_verification.sql",
+            "007_account_settings.sql",
         }));
     }
 
