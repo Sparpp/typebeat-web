@@ -3,10 +3,11 @@ namespace Typebeat.Web.Scoring;
 /// <summary>
 /// Server-side recompute + tamper-bounds for a submitted solo score.
 ///
-/// The client computes score with the DEFAULT standardised <c>ScoreProcessor</c> (typebeat does
-/// not override <c>CreateScoreProcessor</c>). What it actually submits over the wire is
-/// <c>ScoreInfo.TotalScore</c> (the processor's <c>TotalScore</c> value) plus the per-result
-/// <c>statistics</c> / <c>maximum_statistics</c> dictionaries and <c>max_combo</c>.
+/// The client computes score/accuracy/combo with the standardised <c>ScoreProcessor</c> maths
+/// (typebeat's <c>TypeBeatScoreProcessor</c> subclass overrides ONLY the rank derivation, nothing
+/// numeric). What it actually submits over the wire is <c>ScoreInfo.TotalScore</c> (the
+/// processor's <c>TotalScore</c> value) plus the per-result <c>statistics</c> /
+/// <c>maximum_statistics</c> dictionaries and <c>max_combo</c>.
 ///
 /// What we can reproduce EXACTLY server-side:
 ///  - <b>accuracy</b>. The client accuracy at end of play is
@@ -17,7 +18,12 @@ namespace Typebeat.Web.Scoring;
 ///    numerator = Σ base(result)·count over <c>statistics</c>;
 ///    denominator = Σ base(maxResult)·count over <c>maximum_statistics</c>.
 ///    Both dictionaries are transmitted, so accuracy is exact — we OVERRIDE the submitted value.
-///  - <b>rank</b>. Derived from accuracy via ScoreProcessor.RankFromScore (ScoreProcessor.cs:559-573).
+///  - <b>completion</b> and <b>rank</b>. Completion = typed cells (accuracy-affecting hits in
+///    <c>statistics</c>) over TOTAL map cells (accuracy-affecting counts in
+///    <c>maximum_statistics</c>). Rank is graded on completion, NOT accuracy — typing every
+///    character is an SS regardless of timing quality; only cells that scrolled past untyped
+///    (misses) cost the grade. Mirrors the client's <c>TypeBeatScoreProcessor</c> — keep the
+///    cutoffs in the two files in sync.
 ///  - <b>theoretical max combo</b>. Every combo-increasing judgement in <c>maximum_statistics</c>
 ///    (HitResult.IncreasesCombo = AffectsCombo &amp;&amp; IsHit, HitResult.cs:171-203). For a typing
 ///    map that is the note count. Submitted <c>max_combo</c> may not exceed it.
@@ -42,7 +48,8 @@ public static class ScoringContract
     private const double accuracy_portion_max = 500_000;
     private const double accuracy_exponent = 5; // Math.Pow(Accuracy.Value, 5), ScoreProcessor.cs:430
 
-    // Accuracy → rank cutoffs (ScoreProcessor.cs:34-39, RankFromScore ScoreProcessor.cs:559-573).
+    // Completion → rank cutoffs (TypeBeatScoreProcessor.COMPLETION_CUTOFF_*; same band shape the
+    // base game used for accuracy, but graded on the fraction of cells typed).
     private const double cutoff_x = 1;
     private const double cutoff_s = 0.95;
     private const double cutoff_a = 0.9;
@@ -67,10 +74,14 @@ public static class ScoringContract
     /// what a FAILED play's submitted total was computed from. For a completed play the two are
     /// equal (every cell judged); they diverge only on fails, where the whole-map value would
     /// falsely flag honest submissions as out of bounds.
+    ///
+    /// <see cref="Completion"/> is whole-map: typed cells over the map's total cell count, so a
+    /// failed run reads as "typed 43% of the map". <see cref="Rank"/> is graded on it.
     /// </summary>
     public readonly record struct Recomputed(
         double Accuracy,
         double JudgedAccuracy,
+        double Completion,
         long TotalScoreCeiling,
         string Rank,
         bool StatisticsValid,
@@ -98,6 +109,7 @@ public static class ScoringContract
         long denominator = 0;       // whole-map maximum base score (ScoreProcessor.cs:450)
         int accuracyJudged = 0;
         int accuracyMax = 0;
+        int typedCells = 0; // accuracy-affecting HITS — the completion numerator
         long bonusPortion = 0; // Σ base(result) over bonus hits (GetBonusScoreChange, ScoreProcessor.cs:338)
 
         foreach (var (key, count) in statistics)
@@ -113,6 +125,9 @@ public static class ScoringContract
                 numerator += (long)BaseScore(key) * count;
                 judgedDenominator += (long)MaxBaseScore(key) * count;
                 accuracyJudged += count;
+
+                if (IsHit(key))
+                    typedCells += count;
             }
 
             if (IsBonus(key))
@@ -156,6 +171,12 @@ public static class ScoringContract
             ? (double)Math.Min(accuracyJudged, accuracyMax) / accuracyMax
             : 0;
 
+        // Whole-map completion: cells typed over the map's total cell count. Clamped for the same
+        // reason accuracy is (statistics ⊄ maximum_statistics is tamper-shaped, not a 500).
+        double completion = accuracyMax > 0
+            ? Math.Clamp((double)typedCells / accuracyMax, 0, 1)
+            : 0;
+
         // Provable ceiling: comboProgress at its maximum (1), no-mod multiplier 1. Uses the
         // JUDGED accuracy — the value the client actually baked into its total (running accuracy
         // at end of play; equals whole-map accuracy for completed plays). judgedAccuracy >=
@@ -170,7 +191,7 @@ public static class ScoringContract
         // numerator alone would suggest. (StatisticsValid is already false in this case.)
         long ceiling = denominator <= 0 ? 0 : (long)Math.Round(raw, MidpointRounding.ToEven);
 
-        return new Recomputed(accuracy, judgedAccuracy, ceiling, RankFromAccuracy(accuracy), valid, theoreticalMaxCombo, accuracyProgress);
+        return new Recomputed(accuracy, judgedAccuracy, completion, ceiling, RankFromCompletion(completion), valid, theoreticalMaxCombo, accuracyProgress);
     }
 
     /// <summary>
@@ -182,17 +203,18 @@ public static class ScoringContract
         => submittedTotalScore >= 0 && submittedTotalScore <= recomputed.TotalScoreCeiling;
 
     /// <summary>
-    /// Accuracy (0..1) → rank string, mirroring ScoreProcessor.RankFromScore (ScoreProcessor.cs:559-573).
-    /// M1 has no mods, so the silver ranks (SH/XH) never apply. The strings match the client's
+    /// Completion (0..1) → rank string, mirroring TypeBeatScoreProcessor.RankFromCompletion.
+    /// Typing every cell is an X (SS) regardless of timing; only missed cells cost the grade.
+    /// There are no mods, so the silver ranks (SH/XH) never apply. The strings match the client's
     /// <c>ScoreRank</c> enum names, which its <c>StringEnumConverter</c> parses on the wire.
     /// </summary>
-    public static string RankFromAccuracy(double accuracy)
+    public static string RankFromCompletion(double completion)
     {
-        if (accuracy >= cutoff_x) return "X";
-        if (accuracy >= cutoff_s) return "S";
-        if (accuracy >= cutoff_a) return "A";
-        if (accuracy >= cutoff_b) return "B";
-        if (accuracy >= cutoff_c) return "C";
+        if (completion >= cutoff_x) return "X";
+        if (completion >= cutoff_s) return "S";
+        if (completion >= cutoff_a) return "A";
+        if (completion >= cutoff_b) return "B";
+        if (completion >= cutoff_c) return "C";
         return "D";
     }
 
@@ -237,6 +259,15 @@ public static class ScoringContract
             or "small_tick_hit" or "small_tick_miss"
             or "large_tick_hit" or "large_tick_miss"
             or "slider_tail_hit" => true,
+        _ => false,
+    };
+
+    // HitResult.IsHit (HitResult.cs:308-…): a successful judgement. Among the accuracy-affecting
+    // keys this is everything except the miss family — the completion numerator ("cells typed").
+    private static bool IsHit(string key) => key switch
+    {
+        "great" or "perfect" or "good" or "ok" or "meh"
+            or "small_tick_hit" or "large_tick_hit" or "slider_tail_hit" => true,
         _ => false,
     };
 

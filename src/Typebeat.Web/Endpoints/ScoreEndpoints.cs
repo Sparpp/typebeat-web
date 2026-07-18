@@ -205,10 +205,10 @@ public static class ScoreEndpoints
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO scores
-                (user_id, beatmap_id, ruleset_id, total_score, accuracy, max_combo, rank, passed,
+                (user_id, beatmap_id, ruleset_id, total_score, accuracy, completion, max_combo, rank, passed,
                  ranked, preserve, mods, statistics, maximum_statistics, build_id, started_at, ended_at)
             VALUES
-                (@userId, @beatmapId, 0, @totalScore, @accuracy, @maxCombo, @rank, @passed,
+                (@userId, @beatmapId, 0, @totalScore, @accuracy, @completion, @maxCombo, @rank, @passed,
                  @ranked, @preserve, '[]'::jsonb, CAST(@statistics AS jsonb), CAST(@maximumStatistics AS jsonb),
                  @buildId, @startedAt, @endedAt)
             RETURNING id
@@ -219,6 +219,7 @@ public static class ScoreEndpoints
                 beatmapId,
                 totalScore = storedTotal,
                 accuracy = storedAccuracy,
+                completion = recomputed.Completion, // whole-map % typed — what the rank is graded on
                 maxCombo = storedMaxCombo,
                 rank,
                 passed,

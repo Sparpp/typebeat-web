@@ -160,6 +160,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                    s.artist        AS Artist,
                    CASE WHEN s.cover_key IS NOT NULL THEN '/' || s.cover_key || '/list.jpg' END AS CoverUrl,
                    best.rank       AS Rank,
+                   best.completion AS Completion,
                    best.accuracy   AS Accuracy,
                    best.total_score AS TotalScore,
                    best.ended_at   AS Date,
@@ -171,7 +172,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              {score_row_select}
              FROM (
                  SELECT DISTINCT ON (sc.beatmap_id)
-                        sc.id, sc.beatmap_id, sc.rank, sc.accuracy, sc.total_score, sc.ended_at,
+                        sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
                         sc.mods::text AS mods
                  FROM scores sc
                  WHERE sc.user_id = @id AND sc.ranked AND sc.passed
@@ -191,7 +192,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             $"""
              {score_row_select}
              FROM (
-                 SELECT sc.id, sc.beatmap_id, sc.rank, sc.accuracy, sc.total_score, sc.ended_at,
+                 SELECT sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
                         sc.mods::text AS mods
                  FROM scores sc
                  WHERE sc.user_id = @id AND sc.ranked

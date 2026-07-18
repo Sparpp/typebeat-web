@@ -16,11 +16,13 @@ public class ScoringContractTest
     // ---- accuracy recompute ----
 
     [Test]
-    public void Accuracy_RecomputedFromWeights()
+    public void Accuracy_RecomputedFromWeights_ButRankGradesOnCompletion()
     {
         // 8×great + 1×ok + 1×meh out of 10 max-great objects.
         // numerator   = 300·8 + 100·1 + 50·1 = 2550
-        // denominator = 300·10              = 3000  → accuracy = 0.85 → rank B
+        // denominator = 300·10              = 3000  → accuracy = 0.85
+        // completion  = 10 typed / 10 cells = 1.0   → rank X — sloppy timing costs accuracy,
+        // score and combo, but never the grade.
         var r = ScoringContract.Recompute(
             Dict(("great", 8), ("ok", 1), ("meh", 1)),
             Dict(("great", 10)),
@@ -30,7 +32,8 @@ public class ScoringContractTest
         {
             Assert.That(r.StatisticsValid, Is.True);
             Assert.That(r.Accuracy, Is.EqualTo(0.85).Within(1e-9));
-            Assert.That(r.Rank, Is.EqualTo("B"));
+            Assert.That(r.Completion, Is.EqualTo(1.0).Within(1e-12));
+            Assert.That(r.Rank, Is.EqualTo("X"));
             Assert.That(r.TheoreticalMaxCombo, Is.EqualTo(10));
             // ceiling = round(500000·0.85 + 500000·0.85^5·1) = round(646852.65625) = 646853
             Assert.That(r.TotalScoreCeiling, Is.EqualTo(646853L));
@@ -38,9 +41,25 @@ public class ScoringContractTest
     }
 
     [Test]
-    public void Accuracy_MissesCountTowardDenominator()
+    public void WorstTimingEverywhere_StillRankX_WhenEveryCellTyped()
     {
-        // 5×great + 5×miss out of 10. numerator = 1500, denominator = 3000 → accuracy 0.5 → rank D.
+        // The headline rule: an all-meh play (every window scraped) has accuracy 50/300 ≈ 0.167
+        // but typed 100% of the map — SS.
+        var r = ScoringContract.Recompute(Dict(("meh", 10)), Dict(("great", 10)), maxCombo: 10);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.StatisticsValid, Is.True);
+            Assert.That(r.Accuracy, Is.EqualTo(50.0 / 300.0).Within(1e-9));
+            Assert.That(r.Completion, Is.EqualTo(1.0).Within(1e-12));
+            Assert.That(r.Rank, Is.EqualTo("X"));
+        });
+    }
+
+    [Test]
+    public void Accuracy_MissesCountTowardDenominator_AndCompletion()
+    {
+        // 5×great + 5×miss out of 10. accuracy 0.5; completion 5/10 = 0.5 → rank D.
         var r = ScoringContract.Recompute(
             Dict(("great", 5), ("miss", 5)),
             Dict(("great", 10)),
@@ -50,11 +69,28 @@ public class ScoringContractTest
         {
             Assert.That(r.StatisticsValid, Is.True);
             Assert.That(r.Accuracy, Is.EqualTo(0.5).Within(1e-9));
+            Assert.That(r.Completion, Is.EqualTo(0.5).Within(1e-9));
             Assert.That(r.Rank, Is.EqualTo("D"));
             // misses do not increase combo → theoretical max combo is still the note count (10).
             Assert.That(r.TheoreticalMaxCombo, Is.EqualTo(10));
             // ceiling = round(500000·0.5 + 500000·0.5^5·1) = 250000 + 15625 = 265625
             Assert.That(r.TotalScoreCeiling, Is.EqualTo(265625L));
+        });
+    }
+
+    [Test]
+    public void OneMissedCell_DeniesTheSS()
+    {
+        // 99/100 typed → completion 0.99 → S, however clean the timing was.
+        var r = ScoringContract.Recompute(
+            Dict(("great", 99), ("miss", 1)),
+            Dict(("great", 100)),
+            maxCombo: 99);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Completion, Is.EqualTo(0.99).Within(1e-9));
+            Assert.That(r.Rank, Is.EqualTo("S"));
         });
     }
 
@@ -67,6 +103,7 @@ public class ScoringContractTest
         {
             Assert.That(r.StatisticsValid, Is.True);
             Assert.That(r.Accuracy, Is.EqualTo(1.0).Within(1e-12));
+            Assert.That(r.Completion, Is.EqualTo(1.0).Within(1e-12));
             Assert.That(r.Rank, Is.EqualTo("X"));
             Assert.That(r.TotalScoreCeiling, Is.EqualTo(1_000_000L));
         });
@@ -162,7 +199,7 @@ public class ScoringContractTest
         });
     }
 
-    // ---- rank cutoffs (ScoreProcessor.RankFromScore) ----
+    // ---- rank cutoffs (TypeBeatScoreProcessor.RankFromCompletion — keep in sync) ----
 
     [TestCase(1.0, "X")]
     [TestCase(0.99, "S")]
@@ -175,8 +212,8 @@ public class ScoringContractTest
     [TestCase(0.70, "C")]
     [TestCase(0.6999, "D")]
     [TestCase(0.0, "D")]
-    public void RankFromAccuracy_MatchesCutoffs(double accuracy, string expected)
-        => Assert.That(ScoringContract.RankFromAccuracy(accuracy), Is.EqualTo(expected));
+    public void RankFromCompletion_MatchesCutoffs(double completion, string expected)
+        => Assert.That(ScoringContract.RankFromCompletion(completion), Is.EqualTo(expected));
 
     // ---- failed (partial) plays: judged-only accuracy drives the ceiling ----
     // Regression for the review finding: the client's running accuracy denominator only counts
@@ -200,6 +237,8 @@ public class ScoringContractTest
             Assert.That(r.Accuracy, Is.EqualTo(0.1).Within(1e-9));
             Assert.That(r.JudgedAccuracy, Is.EqualTo(1.0).Within(1e-12));
             Assert.That(r.AccuracyProgress, Is.EqualTo(0.1).Within(1e-9));
+            // Completion is whole-map: this fail typed 10% of the map, not 100%-of-what-it-saw.
+            Assert.That(r.Completion, Is.EqualTo(0.1).Within(1e-9));
             // ceiling = round(500000·1·1 + 500000·1^5·0.1) = 550000 — computed from the JUDGED
             // accuracy. The whole-map value would have given ~50001 and rejected honest totals.
             Assert.That(r.TotalScoreCeiling, Is.EqualTo(550_000L));

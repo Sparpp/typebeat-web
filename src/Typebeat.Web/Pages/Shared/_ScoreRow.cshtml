@@ -15,7 +15,8 @@
         @Model.Title <span class="score-row__artist">[@Model.Artist]</span>
     </a>
     <span class="grade @Model.GradeClass">@Model.GradeLabel</span>
-    <span class="score-row__acc">@((Model.Accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
+    <span class="score-row__completion" title="completion — the % of the map typed; what the grade is awarded on">@((Model.Completion * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
+    <span class="score-row__acc" title="accuracy — timing quality">@((Model.Accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
     @if (Model.Mods.Length > 0)
     {
         <span class="score-row__mods">@Model.Mods</span>

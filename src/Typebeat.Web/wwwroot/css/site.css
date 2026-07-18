@@ -1419,12 +1419,17 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     font-weight: 400;
 }
 
+.score-row__completion,
 .score-row__acc,
 .score-row__score,
 .score-row__plays {
     font-family: var(--font-display);
     white-space: nowrap;
 }
+
+/* Completion is the graded metric — lime; accuracy stays muted secondary. */
+.score-row__completion { color: var(--violet); }
+.score-row__acc { color: var(--text-muted); }
 
 .score-row__mods {
     color: var(--violet-bright);

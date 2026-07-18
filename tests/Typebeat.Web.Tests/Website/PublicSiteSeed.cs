@@ -233,11 +233,13 @@ public static class PublicSiteSeed
         => await conn.ExecuteAsync(
             """
             INSERT INTO scores
-                (user_id, beatmap_id, total_score, accuracy, max_combo, rank, passed, ranked,
+                (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
                  mods, statistics, maximum_statistics)
             VALUES
-                (@userId, @beatmapId, @totalScore, @accuracy, @maxCombo, @rank, true, @ranked,
+                (@userId, @beatmapId, @totalScore, @accuracy, @completion, @maxCombo, @rank, true, @ranked,
                  '[]'::jsonb, '{"great":100,"ok":5,"meh":2,"miss":3}'::jsonb, '{"great":110}'::jsonb)
             """,
-            new { userId, beatmapId, totalScore, accuracy, maxCombo, rank, ranked });
+            // completion matches the fixed statistics blob: 107 typed of 110 cells. (Ranks stay
+            // whatever the caller seeds — these are display fixtures, not grading fixtures.)
+            new { userId, beatmapId, totalScore, accuracy, completion = 107.0 / 110.0, maxCombo, rank, ranked });
 }

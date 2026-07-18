@@ -175,7 +175,8 @@
             </div>
             <div class="podium__stats">
                 <div class="podium-stat"><span class="podium-stat__label">Total score</span><span class="podium-stat__value">@top.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>
-                <div class="podium-stat"><span class="podium-stat__label">Accuracy</span><span class="podium-stat__value">@SetModel.FormatAccuracy(top.Accuracy)</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Completion</span><span class="podium-stat__value">@SetModel.FormatPercent(top.Completion)</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Accuracy</span><span class="podium-stat__value">@SetModel.FormatPercent(top.Accuracy)</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Max combo</span><span class="podium-stat__value">@top.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Perfect</span><span class="podium-stat__value">@top.Perfect</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Good</span><span class="podium-stat__value">@top.Good</span></div>
@@ -195,6 +196,7 @@
                 <tr>
                     <th>Rank</th>
                     <th>Grade</th>
+                    <th>Completion</th>
                     <th>Score</th>
                     <th>Accuracy</th>
                     <th>Player</th>
@@ -214,8 +216,9 @@
                     <tr>
                         <td class="num">#@(i + 1)</td>
                         <td><span class="grade @SetModel.GradeClass(score.Rank)">@SetModel.GradeLabel(score.Rank)</span></td>
+                        <td class="num">@SetModel.FormatPercent(score.Completion)</td>
                         <td class="num">@score.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</td>
-                        <td class="num">@SetModel.FormatAccuracy(score.Accuracy)</td>
+                        <td class="num">@SetModel.FormatPercent(score.Accuracy)</td>
                         <td><a href="/users/@score.UserId">@score.Username</a></td>
                         <td class="num">@score.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</td>
                         <td class="num">@score.Perfect</td>

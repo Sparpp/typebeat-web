@@ -107,6 +107,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                    best.username     AS Username,
                    best.total_score  AS TotalScore,
                    best.accuracy     AS Accuracy,
+                   best.completion   AS Completion,
                    best.max_combo    AS MaxCombo,
                    best.rank         AS Rank,
                    best.ended_at     AS EndedAt,
@@ -114,7 +115,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                    best.statistics   AS StatisticsJson
             FROM (
                 SELECT DISTINCT ON (sc.user_id)
-                       sc.id, sc.user_id, sc.total_score, sc.accuracy, sc.max_combo, sc.rank,
+                       sc.id, sc.user_id, sc.total_score, sc.accuracy, sc.completion, sc.max_combo, sc.rank,
                        sc.ended_at, sc.mods::text AS mods, sc.statistics::text AS statistics,
                        u.username::text AS username
                 FROM scores sc
@@ -253,8 +254,9 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         return $"{(int)t.TotalMinutes}:{t.Seconds:00}";
     }
 
-    public static string FormatAccuracy(double accuracy)
-        => (accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%";
+    /// <summary>0..1 → "97.53%"; used for accuracy AND completion (both are stored as fractions).</summary>
+    public static string FormatPercent(double fraction)
+        => (fraction * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%";
 
     /// <summary>The client's ScoreRank strings; X is the perfect rank, shown as SS like the game.</summary>
     public static string GradeLabel(string rank) => rank == "X" ? "SS" : rank;
@@ -280,10 +282,11 @@ public sealed class SetModel(Db db) : TypebeatPageModel
     /// One leaderboard row. Judgement counts come from the statistics jsonb (wire keys
     /// great/ok/meh/miss) but are DISPLAYED with the game engine's own judgement names —
     /// Perfect/Good/Ok/Miss per the mapping in the fork's TypeBeatJudgements.cs
-    /// ("Perfect->Great, Good->Ok, Ok->Meh, ...->Miss").
+    /// ("Perfect->Great, Good->Ok, Ok->Meh, ...->Miss"). Completion (% of the map typed) is
+    /// the metric the grade is awarded on; accuracy remains the timing-quality metric.
     /// </summary>
     public sealed record ScoreRow(
-        long ScoreId, long UserId, string Username, long TotalScore, double Accuracy,
+        long ScoreId, long UserId, string Username, long TotalScore, double Accuracy, double Completion,
         int MaxCombo, string Rank, DateTime EndedAt, string ModsJson, string StatisticsJson)
     {
         private JObject? statistics;

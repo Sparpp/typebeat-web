@@ -9,6 +9,7 @@ namespace Typebeat.Web.Pages;
 /// </summary>
 /// <param name="CoverUrl">Site-relative list-cover URL, or null → gradient placeholder.</param>
 /// <param name="Rank">Raw ScoreRank string from scores.rank (X/XH read as SS, like the game).</param>
+/// <param name="Completion">% of the map typed (0..1) — the metric the grade is awarded on.</param>
 /// <param name="Date">ended_at; timestamptz arrives from Npgsql as UTC DateTime.</param>
 public sealed record ScoreRowModel(
     long SetId,
@@ -16,6 +17,7 @@ public sealed record ScoreRowModel(
     string Artist,
     string? CoverUrl,
     string Rank,
+    double Completion,
     double Accuracy,
     long TotalScore,
     DateTime Date,
