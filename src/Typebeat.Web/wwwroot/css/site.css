@@ -840,12 +840,21 @@ img { max-width: 100%; }
 
 /* ---- Preview play button (progress ring via conic-gradient + --progress) ---- */
 
+/* A self-contained 44px play/stop disc. Deliberately NOT absolute by default: the base must be
+   safe wherever it lands (the set-page action row is plain flow), so a stray/stale stylesheet can
+   never let it stretch to fill — and overlay a click target across — its container. The card
+   variant opts INTO absolute centring via the scoped rule below. */
 .preview-btn {
-    position: absolute;
-    inset: 0;
-    margin: auto;
+    position: relative;
+    flex: 0 0 auto;
+    box-sizing: border-box;
     width: 44px;
     height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    max-width: 44px;
+    max-height: 44px;
+    padding: 0;
     border: none;
     border-radius: 50%;
     cursor: pointer;
@@ -855,6 +864,14 @@ img { max-width: 100%; }
     justify-content: center;
     color: var(--text);
     transition: box-shadow 120ms ease;
+}
+
+/* Card variant only: centre the disc over the cover thumbnail. Scoped to the media box so it can
+   never escape onto a page-level container. */
+.bset-card__media .preview-btn {
+    position: absolute;
+    inset: 0;
+    margin: auto;
 }
 
 .preview-btn:hover { box-shadow: var(--glow-violet); }
