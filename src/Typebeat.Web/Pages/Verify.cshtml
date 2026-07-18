@@ -33,11 +33,11 @@
         <button type="submit" class="btn btn-primary">@(Model.IsLogin ? "Sign in" : "Confirm email")</button>
     </form>
 
-    <p class="card-note">
+    <div class="card-note">
         Didn't get it? Check your spam folder, or
         <form class="resend-form" method="post" asp-page-handler="Resend">
             @Html.AntiForgeryToken()
             <button type="submit" class="btn-link">send a new code</button>
         </form>.
-    </p>
+    </div>
 </div>
