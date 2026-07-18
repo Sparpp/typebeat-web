@@ -95,7 +95,15 @@ await PaceBackfill.RunAsync(
     app.Logger);
 
 // Which email path is live (helps confirm prod is actually sending, not just logging codes).
-app.Logger.LogInformation("Email sender: {Sender}", app.Services.GetRequiredService<IEmailSender>().GetType().Name);
+// The log fallback means verification/login codes are NOT delivered — the site still says
+// "sent" — so make it a startup WARNING behind the proxy (i.e. a real deployment), where that
+// is almost certainly a missing TYPEBEAT_RESEND_API_KEY rather than an intended dev default.
+var emailSender = app.Services.GetRequiredService<IEmailSender>();
+
+if (emailSender is LogEmailSender && app.Configuration.GetValue<bool>("TYPEBEAT_BEHIND_PROXY"))
+    app.Logger.LogWarning("Email sender: LogEmailSender — codes are only written to this log, NO emails are delivered. Set TYPEBEAT_RESEND_API_KEY to enable real delivery.");
+else
+    app.Logger.LogInformation("Email sender: {Sender}", emailSender.GetType().Name);
 
 // Behind the Caddy reverse proxy, honor X-Forwarded-For / X-Forwarded-Proto so Request.Scheme is
 // "https" (the notification_endpoint must be wss://, cover/avatar URLs must be https://) and
