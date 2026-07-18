@@ -4,7 +4,7 @@ namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
 /// Landing page (Phase B): live stats line, newest-maps strip rendered with the shared card
-/// partial (cover + preview markup included), and the signed-out CTA pair.
+/// partial (cover + preview markup included), and the signed-out CTA.
 /// </summary>
 public class LandingPageTest
 {
@@ -26,8 +26,7 @@ public class LandingPageTest
             Assert.That(html, Does.Contain("scores today"));
             Assert.That(html, Does.Contain("maps available"));
 
-            // CTA pair for the signed-out state.
-            Assert.That(html, Does.Contain("href=\"/download\""));
+            // Signed-out CTA. (The dedicated /download page is gone — the hero only invites sign-up.)
             Assert.That(html, Does.Contain("href=\"/register\""));
 
             // Newest strip: the newest public set leads, rendered via the card partial.
