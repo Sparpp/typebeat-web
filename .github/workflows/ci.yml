@@ -112,3 +112,11 @@ jobs:
           sleep 5
           curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -q ok
           echo "healthy"
+
+      # The aligner worker (torch/demucs) is a separate long-lived service, deployed AFTER the app
+      # is already live+healthy so its heavy build can never gate an app deploy. Docker layer cache
+      # on the box makes this a no-op fast path unless deploy/aligner/* changed; restart:
+      # unless-stopped keeps it up between deploys regardless. Build then up, both scoped to the
+      # aligner service so postgres/caddy/app are untouched.
+      - name: Build + start aligner worker
+        run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web && ./deploy/up.sh build aligner && ./deploy/up.sh up -d aligner'
