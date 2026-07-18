@@ -848,12 +848,12 @@ img { max-width: 100%; }
     position: relative;
     flex: 0 0 auto;
     box-sizing: border-box;
-    width: 44px;
-    height: 44px;
-    min-width: 44px;
-    min-height: 44px;
-    max-width: 44px;
-    max-height: 44px;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    max-width: 32px;
+    max-height: 32px;
     padding: 0;
     border: none;
     border-radius: 50%;
@@ -879,7 +879,7 @@ img { max-width: 100%; }
 .preview-btn::before {
     content: '';
     position: absolute;
-    inset: 3px;
+    inset: 2px;
     border-radius: 50%;
     background: var(--surface);
 }
@@ -887,7 +887,7 @@ img { max-width: 100%; }
 .preview-btn::after {
     content: '▶';
     position: relative;
-    font-size: 13px;
+    font-size: 10px;
     line-height: 1;
     padding-left: 2px;
 }
