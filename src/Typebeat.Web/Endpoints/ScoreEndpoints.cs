@@ -280,7 +280,7 @@ public static class ScoreEndpoints
         var response = new MultiplayerScoreWire
         {
             Id = scoreId,
-            User = BuildUser(ctx, user.Id, user.Username, user.CountryCode, avatarKey: null),
+            User = BuildUser(ctx, user.Id, user.Username, user.CountryCode, user.AvatarKey),
             Rank = rank,
             TotalScore = storedTotal,
             Accuracy = storedAccuracy,
@@ -465,19 +465,17 @@ public static class ScoreEndpoints
     };
 
     /// <summary>
-    /// The user object riding on leaderboard rows and the submit response. avatar_url must
-    /// never be null: the client's APIUser falls back to a ppy CDN URL for a null avatar, so
-    /// we always emit an absolute URL on THIS host — the stored avatar_key when the user has
-    /// one, the same self-hosted default the me-payload uses (UserWire.AvatarUrl) otherwise.
+    /// The user object riding on leaderboard rows and the submit response. avatar_url is built by
+    /// the shared <see cref="UserWire.AvatarUrl(string, string, string?)"/> — the stored avatar_key
+    /// when the user has one, the same self-hosted default the me-payload uses otherwise (never
+    /// null, or the client falls back to a ppy CDN URL).
     /// </summary>
     private static ScoreUserWire BuildUser(HttpContext ctx, long id, string username, string countryCode, string? avatarKey) => new()
     {
         Id = id,
         Username = username,
         CountryCode = countryCode,
-        AvatarUrl = avatarKey is null
-            ? UserWire.AvatarUrl(ctx.Request.Scheme, ctx.Request.Host.Value ?? string.Empty)
-            : $"{ctx.Request.Scheme}://{ctx.Request.Host}/{avatarKey}",
+        AvatarUrl = UserWire.AvatarUrl(ctx.Request.Scheme, ctx.Request.Host.Value ?? string.Empty, avatarKey),
     };
 
     private static Dictionary<string, int> ParseCounts(string? json)

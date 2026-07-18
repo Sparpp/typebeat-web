@@ -24,7 +24,7 @@ public static class UserWire
         id = user.Id,
         username = user.Username,
         country_code = user.CountryCode,
-        avatar_url = AvatarUrl(scheme, host),
+        avatar_url = AvatarUrl(scheme, host, user.AvatarKey),
         is_supporter = false,
         is_admin = user.IsAdmin,
         is_bot = false,
@@ -35,8 +35,16 @@ public static class UserWire
         score_processing_notice_url = "",
     };
 
-    /// <summary>Absolute URL of the static default avatar (served by StubEndpoints).</summary>
-    public static string AvatarUrl(string scheme, string host) => $"{scheme}://{host}/img/default-avatar.png";
+    /// <summary>
+    /// Absolute avatar URL: the user's uploaded avatar (<paramref name="avatarKey"/>, a served
+    /// store key) when set, else the self-hosted default served by StubEndpoints. Never null and
+    /// always absolute — the client's APIUser falls back to a ppy CDN URL for a null/relative
+    /// avatar_url, so every payload emits a full URL on THIS host.
+    /// </summary>
+    public static string AvatarUrl(string scheme, string host, string? avatarKey = null)
+        => avatarKey is null
+            ? $"{scheme}://{host}/img/default-avatar.png"
+            : $"{scheme}://{host}/{avatarKey}";
 
     /// <summary>
     /// A zeroed UserStatistics (Users/UserStatistics.cs). global_rank stays null so the client

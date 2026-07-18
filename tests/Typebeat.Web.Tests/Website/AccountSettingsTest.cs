@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Headers;
 using Dapper;
+using Newtonsoft.Json.Linq;
 using Npgsql;
+using Typebeat.Web.Auth;
+using Typebeat.Web.Data;
 
 namespace Typebeat.Web.Tests.Website;
 
@@ -155,6 +158,36 @@ public class AccountSettingsTest
     }
 
     [Test]
+    public async Task Me_EmitsUploadedAvatarUrl_ToTheGameClient()
+    {
+        string username = "meavatar_" + Guid.NewGuid().ToString("N")[..10];
+        long id = await WebsiteFixture.SeedUserAsync(username, username + "@example.com", password, verified: true);
+
+        string avatarKey = $"avatars/{id}/9.jpg";
+        await using (var conn = Db())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync("UPDATE users SET avatar_key = @k WHERE id = @id", new { id, k = avatarKey });
+        }
+
+        // Mint a real bearer for this user (the game-client path), same as BssFixture does.
+        await using var ds = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+        var pair = await new TokenService(new Db(ds)).IssueAsync(id);
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v2/me/");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", pair.AccessToken);
+        using var resp = await WebsiteFixture.Client.SendAsync(req);
+
+        var me = JObject.Parse(await resp.Content.ReadAsStringAsync());
+        Assert.Multiple(() =>
+        {
+            Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            // The client renders this avatar_url in-game; it must be the uploaded one, absolute.
+            Assert.That((string?)me["avatar_url"], Is.EqualTo($"https://localhost/{avatarKey}"));
+        });
+    }
+
+    [Test]
     public async Task Delete_WrongUsername_KeepsAccount()
     {
         var (client, _) = WebsiteFixture.CreateBrowser();
@@ -173,7 +206,7 @@ public class AccountSettingsTest
 
         await using var conn = Db();
         await conn.OpenAsync();
-        string stillThere = await conn.ExecuteScalarAsync<string>("SELECT username::text FROM users WHERE id = @id", new { id });
+        string? stillThere = await conn.ExecuteScalarAsync<string>("SELECT username::text FROM users WHERE id = @id", new { id });
         Assert.That(stillThere, Is.EqualTo(username), "the account must be untouched after a failed confirmation");
     }
 
