@@ -897,11 +897,12 @@ img { max-width: 100%; }
     padding-left: 0;
 }
 
-/* set-page variant sits in the action row instead of over a cover */
+/* set-page variant sits in the action row instead of over a cover. The base rule already handles
+   layout (relative + flex-auto); crucially it must stay positioned so the ::before disc cannot
+   escape onto the header. */
 .preview-btn--big {
-    position: static;
+    position: relative;
     margin: 0;
-    flex: 0 0 auto;
 }
 
 /* ---- Listing: search + filter rows + paging ---- */
