@@ -263,6 +263,44 @@ public class WireCompatTests
     }
 
     // ---------------------------------------------------------------------------------------------
+    // (f2) GET /api/v2/users/{id} → APIUser. The profile overlay's fetch; without it the client
+    // spins forever (no Failure handler on GetUserRequest). Runs after the score loop so the
+    // player has a ranked score to rank.
+    // ---------------------------------------------------------------------------------------------
+    [Test]
+    [Order(3)]
+    public async Task GetUser_DeserializesAsAPIUser_WithRankedStatisticsAndPlaymode()
+    {
+        using var req = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/users/{ServerFixture.PlayerUserId}?key=id");
+        using var resp = await client.SendAsync(req);
+
+        string body = await resp.Content.ReadAsStringAsync();
+        Assert.That(resp.IsSuccessStatusCode, Is.True, $"users status {(int)resp.StatusCode}: {body}");
+
+        var user = JsonConvert.DeserializeObject<APIUser>(body);
+
+        Assert.That(user, Is.Not.Null);
+        Assert.That(user!.Id, Is.EqualTo((int)ServerFixture.PlayerUserId));
+        Assert.That(user.Username, Is.EqualTo(ServerFixture.PlayerUsername));
+
+        // playmode must be present + resolvable: UserProfileOverlay.userLoadComplete feeds it to
+        // RulesetStore.GetRuleset(...).AsNonNull(), which NREs on a null/unknown ruleset.
+        Assert.That(user.PlayMode, Is.EqualTo("typebeat"));
+
+        Assert.DoesNotThrow(() =>
+        {
+            var stats = user.Statistics;
+            _ = stats.DisplayAccuracy;
+            _ = stats.Level.Current;
+            _ = stats.GradesCount[ScoreRank.S];
+        }, "reading the profile statistics must not throw");
+
+        // The score loop submitted a single 400k play on the ranked seed map → global rank #1.
+        Assert.That(user.Statistics.GlobalRank, Is.EqualTo(1));
+        Assert.That(user.Statistics.RankedScore, Is.EqualTo(400_000));
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // (g) MD5 identity: the client's ComputeMD5Hash over the fixture bytes == the stored checksum.
     // ---------------------------------------------------------------------------------------------
     [Test]

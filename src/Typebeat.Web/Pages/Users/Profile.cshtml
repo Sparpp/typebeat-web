@@ -161,6 +161,7 @@
                 <span class="profile-rank__label">Global rank</span>
                 <span class="profile-rank__value">@(Model.GlobalRank is long rank ? "#" + rank.ToString("N0", CultureInfo.InvariantCulture) : "Unranked")</span>
             </div>
+            <div class="stat-row"><span class="stat-row__label">Ranked score</span><span class="stat-row__value">@Model.RankedScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Total score</span><span class="stat-row__value">@Model.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Play count</span><span class="stat-row__value">@Model.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Play time</span><span class="stat-row__value">@ProfileModel.FormatPlayTime(Model.PlayTimeS)</span></div>

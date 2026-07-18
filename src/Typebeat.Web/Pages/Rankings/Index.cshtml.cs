@@ -1,5 +1,6 @@
 using Dapper;
 using Typebeat.Web.Data;
+using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Pages.Rankings;
 
@@ -27,28 +28,21 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
     {
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
+        // Same cumulative-ranked-score metric as the profile stats card and the client user
+        // endpoint (GlobalRanking) — one definition so every ranking surface agrees.
         Rows = (await conn.QueryAsync<Row>(
-                """
-                SELECT u.id AS UserId,
-                       u.username AS Username,
-                       u.avatar_key AS AvatarKey,
-                       u.country_code AS CountryCode,
-                       SUM(best.total_score)::bigint AS CumulativeScore,
-                       COUNT(*)::bigint AS RankedScoreCount
-                FROM (
-                    SELECT DISTINCT ON (s.user_id, s.beatmap_id) s.user_id, s.total_score
-                    FROM scores s
-                    JOIN beatmaps b ON b.id = s.beatmap_id
-                    JOIN beatmapsets bs ON bs.id = b.set_id
-                    WHERE s.ranked AND s.passed AND bs.status = 'ranked'
-                    ORDER BY s.user_id, s.beatmap_id, s.total_score DESC, s.id ASC
-                ) best
-                JOIN users u ON u.id = best.user_id
-                WHERE NOT u.restricted AND u.deleted_at IS NULL
-                GROUP BY u.id, u.username, u.avatar_key, u.country_code
-                ORDER BY SUM(best.total_score) DESC, u.id ASC
-                LIMIT @limit
-                """,
+                $"""
+                 SELECT u.id AS UserId,
+                        u.username AS Username,
+                        u.avatar_key AS AvatarKey,
+                        u.country_code AS CountryCode,
+                        t.ranked_score AS CumulativeScore,
+                        t.ranked_map_count AS RankedScoreCount
+                 FROM ({GlobalRanking.PerUserCumulativeSql}) t
+                 JOIN users u ON u.id = t.user_id
+                 ORDER BY t.ranked_score DESC, u.id ASC
+                 LIMIT @limit
+                 """,
                 new { limit = page_size }))
             .ToList();
     }

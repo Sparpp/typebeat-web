@@ -183,6 +183,7 @@ if (Flags.IsEnabled(app.Configuration, "TYPEBEAT_ENABLE_DEBUG_THROW"))
 OAuthEndpoints.Map(app);
 RegistrationEndpoints.Map(app);
 MeEndpoints.Map(app);
+UserEndpoints.Map(app);
 StubEndpoints.Map(app);
 NotificationsSocket.Map(app);
 BeatmapLookupEndpoints.Map(app);

@@ -45,7 +45,9 @@ public class ProfilePageTest
         visitorId = await InsertUserAsync(conn, visitor_username, passwords.Hash(visitor_password));
         idlerId = await InsertUserAsync(conn, "idle observer");
 
-        // rival outscores star -> star is global rank #2 by dense_rank over total_score.
+        // user_stats drives the displayed Total score / Play count / Play time only. Global rank is
+        // now the cumulative ranked-score metric (GlobalRanking), so it comes from real scores on
+        // ranked maps below, NOT from these totals.
         await conn.ExecuteAsync(
             """
             INSERT INTO user_stats (user_id, play_count, total_score, play_time_s)
@@ -69,6 +71,10 @@ public class ProfilePageTest
         // Map B: best 300k B (90%), plus a fail that may only surface under Recent scores.
         await InsertScoreAsync(conn, starId, beatmapB, 300_000, 0.90, "B");
         await InsertScoreAsync(conn, starId, beatmapB, 100_000, 0.40, "F", passed: false);
+
+        // rival's 900k on ranked map A tops star's cumulative ranked score (800k — map B is
+        // pending, so it does not count toward ranked score), making star global rank #2.
+        await InsertScoreAsync(conn, rivalId, beatmapA, 900_000, 0.97, "S");
 
         await conn.ExecuteAsync(
             "INSERT INTO favourites (user_id, set_id) VALUES (@starId, @setId)",

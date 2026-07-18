@@ -2,6 +2,7 @@ using System.Globalization;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Typebeat.Web.Data;
+using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Pages.Users;
 
@@ -29,8 +30,11 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
     public UserHeader ProfileUser { get; private set; } = null!;
 
-    /// <summary>Dense rank among user_stats by total_score; null → unranked (no positive score).</summary>
+    /// <summary>Global rank by cumulative ranked score (<see cref="GlobalRanking"/>); null → unranked.</summary>
     public long? GlobalRank { get; private set; }
+
+    /// <summary>Sum of best score per ranked map — the metric global rank is drawn from.</summary>
+    public long RankedScore { get; private set; }
 
     public long TotalScore { get; private set; }
     public int PlayCount { get; private set; }
@@ -95,17 +99,9 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         // ---- stats card ----
 
-        GlobalRank = await conn.ExecuteScalarAsync<long?>(
-            """
-            SELECT rnk
-            FROM (
-                SELECT user_id, dense_rank() OVER (ORDER BY total_score DESC) AS rnk
-                FROM user_stats
-                WHERE total_score > 0
-            ) ranked
-            WHERE ranked.user_id = @id
-            """,
-            new { id });
+        var ranking = await GlobalRanking.ForUserAsync(conn, id, HttpContext.RequestAborted);
+        GlobalRank = ranking.GlobalRank;
+        RankedScore = ranking.RankedScore;
 
         // Value tuple defaults to all-zero when the user_stats row doesn't exist yet.
         (TotalScore, PlayCount, PlayTimeS) = await conn.QuerySingleOrDefaultAsync<(long, int, long)>(
