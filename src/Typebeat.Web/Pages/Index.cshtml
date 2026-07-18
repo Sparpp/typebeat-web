@@ -17,7 +17,7 @@
     <div class="hero-actions">
         @if (Model.GameDownloadAvailable)
         {
-            <a class="btn btn-primary btn-big" href="/download/game" download>download &mdash; windows</a>
+            <a class="btn btn-primary btn-big" href="/download/game" download>download installer (windows)</a>
         }
         @if (Model.CurrentUser is null)
         {
@@ -28,6 +28,10 @@
             <a class="btn btn-ghost btn-big" href="/beatmapsets">browse maps</a>
         }
     </div>
+    @if (Model.GameDownloadAvailable)
+    {
+        <p class="hero-note">Installer isn't signed yet and will trigger Windows SmartScreen :(</p>
+    }
     <p class="hero-stats">
         <span><strong>@Model.Players.ToString("N0", CultureInfo.InvariantCulture)</strong> registered players</span>
         <span><strong>@Model.ScoresToday.ToString("N0", CultureInfo.InvariantCulture)</strong> scores today</span>
