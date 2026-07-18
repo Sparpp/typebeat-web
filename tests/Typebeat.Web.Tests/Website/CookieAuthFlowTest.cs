@@ -1,40 +1,65 @@
 using System.Net;
+using Dapper;
 using Newtonsoft.Json.Linq;
+using Npgsql;
 
 namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
-/// End-to-end cookie auth: login form -> typebeat_session cookie -> authed layout, and the
-/// identity-unification contract — the raw token in the cookie IS a bearer access token, so
-/// the API's /api/v2/me/ must resolve it to the same user the website session shows.
+/// End-to-end cookie auth through the M2 two-step flow: password → emailed code → session. Login
+/// and register no longer sign the user in directly; they email a code and hand off to /verify,
+/// where the session is minted. Also pins the identity-unification contract — the raw token in the
+/// session cookie IS a bearer access token, so /api/v2/me/ resolves it to the same user.
 /// </summary>
 public class CookieAuthFlowTest
 {
     [Test]
-    public async Task Login_ShowsUserChip_AndCookieTokenResolvesViaBearerPath()
+    public async Task LoginThenVerify_ShowsUserChip_AndCookieTokenResolvesViaBearerPath()
     {
+        const string email = "chip.user@example.com";
+        long userId = await WebsiteFixture.SeedUserAsync("chip user", email, "hunter2hunter2", verified: true);
+
         var (client, cookies) = WebsiteFixture.CreateBrowser();
         using var _ = client;
 
-        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/login");
-
-        using var response = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        // Step 1: password. Lands on /verify with NO session yet.
+        string loginToken = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/login");
+        using (var login = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["__RequestVerificationToken"] = token,
-            ["Login"] = WebsiteFixture.SeededUsername,
-            ["Password"] = WebsiteFixture.SeededPassword,
+            ["__RequestVerificationToken"] = loginToken,
+            ["Login"] = "chip user",
+            ["Password"] = "hunter2hunter2",
+        })))
+        {
+            string verifyHtml = await login.Content.ReadAsStringAsync();
+            Assert.Multiple(() =>
+            {
+                Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(login.RequestMessage!.RequestUri!.AbsolutePath, Is.EqualTo("/verify"));
+                Assert.That(verifyHtml, Does.Contain("code"));
+                Assert.That(cookies.GetCookies(WebsiteFixture.BaseAddress)["typebeat_session"], Is.Null, "no session before the code step");
+            });
+        }
+
+        // Step 2: the emailed code.
+        string code = WebsiteFixture.Emails.LastCodeFor(email)!;
+        Assert.That(code, Is.Not.Null.And.Not.Empty, "a login code should have been emailed");
+
+        string verifyToken = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/verify");
+        using var response = await client.PostAsync("/verify", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = verifyToken,
+            ["Code"] = code,
         }));
 
-        // 302 -> "/" followed by the redirect handler.
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
         string html = await response.Content.ReadAsStringAsync();
         Assert.Multiple(() =>
         {
             Assert.That(html, Does.Contain("user-chip"));
-            Assert.That(html, Does.Contain(WebsiteFixture.SeededUsername));
-            // logged-in nav shows the sign-out control (lowercase per the Caret theme)
-            Assert.That(html, Does.Contain($"href=\"/users/{WebsiteFixture.SeededUserId}\""));
+            Assert.That(html, Does.Contain("chip user"));
+            Assert.That(html, Does.Contain($"href=\"/users/{userId}\""));
             Assert.That(html, Does.Contain("sign out"));
         });
 
@@ -51,14 +76,17 @@ public class CookieAuthFlowTest
         var me = JObject.Parse(await meResponse.Content.ReadAsStringAsync());
         Assert.Multiple(() =>
         {
-            Assert.That(me["id"]!.Value<long>(), Is.EqualTo(WebsiteFixture.SeededUserId));
-            Assert.That(me["username"]!.Value<string>(), Is.EqualTo(WebsiteFixture.SeededUsername));
+            Assert.That(me["id"]!.Value<long>(), Is.EqualTo(userId));
+            Assert.That(me["username"]!.Value<string>(), Is.EqualTo("chip user"));
         });
     }
 
     [Test]
-    public async Task Login_WrongPassword_ShowsGenericError_AndSetsNoCookie()
+    public async Task Login_WrongPassword_ShowsGenericError_SendsNoCode_AndSetsNoCookie()
     {
+        const string email = "wrongpw.user@example.com";
+        await WebsiteFixture.SeedUserAsync("wrongpw user", email, "hunter2hunter2", verified: true);
+
         var (client, cookies) = WebsiteFixture.CreateBrowser();
         using var _ = client;
 
@@ -67,46 +95,89 @@ public class CookieAuthFlowTest
         using var response = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["__RequestVerificationToken"] = token,
-            ["Login"] = WebsiteFixture.SeededUsername,
+            ["Login"] = "wrongpw user",
             ["Password"] = "not the password",
         }));
 
         string html = await response.Content.ReadAsStringAsync();
         Assert.Multiple(() =>
         {
-            // Re-rendered form (200), generic message, no session issued.
+            // Re-rendered login form (200), generic message, no session, and crucially NO code sent
+            // (so the form cannot be used to probe which accounts exist).
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(response.RequestMessage!.RequestUri!.AbsolutePath, Is.EqualTo("/login"));
             Assert.That(html, Does.Contain("The username or password is incorrect."));
             Assert.That(cookies.GetCookies(WebsiteFixture.BaseAddress)["typebeat_session"], Is.Null);
+            Assert.That(WebsiteFixture.Emails.CountFor(email), Is.EqualTo(0));
         });
     }
 
     [Test]
-    public async Task Register_CreatesAccount_AndAutoLogsIn()
+    public async Task RegisterThenVerify_SetsVerifiedAt_AndSignsIn()
     {
+        const string email = "reg.verify@example.com";
+
         var (client, cookies) = WebsiteFixture.CreateBrowser();
         using var _ = client;
 
-        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/register");
-
-        using var response = await client.PostAsync("/register", new FormUrlEncodedContent(new Dictionary<string, string>
+        string regToken = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/register");
+        using (var register = await client.PostAsync("/register", new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["__RequestVerificationToken"] = token,
-            ["Username"] = "reg tester",
-            ["Email"] = "reg.tester@example.com",
+            ["__RequestVerificationToken"] = regToken,
+            ["Username"] = "reg verify",
+            ["Email"] = email,
             ["Password"] = "registerpass1",
-        }));
-
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-
-        string html = await response.Content.ReadAsStringAsync();
-        Assert.Multiple(() =>
+        })))
         {
-            // Landed on "/" signed in: chip visible, no "Sign in" prompt.
-            Assert.That(html, Does.Contain("user-chip"));
-            Assert.That(html, Does.Contain("reg tester"));
-            Assert.That(cookies.GetCookies(WebsiteFixture.BaseAddress)["typebeat_session"], Is.Not.Null);
-        });
+            Assert.Multiple(() =>
+            {
+                // Lands on /verify, NOT signed in, and NOT yet verified.
+                Assert.That(register.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(register.RequestMessage!.RequestUri!.AbsolutePath, Is.EqualTo("/verify"));
+                Assert.That(cookies.GetCookies(WebsiteFixture.BaseAddress)["typebeat_session"], Is.Null);
+            });
+        }
+
+        Assert.That(await VerifiedAtAsync(email), Is.Null, "account starts unverified");
+
+        string code = WebsiteFixture.Emails.LastCodeFor(email)!;
+        Assert.That(code, Is.Not.Null.And.Not.Empty);
+
+        // A wrong code first: fails, no session.
+        string wrongToken = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/verify");
+        using (var wrong = await client.PostAsync("/verify", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = wrongToken,
+            ["Code"] = NextWrongCode(code),
+        })))
+        {
+            string wrongHtml = await wrong.Content.ReadAsStringAsync();
+            Assert.Multiple(() =>
+            {
+                Assert.That(wrong.RequestMessage!.RequestUri!.AbsolutePath, Is.EqualTo("/verify"));
+                Assert.That(wrongHtml, Does.Contain("alert-error"));
+                Assert.That(cookies.GetCookies(WebsiteFixture.BaseAddress)["typebeat_session"], Is.Null);
+            });
+        }
+
+        // The right code: verified + signed in.
+        string rightToken = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/verify");
+        using (var right = await client.PostAsync("/verify", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = rightToken,
+            ["Code"] = code,
+        })))
+        {
+            string html = await right.Content.ReadAsStringAsync();
+            Assert.Multiple(() =>
+            {
+                Assert.That(html, Does.Contain("user-chip"));
+                Assert.That(html, Does.Contain("reg verify"));
+                Assert.That(cookies.GetCookies(WebsiteFixture.BaseAddress)["typebeat_session"], Is.Not.Null);
+            });
+        }
+
+        Assert.That(await VerifiedAtAsync(email), Is.Not.Null, "verify sets verified_at");
     }
 
     [Test]
@@ -138,18 +209,13 @@ public class CookieAuthFlowTest
     [Test]
     public async Task Logout_ClearsCookie_AndRevokesTheToken()
     {
+        const string email = "logout.user@example.com";
+        await WebsiteFixture.SeedUserAsync("logout user", email, "hunter2hunter2", verified: true);
+
         var (client, cookies) = WebsiteFixture.CreateBrowser();
         using var _ = client;
 
-        // Sign in first.
-        string loginToken = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/login");
-        using (var login = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["__RequestVerificationToken"] = loginToken,
-            ["Login"] = WebsiteFixture.SeededUsername,
-            ["Password"] = WebsiteFixture.SeededPassword,
-        })))
-            Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        using (await WebsiteFixture.LoginAndVerifyAsync(client, "logout user", "hunter2hunter2")) { }
 
         string sessionToken = cookies.GetCookies(WebsiteFixture.BaseAddress)["typebeat_session"]!.Value;
 
@@ -191,5 +257,16 @@ public class CookieAuthFlowTest
         }));
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    private static string NextWrongCode(string code)
+        => code == "000000" ? "111111" : "000000";
+
+    private static async Task<DateTime?> VerifiedAtAsync(string email)
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+        return await conn.ExecuteScalarAsync<DateTime?>(
+            "SELECT verified_at FROM users WHERE email = @email::citext", new { email });
     }
 }

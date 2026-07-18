@@ -49,15 +49,8 @@ public class LandingPageTest
         var (client, _) = WebsiteFixture.CreateBrowser();
         using var __ = client;
 
-        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/login");
-
-        using (var login = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["__RequestVerificationToken"] = token,
-            ["Login"] = WebsiteFixture.SeededUsername,
-            ["Password"] = WebsiteFixture.SeededPassword,
-        })))
-            Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        // Sign in via the real two-step flow (password → emailed code → session).
+        using (await WebsiteFixture.LoginAndVerifyAsync(client, WebsiteFixture.SeededUsername, WebsiteFixture.SeededPassword)) { }
 
         using var response = await client.GetAsync("/");
         string html = await response.Content.ReadAsStringAsync();

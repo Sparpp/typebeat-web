@@ -92,15 +92,8 @@ public class SetPageTest
         var (client, _) = WebsiteFixture.CreateBrowser();
         using var __ = client;
 
-        // Sign in as the fixture-seeded user.
-        string loginToken = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/login");
-        using (var login = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["__RequestVerificationToken"] = loginToken,
-            ["Login"] = WebsiteFixture.SeededUsername,
-            ["Password"] = WebsiteFixture.SeededPassword,
-        })))
-            Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        // Sign in as the fixture-seeded user (two-step: password → emailed code → session).
+        using (await WebsiteFixture.LoginAndVerifyAsync(client, WebsiteFixture.SeededUsername, WebsiteFixture.SeededPassword)) { }
 
         int countBefore = await FavouriteCountAsync(setId);
 
@@ -321,21 +314,11 @@ public class SetPageTest
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
     }
 
-    /// <summary>A browser client signed in via the real /login form.</summary>
+    /// <summary>A browser client signed in via the real two-step /login → /verify flow.</summary>
     private static async Task<HttpClient> SignedInBrowserAsync(string username, string password)
     {
         var (client, _) = WebsiteFixture.CreateBrowser();
-
-        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/login");
-
-        using var login = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["__RequestVerificationToken"] = token,
-            ["Login"] = username,
-            ["Password"] = password,
-        }));
-
-        Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"login as {username}");
+        using (await WebsiteFixture.LoginAndVerifyAsync(client, username, password)) { }
         return client;
     }
 

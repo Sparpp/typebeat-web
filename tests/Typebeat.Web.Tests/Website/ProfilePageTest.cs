@@ -215,16 +215,8 @@ public class ProfilePageTest
 
     private static async Task LoginAsync(HttpClient client, string username, string password)
     {
-        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/login");
-
-        using var login = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["__RequestVerificationToken"] = token,
-            ["Login"] = username,
-            ["Password"] = password,
-        }));
-
-        Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        // Login is now a two-step flow (password → emailed code → session).
+        using var _ = await WebsiteFixture.LoginAndVerifyAsync(client, username, password);
     }
 
     private static async Task<DateTime?> LastVisitAsync(long userId)

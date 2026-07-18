@@ -3,8 +3,12 @@ using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Mvc.Testing.Handlers;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using Typebeat.Web.Auth;
+using Typebeat.Web.Email;
 
 namespace Typebeat.Web.Tests.Website;
 
@@ -42,6 +46,16 @@ public class WebsiteFixture
     /// <summary>Shared anonymous client (no cookie jar) for stateless page/API checks.</summary>
     public static HttpClient Client { get; private set; } = null!;
 
+    /// <summary>
+    /// The capturing email sender the host uses in place of the real one — tests read the emitted
+    /// verification code from it.
+    /// </summary>
+    public static CapturingEmailSender Emails { get; } = new();
+
+    // Each browser client is stamped with a unique CF-Connecting-IP so per-IP rate limiters
+    // (registration 3/hour, login 10/5min) never collide across tests.
+    private static int ipCounter;
+
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
@@ -50,7 +64,13 @@ public class WebsiteFixture
         // Must be set BEFORE the host is built (Db.ResolveConnectionString reads it at startup).
         Environment.SetEnvironmentVariable("TYPEBEAT_DB", ConnectionString);
 
-        factory = new WebApplicationFactory<Program>();
+        factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            b.ConfigureTestServices(services =>
+            {
+                // Swap the real/log sender for the capturing double so tests can read codes.
+                services.RemoveAll<IEmailSender>();
+                services.AddSingleton<IEmailSender>(Emails);
+            }));
 
         Client = factory.CreateDefaultClient(BaseAddress, new RedirectHandler());
 
@@ -77,7 +97,8 @@ public class WebsiteFixture
     public static (HttpClient client, CookieContainer cookies) CreateBrowser()
     {
         var cookies = new CookieContainer();
-        var client = factory!.CreateDefaultClient(BaseAddress, new RedirectHandler(), new CookieContainerHandler(cookies));
+        var client = factory!.CreateDefaultClient(
+            BaseAddress, new RedirectHandler(), new CookieContainerHandler(cookies), new ClientIpHandler(NextClientIp()));
         return (client, cookies);
     }
 
@@ -87,6 +108,78 @@ public class WebsiteFixture
     /// </summary>
     public static HttpClient CreateNoRedirectClient()
         => factory!.CreateDefaultClient(BaseAddress);
+
+    /// <summary>A fresh, unique CF-Connecting-IP so a caller can claim its own rate-limit bucket.</summary>
+    public static string NextClientIp()
+    {
+        int n = Interlocked.Increment(ref ipCounter);
+        return $"10.{(n >> 16) & 255}.{(n >> 8) & 255}.{n & 255}";
+    }
+
+    /// <summary>Stamps a fixed CF-Connecting-IP on every request (GetClientIp reads it first).</summary>
+    private sealed class ClientIpHandler(string ip) : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            request.Headers.Remove("CF-Connecting-IP");
+            request.Headers.Add("CF-Connecting-IP", ip);
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Seeds a user directly (bypassing the flow) with a real PBKDF2 hash, returning its id.
+    /// Optionally pre-verified. Used by tests that need a known credential without spending the
+    /// registration rate budget.
+    /// </summary>
+    public static async Task<long> SeedUserAsync(string username, string email, string password, bool verified = false)
+    {
+        string hash = new PasswordService().Hash(password);
+
+        await using var conn = new NpgsqlConnection(ConnectionString);
+        await conn.OpenAsync();
+
+        long id = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO users (username, email, password_hash, country_code, verified_at)
+            VALUES (@username, @email, @hash, 'US', @verifiedAt)
+            RETURNING id
+            """,
+            new { username, email, hash, verifiedAt = verified ? DateTime.UtcNow : (DateTime?)null });
+
+        await conn.ExecuteAsync("INSERT INTO user_stats (user_id) VALUES (@id)", new { id });
+        return id;
+    }
+
+    /// <summary>
+    /// Drives the full two-step website sign-in on <paramref name="client"/>: POST /login (which
+    /// now emails a code and redirects to /verify) then POST /verify with the captured code,
+    /// leaving an authenticated session in the client's cookie jar. Returns the final /verify
+    /// response (already redirected to the landing page).
+    /// </summary>
+    public static async Task<HttpResponseMessage> LoginAndVerifyAsync(HttpClient client, string login, string password)
+    {
+        string loginToken = await GetAntiforgeryTokenAsync(client, "/login");
+        using (var loginResponse = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = loginToken,
+            ["Login"] = login,
+            ["Password"] = password,
+        })))
+            Assert.That(loginResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"login as {login} should land on /verify");
+
+        string code = Emails.LastCode ?? throw new InvalidOperationException($"no login code captured for {login}");
+
+        string verifyToken = await GetAntiforgeryTokenAsync(client, "/verify");
+        var verifyResponse = await client.PostAsync("/verify", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = verifyToken,
+            ["Code"] = code,
+        }));
+
+        Assert.That(verifyResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"verify for {login}");
+        return verifyResponse;
+    }
 
     /// <summary>GETs a page and extracts the antiforgery request token from its form markup.</summary>
     public static async Task<string> GetAntiforgeryTokenAsync(HttpClient client, string url)

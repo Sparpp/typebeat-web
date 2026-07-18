@@ -262,28 +262,13 @@ public class RankedApprovalTest
 
     // ---- helpers ----
 
-    private static int clientIpCounter;
-
     private static async Task<HttpClient> SignedInBrowserAsync(string username, string password)
     {
+        // CreateBrowser already stamps each client with its own unique CF-Connecting-IP, so the
+        // per-IP login limiter never collides across tests. Login is now a two-step flow
+        // (password → emailed code → session).
         var (client, _) = WebsiteFixture.CreateBrowser();
-
-        // Each browser declares its own client IP (GetClientIp reads CF-Connecting-IP first).
-        // The login limiter is 10 per IP per 5 minutes and the pre-existing suite already
-        // spends that whole budget on the shared "unknown" bucket — these logins must not
-        // push a later fixture's login over the line.
-        client.DefaultRequestHeaders.Add("CF-Connecting-IP", $"10.99.0.{Interlocked.Increment(ref clientIpCounter)}");
-
-        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, "/login");
-
-        using var login = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["__RequestVerificationToken"] = token,
-            ["Login"] = username,
-            ["Password"] = password,
-        }));
-
-        Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"login as {username}");
+        using (await WebsiteFixture.LoginAndVerifyAsync(client, username, password)) { }
         return client;
     }
 
