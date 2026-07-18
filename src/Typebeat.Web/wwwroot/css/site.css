@@ -676,6 +676,23 @@ img { max-width: 100%; }
     color: var(--violet);
 }
 
+/* Demo reel under the stats line: a framed, self-contained gameplay clip. */
+.hero-demo {
+    margin: var(--space-7) auto 0;
+    max-width: 900px;
+}
+
+.hero-demo__video {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1280 / 719;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glow-violet);
+}
+
 .landing-newest { margin-top: var(--space-7); }
 
 .landing-newest__head {
