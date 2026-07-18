@@ -39,6 +39,13 @@ services:
       # does NOT forward undeclared host env vars — without this line an .env entry is
       # silently ignored and the page stays on "coming soon" forever). Empty = coming soon.
       TYPEBEAT_GAME_DOWNLOAD: "${TYPEBEAT_GAME_DOWNLOAD:-}"
+      # Email verification (M2). With a Resend API key the app sends real 6-digit codes; without
+      # one it logs codes to the container log (docker logs typebeat-web-app-1) so verification
+      # still works. See docs/email-setup.md for the one-time Resend + DNS setup. Empty = log mode.
+      TYPEBEAT_RESEND_API_KEY: "${TYPEBEAT_RESEND_API_KEY:-}"
+      # Sender identity for outgoing mail; must be on a Resend-verified domain. Empty falls back to
+      # the app default "type!beat <noreply@mingda.sh>".
+      TYPEBEAT_EMAIL_FROM: "${TYPEBEAT_EMAIL_FROM:-}"
     volumes:
       - appdata:/data
     depends_on:
