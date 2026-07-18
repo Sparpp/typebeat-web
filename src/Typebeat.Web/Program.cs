@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Dapper;
 using Npgsql;
 using Typebeat.Web;
+using Typebeat.Web.Align;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
 using Typebeat.Web.Email;
@@ -75,6 +76,9 @@ builder.Services.AddSingleton<IFileStore>(_ => LocalFileStore.FromConfiguration(
 builder.Services.AddSingleton<CoverGenerator>();
 builder.Services.AddSingleton<PreviewGenerator>();
 builder.Services.AddSingleton<PackageIngest>();
+
+// Server-side lyric alignment (file-based job exchange with the aligner worker container).
+builder.Services.AddSingleton<AlignJobStore>();
 
 // The website (M3): server-rendered Razor Pages under Pages/, HTML only — every APIv2/BSS JSON
 // response keeps going through WireJson (Newtonsoft), untouched by this. AddRazorPages also
@@ -195,6 +199,7 @@ ScoreEndpoints.Map(app);
 // other route keeps the default.
 BssEndpoints.Map(app);
 MediaEndpoints.Map(app);
+AlignEndpoints.Map(app);
 
 // The website pages ("/", /login, /register, /legal/dmca, ...). Mapped after the wire modules;
 // none of their routes overlap the API surface.

@@ -57,6 +57,9 @@ public class ServerFixture
 
     public static HttpClient Client { get; private set; } = null!;
 
+    /// <summary>The app's TYPEBEAT_FILE_ROOT for this run — a fresh temp dir (see OneTimeSetUp).</summary>
+    public static string FileRoot { get; private set; } = null!;
+
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
@@ -64,6 +67,11 @@ public class ServerFixture
 
         // Must be set BEFORE the host is built (Db.ResolveConnectionString reads it at startup).
         Environment.SetEnvironmentVariable("TYPEBEAT_DB", ConnectionString);
+
+        // Hermetic file root (align jobs, packages): a fresh temp dir per run, so tests can both
+        // observe and simulate the on-disk side of file-based protocols (AlignJobStore).
+        FileRoot = Path.Combine(Path.GetTempPath(), "typebeat-wirecompat-" + Guid.NewGuid().ToString("N"));
+        Environment.SetEnvironmentVariable("TYPEBEAT_FILE_ROOT", FileRoot);
 
         factory = new WebApplicationFactory<Program>();
 
