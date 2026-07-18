@@ -232,6 +232,20 @@ public static class ScoreEndpoints
                 endedAt
             }, tx);
 
+        // Denormalized play counters. The website reads beatmapsets.play_count (like download_count
+        // / favourite_count); osu clients read beatmaps.playcount. Count one per submitted play —
+        // passed or failed, ranked or not — since every submission inserts a scores row above and
+        // is a genuine attempt. The parent set is bumped through the beatmap's set_id. (This is the
+        // only place either counter is touched; user_stats.play_count below is the player's own
+        // aggregate, a separate thing.)
+        await conn.ExecuteAsync(
+            """
+            UPDATE beatmaps SET play_count = play_count + 1 WHERE id = @beatmapId;
+            UPDATE beatmapsets SET play_count = play_count + 1
+            WHERE id = (SELECT set_id FROM beatmaps WHERE id = @beatmapId)
+            """,
+            new { beatmapId }, tx);
+
         // Upsert user_stats — but ONLY for submissions that held up to the tamper checks. The same
         // invariants that withhold ranking must withhold aggregate accumulation, or a rejected
         // submission could still inflate profile hit counts / totals with client-controlled data.

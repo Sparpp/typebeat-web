@@ -237,6 +237,27 @@ public class WireCompatTests
         Assert.That(result.Statistics[HitResult.Meh], Is.EqualTo(1));
         Assert.That(result.Statistics[HitResult.Miss], Is.EqualTo(1));
         Assert.That(result.MaximumStatistics[HitResult.Great], Is.EqualTo(10));
+
+        // The submission must bump the denormalized play counters the website reads — the map and
+        // its parent set should now show at least this play (the bug: they stayed 0 while scores
+        // piled up on the leaderboard). They track the scores row count for the beatmap.
+        await using (var db = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString))
+        {
+            await db.OpenAsync();
+            var counts = await Dapper.SqlMapper.QuerySingleAsync<(int beatmapPlays, int setPlays, long scoreRows)>(db,
+                """
+                SELECT b.play_count AS beatmapPlays,
+                       s.play_count AS setPlays,
+                       (SELECT count(*) FROM scores WHERE beatmap_id = b.id) AS scoreRows
+                FROM beatmaps b JOIN beatmapsets s ON s.id = b.set_id
+                WHERE b.id = @id
+                """,
+                new { id = beatmapId });
+
+            Assert.That(counts.beatmapPlays, Is.GreaterThan(0), "beatmaps.play_count must increment on submission");
+            Assert.That(counts.beatmapPlays, Is.EqualTo(counts.scoreRows), "beatmaps.play_count must track submitted plays");
+            Assert.That(counts.setPlays, Is.GreaterThanOrEqualTo(counts.beatmapPlays), "beatmapsets.play_count must include its beatmaps' plays");
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
