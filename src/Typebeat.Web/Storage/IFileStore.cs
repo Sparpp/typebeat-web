@@ -56,6 +56,14 @@ public static class StoreKeys
 
     public static string Preview(long setId) => $"previews/{setId}.mp3";
 
+    /// <summary>Profile avatar, version-stamped so a replacement gets a fresh immutable URL:
+    /// <c>avatars/{userId}/{version}.jpg</c>. Stored verbatim in <c>users.avatar_key</c>.</summary>
+    public static string Avatar(long userId, long version) => $"avatars/{userId}/{version}.jpg";
+
+    /// <summary>Profile banner/cover, version-stamped like the avatar:
+    /// <c>user-covers/{userId}/{version}.jpg</c>. Stored verbatim in <c>users.cover_key</c>.</summary>
+    public static string UserCover(long userId, long version) => $"user-covers/{userId}/{version}.jpg";
+
     /// <summary>Assembled full package for a set version (stored in <c>set_versions.package_key</c>);
     /// <c>.typb</c> is the game's native package extension.</summary>
     public static string Package(long setId, int versionNo) => $"packages/{setId}/{versionNo}.typb";

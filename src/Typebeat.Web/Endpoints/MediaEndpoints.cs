@@ -53,6 +53,19 @@ public static class MediaEndpoints
         app.MapGet("/previews/{setId:long}.mp3", GetPreviewAsync);
         app.MapGet("/beatmapsets/{setId:long}/download", DownloadAsync);
 
+        // Profile avatar/banner: version-stamped keys (avatars/{id}/{v}.jpg, user-covers/{id}/{v}.jpg)
+        // so each upload has a distinct, immutable URL. World-readable (public profiles; the image
+        // loader carries no auth). A stale-key request just 404s once the user re-uploads.
+        app.MapGet("/avatars/{userId:long}/{version:long}.jpg", (long userId, long version, HttpContext ctx, IFileStore store)
+            => ServeImmutableImageAsync(StoreKeys.Avatar(userId, version), ctx, store));
+        app.MapGet("/user-covers/{userId:long}/{version:long}.jpg", (long userId, long version, HttpContext ctx, IFileStore store)
+            => ServeImmutableImageAsync(StoreKeys.UserCover(userId, version), ctx, store));
+
+        // The game-client release zip (downloads/{TYPEBEAT_GAME_DOWNLOAD}). The dedicated
+        // /download PAGE was removed; the landing button links straight here. 404 when no build is
+        // configured or stored. Anonymous — anyone can grab the game.
+        app.MapGet("/download/game", DownloadGameAsync);
+
         // Like the default avatar (StubEndpoints): unauthenticated, image loaders carry no token.
         app.MapGet("/img/default-cover.jpg", (HttpContext ctx) =>
         {
@@ -92,6 +105,36 @@ public static class MediaEndpoints
 
         // Range processing lets <audio> seek without re-downloading the whole clip.
         return Results.Stream(stream, "audio/mpeg", enableRangeProcessing: true);
+    }
+
+    /// <summary>Serves a version-stamped profile image. The key changes on every upload, so the
+    /// URL is safe to cache forever; a request for a superseded version simply 404s.</summary>
+    private static async Task<IResult> ServeImmutableImageAsync(string key, HttpContext ctx, IFileStore store)
+    {
+        var stream = await store.OpenObjectReadAsync(key, ctx.RequestAborted);
+
+        if (stream == null)
+            return Results.NotFound();
+
+        ctx.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+        return Results.Stream(stream, "image/jpeg");
+    }
+
+    private static async Task<IResult> DownloadGameAsync(HttpContext ctx, IConfiguration config, IFileStore store)
+    {
+        string? fileName = config["TYPEBEAT_GAME_DOWNLOAD"];
+
+        if (string.IsNullOrEmpty(fileName))
+            return Results.NotFound();
+
+        var stream = await store.OpenObjectReadAsync(StoreKeys.Download(fileName), ctx.RequestAborted);
+
+        if (stream == null)
+            return Results.NotFound();
+
+        // Attachment disposition + Content-Length + range (seekable FileStream) — a download
+        // manager's segmented/resumed fetch works, same as the old page handler did.
+        return Results.Stream(stream, "application/zip", fileDownloadName: fileName, enableRangeProcessing: true);
     }
 
     private static async Task<IResult> DownloadAsync(long setId, HttpContext ctx, Db db, IFileStore store)

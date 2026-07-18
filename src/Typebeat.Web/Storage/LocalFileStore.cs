@@ -74,7 +74,17 @@ public sealed class LocalFileStore : IFileStore
 
     public Task DeleteObjectAsync(string key, CancellationToken ct = default)
     {
-        File.Delete(resolve(key));
+        try
+        {
+            File.Delete(resolve(key));
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // Contract: no-op when the object is absent. File.Delete already no-ops on a missing
+            // file when its parent directory exists, but throws DirectoryNotFoundException when
+            // the directory itself is missing — that's "absent" too, not an error.
+        }
+
         return Task.CompletedTask;
     }
 

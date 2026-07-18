@@ -6,10 +6,19 @@
         + "the lyrics are the notes. Download for Windows, grab community maps and chase the leaderboards.";
 }
 
+@if (Model.AccountDeleted)
+{
+    <div class="alert-info">Your account has been deleted. Thanks for playing.</div>
+}
+
 <section class="hero">
     <p class="hero-kicker">// built from osu!</p>
     <h1 class="hero-title">type to the b<span class="tail">eat</span></h1>
     <div class="hero-actions">
+        @if (Model.GameDownloadAvailable)
+        {
+            <a class="btn btn-primary btn-big" href="/download/game" download>download &mdash; windows</a>
+        }
         @if (Model.CurrentUser is null)
         {
             <a class="btn btn-ghost btn-big" href="/register">sign up</a>
