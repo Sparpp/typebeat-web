@@ -68,6 +68,9 @@ public static class StoreKeys
     /// <c>.typb</c> is the game's native package extension.</summary>
     public static string Package(long setId, int versionNo) => $"packages/{setId}/{versionNo}.typb";
 
-    /// <summary>Game-client release zips live under <c>downloads/{fileName}</c> (TYPEBEAT_GAME_DOWNLOAD).</summary>
+    /// <summary>Game-client release artifacts live under <c>downloads/{fileName}</c> (TYPEBEAT_GAME_DOWNLOAD).</summary>
     public static string Download(string fileName) => $"downloads/{fileName}";
+
+    /// <summary>Velopack update-feed assets (manifest + packages): <c>downloads/releases/{fileName}</c>.</summary>
+    public static string Release(string fileName) => $"downloads/releases/{fileName}";
 }

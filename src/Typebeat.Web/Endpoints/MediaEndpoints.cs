@@ -61,10 +61,17 @@ public static class MediaEndpoints
         app.MapGet("/user-covers/{userId:long}/{version:long}.jpg", (long userId, long version, HttpContext ctx, IFileStore store)
             => ServeImmutableImageAsync(StoreKeys.UserCover(userId, version), ctx, store));
 
-        // The game-client release zip (downloads/{TYPEBEAT_GAME_DOWNLOAD}). The dedicated
+        // The game-client release artifact (downloads/{TYPEBEAT_GAME_DOWNLOAD} — the Velopack
+        // Setup.exe since the installer switch; historically the win-x64 zip). The dedicated
         // /download PAGE was removed; the landing button links straight here. 404 when no build is
         // configured or stored. Anonymous — anyone can grab the game.
         app.MapGet("/download/game", DownloadGameAsync);
+
+        // The Velopack update feed (downloads/releases/{file}): the release manifest + full
+        // package the installed client's VelopackUpdateManager polls (SimpleWebSource at
+        // https://typebeat.mingda.sh/releases). Anonymous. Manifests must never be cached (a
+        // stale one hides a new release); packages are immutable by name.
+        app.MapGet("/releases/{file}", ServeReleaseAssetAsync);
 
         // Like the default avatar (StubEndpoints): unauthenticated, image loaders carry no token.
         app.MapGet("/img/default-cover.jpg", (HttpContext ctx) =>
@@ -133,8 +140,36 @@ public static class MediaEndpoints
             return Results.NotFound();
 
         // Attachment disposition + Content-Length + range (seekable FileStream) — a download
-        // manager's segmented/resumed fetch works, same as the old page handler did.
-        return Results.Stream(stream, "application/zip", fileDownloadName: fileName, enableRangeProcessing: true);
+        // manager's segmented/resumed fetch works, same as the old page handler did. Content type
+        // follows the artifact (installer exe today, zip historically).
+        string contentType = fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+            ? "application/zip"
+            : "application/octet-stream";
+
+        return Results.Stream(stream, contentType, fileDownloadName: fileName, enableRangeProcessing: true);
+    }
+
+    /// <summary>
+    /// Serves one Velopack feed asset from downloads/releases/. The path segment route constraint
+    /// already excludes slashes; ".." is rejected explicitly so a store key can never escape the
+    /// releases prefix. Manifests (extensionless RELEASES / *.json) get no-cache so a new release
+    /// is visible immediately; packages (*.nupkg, *.exe) are content-named and effectively
+    /// immutable, but a bounded day keeps takedown behavior consistent with other media.
+    /// </summary>
+    private static async Task<IResult> ServeReleaseAssetAsync(string file, HttpContext ctx, IFileStore store)
+    {
+        if (string.IsNullOrEmpty(file) || file.Contains(".."))
+            return Results.NotFound();
+
+        var stream = await store.OpenObjectReadAsync(StoreKeys.Release(file), ctx.RequestAborted);
+
+        if (stream == null)
+            return Results.NotFound();
+
+        bool isManifest = !file.Contains('.') || file.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
+        ctx.Response.Headers.CacheControl = isManifest ? "no-cache" : "public, max-age=86400";
+
+        return Results.Stream(stream, "application/octet-stream", enableRangeProcessing: true);
     }
 
     private static async Task<IResult> DownloadAsync(long setId, HttpContext ctx, Db db, IFileStore store)
