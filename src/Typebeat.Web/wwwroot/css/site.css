@@ -492,6 +492,38 @@ img { max-width: 100%; }
     font-size: var(--text-sm);
 }
 
+/* positive/neutral banner (e.g. "we sent a new code") — accent-tinted sibling of alert-error */
+.alert-info {
+    background: rgba(201, 242, 77, 0.10);
+    border: 1px solid rgba(201, 242, 77, 0.4);
+    border-radius: var(--radius-md);
+    color: var(--good);
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-4);
+    font-size: var(--text-sm);
+}
+
+/* big centered one-time-code entry on /verify */
+.code-input {
+    text-align: center;
+    font-size: var(--text-2xl);
+    letter-spacing: 0.5em;
+    font-weight: 700;
+    padding-inline: var(--space-3);
+}
+
+/* inline "resend" control that reads as a link, not a filled button */
+.resend-form { display: inline; }
+.resend-form .btn-link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--violet);
+    font: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
 /* ---- Table ---- */
 
 .table-wrap {

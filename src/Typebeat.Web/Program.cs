@@ -1,9 +1,11 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Dapper;
 using Npgsql;
 using Typebeat.Web;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Email;
 using Typebeat.Web.Endpoints;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Storage;
@@ -39,6 +41,34 @@ builder.Services.AddSingleton<Db>(sp => new Db(sp.GetRequiredService<NpgsqlDataS
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<PasswordService>();
 
+// Email verification (M2): 6-digit codes on signup ('verify') and on EVERY website login
+// ('login'), plus the Data-Protection-backed challenge cookie that carries the pending user
+// between the password step and the code step.
+builder.Services.AddSingleton<EmailCodeService>();
+builder.Services.AddSingleton<ChallengeCookie>();
+builder.Services.AddHttpClient();
+
+// Real delivery via Resend when TYPEBEAT_RESEND_API_KEY is set; otherwise the LogEmailSender
+// writes the code to the log so dev/tests and a not-yet-configured prod box still work. The
+// chosen sender is logged at startup.
+if (!string.IsNullOrEmpty(builder.Configuration["TYPEBEAT_RESEND_API_KEY"]))
+    builder.Services.AddSingleton<IEmailSender, ResendEmailSender>();
+else
+    builder.Services.AddSingleton<IEmailSender, LogEmailSender>();
+
+// Persist Data Protection keys (challenge cookies + antiforgery tokens) across container
+// redeploys when a file root is configured (prod: the /data appdata volume). Without this,
+// every redeploy would rotate the in-memory keys and invalidate in-flight challenge cookies and
+// any rendered antiforgery tokens. Local/tests keep the default ephemeral keyring.
+if (builder.Configuration["TYPEBEAT_FILE_ROOT"] is { Length: > 0 } fileRoot)
+{
+    var keyDir = new DirectoryInfo(Path.Combine(fileRoot, "dpkeys"));
+    keyDir.Create();
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(keyDir)
+        .SetApplicationName("typebeat-web");
+}
+
 // Upload/package pipeline (M3). File root: TYPEBEAT_FILE_ROOT (prod: the /data volume; dev
 // default ./data). Everything under it is content-addressed or set-scoped — see StoreKeys.
 builder.Services.AddSingleton<IFileStore>(_ => LocalFileStore.FromConfiguration(builder.Configuration));
@@ -56,6 +86,9 @@ builder.Services.AddRazorPages();
 var app = builder.Build();
 
 await app.Services.GetRequiredService<Db>().MigrateAsync(app.Logger);
+
+// Which email path is live (helps confirm prod is actually sending, not just logging codes).
+app.Logger.LogInformation("Email sender: {Sender}", app.Services.GetRequiredService<IEmailSender>().GetType().Name);
 
 // Behind the Caddy reverse proxy, honor X-Forwarded-For / X-Forwarded-Proto so Request.Scheme is
 // "https" (the notification_endpoint must be wss://, cover/avatar URLs must be https://) and

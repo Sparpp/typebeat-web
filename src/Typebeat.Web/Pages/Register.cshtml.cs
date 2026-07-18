@@ -1,15 +1,18 @@
 using Microsoft.AspNetCore.Mvc;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Email;
 
 namespace Typebeat.Web.Pages;
 
 /// <summary>
 /// Website registration. Same rules and creation path as POST /users (AccountCreation /
-/// AccountValidation are shared), then auto-login: a fresh token pair goes straight into the
-/// session cookie so the new user lands signed in.
+/// AccountValidation are shared). The account is created with verified_at NULL; instead of the
+/// old auto-login, we issue a 'verify' code, email it, set the challenge cookie, and redirect to
+/// /verify. The session is minted there once the new user confirms their email.
 /// </summary>
-public sealed class RegisterModel(Db db, PasswordService passwords, TokenService tokens) : TypebeatPageModel
+public sealed class RegisterModel(
+    Db db, PasswordService passwords, EmailCodeService codes, IEmailSender email, ChallengeCookie challenge, ILogger<RegisterModel> logger) : TypebeatPageModel
 {
     // Same budget as the in-client registration endpoint: 3 per IP per hour.
     private static readonly FixedWindowLimiter register_attempts = new(3, TimeSpan.FromHours(1));
@@ -40,7 +43,8 @@ public sealed class RegisterModel(Db db, PasswordService passwords, TokenService
             return Page();
         }
 
-        var result = await AccountCreation.CreateAsync(db, passwords, Username.Trim(), Email.Trim(), Password);
+        string emailAddress = Email.Trim();
+        var result = await AccountCreation.CreateAsync(db, passwords, Username.Trim(), emailAddress, Password);
 
         if (!result.Succeeded)
         {
@@ -50,7 +54,23 @@ public sealed class RegisterModel(Db db, PasswordService passwords, TokenService
             return Page();
         }
 
-        SessionCookieAuth.SignIn(HttpContext, await tokens.IssueAsync(result.UserId!.Value));
-        return Redirect("/");
+        long userId = result.UserId!.Value;
+
+        // Account exists but is unverified: issue + email a 'verify' code and hand off to /verify.
+        // We do NOT sign in yet. If the email fails to send the account still exists, but we tell
+        // the user so they can retry (they can also just sign in later to get a fresh code).
+        try
+        {
+            await EmailCodeFlow.IssueAndSendAsync(codes, email, emailAddress, userId, "verify", HttpContext.RequestAborted);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to send verification code to new user {UserId}", userId);
+            Error = "Your account was created, but we couldn't send the verification email. Please sign in to try again.";
+            return Page();
+        }
+
+        challenge.Issue(HttpContext, userId, "verify");
+        return Redirect("/verify");
     }
 }

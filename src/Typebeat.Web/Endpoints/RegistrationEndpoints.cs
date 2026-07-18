@@ -1,6 +1,7 @@
 using Newtonsoft.Json;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Email;
 using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
@@ -38,7 +39,7 @@ public static class RegistrationEndpoints
 
     public static void Map(IEndpointRouteBuilder app)
     {
-        app.MapPost("/users", async (HttpContext ctx, Db db, PasswordService passwords) =>
+        app.MapPost("/users", async (HttpContext ctx, Db db, PasswordService passwords, EmailCodeService codes, IEmailSender emailSender, ILoggerFactory loggerFactory) =>
         {
             // UA gate (speed bump only — see client_user_agent).
             if (ctx.Request.Headers.UserAgent.ToString() != client_user_agent)
@@ -61,6 +62,20 @@ public static class RegistrationEndpoints
 
             if (!result.Succeeded)
                 return WireJson.Ok(BuildFormError(result.UsernameErrors, result.EmailErrors, result.PasswordErrors), StatusCodes.Status422UnprocessableEntity);
+
+            // Side effect only: issue + email a 'verify' code so an in-game registrant has one to
+            // enter on the WEBSITE (the game client can't do interactive codes). This must never
+            // change the wire response — a send failure is swallowed and logged, and the account
+            // still returns 200 with the exact success body. The user can request a fresh code any
+            // time by signing in on the website.
+            try
+            {
+                await EmailCodeFlow.IssueAndSendAsync(codes, emailSender, email, result.UserId!.Value, "verify", ctx.RequestAborted);
+            }
+            catch (Exception ex)
+            {
+                loggerFactory.CreateLogger("Registration").LogError(ex, "Failed to send verify code to new user {UserId}", result.UserId);
+            }
 
             // The client ignores the success body (CreateAccount returns null on any 2xx), but
             // we return a minimal, sane user object rather than an empty 200.

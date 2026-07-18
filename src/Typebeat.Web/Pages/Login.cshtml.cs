@@ -2,16 +2,20 @@ using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Email;
 
 namespace Typebeat.Web.Pages;
 
 /// <summary>
 /// Website sign-in. Verifies against the same users.password_hash the OAuth password grant
-/// uses (one identity for game and web), then issues a token via TokenService and delivers it
-/// as the typebeat_session cookie. Failure messaging is a single generic line — like
-/// /oauth/token, the form never distinguishes unknown-user / wrong-password / restricted.
+/// uses (one identity for game and web). Per the M2 policy, a correct password does NOT sign the
+/// user in: it issues a fresh emailed 'login' code and sets the challenge cookie, then hands off
+/// to /verify (the session is minted only after the code checks out). Failure messaging is a
+/// single generic line — like /oauth/token, the form never distinguishes unknown-user /
+/// wrong-password / restricted, and a bad password sends NO code (no enumeration signal).
 /// </summary>
-public sealed class LoginModel(Db db, PasswordService passwords, TokenService tokens) : TypebeatPageModel
+public sealed class LoginModel(
+    Db db, PasswordService passwords, EmailCodeService codes, IEmailSender email, ChallengeCookie challenge, ILogger<LoginModel> logger) : TypebeatPageModel
 {
     // Same budget as the OAuth password grant: 10 attempts per IP per 5 minutes (speed bump;
     // Cloudflare is the real layer). Static so it survives across requests.
@@ -54,7 +58,7 @@ public sealed class LoginModel(Db db, PasswordService passwords, TokenService to
             // (case-SENSITIVE); casting the parameter keeps citext's case-insensitive operator.
             user = await conn.QuerySingleOrDefaultAsync<UserRow>(
                 """
-                SELECT id, password_hash AS passwordHash, restricted
+                SELECT id, email, password_hash AS passwordHash, restricted
                 FROM users
                 WHERE username = @login::citext OR email = @login::citext
                 """,
@@ -63,13 +67,29 @@ public sealed class LoginModel(Db db, PasswordService passwords, TokenService to
 
         if (user is null || !passwords.Verify(user.PasswordHash, Password) || user.Restricted)
         {
+            // No code is issued on a failed credential — nothing distinguishes this from an
+            // unknown user, so the form cannot be used to probe which accounts exist.
             Error = bad_credentials;
             return Page();
         }
 
-        SessionCookieAuth.SignIn(HttpContext, await tokens.IssueAsync(user.Id));
-        return Redirect("/");
+        // Password OK, but not signed in yet: issue a fresh 'login' code, email it, and hand off
+        // to /verify carrying the pending user in the challenge cookie. A throttled resend
+        // (IssueStatus.TooSoon/TooMany) still routes to /verify — the user has a live code there.
+        try
+        {
+            await EmailCodeFlow.IssueAndSendAsync(codes, email, user.Email, user.Id, "login", HttpContext.RequestAborted);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to send login code to user {UserId}", user.Id);
+            Error = "We couldn't send your verification email. Please try again.";
+            return Page();
+        }
+
+        challenge.Issue(HttpContext, user.Id, "login");
+        return Redirect("/verify");
     }
 
-    private sealed record UserRow(long Id, string PasswordHash, bool Restricted);
+    private sealed record UserRow(long Id, string Email, string PasswordHash, bool Restricted);
 }

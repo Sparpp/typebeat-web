@@ -1,0 +1,43 @@
+@page "/verify"
+@model VerifyModel
+@{
+    ViewData["Title"] = Model.IsLogin ? "Finish signing in" : "Confirm your email";
+}
+
+<div class="card auth-card">
+    <h1>@(Model.IsLogin ? "Finish signing in" : "Confirm your email")</h1>
+
+    <p class="muted">
+        @(Model.IsLogin
+            ? "For your security, we emailed a one-time code to"
+            : "We sent a 6-digit code to")
+        <strong>@Model.MaskedEmail</strong>. Enter it below.
+    </p>
+
+    @if (Model.Error is not null)
+    {
+        <div class="alert-error">@Model.Error</div>
+    }
+    @if (Model.Status is not null)
+    {
+        <div class="alert-info">@Model.Status</div>
+    }
+
+    <form method="post">
+        @Html.AntiForgeryToken()
+        <div class="field">
+            <label asp-for="Code">6-digit code</label>
+            <input class="input code-input" asp-for="Code" inputmode="numeric" autocomplete="one-time-code"
+                   maxlength="6" pattern="[0-9]{6}" autofocus required />
+        </div>
+        <button type="submit" class="btn btn-primary">@(Model.IsLogin ? "Sign in" : "Confirm email")</button>
+    </form>
+
+    <p class="card-note">
+        Didn't get it? Check your spam folder, or
+        <form class="resend-form" method="post" asp-page-handler="Resend">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="btn-link">send a new code</button>
+        </form>.
+    </p>
+</div>
