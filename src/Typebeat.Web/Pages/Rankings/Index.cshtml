@@ -1,0 +1,47 @@
+@page "/rankings"
+@using System.Globalization
+@model Typebeat.Web.Pages.Rankings.IndexModel
+@{
+    ViewData["Title"] = "Rankings";
+    ViewData["MetaDescription"] = "type!beat global rankings — cumulative best scores across every ranked map.";
+}
+
+<section class="rankings">
+    <h1>Rankings</h1>
+    <p class="faint">Cumulative score: your best score on each ranked map, added up.</p>
+
+    @if (Model.Rows.Count == 0)
+    {
+        <div class="empty-state">
+            <h3>No scores yet</h3>
+            <p>Set a score on any ranked map and this board is yours.</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>Rank</th>
+                    <th>Player</th>
+                    <th>Cumulative score</th>
+                    <th>Ranked scores</th>
+                </tr>
+                </thead>
+                <tbody>
+                @for (int i = 0; i < Model.Rows.Count; i++)
+                {
+                    var row = Model.Rows[i];
+                    <tr>
+                        <td class="num">#@(i + 1)</td>
+                        <td><a href="/users/@row.UserId">@row.Username</a></td>
+                        <td class="num">@row.CumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
+                        <td class="num">@row.RankedScoreCount.ToString("N0", CultureInfo.InvariantCulture)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
