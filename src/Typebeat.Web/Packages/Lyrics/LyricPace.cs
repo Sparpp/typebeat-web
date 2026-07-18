@@ -1,178 +1,103 @@
 namespace Typebeat.Web.Packages.Lyrics;
 
 /// <summary>
-/// Perfect-play typing-pace statistics + star rating for a lyric map — the numbers the client's
-/// song select shows and the exact difficulty formula it stores. Ports, from typebeat-osu:
+/// Boundary-window typing-pace statistics + star rating for a lyric map — the numbers the
+/// client's song select shows and the exact difficulty formula it stores. Ports, from
+/// typebeat-osu:
 ///
-///  - cell/target arithmetic: TypingLine.FromLyricLine
-///    (typebeat.Game.Rulesets.TypeBeat/Gameplay/TypingLine.cs:187-310) — typeable char j of k in
-///    unit u targets u.Start + j*(u.End-u.Start)/k, inter-word spaces target the preceding unit's
-///    EndTime, punctuation backfills neighbours, targets clamped non-decreasing;
 ///  - pace: LyricPaceStatistics.Compute
-///    (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricPaceStatistics.cs:31-65) — gross CPM = cells
-///    over the per-line active windows (line start -> last typeable target, min 500 ms), spaces
-///    included; WPM = CPM / 5;
+///    (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricPaceStatistics.cs) — a line's typing
+///    window is EndTime - StartTime (the boundary-to-boundary time a player actually gets),
+///    floored at 500 ms; per line WPM = real words / window and CPM = real typeable cells /
+///    window (chars + one inter-word space per token gap — TypingLine's cell arithmetic);
+///    the map pace is the unweighted mean of per-line rates, so instrumental gaps between
+///    lines never dilute it. No "1 word = 5 chars" estimate anywhere: the CPM:WPM ratio is
+///    the map's true word length.
 ///  - stars: TypeBeatDifficultyCalculator
-///    (typebeat.Game.Rulesets.TypeBeat/TypeBeatDifficultyCalculator.cs:22-24,40) —
+///    (typebeat.Game.Rulesets.TypeBeat/TypeBeatDifficultyCalculator.cs) —
 ///    stars = min(10, WPM / 25).
 ///
-/// Granularity is deliberately absent: in the client it only widens judgement windows
-/// (TypingLine.cs:217-219), never cell target times, so WPM/stars are granularity-independent.
+/// Granularity is deliberately absent: unit target times no longer enter the pace at all.
 /// </summary>
 public static class LyricPace
 {
-    // LyricPaceStatistics.cs:29 — guards degenerate data from exploding the rate.
-    private const double min_line_active_ms = 500;
+    /// <summary>
+    /// Bumped whenever the pace/star arithmetic changes shape. Stamped on beatmap rows at
+    /// ingest (<c>beatmaps.pace_version</c>); rows below it are recomputed from their stored
+    /// .osu blob at startup (<see cref="PaceBackfill"/>). v1 = perfect-play cells/5 pace,
+    /// v2 = boundary-window real-count pace.
+    /// </summary>
+    public const int VERSION = 2;
 
-    // TypeBeatDifficultyCalculator.cs:23-24.
+    // LyricPaceStatistics.cs — guards degenerate data from exploding the rate.
+    private const double min_line_window_ms = 500;
+
+    // TypeBeatDifficultyCalculator.cs.
     private const double wpm_per_star = 25;
     private const double max_stars = 10;
 
     public readonly record struct PaceStatistics(
         double AverageWpm,
+        double AverageCpm,
         int TypeableCellCount,
-        int WordCount,
-        double ActiveTypingMs)
+        int WordCount)
     {
-        public double AverageCpm => AverageWpm * 5;
-
-        /// <summary>Star rating: min(10, WPM / 25) — TypeBeatDifficultyCalculator.cs:40.</summary>
+        /// <summary>Star rating: min(10, WPM / 25) — TypeBeatDifficultyCalculator.</summary>
         public double DifficultyRating => Math.Min(max_stars, AverageWpm / wpm_per_star);
     }
 
     public static PaceStatistics Compute(IReadOnlyList<LyricLine> lines)
     {
-        int cells = 0;
-        int words = 0;
-        double activeMs = 0;
+        int totalCells = 0;
+        int totalWords = 0;
+        int lineCount = 0;
+        double wpmSum = 0;
+        double cpmSum = 0;
 
         foreach (var line in lines)
         {
-            var (typeableCount, lastTarget) = computeCells(line);
+            // Cell arithmetic mirrors TypingLine.FromLyricLine: every typeable char is a
+            // cell, plus one typeable space cell per token gap.
+            string[] tokens = line.RawText.Split(' ');
 
-            if (typeableCount == 0)
-                continue;
+            int cells = tokens.Length - 1;
+            int words = 0;
 
-            cells += typeableCount;
-            words += line.RawText.Split(' ').Length;
-            activeMs += Math.Max(lastTarget - line.StartTime, min_line_active_ms);
-        }
-
-        if (cells == 0 || activeMs <= 0)
-            return default;
-
-        double cpm = cells / (activeMs / 60000.0);
-
-        return new PaceStatistics(cpm / 5.0, cells, words, activeMs);
-    }
-
-    /// <summary>
-    /// The target-time arithmetic of TypingLine.FromLyricLine (TypingLine.cs:187-310) reduced to
-    /// what the pace needs: the typeable-cell count and the max typeable target time. The full
-    /// cell array is materialised the same way (including punctuation backfill and the
-    /// non-decreasing clamp) so the numbers match the client exactly even for text containing
-    /// cells <see cref="Typeability.Normalize"/> would have removed.
-    /// </summary>
-    private static (int TypeableCount, double LastTarget) computeCells(LyricLine line)
-    {
-        string text = line.RawText;
-        var units = line.Units;
-
-        int n = text.Length;
-
-        if (n == 0)
-            return (0, line.StartTime);
-
-        bool[] isTypeable = new bool[n];
-        double?[] targets = new double?[n];
-
-        // First pass: walk the raw text token by token (spaces delimit tokens; token m maps to
-        // Units[m], clamped against malformed data). (TypingLine.cs:201-258.)
-        string[] tokens = text.Split(' ');
-        int pos = 0;
-
-        for (int m = 0; m < tokens.Length; m++)
-        {
-            string token = tokens[m];
-
-            TimedUnit? unit = units.Count > 0 ? units[Math.Min(m, units.Count - 1)] : null;
-
-            double unitStart = unit?.StartTime ?? line.StartTime;
-            double unitEnd = unit?.EndTime ?? line.SingEndTime;
-
-            int k = 0;
-
-            foreach (char ch in token)
+            foreach (string token in tokens)
             {
-                if (Typeability.IsTypeable(ch))
-                    k++;
-            }
+                int typeable = 0;
 
-            int j = 0;
-
-            foreach (char ch in token)
-            {
-                if (Typeability.IsTypeable(ch))
+                foreach (char ch in token)
                 {
-                    isTypeable[pos] = true;
-                    targets[pos] = unitStart + j * (unitEnd - unitStart) / k;
-                    j++;
+                    if (Typeability.IsTypeable(ch))
+                        typeable++;
                 }
 
-                pos++;
+                cells += typeable;
+
+                if (typeable > 0)
+                    words++;
             }
 
-            if (m < tokens.Length - 1)
-            {
-                // Inter-word space cell: preceding unit's EndTime.
-                isTypeable[pos] = true;
-                targets[pos] = unitEnd;
-                pos++;
-            }
-        }
-
-        // Second pass (a): non-typeable cells copy the NEXT typeable cell's target. (:260-269.)
-        double? next = null;
-
-        for (int i = n - 1; i >= 0; i--)
-        {
-            if (targets[i].HasValue)
-                next = targets[i];
-            else if (next.HasValue)
-                targets[i] = next;
-        }
-
-        // Second pass (b): trailing punctuation copies the PREVIOUS target. (:271-280.)
-        double? prev = null;
-
-        for (int i = 0; i < n; i++)
-        {
-            if (targets[i].HasValue)
-                prev = targets[i];
-            else
-                targets[i] = prev ?? line.StartTime;
-        }
-
-        // Guard: targets non-decreasing. (:282-287.)
-        for (int i = 1; i < n; i++)
-        {
-            if (targets[i]!.Value < targets[i - 1]!.Value)
-                targets[i] = targets[i - 1];
-        }
-
-        // LyricPaceStatistics.cs:43-52: max typeable target, floored at the line start.
-        int typeable = 0;
-        double lastTarget = line.StartTime;
-
-        for (int i = 0; i < n; i++)
-        {
-            if (!isTypeable[i])
+            if (cells <= 0)
                 continue;
 
-            typeable++;
-            lastTarget = Math.Max(lastTarget, targets[i]!.Value);
+            double windowMinutes = Math.Max(line.EndTime - line.StartTime, min_line_window_ms) / 60000.0;
+
+            wpmSum += words / windowMinutes;
+            cpmSum += cells / windowMinutes;
+            totalCells += cells;
+            totalWords += words;
+            lineCount++;
         }
 
-        return (typeable, lastTarget);
+        if (lineCount == 0)
+            return default;
+
+        return new PaceStatistics(
+            wpmSum / lineCount,
+            cpmSum / lineCount,
+            totalCells,
+            totalWords);
     }
 }

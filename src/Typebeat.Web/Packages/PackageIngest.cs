@@ -2,6 +2,7 @@ using System.IO.Compression;
 using Dapper;
 using Npgsql;
 using Typebeat.Web.Data;
+using Typebeat.Web.Packages.Lyrics;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Packages;
@@ -312,10 +313,10 @@ public sealed class PackageIngest(
                 """
                 INSERT INTO beatmaps
                     (id, set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s,
-                     difficulty_rating, filename, word_count, char_count, wpm)
+                     difficulty_rating, filename, word_count, char_count, wpm, pace_version)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
-                     @difficultyRating, @filename, @wordCount, @charCount, @wpm)
+                     @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -326,7 +327,8 @@ public sealed class PackageIngest(
                     filename = EXCLUDED.filename,
                     word_count = EXCLUDED.word_count,
                     char_count = EXCLUDED.char_count,
-                    wpm = EXCLUDED.wpm
+                    wpm = EXCLUDED.wpm,
+                    pace_version = EXCLUDED.pace_version
                 """,
                 new
                 {
@@ -341,6 +343,7 @@ public sealed class PackageIngest(
                     wordCount = diff.Pace.WordCount,
                     charCount = diff.Pace.TypeableCellCount,
                     wpm = diff.Pace.AverageWpm,
+                    paceVersion = LyricPace.VERSION,
                 });
         }
 

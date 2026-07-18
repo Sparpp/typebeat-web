@@ -5,3 +5,4 @@ obj/
 .idea/
 appsettings.Local.json
 deploy/.env
+.claude/

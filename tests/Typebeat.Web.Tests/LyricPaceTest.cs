@@ -5,8 +5,8 @@ namespace Typebeat.Web.Tests;
 /// <summary>
 /// The difficulty arithmetic against known values. The primary anchor is the game's own
 /// regression test (typebeat-osu typebeat.Game.Rulesets.TypeBeat.Tests/NonVisual/
-/// LyricPaceStatisticsTest.cs): "ab cd" -> 5 cells, WPM 40, CPM 200; stars follow
-/// TypeBeatDifficultyCalculator (stars = min(10, WPM / 25)).
+/// LyricPaceStatisticsTest.cs): "ab cd" over a 3000 ms boundary window -> 5 cells, 2 words,
+/// WPM 40, CPM 100; stars follow TypeBeatDifficultyCalculator (stars = min(10, WPM / 25)).
 /// </summary>
 public class LyricPaceTest
 {
@@ -24,7 +24,7 @@ public class LyricPaceTest
     };
 
     [Test]
-    public void ComputesPerfectPlayPace_MatchesGameRegressionValues()
+    public void ComputesBoundaryWindowPace_MatchesGameRegressionValues()
     {
         var pace = LyricPace.Compute([paceRegressionLine()]);
 
@@ -32,10 +32,36 @@ public class LyricPaceTest
         {
             Assert.That(pace.TypeableCellCount, Is.EqualTo(5));
             Assert.That(pace.WordCount, Is.EqualTo(2));
+            // Boundary window 4000 - 1000 = 3000 ms: WPM = 2 / 0.05 min, CPM = 5 / 0.05 min.
             Assert.That(pace.AverageWpm, Is.EqualTo(40.0).Within(1e-9));
-            Assert.That(pace.AverageCpm, Is.EqualTo(200.0).Within(1e-9));
-            // stars = WPM / 25 (TypeBeatDifficultyCalculator.cs:23,40).
+            Assert.That(pace.AverageCpm, Is.EqualTo(100.0).Within(1e-9));
+            // stars = WPM / 25 (TypeBeatDifficultyCalculator).
             Assert.That(pace.DifficultyRating, Is.EqualTo(1.6).Within(1e-9));
+        });
+    }
+
+    [Test]
+    public void AveragesPerLineRates_Unweighted()
+    {
+        // Line 1: "ab cd" over 3000 ms -> 40 WPM / 100 CPM.
+        // Line 2: "ab cd" over 1500 ms -> 80 WPM / 200 CPM.
+        var second = new LyricLine
+        {
+            RawText = "ab cd",
+            StartTime = 4000,
+            EndTime = 5500,
+            SingEndTime = 5500,
+            Units = [new TimedUnit { Text = "ab cd", StartTime = 4000, EndTime = 5500 }],
+        };
+
+        var pace = LyricPace.Compute([paceRegressionLine(), second]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pace.TypeableCellCount, Is.EqualTo(10));
+            Assert.That(pace.WordCount, Is.EqualTo(4));
+            Assert.That(pace.AverageWpm, Is.EqualTo(60.0).Within(1e-9));
+            Assert.That(pace.AverageCpm, Is.EqualTo(150.0).Within(1e-9));
         });
     }
 
@@ -55,15 +81,15 @@ public class LyricPaceTest
     [Test]
     public void DifficultyRating_CapsAtTenStars()
     {
-        // 50 cells in a degenerate instant -> the 500 ms line floor gives CPM 6000, WPM 1200 —
-        // far past the 10-star cap (250 WPM).
+        // 3 words crammed into a 100 ms boundary window -> the 500 ms floor still yields
+        // 3 / (500 ms / 60000) = 360 WPM — past the 10-star cap (250 WPM).
         var line = new LyricLine
         {
-            RawText = new string('a', 50),
+            RawText = "aa bb cc",
             StartTime = 0,
-            EndTime = 1000,
-            SingEndTime = 0,
-            Units = [new TimedUnit { Text = new string('a', 50), StartTime = 0, EndTime = 0 }],
+            EndTime = 100,
+            SingEndTime = 100,
+            Units = [new TimedUnit { Text = "aa bb cc", StartTime = 0, EndTime = 100 }],
         };
 
         var pace = LyricPace.Compute([line]);
@@ -76,22 +102,26 @@ public class LyricPaceTest
     }
 
     [Test]
-    public void MinimumLineWindow_GuardsDegenerateData()
+    public void MinimumLineWindow_GuardsDegenerateBoundaries()
     {
-        // All targets at the line start -> active window clamps to 500 ms (LyricPaceStatistics.cs:29).
+        // A 100 ms boundary window clamps to the 500 ms floor:
+        // 1 word / (500 ms / 60000) = 120 WPM; 5 cells -> 600 CPM.
         var line = new LyricLine
         {
             RawText = "abcde",
             StartTime = 1000,
-            EndTime = 2000,
-            SingEndTime = 1000,
-            Units = [new TimedUnit { Text = "abcde", StartTime = 1000, EndTime = 1000 }],
+            EndTime = 1100,
+            SingEndTime = 1100,
+            Units = [new TimedUnit { Text = "abcde", StartTime = 1000, EndTime = 1100 }],
         };
 
         var pace = LyricPace.Compute([line]);
 
-        // 5 cells / (500 ms / 60000) = 600 CPM -> 120 WPM.
-        Assert.That(pace.AverageWpm, Is.EqualTo(120.0).Within(1e-9));
+        Assert.Multiple(() =>
+        {
+            Assert.That(pace.AverageWpm, Is.EqualTo(120.0).Within(1e-9));
+            Assert.That(pace.AverageCpm, Is.EqualTo(600.0).Within(1e-9));
+        });
     }
 
     [Test]

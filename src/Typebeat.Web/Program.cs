@@ -87,6 +87,13 @@ var app = builder.Build();
 
 await app.Services.GetRequiredService<Db>().MigrateAsync(app.Logger);
 
+// Recompute stored wpm/star/word/char numbers for rows written under an older pace arithmetic
+// (LyricPace.VERSION bumps). No-op when everything is current.
+await PaceBackfill.RunAsync(
+    app.Services.GetRequiredService<Db>(),
+    app.Services.GetRequiredService<IFileStore>(),
+    app.Logger);
+
 // Which email path is live (helps confirm prod is actually sending, not just logging codes).
 app.Logger.LogInformation("Email sender: {Sender}", app.Services.GetRequiredService<IEmailSender>().GetType().Name);
 

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
+using Typebeat.Web.Packages.Lyrics;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Tests;
@@ -364,6 +365,49 @@ public class PackageIngestDbTest
         // The blobs behind v1 are untouched — content-addressed storage is never pruned here.
         foreach (var file in result.Files)
             Assert.That(await fileStore.BlobExistsAsync(file.Sha256), Is.True, file.Filename);
+    }
+
+    [Test]
+    [Order(6)]
+    public async Task PaceBackfill_RecomputesStaleRowsFromStoredBlob()
+    {
+        // Simulate a row written under the old (v1, perfect-play cells/5) arithmetic: scribble
+        // wrong numbers and downgrade the stamp — exactly the state prod is in when a LyricPace
+        // version bump deploys.
+        await using var conn = await db.OpenAsync();
+
+        await conn.ExecuteAsync(
+            """
+            UPDATE beatmaps
+            SET wpm = 999, difficulty_rating = 9.9, word_count = 1, char_count = 1, pace_version = 1
+            WHERE id = 1001
+            """);
+
+        await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        var row = await conn.QuerySingleAsync<(decimal Wpm, double Difficulty, int WordCount, int CharCount, int PaceVersion)>(
+            """
+            SELECT wpm AS Wpm, difficulty_rating AS Difficulty, word_count AS WordCount,
+                   char_count AS CharCount, pace_version AS PaceVersion
+            FROM beatmaps WHERE id = 1001
+            """);
+
+        Assert.Multiple(() =>
+        {
+            // The regression package: "ab cd" over a 3000 ms boundary window.
+            Assert.That((double)row.Wpm, Is.EqualTo(40).Within(1e-6));
+            Assert.That(row.Difficulty, Is.EqualTo(1.6).Within(1e-9));
+            Assert.That(row.WordCount, Is.EqualTo(2));
+            Assert.That(row.CharCount, Is.EqualTo(5));
+            Assert.That(row.PaceVersion, Is.EqualTo(LyricPace.VERSION));
+        });
+
+        // Second run: nothing stale, nothing changes (idempotent no-op).
+        await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        int stale = await conn.ExecuteScalarAsync<int>(
+            "SELECT count(*) FROM beatmaps WHERE pace_version < @v", new { v = LyricPace.VERSION });
+        Assert.That(stale, Is.Zero);
     }
 
     private static string readEmbeddedMigration(string name)

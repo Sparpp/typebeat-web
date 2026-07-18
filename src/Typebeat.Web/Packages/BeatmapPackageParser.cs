@@ -99,6 +99,12 @@ public static class BeatmapPackageParser
     /// <summary>Archive paths are compared and stored with forward slashes (osu's ToStandardisedPath).</summary>
     public static string NormalizeFilename(string archivePath) => archivePath.Replace('\\', '/');
 
+    /// <summary>
+    /// Parses a single .osu difficulty outside the zip path — used by <see cref="PaceBackfill"/>
+    /// to recompute pace/star numbers from stored blobs without reassembling the package.
+    /// </summary>
+    public static ParsedDifficulty ParseDifficulty(string filename, byte[] content) => parseOsu(filename, content);
+
     private static void validateFilename(string filename)
     {
         if (string.IsNullOrWhiteSpace(filename))

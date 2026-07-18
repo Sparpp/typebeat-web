@@ -78,12 +78,12 @@ public class PackageParserTest
 
         Assert.Multiple(() =>
         {
-            // The game's own pace regression values (LyricPaceStatisticsTest.ComputesPerfectPlayPace).
+            // The game's own pace regression values (LyricPaceStatisticsTest.ComputesBoundaryWindowPace).
             Assert.That(diff.Lines, Has.Count.EqualTo(1));
             Assert.That(diff.Pace.TypeableCellCount, Is.EqualTo(5));
             Assert.That(diff.Pace.WordCount, Is.EqualTo(2));
             Assert.That(diff.Pace.AverageWpm, Is.EqualTo(40).Within(1e-9));
-            Assert.That(diff.Pace.AverageCpm, Is.EqualTo(200).Within(1e-9));
+            Assert.That(diff.Pace.AverageCpm, Is.EqualTo(100).Within(1e-9));
             Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(1.6).Within(1e-9));
 
             // Last line end = min(song_end 4000, end_ms 3000 + 3000 tail) = 4000 ms.
