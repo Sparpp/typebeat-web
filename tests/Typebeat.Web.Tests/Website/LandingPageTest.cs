@@ -23,7 +23,7 @@ public class LandingPageTest
 
             // Live stats line (numbers vary with concurrent tests; labels are the contract).
             Assert.That(html, Does.Contain("registered players"));
-            Assert.That(html, Does.Contain("scores today"));
+            Assert.That(html, Does.Contain("scores</span>"));
             Assert.That(html, Does.Contain("maps available"));
 
             // Signed-out CTA. (The dedicated /download page is gone — the hero only invites sign-up.)
