@@ -1,0 +1,68 @@
+@page "/play"
+@model Typebeat.Web.Pages.Play.IndexModel
+@{
+    ViewData["Title"] = "play";
+    ViewData["MetaDescription"] = "Play type!beat in your browser — type the lyrics as they drop, in time with the music.";
+    var user = Model.CurrentUser;
+}
+
+<section class="play-head">
+    <h1>play in your browser</h1>
+    <p class="play-sub">
+        pick a ranked map and type the lyrics as they are sung.
+        @if (user is null)
+        {
+            <text><a href="/login">sign in</a> to save your scores to the leaderboard.</text>
+        }
+        else
+        {
+            <text>your scores land on the same leaderboards as the desktop client.</text>
+        }
+    </p>
+</section>
+
+<div id="tb-picker" class="play-picker">
+    @if (Model.Maps.Count == 0)
+    {
+        <div class="play-empty">No ranked maps yet — check back soon.</div>
+    }
+    else
+    {
+        <div class="play-grid">
+            @foreach (var m in Model.Maps)
+            {
+                <button type="button" class="tb-map"
+                        data-set-id="@m.SetId" data-beatmap-id="@m.BeatmapId"
+                        data-title="@m.Title" data-artist="@m.Artist">
+                    <span class="tb-map-cover">
+                        @if (m.CoverUrl is not null)
+                        {
+                            <img src="@m.CoverUrl" alt="" loading="lazy" />
+                        }
+                    </span>
+                    <span class="tb-map-info">
+                        <span class="tb-map-title">@m.Title</span>
+                        <span class="tb-map-artist">@m.Artist</span>
+                        <span class="tb-map-stats">@(m.Wpm is null ? "" : $"{Math.Round(m.Wpm.Value)} wpm · ")★ @m.Stars.ToString("0.0")</span>
+                    </span>
+                </button>
+            }
+        </div>
+    }
+</div>
+
+<div id="tb-stage" class="play-stage-wrap" hidden>
+    <button type="button" id="tb-close" class="btn btn-ghost btn-small play-close">✕ close</button>
+    <div id="tb-stage-mount"></div>
+</div>
+
+<script>
+    window.TYPEBEAT_PLAY = {
+        signedIn: @(user is not null ? "true" : "false"),
+        username: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(user?.Username ?? "")),
+        csrf: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CsrfToken))
+    };
+</script>
+<script src="~/js/typebeat-core.js" asp-append-version="true"></script>
+<script src="~/js/typebeat-player.js" asp-append-version="true"></script>
+<script src="~/js/play.js" asp-append-version="true"></script>

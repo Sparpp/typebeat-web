@@ -87,6 +87,11 @@ builder.Services.AddSingleton<AlignJobStore>();
 // bound via the framework).
 builder.Services.AddRazorPages();
 
+// Sets the header the in-browser web player (PlayEndpoints) sends its antiforgery token in;
+// AddRazorPages already registered the antiforgery services. Additive — the page pipeline still
+// validates form tokens as before. The /play mutating endpoints validate explicitly via IAntiforgery.
+builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
+
 var app = builder.Build();
 
 await app.Services.GetRequiredService<Db>().MigrateAsync(app.Logger);
@@ -200,6 +205,10 @@ ScoreEndpoints.Map(app);
 BssEndpoints.Map(app);
 MediaEndpoints.Map(app);
 AlignEndpoints.Map(app);
+
+// The in-browser web player's backend (score tokens/submission + map/audio serving). Additive;
+// cookie-session authed, mirrors the bearer score flow in ScoreEndpoints.
+PlayEndpoints.Map(app);
 
 // The website pages ("/", /login, /register, /legal/dmca, ...). Mapped after the wire modules;
 // none of their routes overlap the API surface.
