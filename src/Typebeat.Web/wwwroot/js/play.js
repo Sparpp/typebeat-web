@@ -43,10 +43,10 @@
         return { ok: res.ok, status: res.status, data: data };
     }
 
-    async function createToken(beatmapId) {
+    async function createToken(setId) {
         if (!CFG.signedIn) return null;
         try {
-            const r = await postJson('/play/token', { beatmapId: beatmapId });
+            const r = await postJson('/play/token', { setId: Number(setId) });
             if (r.ok && r.data && (r.data.id != null)) return r.data.id;
         } catch (e) { console.error(e); }
         return null;
@@ -66,7 +66,6 @@
 
     async function pick(btn) {
         const setId = btn.getAttribute('data-set-id');
-        const beatmapId = parseInt(btn.getAttribute('data-beatmap-id'), 10);
         const title = btn.getAttribute('data-title') || '';
         const artist = btn.getAttribute('data-artist') || '';
 
@@ -99,7 +98,7 @@
                 title: title,
                 artist: artist,
                 onExit: showPicker,
-                onPlayStart: () => { tokenPromise = createToken(beatmapId); },
+                onPlayStart: () => { tokenPromise = createToken(setId); },
                 onFinish: async (results, api) => {
                     if (!CFG.signedIn) {
                         api.setSubmitStatus('<a href="/login">sign in</a> to submit your score to the leaderboard.', 'tb-status-muted');
@@ -148,7 +147,7 @@
     }
 
     picker.addEventListener('click', (e) => {
-        const btn = e.target.closest('.tb-map');
+        const btn = e.target.closest('.tb-play');
         if (btn) { e.preventDefault(); pick(btn); }
     });
 

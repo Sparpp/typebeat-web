@@ -27,7 +27,7 @@
         <span class="bset-card__mapper">mapped by <a href="/users/@Model.OwnerId">@Model.Creator</a></span>
         <span class="bset-card__stats">
             <span title="play count"><span aria-hidden="true">&#9654;</span> @Model.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span>
-            <span title="favourites"><span aria-hidden="true">&#9825;</span> @Model.FavouriteCount.ToString("N0", CultureInfo.InvariantCulture)</span>
+            <span title="favourites"><span aria-hidden="true">&#9825;</span> <span data-fav-count>@Model.FavouriteCount.ToString("N0", CultureInfo.InvariantCulture)</span></span>
             <span title="submitted">@Model.Date.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</span>
         </span>
         <span class="bset-card__meta">
@@ -44,9 +44,9 @@
     <div class="bset-card__rail">
         @if (sessionUser is not null)
         {
-            <form method="post" asp-page="/Beatmapsets/Set" asp-route-id="@Model.Id" asp-page-handler="Favourite">
+            <form class="js-fav-form" method="post" asp-page="/Beatmapsets/Set" asp-route-id="@Model.Id" asp-page-handler="Favourite">
                 <input type="hidden" name="returnUrl" value="@returnUrl" />
-                <button type="submit" class="rail-btn @(Model.IsFavourited ? "is-on" : "")"
+                <button type="submit" data-fav-btn class="rail-btn @(Model.IsFavourited ? "is-on" : "")"
                         aria-label="@(Model.IsFavourited ? "Remove from favourites" : "Add to favourites")">
                     @(Model.IsFavourited ? "♥" : "♡")
                 </button>
@@ -56,7 +56,14 @@
         {
             <a class="rail-btn" href="/login" title="Sign in to favourite" aria-label="Sign in to favourite">&#9825;</a>
         }
-        @if (Model.HasPackage)
+        @if ((ViewData["CardPlayMode"] as bool?) == true)
+        {
+            @* Play mode (the /play picker): launch the in-browser player instead of downloading. *@
+            <button type="button" class="rail-btn tb-play" data-set-id="@Model.Id"
+                    data-title="@Model.Title" data-artist="@Model.Artist"
+                    title="Play in browser" aria-label="Play in browser">&#9654;</button>
+        }
+        else if (Model.HasPackage)
         {
             <a class="rail-btn" href="/beatmapsets/@Model.Id/download" title="Download" aria-label="Download">&#8595;</a>
         }

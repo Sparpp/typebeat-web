@@ -179,6 +179,16 @@ public sealed class SetModel(Db db) : TypebeatPageModel
 
         await tx.CommitAsync(HttpContext.RequestAborted);
 
+        // A fetch()-driven toggle (the card grids) gets JSON back so the page never reloads or
+        // jumps to the top; a plain form submit still redirects for no-JS fallback.
+        if (string.Equals(Request.Headers["X-Requested-With"], "fetch", StringComparison.Ordinal))
+        {
+            bool favourited = deleted == 0; // deleted a row → now off; else we inserted → now on
+            int count = await conn.ExecuteScalarAsync<int>(
+                "SELECT favourite_count FROM beatmapsets WHERE id = @id", new { id });
+            return new JsonResult(new { favourited, count });
+        }
+
         return Redirect(Url.IsLocalUrl(returnUrl) ? returnUrl : $"/beatmapsets/{id}");
     }
 

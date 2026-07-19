@@ -137,20 +137,32 @@ public static class PlayEndpoints
             request = null;
         }
 
-        if (request is null || request.BeatmapId <= 0)
+        if (request is null || (request.SetId <= 0 && request.BeatmapId <= 0))
             return WireJson.Error(StatusCodes.Status400BadRequest, "invalid request body");
 
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
-        // The map must exist on a published set (pending or ranked) to be playable.
-        var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-            """
-            SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS
-            FROM beatmaps b
-            JOIN beatmapsets bs ON bs.id = b.set_id
-            WHERE b.id = @beatmapId AND bs.status IN ('pending', 'ranked')
-            """,
-            new { beatmapId = request.BeatmapId });
+        // Resolve the playable beatmap: by SET id (the picker's path — the set's primary .osu diff)
+        // or, for back-compat, by an explicit beatmap id. The set must be published (pending/ranked).
+        var beatmap = request.SetId > 0
+            ? await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
+                """
+                SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS
+                FROM beatmaps b
+                JOIN beatmapsets bs ON bs.id = b.set_id
+                WHERE b.set_id = @setId AND bs.status IN ('pending', 'ranked') AND b.filename LIKE '%.osu'
+                ORDER BY b.id
+                LIMIT 1
+                """,
+                new { setId = request.SetId })
+            : await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
+                """
+                SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS
+                FROM beatmaps b
+                JOIN beatmapsets bs ON bs.id = b.set_id
+                WHERE b.id = @beatmapId AND bs.status IN ('pending', 'ranked')
+                """,
+                new { beatmapId = request.BeatmapId });
 
         if (beatmap is null)
             return WireJson.Error(status_unprocessable, "beatmap not found or not playable");
@@ -533,6 +545,9 @@ public static class PlayEndpoints
 
     private sealed class TokenRequest
     {
+        [JsonProperty("setId")]
+        public long SetId { get; set; }
+
         [JsonProperty("beatmapId")]
         public long BeatmapId { get; set; }
     }

@@ -3,6 +3,7 @@
 @{
     ViewData["Title"] = "play";
     ViewData["MetaDescription"] = "Play type!beat in your browser — type the lyrics as they drop, in time with the music.";
+    ViewData["CardPlayMode"] = true; // the shared card renders a play button instead of download
     var user = Model.CurrentUser;
 }
 
@@ -28,24 +29,10 @@
     }
     else
     {
-        <div class="play-grid">
-            @foreach (var m in Model.Maps)
+        <div class="card-grid">
+            @foreach (var set in Model.Maps)
             {
-                <button type="button" class="tb-map"
-                        data-set-id="@m.SetId" data-beatmap-id="@m.BeatmapId"
-                        data-title="@m.Title" data-artist="@m.Artist">
-                    <span class="tb-map-cover">
-                        @if (m.CoverUrl is not null)
-                        {
-                            <img src="@m.CoverUrl" alt="" loading="lazy" />
-                        }
-                    </span>
-                    <span class="tb-map-info">
-                        <span class="tb-map-title">@m.Title</span>
-                        <span class="tb-map-artist">@m.Artist</span>
-                        <span class="tb-map-stats">@(m.Wpm is null ? "" : $"{Math.Round(m.Wpm.Value)} wpm · ")★ @m.Stars.ToString("0.0")</span>
-                    </span>
-                </button>
+                <partial name="_BeatmapsetCard" model="set" />
             }
         </div>
     }
