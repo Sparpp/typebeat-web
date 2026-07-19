@@ -232,7 +232,11 @@
             cleanupAudio();
             source = audioCtx.createBufferSource();
             source.buffer = audioBuffer;
-            source.connect(audioCtx.destination);
+            // Default playback at 10% (90% quieter) — the map audio is loud on its own.
+            const gain = audioCtx.createGain();
+            gain.gain.value = 0.1;
+            source.connect(gain);
+            gain.connect(audioCtx.destination);
             startedAt = audioCtx.currentTime + 0.06; // small scheduling lead
             source.start(startedAt);
             running = true;

@@ -15,20 +15,17 @@
     <p class="hero-kicker">// built from osu!</p>
     <h1 class="hero-title">type to the b<span class="tail">eat</span></h1>
     <div class="hero-actions">
-        @if (Model.GameDownloadAvailable)
-        {
-            <a class="btn btn-primary btn-big" href="/download/game" download>download installer (windows)</a>
-        }
+        <a class="btn btn-primary btn-big" href="/play">play in browser</a>
         @if (Model.CurrentUser is null)
         {
             <a class="btn btn-ghost btn-big" href="/register">sign up</a>
         }
-        else
+        else if (Model.GameDownloadAvailable)
         {
-            <a class="btn btn-ghost btn-big" href="/beatmapsets">browse maps</a>
+            <a class="btn btn-ghost btn-big" href="/download/game" download>download installer (windows)</a>
         }
     </div>
-    @if (Model.GameDownloadAvailable)
+    @if (Model.CurrentUser is not null && Model.GameDownloadAvailable)
     {
         <p class="hero-note">Installer isn't signed yet and will trigger Windows SmartScreen :(</p>
     }
