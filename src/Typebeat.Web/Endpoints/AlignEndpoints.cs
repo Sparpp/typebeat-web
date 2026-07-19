@@ -9,9 +9,11 @@ namespace Typebeat.Web.Endpoints;
 /// Server-side lyric alignment for game clients without a local lyriclab environment (the
 /// installed build ships no Python/torch — only dev checkouts have the aligner beside the exe).
 ///
-///  - POST /api/v2/typebeat/align          multipart: audio file + lyrics text (+ artist/title)
+///  - POST   /api/v2/typebeat/align        multipart: audio file + lyrics text (+ artist/title)
 ///                                          → { id, state: "pending" }; 409 while a job is active
-///  - GET  /api/v2/typebeat/align/{id}     → { id, state, progress?, timing_json?, error? }
+///  - GET    /api/v2/typebeat/align/{id}   → { id, state, progress?, timing_json?, error? }
+///  - DELETE /api/v2/typebeat/align/{id}   cancel: the worker stops aligning and the owner's slot
+///                                          frees immediately (sent when the client abandons the wait)
 ///
 /// Jobs are files on the shared /data volume (see <see cref="AlignJobStore"/>); the aligner
 /// worker container processes them one at a time (torch/demucs are memory-hungry — serialization
@@ -25,6 +27,7 @@ public static class AlignEndpoints
     {
         app.MapPost("/api/v2/typebeat/align", CreateJob).RequireBearer().DisableAntiforgery().WithAlignBodyLimit();
         app.MapGet("/api/v2/typebeat/align/{id}", GetJob).RequireBearer();
+        app.MapDelete("/api/v2/typebeat/align/{id}", CancelJob).RequireBearer();
     }
 
     /// <summary>
@@ -114,5 +117,18 @@ public static class AlignEndpoints
             timing_json = status.TimingJson,
             error = status.Error,
         });
+    }
+
+    private static async Task<IResult> CancelJob(string id, HttpContext ctx, AlignJobStore store)
+    {
+        var user = ctx.AuthedUser();
+
+        // Idempotent for the owner (already-finished jobs report success); 404 for unknown or
+        // not-the-caller's — same visibility rule as GET (a job is only its creator's).
+        bool cancelled = await store.RequestCancelAsync(id, user.Id, ctx.RequestAborted);
+
+        return cancelled
+            ? WireJson.Ok(new { id, state = "cancelled" })
+            : WireJson.Error(StatusCodes.Status404NotFound, "no such alignment job");
     }
 }

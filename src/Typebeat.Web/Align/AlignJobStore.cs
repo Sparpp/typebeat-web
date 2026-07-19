@@ -96,7 +96,10 @@ public sealed class AlignJobStore(IConfiguration config)
             if (manifest == null || manifest.Value.UserId != userId)
                 continue;
 
-            if (File.Exists(Path.Combine(dir, "timing.json")) || File.Exists(Path.Combine(dir, "error.json")))
+            // Terminal (done/failed) or cancelled jobs no longer occupy the owner's active slot.
+            if (File.Exists(Path.Combine(dir, "timing.json"))
+                || File.Exists(Path.Combine(dir, "error.json"))
+                || File.Exists(Path.Combine(dir, "cancel")))
                 continue;
 
             if (DateTimeOffset.UtcNow - manifest.Value.CreatedAt < ActiveWindow)
@@ -173,6 +176,12 @@ public sealed class AlignJobStore(IConfiguration config)
         if (File.Exists(timingPath))
             return new JobStatus(id, "done", null, await File.ReadAllTextAsync(timingPath, ct), null);
 
+        // Cancelled by the owner: report a terminal failure so any still-polling client stops. The
+        // worker writes its own error.json when it actually halts, but this reflects the request the
+        // instant it lands (and frees the active slot — see FindActiveJob).
+        if (File.Exists(Path.Combine(dir, "cancel")))
+            return new JobStatus(id, "failed", null, null, "alignment cancelled");
+
         string state = File.Exists(Path.Combine(dir, ".running")) ? "running" : "pending";
 
         // Stale-abandoned pending/running (worker down, crashed mid-job): surface as failed so
@@ -181,6 +190,33 @@ public sealed class AlignJobStore(IConfiguration config)
             return new JobStatus(id, "failed", null, null, "alignment timed out on the server");
 
         return new JobStatus(id, state, readLastProgressLine(dir), null, null);
+    }
+
+    /// <summary>
+    /// Requests cancellation of a job (owner-only): drops a <c>cancel</c> marker the worker honours
+    /// by killing its aligner subprocess, and which immediately frees the owner's one-active-job slot
+    /// and makes the job report as failed. Idempotent — an already-finished job reports success with
+    /// nothing to do; returns false only when the job doesn't exist or isn't the caller's.
+    /// </summary>
+    public async Task<bool> RequestCancelAsync(string id, long userId, CancellationToken ct)
+    {
+        // Ids are self-generated GUID strings; reject anything path-like outright (as ReadStatusAsync).
+        if (id.Length > 64 || id.Any(c => !char.IsAsciiLetterOrDigit(c)))
+            return false;
+
+        string dir = Path.Combine(root, id);
+        var manifest = readManifest(dir);
+
+        if (manifest == null || manifest.Value.UserId != userId)
+            return false;
+
+        // Raced the worker to completion — nothing to stop, but report success (idempotent).
+        if (File.Exists(Path.Combine(dir, "timing.json")) || File.Exists(Path.Combine(dir, "error.json")))
+            return true;
+
+        // An empty marker file (like .running): its presence is the worker's cancel signal.
+        await File.WriteAllTextAsync(Path.Combine(dir, "cancel"), string.Empty, ct);
+        return true;
     }
 
     private static string? readLastProgressLine(string dir)

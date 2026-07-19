@@ -62,6 +62,40 @@ public class AlignFlowTest
     }
 
     [Test]
+    public async Task AlignJob_Cancel_DropsMarker_FreesSlot_AndReportsFailed()
+    {
+        // --- create, then confirm it holds the one-active-job slot ---
+        (HttpStatusCode status, JObject body) = await createJobAsync(stamped_lyrics);
+        Assert.That(status, Is.EqualTo(HttpStatusCode.OK));
+        string id = body["id"]!.Value<string>()!;
+        string jobDir = Path.Combine(ServerFixture.FileRoot, "align-jobs", id);
+
+        (HttpStatusCode second, _) = await createJobAsync(stamped_lyrics);
+        Assert.That(second, Is.EqualTo(HttpStatusCode.Conflict), "a job is active");
+
+        // --- cancel (DELETE) ---
+        Assert.That(await cancelJobAsync(id), Is.EqualTo(HttpStatusCode.OK));
+
+        // The worker's cancel signal is on disk...
+        Assert.That(File.Exists(Path.Combine(jobDir, "cancel")), Is.True);
+
+        // ...the job now reports a terminal failure with the cancellation reason...
+        JObject polled = await getJobAsync(id);
+        Assert.That(polled["state"]!.Value<string>(), Is.EqualTo("failed"));
+        Assert.That(polled["error"]!.Value<string>(), Does.Contain("cancelled"));
+
+        // ...and the slot is freed: a fresh create succeeds where the second was blocked.
+        (HttpStatusCode third, JObject thirdBody) = await createJobAsync(stamped_lyrics);
+        Assert.That(third, Is.EqualTo(HttpStatusCode.OK), "cancelling frees the one-active-job slot");
+
+        // Clean up the job we just created so we don't leave an active one for sibling tests.
+        await cancelJobAsync(thirdBody["id"]!.Value<string>()!);
+
+        // Cancelling an unknown job id is a 404 (same visibility rule as GET).
+        Assert.That(await cancelJobAsync("deadbeefdeadbeefdeadbeefdeadbeef"), Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
     public async Task AlignJob_FailureAndValidation()
     {
         // Unknown job id → 404.
@@ -113,5 +147,12 @@ public class AlignFlowTest
         using var resp = await client.SendAsync(req);
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         return JObject.Parse(await resp.Content.ReadAsStringAsync());
+    }
+
+    private static async Task<HttpStatusCode> cancelJobAsync(string id)
+    {
+        using var req = ServerFixture.Authed(HttpMethod.Delete, $"/api/v2/typebeat/align/{id}");
+        using var resp = await client.SendAsync(req);
+        return resp.StatusCode;
     }
 }

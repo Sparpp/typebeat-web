@@ -43,6 +43,11 @@ def is_terminal(job: Path) -> bool:
     return (job / "timing.json").exists() or (job / "error.json").exists()
 
 
+def is_cancelled(job: Path) -> bool:
+    # The web app drops this marker on DELETE /api/v2/typebeat/align/{id} (see AlignJobStore.cs).
+    return (job / "cancel").exists()
+
+
 def gc_old_jobs() -> None:
     now = time.time()
     if not JOBS_ROOT.exists():
@@ -69,6 +74,10 @@ def next_job() -> Path | None:
                 # A claim can only be ours-from-a-past-life: fail it permanently (see module doc).
                 write_error(job, "the aligner restarted while processing this job")
                 continue
+            if is_cancelled(job):
+                # Cancelled before we ever claimed it: terminate without spending any CPU.
+                write_error(job, "alignment cancelled")
+                continue
             candidates.append(job)
         except OSError:
             continue
@@ -87,6 +96,12 @@ def run_job(job: Path) -> None:
         return
 
     (job / ".running").touch()
+
+    if is_cancelled(job):
+        # Cancel landed between claim and start — don't launch the aligner at all.
+        write_error(job, "alignment cancelled")
+        return
+
     log(f"running {job.name} ({manifest.get('artist')} - {manifest.get('title')}, anchors={manifest.get('anchors')})")
 
     cmd = [sys.executable, str(ALIGNER), str(audio), str(lyrics), "-o", str(out_dir)]
@@ -112,6 +127,12 @@ def run_job(job: Path) -> None:
                 if line.strip():
                     progress.write(line if line.endswith("\n") else line + "\n")
                     progress.flush()
+                if is_cancelled(job):
+                    # The client left the import screen; stop burning CPU on a result no one will collect.
+                    proc.kill()
+                    write_error(job, "alignment cancelled")
+                    log(f"cancelled {job.name}")
+                    return
                 if time.time() - start > JOB_TIMEOUT_S:
                     proc.kill()
                     write_error(job, "alignment timed out")
