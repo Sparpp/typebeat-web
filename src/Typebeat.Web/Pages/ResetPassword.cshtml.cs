@@ -96,7 +96,9 @@ public sealed class ResetPasswordModel(
         await using (var conn = await db.OpenAsync(HttpContext.RequestAborted))
         {
             await conn.ExecuteAsync(
-                "UPDATE users SET password_hash = @hash WHERE id = @id",
+                // Completing the emailed reset code also proves email control → mark verified (idempotent),
+                // the same self-service submission gate the login/signup code paths set.
+                "UPDATE users SET password_hash = @hash, verified_at = COALESCE(verified_at, now()) WHERE id = @id",
                 new { hash = passwords.Hash(NewPassword), id = user.Id });
         }
 

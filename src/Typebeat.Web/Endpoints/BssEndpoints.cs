@@ -27,7 +27,9 @@ namespace Typebeat.Web.Endpoints;
 ///
 /// Errors follow the upstream contract: 422 <c>{"error": "..."}</c> for invariants (WireJson),
 /// 403 for ownership, 404 for a missing set. Auth is the existing bearer token; submission
-/// additionally requires <c>users.verified_at</c> (manual lever: deploy/verify-user.sh).
+/// additionally requires <c>users.verified_at</c> — set self-service by completing email
+/// verification (any website sign-in / signup code), NOT by a manual admin lever. Ranking (not
+/// submission) is the role-gated action.
 ///
 /// Set/diff lifecycle conventions owned here:
 ///  - a fresh set is created with status 'hidden' and flipped to 'pending' by its first
@@ -58,7 +60,7 @@ public static class BssEndpoints
     private static readonly FixedWindowLimiter upload_limiter = new(uploads_per_window, TimeSpan.FromHours(1));
 
     private const string verification_required_message =
-        "Beatmap submission requires a verified account. Verification is currently manual — ask an admin to verify your account.";
+        "Beatmap submission requires a verified account. Sign in on the type!beat website to verify your email, then submit again.";
 
     public static void Map(IEndpointRouteBuilder app)
     {

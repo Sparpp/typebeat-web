@@ -181,6 +181,26 @@ public class CookieAuthFlowTest
     }
 
     [Test]
+    public async Task Login_VerifiesAPreviouslyUnverifiedAccount()
+    {
+        // An account created without going through website signup (e.g. registered in-game, whose
+        // OAuth password grant has no email step) starts unverified. Completing a website login's
+        // emailed code is the self-service path to becoming verified — which is the gate for beatmap
+        // submission — with no admin lever.
+        const string email = "ingame.unverified@example.com";
+        await WebsiteFixture.SeedUserAsync("ingame unverified", email, "hunter2hunter2", verified: false);
+
+        Assert.That(await VerifiedAtAsync(email), Is.Null, "account starts unverified");
+
+        var (client, _) = WebsiteFixture.CreateBrowser();
+        using var __ = client;
+
+        using (await WebsiteFixture.LoginAndVerifyAsync(client, "ingame unverified", "hunter2hunter2")) { }
+
+        Assert.That(await VerifiedAtAsync(email), Is.Not.Null, "completing the login email code verifies the account");
+    }
+
+    [Test]
     public async Task Register_InvalidFields_ShowsSharedValidationErrors()
     {
         var (client, _) = WebsiteFixture.CreateBrowser();

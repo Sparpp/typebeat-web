@@ -10,9 +10,10 @@ namespace Typebeat.Web.Pages;
 /// The code step. Reached only mid-flow, carrying a <see cref="ChallengeCookie"/> that names the
 /// pending user and whether they are confirming a new email ('verify') or finishing a login
 /// ('login'). GET requires the challenge (else back to /login); POST checks the code via
-/// <see cref="EmailCodeService.VerifyAsync"/> and, only on success, mints the session — setting
-/// users.verified_at first for the 'verify' purpose. Both POST handlers are antiforgery-validated
-/// by the Razor Pages pipeline.
+/// <see cref="EmailCodeService.VerifyAsync"/> and, only on success, mints the session — marking
+/// users.verified_at (idempotent) on ANY completed code, since entering an emailed code proves
+/// email control. That verified flag is the self-service gate for beatmap submission. Both POST
+/// handlers are antiforgery-validated by the Razor Pages pipeline.
 ///
 /// Fails closed: a challenge whose user was since deleted or restricted is discarded and the flow
 /// restarts at /login.
@@ -73,10 +74,13 @@ public sealed class VerifyModel(
             return Page();
         }
 
-        // Verified: for a fresh signup, flip verified_at (idempotent) before signing in.
-        if (pending.Purpose == "verify")
+        // Completing any email code proves control of the account's email, so mark it verified
+        // (idempotent) before signing in. This is the self-service path to beatmap submission — it
+        // covers accounts created in-game, whose OAuth password grant has no email step: signing in
+        // on the website is what verifies them. Beatmap SUBMISSION gates on verified_at; only RANKING
+        // needs the reviewer/admin role.
+        await using (var conn = await db.OpenAsync(HttpContext.RequestAborted))
         {
-            await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
             await conn.ExecuteAsync(
                 "UPDATE users SET verified_at = now() WHERE id = @id AND verified_at IS NULL",
                 new { id = pending.UserId });
