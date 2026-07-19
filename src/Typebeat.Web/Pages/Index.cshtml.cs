@@ -13,7 +13,7 @@ namespace Typebeat.Web.Pages;
 public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) : TypebeatPageModel
 {
     public long Players { get; private set; }
-    public long ScoresToday { get; private set; }
+    public long ScoresTotal { get; private set; }
     public long Maps { get; private set; }
 
     /// <summary>True when a game build is configured and present — gates the hero download button.</summary>
@@ -36,10 +36,10 @@ public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) :
 
         // One cheap round trip for the whole stats line. Restricted mappers' sets are invisible
         // site-wide (mirroring their 404ing profiles), so they don't count either.
-        (Players, ScoresToday, Maps) = await conn.QuerySingleAsync<(long, long, long)>(
+        (Players, ScoresTotal, Maps) = await conn.QuerySingleAsync<(long, long, long)>(
             """
             SELECT (SELECT count(*) FROM users)                                          AS players,
-                   (SELECT count(*) FROM scores WHERE ended_at >= date_trunc('day', now())) AS scoresToday,
+                   (SELECT count(*) FROM scores)                                        AS scoresTotal,
                    (SELECT count(*)
                     FROM beatmapsets s
                     JOIN users u ON u.id = s.owner_id
