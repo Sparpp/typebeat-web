@@ -25,9 +25,9 @@ jobs:
           --health-retries 20
 
     steps:
-      # SUBMODULE_TOKEN: fine-grained PAT with read-only Contents on Sparpp/typebeat-web,
-      # Sparpp/type-beat, and Sparpp/type-beat-assets (all private). checkout uses it for the
-      # main repo and both submodules.
+      # SUBMODULE_TOKEN: fine-grained PAT with read-only Contents on Sparpp/typebeat-web and
+      # Sparpp/type-beat-assets (private). The game submodule Sparpp/typebeat is now public, so
+      # it needs no explicit grant. checkout uses this token for the main repo and both submodules.
       - uses: actions/checkout@v4
         with:
           submodules: recursive
