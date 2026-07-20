@@ -28,8 +28,8 @@ public static class VerificationEmail
             : $"Your type!beat code: {code}";
 
         string ignore = purpose == "reset"
-            ? "If you didn't request a password reset, you can ignore this email — your password won't change."
-            : "If this wasn't you, you can ignore this email — nothing will change.";
+            ? "If you didn't request a password reset, make sure you secure your email inbox"
+            : "If this wasn't you, make sure you secure your email inbox";
 
         string text =
             $"""
