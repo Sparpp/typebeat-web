@@ -143,6 +143,16 @@
             return frag;
         }
 
+        // Shrink an over-long line to fit the stage width (the C# client's auto-shrink). Lines
+        // never wrap (white-space:nowrap), so without this a long line would overflow/clip.
+        // scrollWidth is the untransformed content width, so re-reading it under an applied scale
+        // stays stable frame to frame.
+        function fitLine(row) {
+            const avail = row.parentElement ? row.parentElement.clientWidth : 0;
+            const natural = row.scrollWidth;
+            row.style.transform = (avail > 0 && natural > avail) ? 'scale(' + (avail / natural).toFixed(4) + ')' : 'none';
+        }
+
         function render() {
             const curIdx = engine.activeLineIndex >= 0 ? engine.activeLineIndex
                 : Math.min(engine.nextSealIndex, beatmap.lines.length - 1);
@@ -151,12 +161,15 @@
             rowCur.classList.toggle('tb-line-live', active);
             rowCur.innerHTML = '';
             rowCur.appendChild(lineToSpans(beatmap.lines[curIdx], active, engine.caretIndex));
+            fitLine(rowCur);
 
             if (curIdx !== lastCurIdx) {
                 rowPrev.innerHTML = '';
                 rowPrev.appendChild(lineToSpans(beatmap.lines[curIdx - 1], false, -1));
                 rowNext.innerHTML = '';
                 rowNext.appendChild(lineToSpans(beatmap.lines[curIdx + 1], false, -1));
+                fitLine(rowPrev);
+                fitLine(rowNext);
                 lastCurIdx = curIdx;
             }
 

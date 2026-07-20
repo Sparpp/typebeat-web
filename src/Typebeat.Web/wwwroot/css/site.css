@@ -1628,8 +1628,11 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 }
 .tb-line {
     font-family: var(--font-display);
-    white-space: pre-wrap;
-    word-break: break-word;
+    /* A lyric line is always ONE visual row: never soft-wrap. Wrapping split a single line
+       across rows and, because the caret is an in-flow node, the break tracked the caret as you
+       typed. Over-long lines are shrunk to fit by mountPlayer's fitLine() (mirrors the C# client)
+       rather than wrapped or clipped. */
+    white-space: nowrap;
     line-height: 1.35;
     letter-spacing: 0.02em;
 }

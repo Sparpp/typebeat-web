@@ -40,6 +40,12 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
     public int PlayCount { get; private set; }
     public long PlayTimeS { get; private set; }
 
+    /// <summary>Distinct ranked beatmapsets the user has submitted any score on.</summary>
+    public int MapsPlayed { get; private set; }
+
+    /// <summary>Total ranked beatmapsets in the (publicly visible) pool.</summary>
+    public int RankedMapPool { get; private set; }
+
     /// <summary>Average accuracy across per-map best scores; null when there are none.</summary>
     public double? Accuracy { get; private set; }
 
@@ -106,6 +112,24 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         // Value tuple defaults to all-zero when the user_stats row doesn't exist yet.
         (TotalScore, PlayCount, PlayTimeS) = await conn.QuerySingleOrDefaultAsync<(long, int, long)>(
             "SELECT total_score, play_count, play_time_s FROM user_stats WHERE user_id = @id",
+            new { id });
+
+        // Maps played out of the ranked pool: distinct ranked sets with any score by this user,
+        // over the count of publicly-visible ranked sets (restricted mappers' sets are delisted).
+        (MapsPlayed, RankedMapPool) = await conn.QuerySingleAsync<(int, int)>(
+            """
+            SELECT
+                (SELECT count(DISTINCT b.set_id)
+                 FROM scores sc
+                 JOIN beatmaps b    ON b.id = sc.beatmap_id
+                 JOIN beatmapsets s ON s.id = b.set_id
+                 JOIN users ow      ON ow.id = s.owner_id
+                 WHERE sc.user_id = @id AND s.status = 'ranked' AND NOT ow.restricted) AS played,
+                (SELECT count(*)
+                 FROM beatmapsets s
+                 JOIN users ow ON ow.id = s.owner_id
+                 WHERE s.status = 'ranked' AND NOT ow.restricted) AS pool
+            """,
             new { id });
 
         // Grade counts + accuracy from the SAME per-map-best fold (see class doc).

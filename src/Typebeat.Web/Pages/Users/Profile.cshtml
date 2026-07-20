@@ -164,6 +164,7 @@
             <div class="stat-row"><span class="stat-row__label">Ranked score</span><span class="stat-row__value">@Model.RankedScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Total score</span><span class="stat-row__value">@Model.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Play count</span><span class="stat-row__value">@Model.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
+            <div class="stat-row"><span class="stat-row__label">Maps played</span><span class="stat-row__value">@Model.MapsPlayed.ToString("N0", CultureInfo.InvariantCulture) / @Model.RankedMapPool.ToString("N0", CultureInfo.InvariantCulture) ranked</span></div>
             <div class="stat-row"><span class="stat-row__label">Play time</span><span class="stat-row__value">@ProfileModel.FormatPlayTime(Model.PlayTimeS)</span></div>
             <div class="stat-row"><span class="stat-row__label">Accuracy</span><span class="stat-row__value">@(Model.Accuracy is double acc ? (acc * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%" : "—")</span></div>
             <div class="grade-counts" title="per-map best grades">

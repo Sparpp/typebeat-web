@@ -22,17 +22,24 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
     public string Sort { get; private set; } = "newest";
     public string StatusFilter { get; private set; } = "any";
 
+    /// <summary>When set (and the viewer is signed in), hides sets the viewer already has a score on.</summary>
+    public bool Unplayed { get; private set; }
+
+    /// <summary>Whether the "Unplayed" filter is offered (only meaningful for a signed-in viewer).</summary>
+    public bool CanFilterUnplayed => CurrentUser is not null;
+
     public IReadOnlyList<BeatmapsetCardModel> Sets { get; private set; } = [];
 
     /// <summary>Querystring link for the next page, or null when this page is the last.</summary>
     public string? NextPageUrl { get; private set; }
 
-    public async Task OnGetAsync(string? q, string? s, string? status,
+    public async Task OnGetAsync(string? q, string? s, string? status, bool? unplayed,
         long? after, [FromQuery(Name = "after_id")] long? afterId)
     {
         Query = (q ?? string.Empty).Trim();
         Sort = s is "plays" or "favs" ? s : "newest";
         StatusFilter = status is "ranked" or "pending" ? status : "any";
+        Unplayed = unplayed == true && CurrentUser is not null;
 
         // Any = every publicly browsable status ('pending' and 'ranked' both are; hidden and
         // removed never list). The Ranked/Pending pills narrow to one of the two.
@@ -78,6 +85,15 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
             {
                 where.Append("\nAND ").Append(ilike);
             }
+        }
+
+        // "Unplayed" = the signed-in viewer has no score on any beatmap in the set. Gated on
+        // Unplayed already being false when signed out, so @viewerId is always a real user here.
+        if (Unplayed)
+        {
+            where.Append(
+                "\nAND NOT EXISTS (SELECT 1 FROM scores sc JOIN beatmaps b ON b.id = sc.beatmap_id"
+                + " WHERE b.set_id = s.id AND sc.user_id = @viewerId)");
         }
 
         string orderBy;
@@ -148,7 +164,7 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
     }
 
     /// <summary>Listing URL preserving query/status/sort; cursor params only when paging.</summary>
-    public string BuildUrl(long? after = null, long? afterId = null, string? sort = null, string? status = null)
+    public string BuildUrl(long? after = null, long? afterId = null, string? sort = null, string? status = null, bool? unplayed = null)
     {
         var parts = new List<string>();
 
@@ -162,6 +178,9 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
         string effectiveSort = sort ?? Sort;
         if (effectiveSort != "newest")
             parts.Add("s=" + effectiveSort);
+
+        if (unplayed ?? Unplayed)
+            parts.Add("unplayed=true");
 
         if (after is not null && afterId is not null)
         {

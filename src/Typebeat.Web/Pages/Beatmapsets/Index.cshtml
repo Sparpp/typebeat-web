@@ -19,6 +19,10 @@
     {
         <input type="hidden" name="status" value="@Model.StatusFilter" />
     }
+    @if (Model.Unplayed)
+    {
+        <input type="hidden" name="unplayed" value="true" />
+    }
     <button type="submit" class="btn btn-primary">Search</button>
 </form>
 
@@ -35,6 +39,13 @@
         <a class="filter-pill @(Model.Sort == "plays" ? "is-active" : "")" href="@Model.BuildUrl(sort: "plays")">Most played</a>
         <a class="filter-pill @(Model.Sort == "favs" ? "is-active" : "")" href="@Model.BuildUrl(sort: "favs")">Most favourited</a>
     </div>
+    @if (Model.CanFilterUnplayed)
+    {
+        <div class="filter-row">
+            <span class="filter-label">Show</span>
+            <a class="filter-pill @(Model.Unplayed ? "is-active" : "")" href="@Model.BuildUrl(unplayed: !Model.Unplayed)">Unplayed only</a>
+        </div>
+    }
 </div>
 
 @if (Model.Sets.Count > 0)
