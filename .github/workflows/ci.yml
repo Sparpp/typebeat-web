@@ -53,6 +53,15 @@ jobs:
             -c Release -o external/packages -p:PackageVersion="$VER" -p:Version="$VER"
           ls -la external/packages
 
+      # The game submodule ships its own nuget.config: a dev-local feed with a Windows-style
+      # relative path (..\type-beat-assets\artifacts) that doesn't resolve on the Linux CI layout
+      # and hard-fails restore with NU1301. The web build vendors typebeat.Game.Resources through
+      # this repo's own feed (external/packages, packed above), so drop the submodule's config and
+      # restore purely from the root nuget.config — the same state CI had before the game repo
+      # started tracking that file.
+      - name: Drop game submodule's dev-local nuget.config
+        run: rm -f external/typebeat-osu/nuget.config
+
       # PreviewGenerator (and the BSS upload flow) shell out to ffmpeg; the tests self-skip or
       # degrade without it, so install it to actually exercise the preview path (matches the
       # runtime image, which apt-installs ffmpeg too).
