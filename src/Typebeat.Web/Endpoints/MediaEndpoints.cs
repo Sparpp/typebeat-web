@@ -53,6 +53,13 @@ public static class MediaEndpoints
         app.MapGet("/previews/{setId:long}.mp3", GetPreviewAsync);
         app.MapGet("/beatmapsets/{setId:long}/download", DownloadAsync);
 
+        // The game client (DownloadBeatmapSetRequest, used by the in-client "update" button) builds
+        // its download URL under the /api/v2 namespace, so alias the same handler there. Without
+        // this the client 404s and shows "Beatmap download failed!". DownloadAsync allows anonymous
+        // and accepts an optional Bearer, so it serves the client unchanged; /api/v2/* is already a
+        // wire route (bare 404s, no styled error page). The website's non-api route above is untouched.
+        app.MapGet("/api/v2/beatmapsets/{setId:long}/download", DownloadAsync);
+
         // Profile avatar/banner: version-stamped keys (avatars/{id}/{v}.jpg, user-covers/{id}/{v}.jpg)
         // so each upload has a distinct, immutable URL. World-readable (public profiles; the image
         // loader carries no auth). A stale-key request just 404s once the user re-uploads.
