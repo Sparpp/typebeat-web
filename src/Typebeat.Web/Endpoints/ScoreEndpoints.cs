@@ -24,6 +24,11 @@ public static class ScoreEndpoints
 {
     private const int status_unprocessable = StatusCodes.Status422UnprocessableEntity;
 
+    /// <summary>Mod acronyms that make a score unranked (mirror the client's Mod.Ranked=false). Only
+    /// Mashing (Relax, "RX") today; every other type!beat mod (DT/HT/NC/NF/SD/FL) is ranked. Add any
+    /// future unranked mod's acronym here.</summary>
+    private static readonly HashSet<string> unranked_mod_acronyms = new(StringComparer.OrdinalIgnoreCase) { "RX" };
+
     public static void Map(IEndpointRouteBuilder app)
     {
         app.MapPost("/api/v2/beatmaps/{beatmapId:long}/solo/scores", CreateToken).RequireBearer();
@@ -179,11 +184,20 @@ public static class ScoreEndpoints
         // is untrustworthy (its judged-only accuracy could overstate the final value).
         bool fullyJudged = recomputed.AccuracyProgress >= 1;
 
+        // Scores set with an unranked mod (currently only Mashing/Relax, "RX") never rank — the
+        // client honestly reports its mods, so an unranked acronym in the submission disqualifies
+        // the score from leaderboards even though everything else checks out.
+        bool modsRanked = submission.Mods is null
+                          || submission.Mods.All(m => m.Acronym is null || !unranked_mod_acronyms.Contains(m.Acronym));
+
         // Ranked only if the SET is ranked and it passed with every cell judged, every hard
-        // invariant held, the total is within its ceiling, the play took long enough, and the
-        // build is not blocked. Anything else is stored unranked so it never reaches a
-        // leaderboard, but the submission still "succeeds" from the client's view.
-        bool ranked = setRanked && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && !buildBlocked;
+        // invariant held, the total is within its ceiling, the play took long enough, no unranked
+        // mod was used, and the build is not blocked. Anything else is stored unranked so it never
+        // reaches a leaderboard, but the submission still "succeeds" from the client's view.
+        bool ranked = setRanked && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && modsRanked && !buildBlocked;
+
+        if (!modsRanked)
+            logger.LogInformation("Score token {TokenId}: unranked mod used — storing unranked.", tokenId);
 
         // What the player saw: final whole-map accuracy for completed plays, the running
         // (judged-only) accuracy at the moment of failure otherwise. Equal when fully judged.
@@ -565,5 +579,15 @@ public static class ScoreEndpoints
 
         [JsonProperty("maximum_statistics")]
         public Dictionary<string, int>? MaximumStatistics { get; set; }
+
+        [JsonProperty("mods")]
+        public List<SubmittedMod>? Mods { get; set; }
+    }
+
+    /// <summary>One entry of the client's submitted mod list (osu APIMod shape); we only read the acronym.</summary>
+    private sealed class SubmittedMod
+    {
+        [JsonProperty("acronym")]
+        public string? Acronym { get; set; }
     }
 }
