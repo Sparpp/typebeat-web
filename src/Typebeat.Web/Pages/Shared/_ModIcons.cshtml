@@ -1,0 +1,13 @@
+@using Typebeat.Web
+@model IReadOnlyList<string>
+@* Renders the mods a score was played with as small osu-style coloured badges. Model is the
+   already-filtered list of acronyms (see ScoreRow.ModAcronyms). Empty list → nothing. *@
+@if (Model is { Count: > 0 })
+{
+    <span class="mod-icons">
+        @foreach (var acronym in Model)
+        {
+            <span class="mod-icon mod-icon--@ModInfo.CategoryClass(acronym)" title="@ModInfo.Name(acronym)">@acronym.ToUpperInvariant()</span>
+        }
+    </span>
+}

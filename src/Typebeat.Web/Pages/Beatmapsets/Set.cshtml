@@ -111,10 +111,10 @@
                 }
                 <div class="stat-row">
                     <span class="stat-row__label">@(Model.Diff.Wpm is double w ? $"{w.ToString("0", CultureInfo.InvariantCulture)} WPM" : "WPM")</span>
-                    <span class="stat-row__value">&#9733; @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
+                    <span class="stat-row__value" style="color:@DifficultyColour.ForStars(Model.Diff.Stars)">&#9733; @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
                 </div>
                 <div class="meter" role="img" aria-label="difficulty @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture) of 10 stars">
-                    <div class="meter__fill" style="width:@Math.Clamp(Model.Diff.Stars / 10 * 100, 0, 100).ToString("0.#", CultureInfo.InvariantCulture)%"></div>
+                    <div class="meter__fill" style="width:@Math.Clamp(Model.Diff.Stars / 10 * 100, 0, 100).ToString("0.#", CultureInfo.InvariantCulture)%;background:@DifficultyColour.ForStars(Model.Diff.Stars)"></div>
                 </div>
             }
             else
@@ -183,9 +183,9 @@
                 <div class="podium-stat"><span class="podium-stat__label">Ok</span><span class="podium-stat__value">@top.Ok</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Miss</span><span class="podium-stat__value">@top.Miss</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Grade</span><span class="podium-stat__value grade @SetModel.GradeClass(top.Rank)">@SetModel.GradeLabel(top.Rank)</span></div>
-                @if (top.Mods.Length > 0)
+                @if (top.ModAcronyms.Count > 0)
                 {
-                    <div class="podium-stat"><span class="podium-stat__label">Mods</span><span class="podium-stat__value">@top.Mods</span></div>
+                    <div class="podium-stat"><span class="podium-stat__label">Mods</span><span class="podium-stat__value"><partial name="_ModIcons" model="top.ModAcronyms" /></span></div>
                 }
             </div>
         </div>
@@ -205,8 +205,8 @@
                     <th>Good</th>
                     <th>Ok</th>
                     <th>Miss</th>
-                    <th>Mods</th>
                     <th>Date</th>
+                    <th>Mods</th>
                 </tr>
                 </thead>
                 <tbody>
@@ -225,8 +225,8 @@
                         <td class="num">@score.Good</td>
                         <td class="num">@score.Ok</td>
                         <td class="num">@score.Miss</td>
-                        <td>@score.Mods</td>
                         <td>@score.EndedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</td>
+                        <td><partial name="_ModIcons" model="score.ModAcronyms" /></td>
                     </tr>
                 }
                 </tbody>

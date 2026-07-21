@@ -17,10 +17,7 @@
     <span class="grade @Model.GradeClass">@Model.GradeLabel</span>
     <span class="score-row__completion" title="completion — the % of the map typed; what the grade is awarded on">@((Model.Completion * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
     <span class="score-row__acc" title="accuracy — timing quality">@((Model.Accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
-    @if (Model.Mods.Length > 0)
-    {
-        <span class="score-row__mods">@Model.Mods</span>
-    }
+    <partial name="_ModIcons" model="Model.ModAcronyms" />
     <span class="score-row__score">@Model.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span>
     <span class="score-row__date faint">@Model.Date.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</span>
 </div>

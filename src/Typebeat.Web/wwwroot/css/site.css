@@ -1279,11 +1279,11 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 }
 
 .profile-cover {
-    height: 140px;
+    height: 240px;
 }
 
 @media (max-width: 560px) {
-    .profile-cover { height: 90px; }
+    .profile-cover { height: 160px; }
 }
 
 /* preset cover bands keyed by user id — charcoal with a restrained lime edge, never neon */
@@ -1471,6 +1471,35 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     font-size: var(--text-sm);
     white-space: nowrap;
 }
+
+/* Mods a score used — small osu-style coloured badges (see _ModIcons.cshtml), coloured by
+   mod category: red = harder, green = easier, violet = automation. */
+.mod-icons {
+    display: inline-flex;
+    gap: 3px;
+    flex-wrap: wrap;
+    vertical-align: middle;
+}
+
+.mod-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    padding: 1px 5px;
+    border-radius: 5px;
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.45;
+    color: #12140c;
+    background: #9aa0aa;
+}
+
+.mod-icon--increase { background: #ff6b5e; }
+.mod-icon--reduction { background: #9ad84f; }
+.mod-icon--automation { background: #b98cff; }
+.mod-icon--other { background: #9aa0aa; }
 
 .score-row__date { white-space: nowrap; }
 

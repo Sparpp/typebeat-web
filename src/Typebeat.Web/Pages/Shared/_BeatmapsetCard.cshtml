@@ -33,7 +33,7 @@
         <span class="bset-card__meta">
             <span class="pill @Model.PillClass">@Model.StatusLabel</span>
             <span class="chip">
-                <span class="chip-value">&#9733; @Model.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
+                <span class="chip-value" style="color:@Typebeat.Web.DifficultyColour.ForStars(Model.Stars)">&#9733; @Model.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
                 @if (Model.Wpm is double wpm)
                 {
                     <span class="chip-label">@wpm.ToString("0", CultureInfo.InvariantCulture) WPM</span>

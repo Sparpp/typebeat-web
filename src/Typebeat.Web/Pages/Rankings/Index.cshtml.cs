@@ -18,6 +18,7 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         string? AvatarKey,
         string CountryCode,
         long CumulativeScore,
+        long TotalCumulativeScore,
         long RankedScoreCount);
 
     public IReadOnlyList<Row> Rows { get; private set; } = [];
@@ -37,9 +38,11 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                         u.avatar_key AS AvatarKey,
                         u.country_code AS CountryCode,
                         t.ranked_score AS CumulativeScore,
+                        COALESCE(us.total_score, 0) AS TotalCumulativeScore,
                         t.ranked_map_count AS RankedScoreCount
                  FROM ({GlobalRanking.PerUserCumulativeSql}) t
                  JOIN users u ON u.id = t.user_id
+                 LEFT JOIN user_stats us ON us.user_id = u.id
                  ORDER BY t.ranked_score DESC, u.id ASC
                  LIMIT @limit
                  """,

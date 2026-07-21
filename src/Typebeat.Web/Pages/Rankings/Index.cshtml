@@ -8,7 +8,7 @@
 
 <section class="rankings">
     <h1>Rankings</h1>
-    <p class="faint">Cumulative score: your best score on each ranked map, added up.</p>
+    <p class="faint">Cumulative score &mdash; your best score on each ranked map, added up &mdash; sets the ranking. Total cumulative score is every play you've ever submitted added up, and doesn't affect your rank.</p>
 
     @if (Model.Rows.Count == 0)
     {
@@ -26,6 +26,7 @@
                     <th>Rank</th>
                     <th>Player</th>
                     <th>Cumulative score</th>
+                    <th>Total cumulative score</th>
                     <th>Ranked scores</th>
                 </tr>
                 </thead>
@@ -37,6 +38,7 @@
                         <td class="num">#@(i + 1)</td>
                         <td><a href="/users/@row.UserId">@row.Username</a></td>
                         <td class="num">@row.CumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
+                        <td class="num">@row.TotalCumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
                         <td class="num">@row.RankedScoreCount.ToString("N0", CultureInfo.InvariantCulture)</td>
                     </tr>
                 }

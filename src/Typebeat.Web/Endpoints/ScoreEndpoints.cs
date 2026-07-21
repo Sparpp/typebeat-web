@@ -216,6 +216,16 @@ public static class ScoreEndpoints
         string rank = passed ? recomputed.Rank : "F"; // ScoreProcessor.FailScore sets rank F (ScoreProcessor.cs:504-513)
         var endedAt = DateTimeOffset.UtcNow;
 
+        // Persist the acronyms the client reported so the site can show which mods a play used.
+        // Normalized to [{acronym}] (the shape the website already parses) — only the acronym is
+        // kept, never the raw client settings blob, so a tampered payload can't bloat the row.
+        string modsJson = submission.Mods is { Count: > 0 }
+            ? JsonConvert.SerializeObject(
+                submission.Mods
+                          .Where(m => !string.IsNullOrWhiteSpace(m.Acronym))
+                          .Select(m => new { acronym = m.Acronym!.Trim().ToUpperInvariant() }))
+            : "[]";
+
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO scores
@@ -223,7 +233,7 @@ public static class ScoreEndpoints
                  ranked, preserve, mods, statistics, maximum_statistics, build_id, started_at, ended_at)
             VALUES
                 (@userId, @beatmapId, 0, @totalScore, @accuracy, @completion, @maxCombo, @rank, @passed,
-                 @ranked, @preserve, '[]'::jsonb, CAST(@statistics AS jsonb), CAST(@maximumStatistics AS jsonb),
+                 @ranked, @preserve, CAST(@mods AS jsonb), CAST(@statistics AS jsonb), CAST(@maximumStatistics AS jsonb),
                  @buildId, @startedAt, @endedAt)
             RETURNING id
             """,
@@ -239,6 +249,7 @@ public static class ScoreEndpoints
                 passed,
                 ranked,
                 preserve = passed, // osu: non-passed rows are prunable (001_init.sql:154-155)
+                mods = modsJson,
                 statistics = JsonConvert.SerializeObject(statistics),
                 maximumStatistics = JsonConvert.SerializeObject(maximumStatistics),
                 buildId = token.BuildId,
