@@ -29,7 +29,7 @@ public static class VerificationEmail
 
         string ignore = purpose == "reset"
             ? "If you didn't request a password reset, make sure you secure your email inbox"
-            : "If this wasn't you, make sure you secure your email inbox";
+            : "If this wasn't you, make sure you reset your password";
 
         string text =
             $"""
