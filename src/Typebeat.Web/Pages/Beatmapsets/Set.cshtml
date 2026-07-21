@@ -168,7 +168,15 @@
 
 <section class="set-leaderboard">
     <h2>Leaderboard@(Model.Diffs.Count > 1 && Model.Diff is not null ? $" — {Model.Diff.Name}" : "")</h2>
-    @if (Model.Set.Status != "ranked")
+    @if (Model.Set.Status == "unranked")
+    {
+        @* The creator marked this map not-for-ranking; it takes plays but will never rank. *@
+        <div class="empty-state">
+            <h3>Unranked</h3>
+            <p>The creator marked this map as not intended for ranking, so it has no leaderboard.</p>
+        </div>
+    }
+    else if (Model.Set.Status != "ranked")
     {
         @* Pending (and owner-viewed hidden/removed) sets take plays but rank nothing. *@
         <div class="empty-state">

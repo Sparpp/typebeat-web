@@ -203,7 +203,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              ) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE s.status IN ('pending', 'ranked')
+             WHERE s.status IN ('pending', 'unranked', 'ranked')
              ORDER BY best.total_score DESC, best.id ASC
              LIMIT {score_section_size}
              """,
@@ -222,7 +222,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              ) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE s.status IN ('pending', 'ranked')
+             WHERE s.status IN ('pending', 'unranked', 'ranked')
              ORDER BY best.ended_at DESC, best.id DESC
              LIMIT {score_section_size}
              """,
@@ -240,7 +240,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              FROM scores sc
              JOIN beatmaps b ON b.id = sc.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE sc.user_id = @id AND s.status IN ('pending', 'ranked')
+             WHERE sc.user_id = @id AND s.status IN ('pending', 'unranked', 'ranked')
              GROUP BY sc.beatmap_id, s.id, s.title, s.artist, s.title_unicode, s.artist_unicode, s.cover_key
              ORDER BY count(*) DESC, s.id ASC
              LIMIT {most_played_size}
@@ -256,7 +256,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         var maps = (await conn.QueryAsync<BeatmapsetCardModel>(
             $"""
              {BeatmapsetCardSql.Select}
-             WHERE s.owner_id = @id AND (s.status IN ('pending', 'ranked') OR @ownProfile)
+             WHERE s.owner_id = @id AND (s.status IN ('pending', 'unranked', 'ranked') OR @ownProfile)
              ORDER BY s.submitted_at DESC, s.id DESC
              LIMIT {card_section_size + 1}
              """,
@@ -273,7 +273,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             $"""
              {BeatmapsetCardSql.Select}
              JOIN favourites fav ON fav.set_id = s.id AND fav.user_id = @id
-             WHERE s.status IN ('pending', 'ranked') AND (NOT u.restricted OR s.owner_id = @viewerId)
+             WHERE s.status IN ('pending', 'unranked', 'ranked') AND (NOT u.restricted OR s.owner_id = @viewerId)
              ORDER BY fav.created_at DESC, s.id DESC
              LIMIT {card_section_size + 1}
              """,

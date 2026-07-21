@@ -32,9 +32,10 @@ namespace Typebeat.Web.Endpoints;
 /// submission) is the role-gated action.
 ///
 /// Set/diff lifecycle conventions owned here:
-///  - a fresh set is created with status 'hidden' and flipped to 'pending' by its first
-///    successful upload (PackageIngest), so empty shells never appear in listings and new
-///    maps await a reviewer's rank flip;
+///  - a fresh set is created with status 'hidden' and flipped to its intended published status by
+///    its first successful upload (PackageIngest) — 'pending' (awaits a reviewer's rank flip) or
+///    'unranked' (creator opted out of ranking in the wizard; never leaderboard-eligible). The
+///    choice rides in on the PUT's <c>target</c> and is stored in <c>intended_status</c>;
 ///  - beatmap rows are NEVER deleted (scores FK); a diff dropped from beatmaps_to_keep — or
 ///    absent from an uploaded package — gets <c>filename = NULL</c>, which is the repo-wide
 ///    "not part of the current version" marker (live diffs have <c>filename IS NOT NULL</c>);
@@ -137,14 +138,23 @@ public static class BssEndpoints
                 $"A beatmap set must contain between 1 and {PackageValidator.MaxDifficulties} difficulties; this request would leave {totalDifficulties}.");
         }
 
+        // The submission wizard's target: only the "not for ranking" choice carries a distinct
+        // server state. WIP and Pending both publish to 'pending' (WIP has no separate state);
+        // Unranked publishes to 'unranked'. Recorded now, applied at the publish flip below (and
+        // immediately for an already-published re-submission).
+        string intendedStatus = string.Equals(request.Target, "Unranked", StringComparison.OrdinalIgnoreCase)
+            ? "unranked"
+            : "pending";
+
         await using (var tx = await conn.BeginTransactionAsync(ctx.RequestAborted))
         {
             if (request.BeatmapsetId == null)
             {
-                // Hidden until the first successful package upload publishes it (see class doc).
+                // Hidden until the first successful package upload publishes it (see class doc);
+                // intended_status carries the creator's ranking-intent to that publish flip.
                 setId = await conn.ExecuteScalarAsync<long>(
-                    "INSERT INTO beatmapsets (owner_id, status) VALUES (@ownerId, 'hidden') RETURNING id",
-                    new { ownerId = user.Id });
+                    "INSERT INTO beatmapsets (owner_id, status, intended_status) VALUES (@ownerId, 'hidden', @intendedStatus) RETURNING id",
+                    new { ownerId = user.Id, intendedStatus });
             }
             else
             {
@@ -153,6 +163,19 @@ public static class BssEndpoints
                 await conn.ExecuteAsync(
                     "UPDATE beatmaps SET filename = NULL WHERE set_id = @setId AND id <> ALL(@keep)",
                     new { setId, keep });
+
+                // Apply the ranking-intent choice: always record it (so a still-hidden set publishes
+                // to the right status), and for an already-published, non-ranked set switch it now.
+                // A 'ranked' set is never self-demoted here (reviewer-only); 'removed' is unreachable.
+                await conn.ExecuteAsync(
+                    """
+                    UPDATE beatmapsets
+                    SET intended_status = @intendedStatus,
+                        status = CASE WHEN status IN ('pending', 'unranked') THEN @intendedStatus ELSE status END,
+                        updated_at = now()
+                    WHERE id = @setId
+                    """,
+                    new { setId, intendedStatus });
             }
 
             var newIds = new List<long>(request.BeatmapsToCreate);

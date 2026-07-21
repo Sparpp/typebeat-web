@@ -150,7 +150,7 @@ public static class PlayEndpoints
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
-                WHERE b.set_id = @setId AND bs.status IN ('pending', 'ranked') AND b.filename LIKE '%.osu'
+                WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked') AND b.filename LIKE '%.osu'
                 ORDER BY b.id
                 LIMIT 1
                 """,
@@ -160,7 +160,7 @@ public static class PlayEndpoints
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
-                WHERE b.id = @beatmapId AND bs.status IN ('pending', 'ranked')
+                WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
                 """,
                 new { beatmapId = request.BeatmapId });
 

@@ -433,6 +433,13 @@ img { max-width: 100%; }
     color: var(--text-muted);
 }
 
+/* Deliberately not for ranking: muted slate — published (unlike hidden) but plainly outside the
+   ranked pipeline, distinct from pending's amber. */
+.pill--unranked {
+    background: rgba(148, 163, 184, 0.16);
+    color: #b6c0cf;
+}
+
 .pill--removed {
     background: rgba(255, 106, 90, 0.16);
     color: var(--bad);

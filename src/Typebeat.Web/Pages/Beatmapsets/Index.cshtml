@@ -32,6 +32,7 @@
         <a class="filter-pill @(Model.StatusFilter == "any" ? "is-active" : "")" href="@Model.BuildUrl(status: "any")">Any</a>
         <a class="filter-pill @(Model.StatusFilter == "ranked" ? "is-active" : "")" href="@Model.BuildUrl(status: "ranked")">Ranked</a>
         <a class="filter-pill @(Model.StatusFilter == "pending" ? "is-active" : "")" href="@Model.BuildUrl(status: "pending")">Pending</a>
+        <a class="filter-pill @(Model.StatusFilter == "unranked" ? "is-active" : "")" href="@Model.BuildUrl(status: "unranked")">Unranked</a>
     </div>
     <div class="filter-row">
         <span class="filter-label">Sort</span>

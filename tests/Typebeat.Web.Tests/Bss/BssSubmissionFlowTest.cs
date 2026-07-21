@@ -451,6 +451,75 @@ public class BssSubmissionFlowTest
             Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
 
+    [Test]
+    [Order(12)]
+    public async Task UnrankedTarget_PublishesAsUnranked_AndReTargetsBothWays()
+    {
+        // A brand-new set whose creator picks "Unranked" in the submission wizard.
+        using var create = await SendAsync(HttpMethod.Put, "/bss/beatmapsets", bearer, JsonBody(new
+        {
+            beatmapset_id = (long?)null,
+            beatmaps_to_create = 1,
+            beatmaps_to_keep = Array.Empty<long>(),
+            target = "Unranked",
+            notify_on_discussion_replies = false,
+        }));
+        Assert.That(create.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var body = JObject.Parse(await create.Content.ReadAsStringAsync());
+        long unrankedSetId = (long)body["beatmapset_id"]!;
+        long diffId = body["beatmap_ids"]!.Select(t => (long)t).First();
+
+        await using var conn = await BssFixture.OpenDbAsync();
+
+        // Intent is recorded immediately; the set is still an unpublished shell.
+        Assert.That(await conn.ExecuteScalarAsync<string>("SELECT intended_status FROM beatmapsets WHERE id = @unrankedSetId", new { unrankedSetId }),
+            Is.EqualTo("unranked"));
+        Assert.That(await conn.ExecuteScalarAsync<string>("SELECT status FROM beatmapsets WHERE id = @unrankedSetId", new { unrankedSetId }),
+            Is.EqualTo("hidden"), "still hidden until the first upload");
+
+        // First upload publishes straight to 'unranked', not 'pending'.
+        var osu = SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+            creator: username, version: "solo", beatmapId: diffId, beatmapSetId: unrankedSetId));
+        byte[] zipBytes;
+        using (var zip = SyntheticPackage.Zip(("solo.osu", osu), ("audio.mp3", MakeWav(seconds: 1)), ("bg.jpg", SyntheticPackage.TinyPng())))
+            zipBytes = zip.ToArray();
+
+        using (var upload = await SendAsync(HttpMethod.Put, $"/bss/beatmapsets/{unrankedSetId}", bearer, PackageBody(zipBytes)))
+            Assert.That(upload.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+
+        Assert.That(conn.ExecuteScalar<string>("SELECT status FROM beatmapsets WHERE id = @unrankedSetId", new { unrankedSetId }),
+            Is.EqualTo("unranked"), "the creator opted out of ranking, so publication lands as unranked");
+
+        // Re-submitting with target Pending moves an already-published, non-ranked set to pending.
+        using (var toPending = await SendAsync(HttpMethod.Put, "/bss/beatmapsets", bearer, JsonBody(new
+        {
+            beatmapset_id = unrankedSetId,
+            beatmaps_to_create = 0,
+            beatmaps_to_keep = new[] { diffId },
+            target = "Pending",
+            notify_on_discussion_replies = false,
+        })))
+            Assert.That(toPending.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        Assert.That(conn.ExecuteScalar<string>("SELECT status FROM beatmapsets WHERE id = @unrankedSetId", new { unrankedSetId }),
+            Is.EqualTo("pending"), "changing the target to Pending re-targets a published set");
+
+        // ...and back to Unranked.
+        using (var toUnranked = await SendAsync(HttpMethod.Put, "/bss/beatmapsets", bearer, JsonBody(new
+        {
+            beatmapset_id = unrankedSetId,
+            beatmaps_to_create = 0,
+            beatmaps_to_keep = new[] { diffId },
+            target = "Unranked",
+            notify_on_discussion_replies = false,
+        })))
+            Assert.That(toUnranked.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        Assert.That(conn.ExecuteScalar<string>("SELECT status FROM beatmapsets WHERE id = @unrankedSetId", new { unrankedSetId }),
+            Is.EqualTo("unranked"));
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Helpers.
     // ---------------------------------------------------------------------------------------------

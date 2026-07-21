@@ -432,10 +432,12 @@ public sealed class PackageIngest(
             "UPDATE beatmaps SET filename = NULL WHERE set_id = @setId AND id <> ALL(@liveIds)",
             new { setId, liveIds });
 
-        // Publication means 'pending', not ranked: leaderboards stay locked until a map
-        // reviewer (or admin) promotes the set from the website (migration 005).
+        // Publication is never ranked: leaderboards stay locked until a map reviewer (or admin)
+        // promotes the set from the website (migration 005). The published status is the creator's
+        // wizard choice — 'pending' (awaiting review) or 'unranked' (not intended for ranking),
+        // recorded on the set at PUT time (migration 012).
         await conn.ExecuteAsync(
-            "UPDATE beatmapsets SET status = 'pending' WHERE id = @setId AND status = 'hidden'",
+            "UPDATE beatmapsets SET status = intended_status WHERE id = @setId AND status = 'hidden'",
             new { setId });
     }
 

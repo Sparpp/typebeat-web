@@ -51,6 +51,7 @@ public static class BeatmapsetDisplay
     {
         "ranked" => "Ranked",
         "pending" => "Pending",
+        "unranked" => "Unranked",
         "hidden" => "Hidden",
         "removed" => "Removed",
         _ => status,
@@ -58,7 +59,7 @@ public static class BeatmapsetDisplay
 
     public static string PillClass(string status) => status switch
     {
-        "ranked" or "pending" or "hidden" or "removed" => $"pill--{status}",
+        "ranked" or "pending" or "unranked" or "hidden" or "removed" => $"pill--{status}",
         _ => string.Empty,
     };
 }

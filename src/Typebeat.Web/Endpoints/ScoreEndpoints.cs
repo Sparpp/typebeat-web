@@ -61,7 +61,7 @@ public static class ScoreEndpoints
             SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS
             FROM beatmaps b
             JOIN beatmapsets bs ON bs.id = b.set_id
-            WHERE b.id = @beatmapId AND bs.status IN ('pending', 'ranked')
+            WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
             """,
             new { beatmapId });
 

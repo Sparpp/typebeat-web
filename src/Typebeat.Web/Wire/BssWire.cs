@@ -22,8 +22,9 @@ public sealed class BssPutRequest
     [JsonProperty("beatmaps_to_keep")]
     public long[] BeatmapsToKeep { get; init; } = [];
 
-    // "WIP" | "Pending" on the wire. typebeat has no ranking pipeline — sets are simply
-    // hidden until first upload, then public — so the target is accepted and ignored.
+    // "WIP" | "Pending" | "Unranked" on the wire. WIP/Pending both publish to 'pending' (the map
+    // still gets reviewed for ranking); "Unranked" is the creator opting out of ranking entirely,
+    // publishing to 'unranked' (browsable + playable, never leaderboard-eligible). See BssEndpoints.
     [JsonProperty("target")]
     public string Target { get; init; } = "WIP";
 

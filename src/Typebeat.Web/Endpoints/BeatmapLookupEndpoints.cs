@@ -119,7 +119,7 @@ public static class BeatmapLookupEndpoints
         FROM beatmaps b
         JOIN beatmapsets bs ON bs.id = b.set_id
         JOIN users u ON u.id = bs.owner_id
-        WHERE bs.status IN ('pending', 'ranked')
+        WHERE bs.status IN ('pending', 'unranked', 'ranked')
 
         """;
 

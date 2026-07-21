@@ -67,7 +67,7 @@ public static class BeatmapsetEndpoints
             """,
             new { setId });
 
-        if (set is null || (set.Status is not ("ranked" or "pending") && requester?.Id != set.OwnerId))
+        if (set is null || (set.Status is not ("ranked" or "pending" or "unranked") && requester?.Id != set.OwnerId))
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");
 
         // Live difficulties only: filename IS NOT NULL ⇔ part of the current version (the
@@ -155,6 +155,7 @@ public static class BeatmapsetEndpoints
     {
         "ranked" => "ranked",
         "pending" => "pending",
+        "unranked" => "unranked",
         "hidden" => "wip",
         _ => "graveyard",
     };
