@@ -25,9 +25,10 @@ public static class LyricPace
     /// ingest (<c>beatmaps.pace_version</c>); rows below it are recomputed from their stored
     /// .osu blob at startup (<see cref="PaceBackfill"/>). v1 = perfect-play cells/5 pace,
     /// v2 = boundary-window real-count pace, v3 = strain-based star rating (LyricDifficulty;
-    /// pace WPM/CPM unchanged), v4 = per-word strain sum (sustained difficulty counts).
+    /// pace WPM/CPM unchanged), v4 = per-word strain sum (sustained difficulty counts),
+    /// v5 = per-character window floor (fast multi-char words no longer over-capped).
     /// </summary>
-    public const int VERSION = 4;
+    public const int VERSION = 5;
 
     // LyricPaceStatistics.cs — guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;

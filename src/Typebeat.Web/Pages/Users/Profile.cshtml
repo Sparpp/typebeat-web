@@ -5,7 +5,7 @@
 <section class="profile-header">
     @if (Model.ProfileUser.CoverUrl is string coverUrl)
     {
-        <div class="profile-cover profile-cover--image" style="background-image:url('@coverUrl')" aria-hidden="true"></div>
+        <img class="profile-cover profile-cover--image" src="@coverUrl" alt="" aria-hidden="true" />
     }
     else
     {

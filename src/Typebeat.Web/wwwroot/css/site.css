@@ -1648,7 +1648,10 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .mono { color: var(--violet); }
 
 /* Profile: an uploaded banner replaces the preset gradient band; the "about" box holds the bio. */
-.profile-cover--image { background-size: cover; background-position: center; }
+/* Uploaded covers render as a full-width <img> that scales to its own aspect ratio, so the
+   whole banner is visible (no crop/zoom). Height is intrinsic — the fixed 240px band only
+   applies to the preset gradient covers. */
+.profile-cover--image { height: auto; width: 100%; display: block; }
 .profile-header__edit { margin-left: auto; align-self: center; }
 .profile-about { margin-top: var(--space-4); }
 .profile-about__text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-muted); }
