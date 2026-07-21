@@ -117,6 +117,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
             SELECT best.id           AS ScoreId,
                    best.user_id      AS UserId,
                    best.username     AS Username,
+                   best.avatar_key   AS AvatarKey,
                    best.total_score  AS TotalScore,
                    best.accuracy     AS Accuracy,
                    best.completion   AS Completion,
@@ -129,7 +130,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                 SELECT DISTINCT ON (sc.user_id)
                        sc.id, sc.user_id, sc.total_score, sc.accuracy, sc.completion, sc.max_combo, sc.rank,
                        sc.ended_at, sc.mods::text AS mods, sc.statistics::text AS statistics,
-                       u.username::text AS username
+                       u.username::text AS username, u.avatar_key
                 FROM scores sc
                 JOIN users u ON u.id = sc.user_id
                 WHERE sc.beatmap_id = @beatmapId AND sc.ranked AND sc.passed
@@ -313,9 +314,12 @@ public sealed class SetModel(Db db) : TypebeatPageModel
     /// the metric the grade is awarded on; accuracy remains the timing-quality metric.
     /// </summary>
     public sealed record ScoreRow(
-        long ScoreId, long UserId, string Username, long TotalScore, double Accuracy, double Completion,
+        long ScoreId, long UserId, string Username, string? AvatarKey, long TotalScore, double Accuracy, double Completion,
         int MaxCombo, string Rank, DateTime EndedAt, string ModsJson, string StatisticsJson)
     {
+        /// <summary>Uploaded avatar, or null → the initial-letter fallback.</summary>
+        public string? AvatarUrl => AvatarKey is null ? null : $"/{AvatarKey}";
+
         private JObject? statistics;
         private JObject Statistics => statistics ??= JObject.Parse(string.IsNullOrEmpty(StatisticsJson) ? "{}" : StatisticsJson);
 

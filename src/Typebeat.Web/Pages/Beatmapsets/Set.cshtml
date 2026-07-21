@@ -188,7 +188,16 @@
         var top = Model.Scores[0];
         <div class="podium">
             <span class="podium__rank">#1</span>
-            <span class="avatar-fallback" aria-hidden="true">@top.Username[..1]</span>
+            <a href="/users/@top.UserId" class="podium__avatar-link" aria-label="@top.Username">
+                @if (top.AvatarUrl is string topAvatar)
+                {
+                    <img class="podium__avatar" src="@topAvatar" alt="" />
+                }
+                else
+                {
+                    <span class="avatar-fallback" aria-hidden="true">@top.Username[..1]</span>
+                }
+            </a>
             <div class="podium__who">
                 <a class="podium__name" href="/users/@top.UserId">@top.Username</a>
                 <div class="faint">@top.EndedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</div>
