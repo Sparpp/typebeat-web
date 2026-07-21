@@ -383,6 +383,7 @@ public static class ScoreEndpoints
                    best.ended_at           AS endedAt,
                    best.statistics         AS statisticsJson,
                    best.maximum_statistics AS maximumStatisticsJson,
+                   best.mods               AS modsJson,
                    best.username           AS username,
                    best.country_code       AS countryCode,
                    best.avatar_key         AS avatarKey
@@ -390,6 +391,7 @@ public static class ScoreEndpoints
                 SELECT DISTINCT ON (s.user_id)
                        s.id, s.user_id, s.total_score, s.accuracy, s.max_combo, s.rank, s.ended_at,
                        s.statistics::text AS statistics, s.maximum_statistics::text AS maximum_statistics,
+                       s.mods::text AS mods,
                        u.username, u.country_code, u.avatar_key
                 FROM scores s
                 JOIN users u ON u.id = s.user_id
@@ -420,6 +422,7 @@ public static class ScoreEndpoints
                    s.ended_at           AS endedAt,
                    s.statistics::text   AS statisticsJson,
                    s.maximum_statistics::text AS maximumStatisticsJson,
+                   s.mods::text         AS modsJson,
                    u.username           AS username,
                    u.country_code       AS countryCode,
                    u.avatar_key         AS avatarKey
@@ -497,7 +500,7 @@ public static class ScoreEndpoints
         MaxCombo = r.MaxCombo,
         Rank = r.Rank,
         EndedAt = r.EndedAt,
-        Mods = Array.Empty<object>(),
+        Mods = ParseMods(r.ModsJson),
         Statistics = ParseCounts(r.StatisticsJson),
         MaximumStatistics = ParseCounts(r.MaximumStatisticsJson),
         Ranked = true,
@@ -520,6 +523,16 @@ public static class ScoreEndpoints
 
     private static Dictionary<string, int> ParseCounts(string? json)
         => JsonConvert.DeserializeObject<Dictionary<string, int>>(json ?? "{}") ?? new Dictionary<string, int>();
+
+    /// <summary>
+    /// The stored mods jsonb (<c>[{"acronym":"DT"}]</c>) passed straight through to the leaderboard
+    /// wire, so the client's ModIcon strip renders on global scores exactly as it does for local
+    /// plays. Empty/null → no mods.
+    /// </summary>
+    private static object[] ParseMods(string? json)
+        => string.IsNullOrWhiteSpace(json)
+            ? Array.Empty<object>()
+            : JsonConvert.DeserializeObject<object[]>(json) ?? Array.Empty<object>();
 
     /// <summary>Sums per-key hit counts of <paramref name="add"/> into the stored hit_counts JSON.</summary>
     private static string MergeHitCounts(string existingJson, IReadOnlyDictionary<string, int> add)
@@ -559,6 +572,7 @@ public static class ScoreEndpoints
         DateTime EndedAt,
         string? StatisticsJson,
         string? MaximumStatisticsJson,
+        string? ModsJson,
         string Username,
         string CountryCode,
         string? AvatarKey);
