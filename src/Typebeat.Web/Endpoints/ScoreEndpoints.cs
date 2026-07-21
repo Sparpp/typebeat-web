@@ -24,10 +24,55 @@ public static class ScoreEndpoints
 {
     private const int status_unprocessable = StatusCodes.Status422UnprocessableEntity;
 
-    /// <summary>Mod acronyms that make a score unranked (mirror the client's Mod.Ranked=false). Only
-    /// Mashing (Relax, "RX") today; every other type!beat mod (DT/HT/NC/NF/SD/FL) is ranked. Add any
-    /// future unranked mod's acronym here.</summary>
-    private static readonly HashSet<string> unranked_mod_acronyms = new(StringComparer.OrdinalIgnoreCase) { "RX" };
+    /// <summary>Mods that are unranked at ANY configuration (mirror the client's Mod.Ranked=false):
+    /// Mashing (Relax "RX") and the time-ramp Wind Up / Wind Down ("WU"/"WD").</summary>
+    private static readonly HashSet<string> always_unranked_mod_acronyms = new(StringComparer.OrdinalIgnoreCase) { "RX", "WU", "WD" };
+
+    /// <summary>Rate mods whose client Ranked flag is <c>SpeedChange.IsDefault</c>: a non-default
+    /// speed_change makes the play unranked. Values are the client defaults (DT/NC 1.5, HT/DC 0.75).</summary>
+    private static readonly Dictionary<string, double> rate_mod_default_speed = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["DT"] = 1.5, ["NC"] = 1.5, ["HT"] = 0.75, ["DC"] = 0.75,
+    };
+
+    /// <summary>Ceiling headroom for the mod score-multiplier (the highest realistic stack is well
+    /// under 2×). Bounds a tampered multiplied total without needing the exact per-mod multiplier.</summary>
+    private const double max_mod_score_multiplier = 2.0;
+
+    /// <summary>
+    /// Whether a single submitted mod is ranked at its submitted configuration — the server-side
+    /// mirror of the client's per-mod <c>Ranked</c>. Unknown/null acronyms are treated as ranked
+    /// (forward-compatible); the caller ANDs this across all mods.
+    /// </summary>
+    private static bool ModConfigRanked(SubmittedMod mod)
+    {
+        if (string.IsNullOrWhiteSpace(mod.Acronym))
+            return true;
+
+        string acronym = mod.Acronym.Trim().ToUpperInvariant();
+
+        if (always_unranked_mod_acronyms.Contains(acronym))
+            return false;
+
+        if (rate_mod_default_speed.TryGetValue(acronym, out double defaultSpeed)
+            && mod.Settings != null
+            && mod.Settings.TryGetValue("speed_change", out object? raw)
+            && raw != null)
+        {
+            try
+            {
+                double speed = Convert.ToDouble(raw, CultureInfo.InvariantCulture);
+                if (Math.Abs(speed - defaultSpeed) > 1e-6)
+                    return false;
+            }
+            catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
+            {
+                // Unparseable speed → treat as default (ranked); the score's other invariants still apply.
+            }
+        }
+
+        return true;
+    }
 
     public static void Map(IEndpointRouteBuilder app)
     {
@@ -164,9 +209,17 @@ public static class ScoreEndpoints
         var statistics = submission.Statistics ?? new Dictionary<string, int>();
         var maximumStatistics = submission.MaximumStatistics ?? new Dictionary<string, int>();
 
-        // Recompute accuracy exactly and bound the total score against a provable ceiling.
+        // Recompute accuracy exactly and bound the score against a provable ceiling. The ceiling is
+        // the no-mod maximum, so bound the UNMODDED score against it; the mod score-multiplier then
+        // legitimately scales the ranked TotalScore up (DT/NC/FL) or down (HT). The multiplied total
+        // is still capped (generously) so a tampered client can't submit an absurd leaderboard score.
         var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, submission.MaxCombo);
-        bool withinBounds = ScoringContract.TotalScoreWithinBounds(submission.TotalScore, recomputed);
+        bool withinBounds = ScoringContract.TotalScoreWithinBounds(submission.TotalScoreWithoutMods, recomputed)
+                            && submission.TotalScore >= 0
+                            // Tie the multiplied total to the (ceiling-bounded) base score, so a tampered
+                            // client can't claim a huge total against a zero base. HalfTime legitimately
+                            // lands below the base; the cap is only an upper bound.
+                            && submission.TotalScore <= submission.TotalScoreWithoutMods * max_mod_score_multiplier;
 
         // Minimum-play-time gate: at least 90% of the map's drain length must have elapsed since the
         // token was created (created_at is the server wall-clock anchor, 001_init.sql:126). Too fast
@@ -184,11 +237,11 @@ public static class ScoreEndpoints
         // is untrustworthy (its judged-only accuracy could overstate the final value).
         bool fullyJudged = recomputed.AccuracyProgress >= 1;
 
-        // Scores set with an unranked mod (currently only Mashing/Relax, "RX") never rank — the
-        // client honestly reports its mods, so an unranked acronym in the submission disqualifies
-        // the score from leaderboards even though everything else checks out.
-        bool modsRanked = submission.Mods is null
-                          || submission.Mods.All(m => m.Acronym is null || !unranked_mod_acronyms.Contains(m.Acronym));
+        // Mirror the client's per-mod Ranked flag: a score is ranked only if every mod is ranked at
+        // its submitted configuration. Always-unranked mods (Mashing/Relax "RX"; the time-ramp Wind
+        // Up/Down "WU"/"WD") disqualify it, as do the rate mods (DT/NC/HT/DC) at a NON-default speed
+        // — the same rule the client shows as "unranked" in the mod overlay.
+        bool modsRanked = submission.Mods is null || submission.Mods.All(ModConfigRanked);
 
         // Ranked only if the SET is ranked and it passed with every cell judged, every hard
         // invariant held, the total is within its ceiling, the play took long enough, no unranked
@@ -587,6 +640,12 @@ public static class ScoreEndpoints
         [JsonProperty("total_score")]
         public long TotalScore { get; set; }
 
+        // The base standardised score before any mod multiplier. Bounded against the provable no-mod
+        // ceiling; the mod multiplier legitimately moves the ranked TotalScore above (DT/NC/FL) or
+        // below (HT) that ceiling, so the multiplied total must not be bounded by it directly.
+        [JsonProperty("total_score_without_mods")]
+        public long TotalScoreWithoutMods { get; set; }
+
         [JsonProperty("accuracy")]
         public double Accuracy { get; set; } // overridden by the server-side recompute
 
@@ -609,10 +668,15 @@ public static class ScoreEndpoints
         public List<SubmittedMod>? Mods { get; set; }
     }
 
-    /// <summary>One entry of the client's submitted mod list (osu APIMod shape); we only read the acronym.</summary>
+    /// <summary>One entry of the client's submitted mod list (osu APIMod shape): acronym + settings.</summary>
     private sealed class SubmittedMod
     {
         [JsonProperty("acronym")]
         public string? Acronym { get; set; }
+
+        // e.g. { "speed_change": 1.01 } for a non-default DoubleTime. Used to mirror the client's
+        // per-mod Ranked flag (rate mods are unranked at non-default speeds).
+        [JsonProperty("settings")]
+        public Dictionary<string, object>? Settings { get; set; }
     }
 }

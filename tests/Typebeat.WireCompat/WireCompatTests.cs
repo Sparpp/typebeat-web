@@ -195,6 +195,7 @@ public class WireCompatTests
         {
             Passed = true,
             TotalScore = 400_000,
+            TotalScoreWithoutMods = 400_000, // nomod: base == total (bounded against the provable ceiling)
             Accuracy = 0.75,
             MaxCombo = 8,
             RulesetID = 0,
@@ -257,6 +258,69 @@ public class WireCompatTests
             Assert.That(counts.beatmapPlays, Is.GreaterThan(0), "beatmaps.play_count must increment on submission");
             Assert.That(counts.beatmapPlays, Is.EqualTo(counts.scoreRows), "beatmaps.play_count must track submitted plays");
             Assert.That(counts.setPlays, Is.GreaterThanOrEqualTo(counts.beatmapPlays), "beatmapsets.play_count must include its beatmaps' plays");
+        }
+    }
+
+    // A completed play with a NON-DEFAULT rate mod (DT at 1.01x) must submit successfully but store
+    // unranked — mirroring the client's per-mod Ranked = SpeedChange.IsDefault. The multiplied total
+    // is still accepted (bounded against the base score), it just never reaches the ranked board.
+    [Test]
+    [Order(50)]
+    public async Task NonDefaultRateMod_SubmitsButIsUnranked()
+    {
+        long beatmapId = ServerFixture.SeededBeatmapId;
+
+        using var createReq = ServerFixture.Authed(HttpMethod.Post, $"/api/v2/beatmaps/{beatmapId}/solo/scores");
+        createReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["version_hash"] = "0123456789abcdef0123456789abcdef",
+            ["beatmap_hash"] = ServerFixture.SeedChecksum,
+            ["ruleset_id"] = "0",
+        });
+        using var createResp = await client.SendAsync(createReq);
+        Assert.That(createResp.IsSuccessStatusCode, Is.True);
+        var token = JsonConvert.DeserializeObject<APIScoreToken>(await createResp.Content.ReadAsStringAsync())!;
+
+        await using (var db = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString))
+        {
+            await db.OpenAsync();
+            await Dapper.SqlMapper.ExecuteAsync(db,
+                "UPDATE score_tokens SET created_at = now() - interval '400 seconds' WHERE id = @id",
+                new { id = token.ID });
+        }
+
+        var score = new SoloScoreInfo
+        {
+            Passed = true,
+            TotalScore = 480_000,          // base × DoubleTime multiplier
+            TotalScoreWithoutMods = 400_000, // base bounded against the provable ceiling
+            Accuracy = 0.75,
+            MaxCombo = 8,
+            RulesetID = 0,
+            Rank = ScoreRank.C,
+            Statistics = new Dictionary<HitResult, int> { [HitResult.Great] = 7, [HitResult.Ok] = 1, [HitResult.Meh] = 1, [HitResult.Miss] = 1 },
+            MaximumStatistics = new Dictionary<HitResult, int> { [HitResult.Great] = 10 },
+            Mods = new[] { new APIMod { Acronym = "DT", Settings = new Dictionary<string, object> { ["speed_change"] = 1.01 } } },
+        };
+
+        string payload = JsonConvert.SerializeObject(score, new JsonSerializerSettings { ReferenceLoopHandling = ReferenceLoopHandling.Ignore });
+        using var submitReq = ServerFixture.Authed(HttpMethod.Put, $"/api/v2/beatmaps/{beatmapId}/solo/scores/{token.ID}");
+        submitReq.Content = new StringContent(payload);
+        submitReq.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+        using var submitResp = await client.SendAsync(submitReq);
+        Assert.That(submitResp.IsSuccessStatusCode, Is.True, $"submit status {(int)submitResp.StatusCode}: {await submitResp.Content.ReadAsStringAsync()}");
+
+        var result = JsonConvert.DeserializeObject<MultiplayerScore>(await submitResp.Content.ReadAsStringAsync())!;
+
+        Assert.That(result.Position, Is.Null, "a non-default-rate play must be stored unranked (no leaderboard position)");
+
+        await using (var verify = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString))
+        {
+            await verify.OpenAsync();
+            bool ranked = await Dapper.SqlMapper.ExecuteScalarAsync<bool>(verify,
+                "SELECT ranked FROM scores WHERE id = @id", new { id = result.ID });
+            Assert.That(ranked, Is.False, "scores.ranked must be false for a non-default-rate mod");
         }
     }
 
