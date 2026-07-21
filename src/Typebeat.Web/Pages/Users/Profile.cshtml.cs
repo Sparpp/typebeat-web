@@ -180,6 +180,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                    s.artist        AS Artist,
                    s.title_unicode  AS TitleUnicode,
                    s.artist_unicode AS ArtistUnicode,
+                   b.version_name   AS Version,
                    CASE WHEN s.cover_key IS NOT NULL THEN '/' || s.cover_key || '/list.jpg' END AS CoverUrl,
                    best.rank       AS Rank,
                    best.completion AS Completion,

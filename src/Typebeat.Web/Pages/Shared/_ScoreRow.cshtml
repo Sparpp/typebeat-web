@@ -16,9 +16,15 @@
             <div class="cover-fallback" aria-hidden="true"></div>
         }
     </div>
-    <a class="score-row__map" href="/beatmapsets/@Model.SetId" title="@displayTitle [@displayArtist]">
-        @displayTitle <span class="score-row__artist">[@displayArtist]</span>
-    </a>
+    <div class="score-row__mapcol">
+        <a class="score-row__map" href="/beatmapsets/@Model.SetId" title="@displayTitle [@displayArtist]">
+            @displayTitle <span class="score-row__artist">[@displayArtist]</span>
+        </a>
+        @if (!string.IsNullOrEmpty(Model.Version))
+        {
+            <span class="score-row__diff">@Model.Version</span>
+        }
+    </div>
     <span class="grade @Model.GradeClass">@Model.GradeLabel</span>
     <span class="score-row__completion" title="completion — the % of the map typed; what the grade is awarded on">@((Model.Completion * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
     <span class="score-row__acc" title="accuracy — timing quality">@((Model.Accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>

@@ -1479,8 +1479,16 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     object-fit: cover;
 }
 
-.score-row__map {
+/* Title link + difficulty stacked; this column takes the row's flexible middle. */
+.score-row__mapcol {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.score-row__map {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1493,6 +1501,17 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 .score-row__artist {
     color: var(--text-muted);
+    font-weight: 400;
+}
+
+/* Difficulty name, sitting under the title like the in-game scorecard. */
+.score-row__diff {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
     font-weight: 400;
 }
 

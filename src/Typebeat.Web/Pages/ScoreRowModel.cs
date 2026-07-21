@@ -17,6 +17,7 @@ public sealed record ScoreRowModel(
     string Artist,
     string? TitleUnicode,
     string? ArtistUnicode,
+    string? Version,
     string? CoverUrl,
     string Rank,
     double Completion,
