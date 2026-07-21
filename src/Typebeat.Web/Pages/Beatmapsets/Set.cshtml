@@ -167,7 +167,16 @@
 </section>
 
 <section class="set-leaderboard">
-    <h2>Leaderboard@(Model.Diffs.Count > 1 && Model.Diff is not null ? $" — {Model.Diff.Name}" : "")</h2>
+    <div class="set-leaderboard__head">
+        <h2>Leaderboard@(Model.Diffs.Count > 1 && Model.Diff is not null ? $" — {Model.Diff.Name}" : "")</h2>
+        @if (Model.Set.Status == "ranked" && Model.Diff is not null)
+        {
+            <div class="lb-tabs" role="tablist">
+                <a class="lb-tab @(Model.Board == "ranked" ? "is-active" : "")" href="/beatmapsets/@Model.Set.Id?diff=@Model.Diff.Id&board=ranked">Ranked</a>
+                <a class="lb-tab @(Model.Board == "unranked" ? "is-active" : "")" href="/beatmapsets/@Model.Set.Id?diff=@Model.Diff.Id&board=unranked">Unranked</a>
+            </div>
+        }
+    </div>
     @if (Model.Set.Status == "unranked")
     {
         @* The creator marked this map not-for-ranking; it takes plays but will never rank. *@
@@ -182,6 +191,13 @@
         <div class="empty-state">
             <h3>Not ranked yet</h3>
             <p>Leaderboard unlocks when this map is ranked.</p>
+        </div>
+    }
+    else if (Model.Scores.Count == 0 && Model.Board == "unranked")
+    {
+        <div class="empty-state">
+            <h3>No unranked scores</h3>
+            <p>No completed play here used an unranked mod (Mashing, Wind Up/Down) or a non-default rate.</p>
         </div>
     }
     else if (Model.Scores.Count == 0)

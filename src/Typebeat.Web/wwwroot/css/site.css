@@ -1186,6 +1186,29 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 .set-leaderboard { margin-top: var(--space-6); }
 
+/* Leaderboard heading + Ranked/Unranked board toggle on one row. */
+.set-leaderboard__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+}
+
+.lb-tabs { display: inline-flex; gap: var(--space-2); }
+
+.lb-tab {
+    padding: 2px var(--space-3);
+    border-radius: var(--radius-full);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 700;
+}
+
+.lb-tab:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
+
+.lb-tab.is-active { background: rgba(201, 242, 77, 0.16); color: var(--violet-bright); }
+
 .podium {
     display: flex;
     align-items: center;

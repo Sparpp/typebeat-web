@@ -30,12 +30,17 @@ public sealed class SetModel(Db db) : TypebeatPageModel
     public DiffStats? Diff { get; private set; }
     public IReadOnlyList<ScoreRow> Scores { get; private set; } = [];
 
+    /// <summary>Which board is shown: "ranked" (default) or "unranked" (passed plays that used an
+    /// unranked mod / non-default rate, so they never reached the ranked board). Toggled by ?board=.</summary>
+    public string Board { get; private set; } = "ranked";
+
     /// <summary>Set by the post-report redirect (?reported=1) to swap the form for a thanks note.</summary>
     public bool Reported { get; private set; }
 
-    public async Task<IActionResult> OnGetAsync(long id, bool reported = false, long diff = 0)
+    public async Task<IActionResult> OnGetAsync(long id, bool reported = false, long diff = 0, string board = "ranked")
     {
         Reported = reported;
+        Board = board == "unranked" ? "unranked" : "ranked";
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
@@ -109,8 +114,11 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         // (same DISTINCT ON shape as the game-facing endpoint in ScoreEndpoints). Only ranked
         // sets have one — pending plays are stored unranked, and the page renders an "unlocks
         // when ranked" note instead, so don't even run the query for non-ranked sets.
-        // Per-difficulty leaderboard: best ranked+passed score per user on the SELECTED beatmap
-        // (each difficulty has its own board). Same DISTINCT ON best-per-user shape as before.
+        // Per-difficulty leaderboard: best passed score per user on the SELECTED beatmap (each
+        // difficulty has its own board). @wantRanked picks the ranked board (default) or the
+        // Unranked board — passed plays stored ranked=false because they used an unranked mod or a
+        // non-default rate. Only ranked sets have boards; pending/unranked sets show a note instead.
+        bool wantRanked = Board == "ranked";
         if (Set.Status == "ranked" && Diff is not null)
             Scores = (await conn.QueryAsync<ScoreRow>(
             """
@@ -133,13 +141,13 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                        u.username::text AS username, u.avatar_key
                 FROM scores sc
                 JOIN users u ON u.id = sc.user_id
-                WHERE sc.beatmap_id = @beatmapId AND sc.ranked AND sc.passed
+                WHERE sc.beatmap_id = @beatmapId AND sc.passed AND sc.ranked = @wantRanked
                 ORDER BY sc.user_id, sc.total_score DESC, sc.id ASC
             ) best
             ORDER BY best.total_score DESC, best.id ASC
             LIMIT 50
             """,
-                new { beatmapId = Diff.Id })).ToList();
+                new { beatmapId = Diff.Id, wantRanked })).ToList();
 
         ViewData["Title"] = $"{Set.Artist} - {Set.Title}";
         ViewData["MetaDescription"] =
