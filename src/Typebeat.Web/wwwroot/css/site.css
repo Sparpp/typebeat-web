@@ -1501,6 +1501,32 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .mod-icon--automation { background: #b98cff; }
 .mod-icon--other { background: #9aa0aa; }
 
+/* Difficulty selector on the set page — one pill per difficulty, tinted by star rating. */
+.diff-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: var(--space-3);
+}
+
+.diff-pill {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--diff-colour);
+    background: var(--surface-2);
+    text-decoration: none;
+    font-size: var(--text-sm);
+}
+
+.diff-pill:hover { border-color: var(--diff-colour); }
+.diff-pill.is-on { border-color: var(--diff-colour); box-shadow: inset 0 0 0 1px var(--diff-colour); }
+.diff-pill__star { color: var(--diff-colour); font-weight: 700; font-family: var(--font-display); }
+.diff-pill__name { color: var(--text); }
+
 .score-row__date { white-space: nowrap; }
 
 @media (max-width: 560px) {

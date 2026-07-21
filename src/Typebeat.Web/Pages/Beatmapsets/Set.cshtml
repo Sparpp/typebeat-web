@@ -94,6 +94,23 @@
         </div>
         <aside class="set-stats">
             <h3 class="card-title">Map stats</h3>
+            @if (Model.Diffs.Count > 1)
+            {
+                @* Difficulty selector — one pill per difficulty, coloured by rating; the selected
+                   one drives the stats box + leaderboard below (server re-renders on ?diff=). *@
+                <div class="diff-selector">
+                    @foreach (var d in Model.Diffs)
+                    {
+                        <a class="diff-pill @(d.Id == Model.Diff?.Id ? "is-on" : "")"
+                           href="/beatmapsets/@Model.Set.Id?diff=@d.Id"
+                           style="--diff-colour:@Typebeat.Web.DifficultyColour.ForStars(d.Stars)"
+                           title="@d.Name">
+                            <span class="diff-pill__star">&#9733; @d.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
+                            <span class="diff-pill__name">@d.Name</span>
+                        </a>
+                    }
+                </div>
+            }
             @if (Model.Diff is not null)
             {
                 <div class="stat-row"><span class="stat-row__label">Length</span><span class="stat-row__value">@SetModel.FormatLength(Model.Diff.TotalLengthS)</span></div>
@@ -147,7 +164,7 @@
 </section>
 
 <section class="set-leaderboard">
-    <h2>Leaderboard</h2>
+    <h2>Leaderboard@(Model.Diffs.Count > 1 && Model.Diff is not null ? $" — {Model.Diff.Name}" : "")</h2>
     @if (Model.Set.Status != "ranked")
     {
         @* Pending (and owner-viewed hidden/removed) sets take plays but rank nothing. *@

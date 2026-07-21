@@ -22,13 +22,18 @@ public sealed class SetModel(Db db) : TypebeatPageModel
     private const int max_report_reason_length = 4000;
 
     public SetDetails Set { get; private set; } = null!;
+
+    /// <summary>Every difficulty in the set, hardest first (drives the difficulty selector).</summary>
+    public IReadOnlyList<DiffStats> Diffs { get; private set; } = [];
+
+    /// <summary>The selected difficulty (?diff=, else the hardest) — its stats + leaderboard show.</summary>
     public DiffStats? Diff { get; private set; }
     public IReadOnlyList<ScoreRow> Scores { get; private set; } = [];
 
     /// <summary>Set by the post-report redirect (?reported=1) to swap the form for a thanks note.</summary>
     public bool Reported { get; private set; }
 
-    public async Task<IActionResult> OnGetAsync(long id, bool reported = false)
+    public async Task<IActionResult> OnGetAsync(long id, bool reported = false, long diff = 0)
     {
         Reported = reported;
 
@@ -79,11 +84,13 @@ public sealed class SetModel(Db db) : TypebeatPageModel
 
         Set = set;
 
-        // Representative difficulty for the stats box: the hardest one (sets are effectively
-        // single-difficulty today — song select collapsed to a single panel).
-        Diff = await conn.QuerySingleOrDefaultAsync<DiffStats>(
+        // Every difficulty in the set, hardest first. The stats box + leaderboard show one at a
+        // time: the ?diff= beatmap when it belongs to this set, otherwise the hardest.
+        Diffs = (await conn.QueryAsync<DiffStats>(
             """
-            SELECT b.total_length_s        AS TotalLengthS,
+            SELECT b.id                    AS Id,
+                   b.version_name          AS Name,
+                   b.total_length_s        AS TotalLengthS,
                    b.word_count            AS WordCount,
                    b.char_count            AS CharCount,
                    b.wpm::double precision AS Wpm,
@@ -91,15 +98,18 @@ public sealed class SetModel(Db db) : TypebeatPageModel
             FROM beatmaps b
             WHERE b.set_id = @id AND b.filename IS NOT NULL
             ORDER BY b.difficulty_rating DESC, b.id ASC
-            LIMIT 1
             """,
-            new { id });
+            new { id })).ToList();
+
+        Diff = Diffs.FirstOrDefault(d => d.Id == diff) ?? Diffs.FirstOrDefault();
 
         // Global leaderboard: best ranked+passed score per user across the set's difficulties
         // (same DISTINCT ON shape as the game-facing endpoint in ScoreEndpoints). Only ranked
         // sets have one — pending plays are stored unranked, and the page renders an "unlocks
         // when ranked" note instead, so don't even run the query for non-ranked sets.
-        if (Set.Status == "ranked")
+        // Per-difficulty leaderboard: best ranked+passed score per user on the SELECTED beatmap
+        // (each difficulty has its own board). Same DISTINCT ON best-per-user shape as before.
+        if (Set.Status == "ranked" && Diff is not null)
             Scores = (await conn.QueryAsync<ScoreRow>(
             """
             SELECT best.id           AS ScoreId,
@@ -119,15 +129,14 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                        sc.ended_at, sc.mods::text AS mods, sc.statistics::text AS statistics,
                        u.username::text AS username
                 FROM scores sc
-                JOIN beatmaps b ON b.id = sc.beatmap_id
                 JOIN users u ON u.id = sc.user_id
-                WHERE b.set_id = @id AND sc.ranked AND sc.passed
+                WHERE sc.beatmap_id = @beatmapId AND sc.ranked AND sc.passed
                 ORDER BY sc.user_id, sc.total_score DESC, sc.id ASC
             ) best
             ORDER BY best.total_score DESC, best.id ASC
             LIMIT 50
             """,
-                new { id })).ToList();
+                new { beatmapId = Diff.Id })).ToList();
 
         ViewData["Title"] = $"{Set.Artist} - {Set.Title}";
         ViewData["MetaDescription"] =
@@ -286,7 +295,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
             Tags.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct();
     }
 
-    public sealed record DiffStats(double TotalLengthS, int? WordCount, int? CharCount, double? Wpm, double Stars);
+    public sealed record DiffStats(long Id, string Name, double TotalLengthS, int? WordCount, int? CharCount, double? Wpm, double Stars);
 
     /// <summary>
     /// One leaderboard row. Judgement counts come from the statistics jsonb (wire keys
