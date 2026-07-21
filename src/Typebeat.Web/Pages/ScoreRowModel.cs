@@ -15,6 +15,8 @@ public sealed record ScoreRowModel(
     long SetId,
     string Title,
     string Artist,
+    string? TitleUnicode,
+    string? ArtistUnicode,
     string? CoverUrl,
     string Rank,
     double Completion,
@@ -31,6 +33,12 @@ public sealed record ScoreRowModel(
     };
 
     public string GradeClass => "grade--" + GradeLabel.ToLowerInvariant();
+
+    /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
+    public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);
+
+    /// <summary>Artist, or its original non-romanized text when the viewer prefers that.</summary>
+    public string DisplayArtist(bool preferOriginal) => MetadataDisplay.Pick(Artist, ArtistUnicode, preferOriginal);
 
     /// <summary>Mod acronyms from the mods jsonb ([{acronym, settings}] wire shape).</summary>
     public IReadOnlyList<string> ModAcronyms =>

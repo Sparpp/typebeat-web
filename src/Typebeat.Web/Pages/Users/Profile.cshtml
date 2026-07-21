@@ -79,6 +79,7 @@
 
         <section class="profile-section">
             <h2>Most played</h2>
+            @{ bool preferOriginalMostPlayed = Model.CurrentUser?.PreferOriginalMetadata ?? false; }
             @if (Model.MostPlayed.Count == 0)
             {
                 <p class="profile-empty muted">No plays on record yet.</p>
@@ -88,6 +89,8 @@
                 <div class="score-list">
                     @foreach (var row in Model.MostPlayed)
                     {
+                        string mpTitle = row.DisplayTitle(preferOriginalMostPlayed);
+                        string mpArtist = row.DisplayArtist(preferOriginalMostPlayed);
                         <div class="score-row">
                             <div class="score-row__thumb">
                                 @if (row.CoverUrl is not null)
@@ -99,8 +102,8 @@
                                     <div class="cover-fallback" aria-hidden="true"></div>
                                 }
                             </div>
-                            <a class="score-row__map" href="/beatmapsets/@row.SetId" title="@row.Title [@row.Artist]">
-                                @row.Title <span class="score-row__artist">[@row.Artist]</span>
+                            <a class="score-row__map" href="/beatmapsets/@row.SetId" title="@mpTitle [@mpArtist]">
+                                @mpTitle <span class="score-row__artist">[@mpArtist]</span>
                             </a>
                             <span class="score-row__plays">@row.Plays.ToString("N0", CultureInfo.InvariantCulture) plays</span>
                         </div>

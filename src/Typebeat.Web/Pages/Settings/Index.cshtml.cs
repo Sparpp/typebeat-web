@@ -33,6 +33,9 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
     [BindProperty] public string? Description { get; set; }
     [BindProperty] public string? ConfirmUsername { get; set; }
 
+    /// <summary>Preferences &gt; show a map's original (non-romanized) title/artist instead of romanized.</summary>
+    [BindProperty] public bool PreferOriginalMetadata { get; set; }
+
     /// <summary>Non-null after a failed POST; shown as an inline error.</summary>
     public string? Error { get; private set; }
 
@@ -53,6 +56,7 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
             "profile" => "Profile saved.",
             "avatar" => "Avatar updated.",
             "banner" => "Banner updated.",
+            "preferences" => "Preferences saved.",
             _ => null,
         };
 
@@ -79,6 +83,21 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
         }
 
         return RedirectToPage(new { saved = "profile" });
+    }
+
+    public async Task<IActionResult> OnPostPreferencesAsync()
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        await using (var conn = await db.OpenAsync(HttpContext.RequestAborted))
+        {
+            await conn.ExecuteAsync(
+                "UPDATE users SET prefer_original_metadata = @pref WHERE id = @id",
+                new { pref = PreferOriginalMetadata, id = CurrentUser.Id });
+        }
+
+        return RedirectToPage(new { saved = "preferences" });
     }
 
     public Task<IActionResult> OnPostAvatarAsync(IFormFile? avatar) => handleImageUploadAsync(avatar, isBanner: false);
@@ -195,14 +214,15 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
 
     private async Task loadCurrentAsync(NpgsqlConnection conn, long id)
     {
-        var row = await conn.QuerySingleOrDefaultAsync<(string Description, string? AvatarKey, string? CoverKey)>(
-            "SELECT description AS Description, avatar_key AS AvatarKey, cover_key AS CoverKey FROM users WHERE id = @id",
+        var row = await conn.QuerySingleOrDefaultAsync<(string Description, string? AvatarKey, string? CoverKey, bool PreferOriginalMetadata)>(
+            "SELECT description AS Description, avatar_key AS AvatarKey, cover_key AS CoverKey, prefer_original_metadata AS PreferOriginalMetadata FROM users WHERE id = @id",
             new { id });
 
         // Preserve a rejected edit (Description already bound) but fill the rest from the row.
         Description ??= row.Description;
         AvatarUrl = row.AvatarKey is null ? null : $"/{row.AvatarKey}";
         BannerUrl = row.CoverKey is null ? null : $"/{row.CoverKey}";
+        PreferOriginalMetadata = row.PreferOriginalMetadata;
     }
 
     /// <summary>

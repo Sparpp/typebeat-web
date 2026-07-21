@@ -4,6 +4,9 @@
     // Where the favourite POST sends the user back to (listing page keeps its query string).
     string returnUrl = Context.Request.Path + Context.Request.QueryString;
     var sessionUser = Context.SessionUser();
+    bool preferOriginal = sessionUser?.PreferOriginalMetadata ?? false;
+    string displayTitle = Model.DisplayTitle(preferOriginal);
+    string displayArtist = Model.DisplayArtist(preferOriginal);
 }
 <article class="bset-card" data-set-id="@Model.Id">
     <div class="bset-card__media">
@@ -22,8 +25,8 @@
         }
     </div>
     <div class="bset-card__info">
-        <a class="bset-card__title" href="/beatmapsets/@Model.Id" title="@Model.Title">@Model.Title</a>
-        <span class="bset-card__artist" title="@Model.Artist">by @Model.Artist</span>
+        <a class="bset-card__title" href="/beatmapsets/@Model.Id" title="@displayTitle">@displayTitle</a>
+        <span class="bset-card__artist" title="@displayArtist">by @displayArtist</span>
         <span class="bset-card__mapper">mapped by <a href="/users/@Model.OwnerId">@Model.Creator</a></span>
         <span class="bset-card__stats">
             <span title="play count"><span aria-hidden="true">&#9654;</span> @Model.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span>
@@ -60,7 +63,7 @@
         {
             @* Play mode (the /play picker): launch the in-browser player instead of downloading. *@
             <button type="button" class="rail-btn tb-play" data-set-id="@Model.Id"
-                    data-title="@Model.Title" data-artist="@Model.Artist"
+                    data-title="@displayTitle" data-artist="@displayArtist"
                     title="Play in browser" aria-label="Play in browser">&#9654;</button>
         }
         else if (Model.HasPackage)

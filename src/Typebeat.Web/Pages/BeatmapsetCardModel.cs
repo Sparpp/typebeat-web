@@ -16,6 +16,8 @@ public sealed record BeatmapsetCardModel(
     long Id,
     string Title,
     string Artist,
+    string? TitleUnicode,
+    string? ArtistUnicode,
     string Creator,
     long OwnerId,
     string? CoverUrl,
@@ -33,6 +35,12 @@ public sealed record BeatmapsetCardModel(
     public string StatusLabel => BeatmapsetDisplay.StatusLabel(Status);
 
     public string PillClass => BeatmapsetDisplay.PillClass(Status);
+
+    /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
+    public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);
+
+    /// <summary>Artist, or its original non-romanized text when the viewer prefers that.</summary>
+    public string DisplayArtist(bool preferOriginal) => MetadataDisplay.Pick(Artist, ArtistUnicode, preferOriginal);
 }
 
 /// <summary>Status wording shared by the card partial and the set page.</summary>
@@ -71,6 +79,8 @@ public static class BeatmapsetCardSql
         SELECT s.id               AS Id,
                s.title            AS Title,
                s.artist           AS Artist,
+               s.title_unicode    AS TitleUnicode,
+               s.artist_unicode   AS ArtistUnicode,
                u.username::text   AS Creator,
                s.owner_id         AS OwnerId,
                CASE WHEN s.cover_key IS NOT NULL THEN '/' || s.cover_key || '/list.jpg' END AS CoverUrl,

@@ -44,6 +44,8 @@ public sealed class SetModel(Db db) : TypebeatPageModel
             SELECT s.id               AS Id,
                    s.title            AS Title,
                    s.artist           AS Artist,
+                   s.title_unicode    AS TitleUnicode,
+                   s.artist_unicode   AS ArtistUnicode,
                    s.source           AS Source,
                    s.tags             AS Tags,
                    s.description      AS Description,
@@ -283,7 +285,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
     public static string GradeClass(string rank) => "grade--" + (rank == "X" ? "ss" : rank.ToLowerInvariant());
 
     public sealed record SetDetails(
-        long Id, string Title, string Artist, string Source, string Tags, string Description,
+        long Id, string Title, string Artist, string? TitleUnicode, string? ArtistUnicode, string Source, string Tags, string Description,
         string Status, string Creator, bool OwnerRestricted, long OwnerId, string? CoverKey, string? PreviewUrl,
         int PlayCount, int FavouriteCount, int DownloadCount, double? Bpm,
         DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited, bool HasPackage)
@@ -293,6 +295,12 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         public string? CoverUrl => CoverKey is null ? null : $"/{CoverKey}/cover.jpg";
         public IEnumerable<string> TagList =>
             Tags.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct();
+
+        /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
+        public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);
+
+        /// <summary>Artist, or its original non-romanized text when the viewer prefers that.</summary>
+        public string DisplayArtist(bool preferOriginal) => MetadataDisplay.Pick(Artist, ArtistUnicode, preferOriginal);
     }
 
     public sealed record DiffStats(long Id, string Name, double TotalLengthS, int? WordCount, int? CharCount, double? Wpm, double Stars);

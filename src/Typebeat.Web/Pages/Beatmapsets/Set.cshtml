@@ -4,6 +4,9 @@
 
 @{
     string? coverStyle = Model.Set.CoverUrl is null ? null : $"background-image:url('{Model.Set.CoverUrl}')";
+    bool preferOriginal = Model.CurrentUser?.PreferOriginalMetadata ?? false;
+    string displayTitle = Model.Set.DisplayTitle(preferOriginal);
+    string displayArtist = Model.Set.DisplayArtist(preferOriginal);
 }
 <section class="set-header @(Model.Set.CoverUrl is null ? "set-header--nocover" : "")" style="@coverStyle">
     <div class="set-header__scrim">
@@ -14,8 +17,8 @@
                 <span class="set-header__counter" title="favourites"><span aria-hidden="true">&#9825;</span> @Model.Set.FavouriteCount.ToString("N0", CultureInfo.InvariantCulture)</span>
                 <span class="set-header__counter" title="downloads"><span aria-hidden="true">&#8595;</span> @Model.Set.DownloadCount.ToString("N0", CultureInfo.InvariantCulture)</span>
             </div>
-            <h1 class="set-header__title">@Model.Set.Title</h1>
-            <div class="set-header__artist">by @Model.Set.Artist</div>
+            <h1 class="set-header__title">@displayTitle</h1>
+            <div class="set-header__artist">by @displayArtist</div>
             <div class="set-header__mapper">
                 mapped by <a href="/users/@Model.Set.OwnerId">@Model.Set.Creator</a>
             </div>

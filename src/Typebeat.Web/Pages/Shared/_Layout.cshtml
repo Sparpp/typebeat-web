@@ -36,7 +36,17 @@
         <div class="nav-auth">
             @if (sessionUser is not null)
             {
-                <a class="user-chip" href="/users/@sessionUser.Id">@sessionUser.Username</a>
+                <a class="user-chip" href="/users/@sessionUser.Id">
+                    @if (sessionUser.AvatarKey is string avatarKey)
+                    {
+                        <img class="user-chip__avatar" src="/@avatarKey" alt="" />
+                    }
+                    else
+                    {
+                        <span class="user-chip__avatar user-chip__avatar--fallback" aria-hidden="true">@sessionUser.Username[..1]</span>
+                    }
+                    <span class="user-chip__name">@sessionUser.Username</span>
+                </a>
                 <a class="btn btn-ghost btn-small" href="/settings">settings</a>
                 <form method="post" action="/logout">
                     @Html.AntiForgeryToken()

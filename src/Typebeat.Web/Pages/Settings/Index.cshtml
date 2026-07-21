@@ -74,6 +74,21 @@
         </form>
     </div>
 
+    <div class="card settings-card">
+        <h2 class="card-title">Preferences</h2>
+        <form method="post" asp-page-handler="Preferences">
+            @Html.AntiForgeryToken()
+            <label class="settings-toggle">
+                <input type="checkbox" asp-for="PreferOriginalMetadata" />
+                <span class="settings-toggle__text">
+                    Show original (non-romanized) title &amp; artist
+                    <span class="faint">Displays a map's original-script title and artist where available, instead of the romanized version.</span>
+                </span>
+            </label>
+            <button type="submit" class="btn btn-primary btn-small">Save preferences</button>
+        </form>
+    </div>
+
     <div class="card settings-card settings-danger">
         <h2 class="card-title">Delete account</h2>
         <p class="muted">
