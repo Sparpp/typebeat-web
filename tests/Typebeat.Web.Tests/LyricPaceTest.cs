@@ -3,10 +3,11 @@ using Typebeat.Web.Packages.Lyrics;
 namespace Typebeat.Web.Tests;
 
 /// <summary>
-/// The difficulty arithmetic against known values. The primary anchor is the game's own
+/// The pace + difficulty arithmetic against known values. Pace anchors on the game's own
 /// regression test (typebeat-osu typebeat.Game.Rulesets.TypeBeat.Tests/NonVisual/
 /// LyricPaceStatisticsTest.cs): "ab cd" over a 3000 ms boundary window -> 5 cells, 2 words,
-/// WPM 40, CPM 100; stars follow TypeBeatDifficultyCalculator (stars = min(10, WPM / 25)).
+/// WPM 40, CPM 100. Stars follow <see cref="LyricDifficulty"/> (strain-based); the hand-computed
+/// "cat cat" -> 0.7608 anchor is shared with the game's LyricDifficultyTest to lock the two ports.
 /// </summary>
 public class LyricPaceTest
 {
@@ -35,8 +36,9 @@ public class LyricPaceTest
             // Boundary window 4000 - 1000 = 3000 ms: WPM = 2 / 0.05 min, CPM = 5 / 0.05 min.
             Assert.That(pace.AverageWpm, Is.EqualTo(40.0).Within(1e-9));
             Assert.That(pace.AverageCpm, Is.EqualTo(100.0).Within(1e-9));
-            // stars = WPM / 25 (TypeBeatDifficultyCalculator).
-            Assert.That(pace.DifficultyRating, Is.EqualTo(1.6).Within(1e-9));
+            // stars from LyricDifficulty: "ab cd" lands one word in each of two 1 s sections,
+            // each load 3 -> Dmax 3, agg = 3/4 + ln(2) = 1.443, stars = 0.108 * 1.443^1.5 = 0.19.
+            Assert.That(pace.DifficultyRating, Is.EqualTo(0.19).Within(0.01));
         });
     }
 
@@ -79,26 +81,25 @@ public class LyricPaceTest
     }
 
     [Test]
-    public void DifficultyRating_CapsAtTenStars()
+    public void DifficultyRating_MatchesGameAnchor()
     {
-        // 3 words crammed into a 100 ms boundary window -> the 500 ms floor still yields
-        // 3 / (500 ms / 60000) = 360 WPM — past the 10-star cap (250 WPM).
+        // The hand-computed anchor shared with the game's LyricDifficultyTest: "cat cat" — both
+        // 400 ms words fall in section 0; loads 4 + 3.4 (2nd repeats) = 7.4, agg = 7.4/4 + ln(1),
+        // stars = 0.108 * 1.85^1.5 = 0.27. Locks the web port to the game byte-for-byte.
         var line = new LyricLine
         {
-            RawText = "aa bb cc",
+            RawText = "cat cat",
             StartTime = 0,
-            EndTime = 100,
-            SingEndTime = 100,
-            Units = [new TimedUnit { Text = "aa bb cc", StartTime = 0, EndTime = 100 }],
+            EndTime = 800,
+            SingEndTime = 800,
+            Units =
+            [
+                new TimedUnit { Text = "cat", StartTime = 0, EndTime = 400 },
+                new TimedUnit { Text = "cat", StartTime = 400, EndTime = 800 },
+            ],
         };
 
-        var pace = LyricPace.Compute([line]);
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(pace.AverageWpm, Is.GreaterThan(250));
-            Assert.That(pace.DifficultyRating, Is.EqualTo(10));
-        });
+        Assert.That(LyricPace.Compute([line]).DifficultyRating, Is.EqualTo(0.27).Within(0.01));
     }
 
     [Test]
@@ -242,6 +243,8 @@ public class LyricPaceTest
 
         var lines = LyricTiming.BuildLines(raw, songEnd);
         var pace = LyricPace.Compute(lines);
+
+        TestContext.WriteLine($"Real map -> WPM {pace.AverageWpm:0.0}, CPM {pace.AverageCpm:0.0}, stars {pace.DifficultyRating:0.00}");
 
         Assert.Multiple(() =>
         {

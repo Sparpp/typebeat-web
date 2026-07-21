@@ -13,11 +13,10 @@ namespace Typebeat.Web.Packages.Lyrics;
 ///    the map pace is the unweighted mean of per-line rates, so instrumental gaps between
 ///    lines never dilute it. No "1 word = 5 chars" estimate anywhere: the CPM:WPM ratio is
 ///    the map's true word length.
-///  - stars: TypeBeatDifficultyCalculator
-///    (typebeat.Game.Rulesets.TypeBeat/TypeBeatDifficultyCalculator.cs) —
-///    stars = min(10, WPM / 25).
-///
-/// Granularity is deliberately absent: unit target times no longer enter the pace at all.
+///  - stars: <see cref="LyricDifficulty"/> — a duration-weighted soft maximum over per-word
+///    typing strain (sr-formula-v1.md), mirroring the game's
+///    typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty. Unlike the pace, this DOES use
+///    unit target times (per-word windows drive strain).
 /// </summary>
 public static class LyricPace
 {
@@ -25,26 +24,21 @@ public static class LyricPace
     /// Bumped whenever the pace/star arithmetic changes shape. Stamped on beatmap rows at
     /// ingest (<c>beatmaps.pace_version</c>); rows below it are recomputed from their stored
     /// .osu blob at startup (<see cref="PaceBackfill"/>). v1 = perfect-play cells/5 pace,
-    /// v2 = boundary-window real-count pace.
+    /// v2 = boundary-window real-count pace, v3 = strain-based star rating (LyricDifficulty;
+    /// pace WPM/CPM unchanged).
     /// </summary>
-    public const int VERSION = 2;
+    public const int VERSION = 3;
 
     // LyricPaceStatistics.cs — guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;
 
-    // TypeBeatDifficultyCalculator.cs.
-    private const double wpm_per_star = 25;
-    private const double max_stars = 10;
-
+    /// <param name="DifficultyRating">Stars from <see cref="LyricDifficulty"/> (no-mod baseline).</param>
     public readonly record struct PaceStatistics(
         double AverageWpm,
         double AverageCpm,
         int TypeableCellCount,
-        int WordCount)
-    {
-        /// <summary>Star rating: min(10, WPM / 25) — TypeBeatDifficultyCalculator.</summary>
-        public double DifficultyRating => Math.Min(max_stars, AverageWpm / wpm_per_star);
-    }
+        int WordCount,
+        double DifficultyRating);
 
     public static PaceStatistics Compute(IReadOnlyList<LyricLine> lines)
     {
@@ -98,6 +92,7 @@ public static class LyricPace
             wpmSum / lineCount,
             cpmSum / lineCount,
             totalCells,
-            totalWords);
+            totalWords,
+            LyricDifficulty.Compute(lines));
     }
 }

@@ -217,7 +217,7 @@ public class PackageIngestDbTest
             Assert.That(beatmap.WordCount, Is.EqualTo(2));
             Assert.That(beatmap.CharCount, Is.EqualTo(5));
             Assert.That((double)beatmap.Wpm, Is.EqualTo(40).Within(1e-6));
-            Assert.That(beatmap.Difficulty, Is.EqualTo(1.6).Within(1e-9));
+            Assert.That(beatmap.Difficulty, Is.EqualTo(0.19).Within(0.01)); // strain-based stars
         });
 
         // Blobs + assembled package + covers exist in the store.
@@ -396,7 +396,7 @@ public class PackageIngestDbTest
         {
             // The regression package: "ab cd" over a 3000 ms boundary window.
             Assert.That((double)row.Wpm, Is.EqualTo(40).Within(1e-6));
-            Assert.That(row.Difficulty, Is.EqualTo(1.6).Within(1e-9));
+            Assert.That(row.Difficulty, Is.EqualTo(0.19).Within(0.01)); // strain-based stars
             Assert.That(row.WordCount, Is.EqualTo(2));
             Assert.That(row.CharCount, Is.EqualTo(5));
             Assert.That(row.PaceVersion, Is.EqualTo(LyricPace.VERSION));

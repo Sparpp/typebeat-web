@@ -84,7 +84,8 @@ public class PackageParserTest
             Assert.That(diff.Pace.WordCount, Is.EqualTo(2));
             Assert.That(diff.Pace.AverageWpm, Is.EqualTo(40).Within(1e-9));
             Assert.That(diff.Pace.AverageCpm, Is.EqualTo(100).Within(1e-9));
-            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(1.6).Within(1e-9));
+            // Strain-based stars (LyricDifficulty): "ab cd" -> two 1 s sections -> 0.19.
+            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.19).Within(0.01));
 
             // Last line end = min(song_end 4000, end_ms 3000 + 3000 tail) = 4000 ms.
             Assert.That(diff.TotalLengthS, Is.EqualTo(4.0).Within(1e-9));
