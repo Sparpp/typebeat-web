@@ -1,0 +1,25 @@
+@model (Typebeat.Web.Pages.DownloadModel.PlatformDownload Platform, string? DetectedOs)
+@{
+    var p = Model.Platform;
+    bool featured = Model.DetectedOs == p.Os;
+    string label = p.Os == "windows" ? "Windows" : "Linux";
+    string requirement = p.Os == "windows" ? "Windows 10+" : "x86-64 · glibc 2.31+";
+}
+
+<div class="download-card card @(featured ? "download-card--featured" : "") @(p.Available ? "" : "download-card--soon")">
+    @if (featured)
+    {
+        <span class="download-card__badge">Your system</span>
+    }
+    <h3 class="download-card__os">@label</h3>
+    @if (p.Available)
+    {
+        <a class="btn @(featured ? "btn-primary" : "btn-ghost") btn-big" href="@p.Href" download>Download for @label</a>
+        <p class="download-card__meta">@p.FileName &middot; @p.SizeDisplay &middot; @requirement</p>
+    }
+    else
+    {
+        <span class="btn btn-ghost btn-big is-disabled" aria-disabled="true">Coming soon</span>
+        <p class="download-card__meta">@label build is on the way.</p>
+    }
+</div>

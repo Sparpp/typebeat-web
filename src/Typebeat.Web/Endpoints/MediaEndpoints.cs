@@ -68,11 +68,14 @@ public static class MediaEndpoints
         app.MapGet("/user-covers/{userId:long}/{version:long}.jpg", (long userId, long version, HttpContext ctx, IFileStore store)
             => ServeImmutableImageAsync(StoreKeys.UserCover(userId, version), ctx, store));
 
-        // The game-client release artifact (downloads/{TYPEBEAT_GAME_DOWNLOAD} — the Velopack
-        // Setup.exe since the installer switch; historically the win-x64 zip). The dedicated
-        // /download PAGE was removed; the landing button links straight here. 404 when no build is
-        // configured or stored. Anonymous — anyone can grab the game.
-        app.MapGet("/download/game", DownloadGameAsync);
+        // The game-client release artifacts (downloads/{TYPEBEAT_GAME_DOWNLOAD} — the Velopack
+        // Windows Setup.exe; downloads/{TYPEBEAT_GAME_DOWNLOAD_LINUX} — the Linux AppImage). The
+        // /download page links here per-platform. 404 when the platform's build is unconfigured or
+        // unstored. Anonymous — anyone can grab the game.
+        app.MapGet("/download/game", (HttpContext ctx, IConfiguration config, IFileStore store)
+            => DownloadArtifactAsync(ctx, config, store, "TYPEBEAT_GAME_DOWNLOAD"));
+        app.MapGet("/download/game-linux", (HttpContext ctx, IConfiguration config, IFileStore store)
+            => DownloadArtifactAsync(ctx, config, store, "TYPEBEAT_GAME_DOWNLOAD_LINUX"));
 
         // The Velopack update feed (downloads/releases/{file}): the release manifest + full
         // package the installed client's VelopackUpdateManager polls (SimpleWebSource at
@@ -134,9 +137,9 @@ public static class MediaEndpoints
         return Results.Stream(stream, "image/jpeg");
     }
 
-    private static async Task<IResult> DownloadGameAsync(HttpContext ctx, IConfiguration config, IFileStore store)
+    private static async Task<IResult> DownloadArtifactAsync(HttpContext ctx, IConfiguration config, IFileStore store, string configKey)
     {
-        string? fileName = config["TYPEBEAT_GAME_DOWNLOAD"];
+        string? fileName = config[configKey];
 
         if (string.IsNullOrEmpty(fileName))
             return Results.NotFound();
@@ -147,8 +150,8 @@ public static class MediaEndpoints
             return Results.NotFound();
 
         // Attachment disposition + Content-Length + range (seekable FileStream) — a download
-        // manager's segmented/resumed fetch works, same as the old page handler did. Content type
-        // follows the artifact (installer exe today, zip historically).
+        // manager's segmented/resumed fetch works. Content type follows the artifact (installer
+        // exe / AppImage today, zip historically).
         string contentType = fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
             ? "application/zip"
             : "application/octet-stream";
