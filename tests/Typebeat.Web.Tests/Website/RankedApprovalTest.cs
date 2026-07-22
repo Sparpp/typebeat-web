@@ -323,6 +323,7 @@ public class RankedApprovalTest
             {
                 passed = true,
                 total_score = totalScore,
+                total_score_without_mods = totalScore, // nomod: base == total (bounded vs the nomod ceiling)
                 accuracy = 1.0,
                 max_combo = 5,
                 ruleset_id = 0,
