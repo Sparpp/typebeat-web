@@ -19,9 +19,10 @@ public class WebsitePagesTest
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(response.Content.Headers.ContentType?.MediaType, Is.EqualTo("text/html"));
 
-            // Layout nav: wordmark + the beatmaps section link (the /download page is gone).
+            // Layout nav: wordmark + the beatmaps and (restored) download section links.
             Assert.That(html, Does.Contain("type!beat"));
             Assert.That(html, Does.Contain("href=\"/beatmapsets\""));
+            Assert.That(html, Does.Contain("href=\"/download\""));
 
             // Anonymous state shows a sign-in entry point.
             Assert.That(html, Does.Contain("href=\"/login\""));
