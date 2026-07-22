@@ -2,6 +2,7 @@ using System.Text;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Typebeat.Web.Data;
+using Typebeat.Web.Search;
 
 namespace Typebeat.Web.Pages.Beatmapsets;
 
@@ -57,7 +58,13 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
         var param = new Dapper.DynamicParameters();
         param.Add("viewerId", CurrentUser?.Id ?? 0);
 
-        if (Query.Length > 0)
+        // Pull osu-web-style key:value operators (title:, star:>4, date:2026, …) out of the box;
+        // whatever's left is the free text the site has always matched on. Unknown keys and
+        // malformed operator values stay in the free text, so the query never errors.
+        var search = BeatmapSearchQuery.Parse(Query);
+        string freeText = search.FreeText;
+
+        if (freeText.Length > 0)
         {
             const string ilike =
                 """
@@ -66,14 +73,14 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
                  OR s.tags ILIKE @like OR s.source ILIKE @like OR u.username::text ILIKE @like)
                 """;
 
-            param.Add("like", "%" + EscapeLike(Query) + "%");
+            param.Add("like", "%" + EscapeLike(freeText) + "%");
 
-            if (Query.Length >= min_fts_query_length)
+            if (freeText.Length >= min_fts_query_length)
             {
                 // websearch_to_tsquery('simple') matches how the vector is built (PackageIngest.
                 // SearchVectorSql, 'simple' config). A query that yields no lexemes at all
                 // (punctuation-only) falls back to substring matching instead of matching nothing.
-                param.Add("q", Query);
+                param.Add("q", freeText);
                 where.Append(
                     $"""
 
@@ -86,6 +93,17 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
             {
                 where.Append("\nAND ").Append(ilike);
             }
+        }
+
+        // Typed operators translate to strictly-parameterised WHERE clauses (columns come from the
+        // parser whitelist only). Composes with the free-text predicate above and the sort/paging
+        // cursor below.
+        var (opSql, opParams) = BeatmapSearchSql.Build(search);
+        if (opSql.Length > 0)
+        {
+            where.Append(opSql);
+            foreach (var (name, value) in opParams)
+                param.Add(name, value);
         }
 
         // "Unplayed" = the signed-in viewer has no score on any beatmap in the set. Gated on
