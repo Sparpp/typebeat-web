@@ -59,6 +59,18 @@ public static class PublicSiteSeed
     /// </summary>
     public static long PackagelessId { get; private set; }
 
+    // Two fixed-fingerprint sets for the typed search-operator tests. Both tagged "operatorset"
+    // so a test can scope free text to just this pair, then narrow with an operator. Fixed past
+    // submit dates make the date: assertions deterministic.
+    //
+    // Alpha: submitted 2024-03-15, stars 4.5, wpm 100, length 90s (1:30), cpm 100*500/100 = 500.
+    /// <summary>"Operator Alpha Synthwave" — the low-stat operator fixture.</summary>
+    public static long OpAlphaId { get; private set; }
+
+    // Bravo: submitted 2022-11-01, stars 7.0, wpm 200, length 240s (4:00), cpm 200*700/100 = 1400.
+    /// <summary>"Operator Bravo Ballad" — the high-stat operator fixture.</summary>
+    public static long OpBravoId { get; private set; }
+
     public static async Task EnsureSeededAsync()
     {
         await gate.WaitAsync();
@@ -157,6 +169,18 @@ public static class PublicSiteSeed
             await InsertBeatmapAsync(conn, PackagelessId,
                 totalLengthS: 100, stars: 2.5, wpm: 60, wordCount: 90, charCount: 420);
 
+            OpAlphaId = await InsertSetAtAsync(conn,
+                title: "Operator Alpha Synthwave", artist: "Synth Operator",
+                tags: "operatorset", submittedAt: new DateTime(2024, 3, 15, 0, 0, 0, DateTimeKind.Utc));
+            await InsertBeatmapAsync(conn, OpAlphaId,
+                totalLengthS: 90, stars: 4.5, wpm: 100, wordCount: 100, charCount: 500);
+
+            OpBravoId = await InsertSetAtAsync(conn,
+                title: "Operator Bravo Ballad", artist: "Piano Operator",
+                tags: "operatorset", submittedAt: new DateTime(2022, 11, 1, 0, 0, 0, DateTimeKind.Utc));
+            await InsertBeatmapAsync(conn, OpBravoId,
+                totalLengthS: 240, stars: 7.0, wpm: 200, wordCount: 100, charCount: 700);
+
             // Every seeded set EXCEPT the packageless one gets a version row, mirroring sets
             // that went through the upload pipeline: the set page / card Download actions key
             // on package existence (the object itself is never streamed by these tests).
@@ -209,6 +233,20 @@ public static class PublicSiteSeed
                 ownerId = MapperId, title, artist, source, tags, description, status, bpm,
                 playCount, favouriteCount, submittedOffset,
             });
+
+    /// <summary>As <see cref="InsertSetAsync"/> but pins an ABSOLUTE submitted_at (the operator
+    /// date: fixtures need stable calendar dates, not now()-relative offsets).</summary>
+    private static async Task<long> InsertSetAtAsync(NpgsqlConnection conn,
+        string title, string artist, string tags, DateTime submittedAt, string status = "ranked")
+        => await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets
+                (owner_id, title, artist, tags, status, submitted_at, updated_at)
+            VALUES
+                (@ownerId, @title, @artist, @tags, @status, @submittedAt, @submittedAt)
+            RETURNING id
+            """,
+            new { ownerId = MapperId, title, artist, tags, status, submittedAt });
 
     private static async Task<long> InsertBeatmapAsync(NpgsqlConnection conn, long setId,
         double totalLengthS, double stars, double wpm, int wordCount, int charCount)

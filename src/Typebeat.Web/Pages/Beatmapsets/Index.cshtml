@@ -10,7 +10,8 @@
 
 <form method="get" action="/beatmapsets" class="listing-search" role="search">
     <input class="input" type="search" name="q" value="@Model.Query"
-           placeholder="search by title, artist, mapper or tags&hellip;" aria-label="Search beatmaps" />
+           placeholder="search &mdash; try title, artist, or star:&gt;4 length:&lt;2:00&hellip;"
+           aria-label="Search beatmaps" aria-describedby="search-guide" />
     @if (Model.Sort != "newest")
     {
         <input type="hidden" name="s" value="@Model.Sort" />
@@ -25,6 +26,33 @@
     }
     <button type="submit" class="btn btn-primary">Search</button>
 </form>
+
+<details class="search-guide" id="search-guide">
+    <summary>Search filters &mdash; type <code>key:value</code> right in the box</summary>
+    <div class="search-guide__body">
+        <p>
+            Mix filters with normal words. Wrap values with spaces in quotes
+            (<code>title:"night drive"</code>). Numbers take <code>&gt;</code>, <code>&lt;</code>,
+            <code>&gt;=</code>, <code>&lt;=</code> or a <code>4-6</code> range. Unknown filters are
+            treated as plain text.
+        </p>
+        <table class="search-guide__table">
+            <tbody>
+                <tr><td><code>title:</code></td><td>set title</td><td><code>title:rhapsody</code></td></tr>
+                <tr><td><code>artist:</code></td><td>track artist</td><td><code>artist:"daft punk"</code></td></tr>
+                <tr><td><code>creator:</code></td><td>mapper (also <code>mapper:</code>)</td><td><code>creator:neon</code></td></tr>
+                <tr><td><code>source:</code></td><td>source</td><td><code>source:anime</code></td></tr>
+                <tr><td><code>tag:</code></td><td>tags</td><td><code>tag:vocaloid</code></td></tr>
+                <tr><td><code>star:</code></td><td>difficulty stars</td><td><code>star:4-6</code></td></tr>
+                <tr><td><code>wpm:</code></td><td>words per minute</td><td><code>wpm:&gt;120</code></td></tr>
+                <tr><td><code>cpm:</code></td><td>characters per minute</td><td><code>cpm:&gt;600</code></td></tr>
+                <tr><td><code>length:</code></td><td>seconds, or <code>mm:ss</code></td><td><code>length:&gt;1:30</code></td></tr>
+                <tr><td><code>bpm:</code></td><td>beats per minute</td><td><code>bpm:120-140</code></td></tr>
+                <tr><td><code>date:</code></td><td>submitted (year / month / day)</td><td><code>date:&gt;2026-01-01</code></td></tr>
+            </tbody>
+        </table>
+    </div>
+</details>
 
 <div class="listing-filters">
     <div class="filter-row">
