@@ -26,7 +26,7 @@ public class LandingPageTest
             Assert.That(html, Does.Contain("scores</span>"));
             Assert.That(html, Does.Contain("maps available"));
 
-            // Signed-out CTA. (The dedicated /download page is gone — the hero only invites sign-up.)
+            // Signed-out CTA: no game build configured in the fixture, so the hero invites sign-up.
             Assert.That(html, Does.Contain("href=\"/register\""));
 
             // Newest strip: the newest public set leads, rendered via the card partial.
