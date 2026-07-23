@@ -8,7 +8,7 @@ namespace Typebeat.Web.Packages;
 /// Clips a 30-second 128 kbps mp3 preview from a set's audio track by shelling out to ffmpeg
 /// (present in the prod runtime image; NOT a package dependency). Start point is the map's
 /// PreviewTime, falling back to 40% into the track (duration probed via ffprobe, then via
-/// ffmpeg -i output). A missing/broken ffmpeg degrades to "no preview" — never an upload failure.
+/// ffmpeg -i output). A missing/broken ffmpeg degrades to "no preview", never an upload failure.
 /// </summary>
 public sealed class PreviewGenerator
 {
@@ -120,7 +120,7 @@ public sealed class PreviewGenerator
         }
         catch (System.ComponentModel.Win32Exception)
         {
-            // No ffprobe — fall through to the ffmpeg -i parse.
+            // No ffprobe; fall through to the ffmpeg -i parse.
         }
 
         // `ffmpeg -i x` exits non-zero (no output requested) but prints "Duration: hh:mm:ss.cc".

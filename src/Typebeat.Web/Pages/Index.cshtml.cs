@@ -16,7 +16,7 @@ public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) :
     public long ScoresTotal { get; private set; }
     public long Maps { get; private set; }
 
-    /// <summary>True when a game build is configured and present — gates the hero download button.</summary>
+    /// <summary>True when a game build is configured and present; gates the hero download button.</summary>
     public bool GameDownloadAvailable { get; private set; }
 
     /// <summary>Set after an account-deletion redirect (?deleted=1) to show a farewell note.</summary>

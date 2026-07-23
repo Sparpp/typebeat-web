@@ -5,7 +5,7 @@ using Typebeat.Web.Scoring;
 namespace Typebeat.Web.Pages.Rankings;
 
 /// <summary>
-/// Global leaderboard. No pp yet — the metric is a naive cumulative score: each player's best
+/// Global leaderboard. No pp yet; the metric is a naive cumulative score: each player's best
 /// score per beatmap (the same best-per-user fold the per-map leaderboards use), summed across
 /// RANKED maps only. Pending/hidden/removed sets contribute nothing, unranked/failed scores
 /// never count, and restricted or deleted accounts are delisted like everywhere else.
@@ -30,7 +30,7 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
         // Same cumulative-ranked-score metric as the profile stats card and the client user
-        // endpoint (GlobalRanking) — one definition so every ranking surface agrees.
+        // endpoint (GlobalRanking); one definition so every ranking surface agrees.
         Rows = (await conn.QueryAsync<Row>(
                 $"""
                  SELECT u.id AS UserId,

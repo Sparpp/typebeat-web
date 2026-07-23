@@ -33,7 +33,7 @@ public sealed class LyricLine
 /// stats need (unit/line times; the judge-granularity and seal-grace machinery only affect
 /// gameplay windows, never cell target times, so it is deliberately not ported):
 ///
-///  - one compact JSON object per [Lyrics] line: a header object (no "text" key —
+///  - one compact JSON object per [Lyrics] line: a header object (no "text" key:
 ///    version/song_end_ms/beatdrop_ms/granularity) followed by one line object each, exactly as
 ///    written by LyricOsuFormat.GenerateOsu (typebeat-osu
 ///    typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricOsuFormat.cs:112-133) and read back by

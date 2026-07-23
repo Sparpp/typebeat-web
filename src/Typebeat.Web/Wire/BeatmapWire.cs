@@ -7,12 +7,12 @@ namespace Typebeat.Web.Wire;
 /// typebeat.Game.Online.API.Requests.Responses.APIBeatmap and APIBeatmapSet.
 ///
 /// The client deserializes these with Newtonsoft default settings (OsuJsonWebRequest), so
-/// only the [JsonProperty] names are load-bearing — APIBeatmap/APIBeatmapSet are plain
+/// only the [JsonProperty] names are load-bearing; APIBeatmap/APIBeatmapSet are plain
 /// classes (no MemberSerialization.OptIn, no property-order sensitivity). We still declare a
 /// [JsonProperty] on every member so nothing leaks under an implicit name.
 ///
 /// Status is emitted as the string "ranked": BeatmapOnlineStatus carries no [EnumMember]
-/// values, so Newtonsoft matches enum members by NAME (case-insensitively) — "ranked" binds to
+/// values, so Newtonsoft matches enum members by NAME (case-insensitively); "ranked" binds to
 /// BeatmapOnlineStatus.Ranked (=1). A ranked-family status is REQUIRED for anything to work:
 ///  - MatchesOnlineVersion must hold (checksum echoed back == local MD5) before the client
 ///    stamps beatmapInfo.Status = res.Status (BeatmapUpdaterMetadataLookup), and
@@ -57,7 +57,7 @@ public sealed class APIBeatmapResponse
     [JsonProperty("last_updated")]
     public required DateTimeOffset LastUpdated { get; init; }
 
-    // playcount (no underscore — osu-web's historical name, mirrored by APIBeatmap.PlayCount).
+    // playcount (no underscore; osu-web's historical name, mirrored by APIBeatmap.PlayCount).
     [JsonProperty("playcount")]
     public int PlayCount { get; init; }
 
@@ -192,7 +192,7 @@ public sealed class BeatmapCovers
 
     /// <summary>
     /// Builds the covers block for a set. <paramref name="coverKey"/> is the PREFIX stored in
-    /// <c>beatmapsets.cover_key</c> (<c>covers/{setId}/{versionNo}</c>) — each variant appends
+    /// <c>beatmapsets.cover_key</c> (<c>covers/{setId}/{versionNo}</c>); each variant appends
     /// <c>/{name}.jpg</c>, matching the objects CoverGenerator wrote and the MediaEndpoints
     /// route that serves them. Null (no cover generated) falls back to the placeholder.
     /// </summary>

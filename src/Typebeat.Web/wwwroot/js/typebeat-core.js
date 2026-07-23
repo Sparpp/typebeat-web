@@ -1,5 +1,5 @@
 /*
- * typebeat-core.js — a faithful, dependency-free reimplementation of the
+ * typebeat-core.js: a faithful, dependency-free reimplementation of the
  * type!beat typing gameplay for the browser.
  *
  * This mirrors the desktop client's headless gameplay core
@@ -10,14 +10,14 @@
  * same leaderboards. See the recon spec in the repo history for the exact rules
  * each block reproduces.
  *
- * Vanilla JS on purpose — no framework, no bundler (matches the rest of the site).
+ * Vanilla JS on purpose, no framework, no bundler (matches the rest of the site).
  * Exposes window.TypeBeatCore.
  */
 (function (global) {
     'use strict';
 
     // ---------------------------------------------------------------------------
-    // Typeability — text normalization (mirrors Typeability in LyricBeatmap.cs).
+    // Typeability: text normalization (mirrors Typeability in LyricBeatmap.cs).
     // ---------------------------------------------------------------------------
     function isTypeable(ch) {
         return ch === ' ' ||
@@ -30,7 +30,7 @@
         return ch.toLowerCase();
     }
 
-    // Remove bracketed backing-vocal spans — "(...)" and "[...]" — with a shared depth
+    // Remove bracketed backing-vocal spans, "(...)" and "[...]", with a shared depth
     // counter across both bracket types; an UNCLOSED bracket strips to end-of-string
     // (mirrors Typeability.StripBackingVocals; regexes diverged on unclosed/nested spans).
     function stripBackingVocals(raw) {
@@ -100,7 +100,7 @@
         }
 
         // The [Lyrics] header is the first object WITHOUT a "text" key. No default
-        // granularity — a header-less file derives it from whether lines carry words[].
+        // granularity; a header-less file derives it from whether lines carry words[].
         let header = { version: 2 };
         let lineObjs = lyricObjs;
         if (lyricObjs.length && !('text' in lyricObjs[0])) {
@@ -268,7 +268,7 @@
                     const we = isFinite(+w.end_ms) ? +w.end_ms : ws;
                     const score = isFinite(+w.score) ? +w.score : 1;
                     // Optional syllable subdivisions: each syllable's start_ms strictly inside the
-                    // (raw) word becomes an internal boundary — the first syllable starts at the
+                    // (raw) word becomes an internal boundary; the first syllable starts at the
                     // word start so it contributes none (mirrors TimingJsonLoader.parseLine).
                     const syllables = [];
                     if (Array.isArray(w.syllables)) {
@@ -399,7 +399,7 @@
     }
 
     // ---------------------------------------------------------------------------
-    // TypingEngine — the frame-driven gameplay/judgement core.
+    // TypingEngine: the frame-driven gameplay/judgement core.
     // ---------------------------------------------------------------------------
     const COMBO_CAP = 50;
     const WRONG_KEY_FAIL_STREAK = 13;
@@ -408,8 +408,8 @@
         constructor(beatmap) {
             this.beatmap = beatmap;
             this.lines = beatmap.lines;
-            // Cells carry play state on the (shared) beatmap, so a fresh engine — e.g.
-            // "play again" reusing the same beatmap — must clear it first.
+            // Cells carry play state on the (shared) beatmap, so a fresh engine, e.g.
+            // "play again" reusing the same beatmap, must clear it first.
             for (const line of this.lines) {
                 for (const c of line.cells) {
                     c.state = 'untyped';
@@ -475,7 +475,7 @@
             let missed = 0;
             for (const c of line.cells) {
                 // A cell that was ever typed correctly keeps its first result (firstCorrectDelta
-                // stands, even if later backspaced) — only never-correct cells seal as Miss.
+                // stands, even if later backspaced); only never-correct cells seal as Miss.
                 if (c.typeable && c.state === 'untyped' && c.firstCorrectDelta === null) {
                     c.state = 'missed';
                     c.judgeType = 'Miss';
@@ -540,7 +540,7 @@
             const matched = fold(c) === fold(cell.expected);
 
             if (!matched) {
-                // Wrong key — REJECTED. Costs a keypress + combo + streak; caret unmoved.
+                // Wrong key, REJECTED. Costs a keypress + combo + streak; caret unmoved.
                 this.totalKeypresses++;
                 this.errorCount++;
                 this.consecutiveWrongKeys++;
@@ -579,7 +579,7 @@
                     this.combo++;
                     if (this.combo > this.maxCombo) this.maxCombo = this.combo;
                 } else {
-                    // right char, wrong time — Premature/Lagging: no points, combo breaks.
+                    // right char, wrong time: Premature/Lagging, no points, combo breaks.
                     this.combo = 0;
                     if (this.onComboBroken) this.onComboBroken();
                 }
@@ -622,7 +622,7 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Scoring — standardised total_score + statistics dicts + completion rank.
+    // Scoring: standardised total_score + statistics dicts + completion rank.
     // Reproduces osu ScoreProcessor.ComputeTotalScore and the completion cutoffs.
     // ---------------------------------------------------------------------------
     const COMPLETION_CUTOFFS = [[1.0, 'X'], [0.95, 'S'], [0.90, 'A'], [0.80, 'B'], [0.70, 'C']];
@@ -636,7 +636,7 @@
         const beatmap = engine.beatmap;
         const total = beatmap.totalCells;
 
-        // Per-cell osu result, in order. The FIRST correct judgement stands for a cell — even
+        // Per-cell osu result, in order. The FIRST correct judgement stands for a cell, even
         // if later backspaced (firstCorrectDelta), matching the drawable's "first result stands".
         // A rejected wrong key never produced a cell result, so it never appears here.
         const results = [];
@@ -666,7 +666,7 @@
         const acc = total > 0 ? (300 * great + 100 * ok + 50 * meh) / (300 * total) : 1;
 
         // Combo portions + max combo from the ordered result stream. Combo breaks only on a
-        // Miss cell (never on a rejected wrong key — those aren't in `results`); unreached (null)
+        // Miss cell (never on a rejected wrong key; those aren't in `results`); unreached (null)
         // cells contribute nothing. maxComboPortion is the whole-map (all-Great) maximum.
         let combo = 0, comboPortion = 0, maxComboCounter = 0, maxComboPortion = 0, maxCombo = 0;
         for (const r of results) {
@@ -685,7 +685,7 @@
         const accuracyProgress = total > 0 ? judged / total : 1;
 
         // total_score uses the JUDGED-only accuracy denominator (ScoreProcessor.Accuracy =
-        // currentBaseScore / currentMaximumBaseScore, judged cells only) — equals whole-map
+        // currentBaseScore / currentMaximumBaseScore, judged cells only); equals whole-map
         // accuracy for a completed play, differs only for a failed/incomplete (unranked) run.
         const accJudged = judged > 0 ? (300 * great + 100 * ok + 50 * meh) / (300 * judged) : 1;
         const totalWithoutMods = Math.round(500000 * accJudged * comboProgress + 500000 * Math.pow(accJudged, 5) * accuracyProgress);

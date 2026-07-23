@@ -4,7 +4,7 @@ namespace Typebeat.Web.Email;
 
 /// <summary>
 /// Builds the one transactional message this milestone sends: a 6-digit code, plus a plain and a
-/// minimal-HTML body. Deliberately plain and un-osu — no branding trade dress, just the code, the
+/// minimal-HTML body. Deliberately plain and un-osu, no branding trade dress, just the code, the
 /// expiry, and an "ignore this if it wasn't you" line.
 /// </summary>
 public static class VerificationEmail

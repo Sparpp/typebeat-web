@@ -8,14 +8,14 @@ namespace Typebeat.Web.Packages;
 
 /// <summary>
 /// Parses an uploaded beatmap package (a plain zip: one .osu per difficulty + audio/background/
-/// video/skin files, no manifest — see the game's exporter, typebeat-osu
+/// video/skin files, no manifest; see the game's exporter, typebeat-osu
 /// typebeat.Game/Database/BeatmapExporter.cs) into content-addressed
 /// <see cref="PackageFileEntry"/>s plus a <see cref="ParsedDifficulty"/> per .osu.
 ///
 /// The .osu dialect is the "type!beat file format v1" written by LyricOsuFormat.GenerateOsu
 /// (typebeat-osu typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricOsuFormat.cs:69-135): classic
 /// .osu sections plus a [Lyrics] section of compact JSON objects. Section parsing here is the
-/// minimal server-side subset — only the keys the database stores.
+/// minimal server-side subset, only the keys the database stores.
 ///
 /// Structural problems (bad zip, undecodable .osu, hostile entry names) throw
 /// <see cref="PackageValidationException"/>; semantic invariants live in <see cref="PackageValidator"/>.
@@ -100,7 +100,7 @@ public static class BeatmapPackageParser
     public static string NormalizeFilename(string archivePath) => archivePath.Replace('\\', '/');
 
     /// <summary>
-    /// Parses a single .osu difficulty outside the zip path — used by <see cref="PaceBackfill"/>
+    /// Parses a single .osu difficulty outside the zip path, used by <see cref="PaceBackfill"/>
     /// to recompute pace/star numbers from stored blobs without reassembling the package.
     /// </summary>
     public static ParsedDifficulty ParseDifficulty(string filename, byte[] content) => parseOsu(filename, content);
@@ -219,7 +219,7 @@ public static class BeatmapPackageParser
 
                 case "TimingPoints":
                 {
-                    // time,beatLength,... — first uninherited (positive beatLength) point wins.
+                    // time,beatLength,... first uninherited (positive beatLength) point wins.
                     // (LyricOsuFormat writes exactly one: "0,500,4,2,0,100,1,0" -> 120 BPM.)
                     if (bpm != null)
                         break;

@@ -8,7 +8,7 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 
 /// <summary>
 /// Beatmapset page (/beatmapsets/{id}): cover header with scrim, stats box, plain-text
-/// description, tags, and the global leaderboard (top 50 best-per-user, podium for #1) —
+/// description, tags, and the global leaderboard (top 50 best-per-user, podium for #1),
 /// rendered only on 'ranked' sets; anything else shows a "unlocks when ranked" note instead.
 /// POST handlers: Favourite (toggle + denormalized counter bump), Report (reports table),
 /// and the reviewer-only Rank/Unrank pair (pending ⇄ ranked, nothing else).
@@ -26,7 +26,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
     /// <summary>Every difficulty in the set, hardest first (drives the difficulty selector).</summary>
     public IReadOnlyList<DiffStats> Diffs { get; private set; } = [];
 
-    /// <summary>The selected difficulty (?diff=, else the hardest) — its stats + leaderboard show.</summary>
+    /// <summary>The selected difficulty (?diff=, else the hardest); its stats + leaderboard show.</summary>
     public DiffStats? Diff { get; private set; }
     public IReadOnlyList<ScoreRow> Scores { get; private set; } = [];
 
@@ -112,11 +112,11 @@ public sealed class SetModel(Db db) : TypebeatPageModel
 
         // Global leaderboard: best ranked+passed score per user across the set's difficulties
         // (same DISTINCT ON shape as the game-facing endpoint in ScoreEndpoints). Only ranked
-        // sets have one — pending plays are stored unranked, and the page renders an "unlocks
+        // sets have one; pending plays are stored unranked, and the page renders an "unlocks
         // when ranked" note instead, so don't even run the query for non-ranked sets.
         // Per-difficulty leaderboard: best passed score per user on the SELECTED beatmap (each
         // difficulty has its own board). @wantRanked picks the ranked board (default) or the
-        // Unranked board — passed plays stored ranked=false because they used an unranked mod or a
+        // Unranked board: passed plays stored ranked=false because they used an unranked mod or a
         // non-default rate. Only ranked sets have boards; pending/unranked sets show a note instead.
         bool wantRanked = Board == "ranked";
         if (Set.Status == "ranked" && Diff is not null)
@@ -151,7 +151,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
 
         ViewData["Title"] = $"{Set.Artist} - {Set.Title}";
         ViewData["MetaDescription"] =
-            $"{Set.Artist} — {Set.Title}, mapped by {Set.Creator}. Type it in type!beat.";
+            $"{Set.Artist}: {Set.Title}, mapped by {Set.Creator}. Type it in type!beat.";
         if (Set.CoverKey is not null)
             ViewData["OgImage"] = $"{Request.Scheme}://{Request.Host}/{Set.CoverKey}/cover.jpg";
 
@@ -248,7 +248,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
     /// <summary>
     /// The only two review transitions are pending → ranked and ranked → pending; hidden and
     /// removed sets are untouchable from here (takedowns stay an admin-SQL lever). 404 for
-    /// non-reviewers — the same nothing-to-see answer the buttons' absence gives them (the
+    /// non-reviewers; the same nothing-to-see answer the buttons' absence gives them (the
     /// site's custom cookie auth has no ASP.NET authentication scheme for Forbid()).
     /// </summary>
     private async Task<IActionResult> transitionAsync(long id, string from, string to)
@@ -316,7 +316,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
 
     /// <summary>
     /// One leaderboard row. Judgement counts come from the statistics jsonb (wire keys
-    /// great/ok/meh/miss) but are DISPLAYED with the game engine's own judgement names —
+    /// great/ok/meh/miss) but are DISPLAYED with the game engine's own judgement names:
     /// Perfect/Good/Ok/Miss per the mapping in the fork's TypeBeatJudgements.cs
     /// ("Perfect->Great, Good->Ok, Ok->Meh, ...->Miss"). Completion (% of the map typed) is
     /// the metric the grade is awarded on; accuracy remains the timing-quality metric.

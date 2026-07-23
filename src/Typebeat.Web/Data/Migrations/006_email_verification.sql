@@ -5,10 +5,10 @@
 -- is single-use (used_at) and time-boxed (expires_at). The new `attempts` column is the
 -- per-code wrong-guess counter that lets VerifyAsync burn a code after too many misses
 -- (brute-force ceiling: 6 digits = 1e6 space, <=5 guesses per code, one active code per
--- (user,purpose), 60s resend cooldown + hourly cap — see EmailCodeService).
+-- (user,purpose), 60s resend cooldown + hourly cap; see EmailCodeService).
 --
 -- `purpose` gains a third value 'login' alongside the original 'verify' | 'reset'. The column
--- is free text (no CHECK constraint), so no constraint change is needed — only the intent comment.
+-- is free text (no CHECK constraint), so no constraint change is needed, only the intent comment.
 
 COMMENT ON COLUMN email_tokens.purpose IS 'verify | login | reset';
 

@@ -10,7 +10,7 @@ namespace Typebeat.Web.Tests.Website;
 /// the website test host in place of the real sender (see <see cref="WebsiteFixture"/>).
 ///
 /// <see cref="ThrowOnSend"/> flips it into a failing sender for the regression that POST /users
-/// must still succeed when email delivery throws — tests run serially, so a toggle on the shared
+/// must still succeed when email delivery throws; tests run serially, so a toggle on the shared
 /// instance (set/reset in a finally) is safe.
 /// </summary>
 public sealed class CapturingEmailSender : IEmailSender

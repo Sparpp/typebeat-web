@@ -47,7 +47,7 @@ public class WebsiteFixture
     public static HttpClient Client { get; private set; } = null!;
 
     /// <summary>
-    /// The capturing email sender the host uses in place of the real one — tests read the emitted
+    /// The capturing email sender the host uses in place of the real one; tests read the emitted
     /// verification code from it.
     /// </summary>
     public static CapturingEmailSender Emails { get; } = new();
@@ -203,7 +203,7 @@ public class WebsiteFixture
             await conn.ExecuteAsync($"CREATE DATABASE {DatabaseName}");
         }
 
-        // citext must exist before the server's pooled data source first connects — same type
+        // citext must exist before the server's pooled data source first connects, same type
         // catalog snapshot pitfall documented in the WireCompat ServerFixture.
         await using (var conn = new NpgsqlConnection(ConnectionString))
         {

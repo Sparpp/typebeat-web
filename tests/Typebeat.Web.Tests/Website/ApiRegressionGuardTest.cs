@@ -96,7 +96,7 @@ public class ApiRegressionGuardTest
     public async Task RegistrationPost_WrongUserAgent_StillExact403Envelope()
     {
         // POST /users is the game client's registration wire route; only GET/HEAD /users/* is
-        // website surface. The UA gate fires before anything else — exact envelope pinned.
+        // website surface. The UA gate fires before anything else; exact envelope pinned.
         using var response = await WebsiteFixture.Client.PostAsync("/users", new FormUrlEncodedContent([]));
         string body = await response.Content.ReadAsStringAsync();
 

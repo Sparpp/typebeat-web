@@ -5,7 +5,7 @@ using Typebeat.Web.Wire;
 namespace Typebeat.Web.Tests;
 
 /// <summary>
-/// Pure wire-shape tests for the /oauth/token DTOs — no database. Guards the exact JSON the
+/// Pure wire-shape tests for the /oauth/token DTOs; no database. Guards the exact JSON the
 /// client (typebeat.Game.Online.API.OAuthToken / OAuth.OAuthError) deserializes: property
 /// names and declaration order. Serialized through <see cref="WireJson.Settings"/>, i.e. the
 /// same Newtonsoft settings the live endpoint uses.
@@ -35,7 +35,7 @@ public class OAuthShapeTest
     public void ErrorBody_PutsHumanTextInHint_SoClientSurfacesIt()
     {
         // OAuth.OAuthError.UserDisplayableError = !empty(Hint) ? Hint : Error, so the readable
-        // message must live in "hint" — assert it is populated and distinct from the identifier.
+        // message must live in "hint"; assert it is populated and distinct from the identifier.
         var body = new OAuthEndpoints.OAuthErrorBody
         {
             Error = "invalid_grant",

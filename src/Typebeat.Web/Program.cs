@@ -34,7 +34,7 @@ string connectionString = Db.ResolveConnectionString(builder.Configuration);
 // yet at that moment, its OID is never learned and every citext read (usernames, emails) throws
 // for the life of the process. That is exactly what happens on a first boot against an empty DB,
 // where the migration creates citext only after the pool has already connected. citext is a
-// trusted extension (PG13+), so the app's own DB-owner role can create it — no superuser needed.
+// trusted extension (PG13+), so the app's own DB-owner role can create it, no superuser needed.
 await Db.EnsureExtensionsAsync(connectionString);
 
 builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(connectionString));
@@ -71,7 +71,7 @@ if (builder.Configuration["TYPEBEAT_FILE_ROOT"] is { Length: > 0 } fileRoot)
 }
 
 // Upload/package pipeline (M3). File root: TYPEBEAT_FILE_ROOT (prod: the /data volume; dev
-// default ./data). Everything under it is content-addressed or set-scoped — see StoreKeys.
+// default ./data). Everything under it is content-addressed or set-scoped; see StoreKeys.
 builder.Services.AddSingleton<IFileStore>(_ => LocalFileStore.FromConfiguration(builder.Configuration));
 builder.Services.AddSingleton<CoverGenerator>();
 builder.Services.AddSingleton<PreviewGenerator>();
@@ -80,7 +80,7 @@ builder.Services.AddSingleton<PackageIngest>();
 // Server-side lyric alignment (file-based job exchange with the aligner worker container).
 builder.Services.AddSingleton<AlignJobStore>();
 
-// The website (M3): server-rendered Razor Pages under Pages/, HTML only — every APIv2/BSS JSON
+// The website (M3): server-rendered Razor Pages under Pages/, HTML only; every APIv2/BSS JSON
 // response keeps going through WireJson (Newtonsoft), untouched by this. AddRazorPages also
 // registers antiforgery, which the page pipeline validates on every POST handler (400 on a
 // missing/invalid token); the bearer API endpoints below are unaffected (no cookies, no forms
@@ -88,7 +88,7 @@ builder.Services.AddSingleton<AlignJobStore>();
 builder.Services.AddRazorPages();
 
 // Sets the header the in-browser web player (PlayEndpoints) sends its antiforgery token in;
-// AddRazorPages already registered the antiforgery services. Additive — the page pipeline still
+// AddRazorPages already registered the antiforgery services. Additive: the page pipeline still
 // validates form tokens as before. The /play mutating endpoints validate explicitly via IAntiforgery.
 builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
 
@@ -104,13 +104,13 @@ await PaceBackfill.RunAsync(
     app.Logger);
 
 // Which email path is live (helps confirm prod is actually sending, not just logging codes).
-// The log fallback means verification/login codes are NOT delivered — the site still says
-// "sent" — so make it a startup WARNING behind the proxy (i.e. a real deployment), where that
+// The log fallback means verification/login codes are NOT delivered; the site still says
+// "sent", so make it a startup WARNING behind the proxy (i.e. a real deployment), where that
 // is almost certainly a missing TYPEBEAT_RESEND_API_KEY rather than an intended dev default.
 var emailSender = app.Services.GetRequiredService<IEmailSender>();
 
 if (emailSender is LogEmailSender && app.Configuration.GetValue<bool>("TYPEBEAT_BEHIND_PROXY"))
-    app.Logger.LogWarning("Email sender: LogEmailSender — codes are only written to this log, NO emails are delivered. Set TYPEBEAT_RESEND_API_KEY to enable real delivery.");
+    app.Logger.LogWarning("Email sender: LogEmailSender, codes are only written to this log, NO emails are delivered. Set TYPEBEAT_RESEND_API_KEY to enable real delivery.");
 else
     app.Logger.LogInformation("Email sender: {Sender}", emailSender.GetType().Name);
 
@@ -119,7 +119,7 @@ else
 // Connection.RemoteIpAddress is the real client IP (the rate limiters key on it). Only enabled
 // when TYPEBEAT_BEHIND_PROXY is set, so local dev keeps the direct connection info. KnownNetworks/
 // Proxies are cleared because the proxy is a trusted same-host container on the Docker network.
-// NOTE: flags are read with tolerant parsing (Flags.IsEnabled), never GetValue<bool> — compose
+// NOTE: flags are read with tolerant parsing (Flags.IsEnabled), never GetValue<bool>; compose
 // passes unset flags as EMPTY STRINGS, which GetValue<bool> throws on (it crashed prod once).
 if (Flags.IsEnabled(builder.Configuration, "TYPEBEAT_BEHIND_PROXY"))
 {
@@ -133,9 +133,9 @@ if (Flags.IsEnabled(builder.Configuration, "TYPEBEAT_BEHIND_PROXY"))
 }
 
 // Styled error/status pages for the WEBSITE's navigable surface only: GET/HEAD requests
-// outside every wire prefix. Scoped with UseWhen so the wire surfaces — /api/*, /bss/*,
+// outside every wire prefix. Scoped with UseWhen so the wire surfaces, /api/*, /bss/*,
 // /oauth/*, /ws, /health, /menu-content.json, /debug and the game-client registration
-// POST /users (all POSTs are excluded by the method gate) — keep their exact envelopes,
+// POST /users (all POSTs are excluded by the method gate), keep their exact envelopes,
 // status codes and empty bodies (the client string-matches some of them;
 // ApiRegressionGuardTest pins this). Website POST flows (login/favourite/report forms) also
 // keep their raw statuses: re-executing a POST against the GET-only error page would REPLACE

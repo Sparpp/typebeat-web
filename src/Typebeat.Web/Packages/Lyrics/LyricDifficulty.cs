@@ -6,7 +6,7 @@ namespace Typebeat.Web.Packages.Lyrics;
 /// that decays with rest, and a duration-weighted soft maximum (log-sum-exp) over the strains is
 /// remapped to stars. The soft max means difficulty spikes dominate and a subset can never rate
 /// above its superset, while summing over every word (rather than one peak bucket) means a
-/// sustained hard stretch actually counts — the thing that separates otherwise-equal-peak diffs.
+/// sustained hard stretch actually counts: the thing that separates otherwise-equal-peak diffs.
 ///
 /// Kept byte-for-byte in step with the game's port
 /// (typebeat-osu: typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty). Website computes the
@@ -21,7 +21,7 @@ public static class LyricDifficulty
     private const double variation_weight = 0.50; // how much rhythm cv scales a line
     private const double variation_cap = 1.5; // cv is clamped here
     private const double strain_decay_per_s = 0.05; // strain carried per second of rest
-    private const double spike_focus = 14; // w — how sharply the hardest strains dominate
+    private const double spike_focus = 14; // w: how sharply the hardest strains dominate
     private const double reference_duration_s = 0.4; // duration weight unit
     private const double star_scale = 0.277; // maps the aggregate to stars
     private const double star_power = 1.3; // stretches the hard end so top ratings spread
@@ -104,7 +104,7 @@ public static class LyricDifficulty
 
             if (prevLineEndMs is not double prevEnd)
             {
-                pressure = 0; // first line — no run-up
+                pressure = 0; // first line, no run-up
             }
             else
             {
@@ -139,7 +139,7 @@ public static class LyricDifficulty
             double intervalMs = i + 1 < words.Count ? words[i + 1].StartMs - w.StartMs : w.SpanMs / rate;
             // Per-character floor: typing a word takes at least ~40 ms/char of real time, so its
             // window can't drop below chars × that. A flat floor treated a 1-char and a 7-char word
-            // alike — over-capping fast multi-char words (exactly what separates a dense "Insane"
+            // alike, over-capping fast multi-char words (exactly what separates a dense "Insane"
             // ending from a "Hard") while under-guarding crammed long words.
             double durationS = Math.Max(intervalMs, w.Chars * perCharFloorMs) / 1000.0;
             durations[i] = durationS;

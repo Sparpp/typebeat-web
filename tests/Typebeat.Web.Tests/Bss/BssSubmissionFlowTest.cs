@@ -11,7 +11,7 @@ namespace Typebeat.Web.Tests.Bss;
 /// <summary>
 /// The full BSS happy path against the real pipeline, in the client wizard's exact order
 /// (recon result.bss.endpoint_sequence): create set → full package PUT → re-PUT returning the
-/// manifest → identical re-upload (no version) → PATCH delta (new version, blobs reused) —
+/// manifest → identical re-upload (no version) → PATCH delta (new version, blobs reused),
 /// then the surrounding surface: the APIv2 beatmapset GET, the website download endpoint, the
 /// real favourites read, and the media/cover routes.
 /// </summary>
@@ -281,7 +281,7 @@ public class BssSubmissionFlowTest
         Assert.That((string)set["covers"]!["card@2x"]!, Does.EndWith($"/covers/{setId}/1/card@2x.jpg"));
 
         // Previews degrade gracefully: with ffmpeg available the WAV clip generates and the URL
-        // is real; without it the field stays an empty string (never null — client contract).
+        // is real; without it the field stays an empty string (never null; client contract).
         string previewUrl = (string)set["preview_url"]!;
         if (PreviewGenerator.IsFfmpegAvailable())
             Assert.That(previewUrl, Does.EndWith($"/previews/{setId}.mp3"));
@@ -357,7 +357,7 @@ public class BssSubmissionFlowTest
         Assert.That(await DownloadCountAsync(), Is.EqualTo(countBefore),
             "a non-zero-start range is a continuation of an already-counted download");
 
-        // The segment covering the start of the file is the one that counts — exactly once,
+        // The segment covering the start of the file is the one that counts, exactly once,
         // so an 8-way segmented download totals one, not eight.
         using (var first = new HttpRequestMessage(HttpMethod.Get, $"/beatmapsets/{setId}/download"))
         {
@@ -435,7 +435,7 @@ public class BssSubmissionFlowTest
     public async Task PreviewRoute_ServesTheClip_WithRangeSupport()
     {
         if (!PreviewGenerator.IsFfmpegAvailable())
-            Assert.Ignore("ffmpeg not on PATH — no preview was generated for this set.");
+            Assert.Ignore("ffmpeg not on PATH, no preview was generated for this set.");
 
         using (var response = await BssFixture.Client.GetAsync($"/previews/{setId}.mp3"))
         {

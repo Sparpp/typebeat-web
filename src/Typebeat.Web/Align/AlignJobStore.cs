@@ -7,7 +7,7 @@ namespace Typebeat.Web.Align;
 /// File-based job exchange between the web app and the aligner worker container, rooted at
 /// {TYPEBEAT_FILE_ROOT}/align-jobs (the shared /data volume in prod). The app owns job creation
 /// and status reads; the worker (deploy/aligner/worker.py) claims the oldest unprocessed job,
-/// streams progress, and terminates it with timing.json or error.json. No database involvement —
+/// streams progress, and terminates it with timing.json or error.json. No database involvement:
 /// jobs are transient scratch (the worker garbage-collects dirs older than a few hours), and the
 /// protocol is plain files so the worker needs no credentials:
 ///
@@ -43,7 +43,7 @@ public sealed class AlignJobStore(IConfiguration config)
 
     /// <summary>
     /// True when every non-empty content line starts with a [mm:ss.xx] stamp (metadata tags
-    /// neutral) — the aligner's high-accuracy "ref" mode. Mirrors the game's
+    /// neutral), the aligner's high-accuracy "ref" mode. Mirrors the game's
     /// LyricMapImporter.HasLineStamps so the worker runs the same mode the client would locally.
     /// </summary>
     public static bool HasLineStamps(string lyricsContent)
@@ -71,7 +71,7 @@ public sealed class AlignJobStore(IConfiguration config)
                     if (colon > 0 && int.TryParse(stamp[..colon], out _) && double.TryParse(stamp[(colon + 1)..], out _))
                         anyStamp = true;
 
-                    // Timestamped or metadata tag line — either way not a bare content line.
+                    // Timestamped or metadata tag line; either way not a bare content line.
                     continue;
                 }
             }
@@ -133,7 +133,7 @@ public sealed class AlignJobStore(IConfiguration config)
             created_at = DateTimeOffset.UtcNow,
         };
 
-        // job.json LAST — its presence is the worker's "inputs are complete" signal.
+        // job.json LAST: its presence is the worker's "inputs are complete" signal.
         await File.WriteAllTextAsync(Path.Combine(dir, "job.json"), JsonSerializer.Serialize(manifest), ct);
 
         return id;
@@ -178,7 +178,7 @@ public sealed class AlignJobStore(IConfiguration config)
 
         // Cancelled by the owner: report a terminal failure so any still-polling client stops. The
         // worker writes its own error.json when it actually halts, but this reflects the request the
-        // instant it lands (and frees the active slot — see FindActiveJob).
+        // instant it lands (and frees the active slot, see FindActiveJob).
         if (File.Exists(Path.Combine(dir, "cancel")))
             return new JobStatus(id, "failed", null, null, "alignment cancelled");
 
@@ -195,7 +195,7 @@ public sealed class AlignJobStore(IConfiguration config)
     /// <summary>
     /// Requests cancellation of a job (owner-only): drops a <c>cancel</c> marker the worker honours
     /// by killing its aligner subprocess, and which immediately frees the owner's one-active-job slot
-    /// and makes the job report as failed. Idempotent — an already-finished job reports success with
+    /// and makes the job report as failed. Idempotent: an already-finished job reports success with
     /// nothing to do; returns false only when the job doesn't exist or isn't the caller's.
     /// </summary>
     public async Task<bool> RequestCancelAsync(string id, long userId, CancellationToken ct)
@@ -210,7 +210,7 @@ public sealed class AlignJobStore(IConfiguration config)
         if (manifest == null || manifest.Value.UserId != userId)
             return false;
 
-        // Raced the worker to completion — nothing to stop, but report success (idempotent).
+        // Raced the worker to completion; nothing to stop, but report success (idempotent).
         if (File.Exists(Path.Combine(dir, "timing.json")) || File.Exists(Path.Combine(dir, "error.json")))
             return true;
 

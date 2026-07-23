@@ -8,14 +8,14 @@ using Typebeat.Web.Wire;
 namespace Typebeat.Web.Endpoints;
 
 /// <summary>
-/// POST /oauth/token — the only token endpoint the client hits. Two grant types, both
+/// POST /oauth/token: the only token endpoint the client hits. Two grant types, both
 /// form-encoded (see typebeat.Game.Online.API.OAuth.AccessTokenRequest.PrePerform):
 ///  - grant_type=password        → username, password, client_id, client_secret, scope
 ///  - grant_type=refresh_token   → refresh_token, client_id, client_secret, scope
 ///
 /// The client (OAuth.AuthenticateWithLogin) decodes any error body as OAuthError
 /// {error, hint, message} and surfaces <c>hint ?? error</c> to the user, so we put the
-/// human-readable text in <c>hint</c>. Failed credentials are 400 invalid_grant — NEVER 401:
+/// human-readable text in <c>hint</c>. Failed credentials are 400 invalid_grant, NEVER 401:
 /// a 401 anywhere in the connect flow is the client's "session no longer valid → Logout"
 /// signal (APIAccess.handleWebException), which we must not trip on a mere wrong password.
 /// </summary>
@@ -26,7 +26,7 @@ public static class OAuthEndpoints
     private const string client_id = "1";
     private const string client_secret = "typebeat-official-client";
 
-    // Per-IP fixed-window limiter on the password grant. In-memory backstop only — Cloudflare
+    // Per-IP fixed-window limiter on the password grant. In-memory backstop only; Cloudflare
     // WAF is the real production layer. static so it survives across requests (endpoints are
     // otherwise stateless).
     private const int rate_limit_max = 10;
@@ -70,7 +70,7 @@ public static class OAuthEndpoints
         string password = form["password"].ToString();
 
         // Same 400 invalid_grant for every failure mode below (unknown login, wrong password,
-        // restricted) — never distinguish, so the endpoint leaks nothing about which accounts exist.
+        // restricted); never distinguish, so the endpoint leaks nothing about which accounts exist.
         const string bad_credentials = "The username or password is incorrect.";
 
         if (login.Length == 0 || password.Length == 0)
@@ -116,7 +116,7 @@ public static class OAuthEndpoints
         return tokenResponse(pair);
     }
 
-    /// <summary>The success body consumed by <c>OAuthToken</c> — token_type is ignored by the client but sent for correctness.</summary>
+    /// <summary>The success body consumed by <c>OAuthToken</c>; token_type is ignored by the client but sent for correctness.</summary>
     private static IResult tokenResponse(TokenPair pair)
         => WireJson.Ok(new TokenResponse
         {

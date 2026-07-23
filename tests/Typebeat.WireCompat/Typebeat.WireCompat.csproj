@@ -8,7 +8,7 @@
     a test here instead of production.
 
     A net10 test project referencing a net8 library is supported. The typebeat.Game reference
-    (relative path today; a git submodule in CI) drags in osu.Framework et al. — expected and
+    (relative path today; a git submodule in CI) drags in osu.Framework et al., expected and
     fine for a test project. typebeat.Game is built with its OWN Directory.Build.props (it lives
     in the typebeat-osu tree), so none of its analyzer/nullable settings leak into this project.
   -->

@@ -32,11 +32,11 @@ services:
       TYPEBEAT_ENABLE_DEBUG_THROW: "${TYPEBEAT_ENABLE_DEBUG_THROW:-}"
       # Uploaded beatmap packages/covers/previews (IFileStore root). Lives on the appdata
       # volume so container swaps keep the files; deploy/backup.sh tars it WEEKLY (cron lines
-      # in the script header — they are not installed automatically).
+      # in the script header; they are not installed automatically).
       TYPEBEAT_FILE_ROOT: "/data"
-      # Filename of the game-client release zip under {TYPEBEAT_FILE_ROOT}/downloads/ — the
+      # Filename of the game-client release zip under {TYPEBEAT_FILE_ROOT}/downloads/, the
       # /download page's CTA. Set it in deploy/.env like the other TYPEBEAT_* keys (compose
-      # does NOT forward undeclared host env vars — without this line an .env entry is
+      # does NOT forward undeclared host env vars; without this line an .env entry is
       # silently ignored and the page stays on "coming soon" forever). Empty = coming soon.
       TYPEBEAT_GAME_DOWNLOAD: "${TYPEBEAT_GAME_DOWNLOAD:-}"
       # Linux counterpart (the /download page's Linux card + /download/game-linux). The game
@@ -59,7 +59,7 @@ services:
       - "8080"
 
   # Server-side lyric alignment (torch/demucs, CPU). File-based job exchange with the app over
-  # the shared appdata volume (/data/align-jobs — see AlignJobStore.cs + deploy/aligner/worker.py).
+  # the shared appdata volume (/data/align-jobs, see AlignJobStore.cs + deploy/aligner/worker.py).
   # One job at a time by design; the memory cap keeps a demucs peak from starving postgres/app.
   aligner:
     build:

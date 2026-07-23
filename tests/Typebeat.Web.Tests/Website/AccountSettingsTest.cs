@@ -269,7 +269,7 @@ public class AccountSettingsTest
         long ownerOfSet = await conn.ExecuteScalarAsync<long>("SELECT owner_id FROM beatmapsets WHERE id = @setId", new { setId });
         Assert.That(ownerOfSet, Is.EqualTo(id));
 
-        // Every session/bearer token is gone — the account can't be accessed.
+        // Every session/bearer token is gone; the account can't be accessed.
         int tokens = await conn.ExecuteScalarAsync<int>("SELECT count(*) FROM oauth_tokens WHERE user_id = @id", new { id });
         Assert.That(tokens, Is.Zero);
     }

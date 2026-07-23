@@ -13,22 +13,22 @@ namespace Typebeat.Web.Endpoints;
 /// <summary>
 /// Serves the upload pipeline's stored media and packages:
 ///
-///  - GET /covers/{setId}/{version}/{name}.jpg — the CoverGenerator buckets (whitelisted names).
+///  - GET /covers/{setId}/{version}/{name}.jpg: the CoverGenerator buckets (whitelisted names).
 ///    Version-keyed but NOT status-keyed: the key never changes when a set is taken down, so
-///    covers get the same bounded one-day TTL as previews (never immutable/1y — an edge- or
+///    covers get the same bounded one-day TTL as previews (never immutable/1y; an edge- or
 ///    browser-cached cover of a DMCA'd set must age out within a day, see the takedown runbook
 ///    in deploy/README.md).
-///  - GET /previews/{setId}.mp3 — the 30 s preview clip, range-request capable (audio seeking).
+///  - GET /previews/{setId}.mp3: the 30 s preview clip, range-request capable (audio seeking).
 ///    NOT version-keyed (the key is stable across re-uploads), so cached one day only.
-///  - GET /beatmapsets/{id}/download — streams the latest version's assembled package with a
+///  - GET /beatmapsets/{id}/download: streams the latest version's assembled package with a
 ///    "{artist} - {title}.typb" filename, logs to beatmapset_downloads (user_id NULL when
 ///    anonymous) and bumps the denormalized counter, once per LOGICAL download (ranged
 ///    continuations/resumes are not re-counted). Anonymous allowed (spec iron rule 9).
-///  - GET /img/default-cover.jpg — the self-hosted fallback the beatmap DTOs reference when a
+///  - GET /img/default-cover.jpg: the self-hosted fallback the beatmap DTOs reference when a
 ///    set has no generated covers. Generated in-process (neon violet→magenta gradient, the
 ///    design system's --grad-primary) so no binary asset lives in the repo; cached lazily.
 ///
-/// Hidden/removed sets serve media only to their owner (cookie session or bearer) — covers of
+/// Hidden/removed sets serve media only to their owner (cookie session or bearer); covers of
 /// a DMCA'd set must not remain fetchable, and unpublished shells are nobody's business.
 /// </summary>
 public static class MediaEndpoints
@@ -68,10 +68,10 @@ public static class MediaEndpoints
         app.MapGet("/user-covers/{userId:long}/{version:long}.jpg", (long userId, long version, HttpContext ctx, IFileStore store)
             => ServeImmutableImageAsync(StoreKeys.UserCover(userId, version), ctx, store));
 
-        // The game-client release artifacts (downloads/{TYPEBEAT_GAME_DOWNLOAD} — the Velopack
-        // Windows Setup.exe; downloads/{TYPEBEAT_GAME_DOWNLOAD_LINUX} — the Linux AppImage). The
+        // The game-client release artifacts (downloads/{TYPEBEAT_GAME_DOWNLOAD}, the Velopack
+        // Windows Setup.exe; downloads/{TYPEBEAT_GAME_DOWNLOAD_LINUX}, the Linux AppImage). The
         // /download page links here per-platform. 404 when the platform's build is unconfigured or
-        // unstored. Anonymous — anyone can grab the game.
+        // unstored. Anonymous: anyone can grab the game.
         app.MapGet("/download/game", (HttpContext ctx, IConfiguration config, IFileStore store)
             => DownloadArtifactAsync(ctx, config, store, "TYPEBEAT_GAME_DOWNLOAD"));
         app.MapGet("/download/game-linux", (HttpContext ctx, IConfiguration config, IFileStore store)
@@ -149,7 +149,7 @@ public static class MediaEndpoints
         if (stream == null)
             return Results.NotFound();
 
-        // Attachment disposition + Content-Length + range (seekable FileStream) — a download
+        // Attachment disposition + Content-Length + range (seekable FileStream); a download
         // manager's segmented/resumed fetch works. Content type follows the artifact (installer
         // exe / AppImage today, zip historically).
         string contentType = fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
@@ -214,7 +214,7 @@ public static class MediaEndpoints
 
         // One logical download = one log row + one counter bump. Range processing is enabled
         // below, so a download manager's 8-way segmented fetch or a browser resume issues many
-        // GETs for ONE download — only the request that covers the start of the file counts
+        // GETs for ONE download; only the request that covers the start of the file counts
         // (no Range header, or a range starting at byte 0); continuations and resumes don't.
         if (countsAsDownload(ctx))
         {
@@ -235,7 +235,7 @@ public static class MediaEndpoints
     /// <summary>
     /// True when this request represents the start of a logical download: no Range header, an
     /// unparseable one (ignored by range processing, served as a full 200), or a range starting
-    /// at byte 0. Mid-file continuations (non-zero start) and suffix ranges don't count — they
+    /// at byte 0. Mid-file continuations (non-zero start) and suffix ranges don't count; they
     /// are resumes/segments of a download that was already counted.
     /// </summary>
     private static bool countsAsDownload(HttpContext ctx)
@@ -280,7 +280,7 @@ public static class MediaEndpoints
 
     // ---------------------------------------------------------------------------------------------
     // The default cover: 400x140 (the card bucket), deep-indigo base swept by the design
-    // system's violet→magenta primary gradient — violet leads, magenta only enters at the tail
+    // system's violet→magenta primary gradient, violet leads, magenta only enters at the tail
     // (style-guide rule; never flat pink-on-black). Rendered once, ~4 KB of JPEG.
     // ---------------------------------------------------------------------------------------------
     private static readonly Lazy<byte[]> default_cover = new(() =>

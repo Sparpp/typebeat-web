@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing.Handlers;
 namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
-/// GET /download/game — the game-zip stream that replaced the removed /download page. The main
+/// GET /download/game: the game-zip stream that replaced the removed /download page. The main
 /// fixture host has no TYPEBEAT_GAME_DOWNLOAD ⇒ 404; a second host with the key + a real file in
 /// {TYPEBEAT_FILE_ROOT}/downloads exercises the attachment stream.
 ///

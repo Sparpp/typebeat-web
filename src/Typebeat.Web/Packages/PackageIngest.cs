@@ -8,7 +8,7 @@ using Typebeat.Web.Storage;
 namespace Typebeat.Web.Packages;
 
 /// <summary>
-/// Writes a validated package into the versioned upload store — the server half of the BSS
+/// Writes a validated package into the versioned upload store, the server half of the BSS
 /// versioning contract (osu-server-beatmap-submission's updateBeatmapSetFromArchiveAsync shape,
 /// per recon result.bss.versioning):
 ///
@@ -16,7 +16,7 @@ namespace Typebeat.Web.Packages;
 ///  - <c>set_versions</c> are immutable snapshots; <c>version_files</c> is the per-version
 ///    filename -> hash manifest;
 ///  - if the incoming (sha256, size, filename) set equals the latest version's, NO new version is
-///    cut — only <c>beatmapsets.updated_at</c> is touched;
+///    cut, only <c>beatmapsets.updated_at</c> is touched;
 ///  - otherwise a new version is cut, blobs stored, set metadata + search vector refreshed,
 ///    beatmap rows upserted by their allocated ids, and the full package zip assembled for the
 ///    website download path.
@@ -28,7 +28,7 @@ namespace Typebeat.Web.Packages;
 ///     inside a single transaction. Base-manifest reads (the PATCH rebuild base), the version
 ///     cut, beatmap upserts, the diff-liveness refresh, the hidden→public publish flip and all
 ///     artifact publication (package/covers/preview + their key updates) happen under that one
-///     lock/transaction, so two submissions to the same set can never interleave — the second
+///     lock/transaction, so two submissions to the same set can never interleave; the second
 ///     fully observes the first or fully precedes it.
 ///  2. <b>A set_versions row is only ever committed with its download package already durable
 ///     in the store.</b> The package zip (and covers/preview) are written BEFORE the commit; a
@@ -74,8 +74,8 @@ public sealed class PackageIngest(
 
     /// <summary>
     /// The per-set ingest critical section: one connection + transaction holding
-    /// <c>pg_advisory_xact_lock</c> on the set id, so everything a submission does — reading the
-    /// rebuild-base manifest, cutting the version, publishing artifacts — is serialized against
+    /// <c>pg_advisory_xact_lock</c> on the set id, so everything a submission does, reading the
+    /// rebuild-base manifest, cutting the version, publishing artifacts, is serialized against
     /// every other submission to the same set. Disposal without <see cref="IngestAsync"/> having
     /// committed rolls everything back (transaction disposal aborts it), which also releases the
     /// advisory lock.
@@ -188,7 +188,7 @@ public sealed class PackageIngest(
 
             if (current.SetEquals(incoming))
             {
-                // Identical content: no new version — just record that the set was touched.
+                // Identical content: no new version, just record that the set was touched.
                 await conn.ExecuteAsync(
                     "UPDATE beatmapsets SET updated_at = now() WHERE id = @setId",
                     new { setId });
@@ -361,7 +361,7 @@ public sealed class PackageIngest(
 
         await refreshLivenessAndPublishAsync(conn, package, setId);
 
-        // ---- artifacts: download package, covers, preview — BEFORE the commit, so a version
+        // ---- artifacts: download package, covers, preview, BEFORE the commit, so a version
         //      row is only ever durable with its package object already in the store (a crash
         //      or client abort here rolls the version back; orphaned blobs/objects are harmless
         //      and overwritten by the next attempt at this version number). Cover/preview
@@ -377,7 +377,7 @@ public sealed class PackageIngest(
         await scope.CommitAsync(ct);
 
         // ---- disk hygiene (after the commit; best-effort): assembled per-version packages are
-        //      pure derivatives — reassemblable from the content-addressed blobs at any time —
+        //      pure derivatives (reassemblable from the content-addressed blobs at any time)
         //      and downloads only ever serve the LATEST version, so beyond a one-version safety
         //      margin they are dead weight on the small shared prod disk (~2x amplification of
         //      every upload, never reclaimed). Pruned HERE rather than in the backup cron
@@ -385,7 +385,7 @@ public sealed class PackageIngest(
         //      numbers without scraping the store, runs serialized per set (each ingest deletes
         //      only versions two behind the version it just committed, which no concurrent
         //      request can be serving as "latest"), and bounds growth at creation time instead
-        //      of once a day. Failures only log — a leftover package is a disk-usage nit, never
+        //      of once a day. Failures only log; a leftover package is a disk-usage nit, never
         //      a correctness problem. ----
 
         await prunePackagesBeyondLatestTwoAsync(setId, versionNo, ct);
@@ -421,7 +421,7 @@ public sealed class PackageIngest(
     /// The uploaded package IS the current version: any diff row not in it stops being live
     /// (<c>filename = NULL</c> is the repo-wide marker; validated ids ⊆ allocated, so this only
     /// ever clears rows of this set), and a set still 'hidden' is published by its first
-    /// successful upload ('removed' is deliberately never touched — takedowns are final).
+    /// successful upload ('removed' is deliberately never touched: takedowns are final).
     /// Runs inside the ingest transaction so crossing submissions serialize with the version cut.
     /// </summary>
     private static async Task refreshLivenessAndPublishAsync(NpgsqlConnection conn, ParsedPackage package, long setId)
@@ -434,7 +434,7 @@ public sealed class PackageIngest(
 
         // Publication is never ranked: leaderboards stay locked until a map reviewer (or admin)
         // promotes the set from the website (migration 005). The published status is the creator's
-        // wizard choice — 'pending' (awaiting review) or 'unranked' (not intended for ranking),
+        // wizard choice: 'pending' (awaiting review) or 'unranked' (not intended for ranking),
         // recorded on the set at PUT time (migration 012).
         await conn.ExecuteAsync(
             "UPDATE beatmapsets SET status = intended_status WHERE id = @setId AND status = 'hidden'",
@@ -442,10 +442,10 @@ public sealed class PackageIngest(
     }
 
     /// <summary>
-    /// The latest version's manifest for a set — the <c>files[]</c> list the BSS PUT response
+    /// The latest version's manifest for a set, the <c>files[]</c> list the BSS PUT response
     /// carries (empty for a set with no versions, which drives the client's replace-vs-patch
     /// branch). Exposed here so the endpoints module reuses one definition. This overload is a
-    /// point-in-time read on its own connection — do NOT use it as a rebuild base; that's what
+    /// point-in-time read on its own connection; do NOT use it as a rebuild base, that's what
     /// the <see cref="SetScope"/> overload is for.
     /// </summary>
     public async Task<IReadOnlyList<PackageFileEntry>> GetLatestVersionFilesAsync(long setId, CancellationToken ct = default)
@@ -455,7 +455,7 @@ public sealed class PackageIngest(
     }
 
     /// <summary>
-    /// The latest version's manifest read INSIDE the ingest critical section — the only safe
+    /// The latest version's manifest read INSIDE the ingest critical section: the only safe
     /// rebuild base for the PATCH overlay: nothing can cut another version between this read
     /// and the version this scope goes on to commit.
     /// </summary>
@@ -482,7 +482,7 @@ public sealed class PackageIngest(
     /// <summary>
     /// Assembles the downloadable package zip from the stored blobs (NOT the upload bytes: the
     /// PATCH flow has no full incoming archive, so blob reassembly is the one path that always
-    /// works — and it proves the blobs round-trip).
+    /// works, and it proves the blobs round-trip).
     /// </summary>
     private async Task assemblePackageAsync(string packageKey, IReadOnlyList<PackageFileEntry> files, CancellationToken ct)
     {

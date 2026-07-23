@@ -5,7 +5,7 @@ using Typebeat.Web.Wire;
 namespace Typebeat.Web.Endpoints;
 
 /// <summary>
-/// GET /api/v2/me/ and /api/v2/me/{ruleset} — the logged-in user fetch APIAccess issues at the
+/// GET /api/v2/me/ and /api/v2/me/{ruleset}: the logged-in user fetch APIAccess issues at the
 /// end of its connect sequence (GetMeRequest, Target "me/{ruleset?.ShortName}"). The ruleset
 /// segment is ignored: there is only one ruleset. Returns the APIMe payload built by UserWire.
 /// </summary>
@@ -24,7 +24,7 @@ public static class MeEndpoints
         var user = ctx.AuthedUser();
 
         // The game client fetches /me at every connect, which makes it the natural "last seen
-        // in game" signal — same throttled touch the website's cookie auth applies.
+        // in game" signal, same throttled touch the website's cookie auth applies.
         await LastVisit.TouchAsync(db, user.Id, ctx.RequestAborted);
 
         return WireJson.Ok(UserWire.Me(user, ctx.Request.Scheme, ctx.Request.Host.Value ?? string.Empty));

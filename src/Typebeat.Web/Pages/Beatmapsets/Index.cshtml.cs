@@ -9,7 +9,7 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// <summary>
 /// Public beatmap listing (/beatmapsets): full-text search (websearch_to_tsquery over the
 /// weighted beatmapsets.search vector, ILIKE fallback for short or lexeme-free queries),
-/// a status filter row, three sorts, and keyset "show more" paging — 50 per page, cursor on
+/// a status filter row, three sorts, and keyset "show more" paging: 50 per page, cursor on
 /// (sort key, id) carried in plain querystring links so the page needs no JavaScript.
 /// </summary>
 public sealed class ListingModel(Db db) : TypebeatPageModel
@@ -142,7 +142,7 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
                 orderBy = "ORDER BY s.submitted_at DESC, s.id DESC";
                 if (after is not null && afterId is not null)
                 {
-                    // Cursor carries unix MICROseconds — timestamptz is microsecond-precise, so
+                    // Cursor carries unix MICROseconds; timestamptz is microsecond-precise, so
                     // millisecond truncation could skip rows sharing the boundary instant.
                     cursor = "AND (s.submitted_at, s.id) < (@afterTs, @afterId)";
                     param.Add("afterTs", DateTime.UnixEpoch.AddTicks(after.Value * 10));

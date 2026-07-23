@@ -2,7 +2,7 @@
 """Aligner worker: processes /data/align-jobs one at a time.
 
 Protocol (see AlignJobStore.cs, the C# side of this contract):
-  {job}/job.json       inputs manifest — its presence means inputs are complete
+  {job}/job.json       inputs manifest, its presence means inputs are complete
   {job}/input.<ext>    audio (or video whose audio track aligns)
   {job}/lyrics.txt     raw lyrics
   {job}/.running       claim stamp written by this worker
@@ -10,7 +10,7 @@ Protocol (see AlignJobStore.cs, the C# side of this contract):
   {job}/timing.json    terminal success payload
   {job}/error.json     terminal failure: {"error": "..."}
 
-One job at a time by construction (torch/demucs peak at multiple GB on this box — the loop IS
+One job at a time by construction (torch/demucs peak at multiple GB on this box; the loop IS
 the capacity plan). Jobs older than the GC window are deleted wholesale. A stale .running claim
 (worker crashed/restarted mid-job) is failed permanently rather than re-run: alignment costs
 minutes of CPU and the client has long since given up on the abandonment window anyway.
@@ -98,7 +98,7 @@ def run_job(job: Path) -> None:
     (job / ".running").touch()
 
     if is_cancelled(job):
-        # Cancel landed between claim and start — don't launch the aligner at all.
+        # Cancel landed between claim and start, don't launch the aligner at all.
         write_error(job, "alignment cancelled")
         return
 
@@ -139,7 +139,7 @@ def run_job(job: Path) -> None:
                     return
 
             code = proc.wait(timeout=60)
-    except Exception as e:  # noqa: BLE001 — any failure must terminate the job, not the worker
+    except Exception as e:  # noqa: BLE001 - any failure must terminate the job, not the worker
         write_error(job, f"aligner crashed: {e}")
         return
 
@@ -157,7 +157,7 @@ def run_job(job: Path) -> None:
         write_error(job, "the aligner produced no timing.json")
         return
 
-    # timing.json LAST — its presence is the terminal success signal.
+    # timing.json LAST, its presence is the terminal success signal.
     shutil.copyfile(produced[0], job / "timing.json")
     log(f"done {job.name} in {time.time() - start:.0f}s")
 
@@ -177,7 +177,7 @@ def main() -> None:
             if job is not None:
                 run_job(job)
                 continue  # immediately look for the next queued job
-        except Exception as e:  # noqa: BLE001 — the loop must survive anything
+        except Exception as e:  # noqa: BLE001 - the loop must survive anything
             log(f"loop error: {e}")
 
         time.sleep(POLL_S)

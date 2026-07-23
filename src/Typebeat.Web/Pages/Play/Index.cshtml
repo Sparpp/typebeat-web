@@ -2,7 +2,7 @@
 @model Typebeat.Web.Pages.Play.IndexModel
 @{
     ViewData["Title"] = "play";
-    ViewData["MetaDescription"] = "Play type!beat in your browser — type the lyrics as they drop, in time with the music.";
+    ViewData["MetaDescription"] = "Play type!beat in your browser, type the lyrics as they drop, in time with the music.";
     ViewData["CardPlayMode"] = true; // the shared card renders a play button instead of download
     var user = Model.CurrentUser;
 }
@@ -25,7 +25,7 @@
 <div id="tb-picker" class="play-picker">
     @if (Model.Maps.Count == 0)
     {
-        <div class="play-empty">No ranked maps yet — check back soon.</div>
+        <div class="play-empty">No ranked maps yet, check back soon.</div>
     }
     else
     {

@@ -11,7 +11,7 @@ using Typebeat.Web.Wire;
 namespace Typebeat.Web.Endpoints;
 
 /// <summary>
-/// The in-browser web player's backend (additive — the bearer game-client score flow in
+/// The in-browser web player's backend (additive; the bearer game-client score flow in
 /// <see cref="ScoreEndpoints"/> is untouched). Four routes:
 ///
 ///  - GET  /play/map/{setId}/osu    → the set's primary .osu text (anonymous, same media gate as downloads)
@@ -24,7 +24,7 @@ namespace Typebeat.Web.Endpoints;
 /// identical scores/user_stats side effects, but authenticated by the website session cookie
 /// (<see cref="SessionCookieAuth.SessionUser"/>) and CSRF-protected via <see cref="IAntiforgery"/>
 /// rather than a bearer token. Unlike the bearer path there is no client-sent beatmap_hash to
-/// cross-check — we serve the exact map, so score_tokens.beatmap_hash is populated from the
+/// cross-check: we serve the exact map, so score_tokens.beatmap_hash is populated from the
 /// server's stored checksum for the beatmap (the column is NOT NULL). Tamper-shaped input on the
 /// mutating routes always resolves to a 4xx, never a 500.
 /// </summary>
@@ -42,7 +42,7 @@ public static class PlayEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // GET /play/map/{setId}/osu — the primary difficulty's .osu, served as text/plain. Anonymous,
+    // GET /play/map/{setId}/osu: the primary difficulty's .osu, served as text/plain. Anonymous,
     // same media-access gate as the download route (published set, or the owner).
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> GetOsuAsync(long setId, HttpContext ctx, Db db, IFileStore store)
@@ -64,7 +64,7 @@ public static class PlayEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // GET /play/map/{setId}/audio — the AudioFilename referenced by the primary .osu, streamed with
+    // GET /play/map/{setId}/audio: the AudioFilename referenced by the primary .osu, streamed with
     // range support (so <audio> can seek). Anonymous, same gate as /osu.
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> GetAudioAsync(long setId, HttpContext ctx, Db db, IFileStore store)
@@ -107,7 +107,7 @@ public static class PlayEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // POST /play/token — issue a score token for the signed-in website user. Body: { "beatmapId": <long> }.
+    // POST /play/token: issue a score token for the signed-in website user. Body: { "beatmapId": <long> }.
     // Response: { "id": <long> }.
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> CreateTokenAsync(HttpContext ctx, Db db, IAntiforgery antiforgery)
@@ -142,7 +142,7 @@ public static class PlayEndpoints
 
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
-        // Resolve the playable beatmap: by SET id (the picker's path — the set's primary .osu diff)
+        // Resolve the playable beatmap: by SET id (the picker's path, the set's primary .osu diff)
         // or, for back-compat, by an explicit beatmap id. The set must be published (pending/ranked).
         var beatmap = request.SetId > 0
             ? await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
@@ -168,7 +168,7 @@ public static class PlayEndpoints
             return WireJson.Error(status_unprocessable, "beatmap not found or not playable");
 
         // Register the web player's synthetic build on sight (record-don't-reject, like the bearer
-        // path). blocked is enforced at submission time (buildBlocked → unranked), not here — an
+        // path). blocked is enforced at submission time (buildBlocked → unranked), not here; an
         // admin blocking the web build stops new ranks, not play.
         await conn.ExecuteAsync(
             "INSERT INTO builds (version_hash) VALUES (@versionHash) ON CONFLICT (version_hash) DO NOTHING",
@@ -192,7 +192,7 @@ public static class PlayEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // POST /play/submit — complete a score token. Mirrors ScoreEndpoints.SubmitScore with the
+    // POST /play/submit: complete a score token. Mirrors ScoreEndpoints.SubmitScore with the
     // session user substituted for the bearer user. Body shape below; response:
     // { ranked, rank, total_score, accuracy, completion, position }.
     // ---------------------------------------------------------------------------------------------
@@ -256,7 +256,7 @@ public static class PlayEndpoints
         if (beatmap is null)
             return WireJson.Error(status_unprocessable, "invalid token");
 
-        // Re-read set status NOW — a set un-ranked mid-play must resolve against its current state.
+        // Re-read set status NOW: a set un-ranked mid-play must resolve against its current state.
         bool setRanked = await conn.ExecuteScalarAsync<bool>(
             """
             SELECT bs.status = 'ranked'
@@ -285,10 +285,10 @@ public static class PlayEndpoints
         double storedAccuracy = passed && fullyJudged ? recomputed.Accuracy : recomputed.JudgedAccuracy;
 
         if (!playTimeOk)
-            logger.LogInformation("Play token {TokenId}: elapsed {Elapsed:0.0}s < 90% of drain {Drain:0.0}s — storing unranked.",
+            logger.LogInformation("Play token {TokenId}: elapsed {Elapsed:0.0}s < 90% of drain {Drain:0.0}s, storing unranked.",
                 token.Id, elapsedSeconds, beatmap.DrainLengthS);
         if (!recomputed.StatisticsValid || !withinBounds)
-            logger.LogInformation("Play token {TokenId}: out of bounds (statisticsValid={Valid}, totalWithinBounds={Within}) — storing unranked.",
+            logger.LogInformation("Play token {TokenId}: out of bounds (statisticsValid={Valid}, totalWithinBounds={Within}), storing unranked.",
                 token.Id, recomputed.StatisticsValid, withinBounds);
 
         long storedTotal = withinBounds ? submission.TotalScore : recomputed.TotalScoreCeiling;
@@ -326,7 +326,7 @@ public static class PlayEndpoints
                 endedAt
             }, tx);
 
-        // Denormalized play counters (one per submitted play — passed or failed, ranked or not).
+        // Denormalized play counters (one per submitted play, passed or failed, ranked or not).
         await conn.ExecuteAsync(
             """
             UPDATE beatmaps SET play_count = play_count + 1 WHERE id = @beatmapId;
@@ -335,7 +335,7 @@ public static class PlayEndpoints
             """,
             new { beatmapId }, tx);
 
-        // Aggregate stats accrue only for submissions that held up to the tamper checks — the same
+        // Aggregate stats accrue only for submissions that held up to the tamper checks; the same
         // invariants that withhold ranking withhold accumulation.
         if (recomputed.StatisticsValid && withinBounds)
         {
@@ -537,7 +537,7 @@ public static class PlayEndpoints
 
     private sealed record BestScoreRow(long Id, long TotalScore);
 
-    // timestamptz arrives from Npgsql as UTC DateTime — DateTimeOffset ctor params break Dapper's
+    // timestamptz arrives from Npgsql as UTC DateTime; DateTimeOffset ctor params break Dapper's
     // constructor matching at runtime.
     private sealed record TokenRow(long Id, long UserId, long BeatmapId, long BuildId, long? ScoreId, DateTime CreatedAt);
 

@@ -35,7 +35,7 @@ public sealed class BssPutRequest
 
 /// <summary>
 /// 200 body of PUT /bss/beatmapsets. <see cref="Files"/> MUST be the latest version's manifest
-/// and MUST be an empty array for a fresh set — the client branches replace-vs-patch on
+/// and MUST be an empty array for a fresh set; the client branches replace-vs-patch on
 /// <c>Files.Count == 0</c> (recon result.bss.endpoint_sequence step 3).
 /// </summary>
 public sealed class BssPutBeatmapSetResponse

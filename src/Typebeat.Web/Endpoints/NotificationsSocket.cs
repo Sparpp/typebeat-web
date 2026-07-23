@@ -6,8 +6,8 @@ namespace Typebeat.Web.Endpoints;
 /// <summary>
 /// The /ws/notifications websocket the client connects to after reading notification_endpoint
 /// from GET /api/v2/notifications (WebSocketNotificationsClient). In M1 there are no server-pushed
-/// events: we accept the socket, authenticate it, and idle — reading and discarding anything the
-/// client sends (e.g. a chat.start frame) — so it stays quietly connected without reconnect churn.
+/// events: we accept the socket, authenticate it, and idle, reading and discarding anything the
+/// client sends (e.g. a chat.start frame), so it stays quietly connected without reconnect churn.
 ///
 /// Crucially we never initiate a close: the client's read loop treats a server Close frame as an
 /// error and reconnects with backoff. We only complete the handshake once the client closes.
@@ -56,14 +56,14 @@ public static class NotificationsSocket
                 }
 
                 // Ignore all inbound frames. No server-pushed notifications exist in M1.
-                // TODO: this socket is the future force-logout channel — pushing a text frame
+                // TODO: this socket is the future force-logout channel: pushing a text frame
                 // {"event":"logout"} here signs the user out client-side (APIAccess handles the
                 // "logout" SocketMessage event by calling Logout()).
             }
         }
         catch (OperationCanceledException)
         {
-            // Request aborted / server shutting down — nothing to do.
+            // Request aborted / server shutting down, nothing to do.
         }
         catch (WebSocketException)
         {

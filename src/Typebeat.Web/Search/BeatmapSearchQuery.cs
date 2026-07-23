@@ -8,7 +8,7 @@ namespace Typebeat.Web.Search;
 /// bucket of leftover free text (the existing title/artist/creator/tags match). Pure and
 /// unit-testable: <see cref="Parse"/> turns a raw query string into a whitelisted filter model,
 /// and <see cref="BeatmapSearchSql"/> translates that model into parameterised SQL. The parser
-/// NEVER emits column names or values into SQL itself — it only ever produces this typed model,
+/// NEVER emits column names or values into SQL itself; it only ever produces this typed model,
 /// so an unknown key or a malformed value can only ever degrade to plain free text, never error.
 /// </summary>
 public sealed class BeatmapSearchQuery
@@ -171,7 +171,7 @@ internal static class Fields
 
 public enum Comparator { Eq, Lt, Lte, Gt, Gte, Range }
 
-/// <summary>A substring (ILIKE) filter on a text column — <c>title:</c>, <c>artist:</c>, etc.</summary>
+/// <summary>A substring (ILIKE) filter on a text column: <c>title:</c>, <c>artist:</c>, etc.</summary>
 public sealed record TextFilter(FilterField Field, string Value);
 
 /// <summary>
@@ -183,7 +183,7 @@ public sealed record NumericFilter(FilterField Field, Comparator Op, double Low,
     /// <summary>
     /// Grammar: an optional comparator prefix (<c>&gt;</c>, <c>&gt;=</c>, <c>&lt;</c>, <c>&lt;=</c>,
     /// <c>=</c>) then a number; OR a range <c>a-b</c> / <c>a..b</c>; a bare number means equality.
-    /// Numbers may be plain (<c>4</c>, <c>4.5</c>) or <c>mm:ss</c> (<c>1:30</c> → 90) — the latter
+    /// Numbers may be plain (<c>4</c>, <c>4.5</c>) or <c>mm:ss</c> (<c>1:30</c> → 90); the latter
     /// is meaningful for length but harmless elsewhere. Returns null on anything unparseable.
     /// </summary>
     public static NumericFilter? TryParse(FilterField field, string value)
@@ -216,7 +216,7 @@ public sealed record NumericFilter(FilterField Field, Comparator Op, double Low,
             return low.Length > 0 && high.Length > 0;
         }
 
-        // A single hyphen separates a numeric range (values never contain a hyphen otherwise —
+        // A single hyphen separates a numeric range (values never contain a hyphen otherwise,
         // negatives are meaningless for these columns, and times use ':').
         int dash = value.IndexOf('-', 1);
         if (dash > 0 && dash < value.Length - 1)
@@ -327,7 +327,7 @@ public sealed record DateFilter(DateTime? MinInclusive, DateTime? MaxExclusive)
         }
         catch (ArgumentOutOfRangeException)
         {
-            // e.g. 2024-13-40 — month/day out of range.
+            // e.g. 2024-13-40, month/day out of range.
             return false;
         }
     }

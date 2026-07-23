@@ -1,5 +1,5 @@
 /*
- * typebeat-player.js — the browser renderer + Web Audio driver on top of
+ * typebeat-player.js: the browser renderer + Web Audio driver on top of
  * typebeat-core.js. Exposes TypeBeatCore.mountPlayer(container, opts).
  *
  * opts:
@@ -237,7 +237,7 @@
             concluded = false;
             lastCurIdx = -2;
             removeStartKey();
-            // A fresh play (including "play again") starts a new scoring session — let the host
+            // A fresh play (including "play again") starts a new scoring session; let the host
             // mint a fresh score token here so its min-play-time gate keys off this play's start.
             if (opts.onPlayStart) { try { opts.onPlayStart(); } catch (e) { console.error(e); } }
             overlay.className = 'tb-overlay';
@@ -245,7 +245,7 @@
             cleanupAudio();
             source = audioCtx.createBufferSource();
             source.buffer = audioBuffer;
-            // Default playback at 10% (90% quieter) — the map audio is loud on its own.
+            // Default playback at 10% (90% quieter); the map audio is loud on its own.
             const gain = audioCtx.createGain();
             gain.gain.value = 0.1;
             source.connect(gain);
@@ -329,7 +329,7 @@
         // --- boot: decode audio then show the start gate ---------------------
         overlay.className = 'tb-overlay tb-overlay-on';
 
-        // Guard an empty/unparseable map (no typeable cells) — otherwise the first tick would
+        // Guard an empty/unparseable map (no typeable cells); otherwise the first tick would
         // instantly "clear" it with rank X. Nothing to play.
         if (!beatmap.lines.length || !beatmap.totalCells) {
             overlay.appendChild(el('div', 'tb-card', '<div class="tb-card-title">unplayable map</div><div class="tb-card-hint">this map has no typeable lyrics.</div>'));

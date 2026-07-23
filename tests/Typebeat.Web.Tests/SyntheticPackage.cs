@@ -9,7 +9,7 @@ namespace Typebeat.Web.Tests;
 /// Builders for synthetic "type!beat file format v1" beatmap packages, modeled line-for-line on
 /// the game's writer (typebeat-osu typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricOsuFormat.cs:69-135)
 /// plus the BeatmapID/BeatmapSetID lines the submission flow injects (LegacyBeatmapEncoder.cs:147-148
-/// shape — LyricOsuFormat itself does not emit ids yet).
+/// shape; LyricOsuFormat itself does not emit ids yet).
 /// </summary>
 public static class SyntheticPackage
 {

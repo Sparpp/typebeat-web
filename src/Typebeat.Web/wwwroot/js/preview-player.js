@@ -1,11 +1,11 @@
 // Site-wide beatmap preview player. Singleton <audio>: starting any preview stops the one
 // already playing. Buttons are any .preview-btn with data-preview (the 30 s clip URL); the
 // conic-gradient progress ring is driven by the --progress custom property on the button.
-// Vanilla JS on purpose — no framework anywhere on this site.
+// Vanilla JS on purpose, no framework anywhere on this site.
 (function () {
     'use strict';
 
-    // Playback level for every preview on the site (0..1). Set to 0.1 — the previews were
+    // Playback level for every preview on the site (0..1). Set to 0.1; the previews were
     // uncomfortably loud at the browser default of 1.0, so this is a 90% cut.
     var PREVIEW_VOLUME = 0.1;
 

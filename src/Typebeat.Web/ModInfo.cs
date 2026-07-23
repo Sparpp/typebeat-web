@@ -2,7 +2,7 @@ namespace Typebeat.Web;
 
 /// <summary>
 /// Presentation metadata for the mod acronyms stored on scores: the category (which drives the
-/// icon colour, osu-style — reduction green, increase red, automation violet) and a human name
+/// icon colour, osu-style: reduction green, increase red, automation violet) and a human name
 /// (the icon's tooltip). Unknown acronyms fall back to a neutral "other" badge so a mod added
 /// later still renders something sensible.
 /// </summary>

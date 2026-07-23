@@ -4,7 +4,7 @@ namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
 /// The password-reset flow (/forgot-password → emailed 'reset' code → /reset-password): it swaps the
-/// password, signs the user in, and revokes prior sessions — while staying enumeration-safe (an
+/// password, signs the user in, and revokes prior sessions, while staying enumeration-safe (an
 /// unknown email is indistinguishable from a real one, right down to the Set-Cookie header) and never
 /// burning a valid code on a fumbled new password.
 /// </summary>
@@ -84,7 +84,7 @@ public class PasswordResetTest
 
         Assert.Multiple(() =>
         {
-            // Same redirect and the same Set-Cookie as a real account — the decoy challenge — so the
+            // Same redirect and the same Set-Cookie as a real account, the decoy challenge, so the
             // response can't be used to probe which emails are registered...
             Assert.That(forgot.RequestMessage!.RequestUri!.AbsolutePath, Is.EqualTo("/reset-password"));
             Assert.That(cookies.GetCookies(WebsiteFixture.BaseAddress)["typebeat_challenge"], Is.Not.Null);

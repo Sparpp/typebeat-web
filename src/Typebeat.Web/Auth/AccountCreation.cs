@@ -20,7 +20,7 @@ public sealed record AccountCreationResult(
 }
 
 /// <summary>
-/// The one place an account comes into existence — shared by POST /users (in-client registration)
+/// The one place an account comes into existence, shared by POST /users (in-client registration)
 /// and the website /register form. Validates via <see cref="AccountValidation"/>, checks
 /// uniqueness, inserts users + user_stats, and maps the insert race back to field errors.
 /// </summary>
@@ -64,7 +64,7 @@ public static class AccountCreation
         }
         catch (PostgresException pg) when (pg.SqlState == PostgresErrorCodes.UniqueViolation)
         {
-            // Lost a race between the EXISTS check and the INSERT — map the violated
+            // Lost a race between the EXISTS check and the INSERT; map the violated
             // constraint back to its field.
             if (pg.ConstraintName is not null && pg.ConstraintName.Contains("email"))
                 emailErrors.Add("Email address is already in use.");

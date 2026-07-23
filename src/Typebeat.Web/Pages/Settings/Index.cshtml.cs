@@ -16,7 +16,7 @@ namespace Typebeat.Web.Pages.Settings;
 ///  - Profile: the plain-text description (bio).
 ///  - Avatar / Banner: an uploaded image, resized to a fixed JPEG by <see cref="ProfileMedia"/>
 ///    and stored under a version-stamped key; the superseded object is deleted so blobs don't leak.
-///  - Delete: GDPR erasure. ANONYMIZES rather than hard-deletes — scrubs every personal column,
+///  - Delete: GDPR erasure. ANONYMIZES rather than hard-deletes: scrubs every personal column,
 ///    drops the user's auth/session rows and personal activity (tokens, favourites, download
 ///    logs), and renames to 'deleted_{id}'. The row is KEPT so the maps they uploaded and the
 ///    (now-anonymous) scores/moderation records referencing them stay valid. Requires typing the
@@ -133,11 +133,11 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
         catch (ImageFormatException)
         {
             // Covers UnknownImageFormatException (not an image) and InvalidImageContentException
-            // (declared format, corrupt bytes) — both derive from ImageFormatException.
+            // (declared format, corrupt bytes); both derive from ImageFormatException.
             return await failAsync(id, "That file isn't a readable image. Try a PNG or JPEG.");
         }
 
-        // The column name is a fixed internal literal, never user input — safe to interpolate.
+        // The column name is a fixed internal literal, never user input; safe to interpolate.
         string column = isBanner ? "cover_key" : "avatar_key";
         string? previousKey;
 
@@ -181,7 +181,7 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
             await tx.CommitAsync(HttpContext.RequestAborted);
         }
 
-        // The person's uploaded images are personal data — remove the blobs too. Best-effort: the
+        // The person's uploaded images are personal data; remove the blobs too. Best-effort: the
         // account is already anonymized (committed above), so a storage hiccup must not fail the
         // request or leave the browser session un-cleared. Orphaned blobs can be swept later.
         try
@@ -193,7 +193,7 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
         }
         catch
         {
-            // Ignore — the erasure of personal DATA already happened in the committed transaction.
+            // Ignore: the erasure of personal DATA already happened in the committed transaction.
         }
 
         // Drop the session cookie (its token row is already gone, so the revoke is a no-op).

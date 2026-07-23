@@ -7,7 +7,7 @@ namespace Typebeat.Web.Wire;
 ///
 /// The shapes mirror the client's deserialisation targets exactly:
 ///  - the leaderboard scores + <c>user_score.score</c> are <c>SoloScoreInfo</c> (its property-ORDER
-///    trap — <c>beatmap</c> must precede <c>beatmapset</c> — is avoided by emitting neither);
+///    trap, <c>beatmap</c> must precede <c>beatmapset</c>, is avoided by emitting neither);
 ///  - the score-submit PUT response is <c>MultiplayerScore</c> (SubmitScoreRequest is
 ///    <c>APIRequest&lt;MultiplayerScore&gt;</c>);
 ///  - the leaderboard GET response is <c>APIScoresCollection</c>.
@@ -80,7 +80,7 @@ public sealed class SoloScoreWire
     [JsonProperty("ranked")]
     public bool Ranked { get; init; }
 
-    // Emitted last, after all scalar fields — never alongside "beatmap"/"beatmapset".
+    // Emitted last, after all scalar fields; never alongside "beatmap"/"beatmapset".
     [JsonProperty("user")]
     public ScoreUserWire? User { get; init; }
 }
@@ -141,7 +141,7 @@ public sealed class MultiplayerScoreWire
     public long BeatmapId { get; init; }
 }
 
-/// <summary>APIScoreWithPosition — the caller's own score plus its leaderboard position.</summary>
+/// <summary>APIScoreWithPosition: the caller's own score plus its leaderboard position.</summary>
 public sealed class ScoreWithPositionWire
 {
     [JsonProperty("position")]
@@ -151,7 +151,7 @@ public sealed class ScoreWithPositionWire
     public SoloScoreWire Score { get; init; } = default!;
 }
 
-/// <summary>APIScoresCollection — the leaderboard GET response.</summary>
+/// <summary>APIScoresCollection: the leaderboard GET response.</summary>
 public sealed class ScoresCollectionWire
 {
     [JsonProperty("score_count")]

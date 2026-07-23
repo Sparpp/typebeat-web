@@ -11,7 +11,7 @@ namespace Typebeat.Web.Pages;
 /// uses (one identity for game and web). Per the M2 policy, a correct password does NOT sign the
 /// user in: it issues a fresh emailed 'login' code and sets the challenge cookie, then hands off
 /// to /verify (the session is minted only after the code checks out). Failure messaging is a
-/// single generic line — like /oauth/token, the form never distinguishes unknown-user /
+/// single generic line, like /oauth/token, the form never distinguishes unknown-user /
 /// wrong-password / restricted, and a bad password sends NO code (no enumeration signal).
 /// </summary>
 public sealed class LoginModel(
@@ -67,7 +67,7 @@ public sealed class LoginModel(
 
         if (user is null || !passwords.Verify(user.PasswordHash, Password) || user.Restricted)
         {
-            // No code is issued on a failed credential — nothing distinguishes this from an
+            // No code is issued on a failed credential; nothing distinguishes this from an
             // unknown user, so the form cannot be used to probe which accounts exist.
             Error = bad_credentials;
             return Page();
@@ -75,7 +75,7 @@ public sealed class LoginModel(
 
         // Password OK, but not signed in yet: issue a fresh 'login' code, email it, and hand off
         // to /verify carrying the pending user in the challenge cookie. A throttled resend
-        // (IssueStatus.TooSoon/TooMany) still routes to /verify — the user has a live code there.
+        // (IssueStatus.TooSoon/TooMany) still routes to /verify; the user has a live code there.
         try
         {
             await EmailCodeFlow.IssueAndSendAsync(codes, email, user.Email, user.Id, "login", HttpContext.RequestAborted);

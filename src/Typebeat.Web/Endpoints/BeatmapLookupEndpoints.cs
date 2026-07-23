@@ -6,14 +6,14 @@ using Typebeat.Web.Wire;
 namespace Typebeat.Web.Endpoints;
 
 /// <summary>
-/// GET /api/v2/beatmaps/lookup — the client's import-time metadata lookup
+/// GET /api/v2/beatmaps/lookup: the client's import-time metadata lookup
 /// (typebeat.Game.Beatmaps.APIBeatmapMetadataSource via GetBeatmapRequest, Target
 /// "beatmaps/lookup"). The request carries up to three query params, added only when set:
 ///   checksum = the local .osu MD5 (primary identity), id = OnlineID, filename = the .osu path.
 ///
 /// We resolve by checksum first (so the echoed checksum equals the client's local hash and
 /// MatchesOnlineVersion holds), then by id. filename-only lookups have no column to resolve
-/// against in our schema, so they 404 — which the client handles gracefully: a Failed request
+/// against in our schema, so they 404, which the client handles gracefully: a Failed request
 /// leaves onlineMetadata null and the map is simply treated as not-online (no logout, no crash).
 ///
 /// Published sets ('pending' or 'ranked') are visible, and the REAL status is reported:
@@ -32,7 +32,7 @@ public static class BeatmapLookupEndpoints
     {
         string? checksum = trimmed(ctx.Request.Query["checksum"]);
         // filename is accepted (the client sends it) but our schema stores no per-map path, so it
-        // is not a resolvable key on its own — present only so an id/checksum-less call still 404s.
+        // is not a resolvable key on its own; present only so an id/checksum-less call still 404s.
         _ = trimmed(ctx.Request.Query["filename"]);
 
         bool hasId = int.TryParse(ctx.Request.Query["id"], out int id) && id > 0;
@@ -96,7 +96,7 @@ public static class BeatmapLookupEndpoints
 
     // Published sets only ('pending' or 'ranked'). The predicate is completed by the caller
     // with the identity clause. The status column rides along so the response reports the
-    // real state — "pending" is what keeps un-reviewed maps' leaderboards locked client-side.
+    // real state: "pending" is what keeps un-reviewed maps' leaderboards locked client-side.
     private const string baseQuery =
         """
         SELECT b.id               AS beatmapId,
@@ -143,7 +143,7 @@ public static class BeatmapLookupEndpoints
         string? CoverKey,
         string Status,
         string Creator,
-        // timestamptz arrives from Npgsql as UTC DateTime — a DateTimeOffset ctor param makes
+        // timestamptz arrives from Npgsql as UTC DateTime; a DateTimeOffset ctor param makes
         // Dapper's constructor matching fail at runtime ("no matching signature").
         DateTime SubmittedAt,
         DateTime UpdatedAt);

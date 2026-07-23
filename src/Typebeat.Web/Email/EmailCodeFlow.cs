@@ -4,7 +4,7 @@ namespace Typebeat.Web.Email;
 
 /// <summary>
 /// Glue between <see cref="EmailCodeService"/> (issue a code) and <see cref="IEmailSender"/>
-/// (deliver it) — the one place both the website flows and the game-API registration side effect
+/// (deliver it), the one place both the website flows and the game-API registration side effect
 /// turn "issue a code for this user" into an actual email. Send failures propagate; callers that
 /// must not fail on a bad send (POST /users) wrap the call.
 /// </summary>

@@ -5,7 +5,7 @@ namespace Typebeat.Web.Tests.Website;
 /// <summary>
 /// Website 404s render the styled error page (site chrome + a way back) instead of a 0-byte
 /// blank body, while keeping the true status code. Wire-route behavior is pinned separately in
-/// <see cref="ApiRegressionGuardTest"/> — these two suites together fence the UseWhen scope.
+/// <see cref="ApiRegressionGuardTest"/>; these two suites together fence the UseWhen scope.
 /// </summary>
 public class ErrorPagesTest
 {

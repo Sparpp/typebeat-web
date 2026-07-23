@@ -8,7 +8,7 @@ namespace Typebeat.Web.Tests.Website;
 /// <summary>
 /// End-to-end cookie auth through the M2 two-step flow: password → emailed code → session. Login
 /// and register no longer sign the user in directly; they email a code and hand off to /verify,
-/// where the session is minted. Also pins the identity-unification contract — the raw token in the
+/// where the session is minted. Also pins the identity-unification contract; the raw token in the
 /// session cookie IS a bearer access token, so /api/v2/me/ resolves it to the same user.
 /// </summary>
 public class CookieAuthFlowTest
@@ -185,8 +185,8 @@ public class CookieAuthFlowTest
     {
         // An account created without going through website signup (e.g. registered in-game, whose
         // OAuth password grant has no email step) starts unverified. Completing a website login's
-        // emailed code is the self-service path to becoming verified — which is the gate for beatmap
-        // submission — with no admin lever.
+        // emailed code is the self-service path to becoming verified, which is the gate for beatmap
+        // submission, with no admin lever.
         const string email = "ingame.unverified@example.com";
         await WebsiteFixture.SeedUserAsync("ingame unverified", email, "hunter2hunter2", verified: false);
 

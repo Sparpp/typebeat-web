@@ -28,7 +28,7 @@ docker compose -f deploy/compose.prod.yml up -d --build
 
 ## Takedown runbook (DMCA / removed sets)
 
-Flipping `beatmapsets.status` alone is NOT the whole takedown — stored artifacts and edge
+Flipping `beatmapsets.status` alone is NOT the whole takedown; stored artifacts and edge
 caches keep serving until you finish all four steps:
 
 1. Flip the status (origin pages/API/media start 404ing immediately):
@@ -37,7 +37,7 @@ caches keep serving until you finish all four steps:
      -c "UPDATE beatmapsets SET status = 'removed' WHERE id = <SET_ID>;"
    ```
 2. Delete the set's served artifacts from the appdata volume (covers, preview, assembled
-   packages — the content-addressed `files/` blobs stay; they are not directly addressable):
+   packages; the content-addressed `files/` blobs stay, they are not directly addressable):
    ```
    docker exec typebeat-web-app-1 sh -c \
      "rm -rf /data/covers/<SET_ID> /data/previews/<SET_ID>.mp3 /data/packages/<SET_ID>"
@@ -45,7 +45,7 @@ caches keep serving until you finish all four steps:
 3. Purge the Cloudflare cache for the set's media URLs (dashboard → Caching → Purge by URL:
    `https://typebeat.mingda.sh/covers/<SET_ID>/*` and `/previews/<SET_ID>.mp3`), or purge
    everything for a single-set site. Covers/previews are served with `max-age=86400`, so even
-   without a purge every cache ages out within a day — the purge closes that window.
+   without a purge every cache ages out within a day; the purge closes that window.
 4. If the takedown was a DMCA notice, note the set id + notice reference in the report row
    (`reports` table) so repeat-infringer tracking works.
 
@@ -53,18 +53,18 @@ Browser caches cannot be purged remotely; the one-day `max-age` bounds them.
 
 ## Backups
 
-`deploy/backup.sh` — LOCAL only (offsite/R2 copy is a follow-up):
+`deploy/backup.sh`: LOCAL only (offsite/R2 copy is a follow-up):
 
 - `backup.sh db`: compressed `pg_dump`, meant nightly, 14-day retention.
 - `backup.sh appdata`: tar of the `/data` uploads volume, meant WEEKLY, newest 2 tars kept
   (count-based, so skipped weeks never age out the only copies).
-- Both modes skip (and log) instead of running when the backup filesystem has <10 GB free —
+- Both modes skip (and log) instead of running when the backup filesystem has <10 GB free;
   the 75 GB disk is shared with Postgres, and a skipped backup beats a wedged database.
 - Assembled per-version download packages are pruned by the server itself (PackageIngest
   keeps the latest 2 per set; older ones stay reconstructible from the content-addressed
   blobs), so `/data` does not grow ~2x per re-submission forever.
 
-**Nothing installs the schedule automatically — the box's root crontab starts EMPTY.**
+**Nothing installs the schedule automatically; the box's root crontab starts EMPTY.**
 After the first M3 deploy is up (the appdata job docker-execs into the app container, which
 must mount `/data`), run `crontab -e` as root and add exactly:
 

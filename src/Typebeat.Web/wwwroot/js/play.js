@@ -1,10 +1,10 @@
 /*
- * play.js — website glue for the in-browser player at /play.
+ * play.js: website glue for the in-browser player at /play.
  *
  * Reads the map list rendered server-side (buttons carrying data-* attributes),
  * fetches the chosen map's .osu + audio from the /play/map endpoints, runs the
  * shared TypeBeatCore player, and (when signed in) submits the score through the
- * cookie-authed two-phase /play/token + /play/submit flow — landing it on the
+ * cookie-authed two-phase /play/token + /play/submit flow, landing it on the
  * same leaderboards as the desktop client.
  */
 (function () {
@@ -126,7 +126,7 @@
                             const pos = d.position ? ' · #' + d.position + ' on the board' : '';
                             api.setSubmitStatus('submitted ✓ ranked' + pos, 'tb-status-good');
                         } else {
-                            api.setSubmitStatus('recorded — not ranked (' + (results.passed ? 'map not ranked or checks failed' : 'you failed this run') + ').', 'tb-status-muted');
+                            api.setSubmitStatus('recorded, not ranked (' + (results.passed ? 'map not ranked or checks failed' : 'you failed this run') + ').', 'tb-status-muted');
                         }
                     } catch (e) {
                         console.error(e);

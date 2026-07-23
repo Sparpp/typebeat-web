@@ -8,7 +8,7 @@ namespace Typebeat.Web.Email;
 /// Delivers mail via the Resend HTTP API (https://resend.com). Active when
 /// TYPEBEAT_RESEND_API_KEY is configured. The HttpClient comes from IHttpClientFactory (pooled,
 /// no socket exhaustion). On any non-2xx the response body is logged and a generic exception is
-/// thrown — the caller turns that into a "couldn't send email, try again" for the user; the
+/// thrown. The caller turns that into a "couldn't send email, try again" for the user; the
 /// upstream body (which may name the address/domain) is never surfaced to the browser.
 ///
 /// This external JSON payload uses System.Text.Json deliberately: WireJson/Newtonsoft is reserved

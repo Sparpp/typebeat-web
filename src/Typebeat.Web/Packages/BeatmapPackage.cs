@@ -18,7 +18,7 @@ public sealed class ParsedDifficulty
     /// <summary>Archive path of the .osu file (normalized to forward slashes).</summary>
     public required string Filename { get; init; }
 
-    /// <summary>MD5 of the exact .osu bytes — the beatmap_hash identity contract (beatmaps.checksum_md5).</summary>
+    /// <summary>MD5 of the exact .osu bytes: the beatmap_hash identity contract (beatmaps.checksum_md5).</summary>
     public required string ChecksumMd5 { get; init; }
 
     // [General]

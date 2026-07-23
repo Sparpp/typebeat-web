@@ -1,19 +1,19 @@
 namespace Typebeat.Web.Packages.Lyrics;
 
 /// <summary>
-/// Boundary-window typing-pace statistics + star rating for a lyric map — the numbers the
+/// Boundary-window typing-pace statistics + star rating for a lyric map, the numbers the
 /// client's song select shows and the exact difficulty formula it stores. Ports, from
 /// typebeat-osu:
 ///
 ///  - pace: LyricPaceStatistics.Compute
-///    (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricPaceStatistics.cs) — a line's typing
+///    (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricPaceStatistics.cs): a line's typing
 ///    window is EndTime - StartTime (the boundary-to-boundary time a player actually gets),
 ///    floored at 500 ms; per line WPM = real words / window and CPM = real typeable cells /
-///    window (chars + one inter-word space per token gap — TypingLine's cell arithmetic);
+///    window (chars + one inter-word space per token gap; TypingLine's cell arithmetic);
 ///    the map pace is the unweighted mean of per-line rates, so instrumental gaps between
 ///    lines never dilute it. No "1 word = 5 chars" estimate anywhere: the CPM:WPM ratio is
 ///    the map's true word length.
-///  - stars: <see cref="LyricDifficulty"/> — a duration-weighted soft maximum over per-word
+///  - stars: <see cref="LyricDifficulty"/>, a duration-weighted soft maximum over per-word
 ///    typing strain (sr-formula-v1.md), mirroring the game's
 ///    typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty. Unlike the pace, this DOES use
 ///    unit target times (per-word windows drive strain).
@@ -30,7 +30,7 @@ public static class LyricPace
     /// </summary>
     public const int VERSION = 5;
 
-    // LyricPaceStatistics.cs — guards degenerate data from exploding the rate.
+    // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;
 
     /// <param name="DifficultyRating">Stars from <see cref="LyricDifficulty"/> (no-mod baseline).</param>

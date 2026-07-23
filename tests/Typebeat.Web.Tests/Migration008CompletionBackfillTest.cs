@@ -11,7 +11,7 @@ namespace Typebeat.Web.Tests;
 /// Migration 008 backfill semantics against a database in the pre-deploy state: migrations
 /// 001–007 applied, with scores whose ranks were graded under the OLD accuracy rule. 008 must
 /// add scores.completion, backfill it from the stored statistics jsonb, and re-grade PASSED
-/// scores on completion — while leaving failed scores' 'F' untouched. Same harness shape as
+/// scores on completion, while leaving failed scores' 'F' untouched. Same harness shape as
 /// <see cref="Migration004BackfillTest"/>.
 /// </summary>
 [TestFixture]
@@ -46,7 +46,7 @@ public class Migration008CompletionBackfillTest
         await Db.EnsureExtensionsAsync(connection_string);
 
         // Simulate the pre-deploy database: 001–007 applied and recorded, so MigrateAsync below
-        // applies exactly 008 — against scores that already exist with old-rule ranks.
+        // applies exactly 008, against scores that already exist with old-rule ranks.
         await using (var conn = new NpgsqlConnection(connection_string))
         {
             await conn.OpenAsync();
@@ -88,7 +88,7 @@ public class Migration008CompletionBackfillTest
             sloppyButFullId = await insertScoreAsync(conn, userId, beatmapId, rank: "B", passed: true,
                 statistics: """{"great":80,"ok":10,"meh":10}""", maximum: """{"great":100}""");
 
-            // 90/100 typed (all-great timing): old rule said A via accuracy 0.9 — new rule agrees
+            // 90/100 typed (all-great timing): old rule said A via accuracy 0.9; new rule agrees
             // via completion 0.9, but for the completion REASON.
             missedSomeId = await insertScoreAsync(conn, userId, beatmapId, rank: "A", passed: true,
                 statistics: """{"great":90,"miss":10}""", maximum: """{"great":100}""");

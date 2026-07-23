@@ -232,7 +232,7 @@ public class RankedApprovalTest
             Assert.That(html, Does.Contain(">Rank this map</button>"));
 
             // The ranked-era score keeps its flag, but the set page must not render a podium
-            // for a pending set — the note replaces the whole leaderboard body.
+            // for a pending set; the note replaces the whole leaderboard body.
             Assert.That(html, Does.Not.Contain("podium"));
         });
     }

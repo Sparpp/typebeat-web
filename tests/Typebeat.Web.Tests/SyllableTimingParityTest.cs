@@ -98,7 +98,7 @@ public class SyllableTimingParityTest
         Assert.Multiple(() =>
         {
             // Proves words[].syllables[] in the served .osu decodes into boundaries and warps the
-            // cells (not just the direct helper) — the field flows through parseLyricOsu/buildBeatmap.
+            // cells (not just the direct helper); the field flows through parseLyricOsu/buildBeatmap.
             Assert.That(Arr(root, "dividedCells"), Is.EqualTo(new[] { 1000d, 1100d, 1200d, 1600d }));
             // A word with no syllables[] stays the flat ramp end-to-end.
             Assert.That(Arr(root, "flatCells"), Is.EqualTo(new[] { 1000d, 1250d, 1500d, 1750d }));

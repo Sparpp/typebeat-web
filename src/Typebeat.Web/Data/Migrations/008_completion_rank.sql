@@ -1,7 +1,7 @@
--- Completion-based ranking: rank (X/S/A/B/C/D) is graded on "completion" — the fraction of the
--- map's typeable cells the player actually typed (any non-miss judgement) — instead of accuracy.
+-- Completion-based ranking: rank (X/S/A/B/C/D) is graded on "completion", the fraction of the
+-- map's typeable cells the player actually typed (any non-miss judgement), instead of accuracy.
 -- Accuracy stays stored and displayed; score and combo are untouched. Mirrors the client's
--- TypeBeatScoreProcessor and ScoringContract.RankFromCompletion — keep cutoffs in sync.
+-- TypeBeatScoreProcessor and ScoringContract.RankFromCompletion: keep cutoffs in sync.
 --
 -- Adds scores.completion, backfills it from the stored statistics jsonb, and re-grades every
 -- PASSED score under the new rule (failed scores keep rank 'F'). The key sets below mirror

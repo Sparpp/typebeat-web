@@ -4,7 +4,7 @@ namespace Typebeat.Web.Pages;
 /// The styled error page for HTML routes, rendered two ways (see Program.cs):
 ///
 ///  - UseStatusCodePagesWithReExecute("/error/{0}") re-executes bodyless 4xx/5xx responses
-///    (a page handler's bare NotFound(), an unmatched route) through this page — the original
+///    (a page handler's bare NotFound(), an unmatched route) through this page; the original
 ///    status code is preserved on the response; the route {code} only drives the copy.
 ///  - UseExceptionHandler("/error/500") lands unhandled page exceptions here in production.
 ///
@@ -23,7 +23,7 @@ public sealed class ErrorModel : TypebeatPageModel
     {
         404 => "This page skipped a beat.",
         403 => "That verse isn't yours to sing.",
-        >= 500 => "We dropped the mic — something broke on our side.",
+        >= 500 => "We dropped the mic, something broke on our side.",
         _ => "That request fell out of rhythm.",
     };
 
