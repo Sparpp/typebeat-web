@@ -963,6 +963,80 @@ img { max-width: 100%; }
 
 .listing-search .input { flex: 1; }
 
+/* ---- Listing: search quick-help (info icon + hover/focus tooltip) ---- */
+
+.search-info {
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+}
+
+.search-info__trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    padding: 0;
+    border: 1px solid var(--line-bright);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    line-height: 1;
+    cursor: help;
+    transition: box-shadow 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.search-info__trigger:hover,
+.search-info__trigger:focus-visible {
+    color: var(--text);
+    border-color: var(--violet);
+    box-shadow: var(--glow-violet);
+}
+
+.search-info__tip {
+    position: absolute;
+    top: calc(100% + var(--space-2));
+    right: 0;
+    z-index: 30;
+    width: max-content;
+    max-width: min(24rem, calc(100vw - var(--space-5)));
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    text-align: left;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 120ms ease, transform 120ms ease, visibility 120ms;
+    pointer-events: none;
+}
+
+.search-info:hover .search-info__tip,
+.search-info:focus-within .search-info__tip {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.search-info__tip p { margin: 0 0 var(--space-2); }
+.search-info__tip p:last-child { margin-bottom: 0; }
+
+.search-info__tip code {
+    font-family: var(--font-display);
+    color: var(--violet);
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    padding: 1px 5px;
+    white-space: nowrap;
+}
+
 /* ---- Listing: search-operator guide (collapsed disclosure) ---- */
 
 .search-guide {

@@ -11,7 +11,24 @@
 <form method="get" action="/beatmapsets" class="listing-search" role="search">
     <input class="input" type="search" name="q" value="@Model.Query"
            placeholder="search &mdash; try title, artist, or star:&gt;4 length:&lt;2:00&hellip;"
-           aria-label="Search beatmaps" aria-describedby="search-guide" />
+           aria-label="Search beatmaps" aria-describedby="search-info-tip search-guide" />
+    <span class="search-info">
+        <button type="button" class="search-info__trigger" aria-label="How to search"
+                aria-describedby="search-info-tip">
+            <span aria-hidden="true">&#9432;</span>
+        </button>
+        <span class="search-info__tip" role="tooltip" id="search-info-tip">
+            <p>Type filters right in the box as <code>key:value</code>. Stack several and they all
+                have to match. Plain words search title, artist and mapper.</p>
+            <p>
+                <code>star:&gt;4</code> &nbsp; <code>wpm:&gt;120</code> &nbsp;
+                <code>length:&lt;2:30</code> &nbsp; <code>creator:neon</code> &nbsp;
+                <code>bpm:120-140</code>
+            </p>
+            <p>Numbers take <code>&gt;</code> <code>&lt;</code> or a <code>4-6</code> range;
+                <code>length</code> also reads <code>mm:ss</code>. Full list in the guide below.</p>
+        </span>
+    </span>
     @if (Model.Sort != "newest")
     {
         <input type="hidden" name="s" value="@Model.Sort" />
