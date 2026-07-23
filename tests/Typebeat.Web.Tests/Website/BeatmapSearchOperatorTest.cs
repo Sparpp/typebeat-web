@@ -155,6 +155,26 @@ public class BeatmapSearchOperatorTest
     }
 
     [Test]
+    public async Task InfoIcon_QuickHelpTooltip_RendersWithExamples()
+    {
+        string html = await GetHtml("/beatmapsets");
+
+        Assert.Multiple(() =>
+        {
+            // Focusable, labelled trigger + a role="tooltip" the search box points at.
+            Assert.That(html, Does.Contain("search-info__trigger"));
+            Assert.That(html, Does.Contain("aria-label=\"How to search\""));
+            Assert.That(html, Does.Contain("role=\"tooltip\" id=\"search-info-tip\""));
+            Assert.That(html, Does.Contain("aria-describedby=\"search-info-tip search-guide\""));
+
+            // Concrete, valid-syntax examples in the quick reference.
+            Assert.That(html, Does.Contain("star:&gt;4"));
+            Assert.That(html, Does.Contain("length:&lt;2:30"));
+            Assert.That(html, Does.Contain("creator:neon"));
+        });
+    }
+
+    [Test]
     public async Task FreeTextStillWorks_WithNoOperators()
     {
         // Regression: a plain query behaves exactly as before.
