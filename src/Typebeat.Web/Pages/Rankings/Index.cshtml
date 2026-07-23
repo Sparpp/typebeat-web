@@ -3,12 +3,12 @@
 @model Typebeat.Web.Pages.Rankings.IndexModel
 @{
     ViewData["Title"] = "Rankings";
-    ViewData["MetaDescription"] = "type!beat global rankings — cumulative best scores across every ranked map.";
+    ViewData["MetaDescription"] = "type!beat global rankings: cumulative best scores across every ranked map.";
 }
 
 <section class="rankings">
     <h1>Rankings</h1>
-    <p class="faint">Cumulative score &mdash; your best score on each ranked map, added up &mdash; sets the ranking. Total cumulative score is every play you've ever submitted added up, and doesn't affect your rank.</p>
+    <p class="faint">Cumulative score, your best score on each ranked map added up, sets the ranking. Total cumulative score is every play you've ever submitted added up, and doesn't affect your rank.</p>
 
     @if (Model.Rows.Count == 0)
     {

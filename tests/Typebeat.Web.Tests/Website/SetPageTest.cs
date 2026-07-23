@@ -342,7 +342,7 @@ public class SetPageTest
     [Test]
     public async Task ScoreId_RedirectsPermanentlyToItsSet()
     {
-        // The game's leaderboard "Copy Link" copies {WebsiteUrl}/scores/{id} — it must land.
+        // The game's leaderboard "Copy Link" copies {WebsiteUrl}/scores/{id}; it must land.
         long scoreId;
         long hiddenScoreId;
 

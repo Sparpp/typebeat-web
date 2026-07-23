@@ -5,7 +5,7 @@ namespace Typebeat.Web.Scoring;
 
 /// <summary>
 /// The one global-ranking definition, shared by the /rankings board, the website profile stats
-/// card, and the game client's user endpoint — so all three agree on a player's rank. There is no
+/// card, and the game client's user endpoint, so all three agree on a player's rank. There is no
 /// pp yet: a player's "ranked score" is the sum of their best score per RANKED map (a
 /// best-per-(user, beatmap) fold over ranked+passed scores on sets in status 'ranked'), and their
 /// global rank is the dense_rank by that score among non-restricted, non-deleted users. Ties share
@@ -16,7 +16,7 @@ public static class GlobalRanking
     /// <summary>
     /// Per-user cumulative ranked score. Yields columns <c>user_id</c>, <c>ranked_score</c>
     /// (bigint), <c>ranked_map_count</c> (bigint); only users with at least one qualifying score
-    /// appear. Embed as a subquery — it is the single source of truth for the metric.
+    /// appear. Embed as a subquery: it is the single source of truth for the metric.
     /// </summary>
     public const string PerUserCumulativeSql =
         """

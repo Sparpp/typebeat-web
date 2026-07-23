@@ -1,7 +1,7 @@
 # typebeat-web
 
 The entire server side of [type!beat](../typebeat-osu): the osu-web APIv2 dialect the game
-client speaks (accounts, score submission, per-map leaderboards, beatmap lookup — M1 scope),
+client speaks (accounts, score submission, per-map leaderboards, beatmap lookup, M1 scope),
 plus (later milestones) beatmap hosting/downloads and the public website.
 
 Architecture, wire contract, and milestone plan: `../type!beat/docs/online-architecture.md`.
@@ -9,7 +9,7 @@ Architecture, wire contract, and milestone plan: `../type!beat/docs/online-archi
 ## Stack
 
 - ASP.NET Core (.NET 10), minimal APIs; Razor Pages for the website from M3.
-- **Newtonsoft.Json for every wire response** — the client deserializes with Newtonsoft
+- **Newtonsoft.Json for every wire response**: the client deserializes with Newtonsoft
   attribute semantics; see `Wire/Wire.cs`. Never serialize an API response with
   System.Text.Json.
 - PostgreSQL 16, Dapper + hand-written SQL. Migrations are plain SQL files embedded in the
@@ -28,13 +28,13 @@ then talks to this instance.
 
 ## Layout
 
-- `src/Typebeat.Web` — the app. `Endpoints/` one static module per wire endpoint group;
+- `src/Typebeat.Web`: the app. `Endpoints/` one static module per wire endpoint group;
   `Wire/` response conventions + DTOs; `Auth/` token + password services; `Data/` Db + SQL.
-- `tools/seed` — packages a lyriclab `.osz` for online play: assigns IDs, injects them into
+- `tools/seed`: packages a lyriclab `.osz` for online play: assigns IDs, injects them into
   each `.osu`'s `[Metadata]`, hashes the FINAL bytes (the beatmap_hash identity contract),
   inserts DB rows, emits the finalized `.osz` to import into the client.
-- `tools/admin` — block/unblock builds, unrank scores, restrict users.
-- `tests/Typebeat.Web.Tests` — unit tests (NUnit).
+- `tools/admin`: block/unblock builds, unrank scores, restrict users.
+- `tests/Typebeat.Web.Tests`: unit tests (NUnit).
 
 ## Iron rules
 
@@ -42,6 +42,6 @@ then talks to this instance.
    whatever is served for download must be exactly the hashed bytes.
 2. Download endpoints 302-redirect to object storage; server code never streams `.osz` bytes.
 3. Score-submit error strings (`invalid token`, `expired token`,
-   `invalid or missing beatmap_hash`, `outdated client`) are exact-matched by the client —
+   `invalid or missing beatmap_hash`, `outdated client`) are exact-matched by the client;
    never reword.
 4. Never branch on the client's `x-api-version` header; accept and log any positive integer.

@@ -7,7 +7,7 @@ namespace Typebeat.Web.Auth;
 /// <summary>
 /// Throttled users.last_visit touch (migration 002). Called by <see cref="SessionCookieAuth"/>
 /// for cookie-authed website requests; the game-side GET /api/v2/me handler should call it too
-/// (Endpoints/ change — deliberately not made here, module boundary). Never called for
+/// (Endpoints/ change, deliberately not made here, module boundary). Never called for
 /// anonymous requests: the callers only see resolved users.
 /// </summary>
 public static class LastVisit

@@ -1,6 +1,6 @@
 -- Ranked-by-approval: uploads land as 'pending' (browsable, downloadable, NO leaderboards);
 -- a user with the map_reviewer role (or an admin) promotes them to 'ranked' from the website.
--- 'public' — the pre-approval catch-all state — splits into those two meanings; existing rows
+-- 'public', the pre-approval catch-all state, splits into those two meanings; existing rows
 -- were all live with leaderboards, so they grandfather as 'ranked'.
 
 ALTER TABLE users ADD COLUMN map_reviewer boolean NOT NULL DEFAULT false;

@@ -33,9 +33,9 @@
                 }
                 else
                 {
-                    @* Pre-M3 set: live diffs but no uploaded package — a Download link would 404. *@
+                    @* Pre-M3 set: live diffs but no uploaded package, a Download link would 404. *@
                     <span class="btn btn-ghost btn-big btn-unavailable"
-                          title="This map predates website downloads — grab it from the in-game listing.">
+                          title="This map predates website downloads, grab it from the in-game listing.">
                         available in-game only
                     </span>
                 }
@@ -80,7 +80,7 @@
                 <summary>Report this beatmap</summary>
                 @if (Model.Reported)
                 {
-                    <p class="report-box__thanks">Thanks &mdash; your report is in. A human will look at it.</p>
+                    <p class="report-box__thanks">Thanks, your report is in. A human will look at it.</p>
                 }
                 else
                 {
@@ -99,7 +99,7 @@
             <h3 class="card-title">Map stats</h3>
             @if (Model.Diffs.Count > 1)
             {
-                @* Difficulty selector — one pill per difficulty, coloured by rating; the selected
+                @* Difficulty selector, one pill per difficulty, coloured by rating; the selected
                    one drives the stats box + leaderboard below (server re-renders on ?diff=). *@
                 <div class="diff-selector">
                     @foreach (var d in Model.Diffs)
@@ -168,7 +168,7 @@
 
 <section class="set-leaderboard">
     <div class="set-leaderboard__head">
-        <h2>Leaderboard@(Model.Diffs.Count > 1 && Model.Diff is not null ? $" — {Model.Diff.Name}" : "")</h2>
+        <h2>Leaderboard@(Model.Diffs.Count > 1 && Model.Diff is not null ? $": {Model.Diff.Name}" : "")</h2>
         @if (Model.Set.Status == "ranked" && Model.Diff is not null)
         {
             <div class="lb-tabs" role="tablist">
@@ -204,7 +204,7 @@
     {
         <div class="empty-state">
             <h3>No scores yet</h3>
-            <p>Nobody has typed this one &mdash; the #1 spot is wide open.</p>
+            <p>Nobody has typed this one, the #1 spot is wide open.</p>
         </div>
     }
     else

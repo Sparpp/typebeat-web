@@ -71,7 +71,7 @@ public class PreviewGeneratorTest
     private static void requireFfmpeg()
     {
         if (!PreviewGenerator.IsFfmpegAvailable())
-            Assert.Ignore("ffmpeg not on PATH — the pipeline records ffmpeg_missing and skips previews.");
+            Assert.Ignore("ffmpeg not on PATH, the pipeline records ffmpeg_missing and skips previews.");
     }
 
     /// <summary>A minimal PCM16 mono WAV: a 440 Hz tone, small enough to build inline.</summary>

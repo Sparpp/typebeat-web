@@ -7,7 +7,7 @@ namespace Typebeat.Web.Endpoints;
 
 /// <summary>
 /// Server-side lyric alignment for game clients without a local lyriclab environment (the
-/// installed build ships no Python/torch — only dev checkouts have the aligner beside the exe).
+/// installed build ships no Python/torch; only dev checkouts have the aligner beside the exe).
 ///
 ///  - POST   /api/v2/typebeat/align        multipart: audio file + lyrics text (+ artist/title)
 ///                                          → { id, state: "pending" }; 409 while a job is active
@@ -16,7 +16,7 @@ namespace Typebeat.Web.Endpoints;
 ///                                          frees immediately (sent when the client abandons the wait)
 ///
 /// Jobs are files on the shared /data volume (see <see cref="AlignJobStore"/>); the aligner
-/// worker container processes them one at a time (torch/demucs are memory-hungry — serialization
+/// worker container processes them one at a time (torch/demucs are memory-hungry; serialization
 /// IS the capacity plan on this box). Bearer-authed; a job is only visible to its creator.
 /// </summary>
 public static class AlignEndpoints
@@ -33,7 +33,7 @@ public static class AlignEndpoints
     /// <summary>
     /// Raises Kestrel's per-request body cap on the create endpoint only (default ~30 MB is below
     /// the 64 MB audio allowance). Same filter shape as BssEndpoints.WithUploadBodyLimit: absent
-    /// under TestServer and read-only mid-body — both skipped.
+    /// under TestServer and read-only mid-body; both skipped.
     /// </summary>
     private static TBuilder WithAlignBodyLimit<TBuilder>(this TBuilder builder) where TBuilder : IEndpointConventionBuilder
     {
@@ -124,7 +124,7 @@ public static class AlignEndpoints
         var user = ctx.AuthedUser();
 
         // Idempotent for the owner (already-finished jobs report success); 404 for unknown or
-        // not-the-caller's — same visibility rule as GET (a job is only its creator's).
+        // not-the-caller's, same visibility rule as GET (a job is only its creator's).
         bool cancelled = await store.RequestCancelAsync(id, user.Id, ctx.RequestAborted);
 
         return cancelled

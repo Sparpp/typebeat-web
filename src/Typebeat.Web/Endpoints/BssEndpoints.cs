@@ -13,12 +13,12 @@ using Typebeat.Web.Wire;
 namespace Typebeat.Web.Endpoints;
 
 /// <summary>
-/// The lazer-compatible beatmap submission service (BSS) at /bss — the three endpoints the
+/// The lazer-compatible beatmap submission service (BSS) at /bss: the three endpoints the
 /// editor's submission wizard calls (recon result.bss.endpoint_sequence / minimal_subset):
 ///
 ///  - <c>PUT /bss/beatmapsets</c> (JSON): create a fresh set or re-target an existing one;
 ///    allocates beatmap ids and returns the latest version's file manifest (EMPTY for a fresh
-///    set — this drives the client's replace-vs-patch branch).
+///    set, this drives the client's replace-vs-patch branch).
 ///  - <c>PUT /bss/beatmapsets/{id}</c> (multipart, one <c>beatmapArchive</c> part): full
 ///    package upload → Parse → Validate → Ingest → 204.
 ///  - <c>PATCH /bss/beatmapsets/{id}</c> (multipart, repeated <c>filesChanged</c> file parts +
@@ -27,17 +27,17 @@ namespace Typebeat.Web.Endpoints;
 ///
 /// Errors follow the upstream contract: 422 <c>{"error": "..."}</c> for invariants (WireJson),
 /// 403 for ownership, 404 for a missing set. Auth is the existing bearer token; submission
-/// additionally requires <c>users.verified_at</c> — set self-service by completing email
+/// additionally requires <c>users.verified_at</c>, set self-service by completing email
 /// verification (any website sign-in / signup code), NOT by a manual admin lever. Ranking (not
 /// submission) is the role-gated action.
 ///
 /// Set/diff lifecycle conventions owned here:
 ///  - a fresh set is created with status 'hidden' and flipped to its intended published status by
-///    its first successful upload (PackageIngest) — 'pending' (awaits a reviewer's rank flip) or
+///    its first successful upload (PackageIngest): 'pending' (awaits a reviewer's rank flip) or
 ///    'unranked' (creator opted out of ranking in the wizard; never leaderboard-eligible). The
 ///    choice rides in on the PUT's <c>target</c> and is stored in <c>intended_status</c>;
-///  - beatmap rows are NEVER deleted (scores FK); a diff dropped from beatmaps_to_keep — or
-///    absent from an uploaded package — gets <c>filename = NULL</c>, which is the repo-wide
+///  - beatmap rows are NEVER deleted (scores FK); a diff dropped from beatmaps_to_keep, or
+///    absent from an uploaded package, gets <c>filename = NULL</c>, which is the repo-wide
 ///    "not part of the current version" marker (live diffs have <c>filename IS NOT NULL</c>);
 ///  - newly allocated beatmap rows carry a random placeholder checksum until the first upload
 ///    overwrites it (checksum_md5 is NOT NULL UNIQUE); every beatmap id comes from nextval at
@@ -71,7 +71,7 @@ public static class BssEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // PUT /bss/beatmapsets — create or re-target a set, allocate ids, return the latest manifest.
+    // PUT /bss/beatmapsets: create or re-target a set, allocate ids, return the latest manifest.
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> PutBeatmapSetAsync(HttpContext ctx, Db db, PackageIngest ingest)
     {
@@ -189,7 +189,7 @@ public static class BssEndpoints
 
             await tx.CommitAsync(ctx.RequestAborted);
 
-            // The latest version's manifest ([] for a fresh set) — the client's replace-vs-patch pivot.
+            // The latest version's manifest ([] for a fresh set): the client's replace-vs-patch pivot.
             var files = await ingest.GetLatestVersionFilesAsync(setId, ctx.RequestAborted);
 
             return WireJson.Ok(new BssPutBeatmapSetResponse
@@ -206,7 +206,7 @@ public static class BssEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // PUT /bss/beatmapsets/{id} — full package upload (single "beatmapArchive" file part).
+    // PUT /bss/beatmapsets/{id}: full package upload (single "beatmapArchive" file part).
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> UploadFullPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest)
     {
@@ -250,7 +250,7 @@ public static class BssEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // PATCH /bss/beatmapsets/{id} — delta upload: latest version overlaid with filesChanged
+    // PATCH /bss/beatmapsets/{id}: delta upload, latest version overlaid with filesChanged
     // minus filesDeleted, rebuilt into a full package, then the same ingest path.
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> PatchPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, IFileStore fileStore)
@@ -263,7 +263,7 @@ public static class BssEndpoints
         // A no-change resubmission arrives with NO body at all: the client's diff is empty and
         // osu-framework's WebRequest only builds multipart content when it has parts, so there
         // is no Content-Type to read a form from. Treat any absent/non-form body as an empty
-        // delta — the rebuild below then reproduces the latest version verbatim and the ingest
+        // delta; the rebuild below then reproduces the latest version verbatim and the ingest
         // collapses it into a no-version-cut 204 (never a raw 500 out of ReadFormAsync).
         IFormCollection? form = null;
 
@@ -333,7 +333,7 @@ public static class BssEndpoints
             }
 
             // Deletes apply to the BASE manifest only; an uploaded replacement always lands
-            // (changed-wins, as upstream) — never let a filesDeleted entry swallow new content.
+            // (changed-wins, as upstream); never let a filesDeleted entry swallow new content.
             foreach (var (filename, file) in changed)
             {
                 var entry = zip.CreateEntry(filename);
@@ -390,7 +390,7 @@ public static class BssEndpoints
     /// The tail both upload routes share, running entirely inside the caller's per-set ingest
     /// scope: Parse → Validate (422 on invariant violations) → IngestAsync with the SAME
     /// seekable stream. Diff-liveness refresh, the publish flip and all artifact publication
-    /// happen inside <see cref="PackageIngest.IngestAsync"/>'s transaction — nothing runs after
+    /// happen inside <see cref="PackageIngest.IngestAsync"/>'s transaction; nothing runs after
     /// the commit, so a crash at any point leaves either the whole new version or none of it.
     /// </summary>
     private static async Task<IResult> parseValidateIngestAsync(
@@ -423,7 +423,7 @@ public static class BssEndpoints
 
     /// <summary>
     /// Raises Kestrel's per-request body cap on this endpoint only (the feature is absent under
-    /// TestServer and read-only once the body started flowing — both cases are skipped). Runs
+    /// TestServer and read-only once the body started flowing, both cases are skipped). Runs
     /// as an endpoint filter, i.e. before the handler ever touches Request.Body/Form.
     /// </summary>
     private static TBuilder WithUploadBodyLimit<TBuilder>(this TBuilder builder) where TBuilder : IEndpointConventionBuilder
@@ -456,7 +456,7 @@ public static class BssEndpoints
     /// BadHttpRequestException (413), a malformed multipart body/Content-Type as
     /// InvalidDataException, and a truncated body (garbage where a boundary should be, or a
     /// mid-body disconnect) as IOException. All of these must produce the 422 error envelope,
-    /// never a raw 500 — the wizard surfaces the message verbatim.
+    /// never a raw 500; the wizard surfaces the message verbatim.
     /// </summary>
     private static bool isClientBodyError(Exception e)
         => e is BadHttpRequestException or InvalidDataException or IOException;

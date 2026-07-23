@@ -12,7 +12,7 @@
 --
 -- The synthetic name derives from version_name (path separators and reserved filename
 -- characters become '_', mirroring MediaEndpoints.SanitizeFilename). These sets have no
--- package the name could point into — it only needs to be non-NULL, stable and recognizable.
+-- package the name could point into; it only needs to be non-NULL, stable and recognizable.
 -- Their set pages hide the Download button separately (no package ⇒ "available in-game only").
 UPDATE beatmaps b
 SET filename = regexp_replace(coalesce(nullif(trim(b.version_name), ''), 'beatmap'),

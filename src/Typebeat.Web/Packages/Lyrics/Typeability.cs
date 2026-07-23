@@ -7,11 +7,11 @@ namespace Typebeat.Web.Packages.Lyrics;
 /// Server-side port of the game's text-normalization / typeability authority
 /// (typebeat-osu typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricBeatmap.cs:33-166, class
 /// Typeability). The upload pipeline must count exactly the cells the client will make the
-/// player type, so this logic is copied verbatim — any change there must be mirrored here.
+/// player type, so this logic is copied verbatim; any change there must be mirrored here.
 /// </summary>
 public static class Typeability
 {
-    // LyricBeatmap.cs:39-43 — accepted set is a subset of what the client's KeyCharMap can
+    // LyricBeatmap.cs:39-43: accepted set is a subset of what the client's KeyCharMap can
     // produce (ASCII letters/digits/space); everything else auto-skips.
     public static bool IsTypeable(char c)
         => c == ' '
@@ -20,7 +20,7 @@ public static class Typeability
            || (c >= '0' && c <= '9');
 
     /// <summary>
-    /// Removes bracketed backing-vocal spans — "(...)" and "[...]" — the player never types.
+    /// Removes bracketed backing-vocal spans, "(...)" and "[...]", the player never types.
     /// Unclosed brackets strip to end of string. Call BEFORE <see cref="Normalize"/>.
     /// (LyricBeatmap.cs:53-81.)
     /// </summary>
@@ -70,7 +70,7 @@ public static class Typeability
         }
         catch (ArgumentException)
         {
-            // Invalid Unicode (broken surrogates) — carry on undecomposed.
+            // Invalid Unicode (broken surrogates), carry on undecomposed.
         }
 
         var sb = new StringBuilder(raw.Length);

@@ -14,7 +14,7 @@ namespace Typebeat.Web.Tests.Bss;
 ///  - a no-change resubmission PATCH (no body / non-form body / empty delta) is a graceful
 ///    no-op 204, never a raw 500, while malformed form bodies still get the 422 envelope;
 ///  - a case-only rename (bg.jpg → bg.JPG as filesChanged+filesDeleted) must keep the file
-///    under its NEW name — exact case-sensitive delta semantics matching the client diff;
+///    under its NEW name; exact case-sensitive delta semantics matching the client diff;
 ///  - two concurrent full uploads to one set serialize: no interleaved state, versions cut
 ///    sequentially, the final DB state is wholly one upload's content;
 ///  - a version row implies its download package object exists (assembled before commit), and
@@ -54,7 +54,7 @@ public class BssDeltaAndConcurrencyTest
         Assert.Multiple(() =>
         {
             Assert.That(returned, Has.Length.EqualTo(3), "one created + two kept");
-            Assert.That(returned, Is.SupersetOf(ids), "kept ids MUST be echoed back — the client exporter resolves kept diffs by membership");
+            Assert.That(returned, Is.SupersetOf(ids), "kept ids MUST be echoed back, the client exporter resolves kept diffs by membership");
             Assert.That(returned.Except(ids).Count(), Is.EqualTo(1), "exactly one freshly allocated id");
             Assert.That(returned.Except(ids).Single(), Is.Not.AnyOf(ids[0], ids[1]));
         });
@@ -85,7 +85,7 @@ public class BssDeltaAndConcurrencyTest
                    new FormUrlEncodedContent(new Dictionary<string, string>())))
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NoContent), "an empty urlencoded form is an empty delta");
 
-        // 4. A non-form body (wrong Content-Type entirely) — still not a 500.
+        // 4. A non-form body (wrong Content-Type entirely); still not a 500.
         using (var response = await BssSubmissionFlowTest.SendAsync(HttpMethod.Patch, $"/bss/beatmapsets/{setId}", bearer,
                    new StringContent("{}", System.Text.Encoding.UTF8, "application/json")))
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NoContent), "non-form content is treated as an empty delta");
@@ -98,9 +98,9 @@ public class BssDeltaAndConcurrencyTest
             Assert.That(versions, Is.EqualTo(1), "no-op PATCHes must not cut versions");
         }
 
-        // 5. MALFORMED form bodies are client errors: 422 with the {"error"} envelope — never a
+        // 5. MALFORMED form bodies are client errors: 422 with the {"error"} envelope, never a
         //    raw 500. Both a multipart Content-Type without a boundary and a zero-part
-        //    multipart body (invalid per RFC 2046 — a multipart needs at least one part).
+        //    multipart body (invalid per RFC 2046; a multipart needs at least one part).
         var missingBoundary = new ByteArrayContent([1, 2, 3]);
         missingBoundary.Headers.ContentType = MediaTypeHeaderValue.Parse("multipart/form-data");
 
@@ -124,7 +124,7 @@ public class BssDeltaAndConcurrencyTest
         using var response = await BssSubmissionFlowTest.SendAsync(HttpMethod.Patch, $"/bss/beatmapsets/{setId}", bearer);
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.UnprocessableEntity),
-            "there is nothing to rebuild — the no-version guard must still fire");
+            "there is nothing to rebuild, the no-version guard must still fire");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -157,7 +157,7 @@ public class BssDeltaAndConcurrencyTest
             """,
             new { setId });
 
-        Assert.That(latest.VersionNo, Is.EqualTo(2), "a rename is a manifest change — a new version is cut");
+        Assert.That(latest.VersionNo, Is.EqualTo(2), "a rename is a manifest change, a new version is cut");
 
         var manifest = (await conn.QueryAsync<string>(
             "SELECT filename FROM version_files WHERE version_id = @versionId", new { versionId = latest.VersionId })).ToList();
@@ -223,7 +223,7 @@ public class BssDeltaAndConcurrencyTest
         });
 
         // Determine which upload owns the CURRENT version by its manifest, then require the
-        // whole visible state — beatmap checksums, liveness, cover key — to match that upload
+        // whole visible state, beatmap checksums, liveness, cover key, to match that upload
         // wholly. Any mix of A and B is the interleaving this test exists to catch.
         var currentManifest = (await conn.QueryAsync<byte[]>(
             "SELECT vf.sha256 FROM version_files vf WHERE vf.version_id = @versionId",
@@ -233,7 +233,7 @@ public class BssDeltaAndConcurrencyTest
 
         var winner = currentManifest.SetEquals(packageA.Select(e => Sha256Hex(e.Content))) ? packageA
             : currentManifest.SetEquals(packageB.Select(e => Sha256Hex(e.Content))) ? packageB
-            : throw new InvalidOperationException("current version matches neither upload — interleaved manifest");
+            : throw new InvalidOperationException("current version matches neither upload, interleaved manifest");
 
         var diffs = (await conn.QueryAsync<(long Id, string? Filename, string Checksum)>(
             "SELECT id AS Id, filename AS Filename, checksum_md5 AS Checksum FROM beatmaps WHERE set_id = @setId ORDER BY id",
@@ -243,7 +243,7 @@ public class BssDeltaAndConcurrencyTest
         {
             Assert.That(diffs.Select(d => d.Id), Is.EquivalentTo(ids));
             Assert.That(diffs.Select(d => d.Filename), Is.EquivalentTo(new[] { "map1.osu", "map2.osu" }),
-                "both diffs stay live — the loser's liveness refresh must not NULL the winner's diffs");
+                "both diffs stay live; the loser's liveness refresh must not NULL the winner's diffs");
             Assert.That(diffs.Select(d => d.Checksum),
                 Is.EquivalentTo(winner.Where(e => e.Name.EndsWith(".osu")).Select(e => Md5Hex(e.Content))),
                 "beatmap rows must wholly match the upload that owns the current version");
@@ -332,7 +332,7 @@ public class BssDeltaAndConcurrencyTest
 
     /// <summary>
     /// One package: map{N}.osu per allocated id (ids embedded, so bytes/checksums are unique
-    /// per set — checksum_md5 is globally unique), one fake audio, one decodable bg.
+    /// per set; checksum_md5 is globally unique), one fake audio, one decodable bg.
     /// <paramref name="previewTime"/> varies the .osu bytes to make distinct package contents.
     /// </summary>
     private static (string Name, byte[] Content)[] BuildPackageEntries(string creator, long setId, long[] ids, double previewTime)

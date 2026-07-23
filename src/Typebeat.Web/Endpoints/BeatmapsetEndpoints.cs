@@ -8,16 +8,16 @@ namespace Typebeat.Web.Endpoints;
 /// <summary>
 /// Beatmapset-level APIv2 endpoints:
 ///
-///  - GET /api/v2/beatmapsets/{id} — GetBeatmapSetRequest (Target "beatmapsets/{id}"): the
+///  - GET /api/v2/beatmapsets/{id}: GetBeatmapSetRequest (Target "beatmapsets/{id}"), the
 ///    submission wizard's status preselect on update and the post-submit result card. Shape is
 ///    APIBeatmapSet with nested beatmaps[] (Wire/BeatmapWire.cs). Optional auth: public sets
 ///    are visible to everyone; 'hidden'/'removed' sets 404 for everyone but the owner.
-///  - GET /api/v2/me/beatmapset-favourites — GetMyFavouriteBeatmapSetsResponse
+///  - GET /api/v2/me/beatmapset-favourites: GetMyFavouriteBeatmapSetsResponse
 ///    { beatmapset_ids: [...] }, read from the favourites table (was an empty stub in M1).
 ///
 /// Status strings bind to the client's BeatmapOnlineStatus by member NAME (see BeatmapWire):
 /// 'ranked' → "ranked" (reviewer-approved: leaderboards live, MatchesOnlineVersion satisfied),
-/// 'pending' → "pending" (published upload awaiting review; browsable, no leaderboards —
+/// 'pending' → "pending" (published upload awaiting review; browsable, no leaderboards,
 /// the client's LeaderboardManager blocks non-ranked-family statuses natively),
 /// 'hidden' → "wip" (owner-only pre-publish state, preselects WIP in the wizard),
 /// 'removed' → "graveyard" (owner-only; submission to it is blocked with a 422 in BSS).
@@ -71,7 +71,7 @@ public static class BeatmapsetEndpoints
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");
 
         // Live difficulties only: filename IS NOT NULL ⇔ part of the current version (the
-        // BSS lifecycle convention — dropped diffs keep their rows for the scores FK).
+        // BSS lifecycle convention, dropped diffs keep their rows for the scores FK).
         var beatmaps = (await conn.QueryAsync<BeatmapRow>(
             """
             SELECT id                AS id,

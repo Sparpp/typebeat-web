@@ -10,7 +10,7 @@ namespace Typebeat.Web.Pages;
 /// The code step. Reached only mid-flow, carrying a <see cref="ChallengeCookie"/> that names the
 /// pending user and whether they are confirming a new email ('verify') or finishing a login
 /// ('login'). GET requires the challenge (else back to /login); POST checks the code via
-/// <see cref="EmailCodeService.VerifyAsync"/> and, only on success, mints the session — marking
+/// <see cref="EmailCodeService.VerifyAsync"/> and, only on success, mints the session, marking
 /// users.verified_at (idempotent) on ANY completed code, since entering an emailed code proves
 /// email control. That verified flag is the self-service gate for beatmap submission. Both POST
 /// handlers are antiforgery-validated by the Razor Pages pipeline.
@@ -25,7 +25,7 @@ public sealed class VerifyModel(
     [BindProperty]
     public string Code { get; set; } = string.Empty;
 
-    /// <summary>"verify" | "login" — drives the page copy.</summary>
+    /// <summary>"verify" | "login"; drives the page copy.</summary>
     public string Purpose { get; private set; } = "verify";
 
     public string MaskedEmail { get; private set; } = string.Empty;
@@ -75,7 +75,7 @@ public sealed class VerifyModel(
         }
 
         // Completing any email code proves control of the account's email, so mark it verified
-        // (idempotent) before signing in. This is the self-service path to beatmap submission — it
+        // (idempotent) before signing in. This is the self-service path to beatmap submission; it
         // covers accounts created in-game, whose OAuth password grant has no email step: signing in
         // on the website is what verifies them. Beatmap SUBMISSION gates on verified_at; only RANKING
         // needs the reviewer/admin role.

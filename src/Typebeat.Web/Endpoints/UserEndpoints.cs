@@ -8,7 +8,7 @@ using Typebeat.Web.Wire;
 namespace Typebeat.Web.Endpoints;
 
 /// <summary>
-/// GET /api/v2/users/{lookup}/{ruleset?} — the client's GetUserRequest, fired by the profile
+/// GET /api/v2/users/{lookup}/{ruleset?}: the client's GetUserRequest, fired by the profile
 /// overlay (UserProfileOverlay) whenever a user is shown. Without this route the request never
 /// completes and the overlay spins forever. Returns the APIUser payload UserWire.User builds, with
 /// real statistics: global rank + ranked score from the shared <see cref="GlobalRanking"/> metric
@@ -68,7 +68,7 @@ public static class UserEndpoints
         """;
 
     /// <summary>
-    /// SS/S/A counts + mean accuracy (0–100) over the user's best ranked+passed score per map — the
+    /// SS/S/A counts + mean accuracy (0–100) over the user's best ranked+passed score per map; the
     /// same per-map-best fold the website profile uses. B/C/D exist in our grading but have no slot
     /// in the client grade_counts DTO, so they are folded away here.
     /// </summary>
@@ -111,7 +111,7 @@ public static class UserEndpoints
         return (ss, s, a, accuracyPercent);
     }
 
-    // created_at/last_visit are timestamptz — Npgsql materializes them as DateTime (Kind=Utc).
+    // created_at/last_visit are timestamptz; Npgsql materializes them as DateTime (Kind=Utc).
     private sealed record UserRow(
         long Id, string Username, string CountryCode, string? AvatarKey, bool IsAdmin,
         DateTime CreatedAt, DateTime? LastVisit, int PlayCount, long TotalScore, long PlayTimeS);

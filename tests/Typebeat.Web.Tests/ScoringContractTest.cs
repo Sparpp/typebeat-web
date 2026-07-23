@@ -21,7 +21,7 @@ public class ScoringContractTest
         // 8×great + 1×ok + 1×meh out of 10 max-great objects.
         // numerator   = 300·8 + 100·1 + 50·1 = 2550
         // denominator = 300·10              = 3000  → accuracy = 0.85
-        // completion  = 10 typed / 10 cells = 1.0   → rank X — sloppy timing costs accuracy,
+        // completion  = 10 typed / 10 cells = 1.0   → rank X, sloppy timing costs accuracy,
         // score and combo, but never the grade.
         var r = ScoringContract.Recompute(
             Dict(("great", 8), ("ok", 1), ("meh", 1)),
@@ -44,7 +44,7 @@ public class ScoringContractTest
     public void WorstTimingEverywhere_StillRankX_WhenEveryCellTyped()
     {
         // The headline rule: an all-meh play (every window scraped) has accuracy 50/300 ≈ 0.167
-        // but typed 100% of the map — SS.
+        // but typed 100% of the map: SS.
         var r = ScoringContract.Recompute(Dict(("meh", 10)), Dict(("great", 10)), maxCombo: 10);
 
         Assert.Multiple(() =>
@@ -199,7 +199,7 @@ public class ScoringContractTest
         });
     }
 
-    // ---- rank cutoffs (TypeBeatScoreProcessor.RankFromCompletion — keep in sync) ----
+    // ---- rank cutoffs (TypeBeatScoreProcessor.RankFromCompletion, keep in sync) ----
 
     [TestCase(1.0, "X")]
     [TestCase(0.99, "S")]
@@ -218,7 +218,7 @@ public class ScoringContractTest
     // ---- failed (partial) plays: judged-only accuracy drives the ceiling ----
     // Regression for the review finding: the client's running accuracy denominator only counts
     // JUDGED cells (ScoreProcessor.cs:261,393), so a play failed 100 cells into a 1000-cell map
-    // with all-greats has client accuracy 1.0 — a whole-map ceiling would falsely flag its
+    // with all-greats has client accuracy 1.0; a whole-map ceiling would falsely flag its
     // honest total as tampered.
 
     [Test]
@@ -239,7 +239,7 @@ public class ScoringContractTest
             Assert.That(r.AccuracyProgress, Is.EqualTo(0.1).Within(1e-9));
             // Completion is whole-map: this fail typed 10% of the map, not 100%-of-what-it-saw.
             Assert.That(r.Completion, Is.EqualTo(0.1).Within(1e-9));
-            // ceiling = round(500000·1·1 + 500000·1^5·0.1) = 550000 — computed from the JUDGED
+            // ceiling = round(500000·1·1 + 500000·1^5·0.1) = 550000, computed from the JUDGED
             // accuracy. The whole-map value would have given ~50001 and rejected honest totals.
             Assert.That(r.TotalScoreCeiling, Is.EqualTo(550_000L));
         });

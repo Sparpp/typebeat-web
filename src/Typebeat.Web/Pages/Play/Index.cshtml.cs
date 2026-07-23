@@ -5,11 +5,11 @@ using Typebeat.Web.Data;
 namespace Typebeat.Web.Pages.Play;
 
 /// <summary>
-/// /play — the in-browser web player's map picker. Lists currently-ranked maps that have a
+/// /play: the in-browser web player's map picker. Lists currently-ranked maps that have a
 /// playable .osu difficulty and an assembled package, rendered with the shared beatmapset card
-/// (in "play mode" — the download rail becomes a play button), and mints an antiforgery request
+/// (in "play mode", the download rail becomes a play button), and mints an antiforgery request
 /// token for the cookie-authed /play/token + /play/submit fetches (see play.js). The gameplay
-/// itself is a JS reimplementation (typebeat-core.js) — this page only picks the map and carries
+/// itself is a JS reimplementation (typebeat-core.js); this page only picks the map and carries
 /// auth/CSRF state.
 /// </summary>
 public sealed class IndexModel(Db db, IAntiforgery antiforgery) : TypebeatPageModel

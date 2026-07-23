@@ -10,7 +10,7 @@ namespace Typebeat.Web.Tests.Website;
 /// sections (best/recent scores, most played, maps, favourites), name→id canonical redirect,
 /// hidden-map visibility, empty states, and the throttled users.last_visit touch.
 ///
-/// Seeds its own users/sets on top of <see cref="PublicSiteSeed"/> — all with past
+/// Seeds its own users/sets on top of <see cref="PublicSiteSeed"/>, all with past
 /// submitted_at offsets and small counters so the landing/listing sort and paging assertions
 /// (newest = Fresh Drop, firsts by plays/favs, &lt;100 public sets) stay untouched.
 /// </summary>
@@ -55,8 +55,8 @@ public class ProfilePageTest
             """,
             new { starId, rivalId });
 
-        // The B-side is 'pending' (browsable, awaiting review): every profile section — maps,
-        // scores, most played — must treat it like the ranked set. Its seeded ranked=true
+        // The B-side is 'pending' (browsable, awaiting review): every profile section, maps,
+        // scores, most played, must treat it like the ranked set. Its seeded ranked=true
         // scores model a set that took scores while ranked and was later unranked.
         starRankedSetId = await InsertSetAsync(conn, starId, "Star Anthem", "The Profile Makers", "ranked", days: -3);
         starSecondSetId = await InsertSetAsync(conn, starId, "Star Bside", "The Profile Makers", "pending", days: -4);
@@ -72,7 +72,7 @@ public class ProfilePageTest
         await InsertScoreAsync(conn, starId, beatmapB, 300_000, 0.90, "B");
         await InsertScoreAsync(conn, starId, beatmapB, 100_000, 0.40, "F", passed: false);
 
-        // rival's 900k on ranked map A tops star's cumulative ranked score (800k — map B is
+        // rival's 900k on ranked map A tops star's cumulative ranked score (800k, map B is
         // pending, so it does not count toward ranked score), making star global rank #2.
         await InsertScoreAsync(conn, rivalId, beatmapA, 900_000, 0.97, "S");
 
@@ -120,7 +120,7 @@ public class ProfilePageTest
             Assert.That(html, Does.Contain("100,000"));
             Assert.That(html, Does.Contain("2 plays"));
 
-            // Maps: own published sets as cards — the pending B-side included, wearing its
+            // Maps: own published sets as cards, the pending B-side included, wearing its
             // Pending pill; the hidden set never leaks to anonymous viewers.
             Assert.That(html, Does.Contain($"data-set-id=\"{starRankedSetId}\""));
             Assert.That(html, Does.Contain($"data-set-id=\"{starSecondSetId}\""));

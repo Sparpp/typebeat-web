@@ -93,7 +93,7 @@ public class EmailVerificationTest
                 Assert.That(html, Does.Contain("Too many incorrect attempts"), "6th wrong attempt burns the code");
         }
 
-        // Even the CORRECT code no longer works — it was burned.
+        // Even the CORRECT code no longer works; it was burned.
         using (var afterBurn = await postVerifyAsync(client, code))
         {
             string html = await afterBurn.Content.ReadAsStringAsync();

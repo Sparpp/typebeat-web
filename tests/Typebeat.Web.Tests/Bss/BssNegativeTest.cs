@@ -7,7 +7,7 @@ namespace Typebeat.Web.Tests.Bss;
 
 /// <summary>
 /// BSS error contract: 422 {"error"} for invariant violations (unverified account, bad archive,
-/// foreign keep-ids, oversized package), 403 for non-owners, 404 for missing sets — the exact
+/// foreign keep-ids, oversized package), 403 for non-owners, 404 for missing sets; the exact
 /// codes and envelope the client's per-stage failure handlers surface.
 /// </summary>
 [TestFixture]

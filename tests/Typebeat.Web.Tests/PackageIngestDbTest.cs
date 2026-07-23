@@ -21,7 +21,7 @@ namespace Typebeat.Web.Tests;
 [NonParallelizable]
 public class PackageIngestDbTest
 {
-    // NOTE: "typebeat_pkgtests" — must stay distinct from the website tests' "typebeat_webtests"
+    // NOTE: "typebeat_pkgtests"; must stay distinct from the website tests' "typebeat_webtests"
     // and WireCompat's "typebeat_wirecompat"; each fixture force-drops its own database.
     private const string database_name = "typebeat_pkgtests";
 
@@ -362,7 +362,7 @@ public class PackageIngestDbTest
             Assert.That(oldest, Is.False, "latest-2 is pruned after the commit");
         });
 
-        // The blobs behind v1 are untouched — content-addressed storage is never pruned here.
+        // The blobs behind v1 are untouched; content-addressed storage is never pruned here.
         foreach (var file in result.Files)
             Assert.That(await fileStore.BlobExistsAsync(file.Sha256), Is.True, file.Filename);
     }
@@ -372,7 +372,7 @@ public class PackageIngestDbTest
     public async Task PaceBackfill_RecomputesStaleRowsFromStoredBlob()
     {
         // Simulate a row written under the old (v1, perfect-play cells/5) arithmetic: scribble
-        // wrong numbers and downgrade the stamp — exactly the state prod is in when a LyricPace
+        // wrong numbers and downgrade the stamp, exactly the state prod is in when a LyricPace
         // version bump deploys.
         await using var conn = await db.OpenAsync();
 

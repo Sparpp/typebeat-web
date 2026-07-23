@@ -1,5 +1,5 @@
 # Aligner worker: python + CPU torch + demucs around the vendored lyriclab aligner
-# (align_lyrics.py is a copy of typebeat-osu/lyriclab/align_lyrics.py — keep them in sync).
+# (align_lyrics.py is a copy of typebeat-osu/lyriclab/align_lyrics.py, keep them in sync).
 # Python 3.11 + torch 2.5.x pinned deliberately, mirroring lyriclab/setup.ps1 (torch 2.6
 # breaks Demucs checkpoint loading; 3.11 for wheel coverage). ffmpeg decodes mp3/mp4 inputs.
 FROM python:3.11-slim

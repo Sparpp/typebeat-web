@@ -38,7 +38,7 @@ public static class AuthExtensions
     /// Best-effort client IP for rate limiting. Behind Cloudflare the connection/XFF chain ends
     /// at a CF edge IP (shared by many players), so prefer CF-Connecting-IP when present. A
     /// direct-to-origin caller can spoof that header, but the in-memory limiters are documented
-    /// speed bumps — Cloudflare WAF rules are the real production layer.
+    /// speed bumps; Cloudflare WAF rules are the real production layer.
     /// </summary>
     public static string GetClientIp(this HttpContext ctx)
     {

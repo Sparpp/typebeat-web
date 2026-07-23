@@ -7,7 +7,7 @@ namespace Typebeat.Web.Data;
 
 /// <summary>
 /// Thin wrapper around a pooled <see cref="NpgsqlDataSource"/> plus the SQL-first migrator.
-/// All data access goes through Dapper against hand-written SQL — the schema in
+/// All data access goes through Dapper against hand-written SQL; the schema in
 /// Data/Migrations is the single source of truth, no ORM-generated DDL.
 /// </summary>
 public sealed class Db(NpgsqlDataSource dataSource)

@@ -9,15 +9,15 @@ namespace Typebeat.Web.Pages.Users;
 /// <summary>
 /// User profile (/users/{id} and /users/{name}): cover band (preset gradient keyed by user id),
 /// avatar, joined/last-seen, the stats card (global rank by user_stats.total_score, totals grid,
-/// grade counts), and stacked sections — Best scores / Recent scores / Most played / Maps /
+/// grade counts), and stacked sections: Best scores / Recent scores / Most played / Maps /
 /// Favourites (card partial reuse). A name URL canonical-redirects to the id URL; an all-digit
 /// path segment always reads as an id (so a digits-only USERNAME is only reachable by id).
 ///
 /// Grade counts follow osu semantics: each map contributes only the user's BEST ranked+passed
-/// score (the same per-map-best fold the leaderboards use), not every play — so the row reads
+/// score (the same per-map-best fold the leaderboards use), not every play, so the row reads
 /// as "maps you've SS'd", matching how the game presents grades on results/leaderboards.
 /// Accuracy is the plain average over those same per-map bests (the game aggregates nothing
-/// today — UserWire serves zeroed statistics — so this page defines the semantics).
+/// today, UserWire serves zeroed statistics, so this page defines the semantics).
 /// </summary>
 public sealed class ProfileModel(Db db) : TypebeatPageModel
 {
@@ -33,7 +33,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
     /// <summary>Global rank by cumulative ranked score (<see cref="GlobalRanking"/>); null → unranked.</summary>
     public long? GlobalRank { get; private set; }
 
-    /// <summary>Sum of best score per ranked map — the metric global rank is drawn from.</summary>
+    /// <summary>Sum of best score per ranked map; the metric global rank is drawn from.</summary>
     public long RankedScore { get; private set; }
 
     public long TotalScore { get; private set; }
@@ -285,7 +285,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         Favourites = favourites;
 
         ViewData["Title"] = ProfileUser.Username;
-        ViewData["MetaDescription"] = $"{ProfileUser.Username}'s type!beat profile — scores, maps and favourites.";
+        ViewData["MetaDescription"] = $"{ProfileUser.Username}'s type!beat profile: scores, maps and favourites.";
 
         return Page();
     }

@@ -32,7 +32,7 @@ public class ListingPageTest
     [Test]
     public async Task Search_ShortQuery_FallsBackToSubstringMatch()
     {
-        // "oh" is mid-word in "Bohemian" — only the ILIKE fallback can find it.
+        // "oh" is mid-word in "Bohemian"; only the ILIKE fallback can find it.
         string html = await GetHtml("/beatmapsets?q=oh");
 
         Assert.That(html, Does.Contain($"data-set-id=\"{PublicSiteSeed.SearchSetId}\""));

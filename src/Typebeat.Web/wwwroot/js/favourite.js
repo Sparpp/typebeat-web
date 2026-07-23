@@ -1,9 +1,9 @@
 /*
- * favourite.js — progressive enhancement for the beatmapset card favourite buttons.
+ * favourite.js: progressive enhancement for the beatmapset card favourite buttons.
  *
  * Without JS the favourite form is a normal POST that redirects (and reloads the page,
  * jumping to the top). With JS we intercept the submit, POST via fetch, and update the
- * heart + count in place — the grid never reloads and scroll position is preserved.
+ * heart + count in place; the grid never reloads and scroll position is preserved.
  * Vanilla JS on purpose (no framework anywhere on this site).
  */
 (function () {
@@ -26,7 +26,7 @@
                 body: new FormData(form) // carries the antiforgery token + returnUrl
             });
 
-            // Not signed in (server redirects to /login) — honour it.
+            // Not signed in (server redirects to /login); honour it.
             if (res.redirected) { window.location.href = res.url; return; }
             if (!res.ok) throw new Error('favourite failed: ' + res.status);
 

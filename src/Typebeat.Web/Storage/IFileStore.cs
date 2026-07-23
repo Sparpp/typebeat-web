@@ -5,7 +5,7 @@ namespace Typebeat.Web.Storage;
 ///
 ///  - <b>content-addressed blobs</b>: immutable, write-once, keyed by the SHA-256 of their bytes
 ///    (canonical key <c>files/{sha256hex}</c>). One blob per unique file across all beatmap sets
-///    and versions — the R2-shaped layout from osu-server-beatmap-submission.
+///    and versions; the R2-shaped layout from osu-server-beatmap-submission.
 ///  - <b>named objects</b>: mutable, keyed by a caller-chosen path (covers, previews, assembled
 ///    download packages). Use <see cref="StoreKeys"/> for the canonical key shapes.
 ///
@@ -40,7 +40,7 @@ public interface IFileStore
 }
 
 /// <summary>
-/// Canonical object-key shapes (single authority — endpoints, ingest and the website must all
+/// Canonical object-key shapes (single authority: endpoints, ingest and the website must all
 /// build keys through these so a future R2 bucket has one coherent layout).
 /// </summary>
 public static class StoreKeys

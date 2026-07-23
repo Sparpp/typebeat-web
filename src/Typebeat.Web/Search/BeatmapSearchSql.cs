@@ -6,7 +6,7 @@ namespace Typebeat.Web.Search;
 /// <summary>
 /// Translates a parsed <see cref="BeatmapSearchQuery"/> into SQL WHERE fragments for the
 /// /beatmapsets listing. Every produced clause is <c>AND (...)</c> ready to append after the
-/// listing's base predicate, and every value is a Dapper parameter — column references come
+/// listing's base predicate, and every value is a Dapper parameter; column references come
 /// only from the parser's whitelist, values are NEVER interpolated. Aliases assumed by the
 /// generated SQL match <see cref="Pages.BeatmapsetCardSql"/>: <c>s</c> = beatmapsets,
 /// <c>u</c> = owner. Per-difficulty numeric filters (stars/wpm/cpm/length) resolve through an
@@ -15,7 +15,7 @@ namespace Typebeat.Web.Search;
 /// </summary>
 public static class BeatmapSearchSql
 {
-    /// <summary>Per-difficulty column expressions. cpm is derived — see <see cref="Build"/> notes.</summary>
+    /// <summary>Per-difficulty column expressions. cpm is derived; see <see cref="Build"/> notes.</summary>
     private static string BeatmapExpr(FilterField field) => field switch
     {
         FilterField.Stars => "b.difficulty_rating",

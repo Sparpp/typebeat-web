@@ -6,13 +6,13 @@ namespace Typebeat.Web.Auth;
 
 /// <summary>
 /// Issues and verifies short-lived 6-digit email codes, stored in <c>email_tokens</c> as
-/// SHA-256(code) — the same at-rest hashing style as the opaque bearer tokens in
+/// SHA-256(code), the same at-rest hashing style as the opaque bearer tokens in
 /// <see cref="TokenService"/>. Two purposes carry codes: 'verify' (confirm a new email, 15 min)
 /// and 'login' (fresh code on every website login, 10 min).
 ///
 /// Brute-force argument (documented so a reviewer can check the ceiling):
 ///  - the code space is 10^6 and codes are drawn uniformly with a CSPRNG;
-///  - at most ONE code is active per (user, purpose) — issuing a new one burns the previous;
+///  - at most ONE code is active per (user, purpose); issuing a new one burns the previous;
 ///  - a code is burned after <see cref="MaxAttempts"/> wrong guesses (the 6th attempt);
 ///  - issuance is throttled: <see cref="ResendCooldown"/> between sends and
 ///    <see cref="MaxPerHour"/> per (user, purpose) per hour.
@@ -20,7 +20,7 @@ namespace Typebeat.Web.Auth;
 /// and the hourly issuance cap bounds how many fresh targets an attacker can force.
 ///
 /// Every failure path returns the SAME generic outcome to the caller ("incorrect or expired
-/// code") — no distinction between "no active code", "expired", and "wrong digits" leaks.
+/// code"); no distinction between "no active code", "expired", and "wrong digits" leaks.
 /// </summary>
 public sealed class EmailCodeService(Db db)
 {
@@ -59,7 +59,7 @@ public sealed class EmailCodeService(Db db)
         await using var conn = await db.OpenAsync(ct);
 
         // Throttle first (time comparisons in SQL against now(), like TokenService). Cooldown only
-        // guards against re-spamming a code that is STILL LIVE (unused + unexpired) — once the
+        // guards against re-spamming a code that is STILL LIVE (unused + unexpired); once the
         // previous code was consumed or expired, a fresh login legitimately issues a new one
         // immediately (fresh code on every login). The hourly cap is the absolute
         // per-(user,purpose) ceiling regardless of consumption.
@@ -125,7 +125,7 @@ public sealed class EmailCodeService(Db db)
         if (row is not { } token)
         {
             await tx.CommitAsync(ct);
-            // No live code (never issued / expired / already used/burned) — generic failure.
+            // No live code (never issued / expired / already used/burned): generic failure.
             return new VerifyResult(VerifyStatus.Incorrect, 0);
         }
 

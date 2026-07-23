@@ -5,7 +5,7 @@ namespace Typebeat.Web.Tests;
 
 /// <summary>
 /// DB-free parser tests over synthetic packages (fixtures modeled on the game's
-/// LyricOsuFormat writer — see <see cref="SyntheticPackage"/>).
+/// LyricOsuFormat writer; see <see cref="SyntheticPackage"/>).
 /// </summary>
 public class PackageParserTest
 {

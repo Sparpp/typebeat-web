@@ -4,7 +4,7 @@ namespace Typebeat.Web.Auth;
 
 /// <summary>
 /// Account field validation shared by the in-client registration endpoint (POST /users) and the
-/// website /register form — one rule set, so an account is valid or invalid identically on both
+/// website /register form: one rule set, so an account is valid or invalid identically on both
 /// paths. Pure and DB-free (uniqueness lives in <see cref="AccountCreation"/>); every method
 /// returns human-readable errors, empty list = valid.
 /// </summary>
@@ -12,7 +12,7 @@ public static class AccountValidation
 {
     // Permissive superset of osu's username charset: letters, digits, space, and _ - [ ].
     // Deliberately does NOT enforce osu's finer rules (no mixed space/underscore, no
-    // leading/trailing space) — kept permissive for M1; tighten later if abuse shows up.
+    // leading/trailing space); kept permissive for M1, tighten later if abuse shows up.
     private static readonly Regex username_charset = new(@"^[A-Za-z0-9 _\-\[\]]+$", RegexOptions.Compiled);
 
     /// <summary>Username: 3–15 chars, restricted charset.</summary>

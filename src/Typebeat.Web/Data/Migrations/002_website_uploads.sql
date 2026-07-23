@@ -1,5 +1,5 @@
 -- typebeat-web migration 002: website + lazer-style uploads (M3).
--- New columns only — no table renames, no data-destructive changes.
+-- New columns only; no table renames, no data-destructive changes.
 
 -- Touched by /me and website page loads (throttled by the caller).
 ALTER TABLE users
@@ -31,7 +31,7 @@ ALTER TABLE set_versions
 -- Backfill the search tsvector (declared + GIN-indexed in 001 but never populated).
 -- MUST stay in sync with the expression the upload write path uses (PackageIngest.SearchVectorSql):
 -- title/unicode weighted A, artist/unicode B, creator username C, tags/source D.
--- 'simple' config: titles/artists are multilingual proper nouns — no English stemming.
+-- 'simple' config: titles/artists are multilingual proper nouns, no English stemming.
 UPDATE beatmapsets s
 SET search = setweight(to_tsvector('simple', coalesce(s.title, '')), 'A')
           || setweight(to_tsvector('simple', coalesce(s.title_unicode, '')), 'A')

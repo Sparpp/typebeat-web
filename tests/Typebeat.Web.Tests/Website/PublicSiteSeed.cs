@@ -23,19 +23,19 @@ public static class PublicSiteSeed
     public static long TypistThreeId { get; private set; }
     public static long CheatSuspectId { get; private set; }
 
-    /// <summary>"Bohemian Keyboard Rhapsody" by "Queen of Types" — search assertions.</summary>
+    /// <summary>"Bohemian Keyboard Rhapsody" by "Queen of Types": search assertions.</summary>
     public static long SearchSetId { get; private set; }
 
-    /// <summary>"Hammered Keys", play_count 999999 — most-played sort.</summary>
+    /// <summary>"Hammered Keys", play_count 999999: most-played sort.</summary>
     public static long MostPlayedId { get; private set; }
 
-    /// <summary>"Favourite Fingers", favourite_count 999999 — most-favourited sort.</summary>
+    /// <summary>"Favourite Fingers", favourite_count 999999: most-favourited sort.</summary>
     public static long MostFavedId { get; private set; }
 
     /// <summary>"Fresh Drop", newest published set site-wide.</summary>
     public static long FreshId { get; private set; }
 
-    /// <summary>"Waiting Room", the one seeded 'pending' set — browsable but not ranked, so
+    /// <summary>"Waiting Room", the one seeded 'pending' set, browsable but not ranked, so
     /// listing filters, profile sections and the set page's locked leaderboard cover both
     /// published statuses.</summary>
     public static long PendingId { get; private set; }
@@ -45,16 +45,16 @@ public static class PublicSiteSeed
 
     public static long RemovedId { get; private set; }
 
-    /// <summary>"Leaderboard Anthem" — set page + leaderboard + report/favourite tests.</summary>
+    /// <summary>"Leaderboard Anthem": set page + leaderboard + report/favourite tests.</summary>
     public static long LeaderboardSetId { get; private set; }
 
     public static long LeaderboardBeatmapId { get; private set; }
 
-    /// <summary>Set with cover_key/preview_key populated — cover img + preview button markup.</summary>
+    /// <summary>Set with cover_key/preview_key populated: cover img + preview button markup.</summary>
     public static long CoveredSetId { get; private set; }
 
     /// <summary>
-    /// Public set with live diffs but NO set_versions row — the pre-M3 shape migration 004
+    /// Public set with live diffs but NO set_versions row; the pre-M3 shape migration 004
     /// backfills. Its pages must hide the Download actions ("available in-game only").
     /// </summary>
     public static long PackagelessId { get; private set; }
@@ -64,11 +64,11 @@ public static class PublicSiteSeed
     // submit dates make the date: assertions deterministic.
     //
     // Alpha: submitted 2024-03-15, stars 4.5, wpm 100, length 90s (1:30), cpm 100*500/100 = 500.
-    /// <summary>"Operator Alpha Synthwave" — the low-stat operator fixture.</summary>
+    /// <summary>"Operator Alpha Synthwave": the low-stat operator fixture.</summary>
     public static long OpAlphaId { get; private set; }
 
     // Bravo: submitted 2022-11-01, stars 7.0, wpm 200, length 240s (4:00), cpm 200*700/100 = 1400.
-    /// <summary>"Operator Bravo Ballad" — the high-stat operator fixture.</summary>
+    /// <summary>"Operator Bravo Ballad": the high-stat operator fixture.</summary>
     public static long OpBravoId { get; private set; }
 
     public static async Task EnsureSeededAsync()
@@ -154,7 +154,7 @@ public static class PublicSiteSeed
                 """,
                 new { id = CoveredSetId });
 
-            // Leaderboard: typist one twice (only the 900k best may surface — DISTINCT ON),
+            // Leaderboard: typist one twice (only the 900k best may surface, DISTINCT ON),
             // the others once, plus an unranked row that must never appear.
             await InsertScoreAsync(conn, TypistOneId, LeaderboardBeatmapId, 900_000, 0.9846, 87, "S");
             await InsertScoreAsync(conn, TypistOneId, LeaderboardBeatmapId, 600_000, 0.9012, 40, "A");
@@ -278,6 +278,6 @@ public static class PublicSiteSeed
                  '[]'::jsonb, '{"great":100,"ok":5,"meh":2,"miss":3}'::jsonb, '{"great":110}'::jsonb)
             """,
             // completion matches the fixed statistics blob: 107 typed of 110 cells. (Ranks stay
-            // whatever the caller seeds — these are display fixtures, not grading fixtures.)
+            // whatever the caller seeds; these are display fixtures, not grading fixtures.)
             new { userId, beatmapId, totalScore, accuracy, completion = 107.0 / 110.0, maxCombo, rank, ranked });
 }

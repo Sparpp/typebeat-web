@@ -5,7 +5,7 @@ namespace Typebeat.Web.Tests;
 /// <summary>
 /// The pure query parser for the /beatmapsets search box: each operator, quoting, the numeric
 /// comparators/ranges, date granularity, garbage input, and free text mixed with operators.
-/// No database — <see cref="BeatmapSearchQuery.Parse"/> and the SQL builder are both pure.
+/// No database; <see cref="BeatmapSearchQuery.Parse"/> and the SQL builder are both pure.
 /// </summary>
 public class BeatmapSearchQueryTest
 {

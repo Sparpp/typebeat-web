@@ -17,12 +17,12 @@ namespace Typebeat.Web.Scoring;
 ///    accuracy-affecting judgements (HitResult.AffectsAccuracy, HitResult.cs:208-223).
 ///    numerator = Σ base(result)·count over <c>statistics</c>;
 ///    denominator = Σ base(maxResult)·count over <c>maximum_statistics</c>.
-///    Both dictionaries are transmitted, so accuracy is exact — we OVERRIDE the submitted value.
+///    Both dictionaries are transmitted, so accuracy is exact; we OVERRIDE the submitted value.
 ///  - <b>completion</b> and <b>rank</b>. Completion = typed cells (accuracy-affecting hits in
 ///    <c>statistics</c>) over TOTAL map cells (accuracy-affecting counts in
-///    <c>maximum_statistics</c>). Rank is graded on completion, NOT accuracy — typing every
+///    <c>maximum_statistics</c>). Rank is graded on completion, NOT accuracy: typing every
 ///    character is an SS regardless of timing quality; only cells that scrolled past untyped
-///    (misses) cost the grade. Mirrors the client's <c>TypeBeatScoreProcessor</c> — keep the
+///    (misses) cost the grade. Mirrors the client's <c>TypeBeatScoreProcessor</c>; keep the
 ///    cutoffs in the two files in sync.
 ///  - <b>theoretical max combo</b>. Every combo-increasing judgement in <c>maximum_statistics</c>
 ///    (HitResult.IncreasesCombo = AffectsCombo &amp;&amp; IsHit, HitResult.cs:171-203). For a typing
@@ -35,10 +35,10 @@ namespace Typebeat.Web.Scoring;
 /// HISTORY (each combo-scoring judgement contributes base·combo^0.5, ScoreProcessor.cs:344), which
 /// is NOT transmitted. So instead of recomputing the total we bound it: <c>comboProgress ≤ 1</c>,
 /// the no-mod score multiplier is 1 (M1 forces <c>mods = []</c>), <c>accuracyProgress</c> and
-/// <c>bonusPortion</c> are exact from the dictionaries — giving a provable ceiling. A submitted
+/// <c>bonusPortion</c> are exact from the dictionaries, giving a provable ceiling. A submitted
 /// total above the ceiling is impossible, so it is treated as out of bounds (caller unranks it).
 ///
-/// Everything here is a pure function of the three transmitted quantities — no DB, no throwing on
+/// Everything here is a pure function of the three transmitted quantities; no DB, no throwing on
 /// hostile input (score-submit must never 500 for tamper-shaped data).
 /// </summary>
 public static class ScoringContract
@@ -64,13 +64,13 @@ public static class ScoringContract
     /// total score the transmitted statistics could possibly justify; check the submitted total
     /// against it with <see cref="TotalScoreWithinBounds"/>. <see cref="StatisticsValid"/> is false
     /// when a hard invariant is broken (accuracy would exceed 1, more judgements than the map has,
-    /// max_combo beyond the theoretical maximum, negative counts, or an empty maximum) — such a
+    /// max_combo beyond the theoretical maximum, negative counts, or an empty maximum); such a
     /// score must never be ranked.
     ///
     /// <see cref="Accuracy"/> is the WHOLE-MAP accuracy (denominator over
-    /// <c>maximum_statistics</c>) — the client's final accuracy for a completed play.
+    /// <c>maximum_statistics</c>): the client's final accuracy for a completed play.
     /// <see cref="JudgedAccuracy"/> uses the judged-only denominator (Σ maxBase over
-    /// <c>statistics</c>), which is the client's RUNNING accuracy (ScoreProcessor.cs:261,393) —
+    /// <c>statistics</c>), which is the client's RUNNING accuracy (ScoreProcessor.cs:261,393);
     /// what a FAILED play's submitted total was computed from. For a completed play the two are
     /// equal (every cell judged); they diverge only on fails, where the whole-map value would
     /// falsely flag honest submissions as out of bounds.
@@ -105,11 +105,11 @@ public static class ScoringContract
         bool valid = true;
 
         long numerator = 0;         // currentBaseScore (ScoreProcessor.cs:266)
-        long judgedDenominator = 0; // currentMaximumBaseScore at end of play (ScoreProcessor.cs:261) — judged cells only
+        long judgedDenominator = 0; // currentMaximumBaseScore at end of play (ScoreProcessor.cs:261), judged cells only
         long denominator = 0;       // whole-map maximum base score (ScoreProcessor.cs:450)
         int accuracyJudged = 0;
         int accuracyMax = 0;
-        int typedCells = 0; // accuracy-affecting HITS — the completion numerator
+        int typedCells = 0; // accuracy-affecting HITS, the completion numerator
         long bonusPortion = 0; // Σ base(result) over bonus hits (GetBonusScoreChange, ScoreProcessor.cs:338)
 
         foreach (var (key, count) in statistics)
@@ -178,7 +178,7 @@ public static class ScoringContract
             : 0;
 
         // Provable ceiling: comboProgress at its maximum (1), no-mod multiplier 1. Uses the
-        // JUDGED accuracy — the value the client actually baked into its total (running accuracy
+        // JUDGED accuracy: the value the client actually baked into its total (running accuracy
         // at end of play; equals whole-map accuracy for completed plays). judgedAccuracy >=
         // accuracy always (same numerator, smaller denominator), so this ceiling is valid for
         // passed AND failed plays; using the whole-map value here falsely flagged honest fails.
@@ -186,7 +186,7 @@ public static class ScoringContract
                      + accuracy_portion_max * Math.Pow(judgedAccuracy, accuracy_exponent) * accuracyProgress
                      + bonusPortion;
 
-        // Degenerate maximums (no accuracy-affecting cells at all) describe no playable map —
+        // Degenerate maximums (no accuracy-affecting cells at all) describe no playable map;
         // nothing can justify any score, so the ceiling is 0 rather than whatever the judged
         // numerator alone would suggest. (StatisticsValid is already false in this case.)
         long ceiling = denominator <= 0 ? 0 : (long)Math.Round(raw, MidpointRounding.ToEven);
@@ -238,7 +238,7 @@ public static class ScoringContract
         _ => 0,
     };
 
-    // Base score of the judgement's MaxResult for a judged cell of this key — what the client's
+    // Base score of the judgement's MaxResult for a judged cell of this key: what the client's
     // running currentMaximumBaseScore accrues per judgement (ScoreProcessor.cs:261). The
     // great-family results (great/perfect/good/ok/meh/miss) all belong to Great-max judgements
     // (every type!beat judgement is Great-max); tick/tail families max at their own hit result.
@@ -252,7 +252,7 @@ public static class ScoringContract
     };
 
     // HitResult.AffectsAccuracy (HitResult.cs:208-223): scorable and non-bonus, excluding
-    // combo_break / legacy_combo_increase. Misses count (base 0) — they are accuracy-affecting.
+    // combo_break / legacy_combo_increase. Misses count (base 0); they are accuracy-affecting.
     private static bool AffectsAccuracy(string key) => key switch
     {
         "great" or "perfect" or "good" or "ok" or "meh" or "miss"
@@ -263,7 +263,7 @@ public static class ScoringContract
     };
 
     // HitResult.IsHit (HitResult.cs:308-…): a successful judgement. Among the accuracy-affecting
-    // keys this is everything except the miss family — the completion numerator ("cells typed").
+    // keys this is everything except the miss family, the completion numerator ("cells typed").
     private static bool IsHit(string key) => key switch
     {
         "great" or "perfect" or "good" or "ok" or "meh"

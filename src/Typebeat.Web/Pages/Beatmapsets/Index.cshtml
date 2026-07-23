@@ -2,7 +2,7 @@
 @model Typebeat.Web.Pages.Beatmapsets.ListingModel
 @{
     ViewData["Title"] = "Beatmaps";
-    ViewData["MetaDescription"] = "Browse and download lyric-typing beatmaps for type!beat — "
+    ViewData["MetaDescription"] = "Browse and download lyric-typing beatmaps for type!beat, "
         + "search by title, artist, mapper or tags.";
 }
 
@@ -10,7 +10,7 @@
 
 <form method="get" action="/beatmapsets" class="listing-search" role="search">
     <input class="input" type="search" name="q" value="@Model.Query"
-           placeholder="search &mdash; try title, artist, or star:&gt;4 length:&lt;2:00&hellip;"
+           placeholder="search: try title, artist, or star:&gt;4 length:&lt;2:00&hellip;"
            aria-label="Search beatmaps" aria-describedby="search-info-tip search-guide" />
     <span class="search-info">
         <button type="button" class="search-info__trigger" aria-label="How to search"
@@ -45,7 +45,7 @@
 </form>
 
 <details class="search-guide" id="search-guide">
-    <summary>Search filters &mdash; type <code>key:value</code> right in the box</summary>
+    <summary>Search filters: type <code>key:value</code> right in the box</summary>
     <div class="search-guide__body">
         <p>
             Mix filters with normal words. Wrap values with spaces in quotes

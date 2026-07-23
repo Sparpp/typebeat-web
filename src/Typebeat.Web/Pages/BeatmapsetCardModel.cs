@@ -1,7 +1,7 @@
 namespace Typebeat.Web.Pages;
 
 /// <summary>
-/// View model for the shared beatmapset card partial (Pages/Shared/_BeatmapsetCard.cshtml) —
+/// View model for the shared beatmapset card partial (Pages/Shared/_BeatmapsetCard.cshtml):
 /// THE reusable set-card component (landing strip, /beatmapsets listing, profile sections).
 /// Self-contained: everything the partial renders is on this record; hydrate it with
 /// <see cref="BeatmapsetCardSql.Select"/>.
@@ -72,7 +72,7 @@ public static class BeatmapsetCardSql
     /// <summary>
     /// SELECT … FROM fragment producing exactly the card record's columns. Callers append
     /// WHERE / ORDER BY / LIMIT and must supply <c>@viewerId</c> (the signed-in user id, or 0
-    /// for anonymous — user ids start at 1, so 0 never matches a favourite).
+    /// for anonymous; user ids start at 1, so 0 never matches a favourite).
     /// Aliases in play: <c>s</c> = beatmapsets, <c>u</c> = owner, <c>d</c> = difficulty rollup.
     /// </summary>
     public const string Select =

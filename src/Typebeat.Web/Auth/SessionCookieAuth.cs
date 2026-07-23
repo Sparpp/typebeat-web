@@ -6,7 +6,7 @@ namespace Typebeat.Web.Auth;
 /// Website session auth: the same opaque access tokens the game client carries as a bearer
 /// header, delivered in an HttpOnly cookie instead. Login issues a row via
 /// <see cref="TokenService.IssueAsync"/> and stores the RAW access token in the cookie; the
-/// middleware resolves it per-request via <see cref="TokenService.ResolveAsync"/> — so the
+/// middleware resolves it per-request via <see cref="TokenService.ResolveAsync"/>, so the
 /// website and the API share one identity and one token store, no parallel session scheme.
 ///
 /// Deliberately NOT ASP.NET authentication middleware: the repo's bearer path is a hand-rolled
@@ -37,8 +37,8 @@ public static class SessionCookieAuth
                 {
                     ctx.Items[item_key] = user;
 
-                    // Website page loads keep users.last_visit fresh (throttled; never anonymous
-                    // — this branch only runs for a resolved cookie user).
+                    // Website page loads keep users.last_visit fresh (throttled; never anonymous;
+                    // this branch only runs for a resolved cookie user).
                     await LastVisit.TouchAsync(ctx.RequestServices.GetRequiredService<Db>(), user.Id, ctx.RequestAborted);
                 }
             }
@@ -52,7 +52,7 @@ public static class SessionCookieAuth
 
     /// <summary>
     /// Issues the session cookie carrying <paramref name="pair"/>'s access token. Cookie life
-    /// matches the token's 24h life — there is no refresh flow on the web; users just sign in
+    /// matches the token's 24h life. There is no refresh flow on the web; users just sign in
     /// again. Secure is safe on localhost dev (browsers exempt localhost).
     /// </summary>
     public static void SignIn(HttpContext ctx, TokenPair pair)
@@ -68,7 +68,7 @@ public static class SessionCookieAuth
     }
 
     /// <summary>
-    /// Deletes the cookie and revokes its token row (only that row — the user's game-client
+    /// Deletes the cookie and revokes its token row (only that row; the user's game-client
     /// sessions keep their own tokens).
     /// </summary>
     public static async Task SignOutAsync(HttpContext ctx, TokenService tokens)

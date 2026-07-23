@@ -9,7 +9,7 @@ namespace Typebeat.WireCompat;
 /// <summary>
 /// Assembly-wide fixture for the wire-compat harness. It:
 ///  1. drop+recreates a DEDICATED database "typebeat_wirecompat" (superuser postgres, so the
-///     migration's <c>CREATE EXTENSION citext</c> works) — the dev db is never touched;
+///     migration's <c>CREATE EXTENSION citext</c> works); the dev db is never touched;
 ///  2. points the server at it via the <c>TYPEBEAT_DB</c> env var, read at startup by
 ///     <c>Db.ResolveConnectionString</c>, BEFORE the <see cref="WebApplicationFactory{Program}"/>
 ///     builds the host (which runs the SQL migrations);
@@ -57,7 +57,7 @@ public class ServerFixture
 
     public static HttpClient Client { get; private set; } = null!;
 
-    /// <summary>The app's TYPEBEAT_FILE_ROOT for this run — a fresh temp dir (see OneTimeSetUp).</summary>
+    /// <summary>The app's TYPEBEAT_FILE_ROOT for this run; a fresh temp dir (see OneTimeSetUp).</summary>
     public static string FileRoot { get; private set; } = null!;
 
     [OneTimeSetUp]
@@ -121,7 +121,7 @@ public class ServerFixture
 
     private static async Task seedAsync()
     {
-        // The tiny fixture file. Its content need not be a decodable beatmap — test (g) only
+        // The tiny fixture file. Its content need not be a decodable beatmap; test (g) only
         // computes MD5 over these exact bytes and compares to the checksum stored below.
         const string osuFile =
             "type!beat file format v1\n\n[General]\nAudioFilename: audio.mp3\n\n[Metadata]\nTitle:Wire Compat\nArtist:Harness\n";

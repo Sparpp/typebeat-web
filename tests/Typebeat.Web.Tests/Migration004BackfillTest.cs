@@ -9,7 +9,7 @@ namespace Typebeat.Web.Tests;
 /// <summary>
 /// Migration 004 backfill semantics against a real database that simulates the production
 /// state it exists for: migrations 001–003 already applied, plus (a) a pre-M3 set (the M1
-/// seed tool's shape: beatmapsets + beatmaps only, filename NULL, zero set_versions — prod's
+/// seed tool's shape: beatmapsets + beatmaps only, filename NULL, zero set_versions; prod's
 /// "Wolf" set) and (b) a BSS-era set whose NULL-filename diff means "dropped from the current
 /// version" and must NOT be resurrected. MigrateAsync then applies exactly 004 on top.
 /// </summary>
@@ -17,7 +17,7 @@ namespace Typebeat.Web.Tests;
 [NonParallelizable]
 public class Migration004BackfillTest
 {
-    // Dedicated database — every DB-backed fixture in this repo force-drops its own.
+    // Dedicated database; every DB-backed fixture in this repo force-drops its own.
     private const string database_name = "typebeat_migr004tests";
 
     private const string connection_string =
@@ -46,7 +46,7 @@ public class Migration004BackfillTest
         await Db.EnsureExtensionsAsync(connection_string);
 
         // Simulate the pre-deploy production database: 001–003 applied and recorded, so
-        // MigrateAsync below applies exactly 004 — against data that already exists.
+        // MigrateAsync below applies exactly 004, against data that already exists.
         await using (var conn = new NpgsqlConnection(connection_string))
         {
             await conn.OpenAsync();
@@ -67,7 +67,7 @@ public class Migration004BackfillTest
                 RETURNING id
                 """);
 
-            // (a) Pre-M3 sets: no set_versions, filename NULL — exactly what tools/seed wrote.
+            // (a) Pre-M3 sets: no set_versions, filename NULL, exactly what tools/seed wrote.
             long preM3SetId = await conn.ExecuteScalarAsync<long>(
                 "INSERT INTO beatmapsets (owner_id, title, artist) VALUES (@ownerId, 'The Wolf', 'Siames') RETURNING id",
                 new { ownerId });
@@ -158,7 +158,7 @@ public class Migration004BackfillTest
     {
         await using var conn = await dataSource.OpenConnectionAsync();
 
-        // Both seeded sets predate 005 with 001's default status 'public' — they were live
+        // Both seeded sets predate 005 with 001's default status 'public'; they were live
         // with leaderboards, so they must come out 'ranked'.
         var statuses = (await conn.QueryAsync<string>("SELECT status FROM beatmapsets WHERE title IN ('The Wolf', 'Uploaded Song')")).ToList();
         Assert.Multiple(() =>

@@ -15,7 +15,7 @@ namespace Typebeat.WireCompat;
 /// <summary>
 /// The wire-compat suite. Every test makes a REAL HTTP call through the in-process server and
 /// deserializes the raw response body with the CLIENT'S OWN DTO types via
-/// <c>JsonConvert.DeserializeObject&lt;T&gt;</c> (Newtonsoft default settings — the same primitive
+/// <c>JsonConvert.DeserializeObject&lt;T&gt;</c> (Newtonsoft default settings, the same primitive
 /// the client's <c>OsuJsonWebRequest</c> uses). A server response the client types cannot parse
 /// fails a test here, not in production.
 /// </summary>
@@ -232,14 +232,14 @@ public class WireCompatTests
         Assert.That(result!.Position, Is.Not.Null, "a ranked submission must return a leaderboard position");
         Assert.That(result.TotalScore, Is.EqualTo(400_000), "submitted total score must echo back");
 
-        // The enum-keyed dictionary round-trip — catches snake_case key drift.
+        // The enum-keyed dictionary round-trip; catches snake_case key drift.
         Assert.That(result.Statistics[HitResult.Great], Is.EqualTo(7));
         Assert.That(result.Statistics[HitResult.Ok], Is.EqualTo(1));
         Assert.That(result.Statistics[HitResult.Meh], Is.EqualTo(1));
         Assert.That(result.Statistics[HitResult.Miss], Is.EqualTo(1));
         Assert.That(result.MaximumStatistics[HitResult.Great], Is.EqualTo(10));
 
-        // The submission must bump the denormalized play counters the website reads — the map and
+        // The submission must bump the denormalized play counters the website reads; the map and
         // its parent set should now show at least this play (the bug: they stayed 0 while scores
         // piled up on the leaderboard). They track the scores row count for the beatmap.
         await using (var db = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString))
@@ -262,7 +262,7 @@ public class WireCompatTests
     }
 
     // A completed play with a NON-DEFAULT rate mod (DT at 1.01x) must submit successfully but store
-    // unranked — mirroring the client's per-mod Ranked = SpeedChange.IsDefault. The multiplied total
+    // unranked, mirroring the client's per-mod Ranked = SpeedChange.IsDefault. The multiplied total
     // is still accepted (bounded against the base score), it just never reaches the ranked board.
     [Test]
     [Order(50)]

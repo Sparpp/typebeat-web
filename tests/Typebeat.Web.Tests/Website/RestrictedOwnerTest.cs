@@ -7,7 +7,7 @@ namespace Typebeat.Web.Tests.Website;
 /// <summary>
 /// Restricting a mapper (users.restricted = true, the existing moderation lever) must delist
 /// their sets everywhere their profile already 404s: landing strip, /beatmapsets listing and
-/// search, favourite walls, and the set page itself — otherwise every "mapped by" link
+/// search, favourite walls, and the set page itself; otherwise every "mapped by" link
 /// site-wide points at a 404.
 /// </summary>
 public class RestrictedOwnerTest
@@ -47,7 +47,7 @@ public class RestrictedOwnerTest
             """,
             new { setId = restrictedSetId, checksum = Guid.NewGuid().ToString("N") });
 
-        // The set even has a version/package and a favourite from the fixture user — none of
+        // The set even has a version/package and a favourite from the fixture user; none of
         // which may resurface it.
         await conn.ExecuteAsync(
             "INSERT INTO set_versions (set_id, version_no, package_key) VALUES (@setId, 1, 'packages/' || @setId || '/1.typb')",
@@ -107,7 +107,7 @@ public class RestrictedOwnerTest
         Assert.Multiple(() =>
         {
             Assert.That(setPage.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
-            Assert.That(profile.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), "profiles already 404 — the pages must agree");
+            Assert.That(profile.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), "profiles already 404, the pages must agree");
         });
     }
 

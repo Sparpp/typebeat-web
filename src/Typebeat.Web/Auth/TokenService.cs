@@ -51,7 +51,7 @@ public sealed class TokenService(Db db)
 
     /// <summary>
     /// Exchanges a refresh token for a fresh pair, or returns null if it is unknown, expired,
-    /// or revoked. Each exchange INSERTS a new token row — previously issued access tokens
+    /// or revoked. Each exchange INSERTS a new token row; previously issued access tokens
     /// live out their natural expiry, so a rotation can never log out a live client. The used
     /// refresh token is marked consumed on first use but remains exchangeable within a short
     /// grace window (each use minting an independent pair), so a client retry racing a

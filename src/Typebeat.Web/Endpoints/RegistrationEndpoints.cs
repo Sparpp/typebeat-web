@@ -7,13 +7,13 @@ using Typebeat.Web.Wire;
 namespace Typebeat.Web.Endpoints;
 
 /// <summary>
-/// POST /users — in-client account registration (the AccountCreationOverlay flow).
+/// POST /users: in-client account registration (the AccountCreationOverlay flow).
 ///
 /// Wire contract is dictated by the client's <c>RegistrationRequest</c> /
 /// <c>APIAccess.CreateAccount</c>:
 ///  - request is FORM-encoded with fields user[username] / user[user_email] / user[password];
 ///  - SUCCESS is any 2xx (the client's WebRequest.Perform() does not throw; CreateAccount
-///    returns null and the body is ignored) — we return a minimal user object anyway;
+///    returns null and the body is ignored); we return a minimal user object anyway;
 ///  - FAILURE must be a non-2xx so Perform() throws, and the body must carry a
 ///    <c>form_error</c> token: <c>{"form_error":{"user":{"username":[...],"user_email":[...],"password":[...]}}}</c>.
 ///    CreateAccount does <c>JObject.Parse(body).SelectToken("form_error", true).ToObject&lt;RegistrationRequestErrors&gt;()</c>,
@@ -32,7 +32,7 @@ public static class RegistrationEndpoints
 {
     /// <summary>
     /// The fork's fixed User-Agent (OsuWebRequest.UserAgent == "type!beat"). Gating on it is a
-    /// speed bump against drive-by/browser registration only — it is trivially spoofable and is
+    /// speed bump against drive-by/browser registration only; it is trivially spoofable and is
     /// NOT a security control. Wrong UA -> 403 {"error":...}.
     /// </summary>
     private const string client_user_agent = "type!beat";
@@ -41,7 +41,7 @@ public static class RegistrationEndpoints
     {
         app.MapPost("/users", async (HttpContext ctx, Db db, PasswordService passwords, EmailCodeService codes, IEmailSender emailSender, ILoggerFactory loggerFactory) =>
         {
-            // UA gate (speed bump only — see client_user_agent).
+            // UA gate (speed bump only, see client_user_agent).
             if (ctx.Request.Headers.UserAgent.ToString() != client_user_agent)
                 return WireJson.Error(StatusCodes.Status403Forbidden, "forbidden");
 
@@ -65,7 +65,7 @@ public static class RegistrationEndpoints
 
             // Side effect only: issue + email a 'verify' code so an in-game registrant has one to
             // enter on the WEBSITE (the game client can't do interactive codes). This must never
-            // change the wire response — a send failure is swallowed and logged, and the account
+            // change the wire response; a send failure is swallowed and logged, and the account
             // still returns 200 with the exact success body. The user can request a fresh code any
             // time by signing in on the website.
             try
@@ -153,7 +153,7 @@ public static class RegistrationEndpoints
 
     /// <summary>
     /// In-memory sliding-window limiter: 3 registrations per IP per hour. Process-local (fine for
-    /// the single-node M1 deploy) and unbounded in the number of distinct IPs it tracks — a real
+    /// the single-node M1 deploy) and unbounded in the number of distinct IPs it tracks; a real
     /// deploy behind a shared limiter would replace this. Documented as a speed bump.
     /// </summary>
     private static class RegistrationRateLimiter

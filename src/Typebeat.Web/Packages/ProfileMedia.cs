@@ -9,7 +9,7 @@ namespace Typebeat.Web.Packages;
 /// Turns an uploaded avatar/banner into a fixed-size JPEG in the file store. Center-crop
 /// cover-fit + quality-80, mirroring <see cref="CoverGenerator"/>. Keys are version-stamped
 /// (<see cref="StoreKeys.Avatar"/>/<see cref="StoreKeys.UserCover"/>) so each replacement gets a
-/// fresh, immutable URL — no cache-busting query string, and a stale avatar never lingers in a
+/// fresh, immutable URL, no cache-busting query string, and a stale avatar never lingers in a
 /// browser or edge cache after the user changes it.
 /// </summary>
 public static class ProfileMedia

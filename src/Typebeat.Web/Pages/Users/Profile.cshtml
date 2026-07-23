@@ -47,7 +47,7 @@
             <h2>Best scores</h2>
             @if (Model.BestScores.Count == 0)
             {
-                <p class="profile-empty muted">No scores yet &mdash; the keyboard is waiting.</p>
+                <p class="profile-empty muted">No scores yet, the keyboard is waiting.</p>
             }
             else
             {
@@ -169,7 +169,7 @@
             <div class="stat-row"><span class="stat-row__label">Play count</span><span class="stat-row__value">@Model.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Maps played</span><span class="stat-row__value">@Model.MapsPlayed.ToString("N0", CultureInfo.InvariantCulture) / @Model.RankedMapPool.ToString("N0", CultureInfo.InvariantCulture) ranked</span></div>
             <div class="stat-row"><span class="stat-row__label">Play time</span><span class="stat-row__value">@ProfileModel.FormatPlayTime(Model.PlayTimeS)</span></div>
-            <div class="stat-row"><span class="stat-row__label">Accuracy</span><span class="stat-row__value">@(Model.Accuracy is double acc ? (acc * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%" : "—")</span></div>
+            <div class="stat-row"><span class="stat-row__label">Accuracy</span><span class="stat-row__value">@(Model.Accuracy is double acc ? (acc * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%" : "-")</span></div>
             <div class="grade-counts" title="per-map best grades">
                 <div class="grade-count"><span class="grade grade--ss">SS</span><span class="grade-count__num">@Model.Grades.Ss</span></div>
                 <div class="grade-count"><span class="grade grade--s">S</span><span class="grade-count__num">@Model.Grades.S</span></div>

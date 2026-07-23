@@ -8,7 +8,7 @@ namespace Typebeat.Web.Wire;
 ///
 /// The client deserializes with Newtonsoft.Json attribute semantics ([JsonProperty],
 /// MemberSerialization.OptIn, EnumMember snake_case, and property-ORDER sensitivity in
-/// SoloScoreInfo), so every API response is serialized here with Newtonsoft — never with
+/// SoloScoreInfo), so every API response is serialized here with Newtonsoft, never with
 /// System.Text.Json. Response models declare explicit [JsonProperty] names and their C#
 /// property declaration order is meaningful.
 /// </summary>
@@ -25,7 +25,7 @@ public static class WireJson
 
     /// <summary>
     /// The osu-web error envelope: <c>{"error":"message"}</c>. Score-submit failure messages
-    /// are special-cased by the client by exact string — do not reword them at call sites.
+    /// are special-cased by the client by exact string; do not reword them at call sites.
     /// </summary>
     public static IResult Error(int statusCode, string message)
         => new NewtonsoftJsonResult(new { error = message }, statusCode);

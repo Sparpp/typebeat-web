@@ -7,7 +7,7 @@ namespace Typebeat.Web.Auth;
 /// <summary>
 /// The pending-user token that carries someone between the password step and the code step
 /// WITHOUT logging them in. It is a Data-Protection-encrypted cookie (tamper-proof, opaque to the
-/// browser) holding only {userId, purpose, issuedUnix} — never a real session token. The /verify
+/// browser) holding only {userId, purpose, issuedUnix}, never a real session token. The /verify
 /// page reads it to know who is mid-flow; a signed session is minted only after the code checks
 /// out.
 ///

@@ -40,7 +40,7 @@ public static class ScoreEndpoints
     private const double max_mod_score_multiplier = 2.0;
 
     /// <summary>
-    /// Whether a single submitted mod is ranked at its submitted configuration — the server-side
+    /// Whether a single submitted mod is ranked at its submitted configuration; the server-side
     /// mirror of the client's per-mod <c>Ranked</c>. Unknown/null acronyms are treated as ranked
     /// (forward-compatible); the caller ANDs this across all mods.
     /// </summary>
@@ -82,7 +82,7 @@ public static class ScoreEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // POST — issue a score token.
+    // POST: issue a score token.
     // Form fields (CreateSoloScoreRequest.cs:30-32): version_hash, beatmap_hash, ruleset_id.
     // Response is APIScoreToken { "id": <long> }.
     // ---------------------------------------------------------------------------------------------
@@ -143,7 +143,7 @@ public static class ScoreEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // PUT — complete a score token. Raw JSON SoloScoreInfo body (SubmitScoreRequest.cs:33).
+    // PUT: complete a score token. Raw JSON SoloScoreInfo body (SubmitScoreRequest.cs:33).
     // Response is MultiplayerScore (SubmitScoreRequest : APIRequest<MultiplayerScore>).
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> SubmitScore(long beatmapId, long tokenId, HttpContext ctx, Db db, ILoggerFactory loggerFactory)
@@ -195,7 +195,7 @@ public static class ScoreEndpoints
             return WireJson.Error(status_unprocessable, "invalid token");
 
         // A score ranks only on a reviewer-approved set. Plays on pending maps are accepted
-        // and stored (they show in the player's own history) but never reach a leaderboard —
+        // and stored (they show in the player's own history) but never reach a leaderboard,
         // and the status is re-read here, not trusted from token time, so a set removed or
         // un-ranked mid-play resolves against its current state.
         bool setRanked = await conn.ExecuteScalarAsync<bool>(
@@ -223,7 +223,7 @@ public static class ScoreEndpoints
 
         // Minimum-play-time gate: at least 90% of the map's drain length must have elapsed since the
         // token was created (created_at is the server wall-clock anchor, 001_init.sql:126). Too fast
-        // is not an error — osu accepts and flags; we take the safe route and store it unranked.
+        // is not an error; osu accepts and flags; we take the safe route and store it unranked.
         double elapsedSeconds = (DateTimeOffset.UtcNow - token.CreatedAt).TotalSeconds;
         bool playTimeOk = elapsedSeconds >= 0.9 * beatmap.DrainLengthS;
 
@@ -240,7 +240,7 @@ public static class ScoreEndpoints
         // Mirror the client's per-mod Ranked flag: a score is ranked only if every mod is ranked at
         // its submitted configuration. Always-unranked mods (Mashing/Relax "RX"; the time-ramp Wind
         // Up/Down "WU"/"WD") disqualify it, as do the rate mods (DT/NC/HT/DC) at a NON-default speed
-        // — the same rule the client shows as "unranked" in the mod overlay.
+        // the same rule the client shows as "unranked" in the mod overlay.
         bool modsRanked = submission.Mods is null || submission.Mods.All(ModConfigRanked);
 
         // Ranked only if the SET is ranked and it passed with every cell judged, every hard
@@ -250,17 +250,17 @@ public static class ScoreEndpoints
         bool ranked = setRanked && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && modsRanked && !buildBlocked;
 
         if (!modsRanked)
-            logger.LogInformation("Score token {TokenId}: unranked mod used — storing unranked.", tokenId);
+            logger.LogInformation("Score token {TokenId}: unranked mod used, storing unranked.", tokenId);
 
         // What the player saw: final whole-map accuracy for completed plays, the running
         // (judged-only) accuracy at the moment of failure otherwise. Equal when fully judged.
         double storedAccuracy = passed && fullyJudged ? recomputed.Accuracy : recomputed.JudgedAccuracy;
 
         if (!playTimeOk)
-            logger.LogInformation("Score token {TokenId}: elapsed {Elapsed:0.0}s < 90% of drain {Drain:0.0}s — storing unranked.",
+            logger.LogInformation("Score token {TokenId}: elapsed {Elapsed:0.0}s < 90% of drain {Drain:0.0}s, storing unranked.",
                 tokenId, elapsedSeconds, beatmap.DrainLengthS);
         if (!recomputed.StatisticsValid || !withinBounds)
-            logger.LogInformation("Score token {TokenId}: out of bounds (statisticsValid={Valid}, totalWithinBounds={Within}) — storing unranked.",
+            logger.LogInformation("Score token {TokenId}: out of bounds (statisticsValid={Valid}, totalWithinBounds={Within}), storing unranked.",
                 tokenId, recomputed.StatisticsValid, withinBounds);
 
         // Store defensively-clamped values so a tampered total/combo can never pollute stats or boards.
@@ -270,7 +270,7 @@ public static class ScoreEndpoints
         var endedAt = DateTimeOffset.UtcNow;
 
         // Persist the acronyms the client reported so the site can show which mods a play used.
-        // Normalized to [{acronym}] (the shape the website already parses) — only the acronym is
+        // Normalized to [{acronym}] (the shape the website already parses); only the acronym is
         // kept, never the raw client settings blob, so a tampered payload can't bloat the row.
         string modsJson = submission.Mods is { Count: > 0 }
             ? JsonConvert.SerializeObject(
@@ -296,7 +296,7 @@ public static class ScoreEndpoints
                 beatmapId,
                 totalScore = storedTotal,
                 accuracy = storedAccuracy,
-                completion = recomputed.Completion, // whole-map % typed — what the rank is graded on
+                completion = recomputed.Completion, // whole-map % typed, what the rank is graded on
                 maxCombo = storedMaxCombo,
                 rank,
                 passed,
@@ -311,8 +311,8 @@ public static class ScoreEndpoints
             }, tx);
 
         // Denormalized play counters. The website reads beatmapsets.play_count (like download_count
-        // / favourite_count); osu clients read beatmaps.playcount. Count one per submitted play —
-        // passed or failed, ranked or not — since every submission inserts a scores row above and
+        // / favourite_count); osu clients read beatmaps.playcount. Count one per submitted play,
+        // passed or failed, ranked or not, since every submission inserts a scores row above and
         // is a genuine attempt. The parent set is bumped through the beatmap's set_id. (This is the
         // only place either counter is touched; user_stats.play_count below is the player's own
         // aggregate, a separate thing.)
@@ -324,13 +324,13 @@ public static class ScoreEndpoints
             """,
             new { beatmapId }, tx);
 
-        // Upsert user_stats — but ONLY for submissions that held up to the tamper checks. The same
+        // Upsert user_stats, but ONLY for submissions that held up to the tamper checks. The same
         // invariants that withhold ranking must withhold aggregate accumulation, or a rejected
         // submission could still inflate profile hit counts / totals with client-controlled data.
         // (Failed-but-honest plays pass these checks and do accrue stats, like osu.)
         if (recomputed.StatisticsValid && withinBounds)
         {
-            // Ensure the row exists, lock it, then increment — read-modify-write of hit_counts
+            // Ensure the row exists, lock it, then increment; read-modify-write of hit_counts
             // under the row lock keeps concurrent submissions by the same user consistent.
             await conn.ExecuteAsync(
                 "INSERT INTO user_stats (user_id) VALUES (@userId) ON CONFLICT (user_id) DO NOTHING",
@@ -353,7 +353,7 @@ public static class ScoreEndpoints
                 {
                     userId = user.Id,
                     totalScore = storedTotal,
-                    // A failed play didn't run the whole map — credit actual elapsed time, capped
+                    // A failed play didn't run the whole map; credit actual elapsed time, capped
                     // at the drain length (elapsed can exceed it via pauses).
                     playTime = (long)Math.Round(Math.Min(elapsedSeconds, beatmap.DrainLengthS), MidpointRounding.AwayFromZero),
                     hitCounts = MergeHitCounts(existingHitCounts, statistics)
@@ -395,7 +395,7 @@ public static class ScoreEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // GET — beatmap leaderboard (global, best-per-user). GetScoresRequest.cs:46-59.
+    // GET: beatmap leaderboard (global, best-per-user). GetScoresRequest.cs:46-59.
     // type / mode / mods[] are ignored (always global); limit is capped at 50.
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> Leaderboard(long beatmapId, HttpContext ctx, Db db)
@@ -562,7 +562,7 @@ public static class ScoreEndpoints
 
     /// <summary>
     /// The user object riding on leaderboard rows and the submit response. avatar_url is built by
-    /// the shared <see cref="UserWire.AvatarUrl(string, string, string?)"/> — the stored avatar_key
+    /// the shared <see cref="UserWire.AvatarUrl(string, string, string?)"/>; the stored avatar_key
     /// when the user has one, the same self-hosted default the me-payload uses otherwise (never
     /// null, or the client falls back to a ppy CDN URL).
     /// </summary>
@@ -611,7 +611,7 @@ public static class ScoreEndpoints
 
     private sealed record BuildRow(long Id, bool Blocked);
 
-    // timestamptz arrives from Npgsql as UTC DateTime — DateTimeOffset ctor params break
+    // timestamptz arrives from Npgsql as UTC DateTime; DateTimeOffset ctor params break
     // Dapper's constructor matching at runtime ("no matching signature").
     private sealed record TokenRow(long Id, long UserId, long BeatmapId, long BuildId, long? ScoreId, DateTime CreatedAt);
 

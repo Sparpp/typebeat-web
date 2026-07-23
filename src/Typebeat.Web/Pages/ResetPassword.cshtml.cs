@@ -11,14 +11,14 @@ namespace Typebeat.Web.Pages;
 /// account rides the <see cref="ChallengeCookie"/> set by <see cref="ForgotPasswordModel"/> and the
 /// code is checked with the same <see cref="EmailCodeService.VerifyAsync"/> the /verify page uses.
 /// On success the password hash is replaced, EVERY existing session (web + game) is revoked so any
-/// attacker session dies, and a fresh session is minted — the code already proved control of the
+/// attacker session dies, and a fresh session is minted; the code already proved control of the
 /// account's email, which is exactly the bar M2 signs a user in on.
 ///
 /// Enumeration-safe:
 ///  - GET always renders the form (no redirect, no per-account branch), so a direct visit and a real
 ///    mid-flow visit are identical, and no masked email is shown (which would differ by account).
-///  - Every existence-dependent failure — a missing/decoy/expired challenge, a since-deleted user, a
-///    wrong code, AND a burned code — collapses to ONE generic message; distinguishing "burned" would
+///  - Every existence-dependent failure, a missing/decoy/expired challenge, a since-deleted user, a
+///    wrong code, AND a burned code, collapses to ONE generic message; distinguishing "burned" would
 ///    reveal that a live code exists for this account (decoy accounts can never burn).
 ///  - New-password FIELD validation (match + length) runs BEFORE the code is verified, so fumbling
 ///    the password never burns a good code; those checks are account-independent, so they leak nothing.
@@ -47,7 +47,7 @@ public sealed class ResetPasswordModel(
 
     public async Task<IActionResult> OnPostAsync()
     {
-        // 1) New-password field checks — account-independent, and BEFORE the code is consumed so a
+        // 1) New-password field checks: account-independent, and BEFORE the code is consumed so a
         //    mismatch or too-short password never burns a valid code. Passing an empty username to
         //    the shared validator runs the length/non-empty rules and skips only the
         //    username-equality rule (which would need the resolved account and so cannot run here
@@ -117,7 +117,7 @@ public sealed class ResetPasswordModel(
 
         // Real account → issue + send another 'reset' code (subject to the per-user throttle inside
         // IssueAndSend). Decoy / missing challenge → do nothing. Either way the SAME neutral line is
-        // shown, and the throttle status is never surfaced — so resend can't probe existence either.
+        // shown, and the throttle status is never surfaced, so resend can't probe existence either.
         if (user is not null)
         {
             try

@@ -7,7 +7,7 @@ namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
 /// The game-client registration path (POST /users) gains a verify-code email as a pure side
-/// effect. This pins that the WIRE RESPONSE is unchanged — same 200 and same {id,username} body —
+/// effect. This pins that the WIRE RESPONSE is unchanged, same 200 and same {id,username} body,
 /// and, critically, that a failing email sender never changes the status or body (the account is
 /// still created and returned).
 /// </summary>

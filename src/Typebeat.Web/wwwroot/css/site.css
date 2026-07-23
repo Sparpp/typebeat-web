@@ -1,5 +1,5 @@
 /* ==========================================================================
-   type!beat design system — "Caret"
+   type!beat design system: "Caret"
    Monkeytype-lean minimal: charcoal base, a single lime accent, JetBrains Mono
    throughout, a blinking-caret motif. Dark theme only. Design imported from the
    claude.ai/design "1b Caret" direction (docs/design-1b-caret.md).
@@ -10,7 +10,7 @@
    dozens of references. Read "violet" as "the accent."
    ========================================================================== */
 
-/* ---- Fonts (self-hosted, OFL — see wwwroot/fonts/OFL-NOTICE.txt) ---- */
+/* ---- Fonts (self-hosted, OFL; see wwwroot/fonts/OFL-NOTICE.txt) ---- */
 
 @font-face {
     font-family: 'JetBrains Mono';
@@ -38,7 +38,7 @@
     --text-muted: rgba(233, 234, 228, 0.55);
     --text-faint: rgba(233, 234, 228, 0.35);
 
-    /* accent — a single lime. The names below are legacy (see header note); all
+    /* accent: a single lime. The names below are legacy (see header note); all
        hold shades of the one lime so var() references stay valid and on-brand. */
     --violet: #c9f24d;
     --violet-deep: #b0dd39;
@@ -48,20 +48,20 @@
     /* readable text colour to sit ON the lime accent (buttons, avatars, badges) */
     --on-accent: #141519;
 
-    /* semantic — lime is the positive accent; warm amber + coral for warn/bad */
+    /* semantic: lime is the positive accent; warm amber + coral for warn/bad */
     --good: #c9f24d;
     --warn: #f2c14d;
     --bad: #ff6a5a;
 
-    /* "gradient" token kept for fills that reference it — Caret is flat, so this
+    /* "gradient" token kept for fills that reference it; Caret is flat, so this
        is a near-flat lime (no violet→magenta sweep anymore). */
     --grad-primary: linear-gradient(90deg, var(--violet-deep), var(--violet));
 
-    /* restrained lime glow — hover feedback only, not neon */
+    /* restrained lime glow, hover feedback only, not neon */
     --glow-violet: 0 0 16px rgba(201, 242, 77, 0.18);
     --glow-magenta: 0 0 16px rgba(201, 242, 77, 0.14);
 
-    /* type — JetBrains Mono is the whole identity: display, body, numerals */
+    /* type: JetBrains Mono is the whole identity: display, body, numerals */
     --font-display: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
     --font-body: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
     --text-xs: 0.75rem;
@@ -73,7 +73,7 @@
     --text-3xl: 2.25rem;
     --text-4xl: clamp(2.5rem, 6vw, 3.5rem);
 
-    /* radii — sharper than neon (Caret uses ~8px, not pills) */
+    /* radii: sharper than neon (Caret uses ~8px, not pills) */
     --radius-sm: 5px;
     --radius-md: 8px;
     --radius-lg: 12px;
@@ -433,7 +433,7 @@ img { max-width: 100%; }
     color: var(--text-muted);
 }
 
-/* Deliberately not for ranking: muted slate — published (unlike hidden) but plainly outside the
+/* Deliberately not for ranking: muted slate, published (unlike hidden) but plainly outside the
    ranked pipeline, distinct from pending's amber. */
 .pill--unranked {
     background: rgba(148, 163, 184, 0.16);
@@ -523,7 +523,7 @@ img { max-width: 100%; }
     font-size: var(--text-sm);
 }
 
-/* positive/neutral banner (e.g. "we sent a new code") — accent-tinted sibling of alert-error */
+/* positive/neutral banner (e.g. "we sent a new code"), accent-tinted sibling of alert-error */
 .alert-info {
     background: rgba(201, 242, 77, 0.10);
     border: 1px solid rgba(201, 242, 77, 0.4);
@@ -669,7 +669,7 @@ img { max-width: 100%; }
 }
 
 /* ==========================================================================
-   M3 Phase B — public site components
+   M3 Phase B: public site components
    Landing extras, the shared beatmapset card, listing filters, set page
    (header/stats/leaderboard) and the download page. Same token vocabulary
    as above; violet leads, magenta only ever rides the gradient tail.
@@ -890,7 +890,7 @@ img { max-width: 100%; }
 
 /* A self-contained 44px play/stop disc. Deliberately NOT absolute by default: the base must be
    safe wherever it lands (the set-page action row is plain flow), so a stray/stale stylesheet can
-   never let it stretch to fill — and overlay a click target across — its container. The card
+   never let it stretch to fill, or overlay a click target across, its container. The card
    variant opts INTO absolute centring via the scoped rule below. */
 .preview-btn {
     position: relative;
@@ -1301,7 +1301,7 @@ img { max-width: 100%; }
 .set-body { margin-top: var(--space-5); }
 
 .set-description {
-    white-space: pre-line;           /* plain text with line breaks — no markup pipeline */
+    white-space: pre-line;           /* plain text with line breaks, no markup pipeline */
     overflow-wrap: anywhere;
     max-width: 68ch;
     margin-bottom: var(--space-4);
@@ -1426,7 +1426,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 .table .num { font-family: var(--font-display); }
 
-/* our own grade lettering — plain colored type, no badge artwork */
+/* our own grade lettering, plain colored type, no badge artwork */
 .grade {
     font-family: var(--font-display);
     font-weight: 800;
@@ -1524,7 +1524,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 }
 
 /* ==========================================================================
-   Phase B3 — user profile page
+   Phase B3: user profile page
    ========================================================================== */
 
 /* ---- Header: cover band + avatar + identity ---- */
@@ -1545,7 +1545,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     .profile-cover { height: 160px; }
 }
 
-/* preset cover bands keyed by user id — charcoal with a restrained lime edge, never neon */
+/* preset cover bands keyed by user id: charcoal with a restrained lime edge, never neon */
 .profile-cover--0 { background: linear-gradient(115deg, #17181e, #1f2027 60%, rgba(201, 242, 77, 0.20) 135%); }
 .profile-cover--1 { background: linear-gradient(115deg, #191a20, #23242b 55%, rgba(201, 242, 77, 0.12) 120%); }
 .profile-cover--2 { background: linear-gradient(115deg, #141519, #1f2027 60%, rgba(201, 242, 77, 0.28) 130%); }
@@ -1740,7 +1740,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     white-space: nowrap;
 }
 
-/* Completion is the graded metric — lime; accuracy stays muted secondary. */
+/* Completion is the graded metric: lime; accuracy stays muted secondary. */
 .score-row__completion { color: var(--violet); }
 .score-row__acc { color: var(--text-muted); }
 
@@ -1750,7 +1750,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     white-space: nowrap;
 }
 
-/* Mods a score used — small osu-style coloured badges (see _ModIcons.cshtml), coloured by
+/* Mods a score used, small osu-style coloured badges (see _ModIcons.cshtml), coloured by
    mod category: red = harder, green = easier, violet = automation. */
 .mod-icons {
     display: inline-flex;
@@ -1779,7 +1779,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .mod-icon--automation { background: #b98cff; }
 .mod-icon--other { background: #9aa0aa; }
 
-/* Difficulty selector on the set page — one pill per difficulty, tinted by star rating. */
+/* Difficulty selector on the set page: one pill per difficulty, tinted by star rating. */
 .diff-selector {
     display: flex;
     flex-wrap: wrap;
@@ -1885,7 +1885,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 /* Profile: an uploaded banner replaces the preset gradient band; the "about" box holds the bio. */
 /* Uploaded covers render as a full-width <img> that scales to its own aspect ratio, so the
-   whole banner is visible (no crop/zoom). Height is intrinsic — the fixed 240px band only
+   whole banner is visible (no crop/zoom). Height is intrinsic; the fixed 240px band only
    applies to the preset gradient covers. */
 .profile-cover--image { height: auto; width: 100%; display: block; }
 .profile-header__edit { margin-left: auto; align-self: center; }
@@ -1893,7 +1893,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .profile-about__text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-muted); }
 
 /* ============================================================================
-   /play — in-browser web player (map picker + typing gameplay).
+   /play: in-browser web player (map picker + typing gameplay).
    ========================================================================== */
 
 .play-head { margin: var(--space-6) 0 var(--space-5); }

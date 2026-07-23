@@ -82,7 +82,7 @@ public sealed class LocalFileStore : IFileStore
         {
             // Contract: no-op when the object is absent. File.Delete already no-ops on a missing
             // file when its parent directory exists, but throws DirectoryNotFoundException when
-            // the directory itself is missing — that's "absent" too, not an error.
+            // the directory itself is missing; that's "absent" too, not an error.
         }
 
         return Task.CompletedTask;
@@ -105,7 +105,7 @@ public sealed class LocalFileStore : IFileStore
 
     /// <summary>
     /// Maps a store key to an absolute path under the root, rejecting anything that would
-    /// escape it (defense in depth — keys are server-generated, never user input).
+    /// escape it (defense in depth; keys are server-generated, never user input).
     /// </summary>
     private string resolve(string key)
     {
