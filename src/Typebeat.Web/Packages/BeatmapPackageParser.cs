@@ -113,7 +113,13 @@ public static class BeatmapPackageParser
         if (filename.Length > MaxFilenameLength)
             throw new PackageValidationException($"Filename \"{filename[..64]}...\" exceeds {MaxFilenameLength} characters.");
 
-        if (filename.StartsWith('/') || filename.Contains("..") || filename.Contains(':'))
+        // Traversal is a ".." PATH SEGMENT, not any run of dots: legitimate titles routinely end in
+        // an ellipsis ("I know youre hurting...mp3"), and a substring check rejected those outright.
+        // Backslashes are already folded to '/' by NormalizeFilename before this runs, so splitting
+        // on '/' sees every real segment.
+        bool traversal = filename.Split('/').Any(segment => segment == "..");
+
+        if (filename.StartsWith('/') || traversal || filename.Contains(':'))
             throw new PackageValidationException($"Filename \"{filename}\" is not a valid relative path.");
     }
 

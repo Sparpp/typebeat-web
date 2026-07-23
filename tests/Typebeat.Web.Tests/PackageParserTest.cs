@@ -152,6 +152,41 @@ public class PackageParserTest
         Assert.Throws<PackageValidationException>(() => BeatmapPackageParser.Parse(zip));
     }
 
+    /// <summary>
+    /// Regression: a title ending in an ellipsis ("I know youre hurting...mp3") contains "..", but
+    /// is a perfectly ordinary filename. A substring check used to reject it as path traversal and
+    /// blocked the upload outright — traversal is a ".." SEGMENT, not any run of dots.
+    /// </summary>
+    [Test]
+    public void Parse_EllipsisInFilename_Succeeds()
+    {
+        const string audioName = "I know youre hurting...mp3";
+
+        byte[] osu = SyntheticPackage.Utf8(SyntheticPackage.OsuText(audioFilename: audioName));
+
+        using var zip = SyntheticPackage.Zip(
+            ("Synth Rider - Neon Nights (uploader) [type!beat].osu", osu),
+            (audioName, SyntheticPackage.Utf8("not really mp3 bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        var package = BeatmapPackageParser.Parse(zip);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(package.Files.Select(f => f.Filename), Does.Contain(audioName));
+            Assert.That(package.Difficulties[0].AudioFilename, Is.EqualTo(audioName));
+        });
+    }
+
+    /// <summary>Traversal hidden mid-path must still be rejected (the segment check, not the prefix).</summary>
+    [Test]
+    public void Parse_NestedTraversalFilename_Throws422able()
+    {
+        using var zip = SyntheticPackage.Zip(("skin/../../evil.txt", SyntheticPackage.Utf8("x")));
+
+        Assert.Throws<PackageValidationException>(() => BeatmapPackageParser.Parse(zip));
+    }
+
     [Test]
     public void Parse_OverlongFilename_Throws422able()
     {
