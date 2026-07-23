@@ -157,7 +157,14 @@
             let we = clamp(words[m].end, ws, lineEnd);
             if (ws < prevEnd) ws = prevEnd; // non-decreasing across units
             if (we < ws) we = ws;
-            units.push({ text: tokens[m], start: ws, end: we, conf: clamp(words[m].score, 0, 1) });
+            // Keep only subdivisions that stayed strictly inside the (possibly clamped) word,
+            // deduped + sorted ascending (mirrors TimingJsonLoader.buildExplicitUnits).
+            const boundaries = [];
+            for (const b of (words[m].syllables || [])) {
+                if (b > ws && b < we && boundaries.indexOf(b) < 0) boundaries.push(b);
+            }
+            boundaries.sort((a, b) => a - b);
+            units.push({ text: tokens[m], start: ws, end: we, conf: clamp(words[m].score, 0, 1), syllables: boundaries });
             prevEnd = we;
         }
         return units;
@@ -178,9 +185,36 @@
             const unitStart = start + span * (cumulative / totalWeight);
             cumulative += weights[i];
             const unitEnd = start + span * (cumulative / totalWeight);
-            units.push({ text: tokens[i], start: unitStart, end: unitEnd, conf: 1 });
+            units.push({ text: tokens[i], start: unitStart, end: unitEnd, conf: 1, syllables: EMPTY_BOUNDARIES });
         }
         return units;
+    }
+
+    const EMPTY_BOUNDARIES = [];
+
+    // Target time of typeable char j (0-based, of k in the word) under piecewise-linear syllable
+    // timing (mirrors TypingLine.syllableCharTarget). The word spans [unitStart, unitEnd]; each
+    // entry of boundaries (absolute ms, strictly inside, ascending) splits it into one more
+    // segment, and the k chars are distributed evenly by index across the segments. With no
+    // boundaries this is exactly unitStart + j*(unitEnd-unitStart)/k; char j = 0 lands on unitStart.
+    function syllableCharTarget(unitStart, unitEnd, boundaries, k, j) {
+        if (k <= 0) return unitStart;
+        if (boundaries.length === 0) return unitStart + j * (unitEnd - unitStart) / k;
+
+        const segments = boundaries.length + 1;
+
+        // Which segment holds char index j (floor of j scaled into segment-space), clamped to last.
+        let s = Math.floor(j * segments / k);
+        if (s >= segments) s = segments - 1;
+
+        const segIndexLo = s * k / segments;
+        const segIndexHi = (s + 1) * k / segments;
+        const timeLo = s === 0 ? unitStart : boundaries[s - 1];
+        const timeHi = s === segments - 1 ? unitEnd : boundaries[s];
+
+        if (segIndexHi <= segIndexLo) return timeLo;
+
+        return timeLo + (j - segIndexLo) / (segIndexHi - segIndexLo) * (timeHi - timeLo);
     }
 
     // Expand a line's tokens+units into per-char cells (mirrors TypingLine.FromLyricLine).
@@ -192,11 +226,12 @@
             const unitStart = unit ? unit.start : 0;
             const unitEnd = unit ? unit.end : 0;
             const conf = unit ? unit.conf : 1;
+            const boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
             const tier = (estimated || conf < LOW_CONFIDENCE_SCORE) ? 'Line' : granularity;
             const token = tokens[m];
             const k = token.length;
             for (let j = 0; j < k; j++) {
-                cells.push(newCell(token[j], unitStart + j * (unitEnd - unitStart) / k, tier));
+                cells.push(newCell(token[j], syllableCharTarget(unitStart, unitEnd, boundaries, k, j), tier));
             }
             if (m < tokens.length - 1) {
                 cells.push(newCell(' ', unitEnd, tier)); // inter-word space cell
@@ -232,7 +267,18 @@
                     const ws = isFinite(+w.start_ms) ? +w.start_ms : startMs;
                     const we = isFinite(+w.end_ms) ? +w.end_ms : ws;
                     const score = isFinite(+w.score) ? +w.score : 1;
-                    words.push({ text: typeof w.text === 'string' ? w.text : '', start: ws, end: we, score: score });
+                    // Optional syllable subdivisions: each syllable's start_ms strictly inside the
+                    // (raw) word becomes an internal boundary — the first syllable starts at the
+                    // word start so it contributes none (mirrors TimingJsonLoader.parseLine).
+                    const syllables = [];
+                    if (Array.isArray(w.syllables)) {
+                        for (const s of w.syllables) {
+                            if (s == null || typeof s !== 'object') continue;
+                            const sm = +s.start_ms;
+                            if (isFinite(sm) && sm > ws && sm < we) syllables.push(sm);
+                        }
+                    }
+                    words.push({ text: typeof w.text === 'string' ? w.text : '', start: ws, end: we, score: score, syllables: syllables });
                 }
             }
             const sealGraceMs = isFinite(+o.seal_grace_ms) ? +o.seal_grace_ms : null;
@@ -672,7 +718,7 @@
 
     global.TypeBeatCore = {
         // low-level
-        isTypeable, normalize, parseLyricOsu, buildBeatmap,
+        isTypeable, normalize, parseLyricOsu, buildBeatmap, syllableCharTarget,
         TypingEngine, computeScore, rankFromCompletion,
         windowsFor, classify, toHitResult,
         constants: { CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE },
