@@ -94,6 +94,39 @@ public class PackageParserTest
     }
 
     [Test]
+    public void Parse_FreestyleLine_CountsMarkersAsCells()
+    {
+        // A map blob carrying the editor's freestyle opt-in. Ingest must count the '&' slots as
+        // cells (they are keypresses), or the stored pace/difficulty undercount the map; an
+        // ampersand in an unflagged line stays lyric punctuation and is stripped as always.
+        const string lyrics =
+            """
+            {"granularity":"word","version":2,"song_end_ms":20000}
+            {"text":"me & you","start_ms":1000,"end_ms":4000,"freestyle":true,"words":[{"text":"me","start_ms":1000,"end_ms":2000},{"text":"&","start_ms":2000,"end_ms":3000},{"text":"you","start_ms":3000,"end_ms":4000}]}
+            """;
+
+        const string legacyLyrics =
+            """
+            {"version":2,"song_end_ms":20000}
+            {"text":"me & you","start_ms":1000,"end_ms":4000}
+            """;
+
+        var free = BeatmapPackageParser.ParseDifficulty("free.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: lyrics)));
+        var legacy = BeatmapPackageParser.ParseDifficulty("legacy.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: legacyLyrics)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(free.Lines[0].RawText, Is.EqualTo("me & you"));
+            Assert.That(free.Pace.TypeableCellCount, Is.EqualTo(8)); // 6 letters + the slot + 2 spaces
+            Assert.That(free.Pace.WordCount, Is.EqualTo(3));
+
+            Assert.That(legacy.Lines[0].RawText, Is.EqualTo("me you"));
+            Assert.That(legacy.Pace.TypeableCellCount, Is.EqualTo(6));
+            Assert.That(legacy.Pace.WordCount, Is.EqualTo(2));
+        });
+    }
+
+    [Test]
     public void Parse_EmptyLyrics_YieldsZeroPace()
     {
         byte[] osu = SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: """{"version":2,"granularity":"Line"}"""));

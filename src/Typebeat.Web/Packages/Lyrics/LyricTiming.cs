@@ -122,7 +122,15 @@ public static class LyricTiming
             return false;
         }
 
-        string normalized = Typeability.Normalize(Typeability.StripBackingVocals(textElement.GetString() ?? string.Empty));
+        // Opt-in freestyle authoring (type!beat editor extension, written by the editor's encoder):
+        // "freestyle": true declares that the ampersands in this line's text are FREESTYLE CELL
+        // markers rather than lyric punctuation. Without the flag the text normalizes exactly as it
+        // always has (ampersands stripped), so every map produced before this feature, and every
+        // aligner line whose lyrics genuinely contain "&", ingests unchanged.
+        bool freestyle = lineElement.TryGetProperty("freestyle", out JsonElement freestyleElement)
+                         && freestyleElement.ValueKind == JsonValueKind.True;
+
+        string normalized = Typeability.Normalize(Typeability.StripBackingVocals(textElement.GetString() ?? string.Empty), keepFreestyleMarkers: freestyle);
         if (normalized.Length == 0)
             return false;
 
