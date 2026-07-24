@@ -26,6 +26,19 @@
             (ch >= '0' && ch <= '9');
     }
 
+    // Authoring marker for a FREESTYLE character: a cell the player may satisfy with ANY key,
+    // whose typed char is then displayed for the rest of the play. Deliberately OUTSIDE
+    // isTypeable, that is what keeps it invisible to every legacy path (normalize strips it
+    // unless the caller explicitly opts in).
+    const FREESTYLE_MARKER = '&';
+
+    function isFreestyle(ch) { return ch === FREESTYLE_MARKER; }
+
+    // A char that occupies a typeable CELL: a normal typeable char, or a freestyle slot. This is
+    // what the line flattening and the text statistics count; isTypeable stays the narrower
+    // "this exact glyph must be typed" predicate (mirrors Typeability.IsCell).
+    function isCell(ch) { return isTypeable(ch) || isFreestyle(ch); }
+
     function fold(ch) {
         return ch.toLowerCase();
     }
@@ -44,17 +57,24 @@
         return out;
     }
 
-    // Count typeable chars in a token (for interpolation weights).
+    // Count the cells in a token (typeable chars plus freestyle slots) for interpolation weights.
+    // Identical to the historical typeable-only count for any default-normalized text, which
+    // carries no markers (mirrors Typeability.TypeableCount).
     function typeableCount(text) {
         let n = 0;
-        for (const c of text) if (isTypeable(c)) n++;
+        for (const c of text) if (isCell(c)) n++;
         return n;
     }
 
     // NFD-fold diacritics, map curly punctuation to ASCII, DROP every non-space
     // char that isn't typeable, collapse whitespace, trim. So "don't" -> "dont",
     // "well-being" -> "wellbeing". The typed surface is only [a-z0-9 ].
-    function normalize(s) {
+    //
+    // keepFreestyleMarkers additionally preserves FREESTYLE_MARKERs, which are otherwise stripped
+    // like any other untypeable punctuation. The only caller that opts in is the decoder of a line
+    // the map explicitly flagged ("freestyle": true), so an ampersand that merely occurs in a
+    // song's lyrics ("R&B") still disappears exactly as it always has.
+    function normalize(s, keepFreestyleMarkers = false) {
         if (s == null) return '';
         s = stripBackingVocals(s);
         s = s.normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -67,6 +87,7 @@
         for (const ch of s) {
             if (isTypeable(ch)) out += ch;
             else if (/\s/.test(ch)) out += ' ';
+            else if (keepFreestyleMarkers && isFreestyle(ch)) out += ch;
             // else: dropped entirely (punctuation etc.)
         }
         return out.replace(/\s+/g, ' ').trim();
@@ -218,7 +239,8 @@
     }
 
     // Expand a line's tokens+units into per-char cells (mirrors TypingLine.FromLyricLine).
-    // After normalization every char is typeable, so the punctuation passes are no-ops here.
+    // After normalization every char occupies a cell (isCell: a typeable char, or a freestyle
+    // slot), so the punctuation passes are no-ops here and a token's cell count is its length.
     function buildCells(tokens, units, estimated, granularity) {
         const cells = [];
         for (let m = 0; m < tokens.length; m++) {
@@ -229,6 +251,8 @@
             const boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
             const tier = (estimated || conf < LOW_CONFIDENCE_SCORE) ? 'Line' : granularity;
             const token = tokens[m];
+            // k = number of cells in this token, freestyle slots included: the player presses a key
+            // for them, so they take a share of the word's time like any letter.
             const k = token.length;
             for (let j = 0; j < k; j++) {
                 cells.push(newCell(token[j], syllableCharTarget(unitStart, unitEnd, boundaries, k, j), tier));
@@ -252,7 +276,14 @@
         const raw = [];
         for (const o of parsed.lineObjs) {
             if (o == null || typeof o.text !== 'string') continue;
-            const normalized = normalize(o.text);
+            // Opt-in freestyle authoring (type!beat editor extension, mirrors TryParseRawLine):
+            // "freestyle": true declares that the ampersands in this line's text are FREESTYLE CELL
+            // markers rather than lyric punctuation. The flag must be present AND literally true;
+            // without it the text normalizes exactly as it always has (ampersands stripped), so
+            // every map produced before this feature, and every line whose lyrics genuinely contain
+            // "&", decodes unchanged.
+            const freestyle = o.freestyle === true;
+            const normalized = normalize(o.text, freestyle);
             if (normalized.length === 0) continue;
             if (!isFinite(+o.start_ms)) continue;
 
@@ -358,6 +389,11 @@
             target: target,
             tier: tier,
             typeable: true,          // after normalization every cell is typeable
+            // FREESTYLE cell: any key satisfies it and the char the player actually pressed lands
+            // in typedChar and stays on screen. Judgement is otherwise a completely normal typeable
+            // cell (same windows, points, combo, completion). Mirrors TypingCell.IsFreestyle,
+            // which is (IsTypeable && marker) and so is exactly this here.
+            freestyle: isFreestyle(expected),
             state: 'untyped',        // untyped | correct | missed
             judgeType: null,         // Perfect | Good | Ok | Premature | Lagging | Miss
             typedChar: null,
@@ -434,6 +470,13 @@
             this.finished = false;
             this.failed = false;
             this.counts = {};                 // JudgementType -> count (scored only)
+            // Mods (TypingEngine.CaseSensitive / MashingEnabled). The browser player always plays
+            // vanilla and never turns these on; they exist so processKey stays a line-for-line
+            // mirror of the C# and so the freestyle exemptions in it are pinned by the JS-vs-C#
+            // fidelity harness. Both default off, i.e. today's exact behaviour. Exposing either in
+            // the UI would also mean wiring the submitted mods payload (both are unranked).
+            this.caseSensitive = false;       // Literate: the typed char must match the exact case
+            this.mashingEnabled = false;      // Mashing (Relax): any key is the right key
             // event hooks (optional; set by the renderer)
             this.onCharJudged = null;
             this.onWrongKey = null;
@@ -536,8 +579,20 @@
             this.autoSkipForward();
             if (this.caretIndex >= line.cells.length) return false; // line fully typed
             const cell = line.cells[this.caretIndex];
+
+            // Mashing mod: any key is the right key; judge it as the caret cell's expected char.
+            // A FREESTYLE cell is exempt: it already accepts any key, and rewriting c here would
+            // stamp the authoring marker over the char the player actually pressed (the one thing
+            // a freestyle cell must remember).
+            if (this.mashingEnabled && !cell.freestyle) c = cell.expected;
+
             const delta = time - cell.target;
-            const matched = fold(c) === fold(cell.expected);
+            // FREESTYLE cell: every char matches, in any case, under every mod (so the Literate
+            // mod's exact-case rule is bypassed for it). The press is then judged exactly like a
+            // correct char: same windows, points, combo, accuracy and completion, with the pressed
+            // char kept in typedChar.
+            const matched = cell.freestyle ||
+                (this.caseSensitive ? c === cell.expected : fold(c) === fold(cell.expected));
 
             if (!matched) {
                 // Wrong key, REJECTED. Costs a keypress + combo + streak; caret unmoved.
@@ -716,12 +771,41 @@
         };
     }
 
+    // ---------------------------------------------------------------------------
+    // Freestyle shimmer (mirrors FreestyleGlyphs). Purely cosmetic: the engine neither
+    // knows nor cares which glyph is on screen. An open freestyle cell shows a DIFFERENT
+    // glyph every tick, drawn from a pool that shares the cell's advance width, which is
+    // what stops the line jittering as the glyph changes. The site renders lyrics in
+    // JetBrains Mono, so every candidate already shares an advance and the pool is the
+    // full candidate list (the C# FIXED_WIDTH_POOL case; no measuring needed).
+    // Deterministic in (tick, position), so it needs no random source and is testable.
+    // ---------------------------------------------------------------------------
+    const FREESTYLE_CANDIDATES = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const FREESTYLE_POOL = FREESTYLE_CANDIDATES.split('');
+    const SHIMMER_INTERVAL_MS = 60;
+
+    // Tick index for a clock time; the shimmer advances with the gameplay clock rather than wall
+    // time, so a paused clock holds a stable glyph.
+    function freestyleTick(timeMs) { return Math.floor(timeMs / SHIMMER_INTERVAL_MS); }
+
+    // The glyph an open freestyle slot shows on `tick`. `position` (the cell index) decorrelates
+    // neighbouring slots. Same 32-bit mix as FreestyleGlyphs.Glyph (Math.imul is the unchecked
+    // uint multiply), so the browser shimmers through the identical sequence as the desktop client.
+    function freestyleGlyph(tick, position) {
+        let h = (Math.imul(tick | 0, 2654435761) ^ Math.imul((position | 0) + 1, 2246822519)) >>> 0;
+        h = (h ^ (h >>> 15)) >>> 0;
+        h = Math.imul(h, 2654435761) >>> 0;
+        h = (h ^ (h >>> 13)) >>> 0;
+        return FREESTYLE_POOL[h % FREESTYLE_POOL.length];
+    }
+
     global.TypeBeatCore = {
         // low-level
-        isTypeable, normalize, parseLyricOsu, buildBeatmap, syllableCharTarget,
+        isTypeable, isFreestyle, isCell, normalize, parseLyricOsu, buildBeatmap, syllableCharTarget,
         TypingEngine, computeScore, rankFromCompletion,
         windowsFor, classify, toHitResult,
-        constants: { CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE },
+        freestyleTick, freestyleGlyph,
+        constants: { CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER, SHIMMER_INTERVAL_MS },
         // the renderer/high-level mount is attached in typebeat-player.js
     };
 })(window);

@@ -2003,6 +2003,11 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .tb-c-off  { color: var(--warn); }
 .tb-c-miss { color: var(--bad); opacity: .7; }
 .tb-line-cur .tb-c-todo { color: rgba(233,234,228,0.45); }
+/* FREESTYLE cells: any key fills them and the pressed char is kept. They wear the desktop
+   client's freestyle colour in BOTH states (shimmering placeholder while open, the player's
+   own char once filled), so the slot stays recognisable on a finished line. Listed after the
+   state rules, and duplicated at .tb-line-cur specificity, so the colour wins in every state. */
+.tb-c-free, .tb-line-cur .tb-c-free { color: #c792ea; }
 
 .tb-caret {
     display: inline-block;
