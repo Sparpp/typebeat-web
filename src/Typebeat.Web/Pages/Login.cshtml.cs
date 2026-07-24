@@ -29,6 +29,10 @@ public sealed class LoginModel(
     [BindProperty]
     public string Password { get; set; } = string.Empty;
 
+    /// <summary>When checked, the minted session lasts 30 days instead of the usual 24h.</summary>
+    [BindProperty]
+    public bool RememberMe { get; set; }
+
     public string? Error { get; private set; }
 
     public IActionResult OnGet()
@@ -87,7 +91,7 @@ public sealed class LoginModel(
             return Page();
         }
 
-        challenge.Issue(HttpContext, user.Id, "login");
+        challenge.Issue(HttpContext, user.Id, "login", RememberMe);
         return Redirect("/verify");
     }
 

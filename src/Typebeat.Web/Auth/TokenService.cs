@@ -30,7 +30,13 @@ public sealed class TokenService(Db db)
     public const int REFRESH_LIFETIME_DAYS = 30;
     public const int ROTATION_GRACE_SECONDS = 60;
 
-    public async Task<TokenPair> IssueAsync(long userId)
+    /// <summary>
+    /// Mints a fresh access/refresh pair. <paramref name="accessLifetimeSeconds"/> defaults to the
+    /// standard 24h; the website passes a longer value for a "remember me" session (the cookie life
+    /// tracks <see cref="TokenPair.ExpiresInSeconds"/>, so a 30-day token yields a 30-day cookie).
+    /// The token itself is unchanged, still 32 random bytes hashed at rest, only its expiry moves.
+    /// </summary>
+    public async Task<TokenPair> IssueAsync(long userId, long accessLifetimeSeconds = ACCESS_LIFETIME_SECONDS)
     {
         (string access, byte[] accessHash) = newToken();
         (string refresh, byte[] refreshHash) = newToken();
@@ -44,9 +50,9 @@ public sealed class TokenService(Db db)
                     now() + make_interval(secs => @accessLifetime),
                     now() + make_interval(days => @refreshDays))
             """,
-            new { userId, accessHash, refreshHash, accessLifetime = (double)ACCESS_LIFETIME_SECONDS, refreshDays = REFRESH_LIFETIME_DAYS });
+            new { userId, accessHash, refreshHash, accessLifetime = (double)accessLifetimeSeconds, refreshDays = REFRESH_LIFETIME_DAYS });
 
-        return new TokenPair(access, refresh, ACCESS_LIFETIME_SECONDS);
+        return new TokenPair(access, refresh, accessLifetimeSeconds);
     }
 
     /// <summary>

@@ -22,6 +22,10 @@
             <label asp-for="Password">Password</label>
             <input class="input" asp-for="Password" type="password" autocomplete="current-password" required />
         </div>
+        <label class="settings-toggle">
+            <input type="checkbox" asp-for="RememberMe" />
+            <span class="settings-toggle__text">Remember me for 30 days</span>
+        </label>
         <button type="submit" class="btn btn-primary">Sign in</button>
     </form>
 

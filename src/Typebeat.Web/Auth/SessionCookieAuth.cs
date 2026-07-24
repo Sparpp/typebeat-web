@@ -17,6 +17,14 @@ public static class SessionCookieAuth
 {
     public const string CookieName = "typebeat_session";
 
+    /// <summary>
+    /// Access-token (and therefore cookie) lifetime for a "remember me" website login: 30 days,
+    /// absolute. Absolute, not sliding, because the web has no refresh flow (see TokenService); a
+    /// sliding window would mean re-issuing the token on every request, which the token model
+    /// deliberately avoids. After 30 days the user signs in and re-verifies once.
+    /// </summary>
+    public const long RememberMeLifetimeSeconds = 30L * 24 * 60 * 60;
+
     private const string item_key = "typebeat.web_user";
 
     /// <summary>
@@ -52,8 +60,9 @@ public static class SessionCookieAuth
 
     /// <summary>
     /// Issues the session cookie carrying <paramref name="pair"/>'s access token. Cookie life
-    /// matches the token's 24h life. There is no refresh flow on the web; users just sign in
-    /// again. Secure is safe on localhost dev (browsers exempt localhost).
+    /// matches the token's life (24h normally, or <see cref="RememberMeLifetimeSeconds"/> for a
+    /// "remember me" login). There is no refresh flow on the web; users just sign in again. Secure
+    /// is safe on localhost dev (browsers exempt localhost).
     /// </summary>
     public static void SignIn(HttpContext ctx, TokenPair pair)
     {

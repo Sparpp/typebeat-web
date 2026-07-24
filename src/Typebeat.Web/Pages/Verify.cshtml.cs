@@ -86,8 +86,15 @@ public sealed class VerifyModel(
                 new { id = pending.UserId });
         }
 
+        // "Remember me" (carried from the login form through the challenge cookie) mints a 30-day
+        // session instead of the default 24h; it only ever extends a login that has just cleared the
+        // email code, so it never weakens the verification step itself.
+        long lifetime = pending.RememberMe
+            ? SessionCookieAuth.RememberMeLifetimeSeconds
+            : TokenService.ACCESS_LIFETIME_SECONDS;
+
         challenge.Clear(HttpContext);
-        SessionCookieAuth.SignIn(HttpContext, await tokens.IssueAsync(pending.UserId));
+        SessionCookieAuth.SignIn(HttpContext, await tokens.IssueAsync(pending.UserId, lifetime));
         return Redirect("/");
     }
 

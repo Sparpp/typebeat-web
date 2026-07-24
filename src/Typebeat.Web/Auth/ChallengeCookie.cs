@@ -24,11 +24,14 @@ public sealed class ChallengeCookie(IDataProtectionProvider provider)
 
     private readonly IDataProtector protector = provider.CreateProtector("typebeat.challenge.v1");
 
-    public sealed record Payload(long UserId, string Purpose, long IssuedUnix);
+    // RememberMe rides along so the login form's "remember me for 30 days" choice, made at the
+    // password step, survives to the code step where the session is actually minted. It defaults to
+    // false, so any older in-flight cookie (or a caller that doesn't pass it) reads as not-remembered.
+    public sealed record Payload(long UserId, string Purpose, long IssuedUnix, bool RememberMe = false);
 
-    public void Issue(HttpContext ctx, long userId, string purpose)
+    public void Issue(HttpContext ctx, long userId, string purpose, bool rememberMe = false)
     {
-        string json = JsonSerializer.Serialize(new Payload(userId, purpose, DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+        string json = JsonSerializer.Serialize(new Payload(userId, purpose, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), rememberMe));
         string value = protector.Protect(json);
 
         ctx.Response.Cookies.Append(CookieName, value, new CookieOptions

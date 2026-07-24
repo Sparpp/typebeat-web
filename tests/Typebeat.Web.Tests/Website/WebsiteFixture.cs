@@ -157,15 +157,19 @@ public class WebsiteFixture
     /// leaving an authenticated session in the client's cookie jar. Returns the final /verify
     /// response (already redirected to the landing page).
     /// </summary>
-    public static async Task<HttpResponseMessage> LoginAndVerifyAsync(HttpClient client, string login, string password)
+    public static async Task<HttpResponseMessage> LoginAndVerifyAsync(HttpClient client, string login, string password, bool rememberMe = false)
     {
         string loginToken = await GetAntiforgeryTokenAsync(client, "/login");
-        using (var loginResponse = await client.PostAsync("/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        var form = new Dictionary<string, string>
         {
             ["__RequestVerificationToken"] = loginToken,
             ["Login"] = login,
             ["Password"] = password,
-        })))
+        };
+        if (rememberMe)
+            form["RememberMe"] = "true";
+
+        using (var loginResponse = await client.PostAsync("/login", new FormUrlEncodedContent(form)))
             Assert.That(loginResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"login as {login} should land on /verify");
 
         string code = Emails.LastCode ?? throw new InvalidOperationException($"no login code captured for {login}");
