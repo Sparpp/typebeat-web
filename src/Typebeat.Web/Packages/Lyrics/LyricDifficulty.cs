@@ -175,7 +175,12 @@ public static class LyricDifficulty
         return Math.Clamp(stars, 0, max_stars);
     }
 
-    /// <summary>The typeable characters of a token, lower-cased.</summary>
+    /// <summary>
+    /// The typeable characters of a token, lower-cased. Freestyle slots are deliberately NOT
+    /// included: they carry no fixed key, so they contribute no finger travel or bigram cost to
+    /// the difficulty model (they are, if anything, the easiest cell on the line). Mirrors the
+    /// game's typeableLower, which is <see cref="Typeability.IsTypeable"/>, not IsCell.
+    /// </summary>
     private static string typeableLower(string token)
     {
         var sb = new System.Text.StringBuilder(token.Length);

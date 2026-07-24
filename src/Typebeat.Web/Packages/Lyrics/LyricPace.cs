@@ -26,9 +26,12 @@ public static class LyricPace
     /// .osu blob at startup (<see cref="PaceBackfill"/>). v1 = perfect-play cells/5 pace,
     /// v2 = boundary-window real-count pace, v3 = strain-based star rating (LyricDifficulty;
     /// pace WPM/CPM unchanged), v4 = per-word strain sum (sustained difficulty counts),
-    /// v5 = per-character window floor (fast multi-char words no longer over-capped).
+    /// v5 = per-character window floor (fast multi-char words no longer over-capped),
+    /// v6 = freestyle cells counted (a line flagged <c>"freestyle": true</c> keeps its '&amp;'
+    /// markers, and each is a real cell). v6 is a no-op for every map without a flagged line,
+    /// so the backfill rewrites existing rows with byte-identical values.
     /// </summary>
-    public const int VERSION = 5;
+    public const int VERSION = 6;
 
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;
@@ -64,7 +67,8 @@ public static class LyricPace
 
                 foreach (char ch in token)
                 {
-                    if (Typeability.IsTypeable(ch))
+                    // Freestyle slots are keypresses too, so they count towards the pace.
+                    if (Typeability.IsCell(ch))
                         typeable++;
                 }
 

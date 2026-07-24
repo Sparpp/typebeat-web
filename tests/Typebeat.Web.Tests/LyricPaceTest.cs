@@ -210,6 +210,150 @@ public class LyricPaceTest
         });
     }
 
+    [Test]
+    public void Typeability_FreestyleMarkerIsACellButNeverTypeable()
+    {
+        Assert.Multiple(() =>
+        {
+            // The marker stays outside the typeable surface (nothing can be typed to produce it)
+            // and outside default normalization; it is still a CELL.
+            Assert.That(Typeability.IsTypeable(Typeability.FREESTYLE_MARKER), Is.False);
+            Assert.That(Typeability.IsFreestyle(Typeability.FREESTYLE_MARKER), Is.True);
+            Assert.That(Typeability.IsCell(Typeability.FREESTYLE_MARKER), Is.True);
+
+            // Golden strings shared with the browser core's harness (FreestyleParityTest) and the
+            // game's FreestyleCharTest: opted out, the markers vanish like any other punctuation.
+            Assert.That(Typeability.Normalize("R&B rock & roll"), Is.EqualTo("RB rock roll"));
+            Assert.That(Typeability.Normalize("R&B rock & roll", keepFreestyleMarkers: true), Is.EqualTo("R&B rock & roll"));
+            Assert.That(Typeability.Normalize("  hey,   &you!  ", keepFreestyleMarkers: true), Is.EqualTo("hey &you"));
+
+            // Counting follows IsCell, so a kept marker is a cell; a default-normalized text has
+            // no markers to count and is byte-identical to the historical typeable-only count.
+            Assert.That(Typeability.TypeableCount("a&b"), Is.EqualTo(3));
+            Assert.That(Typeability.TypeableCount("ab cd"), Is.EqualTo(5));
+        });
+    }
+
+    [Test]
+    public void ParseSection_FlaggedLine_CountsMarkersAsCells()
+    {
+        // Same fixture the browser core's harness builds ("me & you" flagged, explicit words).
+        var (_, lines) = LyricTiming.ParseSection(
+        [
+            """{"granularity":"word","version":2,"song_end_ms":20000}""",
+            """{"text":"me & you","start_ms":1000,"end_ms":4000,"freestyle":true,"words":[{"text":"me","start_ms":1000,"end_ms":2000},{"text":"&","start_ms":2000,"end_ms":3000},{"text":"you","start_ms":3000,"end_ms":4000}]}""",
+        ]);
+
+        var pace = LyricPace.Compute(lines);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines, Has.Count.EqualTo(1));
+            Assert.That(lines[0].RawText, Is.EqualTo("me & you"));
+
+            // The token count survived, so the explicit word times align one-to-one.
+            Assert.That(lines[0].Units, Has.Count.EqualTo(3));
+            Assert.That(lines[0].Units[1].Text, Is.EqualTo("&"));
+            Assert.That(lines[0].Units[1].StartTime, Is.EqualTo(2000));
+
+            // m e _ & _ y o u: 6 letters, the slot, 2 inter-word spaces (the browser core's
+            // flattening reaches the same 8 cells).
+            Assert.That(pace.TypeableCellCount, Is.EqualTo(8));
+            Assert.That(pace.WordCount, Is.EqualTo(3));
+            // Boundary window 7000 - 1000 = 6000 ms: 3 words / 0.1 min, 8 cells / 0.1 min.
+            Assert.That(pace.AverageWpm, Is.EqualTo(30.0).Within(1e-9));
+            Assert.That(pace.AverageCpm, Is.EqualTo(80.0).Within(1e-9));
+        });
+    }
+
+    [Test]
+    public void ParseSection_UnflaggedAmpersand_StaysLyricPunctuation()
+    {
+        // Back-compat pin: a line whose lyrics genuinely contain "&" ingests exactly as it always
+        // did, marker stripped, no extra cell. This is why the v6 backfill is value-identical for
+        // every map in prod today.
+        var (_, lines) = LyricTiming.ParseSection(
+        [
+            """{"version":2,"song_end_ms":20000}""",
+            """{"text":"me & you","start_ms":1000,"end_ms":4000}""",
+        ]);
+
+        var pace = LyricPace.Compute(lines);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines[0].RawText, Is.EqualTo("me you"));
+            Assert.That(pace.TypeableCellCount, Is.EqualTo(6));
+            Assert.That(pace.WordCount, Is.EqualTo(2));
+            Assert.That(pace.AverageWpm, Is.EqualTo(20.0).Within(1e-9));
+            Assert.That(pace.AverageCpm, Is.EqualTo(60.0).Within(1e-9));
+        });
+
+        // "freestyle" must be strictly true; anything else is the legacy path.
+        var (_, truthy) = LyricTiming.ParseSection(
+        [
+            """{"version":2,"song_end_ms":20000}""",
+            """{"text":"me & you","start_ms":1000,"end_ms":4000,"freestyle":1}""",
+            """{"text":"you & me","start_ms":5000,"end_ms":6000,"freestyle":"true"}""",
+        ]);
+
+        Assert.That(truthy.Select(l => l.RawText), Is.EqualTo(new[] { "me you", "you me" }));
+    }
+
+    [Test]
+    public void InterpolatedUnits_WeightFreestyleSlotsLikeLetters()
+    {
+        // No words[], so the line falls back to char-weighted interpolation. Weights are
+        // (cells + 1): "a&b" -> 4, "c" -> 2, total 6 over a 600 ms span -> the split lands at 400.
+        var (_, lines) = LyricTiming.ParseSection(
+        [
+            """{"version":2,"song_end_ms":600}""",
+            """{"text":"a&b c","start_ms":0,"end_ms":600,"freestyle":true}""",
+        ]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines[0].Units, Has.Count.EqualTo(2));
+            Assert.That(lines[0].Units[0].EndTime, Is.EqualTo(400).Within(1e-9)); // 360 if the slot were dropped
+            Assert.That(lines[0].Units[1].EndTime, Is.EqualTo(600).Within(1e-9));
+        });
+    }
+
+    [Test]
+    public void FreestyleSlot_AddsACellButNoKeystrokeCost()
+    {
+        // The game's split, mirrored: a freestyle slot is a keypress (pace counts it), but it
+        // carries no fixed key, so it adds no finger travel to the strain model (LyricDifficulty
+        // stays on IsTypeable). Identical timings, so the stars must match exactly.
+        var freestyle = new LyricLine
+        {
+            RawText = "a&b",
+            StartTime = 1000,
+            EndTime = 5000,
+            SingEndTime = 4000,
+            Units = [new TimedUnit { Text = "a&b", StartTime = 1000, EndTime = 4000 }],
+        };
+
+        var plain = new LyricLine
+        {
+            RawText = "ab",
+            StartTime = 1000,
+            EndTime = 5000,
+            SingEndTime = 4000,
+            Units = [new TimedUnit { Text = "ab", StartTime = 1000, EndTime = 4000 }],
+        };
+
+        var freePace = LyricPace.Compute([freestyle]);
+        var plainPace = LyricPace.Compute([plain]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(freePace.TypeableCellCount, Is.EqualTo(3));
+            Assert.That(plainPace.TypeableCellCount, Is.EqualTo(2));
+            Assert.That(freePace.DifficultyRating, Is.EqualTo(plainPace.DifficultyRating).Within(1e-12));
+        });
+    }
+
     /// <summary>
     /// Optional integration anchor: a real lyriclab timing.json from the local map sources
     /// (read-only). Ignored when the assets are not on this machine.

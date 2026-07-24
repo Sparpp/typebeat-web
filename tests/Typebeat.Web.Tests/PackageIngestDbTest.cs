@@ -373,7 +373,9 @@ public class PackageIngestDbTest
     {
         // Simulate a row written under the old (v1, perfect-play cells/5) arithmetic: scribble
         // wrong numbers and downgrade the stamp, exactly the state prod is in when a LyricPace
-        // version bump deploys.
+        // version bump deploys. The asserted values below are also the "no-op backfill" pin for
+        // version bumps that only change freestyle maps (v6): a map without a flagged line must
+        // come back out of the recompute with byte-identical numbers.
         await using var conn = await db.OpenAsync();
 
         await conn.ExecuteAsync(

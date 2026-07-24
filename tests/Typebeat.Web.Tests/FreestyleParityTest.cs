@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Typebeat.Web.Packages.Lyrics;
 
 namespace Typebeat.Web.Tests;
 
@@ -226,6 +227,31 @@ public class FreestyleParityTest
 
             // The slot is the whole of its word unit, so it targets that unit's start.
             Assert.That(JsHarness.Doubles(r, "targets")[3], Is.EqualTo(2000));
+        });
+    }
+
+    /// <summary>
+    /// Third leg of the parity triangle: the SERVER's ingest pipeline (Typeability / LyricTiming /
+    /// LyricPace, what stamps a beatmap row's char_count, word_count, wpm and stars at upload)
+    /// counts exactly the cells the browser core flattens for the same .osu. Leaderboards take
+    /// their statistics from the client, so a divergence here is metadata quality, not scoring,
+    /// but an undercounted freestyle map would still show the wrong pace in song select.
+    /// </summary>
+    [TestCase("freestyleShape", """{"granularity":"word","version":2,"song_end_ms":20000}""", """{"text":"a&b","start_ms":1000,"end_ms":4000,"freestyle":true,"words":[{"text":"a&b","start_ms":1000,"end_ms":4000,"score":1}]}""")]
+    [TestCase("plainShape", """{"granularity":"word","version":2,"song_end_ms":20000}""", """{"text":"axb","start_ms":1000,"end_ms":4000,"words":[{"text":"axb","start_ms":1000,"end_ms":4000,"score":1}]}""")]
+    [TestCase("legacyShape", """{"version":2,"song_end_ms":20000}""", """{"text":"me & you","start_ms":1000,"end_ms":4000}""")]
+    [TestCase("flaggedShape", """{"granularity":"word","version":2,"song_end_ms":20000}""", """{"text":"me & you","start_ms":1000,"end_ms":4000,"freestyle":true,"words":[{"text":"me","start_ms":1000,"end_ms":2000},{"text":"&","start_ms":2000,"end_ms":3000},{"text":"you","start_ms":3000,"end_ms":4000}]}""")]
+    public void ServerIngestCountsTheSameCellsTheBrowserFlattens(string shape, string header, string line)
+    {
+        var browser = Harness().GetProperty(shape);
+
+        var (_, lines) = LyricTiming.ParseSection([header, line]);
+        var pace = LyricPace.Compute(lines);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines[0].RawText, Is.EqualTo(Str(browser, "text")));
+            Assert.That(pace.TypeableCellCount, Is.EqualTo(Num(browser, "count")));
         });
     }
 
