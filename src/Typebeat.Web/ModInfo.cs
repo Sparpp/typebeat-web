@@ -28,6 +28,7 @@ public static class ModInfo
         "FL" => "Flashlight",
         "RX" => "Mashing",
         "LT" => "Literate",
+        "FT" => "Fletcher",
         _ => acronym ?? string.Empty,
     };
 }
