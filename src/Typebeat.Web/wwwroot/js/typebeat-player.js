@@ -113,7 +113,7 @@
         // --- render ----------------------------------------------------------
         let lastCurIdx = -2, wrongFlash = 0;
 
-        function lineToSpans(line, isActive, caretIndex) {
+        function lineToSpans(line, isActive, caretIndex, shimmerTick) {
             const frag = document.createDocumentFragment();
             if (!line) return frag;
             for (let i = 0; i < line.cells.length; i++) {
@@ -132,7 +132,19 @@
                     cls += ' tb-c-todo';
                 }
                 if (isActive && i === caretIndex) cls += ' tb-c-at';
-                const ch = cell.expected === ' ' ? ' ' : cell.expected;
+                let ch = cell.expected;
+                if (cell.freestyle) {
+                    // A FREESTYLE cell never shows the authoring marker: while it is still open it
+                    // shimmers through the glyph pool (the desktop client's exact sequence), and
+                    // once filled it freezes on the char the player actually pressed, so a finished
+                    // line still shows which slots were free. Backspace clears typedChar and the
+                    // shimmer resumes. tb-c-free colours it in both states.
+                    cls += ' tb-c-free';
+                    ch = cell.typedChar !== null ? cell.typedChar : Core.freestyleGlyph(shimmerTick, i);
+                }
+                // A space (a word gap's expected char, or a space typed into a freestyle slot)
+                // must render as nbsp or the browser collapses it away.
+                if (ch === ' ') ch = ' ';
                 const span = el('span', cls);
                 span.textContent = ch;
                 frag.appendChild(span);
@@ -157,17 +169,21 @@
             const curIdx = engine.activeLineIndex >= 0 ? engine.activeLineIndex
                 : Math.min(engine.nextSealIndex, beatmap.lines.length - 1);
             const active = engine.activeLineIndex >= 0;
+            // Freestyle shimmer tick: the current row repaints every frame so its open slots
+            // animate; the neighbour rows only repaint on a line change, so theirs hold a still
+            // glyph until the line becomes current (cheap, and never the raw marker).
+            const shimmerTick = Core.freestyleTick(nowMs());
 
             rowCur.classList.toggle('tb-line-live', active);
             rowCur.innerHTML = '';
-            rowCur.appendChild(lineToSpans(beatmap.lines[curIdx], active, engine.caretIndex));
+            rowCur.appendChild(lineToSpans(beatmap.lines[curIdx], active, engine.caretIndex, shimmerTick));
             fitLine(rowCur);
 
             if (curIdx !== lastCurIdx) {
                 rowPrev.innerHTML = '';
-                rowPrev.appendChild(lineToSpans(beatmap.lines[curIdx - 1], false, -1));
+                rowPrev.appendChild(lineToSpans(beatmap.lines[curIdx - 1], false, -1, shimmerTick));
                 rowNext.innerHTML = '';
-                rowNext.appendChild(lineToSpans(beatmap.lines[curIdx + 1], false, -1));
+                rowNext.appendChild(lineToSpans(beatmap.lines[curIdx + 1], false, -1, shimmerTick));
                 fitLine(rowPrev);
                 fitLine(rowNext);
                 lastCurIdx = curIdx;
