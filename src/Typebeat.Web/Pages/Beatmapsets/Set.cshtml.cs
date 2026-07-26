@@ -55,6 +55,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                    s.tags             AS Tags,
                    s.description      AS Description,
                    s.status           AS Status,
+                   s.explicit         AS Explicit,
                    u.username::text   AS Creator,
                    u.restricted       AS OwnerRestricted,
                    s.owner_id         AS OwnerId,
@@ -295,7 +296,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
 
     public sealed record SetDetails(
         long Id, string Title, string Artist, string? TitleUnicode, string? ArtistUnicode, string Source, string Tags, string Description,
-        string Status, string Creator, bool OwnerRestricted, long OwnerId, string? CoverKey, string? PreviewUrl,
+        string Status, bool Explicit, string Creator, bool OwnerRestricted, long OwnerId, string? CoverKey, string? PreviewUrl,
         int PlayCount, int FavouriteCount, int DownloadCount, double? Bpm,
         DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited, bool HasPackage)
     {

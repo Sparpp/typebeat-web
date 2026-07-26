@@ -450,6 +450,30 @@ img { max-width: 100%; }
     color: var(--violet-bright);
 }
 
+/* ---- Explicit-content badge ----
+   osu's marker, ported to Caret: a small SQUARISH chip (deliberately not the rounded status
+   pill, so it never reads as a lifecycle state) in small caps, sitting beside a set title. Muted
+   coral on a dark wash: unmistakable at a glance, never louder than the title itself. */
+
+.explicit-badge {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 0 5px;
+    border: 1px solid rgba(255, 106, 90, 0.35);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 106, 90, 0.12);
+    color: var(--bad);
+    font-size: var(--text-xs);
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1.5;
+    text-transform: uppercase;
+    vertical-align: middle;
+    white-space: nowrap;
+    cursor: default;
+}
+
 /* ---- Stat chip (label + value pair) ---- */
 
 .chip {
@@ -804,7 +828,17 @@ img { max-width: 100%; }
     padding: var(--space-3) var(--space-4);
 }
 
+/* Title line: the title keeps its ellipsis truncation, the explicit badge (when present) never
+   shrinks and never gets clipped away. */
+.bset-card__titlerow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
 .bset-card__title {
+    min-width: 0;
     font-family: var(--font-display);
     font-weight: 700;
     color: var(--text);
@@ -1703,6 +1737,15 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     display: flex;
     flex-direction: column;
     gap: 1px;
+}
+
+/* Title line inside the map column: the link keeps its ellipsis, the explicit badge rides
+   beside it instead of being pushed onto its own line by the column flex. */
+.score-row__titlerow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
 }
 
 .score-row__map {

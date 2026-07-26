@@ -9,12 +9,15 @@ namespace Typebeat.Web.Pages;
 /// <param name="Rank">Raw ScoreRank string from scores.rank (X/XH read as SS, like the game).</param>
 /// <param name="Completion">% of the map typed (0..1), the metric the grade is awarded on.</param>
 /// <param name="Date">ended_at; timestamptz arrives from Npgsql as UTC DateTime.</param>
+/// <param name="Explicit">Creator-declared explicit content: renders the EXPLICIT badge beside
+/// the set title, the same marker the set page and the set cards show.</param>
 public sealed record ScoreRowModel(
     long SetId,
     string Title,
     string Artist,
     string? TitleUnicode,
     string? ArtistUnicode,
+    bool Explicit,
     string? Version,
     string? CoverUrl,
     string Rank,

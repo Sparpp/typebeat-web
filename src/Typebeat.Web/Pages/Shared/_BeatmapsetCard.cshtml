@@ -25,7 +25,13 @@
         }
     </div>
     <div class="bset-card__info">
-        <a class="bset-card__title" href="/beatmapsets/@Model.Id" title="@displayTitle">@displayTitle</a>
+        <span class="bset-card__titlerow">
+            <a class="bset-card__title" href="/beatmapsets/@Model.Id" title="@displayTitle">@displayTitle</a>
+            @if (Model.Explicit)
+            {
+                <partial name="_ExplicitBadge" />
+            }
+        </span>
         <span class="bset-card__artist" title="@displayArtist">by @displayArtist</span>
         <span class="bset-card__mapper">mapped by <a href="/users/@Model.OwnerId">@Model.Creator</a></span>
         <span class="bset-card__stats">

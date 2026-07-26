@@ -378,4 +378,52 @@ public class BeatmapSearchQueryTest
         var (_, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("title:50%"));
         Assert.That(param["op0"], Is.EqualTo(@"%50\%%"));
     }
+
+    // ---- boolean operator (explicit:) ----
+
+    [Test]
+    public void ExplicitOperator_ReadsEveryTruthWord_AndItsNsfwAlias()
+    {
+        Assert.Multiple(() =>
+        {
+            foreach (string yes in new[] { "explicit:true", "explicit:yes", "explicit:y", "explicit:1", "explicit:on", "nsfw:true" })
+            {
+                var q = BeatmapSearchQuery.Parse(yes);
+                Assert.That(q.BoolFilters, Has.Count.EqualTo(1), yes);
+                Assert.That(q.BoolFilters[0], Is.EqualTo(new BoolFilter(FilterField.Explicit, true)), yes);
+                Assert.That(q.FreeText, Is.Empty, yes);
+            }
+
+            foreach (string no in new[] { "explicit:false", "explicit:no", "explicit:n", "explicit:0", "explicit:off" })
+            {
+                var q = BeatmapSearchQuery.Parse(no);
+                Assert.That(q.BoolFilters[0], Is.EqualTo(new BoolFilter(FilterField.Explicit, false)), no);
+            }
+        });
+    }
+
+    [Test]
+    public void ExplicitOperator_UnparseableValue_StaysFreeText()
+    {
+        var q = BeatmapSearchQuery.Parse("explicit:maybe neon");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(q.BoolFilters, Is.Empty);
+            Assert.That(q.HasOperators, Is.False);
+            Assert.That(q.FreeText, Is.EqualTo("explicit:maybe neon"));
+        });
+    }
+
+    [Test]
+    public void Sql_BoolFilter_IsParameterisedEquality()
+    {
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("explicit:yes"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sql, Does.Contain("s.explicit = @op0"));
+            Assert.That(param["op0"], Is.EqualTo(true));
+        });
+    }
 }

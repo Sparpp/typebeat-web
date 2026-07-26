@@ -36,6 +36,9 @@ namespace Typebeat.Web.Endpoints;
 ///    its first successful upload (PackageIngest): 'pending' (awaits a reviewer's rank flip) or
 ///    'unranked' (creator opted out of ranking in the wizard; never leaderboard-eligible). The
 ///    choice rides in on the PUT's <c>target</c> and is stored in <c>intended_status</c>;
+///  - the same PUT carries the optional <c>explicit</c> boolean (the wizard's explicit-content
+///    toggle, absent = false). It is a display flag only, applied immediately on create and on
+///    every re-submission, and surfaces as the site's EXPLICIT badge;
 ///  - beatmap rows are NEVER deleted (scores FK); a diff dropped from beatmaps_to_keep, or
 ///    absent from an uploaded package, gets <c>filename = NULL</c>, which is the repo-wide
 ///    "not part of the current version" marker (live diffs have <c>filename IS NOT NULL</c>);
@@ -146,6 +149,12 @@ public static class BssEndpoints
             ? "unranked"
             : "pending";
 
+        // The wizard's explicit-content toggle rides on the same call. Unlike intended_status it
+        // needs no deferred flip: it is a pure display flag, so it applies immediately on create
+        // AND on every re-submission (that is how a creator turns it back off). Absent on the
+        // wire (any pre-toggle client) = false.
+        bool isExplicit = request.Explicit;
+
         await using (var tx = await conn.BeginTransactionAsync(ctx.RequestAborted))
         {
             if (request.BeatmapsetId == null)
@@ -153,8 +162,12 @@ public static class BssEndpoints
                 // Hidden until the first successful package upload publishes it (see class doc);
                 // intended_status carries the creator's ranking-intent to that publish flip.
                 setId = await conn.ExecuteScalarAsync<long>(
-                    "INSERT INTO beatmapsets (owner_id, status, intended_status) VALUES (@ownerId, 'hidden', @intendedStatus) RETURNING id",
-                    new { ownerId = user.Id, intendedStatus });
+                    """
+                    INSERT INTO beatmapsets (owner_id, status, intended_status, explicit)
+                    VALUES (@ownerId, 'hidden', @intendedStatus, @isExplicit)
+                    RETURNING id
+                    """,
+                    new { ownerId = user.Id, intendedStatus, isExplicit });
             }
             else
             {
@@ -172,10 +185,11 @@ public static class BssEndpoints
                     UPDATE beatmapsets
                     SET intended_status = @intendedStatus,
                         status = CASE WHEN status IN ('pending', 'unranked') THEN @intendedStatus ELSE status END,
+                        explicit = @isExplicit,
                         updated_at = now()
                     WHERE id = @setId
                     """,
-                    new { setId, intendedStatus });
+                    new { setId, intendedStatus, isExplicit });
             }
 
             var newIds = new List<long>(request.BeatmapsToCreate);

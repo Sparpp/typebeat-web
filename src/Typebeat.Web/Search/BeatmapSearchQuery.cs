@@ -20,17 +20,21 @@ public sealed class BeatmapSearchQuery
     public IReadOnlyList<TextFilter> TextFilters { get; }
     public IReadOnlyList<NumericFilter> NumericFilters { get; }
     public IReadOnlyList<DateFilter> DateFilters { get; }
+    public IReadOnlyList<BoolFilter> BoolFilters { get; }
 
     /// <summary>True when at least one recognised operator was parsed out of the query.</summary>
-    public bool HasOperators => TextFilters.Count + NumericFilters.Count + DateFilters.Count > 0;
+    public bool HasOperators =>
+        TextFilters.Count + NumericFilters.Count + DateFilters.Count + BoolFilters.Count > 0;
 
     private BeatmapSearchQuery(string freeText,
-        IReadOnlyList<TextFilter> text, IReadOnlyList<NumericFilter> numeric, IReadOnlyList<DateFilter> date)
+        IReadOnlyList<TextFilter> text, IReadOnlyList<NumericFilter> numeric, IReadOnlyList<DateFilter> date,
+        IReadOnlyList<BoolFilter> boolean)
     {
         FreeText = freeText;
         TextFilters = text;
         NumericFilters = numeric;
         DateFilters = date;
+        BoolFilters = boolean;
     }
 
     public static BeatmapSearchQuery Parse(string? raw)
@@ -38,6 +42,7 @@ public sealed class BeatmapSearchQuery
         var text = new List<TextFilter>();
         var numeric = new List<NumericFilter>();
         var date = new List<DateFilter>();
+        var boolean = new List<BoolFilter>();
         var freeTokens = new List<string>();
 
         foreach (string token in Tokenize(raw ?? string.Empty))
@@ -48,18 +53,18 @@ public sealed class BeatmapSearchQuery
             if (colon > 0 && Fields.Lookup(token[..colon]) is { } field)
             {
                 string value = Unquote(token[(colon + 1)..]);
-                if (value.Length > 0 && TryAddOperator(field, value, text, numeric, date))
+                if (value.Length > 0 && TryAddOperator(field, value, text, numeric, date, boolean))
                     continue;
             }
 
             freeTokens.Add(token);
         }
 
-        return new BeatmapSearchQuery(string.Join(' ', freeTokens).Trim(), text, numeric, date);
+        return new BeatmapSearchQuery(string.Join(' ', freeTokens).Trim(), text, numeric, date, boolean);
     }
 
     private static bool TryAddOperator(FilterField field, string value,
-        List<TextFilter> text, List<NumericFilter> numeric, List<DateFilter> date)
+        List<TextFilter> text, List<NumericFilter> numeric, List<DateFilter> date, List<BoolFilter> boolean)
     {
         switch (Fields.Kind(field))
         {
@@ -79,6 +84,14 @@ public sealed class BeatmapSearchQuery
                 if (DateFilter.TryParse(value) is { } df)
                 {
                     date.Add(df);
+                    return true;
+                }
+                return false;
+
+            case FieldKind.Bool:
+                if (BoolFilter.TryParse(field, value) is { } bf)
+                {
+                    boolean.Add(bf);
                     return true;
                 }
                 return false;
@@ -131,9 +144,10 @@ public enum FilterField
     Title, Artist, Creator, Source, Tag,
     Stars, Wpm, Cpm, Length, Bpm,
     Date,
+    Explicit,
 }
 
-internal enum FieldKind { Text, Numeric, Date }
+internal enum FieldKind { Text, Numeric, Date, Bool }
 
 /// <summary>Keyword → field whitelist. The single source of truth for which keys are operators.</summary>
 internal static class Fields
@@ -155,6 +169,9 @@ internal static class Fields
         ["len"] = FilterField.Length,
         ["bpm"] = FilterField.Bpm,
         ["date"] = FilterField.Date,
+        // Explicit-content marker; "nsfw" reads as the same thing to anyone arriving from osu.
+        ["explicit"] = FilterField.Explicit,
+        ["nsfw"] = FilterField.Explicit,
     };
 
     public static FilterField? Lookup(string key) =>
@@ -165,6 +182,7 @@ internal static class Fields
         FilterField.Title or FilterField.Artist or FilterField.Creator
             or FilterField.Source or FilterField.Tag => FieldKind.Text,
         FilterField.Date => FieldKind.Date,
+        FilterField.Explicit => FieldKind.Bool,
         _ => FieldKind.Numeric,
     };
 }
@@ -173,6 +191,21 @@ public enum Comparator { Eq, Lt, Lte, Gt, Gte, Range }
 
 /// <summary>A substring (ILIKE) filter on a text column: <c>title:</c>, <c>artist:</c>, etc.</summary>
 public sealed record TextFilter(FilterField Field, string Value);
+
+/// <summary>
+/// An equality filter on a boolean column (<c>explicit:</c>). Anything that is not a recognised
+/// truth word degrades to free text like every other malformed operator value, so
+/// <c>explicit:maybe</c> searches for the word rather than erroring.
+/// </summary>
+public sealed record BoolFilter(FilterField Field, bool Value)
+{
+    public static BoolFilter? TryParse(FilterField field, string value) => value.ToLowerInvariant() switch
+    {
+        "true" or "yes" or "y" or "1" or "on" => new BoolFilter(field, true),
+        "false" or "no" or "n" or "0" or "off" => new BoolFilter(field, false),
+        _ => null,
+    };
+}
 
 /// <summary>
 /// A comparator or inclusive range over a numeric column. For every op except
