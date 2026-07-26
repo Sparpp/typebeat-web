@@ -29,6 +29,7 @@ public static class ModInfo
         "RX" => "Mashing",
         "LT" => "Literate",
         "FT" => "Fletcher",
+        "MU" => "Muted",
         _ => acronym ?? string.Empty,
     };
 }
