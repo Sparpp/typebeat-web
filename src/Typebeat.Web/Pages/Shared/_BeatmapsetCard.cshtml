@@ -7,6 +7,10 @@
     bool preferOriginal = sessionUser?.PreferOriginalMetadata ?? false;
     string displayTitle = Model.DisplayTitle(preferOriginal);
     string displayArtist = Model.DisplayArtist(preferOriginal);
+    bool playMode = (ViewData["CardPlayMode"] as bool?) == true;
+    // The webplay rail is a deep link INTO /play, so it would be circular on the picker itself
+    // (there the whole rail already launches the player in place, without a navigation).
+    bool showWebplay = Model.CanWebplay && !playMode;
 }
 <article class="bset-card" data-set-id="@Model.Id">
     <div class="bset-card__media">
@@ -65,7 +69,7 @@
         {
             <a class="rail-btn" href="/login" title="Sign in to favourite" aria-label="Sign in to favourite">&#9825;</a>
         }
-        @if ((ViewData["CardPlayMode"] as bool?) == true)
+        @if (playMode)
         {
             @* Play mode (the /play picker): launch the in-browser player instead of downloading. *@
             <button type="button" class="rail-btn tb-play" data-set-id="@Model.Id"
@@ -82,4 +86,15 @@
             <span class="rail-btn rail-btn--disabled" title="available in-game only">&#8595;</span>
         }
     </div>
+    @if (showWebplay)
+    {
+        @* Ranked + playable only: one tall rail spanning the favourite and download rows,
+           deep-linking the browser player straight onto this set. Non-playable cards render
+           nothing here, so they keep exactly today's two-column geometry. *@
+        <a class="bset-card__play" href="/play?set=@Model.Id"
+           title="Play in browser" aria-label="Play @displayTitle in browser">
+            <span class="bset-card__play-glyph" aria-hidden="true">&#9654;</span>
+            <span class="bset-card__play-label">play</span>
+        </a>
+    }
 </article>

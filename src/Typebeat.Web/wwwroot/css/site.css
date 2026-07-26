@@ -920,6 +920,47 @@ img { max-width: 100%; }
     background: transparent;
 }
 
+/* Webplay rail: a third card column right of the favourite/download stack, spanning both rows
+   (it is a flex child of .bset-card, so the default stretch gives it the full card height).
+   Only ranked, package-and-diff-complete sets render it; every other card keeps its two-column
+   geometry unchanged, so nothing collapses or reflows for them. */
+.bset-card__play {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 56px;
+    border-left: 1px solid var(--line);
+    background: var(--bg-raised);
+    color: var(--violet);
+    text-decoration: none;
+}
+
+.bset-card__play:hover {
+    color: var(--on-accent);
+    background: var(--violet);
+    text-decoration: none;
+}
+
+.bset-card__play-glyph { font-size: 16px; line-height: 1; }
+
+.bset-card__play-label {
+    font-family: var(--font-display);
+    font-size: var(--text-xs);
+    letter-spacing: 0.02em;
+}
+
+/* Narrow screens: the card is already single-column here and the media box eats 104px, so drop
+   the word and keep the glyph, the rail stays a comfortable tap target without squeezing the
+   title/artist lines into nothing. */
+@media (max-width: 560px) {
+    .bset-card__play { width: 44px; }
+
+    .bset-card__play-label { display: none; }
+}
+
 /* ---- Preview play button (progress ring via conic-gradient + --progress) ---- */
 
 /* A self-contained 44px play/stop disc. Deliberately NOT absolute by default: the base must be

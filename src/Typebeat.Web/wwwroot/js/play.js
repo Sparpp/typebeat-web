@@ -6,6 +6,10 @@
  * shared TypeBeatCore player, and (when signed in) submits the score through the
  * cookie-authed two-phase /play/token + /play/submit flow, landing it on the
  * same leaderboards as the desktop client.
+ *
+ * TYPEBEAT_PLAY.autoPlay is the /play?set={id} deep link (the beatmapset card's
+ * webplay rail): the server has already resolved and vetted that set, so we skip
+ * the picker and load it straight away.
  */
 (function () {
     'use strict';
@@ -64,10 +68,9 @@
         return postJson('/play/submit', body);
     }
 
-    async function pick(btn) {
-        const setId = btn.getAttribute('data-set-id');
-        const title = btn.getAttribute('data-title') || '';
-        const artist = btn.getAttribute('data-artist') || '';
+    async function pick(setId, title, artist) {
+        title = title || '';
+        artist = artist || '';
 
         showStage();
         stageMount.innerHTML = '<div class="tb-loading">loading map…</div>';
@@ -148,9 +151,19 @@
 
     picker.addEventListener('click', (e) => {
         const btn = e.target.closest('.tb-play');
-        if (btn) { e.preventDefault(); pick(btn); }
+        if (!btn) return;
+        e.preventDefault();
+        pick(btn.getAttribute('data-set-id'),
+             btn.getAttribute('data-title'),
+             btn.getAttribute('data-artist'));
     });
 
     const closeBtn = document.getElementById('tb-close');
     if (closeBtn) closeBtn.addEventListener('click', showPicker);
+
+    // /play?set={id}: the server resolved the deep link to a playable set, so skip the picker and
+    // load it now. The player still opens on its "press space to start" gate, so nothing plays
+    // without a user gesture (and closing the stage drops back to the normal picker).
+    const auto = CFG.autoPlay;
+    if (auto && auto.setId) pick(auto.setId, auto.title, auto.artist);
 })();
