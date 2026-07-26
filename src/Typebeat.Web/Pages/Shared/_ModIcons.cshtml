@@ -1,13 +1,25 @@
 @using Typebeat.Web
-@model IReadOnlyList<string>
+@model IReadOnlyList<ScoreMod>
 @* Renders the mods a score was played with as small osu-style coloured badges. Model is the
-   already-filtered list of acronyms (see ScoreRow.ModAcronyms). Empty list → nothing. *@
+   already-parsed badge list (see ScoreMods.Parse). Empty list → nothing.
+
+   A rate mod (DT/NC/HT) carries its exact track rate in a pill welded to the badge, the way the
+   game's own ModIcon does: every rate in range is ranked and paid differently, so "DT" alone would
+   not say whether the play was a 1.01x nudge or a 2.00x sprint. The pill deepens with how far the
+   rate is pushed (--rate-intensity), so an extreme rate reads before the number does. *@
 @if (Model is { Count: > 0 })
 {
     <span class="mod-icons">
-        @foreach (var acronym in Model)
+        @foreach (var mod in Model)
         {
-            <span class="mod-icon mod-icon--@ModInfo.CategoryClass(acronym)" title="@ModInfo.Name(acronym)">@acronym.ToUpperInvariant()</span>
+            @if (mod.RateLabel is null)
+            {
+                <span class="mod-icon mod-icon--@mod.CategoryClass" title="@mod.Title">@mod.Acronym</span>
+            }
+            else
+            {
+                <span class="mod-icon mod-icon--@mod.CategoryClass mod-icon--rated" title="@mod.Title" style="--rate-intensity: @mod.RateIntensityCss">@mod.Acronym<span class="mod-icon__rate">@mod.RateLabel</span></span>
+            }
         }
     </span>
 }

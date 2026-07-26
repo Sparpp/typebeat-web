@@ -261,12 +261,16 @@ public class WireCompatTests
         }
     }
 
-    // A completed play with a NON-DEFAULT rate mod (DT at 1.01x) must submit successfully but store
-    // unranked, mirroring the client's per-mod Ranked = SpeedChange.IsDefault. The multiplied total
-    // is still accepted (bounded against the base score), it just never reaches the ranked board.
+    // A completed play with a NON-DEFAULT rate mod (DT at 1.01x) must submit, RANK, and keep its
+    // rate. type!beat ranks the rate mods at every speed and pays them on a continuous curve
+    // (TypeBeatRateMultiplier), so the client's per-mod Ranked is true regardless of the slider and
+    // the wire always carries settings.speed_change. The server must therefore:
+    //   - rank the play (this pin was the exact inverse before task 27),
+    //   - price it at that rate: 400,000 × For(1.01) = 400,000 × 1.0046 = 401,840,
+    //   - persist the rate, or a "DT" on a board is ambiguous between 1.01x and 2.00x.
     [Test]
     [Order(50)]
-    public async Task NonDefaultRateMod_SubmitsButIsUnranked()
+    public async Task RateModAtAnyRate_IsRanked_AndKeepsItsRate()
     {
         long beatmapId = ServerFixture.SeededBeatmapId;
 
@@ -292,7 +296,7 @@ public class WireCompatTests
         var score = new SoloScoreInfo
         {
             Passed = true,
-            TotalScore = 480_000,          // base × DoubleTime multiplier
+            TotalScore = 401_840,          // base × the exact 1.01x rate multiplier (1.0046)
             TotalScoreWithoutMods = 400_000, // base bounded against the provable ceiling
             Accuracy = 0.75,
             MaxCombo = 8,
@@ -313,14 +317,24 @@ public class WireCompatTests
 
         var result = JsonConvert.DeserializeObject<MultiplayerScore>(await submitResp.Content.ReadAsStringAsync())!;
 
-        Assert.That(result.Position, Is.Null, "a non-default-rate play must be stored unranked (no leaderboard position)");
+        Assert.That(result.Position, Is.Not.Null, "a rate-mod play is ranked at every speed, so it takes a leaderboard position");
+        Assert.That(result.TotalScore, Is.EqualTo(401_840), "the rate-priced total must survive the bounds check unclamped");
 
         await using (var verify = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString))
         {
             await verify.OpenAsync();
             bool ranked = await Dapper.SqlMapper.ExecuteScalarAsync<bool>(verify,
                 "SELECT ranked FROM scores WHERE id = @id", new { id = result.ID });
-            Assert.That(ranked, Is.False, "scores.ranked must be false for a non-default-rate mod");
+            Assert.That(ranked, Is.True, "scores.ranked must be true for a rate mod at any speed");
+
+            // The rate is score-affecting data, so it is persisted in the osu APIMod shape the
+            // client's own ModIcon strip reads back off the leaderboard.
+            string storedMods = await Dapper.SqlMapper.ExecuteScalarAsync<string>(verify,
+                "SELECT mods::text FROM scores WHERE id = @id", new { id = result.ID }) ?? "[]";
+
+            Assert.That(JArray.Parse(storedMods).ToString(Formatting.None),
+                Is.EqualTo("""[{"acronym":"DT","settings":{"speed_change":1.01}}]"""),
+                "the submitted rate must be stored, clamped to the slider range and stripped of every other setting");
         }
     }
 
