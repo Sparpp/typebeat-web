@@ -1779,6 +1779,24 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .mod-icon--automation { background: #b98cff; }
 .mod-icon--other { background: #9aa0aa; }
 
+/* Rate mods (DT/NC/HT) are ranked at every speed and paid a different multiplier at each, so the
+   exact rate rides on the badge in a pill welded to the acronym, matching the game's ModIcon. The
+   pill deepens with --rate-intensity (0 = as good as no-mod, 1 = the slider's far end) so a 2.00x
+   sprint reads darker than a 1.05x nudge before the number itself is read. */
+.mod-icon--rated {
+    gap: 4px;
+    padding-right: 2px;
+}
+
+.mod-icon__rate {
+    padding: 0 4px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.14);
+    background: rgba(0, 0, 0, calc(0.08 + 0.12 * var(--rate-intensity, 0)));
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
 /* Difficulty selector on the set page: one pill per difficulty, tinted by star rating. */
 .diff-selector {
     display: flex;

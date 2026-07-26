@@ -336,12 +336,12 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         public int Ok => Statistics.Value<int?>("meh") ?? 0;
         public int Miss => Statistics.Value<int?>("miss") ?? 0;
 
-        /// <summary>Mod acronyms from the mods jsonb ([{acronym, settings}] wire shape).</summary>
-        public IReadOnlyList<string> ModAcronyms =>
-            JArray.Parse(string.IsNullOrEmpty(ModsJson) ? "[]" : ModsJson)
-                  .Select(m => m?["acronym"]?.Value<string>())
-                  .Where(a => !string.IsNullOrEmpty(a))
-                  .Select(a => a!)
-                  .ToList();
+        /// <summary>
+        /// Mod badges from the mods jsonb ([{acronym, settings}] wire shape), each carrying the
+        /// track rate when it is a rate mod (see <see cref="ScoreMods.Parse"/>).
+        /// </summary>
+        public IReadOnlyList<ScoreMod> Mods => mods ??= ScoreMods.Parse(ModsJson);
+
+        private IReadOnlyList<ScoreMod>? mods;
     }
 }

@@ -1,5 +1,3 @@
-using Newtonsoft.Json.Linq;
-
 namespace Typebeat.Web.Pages;
 
 /// <summary>
@@ -41,11 +39,11 @@ public sealed record ScoreRowModel(
     /// <summary>Artist, or its original non-romanized text when the viewer prefers that.</summary>
     public string DisplayArtist(bool preferOriginal) => MetadataDisplay.Pick(Artist, ArtistUnicode, preferOriginal);
 
-    /// <summary>Mod acronyms from the mods jsonb ([{acronym, settings}] wire shape).</summary>
-    public IReadOnlyList<string> ModAcronyms =>
-        JArray.Parse(string.IsNullOrEmpty(ModsJson) ? "[]" : ModsJson)
-              .Select(m => m?["acronym"]?.Value<string>())
-              .Where(a => !string.IsNullOrEmpty(a))
-              .Select(a => a!)
-              .ToList();
+    /// <summary>
+    /// Mod badges from the mods jsonb ([{acronym, settings}] wire shape), each carrying the track
+    /// rate when it is a rate mod (see <see cref="ScoreMods.Parse"/>).
+    /// </summary>
+    public IReadOnlyList<ScoreMod> Mods => mods ??= ScoreMods.Parse(ModsJson);
+
+    private IReadOnlyList<ScoreMod>? mods;
 }

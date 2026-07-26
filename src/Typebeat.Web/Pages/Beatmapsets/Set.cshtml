@@ -236,9 +236,9 @@
                 <div class="podium-stat"><span class="podium-stat__label">Ok</span><span class="podium-stat__value">@top.Ok</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Miss</span><span class="podium-stat__value">@top.Miss</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Grade</span><span class="podium-stat__value grade @SetModel.GradeClass(top.Rank)">@SetModel.GradeLabel(top.Rank)</span></div>
-                @if (top.ModAcronyms.Count > 0)
+                @if (top.Mods.Count > 0)
                 {
-                    <div class="podium-stat"><span class="podium-stat__label">Mods</span><span class="podium-stat__value"><partial name="_ModIcons" model="top.ModAcronyms" /></span></div>
+                    <div class="podium-stat"><span class="podium-stat__label">Mods</span><span class="podium-stat__value"><partial name="_ModIcons" model="top.Mods" /></span></div>
                 }
             </div>
         </div>
@@ -279,7 +279,7 @@
                         <td class="num">@score.Ok</td>
                         <td class="num">@score.Miss</td>
                         <td>@score.EndedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</td>
-                        <td><partial name="_ModIcons" model="score.ModAcronyms" /></td>
+                        <td><partial name="_ModIcons" model="score.Mods" /></td>
                     </tr>
                 }
                 </tbody>

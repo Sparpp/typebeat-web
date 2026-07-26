@@ -28,51 +28,61 @@ public static class ScoreEndpoints
     /// Mashing (Relax "RX") and the time-ramp Wind Up / Wind Down ("WU"/"WD").</summary>
     private static readonly HashSet<string> always_unranked_mod_acronyms = new(StringComparer.OrdinalIgnoreCase) { "RX", "WU", "WD" };
 
-    /// <summary>Rate mods whose client Ranked flag is <c>SpeedChange.IsDefault</c>: a non-default
-    /// speed_change makes the play unranked. Values are the client defaults (DT/NC 1.5, HT/DC 0.75).</summary>
-    private static readonly Dictionary<string, double> rate_mod_default_speed = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["DT"] = 1.5, ["NC"] = 1.5, ["HT"] = 0.75, ["DC"] = 0.75,
-    };
-
-    /// <summary>Ceiling headroom for the mod score-multiplier (the highest realistic stack is well
-    /// under 2×). Bounds a tampered multiplied total without needing the exact per-mod multiplier.</summary>
-    private const double max_mod_score_multiplier = 2.0;
-
     /// <summary>
     /// Whether a single submitted mod is ranked at its submitted configuration; the server-side
     /// mirror of the client's per-mod <c>Ranked</c>. Unknown/null acronyms are treated as ranked
     /// (forward-compatible); the caller ANDs this across all mods.
+    ///
+    /// <para>
+    /// The rate mods (DT/NC/HT) are ranked at EVERY speed, not just their default: the client pays
+    /// them on a continuous curve (<see cref="RateMultiplier"/>), so an odd rate is priced, not
+    /// banned. Only the always-unranked set above disqualifies a play.
+    /// </para>
     /// </summary>
     private static bool ModConfigRanked(SubmittedMod mod)
     {
         if (string.IsNullOrWhiteSpace(mod.Acronym))
             return true;
 
-        string acronym = mod.Acronym.Trim().ToUpperInvariant();
+        return !always_unranked_mod_acronyms.Contains(mod.Acronym.Trim());
+    }
 
-        if (always_unranked_mod_acronyms.Contains(acronym))
-            return false;
+    /// <summary>
+    /// The mods as they will be STORED: uppercased acronym plus, for a rate mod, the submitted
+    /// <c>speed_change</c> snapped to 0.01 and clamped into that mod's slider range. Every other
+    /// setting is dropped, so a tampered payload cannot bloat the row, and an unparseable or absent
+    /// rate simply yields no setting (read back as the client default).
+    /// </summary>
+    private static List<NormalizedMod> NormalizeMods(List<SubmittedMod>? mods)
+    {
+        var normalized = new List<NormalizedMod>();
 
-        if (rate_mod_default_speed.TryGetValue(acronym, out double defaultSpeed)
-            && mod.Settings != null
-            && mod.Settings.TryGetValue("speed_change", out object? raw)
-            && raw != null)
+        if (mods == null)
+            return normalized;
+
+        foreach (var mod in mods)
         {
-            try
-            {
-                double speed = Convert.ToDouble(raw, CultureInfo.InvariantCulture);
-                if (Math.Abs(speed - defaultSpeed) > 1e-6)
-                    return false;
-            }
-            catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
-            {
-                // Unparseable speed → treat as default (ranked); the score's other invariants still apply.
-            }
+            if (string.IsNullOrWhiteSpace(mod.Acronym))
+                continue;
+
+            string acronym = mod.Acronym.Trim().ToUpperInvariant();
+
+            normalized.Add(new NormalizedMod(acronym, RateMods.ReadSpeedChange(acronym, mod.Settings)));
         }
 
-        return true;
+        return normalized;
     }
+
+    /// <summary>The stored mods jsonb: <c>[{"acronym":"DT","settings":{"speed_change":1.5}}]</c>.</summary>
+    private static string SerializeMods(List<NormalizedMod> mods)
+        => mods.Count == 0
+            ? "[]"
+            : JsonConvert.SerializeObject(mods.Select(m => m.SpeedChange is double speed
+                ? (object)new { acronym = m.Acronym, settings = new { speed_change = speed } }
+                : new { acronym = m.Acronym }));
+
+    /// <summary>A submitted mod reduced to what the server keeps: acronym + rate (rate mods only).</summary>
+    private sealed record NormalizedMod(string Acronym, double? SpeedChange);
 
     public static void Map(IEndpointRouteBuilder app)
     {
@@ -209,17 +219,28 @@ public static class ScoreEndpoints
         var statistics = submission.Statistics ?? new Dictionary<string, int>();
         var maximumStatistics = submission.MaximumStatistics ?? new Dictionary<string, int>();
 
+        // The mods as they will be stored and priced: acronym + clamped rate, everything else dropped.
+        var mods = NormalizeMods(submission.Mods);
+
         // Recompute accuracy exactly and bound the score against a provable ceiling. The ceiling is
         // the no-mod maximum, so bound the UNMODDED score against it; the mod score-multiplier then
-        // legitimately scales the ranked TotalScore up (DT/NC/FL) or down (HT). The multiplied total
-        // is still capped (generously) so a tampered client can't submit an absurd leaderboard score.
+        // legitimately scales the ranked TotalScore up (DT/NC/FL) or down (HT).
+        //
+        // The multiplied total is bounded by the EXACT multiplier the submitted stack earns
+        // (ModMultiplier, mirroring the client's TypeBeatScoreMultiplierCalculator), not by the old
+        // flat 2x allowance: the client sends round(base × multiplier), so the ceiling is that value
+        // plus one unit of rounding slack. Rates are priced from the CLAMPED speed_change, so a
+        // tampered "speed_change": 40 buys the 2.00x price and no more.
         var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, submission.MaxCombo);
+        double modMultiplier = ModMultiplier.MaxForStack(mods.Select(m => ((string?)m.Acronym, m.SpeedChange)));
+        long modCeiling = ModMultiplier.TotalScoreCeiling(submission.TotalScoreWithoutMods, modMultiplier);
+
         bool withinBounds = ScoringContract.TotalScoreWithinBounds(submission.TotalScoreWithoutMods, recomputed)
                             && submission.TotalScore >= 0
                             // Tie the multiplied total to the (ceiling-bounded) base score, so a tampered
                             // client can't claim a huge total against a zero base. HalfTime legitimately
                             // lands below the base; the cap is only an upper bound.
-                            && submission.TotalScore <= submission.TotalScoreWithoutMods * max_mod_score_multiplier;
+                            && submission.TotalScore <= modCeiling;
 
         // Minimum-play-time gate: at least 90% of the map's drain length must have elapsed since the
         // token was created (created_at is the server wall-clock anchor, 001_init.sql:126). Too fast
@@ -239,8 +260,8 @@ public static class ScoreEndpoints
 
         // Mirror the client's per-mod Ranked flag: a score is ranked only if every mod is ranked at
         // its submitted configuration. Always-unranked mods (Mashing/Relax "RX"; the time-ramp Wind
-        // Up/Down "WU"/"WD") disqualify it, as do the rate mods (DT/NC/HT/DC) at a NON-default speed
-        // the same rule the client shows as "unranked" in the mod overlay.
+        // Up/Down "WU"/"WD") disqualify it. The rate mods (DT/NC/HT) no longer do at ANY speed: the
+        // rate is paid on a continuous curve instead of being banned off the default.
         bool modsRanked = submission.Mods is null || submission.Mods.All(ModConfigRanked);
 
         // Ranked only if the SET is ranked and it passed with every cell judged, every hard
@@ -269,15 +290,11 @@ public static class ScoreEndpoints
         string rank = passed ? recomputed.Rank : "F"; // ScoreProcessor.FailScore sets rank F (ScoreProcessor.cs:504-513)
         var endedAt = DateTimeOffset.UtcNow;
 
-        // Persist the acronyms the client reported so the site can show which mods a play used.
-        // Normalized to [{acronym}] (the shape the website already parses); only the acronym is
-        // kept, never the raw client settings blob, so a tampered payload can't bloat the row.
-        string modsJson = submission.Mods is { Count: > 0 }
-            ? JsonConvert.SerializeObject(
-                submission.Mods
-                          .Where(m => !string.IsNullOrWhiteSpace(m.Acronym))
-                          .Select(m => new { acronym = m.Acronym!.Trim().ToUpperInvariant() }))
-            : "[]";
+        // Persist what the client reported so the site (and the game's own leaderboard strip) can
+        // show which mods a play used, and at what rate. Normalized to the osu APIMod shape
+        // [{acronym, settings}] with ONLY speed_change kept, and only on the rate mods, so a
+        // tampered payload can't bloat the row while the score-affecting rate still survives.
+        string modsJson = SerializeMods(mods);
 
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
@@ -578,9 +595,9 @@ public static class ScoreEndpoints
         => JsonConvert.DeserializeObject<Dictionary<string, int>>(json ?? "{}") ?? new Dictionary<string, int>();
 
     /// <summary>
-    /// The stored mods jsonb (<c>[{"acronym":"DT"}]</c>) passed straight through to the leaderboard
-    /// wire, so the client's ModIcon strip renders on global scores exactly as it does for local
-    /// plays. Empty/null → no mods.
+    /// The stored mods jsonb (<c>[{"acronym":"DT","settings":{"speed_change":1.5}}]</c>) passed
+    /// straight through to the leaderboard wire, so the client's ModIcon strip renders on global
+    /// scores exactly as it does for local plays, rate pill included. Empty/null → no mods.
     /// </summary>
     private static object[] ParseMods(string? json)
         => string.IsNullOrWhiteSpace(json)
@@ -674,8 +691,8 @@ public static class ScoreEndpoints
         [JsonProperty("acronym")]
         public string? Acronym { get; set; }
 
-        // e.g. { "speed_change": 1.01 } for a non-default DoubleTime. Used to mirror the client's
-        // per-mod Ranked flag (rate mods are unranked at non-default speeds).
+        // e.g. { "speed_change": 1.01 } on a DoubleTime. The client pins speed_change onto every
+        // DT/NC/HT it submits, even at the default; it prices the play and is stored for display.
         [JsonProperty("settings")]
         public Dictionary<string, object>? Settings { get; set; }
     }
