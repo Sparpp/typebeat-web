@@ -77,6 +77,13 @@ public sealed class SoloScoreWire
     [JsonProperty("maximum_statistics")]
     public IDictionary<string, int> MaximumStatistics { get; init; } = new Dictionary<string, int>();
 
+    // Whether the server holds a downloadable replay for this score
+    // (GET /api/v2/scores/{id}/replay). The client binds it to ScoreInfo.HasOnlineReplay, which
+    // is what enables its "watch replay" action on a leaderboard row. Declared just before
+    // "ranked", matching SoloScoreInfo's own order. Additive: every pre-replay row sends false.
+    [JsonProperty("has_replay")]
+    public bool HasReplay { get; init; }
+
     [JsonProperty("ranked")]
     public bool Ranked { get; init; }
 

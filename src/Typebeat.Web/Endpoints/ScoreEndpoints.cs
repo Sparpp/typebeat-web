@@ -402,6 +402,9 @@ public static class ScoreEndpoints
             EndedAt = endedAt,
             Position = position,
             Pp = null,
+            // Always false here by construction: the score id is minted by this very insert, so
+            // the client cannot have uploaded its replay yet. It uploads right after reading this
+            // response (PUT /api/v2/scores/{id}/replay), and the leaderboard reports it from then on.
             HasReplay = false,
             Ranked = ranked,
             RulesetId = 0,
@@ -454,6 +457,7 @@ public static class ScoreEndpoints
                    best.statistics         AS statisticsJson,
                    best.maximum_statistics AS maximumStatisticsJson,
                    best.mods               AS modsJson,
+                   best.has_replay         AS hasReplay,
                    best.username           AS username,
                    best.country_code       AS countryCode,
                    best.avatar_key         AS avatarKey
@@ -462,6 +466,7 @@ public static class ScoreEndpoints
                        s.id, s.user_id, s.total_score, s.accuracy, s.max_combo, s.rank, s.ended_at,
                        s.statistics::text AS statistics, s.maximum_statistics::text AS maximum_statistics,
                        s.mods::text AS mods,
+                       s.replay_key IS NOT NULL AS has_replay,
                        u.username, u.country_code, u.avatar_key
                 FROM scores s
                 JOIN users u ON u.id = s.user_id
@@ -493,6 +498,7 @@ public static class ScoreEndpoints
                    s.statistics::text   AS statisticsJson,
                    s.maximum_statistics::text AS maximumStatisticsJson,
                    s.mods::text         AS modsJson,
+                   s.replay_key IS NOT NULL AS hasReplay,
                    u.username           AS username,
                    u.country_code       AS countryCode,
                    u.avatar_key         AS avatarKey
@@ -573,6 +579,9 @@ public static class ScoreEndpoints
         Mods = ParseMods(r.ModsJson),
         Statistics = ParseCounts(r.StatisticsJson),
         MaximumStatistics = ParseCounts(r.MaximumStatisticsJson),
+        // Drives the client's "watch replay" action; true once the owner has uploaded the .osr
+        // through PUT /api/v2/scores/{id}/replay (ReplayEndpoints).
+        HasReplay = r.HasReplay,
         Ranked = true,
         User = BuildUser(ctx, r.UserId, r.Username, r.CountryCode, r.AvatarKey),
     };
@@ -643,6 +652,7 @@ public static class ScoreEndpoints
         string? StatisticsJson,
         string? MaximumStatisticsJson,
         string? ModsJson,
+        bool HasReplay,
         string Username,
         string CountryCode,
         string? AvatarKey);

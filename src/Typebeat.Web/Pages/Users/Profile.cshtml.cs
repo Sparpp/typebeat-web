@@ -175,7 +175,9 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         const string score_row_select =
             """
-            SELECT s.id            AS SetId,
+            SELECT best.id         AS ScoreId,
+                   best.has_replay AS HasReplay,
+                   s.id            AS SetId,
                    s.title         AS Title,
                    s.artist        AS Artist,
                    s.title_unicode  AS TitleUnicode,
@@ -197,7 +199,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              FROM (
                  SELECT DISTINCT ON (sc.beatmap_id)
                         sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
-                        sc.mods::text AS mods
+                        sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
                  FROM scores sc
                  WHERE sc.user_id = @id AND sc.ranked AND sc.passed
                  ORDER BY sc.beatmap_id, sc.total_score DESC, sc.id ASC
@@ -217,7 +219,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              {score_row_select}
              FROM (
                  SELECT sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
-                        sc.mods::text AS mods
+                        sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
                  FROM scores sc
                  WHERE sc.user_id = @id AND sc.ranked
              ) best

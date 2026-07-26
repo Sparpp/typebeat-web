@@ -1793,6 +1793,16 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     white-space: nowrap;
 }
 
+/* Replay download slot. Fixed width and always rendered (empty when the play has no stored
+   replay) so the date/score columns don't jog left and right down the list. */
+.score-row__replay {
+    min-width: 52px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: var(--text-sm);
+    white-space: nowrap;
+}
+
 /* Mods a score used, small osu-style coloured badges (see _ModIcons.cshtml), coloured by
    mod category: red = harder, green = easier, violet = automation. */
 .mod-icons {

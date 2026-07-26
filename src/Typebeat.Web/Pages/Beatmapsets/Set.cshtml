@@ -266,6 +266,7 @@
                     <th>Miss</th>
                     <th>Date</th>
                     <th>Mods</th>
+                    <th>Replay</th>
                 </tr>
                 </thead>
                 <tbody>
@@ -286,6 +287,14 @@
                         <td class="num">@score.Miss</td>
                         <td>@score.EndedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</td>
                         <td><partial name="_ModIcons" model="score.Mods" /></td>
+                        @* Only rows whose player uploaded a replay offer the download; the file
+                           is a legacy .osr the game client opens. *@
+                        <td>
+                            @if (score.HasReplay)
+                            {
+                                <a href="/api/v2/scores/@score.ScoreId/replay" title="Download this replay (.osr)">Download</a>
+                            }
+                        </td>
                     </tr>
                 }
                 </tbody>

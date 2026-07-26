@@ -359,6 +359,15 @@ public class WireCompatTests
         Assert.That(collection.Scores[0].User!.Username, Is.EqualTo(ServerFixture.PlayerUsername));
         Assert.That(collection.UserScore, Is.Not.Null, "user_score must be present for the caller");
         Assert.That(collection.UserScore!.Position, Is.EqualTo(1));
+
+        // has_replay (additive, backlog 37) must be EMITTED, not merely absent-and-defaulted: the
+        // client binds it to SoloScoreInfo.HasReplay and from there to ScoreInfo.HasOnlineReplay,
+        // which is the only thing that offers a replay on a leaderboard row. This loop never
+        // uploads one, so the value is false; the presence of the key is what is pinned here.
+        var raw = JObject.Parse(body);
+        Assert.That(raw["scores"]![0]!["has_replay"], Is.Not.Null, "leaderboard rows must carry has_replay");
+        Assert.That(collection.Scores[0].HasReplay, Is.False);
+        Assert.That(collection.UserScore.Score.HasReplay, Is.False);
     }
 
     // ---------------------------------------------------------------------------------------------

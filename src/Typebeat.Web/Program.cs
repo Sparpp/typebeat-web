@@ -198,6 +198,7 @@ NotificationsSocket.Map(app);
 BeatmapLookupEndpoints.Map(app);
 BeatmapsetEndpoints.Map(app);
 ScoreEndpoints.Map(app);
+ReplayEndpoints.Map(app);
 
 // M3: lazer-compatible submission service (/bss/*) + stored media/package serving. The two
 // BSS upload routes raise their own Kestrel body cap (~100 MB) via endpoint metadata; every

@@ -11,7 +11,12 @@ namespace Typebeat.Web.Pages;
 /// <param name="Date">ended_at; timestamptz arrives from Npgsql as UTC DateTime.</param>
 /// <param name="Explicit">Creator-declared explicit content: renders the EXPLICIT badge beside
 /// the set title, the same marker the set page and the set cards show.</param>
+/// <param name="ScoreId">The score's own id; the replay download link is built from it.</param>
+/// <param name="HasReplay">A replay was uploaded for this score (scores.replay_key IS NOT NULL),
+/// so the row can offer the .osr download at /api/v2/scores/{ScoreId}/replay.</param>
 public sealed record ScoreRowModel(
+    long ScoreId,
+    bool HasReplay,
     long SetId,
     string Title,
     string Artist,
