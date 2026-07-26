@@ -77,7 +77,7 @@ public class RateMultiplierTest
         {
             Assert.That(ModMultiplier.For("NF", null), Is.EqualTo(0.5));
             Assert.That(ModMultiplier.For("SD", null), Is.EqualTo(1.0));
-            Assert.That(ModMultiplier.For("FL", null), Is.EqualTo(1.2));
+            Assert.That(ModMultiplier.For("FL", null), Is.EqualTo(1.05));
             Assert.That(ModMultiplier.For("LT", null), Is.EqualTo(1.05));
             Assert.That(ModMultiplier.For("FT", null), Is.EqualTo(0.98));
             Assert.That(ModMultiplier.For("MU", null), Is.EqualTo(1.0));
@@ -102,11 +102,11 @@ public class RateMultiplierTest
     [Test]
     public void MaxForStack_PinsTheFattestRankedStack()
     {
-        // DT@2.00 (1.46) × FL (1.2) × LT (1.05) = 1.8396, the dearest stack the client can assemble
-        // out of ranked mods. Everything else ranked is a trim (NF 0.5, FT 0.98) or neutral.
+        // DT@2.00 (1.46) × FL (1.05) × LT (1.05) = 1.60965, the dearest stack the client can
+        // assemble out of ranked mods. Everything else ranked is a trim (NF 0.5, FT 0.98) or neutral.
         double fattest = ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null)]);
 
-        Assert.That(fattest, Is.EqualTo(1.8396).Within(1e-9));
+        Assert.That(fattest, Is.EqualTo(1.60965).Within(1e-9));
         Assert.That(fattest, Is.LessThan(ModMultiplier.STACK_CAP), "the backstop must never bite a reachable stack");
 
         // Adding the neutral / trimming ranked mods cannot beat it.
@@ -156,9 +156,9 @@ public class RateMultiplierTest
             // DT at 1.01x: 400000 × 1.0046 = 401840.
             Assert.That(ModMultiplier.TotalScoreCeiling(400_000, ModMultiplier.For("DT", 1.01)), Is.EqualTo(401_841));
 
-            // The fattest ranked stack on a perfect 1,000,000 base.
+            // The fattest ranked stack on a perfect 1,000,000 base: 1,000,000 × 1.60965 plus slack.
             Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null)])),
-                Is.EqualTo(1_839_601));
+                Is.EqualTo(1_609_651));
 
             // Half Time trims: the ceiling drops with it (the old flat cap allowed 2× the base here).
             Assert.That(ModMultiplier.TotalScoreCeiling(400_000, ModMultiplier.For("HT", 0.75)), Is.EqualTo(220_001));

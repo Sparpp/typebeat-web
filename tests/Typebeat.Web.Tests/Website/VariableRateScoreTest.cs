@@ -169,7 +169,7 @@ public class VariableRateScoreTest
     public async Task EveryOtherSetting_IsStillStripped()
     {
         var submitted = await SubmitAsync(
-            total: (long)Math.Round(clean_base * 1.23 * 1.2),
+            total: (long)Math.Round(clean_base * 1.23 * 1.05),
             mods:
             [
                 // adjust_pitch is a real client setting; the padding is what a tampered payload
@@ -207,11 +207,11 @@ public class VariableRateScoreTest
         double fattest = ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null)]);
         object[] fattestStack = [Mod("DT", ("speed_change", 2.0)), Mod("FL"), Mod("LT")];
 
-        // 1,000,000 × 1.8396: the dearest total any ranked play on this map could ever submit.
-        var atCeiling = await SubmitAsync(total: 1_839_600, baseScore: 1_000_000, mods: fattestStack);
+        // 1,000,000 × 1.60965: the dearest total any ranked play on this map could ever submit.
+        var atCeiling = await SubmitAsync(total: 1_609_650, baseScore: 1_000_000, mods: fattestStack);
 
         // Two points above it is not reachable by any honest client.
-        var overCeiling = await SubmitAsync(total: 1_839_602, baseScore: 1_000_000, mods: fattestStack);
+        var overCeiling = await SubmitAsync(total: 1_609_652, baseScore: 1_000_000, mods: fattestStack);
 
         // A no-mod play cannot beat its own base score, which the old flat 2x allowance let it do.
         var inflatedNoMod = await SubmitAsync(total: clean_base + 2, mods: []);
@@ -221,9 +221,9 @@ public class VariableRateScoreTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(fattest, Is.EqualTo(1.8396).Within(1e-9));
+            Assert.That(fattest, Is.EqualTo(1.60965).Within(1e-9));
             Assert.That((bool)atCeiling["ranked"]!, Is.True, "the fattest honest stack must submit at its exact total");
-            Assert.That((long)atCeiling["total_score"]!, Is.EqualTo(1_839_600));
+            Assert.That((long)atCeiling["total_score"]!, Is.EqualTo(1_609_650));
 
             Assert.That((bool)overCeiling["ranked"]!, Is.False, "two points over the exact ceiling is out of bounds");
             Assert.That((bool)inflatedNoMod["ranked"]!, Is.False, "no-mod cannot beat its own base score");

@@ -14,10 +14,10 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
-/// Per-mod values, mirroring the calculator: No Fail 0.5, Sudden Death 1.0 (absent), Flashlight 1.2,
+/// Per-mod values, mirroring the calculator: No Fail 0.5, Sudden Death 1.0 (absent), Flashlight 1.05,
 /// Literate 1.05, Fletcher 0.98, Muted 1.0 (absent), Mashing 0.1 (unranked, still priced for
 /// display parity), and the rate mods on the continuous <see cref="RateMultiplier"/> curve. The
-/// fattest RANKED stack is DT@2.00 (1.46) x FL (1.2) x LT (1.05) = 1.8396.
+/// fattest RANKED stack is DT@2.00 (1.46) x FL (1.05) x LT (1.05) = 1.60965.
 /// </para>
 ///
 /// <para>
@@ -39,6 +39,9 @@ namespace Typebeat.Web.Scoring;
 /// an old client's non-default Half Time play lands out of bounds and is stored unranked with a
 /// clamped total. That play was ALREADY unranked under the old server rule, so nothing that counts
 /// is lost; it only matters in the window between deploying this and reshipping the client.
+/// The same window applies to Flashlight after its 1.2x to 1.05x trim (task 36): an old client's
+/// FL play prices at 1.2x, lands over the new ceiling and is stored unranked until that client
+/// updates. Unlike Half Time those plays used to rank, so ship the client promptly after deploy.
 /// </para>
 /// </summary>
 public static class ModMultiplier
@@ -52,7 +55,7 @@ public static class ModMultiplier
 
     /// <summary>
     /// Absolute backstop on a whole stack, whatever it contains. No stack the client can actually
-    /// assemble comes near it (the fattest ranked one is 1.8396, pinned by a test), so this only
+    /// assemble comes near it (the fattest ranked one is 1.60965, pinned by a test), so this only
     /// ever bites tamper-shaped input such as DT and NC submitted together, which the client makes
     /// mutually exclusive. Raise it only if a genuinely reachable stack ever exceeds it.
     /// </summary>
@@ -83,7 +86,9 @@ public static class ModMultiplier
         {
             "NF" => 0.5,
             "SD" => 1.0,
-            "FL" => 1.2,
+            // Trimmed from the old flashlight's 1.2x with the character-window rework (task 36);
+            // must match the game calculator's value.
+            "FL" => 1.05,
             "LT" => 1.05,
             "FT" => 0.98,
             "MU" => 1.0,
