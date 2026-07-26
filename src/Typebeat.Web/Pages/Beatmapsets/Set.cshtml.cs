@@ -134,11 +134,13 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                    best.rank         AS Rank,
                    best.ended_at     AS EndedAt,
                    best.mods         AS ModsJson,
-                   best.statistics   AS StatisticsJson
+                   best.statistics   AS StatisticsJson,
+                   best.has_replay   AS HasReplay
             FROM (
                 SELECT DISTINCT ON (sc.user_id)
                        sc.id, sc.user_id, sc.total_score, sc.accuracy, sc.completion, sc.max_combo, sc.rank,
                        sc.ended_at, sc.mods::text AS mods, sc.statistics::text AS statistics,
+                       sc.replay_key IS NOT NULL AS has_replay,
                        u.username::text AS username, u.avatar_key
                 FROM scores sc
                 JOIN users u ON u.id = sc.user_id
@@ -324,7 +326,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
     /// </summary>
     public sealed record ScoreRow(
         long ScoreId, long UserId, string Username, string? AvatarKey, long TotalScore, double Accuracy, double Completion,
-        int MaxCombo, string Rank, DateTime EndedAt, string ModsJson, string StatisticsJson)
+        int MaxCombo, string Rank, DateTime EndedAt, string ModsJson, string StatisticsJson, bool HasReplay)
     {
         /// <summary>Uploaded avatar, or null → the initial-letter fallback.</summary>
         public string? AvatarUrl => AvatarKey is null ? null : $"/{AvatarKey}";

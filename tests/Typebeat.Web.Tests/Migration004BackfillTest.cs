@@ -131,7 +131,7 @@ public class Migration004BackfillTest
     }
 
     [Test]
-    public async Task Migrations_AppliedInOrder_001Through013()
+    public async Task Migrations_AppliedInOrder_001Through014()
     {
         await using var conn = await dataSource.OpenConnectionAsync();
 
@@ -151,6 +151,7 @@ public class Migration004BackfillTest
             "011_user_preferences.sql",
             "012_unranked_status.sql",
             "013_explicit_flag.sql",
+            "014_replay_storage.sql",
         }));
     }
 
@@ -184,6 +185,34 @@ public class Migration004BackfillTest
         Assert.That(
             async () => await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'public' WHERE id = @shellId", new { shellId }),
             Throws.Exception.With.Message.Contains("beatmapsets_status_check"));
+    }
+
+    [Test]
+    public async Task Migration014_AddsReplayColumns_DefaultingToNoReplay()
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        // A score written without any replay awareness (every pre-feature row, and every row the
+        // submit endpoint writes) must read back as "no replay stored".
+        long scoreId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO scores
+                (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked)
+            SELECT u.id, @beatmapId, 100, 1.0, 1.0, 10, 'S', true, true FROM users u LIMIT 1
+            RETURNING id
+            """,
+            new { beatmapId = liveDiffBeatmapId });
+
+        var row = await conn.QuerySingleAsync<(string? Key, int? Bytes, DateTime? UploadedAt)>(
+            "SELECT replay_key AS Key, replay_bytes AS Bytes, replay_uploaded_at AS UploadedAt FROM scores WHERE id = @scoreId",
+            new { scoreId });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(row.Key, Is.Null, "replay_key NULL is the has_replay=false marker");
+            Assert.That(row.Bytes, Is.Null);
+            Assert.That(row.UploadedAt, Is.Null);
+        });
     }
 
     private static async Task<string?> filenameOf(NpgsqlConnection conn, long beatmapId)

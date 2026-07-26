@@ -68,6 +68,14 @@ public static class StoreKeys
     /// <c>.typb</c> is the game's native package extension.</summary>
     public static string Package(long setId, int versionNo) => $"packages/{setId}/{versionNo}.typb";
 
+    /// <summary>
+    /// A score's uploaded replay (legacy .osr): <c>replays/{scoreId}.osr</c>. A named (mutable)
+    /// object, not a content-addressed blob: it is unique to one score, so there is no dedup to
+    /// win, and the upload contract lets the owner overwrite their own, which write-once blobs
+    /// cannot express without orphaning the superseded bytes.
+    /// </summary>
+    public static string Replay(long scoreId) => $"replays/{scoreId}.osr";
+
     /// <summary>Game-client release artifacts live under <c>downloads/{fileName}</c> (TYPEBEAT_GAME_DOWNLOAD).</summary>
     public static string Download(string fileName) => $"downloads/{fileName}";
 
