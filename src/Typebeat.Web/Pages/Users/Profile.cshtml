@@ -105,6 +105,10 @@
                             <a class="score-row__map" href="/beatmapsets/@row.SetId" title="@mpTitle [@mpArtist]">
                                 @mpTitle <span class="score-row__artist">[@mpArtist]</span>
                             </a>
+                            @if (row.Explicit)
+                            {
+                                <partial name="_ExplicitBadge" />
+                            }
                             <span class="score-row__plays">@row.Plays.ToString("N0", CultureInfo.InvariantCulture) plays</span>
                         </div>
                     }

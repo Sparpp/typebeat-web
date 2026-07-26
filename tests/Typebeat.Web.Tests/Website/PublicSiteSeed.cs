@@ -53,6 +53,13 @@ public static class PublicSiteSeed
     /// <summary>Set with cover_key/preview_key populated: cover img + preview button markup.</summary>
     public static long CoveredSetId { get; private set; }
 
+    /// <summary>"Parental Advisory Anthem", the one set flagged explicit: the EXPLICIT badge and
+    /// the <c>explicit:</c> search operator assert against it (every other seeded set is clean).</summary>
+    public static long ExplicitSetId { get; private set; }
+
+    /// <summary>"Radio Edit Anthem", the non-explicit twin sharing the "advisoryset" tag.</summary>
+    public static long CleanTwinSetId { get; private set; }
+
     /// <summary>
     /// Public set with live diffs but NO set_versions row; the pre-M3 shape migration 004
     /// backfills. Its pages must hide the Download actions ("available in-game only").
@@ -146,6 +153,25 @@ public static class PublicSiteSeed
             await InsertBeatmapAsync(conn, CoveredSetId,
                 totalLengthS: 120, stars: 5.0, wpm: 125, wordCount: 200, charCount: 950);
 
+            // The only explicit-flagged set. Tagged "advisoryset" so a search can scope to it (and
+            // to its clean twin below) without dragging in the filler wall.
+            ExplicitSetId = await InsertSetAsync(conn,
+                title: "Parental Advisory Anthem", artist: "The Unfiltered",
+                submittedOffset: TimeSpan.FromMinutes(-25), tags: "advisoryset",
+                isExplicit: true);
+
+            await InsertBeatmapAsync(conn, ExplicitSetId,
+                totalLengthS: 110, stars: 4.0, wpm: 110, wordCount: 150, charCount: 700);
+
+            // Clean twin of the above, same tag: proves the badge and the explicit: operator
+            // discriminate rather than matching everything in scope.
+            CleanTwinSetId = await InsertSetAsync(conn,
+                title: "Radio Edit Anthem", artist: "The Bleeped",
+                submittedOffset: TimeSpan.FromMinutes(-24), tags: "advisoryset");
+
+            await InsertBeatmapAsync(conn, CleanTwinSetId,
+                totalLengthS: 110, stars: 4.0, wpm: 110, wordCount: 150, charCount: 700);
+
             await conn.ExecuteAsync(
                 """
                 UPDATE beatmapsets
@@ -217,20 +243,20 @@ public static class PublicSiteSeed
     private static async Task<long> InsertSetAsync(NpgsqlConnection conn,
         string title, string artist, TimeSpan submittedOffset,
         string status = "ranked", string tags = "", string source = "", string description = "",
-        int playCount = 0, int favouriteCount = 0, double? bpm = null)
+        int playCount = 0, int favouriteCount = 0, double? bpm = null, bool isExplicit = false)
         => await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmapsets
-                (owner_id, title, artist, source, tags, description, status, bpm,
+                (owner_id, title, artist, source, tags, description, status, bpm, explicit,
                  play_count, favourite_count, submitted_at, updated_at)
             VALUES
-                (@ownerId, @title, @artist, @source, @tags, @description, @status, @bpm,
+                (@ownerId, @title, @artist, @source, @tags, @description, @status, @bpm, @isExplicit,
                  @playCount, @favouriteCount, now() + @submittedOffset, now() + @submittedOffset)
             RETURNING id
             """,
             new
             {
-                ownerId = MapperId, title, artist, source, tags, description, status, bpm,
+                ownerId = MapperId, title, artist, source, tags, description, status, bpm, isExplicit,
                 playCount, favouriteCount, submittedOffset,
             });
 

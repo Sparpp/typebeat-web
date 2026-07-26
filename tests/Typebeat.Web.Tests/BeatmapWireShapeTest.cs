@@ -118,6 +118,9 @@ public class BeatmapWireShapeTest
             Assert.That((int)set["favourite_count"]!, Is.EqualTo(0));
             Assert.That((double)set["bpm"]!, Is.EqualTo(0));
             Assert.That((bool)set["video"]!, Is.False);
+            // Explicit-content marker: always present, false by default. Additive only, older
+            // clients bind APIBeatmapSet with Newtonsoft defaults and ignore the unknown member.
+            Assert.That((bool)set["explicit"]!, Is.False);
 
             // Null lists/back-references are OMITTED, not emitted as JSON null: an explicit
             // null would overwrite the client's non-null array/either-side defaults.

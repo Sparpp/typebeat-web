@@ -180,6 +180,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                    s.artist        AS Artist,
                    s.title_unicode  AS TitleUnicode,
                    s.artist_unicode AS ArtistUnicode,
+                   s.explicit       AS Explicit,
                    b.version_name   AS Version,
                    CASE WHEN s.cover_key IS NOT NULL THEN '/' || s.cover_key || '/list.jpg' END AS CoverUrl,
                    best.rank       AS Rank,
@@ -235,13 +236,14 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                     s.artist AS Artist,
                     s.title_unicode  AS TitleUnicode,
                     s.artist_unicode AS ArtistUnicode,
+                    s.explicit       AS Explicit,
                     CASE WHEN s.cover_key IS NOT NULL THEN '/' || s.cover_key || '/list.jpg' END AS CoverUrl,
                     count(*) AS Plays
              FROM scores sc
              JOIN beatmaps b ON b.id = sc.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
              WHERE sc.user_id = @id AND s.status IN ('pending', 'unranked', 'ranked')
-             GROUP BY sc.beatmap_id, s.id, s.title, s.artist, s.title_unicode, s.artist_unicode, s.cover_key
+             GROUP BY sc.beatmap_id, s.id, s.title, s.artist, s.title_unicode, s.artist_unicode, s.explicit, s.cover_key
              ORDER BY count(*) DESC, s.id ASC
              LIMIT {most_played_size}
              """,
@@ -338,7 +340,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
     public sealed record GradeCounts(int Ss, int S, int A, int B, int C, int D);
 
-    public sealed record MostPlayedRow(long SetId, string Title, string Artist, string? TitleUnicode, string? ArtistUnicode, string? CoverUrl, long Plays)
+    public sealed record MostPlayedRow(long SetId, string Title, string Artist, string? TitleUnicode, string? ArtistUnicode, bool Explicit, string? CoverUrl, long Plays)
     {
         /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
         public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);

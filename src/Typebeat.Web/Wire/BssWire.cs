@@ -28,6 +28,15 @@ public sealed class BssPutRequest
     [JsonProperty("target")]
     public string Target { get; init; } = "WIP";
 
+    /// <summary>
+    /// The creator's explicit-content marker, chosen in the same wizard step as
+    /// <see cref="Target"/>. OPTIONAL: absent (every pre-toggle client) deserializes to false,
+    /// which is the "not explicit" answer. Stored on beatmapsets.explicit and re-applied on
+    /// every submission, so the toggle can be flipped either way by re-submitting.
+    /// </summary>
+    [JsonProperty("explicit")]
+    public bool Explicit { get; init; }
+
     // Accepted and ignored: there is no discussion system (recon: safely no-op-able).
     [JsonProperty("notify_on_discussion_replies")]
     public bool NotifyOnDiscussionReplies { get; init; }

@@ -17,9 +17,15 @@
         }
     </div>
     <div class="score-row__mapcol">
-        <a class="score-row__map" href="/beatmapsets/@Model.SetId" title="@displayTitle [@displayArtist]">
-            @displayTitle <span class="score-row__artist">[@displayArtist]</span>
-        </a>
+        <span class="score-row__titlerow">
+            <a class="score-row__map" href="/beatmapsets/@Model.SetId" title="@displayTitle [@displayArtist]">
+                @displayTitle <span class="score-row__artist">[@displayArtist]</span>
+            </a>
+            @if (Model.Explicit)
+            {
+                <partial name="_ExplicitBadge" />
+            }
+        </span>
         @if (!string.IsNullOrEmpty(Model.Version))
         {
             <span class="score-row__diff">@Model.Version</span>

@@ -144,6 +144,14 @@ public sealed class APIBeatmapSetResponse
     [JsonProperty("video")]
     public bool HasVideo { get; init; }
 
+    /// <summary>
+    /// The creator's explicit-content marker (beatmapsets.explicit), echoed so the submission
+    /// wizard can preselect its toggle on a re-submission. ADDITIVE: clients that predate the
+    /// toggle deserialize with Newtonsoft defaults (unknown members ignored) and never see it.
+    /// </summary>
+    [JsonProperty("explicit")]
+    public bool Explicit { get; init; }
+
     // Null on the nested-inside-a-beatmap variant (lookup), where the key must be OMITTED:
     // the client's APIBeatmapSet.Beatmaps defaults to an empty array and an explicit JSON null
     // would overwrite it with null under Newtonsoft. The set GET emits the real list.

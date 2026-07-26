@@ -52,6 +52,7 @@ public static class BeatmapsetEndpoints
                    s.source          AS source,
                    s.tags            AS tags,
                    s.status          AS status,
+                   s.explicit        AS explicit,
                    s.has_video       AS hasVideo,
                    s.cover_key       AS coverKey,
                    s.preview_key     AS previewKey,
@@ -118,6 +119,8 @@ public static class BeatmapsetEndpoints
             FavouriteCount = set.FavouriteCount,
             Bpm = set.Bpm is { } bpm ? (double)bpm : 0,
             HasVideo = set.HasVideo,
+            // Echoed so the wizard can preselect the explicit toggle when updating a set.
+            Explicit = set.Explicit,
             Beatmaps = beatmaps.Select(b => new APIBeatmapResponse
             {
                 Id = (int)b.Id,
@@ -171,6 +174,7 @@ public static class BeatmapsetEndpoints
         string Source,
         string Tags,
         string Status,
+        bool Explicit,
         bool HasVideo,
         string? CoverKey,
         string? PreviewKey,

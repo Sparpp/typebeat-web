@@ -78,6 +78,16 @@ public static class BeatmapSearchSql
         foreach (var n in query.NumericFilters.Where(n => n.Field == FilterField.Bpm))
             sql.Append("\nAND ").Append(Comparison("s.bpm", n, Next));
 
+        foreach (var b in query.BoolFilters)
+        {
+            string column = b.Field switch
+            {
+                FilterField.Explicit => "s.explicit",
+                _ => throw new ArgumentOutOfRangeException(nameof(query), b.Field, "not a boolean field"),
+            };
+            sql.Append("\nAND ").Append(column).Append(" = @").Append(Next(b.Value));
+        }
+
         foreach (var d in query.DateFilters)
         {
             if (d.MinInclusive is { } min)

@@ -17,7 +17,13 @@
                 <span class="set-header__counter" title="favourites"><span aria-hidden="true">&#9825;</span> @Model.Set.FavouriteCount.ToString("N0", CultureInfo.InvariantCulture)</span>
                 <span class="set-header__counter" title="downloads"><span aria-hidden="true">&#8595;</span> @Model.Set.DownloadCount.ToString("N0", CultureInfo.InvariantCulture)</span>
             </div>
-            <h1 class="set-header__title">@displayTitle</h1>
+            <h1 class="set-header__title">
+                @displayTitle
+                @if (Model.Set.Explicit)
+                {
+                    <partial name="_ExplicitBadge" />
+                }
+            </h1>
             <div class="set-header__artist">by @displayArtist</div>
             <div class="set-header__mapper">
                 mapped by <a href="/users/@Model.Set.OwnerId">@Model.Set.Creator</a>

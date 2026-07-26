@@ -90,6 +90,7 @@ public static class BeatmapLookupEndpoints
                 // touched) is the closest anchor. Pending sets have no ranked date.
                 RankedDate = row.Status == "ranked" ? row.UpdatedAt : null,
                 LastUpdated = row.UpdatedAt,
+                Explicit = row.Explicit,
             },
         });
     }
@@ -113,6 +114,7 @@ public static class BeatmapLookupEndpoints
                bs.artist          AS artist,
                bs.cover_key       AS coverKey,
                bs.status          AS status,
+               bs.explicit        AS explicit,
                u.username         AS creator,
                bs.submitted_at    AS submittedAt,
                bs.updated_at      AS updatedAt
@@ -142,6 +144,7 @@ public static class BeatmapLookupEndpoints
         string Artist,
         string? CoverKey,
         string Status,
+        bool Explicit,
         string Creator,
         // timestamptz arrives from Npgsql as UTC DateTime; a DateTimeOffset ctor param makes
         // Dapper's constructor matching fail at runtime ("no matching signature").
