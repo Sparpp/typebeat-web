@@ -51,6 +51,20 @@ public class ExplicitBadgeTest
     }
 
     [Test]
+    public async Task PlayPicker_RendersTheSameCardBadge()
+    {
+        // /play reuses the card SQL through a subquery (SELECT card.* FROM (...) card), so it is
+        // the one consumer that would break if the new column were added out of position.
+        string html = await GetHtml("/play");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Ids(html), Does.Contain(PublicSiteSeed.ExplicitSetId));
+            Assert.That(html, Does.Contain("class=\"explicit-badge\""));
+        });
+    }
+
+    [Test]
     public async Task ExplicitOperator_FiltersBothWays()
     {
         var yes = Ids(await GetHtml("/beatmapsets?q=" + Enc("advisoryset explicit:yes")));
