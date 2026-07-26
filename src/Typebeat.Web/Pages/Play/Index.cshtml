@@ -5,6 +5,8 @@
     ViewData["MetaDescription"] = "Play type!beat in your browser, type the lyrics as they drop, in time with the music.";
     ViewData["CardPlayMode"] = true; // the shared card renders a play button instead of download
     var user = Model.CurrentUser;
+    var auto = Model.AutoPlay;
+    bool preferOriginal = user?.PreferOriginalMetadata ?? false;
 }
 
 <section class="play-head">
@@ -47,7 +49,16 @@
     window.TYPEBEAT_PLAY = {
         signedIn: @(user is not null ? "true" : "false"),
         username: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(user?.Username ?? "")),
-        csrf: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CsrfToken))
+        csrf: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CsrfToken)),
+        // ?set={id} deep link (the beatmapset card's play rail): load this map immediately.
+        autoPlay: @Html.Raw(auto is null
+            ? "null"
+            : System.Text.Json.JsonSerializer.Serialize(new
+              {
+                  setId = auto.Id,
+                  title = auto.DisplayTitle(preferOriginal),
+                  artist = auto.DisplayArtist(preferOriginal),
+              }))
     };
 </script>
 <script src="~/js/typebeat-core.js" asp-append-version="true"></script>

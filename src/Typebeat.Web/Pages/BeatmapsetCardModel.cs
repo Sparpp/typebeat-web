@@ -14,6 +14,9 @@ namespace Typebeat.Web.Pages;
 /// icon becomes an inert "available in-game only" hint instead of a dead 404 link.</param>
 /// <param name="Explicit">Creator-declared explicit content (submission wizard toggle): renders
 /// the EXPLICIT badge beside the title. Display only, it filters nothing out.</param>
+/// <param name="HasPlayableDiff">The set has a live .osu difficulty, i.e. exactly what
+/// /play/map/{id}/osu resolves. Combined with the status and the package in
+/// <see cref="CanWebplay"/> it decides whether the card offers the browser-play rail.</param>
 public sealed record BeatmapsetCardModel(
     long Id,
     string Title,
@@ -33,11 +36,21 @@ public sealed record BeatmapsetCardModel(
     double? Wpm,
     bool IsFavourited,
     bool HasPackage,
-    bool Explicit)
+    bool Explicit,
+    bool HasPlayableDiff)
 {
     public string StatusLabel => BeatmapsetDisplay.StatusLabel(Status);
 
     public string PillClass => BeatmapsetDisplay.PillClass(Status);
+
+    /// <summary>
+    /// Can this set be played in the browser right now? Ranked only (browser scores land on the
+    /// live leaderboards, so an unranked map has nothing to play for), and only when the two
+    /// things /play/map/{id}/* need are present: an assembled package and a live .osu difficulty.
+    /// These are exactly the conditions the /play picker filters on, so the card's play rail can
+    /// never link a map the player would fail to load.
+    /// </summary>
+    public bool CanWebplay => Status == "ranked" && HasPackage && HasPlayableDiff;
 
     /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
     public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);
@@ -101,7 +114,10 @@ public static class BeatmapsetCardSql
                d.wpm::double precision   AS Wpm,
                EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId) AS IsFavourited,
                EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS HasPackage,
-               s.explicit         AS Explicit
+               s.explicit         AS Explicit,
+               -- Same predicate as PlayEndpoints.ResolveOsuFilenameAsync: if this is false the
+               -- browser player has nothing to load, so the card must not offer webplay.
+               EXISTS (SELECT 1 FROM beatmaps b2 WHERE b2.set_id = s.id AND b2.filename LIKE '%.osu') AS HasPlayableDiff
         FROM beatmapsets s
         JOIN users u ON u.id = s.owner_id
         LEFT JOIN LATERAL (
