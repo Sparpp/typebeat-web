@@ -43,6 +43,16 @@ namespace Typebeat.Web.Scoring;
 /// FL play prices at 1.2x, lands over the new ceiling and is stored unranked until that client
 /// updates. Unlike Half Time those plays used to rank, so ship the client promptly after deploy.
 /// </para>
+///
+/// <para>
+/// THE HALF TIME NERF (task 44) reuses that same window mechanism, no new machinery. The rate
+/// curve's decrease slope went 1.80 to 3.00, so every down-rate now prices strictly lower than it
+/// used to (0.75x pays 0.25 where it paid 0.55). A client still running the old curve submits
+/// round(base x 0.55), which is above <see cref="TotalScoreCeiling"/> for the 0.25 the server now
+/// allows, so the submission is stored UNRANKED with the total clamped to the no-mod ceiling and
+/// never reaches a board. Nothing is silently accepted at the old price. Ship the client promptly
+/// after deploying this, exactly as for the Flashlight trim, because these plays used to rank.
+/// </para>
 /// </summary>
 public static class ModMultiplier
 {

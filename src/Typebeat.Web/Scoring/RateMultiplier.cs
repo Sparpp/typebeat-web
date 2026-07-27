@@ -15,7 +15,7 @@ namespace Typebeat.Web.Scoring;
 /// <code>
 /// r = round(rate, 2)                                   // the sliders step by 0.01
 /// raw = r >= 1 ? 1 + 0.46 * (r - 1)                    // speeding up
-///              : 1 - 1.80 * (1 - r)                    // slowing down
+///              : 1 - 3.00 * (1 - r)                    // slowing down
 /// multiplier = round(max(0.10, raw), 4)
 /// </code>
 ///
@@ -23,14 +23,24 @@ namespace Typebeat.Web.Scoring;
 /// Two rounding steps with fixed decimal counts and <see cref="MidpointRounding.AwayFromZero"/> on
 /// both, so this independent implementation lands on the same double as the client's and the
 /// contract can be stated as exact decimal values rather than "within some epsilon". The pinned
-/// values (see <c>RateMultiplierTest</c>) are 0.50 → 0.1000, 0.75 → 0.5500, 0.99 → 0.9820,
-/// 1.00 → 1.0000, 1.01 → 1.0046, 1.50 → 1.2300, 2.00 → 1.4600.
+/// values (see <c>RateMultiplierTest</c>) are 0.50 → 0.1000, 0.70 → 0.1000, 0.75 → 0.2500,
+/// 0.80 → 0.4000, 0.90 → 0.7000, 0.99 → 0.9700, 1.00 → 1.0000, 1.01 → 1.0046, 1.50 → 1.2300,
+/// 2.00 → 1.4600.
 /// </para>
 ///
 /// <para>
-/// The slopes are fixed by the two defaults, not by taste: 0.46 is (1.23 - 1) / (1.50 - 1) and 1.80
-/// is (1 - 0.55) / (1 - 0.75), so default Double Time / Nightcore still pays 1.23x and default Half
-/// Time still pays 0.55x. No existing default-speed score is re-based by the change.
+/// The slopes are fixed by the two defaults, not by taste: 0.46 is (1.23 - 1) / (1.50 - 1) and 3.00
+/// is (1 - 0.25) / (1 - 0.75), so default Double Time / Nightcore pays 1.23x and default Half Time
+/// pays 0.25x. The decrease slope was 1.80 (a 0.55x default) until the Half Time nerf; the
+/// increase side was not touched, so no DT/NC score is re-based by that change. Every score
+/// already stored under a down-rate WAS re-based, by migration <c>015_ht_nerf_rescore.sql</c>.
+/// </para>
+///
+/// <para>
+/// A consequence of the steeper decrease slope: the 0.10 floor is now reached at 0.70x rather than
+/// at 0.50x, so every rate in [0.50, 0.70] pays the same 0.10. The curve is therefore
+/// non-decreasing over the whole slider but only STRICTLY increasing above 0.70x. That is
+/// deliberate: below 0.70x the map is slow enough that the score should not be worth chasing.
 /// </para>
 ///
 /// <para>
@@ -43,10 +53,11 @@ public static class RateMultiplier
     /// <summary>Multiplier gained per +1.0x of rate above 1.0x. Fixed by the 1.50x → 1.23x anchor.</summary>
     public const double INCREASE_SLOPE = 0.46;
 
-    /// <summary>Multiplier lost per -1.0x of rate below 1.0x. Fixed by the 0.75x → 0.55x anchor.</summary>
-    public const double DECREASE_SLOPE = 1.8;
+    /// <summary>Multiplier lost per -1.0x of rate below 1.0x. Fixed by the 0.75x → 0.25x anchor.</summary>
+    public const double DECREASE_SLOPE = 3.0;
 
-    /// <summary>Floor on the returned multiplier (the reachable rate floor, 0.50x, lands exactly on it).</summary>
+    /// <summary>Floor on the returned multiplier; the curve reaches it at 0.70x and holds it down to
+    /// the slider's 0.50x floor.</summary>
     public const double MINIMUM = 0.1;
 
     /// <summary>Decimal places the rate is snapped to before use (the slider's Precision).</summary>

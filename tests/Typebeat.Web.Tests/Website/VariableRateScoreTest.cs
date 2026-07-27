@@ -113,9 +113,9 @@ public class VariableRateScoreTest
     [Test]
     public async Task HalfTimeAtAnyRate_IsRanked_AndKeepsItsRate()
     {
-        // 0.62x pays 1 - 1.8 × 0.38 = 0.316.
+        // 0.62x is below the post-nerf floor crossing (0.70x), so it pays the 0.10 minimum.
         var submitted = await SubmitAsync(
-            total: (long)Math.Round(clean_base * 0.316),
+            total: (long)Math.Round(clean_base * 0.10),
             mods: [Mod("HT", ("speed_change", 0.62))]);
 
         Assert.That((bool)submitted["ranked"]!, Is.True);
@@ -216,8 +216,13 @@ public class VariableRateScoreTest
         // A no-mod play cannot beat its own base score, which the old flat 2x allowance let it do.
         var inflatedNoMod = await SubmitAsync(total: clean_base + 2, mods: []);
 
-        // Half Time's ceiling drops with its multiplier: 400,000 × 0.55 = 220,000.
-        var inflatedHalfTime = await SubmitAsync(total: 300_000, mods: [Mod("HT", ("speed_change", 0.75))]);
+        // Half Time's ceiling drops with its multiplier: after the task-44 nerf that is
+        // 400,000 × 0.25 = 100,000, so an un-updated client's 0.55-scaled 220,000 is out of
+        // bounds and stores unranked. This is the whole deploy-window mechanism for the nerf.
+        var inflatedHalfTime = await SubmitAsync(total: 220_000, mods: [Mod("HT", ("speed_change", 0.75))]);
+
+        // The value that same play submits once the client ships the new curve.
+        var nerfedHalfTime = await SubmitAsync(total: 100_000, mods: [Mod("HT", ("speed_change", 0.75))]);
 
         Assert.Multiple(() =>
         {
@@ -227,7 +232,10 @@ public class VariableRateScoreTest
 
             Assert.That((bool)overCeiling["ranked"]!, Is.False, "two points over the exact ceiling is out of bounds");
             Assert.That((bool)inflatedNoMod["ranked"]!, Is.False, "no-mod cannot beat its own base score");
-            Assert.That((bool)inflatedHalfTime["ranked"]!, Is.False, "Half Time's ceiling is 0.55x the base");
+            Assert.That((bool)inflatedHalfTime["ranked"]!, Is.False, "an old client's 0.55x Half Time total is over the 0.25x ceiling");
+
+            Assert.That((bool)nerfedHalfTime["ranked"]!, Is.True, "the new curve's own total is exactly in bounds");
+            Assert.That((long)nerfedHalfTime["total_score"]!, Is.EqualTo(100_000));
         });
     }
 

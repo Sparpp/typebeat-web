@@ -15,17 +15,26 @@ namespace Typebeat.Web.Tests;
 /// </summary>
 public class RateMultiplierTest
 {
-    // (rate, multiplier) pins, identical to the game-side table.
+    // (rate, multiplier) pins, identical to the game-side table. The decrease side is the
+    // post-nerf curve (slope 3.00, task 44); the increase side is byte-identical to what it
+    // always was.
     private static readonly (double rate, double multiplier)[] pinned =
     [
-        (0.50, 0.1000),
-        (0.75, 0.5500),
-        (0.99, 0.9820),
+        (0.50, 0.1000), // below the floor's crossing point: everything down here pays the floor
+        (0.70, 0.1000), // exactly where the floor is reached now (it used to be reached at 0.50)
+        (0.71, 0.1300),
+        (0.75, 0.2500), // the Half Time default: 0.55 before the nerf
+        (0.80, 0.4000),
+        (0.90, 0.7000),
+        (0.99, 0.9700),
         (1.00, 1.0000),
         (1.01, 1.0046),
         (1.50, 1.2300),
         (2.00, 1.4600),
     ];
+
+    // Every rate in [0.50, 0.70] is flattened onto the floor by the steeper slope.
+    private const double floor_reached_at = 0.70;
 
     [Test]
     public void Curve_MatchesTheGamesPinnedTable()
@@ -38,7 +47,7 @@ public class RateMultiplierTest
     }
 
     [Test]
-    public void Curve_IsContinuousAtOne_AndStrictlyMonotonic()
+    public void Curve_IsContinuousAtOne_AndMonotonic()
     {
         // Exactly 1.0 at 1.0 from both sides: dialling a rate mod back toward no-mod pays what
         // no-mod pays, which is what makes the setting rankable at all.
@@ -46,8 +55,11 @@ public class RateMultiplierTest
         Assert.That(RateMultiplier.For(0.99), Is.LessThan(1.0));
         Assert.That(RateMultiplier.For(1.01), Is.GreaterThan(1.0));
 
-        // Strictly increasing across the whole reachable domain in the slider's 0.01 steps: there is
-        // never a rate you can pick for free.
+        // Non-decreasing across the whole reachable domain in the slider's 0.01 steps, and STRICTLY
+        // increasing everywhere above the floor's crossing point: there is never a rate you can
+        // pick for free. Below 0.70x the curve is flat on the 0.10 floor, which is the deliberate
+        // shape of the nerf rather than a hole in the pricing (0.10 is already the cheapest a play
+        // can be worth, so nothing is gained by slowing down further).
         double previous = double.NegativeInfinity;
 
         for (int step = 50; step <= 200; step++)
@@ -55,7 +67,11 @@ public class RateMultiplierTest
             double rate = step / 100.0;
             double multiplier = RateMultiplier.For(rate);
 
-            Assert.That(multiplier, Is.GreaterThan(previous), $"multiplier must strictly increase at {rate}");
+            if (rate <= floor_reached_at)
+                Assert.That(multiplier, Is.EqualTo(RateMultiplier.MINIMUM).Within(1e-12), $"floor holds at {rate}");
+            else
+                Assert.That(multiplier, Is.GreaterThan(previous), $"multiplier must strictly increase at {rate}");
+
             previous = multiplier;
         }
     }
@@ -87,8 +103,9 @@ public class RateMultiplierTest
             Assert.That(ModMultiplier.For("DT", 2.00), Is.EqualTo(1.46).Within(1e-12));
             Assert.That(ModMultiplier.For("dt", null), Is.EqualTo(1.23).Within(1e-12), "absent rate = the 1.50x default");
             Assert.That(ModMultiplier.For("NC", 1.01), Is.EqualTo(1.0046).Within(1e-12));
-            Assert.That(ModMultiplier.For("HT", null), Is.EqualTo(0.55).Within(1e-12), "absent rate = the 0.75x default");
+            Assert.That(ModMultiplier.For("HT", null), Is.EqualTo(0.25).Within(1e-12), "absent rate = the 0.75x default");
             Assert.That(ModMultiplier.For("HT", 0.50), Is.EqualTo(0.10).Within(1e-12));
+            Assert.That(ModMultiplier.For("HT", 0.90), Is.EqualTo(0.70).Within(1e-12));
 
             // Ramps: rates are not persisted, so they are priced at the most any ramp could pay.
             Assert.That(ModMultiplier.For("WU", null), Is.EqualTo(1.46).Within(1e-12));
@@ -138,7 +155,7 @@ public class RateMultiplierTest
         Assert.That(ModMultiplier.MaxForStack([("ZZ", null), ("YY", null), ("XX", null)]), Is.EqualTo(ModMultiplier.STACK_CAP));
 
         // An unknown mod alongside a known trim is still tightened by the known part.
-        Assert.That(ModMultiplier.MaxForStack([("HT", 0.75), ("ZZ", null)]), Is.EqualTo(1.1).Within(1e-9));
+        Assert.That(ModMultiplier.MaxForStack([("HT", 0.75), ("ZZ", null)]), Is.EqualTo(0.5).Within(1e-9));
     }
 
     // ---- the per-score ceiling ----
@@ -160,8 +177,18 @@ public class RateMultiplierTest
             Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null)])),
                 Is.EqualTo(1_609_651));
 
-            // Half Time trims: the ceiling drops with it (the old flat cap allowed 2× the base here).
-            Assert.That(ModMultiplier.TotalScoreCeiling(400_000, ModMultiplier.For("HT", 0.75)), Is.EqualTo(220_001));
+            // Half Time trims, and after the nerf it trims hard: 400,000 × 0.25 = 100,000 at the
+            // default rate (it was 220,000 under the 0.55 curve). This is the bound that makes an
+            // un-updated client's 0.55-scaled submission land out of bounds and store unranked.
+            Assert.That(ModMultiplier.TotalScoreCeiling(400_000, ModMultiplier.For("HT", 0.75)), Is.EqualTo(100_001));
+
+            // The floor now bites from 0.70x down: 400,000 × 0.10 either way.
+            Assert.That(ModMultiplier.TotalScoreCeiling(400_000, ModMultiplier.For("HT", 0.70)), Is.EqualTo(40_001));
+            Assert.That(ModMultiplier.TotalScoreCeiling(400_000, ModMultiplier.For("HT", 0.50)), Is.EqualTo(40_001));
+
+            // Half Time stacked with the ranked boosters is still a net trim: 0.25 × 1.05 × 1.05.
+            Assert.That(ModMultiplier.TotalScoreCeiling(400_000, ModMultiplier.MaxForStack([("HT", 0.75), ("FL", null), ("LT", null)])),
+                Is.EqualTo(110_251));
 
             // A zero or negative base justifies nothing.
             Assert.That(ModMultiplier.TotalScoreCeiling(0, 1.46), Is.EqualTo(0));
