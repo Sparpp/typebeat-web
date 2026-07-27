@@ -30,8 +30,13 @@ public static class LyricPace
     /// v6 = freestyle cells counted (a line flagged <c>"freestyle": true</c> keeps its '&amp;'
     /// markers, and each is a real cell). v6 is a no-op for every map without a flagged line,
     /// so the backfill rewrites existing rows with byte-identical values.
+    /// v7 = <c>beatmaps.skippable_s</c> is written alongside the pace numbers
+    /// (<see cref="InstrumentalGaps.SkippableSeconds"/>, the play-time gate's skip allowance;
+    /// 016_refund_skip_gate.sql). The pace/star arithmetic itself is unchanged at v7, so the
+    /// backfill rewrites every other column with byte-identical values; the bump exists purely to
+    /// make it revisit every row and fill the new column from the stored blob.
     /// </summary>
-    public const int VERSION = 6;
+    public const int VERSION = 7;
 
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;

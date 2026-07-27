@@ -55,6 +55,13 @@ public sealed class ParsedDifficulty
 
     /// <summary>First lyric line start -> last line end, seconds.</summary>
     public double DrainLengthS => Lines.Count > 0 ? (Lines[^1].EndTime - Lines[0].StartTime) / 1000 : 0;
+
+    /// <summary>
+    /// Seconds of <see cref="DrainLengthS"/> the in-game skip button can legally remove, seconds
+    /// (<see cref="InstrumentalGaps.SkippableSeconds"/>). Stored on the beatmap row so the
+    /// play-time anti-cheat gate can price an honest skip-using play without re-reading the blob.
+    /// </summary>
+    public double SkippableS => InstrumentalGaps.SkippableSeconds(Lines);
 }
 
 /// <summary>The fully parsed contents of an uploaded beatmap package zip.</summary>

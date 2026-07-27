@@ -9,6 +9,7 @@ using Typebeat.Web.Data;
 using Typebeat.Web.Email;
 using Typebeat.Web.Endpoints;
 using Typebeat.Web.Packages;
+using Typebeat.Web.Scoring;
 using Typebeat.Web.Storage;
 using Typebeat.Web.Wire;
 
@@ -102,6 +103,11 @@ await PaceBackfill.RunAsync(
     app.Services.GetRequiredService<Db>(),
     app.Services.GetRequiredService<IFileStore>(),
     app.Logger);
+
+// Re-rank scores the pre-task-47 play-time gate unranked purely for using the in-game skip button
+// (016_refund_skip_gate.sql). Must run AFTER the backfill: it reads beatmaps.skippable_s, which the
+// backfill is what fills in. No-op once every victim is recorded in score_refunds.
+await SkipGateRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
 
 // Which email path is live (helps confirm prod is actually sending, not just logging codes).
 // The log fallback means verification/login codes are NOT delivered; the site still says
