@@ -313,10 +313,10 @@ public sealed class PackageIngest(
                 """
                 INSERT INTO beatmaps
                     (id, set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s,
-                     difficulty_rating, filename, word_count, char_count, wpm, pace_version)
+                     difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
-                     @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion)
+                     @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -328,7 +328,8 @@ public sealed class PackageIngest(
                     word_count = EXCLUDED.word_count,
                     char_count = EXCLUDED.char_count,
                     wpm = EXCLUDED.wpm,
-                    pace_version = EXCLUDED.pace_version
+                    pace_version = EXCLUDED.pace_version,
+                    skippable_s = EXCLUDED.skippable_s
                 """,
                 new
                 {
@@ -344,6 +345,9 @@ public sealed class PackageIngest(
                     charCount = diff.Pace.TypeableCellCount,
                     wpm = diff.Pace.AverageWpm,
                     paceVersion = LyricPace.VERSION,
+                    // What the in-game skip button may legally remove from this map; the
+                    // play-time gate's allowance (Scoring/PlayTimeGate).
+                    skippableS = diff.SkippableS,
                 });
         }
 

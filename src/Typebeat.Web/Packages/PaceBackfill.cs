@@ -58,6 +58,7 @@ public static class PaceBackfill
                         word_count = @wordCount,
                         char_count = @charCount,
                         wpm = @wpm,
+                        skippable_s = @skippableS,
                         pace_version = @paceVersion
                     WHERE id = @id
                     """,
@@ -68,6 +69,9 @@ public static class PaceBackfill
                         wordCount = diff.Pace.WordCount,
                         charCount = diff.Pace.TypeableCellCount,
                         wpm = diff.Pace.AverageWpm,
+                        // v7: the skip allowance the play-time gate subtracts from drain. Rows the
+                        // backfill cannot reach keep skippable_s = 0, i.e. the pre-task-47 bound.
+                        skippableS = diff.SkippableS,
                         paceVersion = LyricPace.VERSION,
                     });
 

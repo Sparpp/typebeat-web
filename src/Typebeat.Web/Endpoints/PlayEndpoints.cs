@@ -147,7 +147,7 @@ public static class PlayEndpoints
         var beatmap = request.SetId > 0
             ? await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 """
-                SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS
+                SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked') AND b.filename LIKE '%.osu'
@@ -157,7 +157,7 @@ public static class PlayEndpoints
                 new { setId = request.SetId })
             : await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 """
-                SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS
+                SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
@@ -250,7 +250,7 @@ public static class PlayEndpoints
         long beatmapId = token.BeatmapId;
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-            "SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS FROM beatmaps WHERE id = @beatmapId",
+            "SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS FROM beatmaps WHERE id = @beatmapId",
             new { beatmapId }, tx);
 
         if (beatmap is null)
@@ -271,8 +271,10 @@ public static class PlayEndpoints
         var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, submission.MaxCombo);
         bool withinBounds = ScoringContract.TotalScoreWithinBounds(submission.TotalScore, recomputed);
 
+        // At least 90% of the map's SKIP-ADJUSTED drain length must have elapsed since the token
+        // was created; the allowance is what the skip button may legally remove (see PlayTimeGate).
         double elapsedSeconds = (DateTimeOffset.UtcNow - token.CreatedAt).TotalSeconds;
-        bool playTimeOk = elapsedSeconds >= 0.9 * beatmap.DrainLengthS;
+        bool playTimeOk = PlayTimeGate.Passes(elapsedSeconds, beatmap.DrainLengthS, beatmap.SkippableS);
 
         bool buildBlocked = await conn.ExecuteScalarAsync<bool>(
             "SELECT blocked FROM builds WHERE id = @buildId", new { buildId = token.BuildId }, tx);
@@ -285,8 +287,9 @@ public static class PlayEndpoints
         double storedAccuracy = passed && fullyJudged ? recomputed.Accuracy : recomputed.JudgedAccuracy;
 
         if (!playTimeOk)
-            logger.LogInformation("Play token {TokenId}: elapsed {Elapsed:0.0}s < 90% of drain {Drain:0.0}s, storing unranked.",
-                token.Id, elapsedSeconds, beatmap.DrainLengthS);
+            logger.LogInformation("Play token {TokenId}: elapsed {Elapsed:0.0}s < required {Required:0.0}s (drain {Drain:0.0}s, skippable {Skippable:0.0}s), storing unranked.",
+                token.Id, elapsedSeconds, PlayTimeGate.RequiredSeconds(beatmap.DrainLengthS, beatmap.SkippableS),
+                beatmap.DrainLengthS, beatmap.SkippableS);
         if (!recomputed.StatisticsValid || !withinBounds)
             logger.LogInformation("Play token {TokenId}: out of bounds (statisticsValid={Valid}, totalWithinBounds={Within}), storing unranked.",
                 token.Id, recomputed.StatisticsValid, withinBounds);
@@ -531,7 +534,7 @@ public static class PlayEndpoints
 
     // ---- Dapper row shapes ----
 
-    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS);
+    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS);
 
     private sealed record BuildRow(long Id, bool Blocked);
 

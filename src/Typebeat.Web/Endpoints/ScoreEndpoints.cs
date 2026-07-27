@@ -113,7 +113,7 @@ public static class ScoreEndpoints
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
             """
-            SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS
+            SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS
             FROM beatmaps b
             JOIN beatmapsets bs ON bs.id = b.set_id
             WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
@@ -198,7 +198,7 @@ public static class ScoreEndpoints
             return WireJson.Error(status_unprocessable, "invalid token");
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-            "SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS FROM beatmaps WHERE id = @beatmapId",
+            "SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS FROM beatmaps WHERE id = @beatmapId",
             new { beatmapId }, tx);
 
         if (beatmap is null)
@@ -242,11 +242,13 @@ public static class ScoreEndpoints
                             // lands below the base; the cap is only an upper bound.
                             && submission.TotalScore <= modCeiling;
 
-        // Minimum-play-time gate: at least 90% of the map's drain length must have elapsed since the
-        // token was created (created_at is the server wall-clock anchor, 001_init.sql:126). Too fast
-        // is not an error; osu accepts and flags; we take the safe route and store it unranked.
+        // Minimum-play-time gate: at least 90% of the map's SKIP-ADJUSTED drain length must have
+        // elapsed since the token was created (created_at is the server wall-clock anchor,
+        // 001_init.sql:126). The allowance is what the in-game skip button may legally remove from
+        // this map; see PlayTimeGate. Too fast is not an error; osu accepts and flags; we take the
+        // safe route and store it unranked.
         double elapsedSeconds = (DateTimeOffset.UtcNow - token.CreatedAt).TotalSeconds;
-        bool playTimeOk = elapsedSeconds >= 0.9 * beatmap.DrainLengthS;
+        bool playTimeOk = PlayTimeGate.Passes(elapsedSeconds, beatmap.DrainLengthS, beatmap.SkippableS);
 
         // The build may have been blocked after the token was issued.
         bool buildBlocked = await conn.ExecuteScalarAsync<bool>(
@@ -278,8 +280,9 @@ public static class ScoreEndpoints
         double storedAccuracy = passed && fullyJudged ? recomputed.Accuracy : recomputed.JudgedAccuracy;
 
         if (!playTimeOk)
-            logger.LogInformation("Score token {TokenId}: elapsed {Elapsed:0.0}s < 90% of drain {Drain:0.0}s, storing unranked.",
-                tokenId, elapsedSeconds, beatmap.DrainLengthS);
+            logger.LogInformation("Score token {TokenId}: elapsed {Elapsed:0.0}s < required {Required:0.0}s (drain {Drain:0.0}s, skippable {Skippable:0.0}s), storing unranked.",
+                tokenId, elapsedSeconds, PlayTimeGate.RequiredSeconds(beatmap.DrainLengthS, beatmap.SkippableS),
+                beatmap.DrainLengthS, beatmap.SkippableS);
         if (!recomputed.StatisticsValid || !withinBounds)
             logger.LogInformation("Score token {TokenId}: out of bounds (statisticsValid={Valid}, totalWithinBounds={Within}), storing unranked.",
                 tokenId, recomputed.StatisticsValid, withinBounds);
@@ -631,7 +634,7 @@ public static class ScoreEndpoints
 
     // ---- Dapper row shapes ----
 
-    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS);
+    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS);
 
     private sealed record BestScoreRow(long Id, long TotalScore);
 
