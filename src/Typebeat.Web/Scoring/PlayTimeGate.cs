@@ -25,10 +25,21 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
+/// The rate adjustment (backlog task 54) is the other half of the same honesty. Drain and the skip
+/// allowance are MAP time; the gate measures REAL time, and a rate mod is exactly the conversion
+/// between the two: a map played at 1.5x takes drain/1.5 real seconds. Without the division a
+/// default Double Time play (drain/1.5 = 0.667 x drain of real time) could never reach 0.9 x drain,
+/// so every DT play above roughly 1.111x was unranked outright, the same bug as the missing skip
+/// allowance with a different cause. Down-rates were never wrongly caught: they take LONGER, which
+/// the un-divided bound only ever under-demanded.
+/// </para>
+///
+/// <para>
 /// Fail toward the OLD behaviour: a map whose skippable time could not be computed (blob missing,
 /// unparseable, a row the backfill has not reached yet) carries <c>skippable_s = 0</c>, which makes
-/// the requirement exactly the pre-task-47 one. A gate that cannot compute the allowance must not
-/// become more lenient than it was.
+/// the requirement exactly the pre-task-47 one, and a stack with no rate mod is rate 1.0, which
+/// makes it exactly the pre-task-54 one. A gate that cannot compute an allowance must not become
+/// more lenient than it was.
 /// </para>
 /// </summary>
 public static class PlayTimeGate
@@ -37,18 +48,34 @@ public static class PlayTimeGate
     public const double MINIMUM_FRACTION = 0.9;
 
     /// <summary>
-    /// Seconds a submitted play must have taken to be rankable on this map. Negative or oversized
-    /// inputs cannot make the bound negative or exceed the un-adjusted one.
+    /// Seconds of REAL time a submitted play must have taken to be rankable on this map:
+    /// <c>MINIMUM_FRACTION x (drain - skippable) / rate</c>. Skips remove MAP time, so they come off
+    /// inside the bracket; the rate converts the whole of that map time into real time, so it
+    /// divides the lot.
+    ///
+    /// <para>
+    /// Every input is clamped before it is used, so no submitted number can make the bound negative,
+    /// infinite or NaN: drain floors at 0, the allowance is held inside [0, drain], and the rate is
+    /// held inside the sliders' own reachable span (<see cref="RateMods.SlowestRate"/> to
+    /// <see cref="RateMods.FastestRate"/>), which is strictly positive, so the division is safe and
+    /// the result is a finite value in [0, MINIMUM_FRACTION x drain / SlowestRate].
+    /// </para>
     /// </summary>
-    public static double RequiredSeconds(double drainLengthS, double skippableS)
+    /// <param name="rate">
+    /// The play's track rate: 1.0 for a stack with no rate mod (the browser player always), or the
+    /// submitted speed_change of DT/NC/HT (see <see cref="RateMods.EffectiveRate"/>). Below 1 it
+    /// makes the requirement LONGER, which is correct: a Half Time play does take more real time.
+    /// </param>
+    public static double RequiredSeconds(double drainLengthS, double skippableS, double rate = 1.0)
     {
         double drain = Math.Max(0, drainLengthS);
         double skippable = Math.Clamp(skippableS, 0, drain);
+        double safeRate = double.IsFinite(rate) ? Math.Clamp(rate, RateMods.SlowestRate, RateMods.FastestRate) : 1.0;
 
-        return MINIMUM_FRACTION * (drain - skippable);
+        return MINIMUM_FRACTION * (drain - skippable) / safeRate;
     }
 
     /// <summary>Whether a play that took <paramref name="elapsedSeconds"/> clears the gate.</summary>
-    public static bool Passes(double elapsedSeconds, double drainLengthS, double skippableS)
-        => elapsedSeconds >= RequiredSeconds(drainLengthS, skippableS);
+    public static bool Passes(double elapsedSeconds, double drainLengthS, double skippableS, double rate = 1.0)
+        => elapsedSeconds >= RequiredSeconds(drainLengthS, skippableS, rate);
 }

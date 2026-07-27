@@ -242,13 +242,17 @@ public static class ScoreEndpoints
                             // lands below the base; the cap is only an upper bound.
                             && submission.TotalScore <= modCeiling;
 
-        // Minimum-play-time gate: at least 90% of the map's SKIP-ADJUSTED drain length must have
-        // elapsed since the token was created (created_at is the server wall-clock anchor,
-        // 001_init.sql:126). The allowance is what the in-game skip button may legally remove from
-        // this map; see PlayTimeGate. Too fast is not an error; osu accepts and flags; we take the
-        // safe route and store it unranked.
+        // Minimum-play-time gate: at least 90% of the map's SKIP-ADJUSTED drain length, converted
+        // from map time into real time by the play's RATE, must have elapsed since the token was
+        // created (created_at is the server wall-clock anchor, 001_init.sql:126). The allowance is
+        // what the in-game skip button may legally remove from this map; the rate is the submitted
+        // speed_change of DT/NC/HT, read from the very same normalized stack that prices the score
+        // just above, so the gate and the multiplier can never disagree about how fast the play was.
+        // See PlayTimeGate. Too fast is not an error; osu accepts and flags; we take the safe route
+        // and store it unranked.
         double elapsedSeconds = (DateTimeOffset.UtcNow - token.CreatedAt).TotalSeconds;
-        bool playTimeOk = PlayTimeGate.Passes(elapsedSeconds, beatmap.DrainLengthS, beatmap.SkippableS);
+        double rate = RateMods.EffectiveRate(mods.Select(m => ((string?)m.Acronym, m.SpeedChange)));
+        bool playTimeOk = PlayTimeGate.Passes(elapsedSeconds, beatmap.DrainLengthS, beatmap.SkippableS, rate);
 
         // The build may have been blocked after the token was issued.
         bool buildBlocked = await conn.ExecuteScalarAsync<bool>(
@@ -280,9 +284,9 @@ public static class ScoreEndpoints
         double storedAccuracy = passed && fullyJudged ? recomputed.Accuracy : recomputed.JudgedAccuracy;
 
         if (!playTimeOk)
-            logger.LogInformation("Score token {TokenId}: elapsed {Elapsed:0.0}s < required {Required:0.0}s (drain {Drain:0.0}s, skippable {Skippable:0.0}s), storing unranked.",
-                tokenId, elapsedSeconds, PlayTimeGate.RequiredSeconds(beatmap.DrainLengthS, beatmap.SkippableS),
-                beatmap.DrainLengthS, beatmap.SkippableS);
+            logger.LogInformation("Score token {TokenId}: elapsed {Elapsed:0.0}s < required {Required:0.0}s (drain {Drain:0.0}s, skippable {Skippable:0.0}s, rate {Rate:0.00}x), storing unranked.",
+                tokenId, elapsedSeconds, PlayTimeGate.RequiredSeconds(beatmap.DrainLengthS, beatmap.SkippableS, rate),
+                beatmap.DrainLengthS, beatmap.SkippableS, rate);
         if (!recomputed.StatisticsValid || !withinBounds)
             logger.LogInformation("Score token {TokenId}: out of bounds (statisticsValid={Valid}, totalWithinBounds={Within}), storing unranked.",
                 tokenId, recomputed.StatisticsValid, withinBounds);
