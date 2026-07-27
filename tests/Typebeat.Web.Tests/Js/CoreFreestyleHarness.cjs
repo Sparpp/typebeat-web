@@ -78,7 +78,8 @@ function cellShape(beatmap) {
     };
 }
 
-// "Any key really is any key on the typeable surface": press 'a', then `pressed` on the slot.
+// "Any key really is any key on the typeable surface EXCEPT space": press 'a', then `pressed` on
+// the slot.
 function anyKey(pressed) {
     const engine = activeEngine();
     const first = engine.processKey('a', 1000);
@@ -124,6 +125,71 @@ function playThrough(osuText, middle) {
         counts: results.counts,
         wpm: results.wpm,
         liveAccuracy: engine.liveAccuracy
+    };
+}
+
+// Space is the ONE key a freestyle slot refuses (backlog 50). It must be rejected with exactly the
+// consequences a wrong key has on an ordinary cell, so the same run is played against the plain
+// "axb" map as a control and both sets of observations are emitted for comparison.
+function spaceRejected(osuText, refill) {
+    const engine = activeEngine(osuText);
+    const rejected = [];
+    let judged = 0;
+    engine.onWrongKey = ch => rejected.push(ch);
+
+    engine.processKey('a', 1000);
+    engine.onCharJudged = () => judged++; // count only what the space does
+    engine.update(2000);
+    const handled = engine.processKey(' ', 2000);
+    const cell = engine.lines[0].cells[1];
+
+    const after = {
+        handled: handled,
+        state: cell.state,
+        typedChar: cell.typedChar,
+        judgedDelta: cell.judgedDelta,
+        caretIndex: engine.caretIndex,
+        combo: engine.combo,
+        consecutiveWrongKeys: engine.consecutiveWrongKeys,
+        liveAccuracy: engine.liveAccuracy,
+        judged: judged,
+        rejected: rejected.join('')
+    };
+
+    // The slot is still fillable afterwards: the space cost combo, not the cell.
+    engine.update(2400);
+    after.refillAccepted = engine.processKey(refill, 2400);
+    after.refillState = engine.lines[0].cells[1].state;
+    after.refillWrongKeys = engine.consecutiveWrongKeys;
+    after.score = engine.score;
+    after.maxCombo = engine.maxCombo;
+    after.finalAccuracy = engine.liveAccuracy;
+    return after;
+}
+
+// Mashing accepts any key on any cell. A freestyle slot is exempt from the char rewrite, so space
+// (the one key it would otherwise reject) is substituted with the auto char instead.
+function mashingSpace() {
+    const engine = activeEngine();
+    engine.mashingEnabled = true;
+    engine.processKey('a', 1000);
+    engine.update(2000);
+    const accepted = engine.processKey(' ', 2000);
+    const cell = engine.lines[0].cells[1];
+
+    const control = activeEngine(PLAIN_OSU);
+    control.mashingEnabled = true;
+    const controlAccepted = control.processKey(' ', 1000); // space on an ORDINARY cell, still taken
+
+    return {
+        accepted: accepted,
+        state: cell.state,
+        typedChar: cell.typedChar,
+        combo: engine.combo,
+        liveAccuracy: engine.liveAccuracy,
+        controlAccepted: controlAccepted,
+        controlState: control.lines[0].cells[0].state,
+        controlTypedChar: control.lines[0].cells[0].typedChar
     };
 }
 
@@ -252,11 +318,13 @@ const out = {
     anyKeyQ: anyKey('q'),
     anyKeyZ: anyKey('Z'),
     anyKey7: anyKey('7'),
-    anyKeySpace: anyKey(' '),
+    spaceOnFreestyle: spaceRejected(FREESTYLE_OSU, '7'),
+    spaceOnOrdinary: spaceRejected(PLAIN_OSU, 'x'),
     freeRun: playThrough(FREESTYLE_OSU, 'q'),
     plainRun: playThrough(PLAIN_OSU, 'x'),
     literate: literate(),
     mashing: mashing(),
+    mashingSpace: mashingSpace(),
     backspace: backspace(),
     sealed: sealed_(),
 

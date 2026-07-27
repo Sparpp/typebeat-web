@@ -5,8 +5,8 @@ namespace Typebeat.Web.Tests;
 
 /// <summary>
 /// Fidelity guard for FREESTYLE characters in the browser scoring core. A mapper types '&amp;' into
-/// a lyric line and gets a cell ANY key satisfies, whose pressed char is then displayed; judgement
-/// is otherwise a completely normal typeable cell. The hand-written wwwroot/js/typebeat-core.js
+/// a lyric line and gets a cell ANY key but SPACE satisfies, whose pressed char is then displayed;
+/// judgement is otherwise a completely normal typeable cell. The hand-written wwwroot/js/typebeat-core.js
 /// must reproduce the desktop game's rules exactly, or /play scores on freestyle maps diverge from
 /// desktop and corrupt the shared leaderboards.
 ///
@@ -73,7 +73,7 @@ public class FreestyleParityTest
     [TestCase("anyKeyQ", "q")]
     [TestCase("anyKeyZ", "Z")]
     [TestCase("anyKey7", "7")]
-    [TestCase("anyKeySpace", " ")] // "any key" really is any key on the typeable surface.
+    // "any key" is every key on the typeable surface but space (see the space cases below).
     public void AnyKeyFillsAFreestyleCellAndTheTypedCharIsKept(string key, string pressed)
     {
         var r = Harness().GetProperty(key);
@@ -91,6 +91,70 @@ public class FreestyleParityTest
             Assert.That(Num(r, "combo"), Is.EqualTo(2));
             Assert.That(Num(r, "consecutiveWrongKeys"), Is.EqualTo(0));
             Assert.That(Num(r, "liveAccuracy"), Is.EqualTo(1.0)); // no error was recorded
+        });
+    }
+
+    [Test]
+    public void SpaceIsRejectedOnAFreestyleCellExactlyLikeAnyWrongKey()
+    {
+        var root = Harness();
+        var free = root.GetProperty("spaceOnFreestyle");
+        var ordinary = root.GetProperty("spaceOnOrdinary");
+
+        Assert.Multiple(() =>
+        {
+            // Backlog 50: space is the word-advance key, not a glyph a player means to leave sitting
+            // in a lyric, so it is the one key a freestyle cell does NOT take. Golden values mirror
+            // the game's SpaceIsRejectedOnAFreestyleCellExactlyLikeAnyWrongKey.
+            Assert.That(Flag(free, "handled"), Is.True);       // handled, but rejected
+            Assert.That(Str(free, "state"), Is.EqualTo("untyped"));
+            Assert.That(free.GetProperty("typedChar").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(free.GetProperty("judgedDelta").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(Num(free, "caretIndex"), Is.EqualTo(1)); // caret unmoved: the slot is open
+            Assert.That(Num(free, "combo"), Is.EqualTo(0));
+            Assert.That(Num(free, "consecutiveWrongKeys"), Is.EqualTo(1));
+            Assert.That(Num(free, "liveAccuracy"), Is.EqualTo(0.5)); // one correct of two presses
+            Assert.That(Num(free, "judged"), Is.EqualTo(0));  // no judgement for a rejected key
+            Assert.That(Str(free, "rejected"), Is.EqualTo(" ")); // onWrongKey saw the space
+
+            // The slot is still fillable afterwards; the space cost combo, not the cell.
+            Assert.That(Flag(free, "refillAccepted"), Is.True);
+            Assert.That(Str(free, "refillState"), Is.EqualTo("correct"));
+            Assert.That(Num(free, "refillWrongKeys"), Is.EqualTo(0));
+
+            // And every one of those observations matches a space pressed on an ORDINARY cell:
+            // that equality IS the semantics ("same consequences as any wrong key").
+            foreach (string field in new[] { "caretIndex", "combo", "consecutiveWrongKeys", "liveAccuracy", "judged", "refillWrongKeys", "score", "maxCombo", "finalAccuracy" })
+                Assert.That(Num(free, field), Is.EqualTo(Num(ordinary, field)), field);
+
+            foreach (string field in new[] { "state", "rejected", "refillState" })
+                Assert.That(Str(free, field), Is.EqualTo(Str(ordinary, field)), field);
+        });
+    }
+
+    [Test]
+    public void MashingSubstitutesTheAutoCharForASpaceOnAFreestyleCell()
+    {
+        var r = Harness().GetProperty("mashingSpace");
+
+        Assert.Multiple(() =>
+        {
+            // Mashing promises any key is the right key on every cell; on an ordinary cell it keeps
+            // that promise by rewriting the press to the expected char (the control). A freestyle
+            // cell is exempt from the rewrite, so space is the one press that would otherwise be
+            // rejected under the mod: it becomes the char autoplay uses, which keeps both the mod's
+            // promise and the "no space in a freestyle slot" rule.
+            Assert.That(Flag(r, "accepted"), Is.True);
+            Assert.That(Str(r, "state"), Is.EqualTo("correct"));
+            Assert.That(Str(r, "typedChar"), Is.EqualTo("a")); // Typeability.FREESTYLE_AUTO_CHAR
+            Assert.That(Str(r, "typedChar"), Is.Not.EqualTo(" "));
+            Assert.That(Str(r, "typedChar"), Is.Not.EqualTo("&"));
+            Assert.That(Num(r, "combo"), Is.EqualTo(2));
+            Assert.That(Num(r, "liveAccuracy"), Is.EqualTo(1.0));
+
+            Assert.That(Flag(r, "controlAccepted"), Is.True);
+            Assert.That(Str(r, "controlState"), Is.EqualTo("correct"));
+            Assert.That(Str(r, "controlTypedChar"), Is.EqualTo("a"));
         });
     }
 
