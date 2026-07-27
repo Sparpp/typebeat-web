@@ -420,6 +420,8 @@ public static class ScoreEndpoints
     // ---------------------------------------------------------------------------------------------
     // GET: beatmap leaderboard (global, best-per-user). GetScoresRequest.cs:46-59.
     // type / mode / mods[] are ignored (always global); limit is capped at 50.
+    // The wire shape is the same whichever board a map serves (see the status switch below); the
+    // client tells them apart from the beatmap status it already holds, plus each row's "ranked".
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> Leaderboard(long beatmapId, HttpContext ctx, Db db)
     {
@@ -431,23 +433,42 @@ public static class ScoreEndpoints
 
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
-        // A board is served only while its set is currently ranked. Ranked-era scores keep their
-        // scores.ranked flag, so without this a reviewer un-ranking a set would still leak its old
-        // board through the API (the website already hides it). Re-reading status here makes the
-        // Rank/Unrank lever authoritative over the leaderboard in both directions.
-        bool setRanked = await conn.ExecuteScalarAsync<bool>(
+        // Which board this map serves is decided by its set's CURRENT status, re-read here (never
+        // trusted from the stored scores.ranked flags) so the reviewer's Rank/Unrank lever stays
+        // authoritative in both directions:
+        //
+        //  - 'ranked'               → the ranked board: passed plays with scores.ranked. Unchanged.
+        //  - 'pending' / 'unranked' → the site's UNRANKED board: passed plays with ranked = false,
+        //                             exactly the rows /beatmapsets/{id}?board=unranked lists (same
+        //                             best-per-user DISTINCT ON, same total-score ordering). Every
+        //                             play on a non-ranked set is stored unranked by construction,
+        //                             so this is "everything typed here, none of it counting"; a
+        //                             set's ranked-era rows stay buried after an un-rank, which is
+        //                             what the website's Unranked tab shows too.
+        //  - anything else          → no board (hidden, removed, or no such beatmap).
+        //
+        // A ranked map's board is therefore byte-identical to what it was before unranked boards
+        // existed: an unranked row can never cross onto it, in either direction.
+        string? setStatus = await conn.ExecuteScalarAsync<string?>(
             """
-            SELECT EXISTS (
-                SELECT 1 FROM beatmaps b JOIN beatmapsets bs ON bs.id = b.set_id
-                WHERE b.id = @beatmapId AND bs.status = 'ranked')
+            SELECT bs.status
+            FROM beatmaps b JOIN beatmapsets bs ON bs.id = b.set_id
+            WHERE b.id = @beatmapId
             """,
             new { beatmapId });
 
-        if (!setRanked)
+        bool? board = setStatus switch
+        {
+            "ranked" => true,
+            "pending" or "unranked" => false,
+            _ => null,
+        };
+
+        if (board is not bool wantRanked)
             return WireJson.Ok(new ScoresCollectionWire { ScoreCount = 0, Scores = [], UserScore = null });
 
-        // Best score per user (DISTINCT ON over ix_scores_leaderboard), ranked+passed only, then the
-        // global ordering by total score. Failed/unranked scores never appear.
+        // Best score per user (DISTINCT ON over ix_scores_leaderboard), passed plays on the selected
+        // board only, then the global ordering by total score. Failed scores never appear.
         var rows = (await conn.QueryAsync<LeaderboardRow>(
             """
             SELECT best.id                 AS scoreId,
@@ -473,20 +494,20 @@ public static class ScoreEndpoints
                        u.username, u.country_code, u.avatar_key
                 FROM scores s
                 JOIN users u ON u.id = s.user_id
-                WHERE s.beatmap_id = @beatmapId AND s.ranked AND s.passed
+                WHERE s.beatmap_id = @beatmapId AND s.ranked = @wantRanked AND s.passed
                 ORDER BY s.user_id, s.total_score DESC, s.id ASC
             ) best
             ORDER BY best.total_score DESC, best.id ASC
             LIMIT @limit
             """,
-            new { beatmapId, limit })).ToList();
+            new { beatmapId, limit, wantRanked })).ToList();
 
-        var scores = rows.Select(r => ToSoloScoreWire(ctx, r, beatmapId)).ToList();
+        var scores = rows.Select(r => ToSoloScoreWire(ctx, r, beatmapId, wantRanked)).ToList();
 
         // Total distinct participants (osu-web's score_count reflects the full board, not the page).
         int scoreCount = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(DISTINCT user_id) FROM scores WHERE beatmap_id = @beatmapId AND ranked AND passed",
-            new { beatmapId });
+            "SELECT COUNT(DISTINCT user_id) FROM scores WHERE beatmap_id = @beatmapId AND ranked = @wantRanked AND passed",
+            new { beatmapId, wantRanked });
 
         // The caller's own best score + its global position, if they have one.
         var callerBest = await conn.QuerySingleOrDefaultAsync<LeaderboardRow>(
@@ -507,17 +528,17 @@ public static class ScoreEndpoints
                    u.avatar_key         AS avatarKey
             FROM scores s
             JOIN users u ON u.id = s.user_id
-            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND s.ranked AND s.passed
+            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND s.ranked = @wantRanked AND s.passed
             ORDER BY s.total_score DESC, s.id ASC
             LIMIT 1
             """,
-            new { beatmapId, userId = user.Id });
+            new { beatmapId, userId = user.Id, wantRanked });
 
         ScoreWithPositionWire? userScore = null;
         if (callerBest is not null)
         {
-            int position = await PositionOf(conn, null, beatmapId, callerBest.TotalScore, callerBest.ScoreId);
-            userScore = new ScoreWithPositionWire { Position = position, Score = ToSoloScoreWire(ctx, callerBest, beatmapId) };
+            int position = await PositionOf(conn, null, beatmapId, callerBest.TotalScore, callerBest.ScoreId, wantRanked);
+            userScore = new ScoreWithPositionWire { Position = position, Score = ToSoloScoreWire(ctx, callerBest, beatmapId, wantRanked) };
         }
 
         return WireJson.Ok(new ScoresCollectionWire
@@ -546,11 +567,15 @@ public static class ScoreEndpoints
         if (best is null)
             return null;
 
-        return await PositionOf(conn, tx, beatmapId, best.TotalScore, best.Id);
+        return await PositionOf(conn, tx, beatmapId, best.TotalScore, best.Id, wantRanked: true);
     }
 
-    /// <summary>1-based rank of a (total_score, scoreId) among distinct users' best scores.</summary>
-    private static async Task<int> PositionOf(System.Data.Common.DbConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long totalScore, long scoreId)
+    /// <summary>
+    /// 1-based rank of a (total_score, scoreId) among distinct users' best scores on one board:
+    /// the ranked board when <paramref name="wantRanked"/>, the unranked board otherwise. The two
+    /// are counted separately, so an unranked play is never positioned against ranked ones.
+    /// </summary>
+    private static async Task<int> PositionOf(System.Data.Common.DbConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long totalScore, long scoreId, bool wantRanked)
     {
         return await conn.ExecuteScalarAsync<int>(
             """
@@ -558,16 +583,20 @@ public static class ScoreEndpoints
             FROM (
                 SELECT DISTINCT ON (s.user_id) s.user_id, s.total_score, s.id
                 FROM scores s
-                WHERE s.beatmap_id = @beatmapId AND s.ranked AND s.passed
+                WHERE s.beatmap_id = @beatmapId AND s.ranked = @wantRanked AND s.passed
                 ORDER BY s.user_id, s.total_score DESC, s.id ASC
             ) b
             WHERE b.total_score > @totalScore
                OR (b.total_score = @totalScore AND b.id < @scoreId)
             """,
-            new { beatmapId, totalScore, scoreId }, tx);
+            new { beatmapId, totalScore, scoreId, wantRanked }, tx);
     }
 
-    private static SoloScoreWire ToSoloScoreWire(HttpContext ctx, LeaderboardRow r, long beatmapId) => new()
+    /// <summary>
+    /// One leaderboard row on the wire. <paramref name="ranked"/> is the board it came from, echoed
+    /// into SoloScoreInfo.ranked so the client can tell a counting play from an unranked-board one.
+    /// </summary>
+    private static SoloScoreWire ToSoloScoreWire(HttpContext ctx, LeaderboardRow r, long beatmapId, bool ranked) => new()
     {
         Id = r.ScoreId,
         BeatmapId = beatmapId,
@@ -585,7 +614,7 @@ public static class ScoreEndpoints
         // Drives the client's "watch replay" action; true once the owner has uploaded the .osr
         // through PUT /api/v2/scores/{id}/replay (ReplayEndpoints).
         HasReplay = r.HasReplay,
-        Ranked = true,
+        Ranked = ranked,
         User = BuildUser(ctx, r.UserId, r.Username, r.CountryCode, r.AvatarKey),
     };
 

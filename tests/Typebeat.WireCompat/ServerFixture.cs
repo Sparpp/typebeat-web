@@ -47,6 +47,12 @@ public class ServerFixture
     public static long SeededBeatmapId { get; private set; }
     public static long Md5SeededBeatmapId { get; private set; }
 
+    /// <summary>
+    /// A map on a PENDING set carrying one passed unranked play: the client's unranked-board path
+    /// (backlog 53). Lookup must report it "pending" and its board must serve that play.
+    /// </summary>
+    public static long PendingBeatmapId { get; private set; }
+
     /// <summary>Raw bytes of a tiny "type!beat file format v1" file (test g).</summary>
     public static byte[] OsuFileBytes { get; private set; } = Array.Empty<byte>();
 
@@ -190,6 +196,37 @@ public class ServerFixture
             RETURNING id
             """,
             new { setId = SeededBeatmapSetId, checksum = OsuFileChecksum });
+
+        // A pending set + map + one passed unranked play. Plays on a non-ranked set are always
+        // stored unranked, so this is what the server's unranked board serves and what the client
+        // resolves to GlobalLeaderboardKind.Unranked from the "pending" status lookup returns.
+        long pendingSetId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist, status)
+            VALUES (@ownerId, 'Wire Compat Pending', 'Harness', 'pending')
+            RETURNING id
+            """,
+            new { ownerId = OwnerUserId });
+
+        PendingBeatmapId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmaps
+                (set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s, difficulty_rating)
+            VALUES (@setId, 'type!beat', 0, '22222222222222222222222222222222', 60, 30, 1.5)
+            RETURNING id
+            """,
+            new { setId = pendingSetId });
+
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO scores
+                (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
+                 mods, statistics, maximum_statistics)
+            VALUES
+                (@userId, @beatmapId, 640000, 0.93, 0.95, 42, 'A', true, false,
+                 '[]'::jsonb, '{"great":40,"ok":2}'::jsonb, '{"great":42}'::jsonb)
+            """,
+            new { userId = PlayerUserId, beatmapId = PendingBeatmapId });
     }
 
     /// <summary>A client-authenticated request builder for the seeded player.</summary>
