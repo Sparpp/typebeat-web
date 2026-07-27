@@ -26,11 +26,15 @@
             (ch >= '0' && ch <= '9');
     }
 
-    // Authoring marker for a FREESTYLE character: a cell the player may satisfy with ANY key,
-    // whose typed char is then displayed for the rest of the play. Deliberately OUTSIDE
+    // Authoring marker for a FREESTYLE character: a cell the player may satisfy with ANY key but
+    // space, whose typed char is then displayed for the rest of the play. Deliberately OUTSIDE
     // isTypeable, that is what keeps it invisible to every legacy path (normalize strips it
     // unless the caller explicitly opts in).
     const FREESTYLE_MARKER = '&';
+
+    // The char an automated player presses on a freestyle cell; also what the Mashing mod
+    // substitutes when a space lands on one (mirrors Typeability.FREESTYLE_AUTO_CHAR).
+    const FREESTYLE_AUTO_CHAR = 'a';
 
     function isFreestyle(ch) { return ch === FREESTYLE_MARKER; }
 
@@ -389,9 +393,10 @@
             target: target,
             tier: tier,
             typeable: true,          // after normalization every cell is typeable
-            // FREESTYLE cell: any key satisfies it and the char the player actually pressed lands
-            // in typedChar and stays on screen. Judgement is otherwise a completely normal typeable
-            // cell (same windows, points, combo, completion). Mirrors TypingCell.IsFreestyle,
+            // FREESTYLE cell: any key but space satisfies it and the char the player actually
+            // pressed lands in typedChar and stays on screen. Judgement is otherwise a completely
+            // normal typeable cell (same windows, points, combo, completion), and a space is
+            // rejected exactly as a wrong key on any other cell is. Mirrors TypingCell.IsFreestyle,
             // which is (IsTypeable && marker) and so is exactly this here.
             freestyle: isFreestyle(expected),
             state: 'untyped',        // untyped | correct | missed
@@ -583,15 +588,24 @@
             // Mashing mod: any key is the right key; judge it as the caret cell's expected char.
             // A FREESTYLE cell is exempt: it already accepts any key, and rewriting c here would
             // stamp the authoring marker over the char the player actually pressed (the one thing
-            // a freestyle cell must remember).
-            if (this.mashingEnabled && !cell.freestyle) c = cell.expected;
+            // a freestyle cell must remember). Space is the single exception to that exemption: a
+            // freestyle cell REJECTS space (see the match below), so mashing's "any key is the
+            // right key" promise needs a substitute to hand it, and the char an automated player
+            // presses into a freestyle slot is the canonical one.
+            if (this.mashingEnabled) {
+                if (!cell.freestyle) c = cell.expected;
+                else if (c === ' ') c = FREESTYLE_AUTO_CHAR;
+            }
 
             const delta = time - cell.target;
-            // FREESTYLE cell: every char matches, in any case, under every mod (so the Literate
-            // mod's exact-case rule is bypassed for it). The press is then judged exactly like a
-            // correct char: same windows, points, combo, accuracy and completion, with the pressed
-            // char kept in typedChar.
-            const matched = cell.freestyle ||
+            // FREESTYLE cell: every char EXCEPT SPACE matches, in any case, under every mod (so the
+            // Literate mod's exact-case rule is bypassed for it). The press is then judged exactly
+            // like a correct char: same windows, points, combo, accuracy and completion, with the
+            // pressed char kept in typedChar.
+            // SPACE is carved out (backlog 50): it is the word-advance key, not a glyph a player
+            // means to leave sitting in a lyric, so it falls through to the ordinary non-match path
+            // below and is rejected exactly as a wrong key on any other cell would be.
+            const matched = (cell.freestyle && c !== ' ') ||
                 (this.caseSensitive ? c === cell.expected : fold(c) === fold(cell.expected));
 
             if (!matched) {
