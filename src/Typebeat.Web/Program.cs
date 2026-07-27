@@ -109,6 +109,12 @@ await PaceBackfill.RunAsync(
 // backfill is what fills in. No-op once every victim is recorded in score_refunds.
 await SkipGateRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
 
+// Re-rank scores the rate-blind play-time gate unranked purely for playing at an up-rate
+// (017_rate_gate_refund.sql). Runs after the skip refund so a row that only needed THAT correction
+// is already ranked, and therefore no longer a candidate here; a play that needed both is refunded
+// by this one. No-op once every victim is recorded in score_refunds.
+await RateGateRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
+
 // Which email path is live (helps confirm prod is actually sending, not just logging codes).
 // The log fallback means verification/login codes are NOT delivered; the site still says
 // "sent", so make it a startup WARNING behind the proxy (i.e. a real deployment), where that

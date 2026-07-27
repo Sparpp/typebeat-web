@@ -271,10 +271,18 @@ public static class PlayEndpoints
         var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, submission.MaxCombo);
         bool withinBounds = ScoringContract.TotalScoreWithinBounds(submission.TotalScore, recomputed);
 
-        // At least 90% of the map's SKIP-ADJUSTED drain length must have elapsed since the token
-        // was created; the allowance is what the skip button may legally remove (see PlayTimeGate).
+        // At least 90% of the map's SKIP-ADJUSTED drain length, in real time at the play's rate,
+        // must have elapsed since the token was created; the allowance is what the skip button may
+        // legally remove (see PlayTimeGate).
+        //
+        // The rate is pinned at 1.0 rather than read from anything: the browser player ships no mod
+        // UI and this endpoint stores a hardcoded empty mod stack ('[]'::jsonb, below), so there is
+        // no speed_change to honour and nothing a caller could claim one through. If the web player
+        // ever gains rate mods, this and the stored stack move together.
+        const double rate = 1.0;
+
         double elapsedSeconds = (DateTimeOffset.UtcNow - token.CreatedAt).TotalSeconds;
-        bool playTimeOk = PlayTimeGate.Passes(elapsedSeconds, beatmap.DrainLengthS, beatmap.SkippableS);
+        bool playTimeOk = PlayTimeGate.Passes(elapsedSeconds, beatmap.DrainLengthS, beatmap.SkippableS, rate);
 
         bool buildBlocked = await conn.ExecuteScalarAsync<bool>(
             "SELECT blocked FROM builds WHERE id = @buildId", new { buildId = token.BuildId }, tx);
@@ -287,9 +295,9 @@ public static class PlayEndpoints
         double storedAccuracy = passed && fullyJudged ? recomputed.Accuracy : recomputed.JudgedAccuracy;
 
         if (!playTimeOk)
-            logger.LogInformation("Play token {TokenId}: elapsed {Elapsed:0.0}s < required {Required:0.0}s (drain {Drain:0.0}s, skippable {Skippable:0.0}s), storing unranked.",
-                token.Id, elapsedSeconds, PlayTimeGate.RequiredSeconds(beatmap.DrainLengthS, beatmap.SkippableS),
-                beatmap.DrainLengthS, beatmap.SkippableS);
+            logger.LogInformation("Play token {TokenId}: elapsed {Elapsed:0.0}s < required {Required:0.0}s (drain {Drain:0.0}s, skippable {Skippable:0.0}s, rate {Rate:0.00}x), storing unranked.",
+                token.Id, elapsedSeconds, PlayTimeGate.RequiredSeconds(beatmap.DrainLengthS, beatmap.SkippableS, rate),
+                beatmap.DrainLengthS, beatmap.SkippableS, rate);
         if (!recomputed.StatisticsValid || !withinBounds)
             logger.LogInformation("Play token {TokenId}: out of bounds (statisticsValid={Valid}, totalWithinBounds={Within}), storing unranked.",
                 token.Id, recomputed.StatisticsValid, withinBounds);

@@ -42,6 +42,12 @@ public static class RateMods
         ["HT"] = new Range(0.50, 0.99, 0.75),
     };
 
+    /// <summary>The slowest rate any rate mod can be submitted at (Half Time's floor, 0.50x).</summary>
+    public static readonly double SlowestRate = ranges.Values.Min(r => r.Min);
+
+    /// <summary>The fastest rate any rate mod can be submitted at (Double Time's ceiling, 2.00x).</summary>
+    public static readonly double FastestRate = ranges.Values.Max(r => r.Max);
+
     /// <summary>Whether the acronym is one of the rate mods whose speed_change is meaningful.</summary>
     public static bool IsRateMod(string? acronym) => acronym != null && ranges.ContainsKey(acronym.Trim());
 
@@ -92,6 +98,36 @@ public static class RateMods
     /// tampered payload (which the assumption prices at the cheap default rather than the dear one).
     /// </summary>
     public static double DefaultSpeed(string? acronym) => TryGetRange(acronym, out var range) ? range.Default : 1.0;
+
+    /// <summary>
+    /// The rate a whole submitted stack was played at, as the play-time gate needs it: 1.0 when the
+    /// stack carries no rate mod, otherwise the SLOWEST rate in it.
+    ///
+    /// <para>
+    /// Slowest, not fastest, because the gate divides its requirement by this number: a higher rate
+    /// buys a shorter real-time bound, so the slowest member is the strictest reading of a stack.
+    /// The client makes DT/NC/HT mutually exclusive, so a stack with two rate mods in it is
+    /// tamper-shaped by construction and gets the reading that concedes the least. Each member is
+    /// read exactly as it is priced (<see cref="ReadSpeedChange"/>): snapped, clamped, and falling
+    /// back to the mod's default when the client sent no <c>speed_change</c>.
+    /// </para>
+    /// </summary>
+    public static double EffectiveRate(IEnumerable<(string? Acronym, double? SpeedChange)> mods)
+    {
+        double? slowest = null;
+
+        foreach (var (acronym, speedChange) in mods)
+        {
+            if (!TryGetRange(acronym, out var range))
+                continue;
+
+            double rate = speedChange is double submitted ? Normalize(range, submitted) : range.Default;
+
+            slowest = slowest is double current ? Math.Min(current, rate) : rate;
+        }
+
+        return slowest ?? 1.0;
+    }
 
     /// <summary>
     /// The rate as the game renders it on a mod icon: <c>{rate:N2}x</c>, invariant, e.g. "1.50x".
