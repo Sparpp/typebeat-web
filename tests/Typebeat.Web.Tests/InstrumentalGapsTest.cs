@@ -232,6 +232,52 @@ public class InstrumentalGapsTest
         });
     }
 
+    // ---- real-map parity ----
+
+    /// <summary>
+    /// The map the whole task is named after, run through the real parse path. Opt-in: the .osu is
+    /// the user's own install, not a repo file, so it is supplied through TYPEBEAT_GAP_OSU_DIR (the
+    /// same variable the game's own InstrumentalGapsRealMapTest uses) and the pin ignores itself
+    /// when that is unset. This is the one check that the server mirror agrees with the game on a
+    /// map that actually shipped, rather than on synthetic lines.
+    /// </summary>
+    [Test]
+    public void ImmortalFlame_HasTwoGaps_AndBecomesReachable()
+    {
+        string dir = Environment.GetEnvironmentVariable("TYPEBEAT_GAP_OSU_DIR") ?? string.Empty;
+
+        if (dir.Length == 0)
+            Assert.Ignore("TYPEBEAT_GAP_OSU_DIR is not set; skipping the real-map instrumental-gap pin.");
+
+        string path = Path.Combine(dir, "immortal-flame.osu");
+
+        if (!File.Exists(path))
+            Assert.Ignore($"Real map file not present (expected {path}); skipping pin.");
+
+        var diff = BeatmapPackageParser.ParseDifficulty("immortal-flame.osu", File.ReadAllBytes(path));
+        var gaps = InstrumentalGaps.Compute(diff.Lines);
+
+        Assert.That(gaps, Has.Count.EqualTo(2), "the two long instrumentals the game shows a skip over");
+
+        Assert.Multiple(() =>
+        {
+            // Roughly a minute and a minute and a half in, which is where the game's own real-map
+            // pin finds them.
+            Assert.That(gaps[0].GapStartTime, Is.EqualTo(58326).Within(1));
+            Assert.That(gaps[1].GapStartTime, Is.EqualTo(92947).Within(1));
+
+            Assert.That(diff.DrainLengthS, Is.EqualTo(121.245).Within(0.01));
+            Assert.That(diff.SkippableS, Is.EqualTo(24.552).Within(0.01));
+
+            // The bug, and the fix, in two numbers: a play that skips both gaps runs about
+            // 121.2 - 24.6 = 96.6 s of map, which the old 109.12 s requirement could never reach,
+            // and which clears the corrected 87.02 s one.
+            Assert.That(PlayTimeGate.RequiredSeconds(diff.DrainLengthS, 0), Is.EqualTo(109.12).Within(0.01));
+            Assert.That(PlayTimeGate.RequiredSeconds(diff.DrainLengthS, diff.SkippableS), Is.EqualTo(87.02).Within(0.01));
+            Assert.That(PlayTimeGate.Passes(diff.DrainLengthS - diff.SkippableS, diff.DrainLengthS, diff.SkippableS), Is.True);
+        });
+    }
+
     private static IReadOnlyList<LyricLine> Lines(string lyrics)
         => LyricTiming.ParseSection(lyrics.ReplaceLineEndings("\n").Split('\n')).Lines;
 }
