@@ -5,6 +5,7 @@ using Newtonsoft.Json.Linq;
 using typebeat.Game.Beatmaps;
 using typebeat.Game.Online.API;
 using typebeat.Game.Online.API.Requests.Responses;
+using typebeat.Game.Online.Leaderboards;
 using typebeat.Game.Online.Rooms;
 using typebeat.Game.Rulesets.Scoring;
 using typebeat.Game.Scoring;
@@ -368,6 +369,49 @@ public class WireCompatTests
         Assert.That(raw["scores"]![0]!["has_replay"], Is.Not.Null, "leaderboard rows must carry has_replay");
         Assert.That(collection.Scores[0].HasReplay, Is.False);
         Assert.That(collection.UserScore.Score.HasReplay, Is.False);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // (f3) The unranked-board path end to end (backlog 53): lookup reports "pending", the client's
+    // own board decision turns that into GlobalLeaderboardKind.Unranked (so it fetches rather than
+    // showing "leaderboards are not available"), and the board that comes back is the website's
+    // unranked board, deserialised through APIScoresCollection with ranked = false on the row.
+    //
+    // This is the cross-repo pin: the server's status STRING, the client's status ENUM and the
+    // client's board decision all have to agree, or the tab silently goes blank again.
+    // ---------------------------------------------------------------------------------------------
+    [Test]
+    public async Task PendingMap_LookupSaysPending_AndItsBoardDeserialisesAsUnranked()
+    {
+        using (var lookup = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/beatmaps/lookup?id={ServerFixture.PendingBeatmapId}"))
+        using (var lookupResp = await client.SendAsync(lookup))
+        {
+            Assert.That(lookupResp.IsSuccessStatusCode, Is.True, $"lookup status {(int)lookupResp.StatusCode}");
+
+            var beatmap = JsonConvert.DeserializeObject<APIBeatmap>(await lookupResp.Content.ReadAsStringAsync());
+
+            Assert.That(beatmap, Is.Not.Null);
+            Assert.That(beatmap!.Status, Is.EqualTo(BeatmapOnlineStatus.Pending), "\"pending\" must bind to the pending enum member");
+            Assert.That(GlobalLeaderboardAvailability.Resolve(beatmap.OnlineID, beatmap.Status),
+                Is.EqualTo(GlobalLeaderboardKind.Unranked),
+                "a pending map must resolve to the unranked board, not to no board at all");
+        }
+
+        using var req = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/beatmaps/{ServerFixture.PendingBeatmapId}/scores");
+        using var resp = await client.SendAsync(req);
+
+        Assert.That(resp.IsSuccessStatusCode, Is.True, $"leaderboard status {(int)resp.StatusCode}");
+
+        string body = await resp.Content.ReadAsStringAsync();
+        var collection = JsonConvert.DeserializeObject<APIScoresCollection>(body);
+
+        Assert.That(collection, Is.Not.Null);
+        Assert.That(collection!.ScoresCount, Is.EqualTo(1));
+        Assert.That(collection.Scores, Has.Count.EqualTo(1), "a pending map now serves its unranked board");
+        Assert.That(collection.Scores[0].TotalScore, Is.EqualTo(640000));
+        Assert.That(collection.Scores[0].Ranked, Is.False, "unranked-board rows must bind to SoloScoreInfo.Ranked = false");
+        Assert.That(collection.UserScore, Is.Not.Null, "the caller's own unranked play still gets a user_score");
+        Assert.That(collection.UserScore!.Position, Is.EqualTo(1), "positioned within the unranked board");
     }
 
     // ---------------------------------------------------------------------------------------------

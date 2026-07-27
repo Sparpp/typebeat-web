@@ -116,13 +116,15 @@ public class RankedApprovalTest
 
     [Test]
     [Order(2)]
-    public async Task ScoreOnPendingSet_StoresUnranked_AndRanksNoLeaderboard()
+    public async Task ScoreOnPendingSet_StoresUnranked_AndShowsOnTheUnrankedBoard()
     {
         var submitted = await SubmitScoreAsync(totalScore: 1_000_000);
 
         Assert.Multiple(() =>
         {
             Assert.That((bool)submitted["ranked"]!, Is.False, "a pending set's play must store unranked");
+            // No RANKED position: the submit response's position is the ranked board's, and the
+            // caller has no ranked score here. The unranked board carries its own positions.
             Assert.That(submitted["position"]!.Type, Is.EqualTo(JTokenType.Null));
         });
 
@@ -133,13 +135,20 @@ public class RankedApprovalTest
             Assert.That(ranked, Is.False);
         }
 
+        // A pending set serves the website's UNRANKED board through the game-facing endpoint, so
+        // the play that just stored unranked is visible (flagged ranked=false) rather than the map
+        // reading as boardless. Nothing about it counts; the ranked board stays empty until review.
         var leaderboard = await GetLeaderboardAsync();
+        var scores = (JArray)leaderboard["scores"]!;
 
         Assert.Multiple(() =>
         {
-            Assert.That((int)leaderboard["score_count"]!, Is.EqualTo(0), "pending sets have no leaderboard");
-            Assert.That((JArray)leaderboard["scores"]!, Is.Empty);
-            Assert.That(leaderboard["user_score"]!.Type, Is.EqualTo(JTokenType.Null));
+            Assert.That((int)leaderboard["score_count"]!, Is.EqualTo(1), "a pending set serves its unranked board");
+            Assert.That(scores, Has.Count.EqualTo(1));
+            Assert.That((long)scores[0]["total_score"]!, Is.EqualTo(1_000_000));
+            Assert.That((bool)scores[0]["ranked"]!, Is.False, "unranked-board rows are flagged as such on the wire");
+            Assert.That((long)leaderboard["user_score"]!["score"]!["id"]!, Is.EqualTo((long)submitted["id"]!));
+            Assert.That((int)leaderboard["user_score"]!["position"]!, Is.EqualTo(1));
         });
     }
 
@@ -216,7 +225,7 @@ public class RankedApprovalTest
 
     [Test]
     [Order(4)]
-    public async Task ReviewerUnrank_ReturnsToPending_AndLocksTheLeaderboardAgain()
+    public async Task ReviewerUnrank_ReturnsToPending_AndBuriesTheRankedBoardAgain()
     {
         using var client = await SignedInBrowserAsync(reviewer_name, reviewer_password);
         using var response = await PostHandlerAsync(client, "Unrank");
@@ -234,6 +243,21 @@ public class RankedApprovalTest
             // The ranked-era score keeps its flag, but the set page must not render a podium
             // for a pending set; the note replaces the whole leaderboard body.
             Assert.That(html, Does.Not.Contain("podium"));
+        });
+
+        // The map is pending again, so the API is back to serving its UNRANKED board: the
+        // pending-era 1,000,000 returns and the ranked-era 999,990 stays buried, exactly as the
+        // website's own Unranked tab (ranked = false) would list it. The Rank/Unrank lever is
+        // authoritative in both directions and neither board's rows ever cross onto the other.
+        var leaderboard = await GetLeaderboardAsync();
+        var scores = (JArray)leaderboard["scores"]!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((int)leaderboard["score_count"]!, Is.EqualTo(1));
+            Assert.That(scores, Has.Count.EqualTo(1));
+            Assert.That((long)scores[0]["total_score"]!, Is.EqualTo(1_000_000), "the unranked board, not the buried ranked one");
+            Assert.That((bool)scores[0]["ranked"]!, Is.False);
         });
     }
 
