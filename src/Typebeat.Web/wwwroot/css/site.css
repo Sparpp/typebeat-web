@@ -1391,6 +1391,16 @@ img { max-width: 100%; }
 
 a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
+/* ---- Set page: lyrics (below the leaderboard) ---- */
+
+.set-lyrics { margin-top: var(--space-6); }
+
+.set-lyrics__text {
+    white-space: pre-line;           /* stored '\n' per lyric line, no markup pipeline */
+    overflow-wrap: anywhere;
+    max-width: 68ch;
+}
+
 /* ---- Set page: leaderboard ---- */
 
 .set-leaderboard { margin-top: var(--space-6); }

@@ -143,8 +143,13 @@ public static class PublicSiteSeed
                 tags: "anthem leaderboard", source: "Type Hero", bpm: 128,
                 description: "Line one\nLine two <script>alert(1)</script>");
 
+            // Mixed-case multi-line lyrics + a markup probe: the set page's lyrics section must
+            // render one stored line per line, casing intact, always encoded (a real ingested
+            // haystack can't contain '<', Typeability.Normalize strips it, but the page must
+            // not care).
             LeaderboardBeatmapId = await InsertBeatmapAsync(conn, LeaderboardSetId,
-                totalLengthS: 95.5, stars: 3.2, wpm: 80, wordCount: 120, charCount: 600);
+                totalLengthS: 95.5, stars: 3.2, wpm: 80, wordCount: 120, charCount: 600,
+                lyrics: "Neon LIGHTS are calling\nWe TYPE through the storm\n<i>stage whisper</i>");
 
             CoveredSetId = await InsertSetAsync(conn,
                 title: "Covered In Neon", artist: "The Artwork",
