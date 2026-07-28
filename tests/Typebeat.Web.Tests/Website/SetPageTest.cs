@@ -85,6 +85,46 @@ public class SetPageTest
     }
 
     [Test]
+    public async Task LyricsSection_BelowLeaderboard_RendersLinesEncodedWithCasing()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync($"/beatmapsets/{PublicSiteSeed.LeaderboardSetId}");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(html, Does.Contain("set-lyrics"));
+
+            // The stored '\n' between lines reaches the markup as the &#xA; character reference
+            // (Razor's HtmlEncoder escapes control chars); the browser decodes it back to a
+            // newline in the text node, which pre-line renders as a line break. Casing survives.
+            Assert.That(html, Does.Contain("Neon LIGHTS are calling&#xA;We TYPE through the storm"));
+
+            // Plain text like the description: markup arrives encoded, never live.
+            Assert.That(html, Does.Contain("&lt;i&gt;stage whisper&lt;/i&gt;"));
+            Assert.That(html, Does.Not.Contain("<i>stage whisper</i>"));
+
+            // The section sits below the leaderboard.
+            Assert.That(html.IndexOf("set-lyrics", StringComparison.Ordinal),
+                Is.GreaterThan(html.IndexOf("set-leaderboard", StringComparison.Ordinal)));
+        });
+    }
+
+    [Test]
+    public async Task LyricsSection_Hidden_WhenTheDifficultyHasNoLyrics()
+    {
+        // The packageless fixture's diff carries the '' default (backfill not there yet / blank
+        // map): no lyrics section at all, not an empty box.
+        using var response = await WebsiteFixture.Client.GetAsync($"/beatmapsets/{PublicSiteSeed.PackagelessId}");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(html, Does.Not.Contain("set-lyrics"));
+        });
+    }
+
+    [Test]
     public async Task Favourite_Post_TogglesRowAndCounter()
     {
         long setId = PublicSiteSeed.LeaderboardSetId;

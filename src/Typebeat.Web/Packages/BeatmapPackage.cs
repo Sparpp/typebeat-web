@@ -64,11 +64,14 @@ public sealed class ParsedDifficulty
     public double SkippableS => InstrumentalGaps.SkippableSeconds(Lines);
 
     /// <summary>
-    /// The searchable lyric text: every line's normalized words, lowercased, joined with single
-    /// spaces. Stored on the beatmap row (<c>beatmaps.lyrics</c>, 018_lyrics_search.sql) as the
-    /// haystack for the site's <c>lyrics:</c> search operator.
+    /// The map's lyric text: every line's normalized words with the author's casing kept, one
+    /// lyric line per '\n'-separated line. Stored on the beatmap row (<c>beatmaps.lyrics</c>,
+    /// 018_lyrics_search.sql) where it serves double duty: the haystack for the site's
+    /// <c>lyrics:</c> search operator (per-word ILIKE is case-insensitive and its wildcards
+    /// cross newlines, so this display-friendly form searches identically to a folded one) and
+    /// the set page's lyrics section (rendered one stored line per line).
     /// </summary>
-    public string LyricsText => string.Join(' ', Lines.Select(l => l.RawText)).ToLowerInvariant();
+    public string LyricsText => string.Join('\n', Lines.Select(l => l.RawText));
 }
 
 /// <summary>The fully parsed contents of an uploaded beatmap package zip.</summary>

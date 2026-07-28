@@ -36,8 +36,9 @@ public static class LyricPace
     /// backfill rewrites every other column with byte-identical values; the bump exists purely to
     /// make it revisit every row and fill the new column from the stored blob.
     /// v8 = <c>beatmaps.lyrics</c> is written alongside (ParsedDifficulty.LyricsText, the
-    /// lyrics: search operator's haystack; 018_lyrics_search.sql). As at v7 the arithmetic is
-    /// unchanged; the bump revisits every row to fill the new column.
+    /// lyrics: search operator's haystack and the set page's lyrics display text;
+    /// 018_lyrics_search.sql). As at v7 the arithmetic is unchanged; the bump revisits every
+    /// row to fill the new column.
     /// </summary>
     public const int VERSION = 8;
 

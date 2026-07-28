@@ -302,3 +302,15 @@
         </div>
     }
 </section>
+
+@if (Model.Diff is not null && Model.Diff.Lyrics.Length > 0)
+{
+    @* The selected difficulty's stored lyric text (?diff= re-renders, same as the stats box
+       and leaderboard above). Same plain-text discipline as the description: default Razor
+       encoding + pre-line = XSS-safe line breaks, one stored lyric line per rendered line.
+       An empty string (blank map, or the backfill has not reached it) hides the section. *@
+    <section class="set-lyrics">
+        <h2>Lyrics@(Model.Diffs.Count > 1 ? $": {Model.Diff.Name}" : "")</h2>
+        <div class="set-lyrics__text">@Model.Diff.Lyrics</div>
+    </section>
+}

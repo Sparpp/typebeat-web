@@ -349,7 +349,8 @@ public sealed class PackageIngest(
                     // What the in-game skip button may legally remove from this map; the
                     // play-time gate's allowance (Scoring/PlayTimeGate).
                     skippableS = diff.SkippableS,
-                    // The lyrics: search operator's haystack (018_lyrics_search.sql).
+                    // The lyrics: search operator's haystack, also rendered by the set page's
+                    // lyrics section (018_lyrics_search.sql).
                     lyrics = diff.LyricsText,
                 });
         }

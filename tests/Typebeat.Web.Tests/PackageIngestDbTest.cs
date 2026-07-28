@@ -343,15 +343,35 @@ public class PackageIngestDbTest
     {
         // Superseded assembled packages are pure derivatives of the content-addressed blobs;
         // only the latest two survive a version cut (75 GB prod disk, see ingest comment).
+        //
+        // The added second difficulty carries two mixed-case [Lyrics] lines: the end-to-end pin
+        // that the author's casing and the line structure survive the whole ingest write path
+        // into beatmaps.lyrics (the set page renders that column verbatim; search ILIKEs it
+        // case-insensitively, so the display-friendly form costs the operator nothing).
+        const string mixedCaseLyrics =
+            """
+            {"version":2,"song_end_ms":9000}
+            {"text":"Neon SKYLINE","start_ms":1000,"end_ms":3000}
+            {"text":"we Type at Night","start_ms":4000,"end_ms":8000}
+            """;
+
         var entries = new (string, byte[])[]
         {
             ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId, previewTime: 2500))),
+            ("map2.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(title: "Neon Nights", titleUnicode: "Neon Nights", version: "Hard", beatmapId: 1002, beatmapSetId: setId, lyrics: mixedCaseLyrics))),
             ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
         };
 
         var result = await ingestAsync(entries);
 
         Assert.That(result.VersionNo, Is.EqualTo(3));
+
+        await using (var conn = await db.OpenAsync())
+        {
+            string? storedLyrics = await conn.ExecuteScalarAsync<string?>(
+                "SELECT lyrics FROM beatmaps WHERE id = 1002");
+            Assert.That(storedLyrics, Is.EqualTo("Neon SKYLINE\nwe Type at Night"));
+        }
 
         bool latest = await fileStore.ObjectExistsAsync(StoreKeys.Package(setId, 3));
         bool previous = await fileStore.ObjectExistsAsync(StoreKeys.Package(setId, 2));

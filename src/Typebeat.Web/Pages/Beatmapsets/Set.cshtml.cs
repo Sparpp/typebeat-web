@@ -8,8 +8,10 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 
 /// <summary>
 /// Beatmapset page (/beatmapsets/{id}): cover header with scrim, stats box, plain-text
-/// description, tags, and the global leaderboard (top 50 best-per-user, podium for #1),
-/// rendered only on 'ranked' sets; anything else shows a "unlocks when ranked" note instead.
+/// description, tags, the global leaderboard (top 50 best-per-user, podium for #1),
+/// rendered only on 'ranked' sets; anything else shows a "unlocks when ranked" note instead;
+/// and, below the leaderboard, the selected difficulty's lyrics (beatmaps.lyrics, hidden
+/// when empty).
 /// POST handlers: Favourite (toggle + denormalized counter bump), Report (reports table),
 /// and the reviewer-only Rank/Unrank pair (pending ⇄ ranked, nothing else).
 /// Hidden sets are visible to their owner only. Removed sets 404 for the public but stay
@@ -102,7 +104,8 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                    b.word_count            AS WordCount,
                    b.char_count            AS CharCount,
                    b.wpm::double precision AS Wpm,
-                   b.difficulty_rating     AS Stars
+                   b.difficulty_rating     AS Stars,
+                   b.lyrics                AS Lyrics
             FROM beatmaps b
             WHERE b.set_id = @id AND b.filename IS NOT NULL
             ORDER BY b.difficulty_rating DESC, b.id ASC
@@ -315,7 +318,10 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         public string DisplayArtist(bool preferOriginal) => MetadataDisplay.Pick(Artist, ArtistUnicode, preferOriginal);
     }
 
-    public sealed record DiffStats(long Id, string Name, double TotalLengthS, int? WordCount, int? CharCount, double? Wpm, double Stars);
+    /// <summary><paramref name="Lyrics"/> is the stored per-difficulty lyric text (one lyric
+    /// line per '\n', author's casing; ParsedDifficulty.LyricsText), empty when unknown (blank
+    /// map, or the v8 backfill has not reached the row), which hides the lyrics section.</summary>
+    public sealed record DiffStats(long Id, string Name, double TotalLengthS, int? WordCount, int? CharCount, double? Wpm, double Stars, string Lyrics);
 
     /// <summary>
     /// One leaderboard row. Judgement counts come from the statistics jsonb (wire keys

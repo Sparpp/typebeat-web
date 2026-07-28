@@ -2,9 +2,13 @@
 -- words appearing in a map's sung lyrics, so the searchable text itself must live in a column.
 --
 -- The haystack is derived from the .osu [Lyrics] section at parse time: every resolved line's
--- normalized text, lowercased, joined with single spaces (ParsedDifficulty.LyricsText). It is
--- written per difficulty at ingest (PackageIngest) and queried by BeatmapSearchSql as per-word
--- ILIKE clauses inside the same per-difficulty EXISTS the numeric operators use.
+-- normalized text with its original casing, one lyric line per newline
+-- (ParsedDifficulty.LyricsText; the set page also renders this column, which is why the
+-- display-lossy lowercase/space-joined form was abandoned before shipping). It is written per
+-- difficulty at ingest (PackageIngest) and queried by BeatmapSearchSql as per-word ILIKE
+-- clauses inside the same per-difficulty EXISTS the numeric operators use; ILIKE is
+-- case-insensitive and % crosses newlines, so search behaves the same as it would on a
+-- lowercased, space-joined haystack.
 --
 -- Existing rows cannot be backfilled here: like skippable_s in 016_refund_skip_gate.sql, the
 -- source text lives in the content-addressed .osu blobs (files/{sha256}), not in any column, so
