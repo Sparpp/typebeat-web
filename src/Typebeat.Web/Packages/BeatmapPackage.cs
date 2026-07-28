@@ -62,6 +62,13 @@ public sealed class ParsedDifficulty
     /// play-time anti-cheat gate can price an honest skip-using play without re-reading the blob.
     /// </summary>
     public double SkippableS => InstrumentalGaps.SkippableSeconds(Lines);
+
+    /// <summary>
+    /// The searchable lyric text: every line's normalized words, lowercased, joined with single
+    /// spaces. Stored on the beatmap row (<c>beatmaps.lyrics</c>, 018_lyrics_search.sql) as the
+    /// haystack for the site's <c>lyrics:</c> search operator.
+    /// </summary>
+    public string LyricsText => string.Join(' ', Lines.Select(l => l.RawText)).ToLowerInvariant();
 }
 
 /// <summary>The fully parsed contents of an uploaded beatmap package zip.</summary>

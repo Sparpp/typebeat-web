@@ -111,6 +111,62 @@ public class BeatmapSearchOperatorTest
     }
 
     [Test]
+    public async Task Lyrics_Operator_MatchesTheMapSingingTheWord()
+    {
+        var ids = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset lyrics:skyline")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ids, Does.Contain(PublicSiteSeed.OpAlphaId));
+            Assert.That(ids, Does.Not.Contain(PublicSiteSeed.OpBravoId));
+        });
+    }
+
+    [Test]
+    public async Task Lyrics_Operator_IsCaseInsensitive()
+    {
+        var ids = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset lyrics:SKYLINE")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ids, Does.Contain(PublicSiteSeed.OpAlphaId));
+            Assert.That(ids, Does.Not.Contain(PublicSiteSeed.OpBravoId));
+        });
+    }
+
+    [Test]
+    public async Task Lyrics_MultiWordValue_RequiresEveryWord()
+    {
+        // Both fixtures sing "night"; only Bravo also sings "rain". A pair that no single
+        // fixture sings together must match neither, proving the words AND rather than OR.
+        var night = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset lyrics:night")));
+        var bravoOnly = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset lyrics:\"night rain\"")));
+        var neither = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset lyrics:\"skyline rain\"")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(night, Does.Contain(PublicSiteSeed.OpAlphaId));
+            Assert.That(night, Does.Contain(PublicSiteSeed.OpBravoId));
+            Assert.That(bravoOnly, Does.Contain(PublicSiteSeed.OpBravoId));
+            Assert.That(bravoOnly, Does.Not.Contain(PublicSiteSeed.OpAlphaId));
+            Assert.That(neither, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task Lyrics_CombinesWithNumericOperators_OnTheSameDifficulty()
+    {
+        // Bravo sings "night" AND has stars 7.0; Alpha sings "night" but sits at 4.5 stars.
+        var ids = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset lyrics:night star:>6")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ids, Does.Contain(PublicSiteSeed.OpBravoId));
+            Assert.That(ids, Does.Not.Contain(PublicSiteSeed.OpAlphaId));
+        });
+    }
+
+    [Test]
     public async Task MultipleOperators_CombineWithAnd()
     {
         // star:>6 AND wpm:>150 both point at Bravo only.
@@ -151,6 +207,7 @@ public class BeatmapSearchOperatorTest
             Assert.That(html, Does.Contain("search-guide"));
             Assert.That(html, Does.Contain("star:"));
             Assert.That(html, Does.Contain("length:"));
+            Assert.That(html, Does.Contain("lyrics:"));
         });
     }
 

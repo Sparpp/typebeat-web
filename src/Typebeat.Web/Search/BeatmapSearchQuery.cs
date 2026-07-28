@@ -141,7 +141,7 @@ public sealed class BeatmapSearchQuery
 
 public enum FilterField
 {
-    Title, Artist, Creator, Source, Tag,
+    Title, Artist, Creator, Source, Tag, Lyrics,
     Stars, Wpm, Cpm, Length, Bpm,
     Date,
     Explicit,
@@ -161,6 +161,8 @@ internal static class Fields
         ["source"] = FilterField.Source,
         ["tag"] = FilterField.Tag,
         ["tags"] = FilterField.Tag,
+        ["lyrics"] = FilterField.Lyrics,
+        ["lyric"] = FilterField.Lyrics,
         ["star"] = FilterField.Stars,
         ["stars"] = FilterField.Stars,
         ["wpm"] = FilterField.Wpm,
@@ -180,7 +182,7 @@ internal static class Fields
     public static FieldKind Kind(FilterField field) => field switch
     {
         FilterField.Title or FilterField.Artist or FilterField.Creator
-            or FilterField.Source or FilterField.Tag => FieldKind.Text,
+            or FilterField.Source or FilterField.Tag or FilterField.Lyrics => FieldKind.Text,
         FilterField.Date => FieldKind.Date,
         FilterField.Explicit => FieldKind.Bool,
         _ => FieldKind.Numeric,
