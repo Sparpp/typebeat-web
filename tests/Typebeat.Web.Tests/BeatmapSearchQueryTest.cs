@@ -379,6 +379,67 @@ public class BeatmapSearchQueryTest
         Assert.That(param["op0"], Is.EqualTo(@"%50\%%"));
     }
 
+    // ---- lyrics operator ----
+
+    [Test]
+    public void LyricsOperator_IsATextFilter_WithLyricAlias()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(BeatmapSearchQuery.Parse("lyrics:neon").TextFilters.Single().Field, Is.EqualTo(FilterField.Lyrics));
+            Assert.That(BeatmapSearchQuery.Parse("lyric:neon").TextFilters.Single().Field, Is.EqualTo(FilterField.Lyrics));
+        });
+    }
+
+    [Test]
+    public void LyricsOperator_QuotedValue_KeepsAllWords()
+    {
+        var q = BeatmapSearchQuery.Parse("lyrics:\"neon night drive\" extra");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(q.TextFilters.Single().Value, Is.EqualTo("neon night drive"));
+            Assert.That(q.FreeText, Is.EqualTo("extra"));
+        });
+    }
+
+    [Test]
+    public void Sql_Lyrics_EachWordGetsItsOwnIlike_AllInsideOneExists()
+    {
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("lyrics:\"neon night\""));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(System.Text.RegularExpressions.Regex.Matches(sql, "EXISTS").Count, Is.EqualTo(1));
+            Assert.That(System.Text.RegularExpressions.Regex.Matches(sql, @"b\.lyrics ILIKE").Count, Is.EqualTo(2));
+            Assert.That(param["op0"], Is.EqualTo("%neon%"));
+            Assert.That(param["op1"], Is.EqualTo("%night%"));
+        });
+    }
+
+    [Test]
+    public void Sql_Lyrics_SharesTheExistsWithPerDifficultyNumerics()
+    {
+        // Same-difficulty semantics: a set must have ONE live diff that is both >4 stars and
+        // sings the word, exactly like stacked numeric filters.
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("star:>4 lyrics:neon"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(System.Text.RegularExpressions.Regex.Matches(sql, "EXISTS").Count, Is.EqualTo(1));
+            Assert.That(sql, Does.Contain("b.difficulty_rating > @op0"));
+            Assert.That(sql, Does.Contain("b.lyrics ILIKE @op1"));
+            Assert.That(param["op1"], Is.EqualTo("%neon%"));
+        });
+    }
+
+    [Test]
+    public void Sql_Lyrics_EscapesLikeWildcardsPerWord()
+    {
+        var (_, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("lyrics:100%"));
+        Assert.That(param["op0"], Is.EqualTo(@"%100\%%"));
+    }
+
     // ---- boolean operator (explicit:) ----
 
     [Test]

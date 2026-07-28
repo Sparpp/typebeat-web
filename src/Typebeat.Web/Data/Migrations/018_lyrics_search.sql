@@ -1,0 +1,19 @@
+-- Lyrics search (task 56): the /beatmapsets search box gains a lyrics: operator that matches
+-- words appearing in a map's sung lyrics, so the searchable text itself must live in a column.
+--
+-- The haystack is derived from the .osu [Lyrics] section at parse time: every resolved line's
+-- normalized text, lowercased, joined with single spaces (ParsedDifficulty.LyricsText). It is
+-- written per difficulty at ingest (PackageIngest) and queried by BeatmapSearchSql as per-word
+-- ILIKE clauses inside the same per-difficulty EXISTS the numeric operators use.
+--
+-- Existing rows cannot be backfilled here: like skippable_s in 016_refund_skip_gate.sql, the
+-- source text lives in the content-addressed .osu blobs (files/{sha256}), not in any column, so
+-- no SQL can compute it. PaceBackfill fills the column at startup via the LyricPace.VERSION bump
+-- to 8 (the v7 precedent: the bump exists purely to make the backfill revisit every row and fill
+-- the new column from the stored blob; the pace/star arithmetic itself is unchanged).
+--
+-- WHY '' AND NOT NULL. Empty means "no searchable lyrics known": the operator's ILIKE simply
+-- never matches, so a row the backfill has not reached yet (or cannot reach: blob missing,
+-- parse error) is invisible to lyrics: searches rather than a NULL special case. The BSS
+-- placeholder rows (INSERT ... (set_id, checksum_md5) in BssEndpoints) land on the default too.
+ALTER TABLE beatmaps ADD COLUMN lyrics text NOT NULL DEFAULT '';

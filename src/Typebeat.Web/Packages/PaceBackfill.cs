@@ -59,6 +59,7 @@ public static class PaceBackfill
                         char_count = @charCount,
                         wpm = @wpm,
                         skippable_s = @skippableS,
+                        lyrics = @lyrics,
                         pace_version = @paceVersion
                     WHERE id = @id
                     """,
@@ -72,6 +73,9 @@ public static class PaceBackfill
                         // v7: the skip allowance the play-time gate subtracts from drain. Rows the
                         // backfill cannot reach keep skippable_s = 0, i.e. the pre-task-47 bound.
                         skippableS = diff.SkippableS,
+                        // v8: the lyrics: search haystack. Rows the backfill cannot reach keep '',
+                        // i.e. invisible to lyrics: searches (018_lyrics_search.sql).
+                        lyrics = diff.LyricsText,
                         paceVersion = LyricPace.VERSION,
                     });
 

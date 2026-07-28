@@ -35,8 +35,11 @@ public static class LyricPace
     /// 016_refund_skip_gate.sql). The pace/star arithmetic itself is unchanged at v7, so the
     /// backfill rewrites every other column with byte-identical values; the bump exists purely to
     /// make it revisit every row and fill the new column from the stored blob.
+    /// v8 = <c>beatmaps.lyrics</c> is written alongside (ParsedDifficulty.LyricsText, the
+    /// lyrics: search operator's haystack; 018_lyrics_search.sql). As at v7 the arithmetic is
+    /// unchanged; the bump revisits every row to fill the new column.
     /// </summary>
-    public const int VERSION = 7;
+    public const int VERSION = 8;
 
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;

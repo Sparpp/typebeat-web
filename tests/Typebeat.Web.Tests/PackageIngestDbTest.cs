@@ -203,10 +203,11 @@ public class PackageIngestDbTest
         Assert.That(searchHits, Is.True, "search vector should match the title");
 
         // Beatmap row upserted by allocated id with the pace-derived stats.
-        var beatmap = await conn.QuerySingleAsync<(string Filename, string Checksum, int WordCount, int CharCount, decimal Wpm, double Difficulty)>(
+        var beatmap = await conn.QuerySingleAsync<(string Filename, string Checksum, int WordCount, int CharCount, decimal Wpm, double Difficulty, string Lyrics)>(
             """
             SELECT filename AS Filename, checksum_md5 AS Checksum, word_count AS WordCount,
-                   char_count AS CharCount, wpm AS Wpm, difficulty_rating AS Difficulty
+                   char_count AS CharCount, wpm AS Wpm, difficulty_rating AS Difficulty,
+                   lyrics AS Lyrics
             FROM beatmaps WHERE id = 1001
             """);
 
@@ -218,6 +219,7 @@ public class PackageIngestDbTest
             Assert.That(beatmap.CharCount, Is.EqualTo(5));
             Assert.That((double)beatmap.Wpm, Is.EqualTo(40).Within(1e-6));
             Assert.That(beatmap.Difficulty, Is.EqualTo(0.61).Within(0.01)); // strain-based stars
+            Assert.That(beatmap.Lyrics, Is.EqualTo("ab cd")); // the lyrics: search haystack
         });
 
         // Blobs + assembled package + covers exist in the store.
@@ -381,16 +383,16 @@ public class PackageIngestDbTest
         await conn.ExecuteAsync(
             """
             UPDATE beatmaps
-            SET wpm = 999, difficulty_rating = 9.9, word_count = 1, char_count = 1, pace_version = 1
+            SET wpm = 999, difficulty_rating = 9.9, word_count = 1, char_count = 1, lyrics = '', pace_version = 1
             WHERE id = 1001
             """);
 
         await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
 
-        var row = await conn.QuerySingleAsync<(decimal Wpm, double Difficulty, int WordCount, int CharCount, int PaceVersion)>(
+        var row = await conn.QuerySingleAsync<(decimal Wpm, double Difficulty, int WordCount, int CharCount, string Lyrics, int PaceVersion)>(
             """
             SELECT wpm AS Wpm, difficulty_rating AS Difficulty, word_count AS WordCount,
-                   char_count AS CharCount, pace_version AS PaceVersion
+                   char_count AS CharCount, lyrics AS Lyrics, pace_version AS PaceVersion
             FROM beatmaps WHERE id = 1001
             """);
 
@@ -401,6 +403,7 @@ public class PackageIngestDbTest
             Assert.That(row.Difficulty, Is.EqualTo(0.61).Within(0.01)); // strain-based stars
             Assert.That(row.WordCount, Is.EqualTo(2));
             Assert.That(row.CharCount, Is.EqualTo(5));
+            Assert.That(row.Lyrics, Is.EqualTo("ab cd")); // v8 fills the lyrics: haystack
             Assert.That(row.PaceVersion, Is.EqualTo(LyricPace.VERSION));
         });
 

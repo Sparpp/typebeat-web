@@ -198,14 +198,18 @@ public static class PublicSiteSeed
             OpAlphaId = await InsertSetAtAsync(conn,
                 title: "Operator Alpha Synthwave", artist: "Synth Operator",
                 tags: "operatorset", submittedAt: new DateTime(2024, 3, 15, 0, 0, 0, DateTimeKind.Utc));
+            // Disjoint lyric haystacks (only "night" shared) so the lyrics: tests can prove
+            // single-word narrowing and multi-word AND semantics within the pair.
             await InsertBeatmapAsync(conn, OpAlphaId,
-                totalLengthS: 90, stars: 4.5, wpm: 100, wordCount: 100, charCount: 500);
+                totalLengthS: 90, stars: 4.5, wpm: 100, wordCount: 100, charCount: 500,
+                lyrics: "neon skyline glowing all night");
 
             OpBravoId = await InsertSetAtAsync(conn,
                 title: "Operator Bravo Ballad", artist: "Piano Operator",
                 tags: "operatorset", submittedAt: new DateTime(2022, 11, 1, 0, 0, 0, DateTimeKind.Utc));
             await InsertBeatmapAsync(conn, OpBravoId,
-                totalLengthS: 240, stars: 7.0, wpm: 200, wordCount: 100, charCount: 700);
+                totalLengthS: 240, stars: 7.0, wpm: 200, wordCount: 100, charCount: 700,
+                lyrics: "quiet rain falls on the piano at night");
 
             // Every seeded set EXCEPT the packageless one gets a version row, mirroring sets
             // that went through the upload pipeline: the set page / card Download actions key
@@ -275,21 +279,22 @@ public static class PublicSiteSeed
             new { ownerId = MapperId, title, artist, tags, status, submittedAt });
 
     private static async Task<long> InsertBeatmapAsync(NpgsqlConnection conn, long setId,
-        double totalLengthS, double stars, double wpm, int wordCount, int charCount)
+        double totalLengthS, double stars, double wpm, int wordCount, int charCount,
+        string lyrics = "")
         => await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmaps
                 (set_id, version_name, checksum_md5, total_length_s, drain_length_s,
-                 difficulty_rating, filename, word_count, char_count, wpm)
+                 difficulty_rating, filename, word_count, char_count, wpm, lyrics)
             VALUES
                 (@setId, 'type!beat', @checksum, @totalLengthS, @drainLengthS,
-                 @stars, 'map.osu', @wordCount, @charCount, @wpm)
+                 @stars, 'map.osu', @wordCount, @charCount, @wpm, @lyrics)
             RETURNING id
             """,
             new
             {
                 setId, checksum = Guid.NewGuid().ToString("N"), totalLengthS,
-                drainLengthS = totalLengthS * 0.9, stars, wordCount, charCount, wpm,
+                drainLengthS = totalLengthS * 0.9, stars, wordCount, charCount, wpm, lyrics,
             });
 
     private static async Task InsertScoreAsync(NpgsqlConnection conn, long userId, long beatmapId,

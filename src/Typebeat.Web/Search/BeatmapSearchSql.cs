@@ -9,9 +9,9 @@ namespace Typebeat.Web.Search;
 /// listing's base predicate, and every value is a Dapper parameter; column references come
 /// only from the parser's whitelist, values are NEVER interpolated. Aliases assumed by the
 /// generated SQL match <see cref="Pages.BeatmapsetCardSql"/>: <c>s</c> = beatmapsets,
-/// <c>u</c> = owner. Per-difficulty numeric filters (stars/wpm/cpm/length) resolve through an
-/// EXISTS over <c>beatmaps</c>, so a set matches when ONE of its live difficulties satisfies
-/// all of them together.
+/// <c>u</c> = owner. Per-difficulty filters (the stars/wpm/cpm/length numerics and the lyrics:
+/// words) resolve through an EXISTS over <c>beatmaps</c>, so a set matches when ONE of its live
+/// difficulties satisfies all of them together.
 /// </summary>
 public static class BeatmapSearchSql
 {
@@ -47,7 +47,9 @@ public static class BeatmapSearchSql
             return name;
         }
 
-        foreach (var f in query.TextFilters)
+        // Lyrics text lives per difficulty (beatmaps.lyrics), so lyrics: joins the per-difficulty
+        // EXISTS below rather than the set-scoped clauses here.
+        foreach (var f in query.TextFilters.Where(f => f.Field != FilterField.Lyrics))
         {
             string p = Next("%" + EscapeLike(f.Value) + "%");
             string clause = f.Field switch
@@ -62,13 +64,24 @@ public static class BeatmapSearchSql
             sql.Append("\nAND ").Append(clause);
         }
 
-        // Per-difficulty numerics collapse into one EXISTS so they apply to the SAME difficulty.
+        // Per-difficulty predicates collapse into one EXISTS so they apply to the SAME difficulty:
+        // the numeric stats, and the lyrics haystack. A lyrics: value is split on whitespace and
+        // EVERY word must appear somewhere in that difficulty's lyrics (one ILIKE per word, ANDed),
+        // so lyrics:"neon night" finds maps singing both words in any order.
         var perDiff = query.NumericFilters.Where(n => n.Field != FilterField.Bpm).ToList();
-        if (perDiff.Count > 0)
+        var lyricWords = query.TextFilters
+            .Where(f => f.Field == FilterField.Lyrics)
+            .SelectMany(f => f.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .ToList();
+
+        if (perDiff.Count > 0 || lyricWords.Count > 0)
         {
             var inner = new StringBuilder();
             foreach (var n in perDiff)
                 inner.Append(" AND ").Append(Comparison(BeatmapExpr(n.Field), n, Next));
+
+            foreach (string word in lyricWords)
+                inner.Append(" AND b.lyrics ILIKE @").Append(Next("%" + EscapeLike(word) + "%"));
 
             sql.Append("\nAND EXISTS (SELECT 1 FROM beatmaps b WHERE b.set_id = s.id AND b.filename IS NOT NULL")
                .Append(inner)
