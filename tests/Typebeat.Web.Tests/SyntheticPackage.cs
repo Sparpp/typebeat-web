@@ -34,6 +34,9 @@ public static class SyntheticPackage
         string version = "type!beat",
         string source = "",
         string tags = "typebeat lyrics typing",
+        // Empty = the file states no language, which is exactly what every pre-task-58 client
+        // wrote and what the game's encoder still writes for an "unspecified" map.
+        string language = "",
         long? beatmapId = 1001,
         long? beatmapSetId = 1,
         string audioFilename = "audio.mp3",
@@ -65,6 +68,11 @@ public static class SyntheticPackage
             sb.Append($"Source:{source}\n");
 
         sb.Append($"Tags:{tags}\n");
+
+        // Written only when set, mirroring the game's encoder: an unspecified map emits no line at
+        // all, which keeps existing maps' encodings byte-identical.
+        if (language.Length > 0)
+            sb.Append($"Language:{language}\n");
 
         if (beatmapId != null)
             sb.Append($"BeatmapID: {beatmapId}\n");

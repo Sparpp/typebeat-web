@@ -36,6 +36,14 @@ public sealed class ParsedDifficulty
     public string VersionName { get; init; } = string.Empty;
     public string Source { get; init; } = string.Empty;
     public string Tags { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Raw <c>[Metadata] Language:</c> text, empty when the file states none (which is what every
+    /// pre-task-58 client writes). Fold it with <see cref="BeatmapLanguages.Normalize"/> before
+    /// storing; nothing else should interpret it.
+    /// </summary>
+    public string Language { get; init; } = string.Empty;
+
     public long? BeatmapId { get; init; }
     public long? BeatmapSetId { get; init; }
 

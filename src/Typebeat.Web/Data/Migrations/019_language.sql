@@ -1,0 +1,44 @@
+-- Song language (task 58): the /beatmapsets search box gains a language: (alias lang:) operator,
+-- and the set page shows the language as a chip beside source/tags. Language is a property of the
+-- SONG, not of a chart, so it lives on beatmapsets rather than beatmaps: two difficulties of the
+-- same track are never in different languages, and every consumer (search, set page) is set-scoped.
+--
+-- THE VALUE SET is osu's language list, stored as its canonical lowercase english name:
+--   english japanese chinese korean french german spanish italian russian polish swedish
+--   instrumental other
+-- (Packages/BeatmapLanguages.cs is the server's single source of truth for that list, its input
+-- aliases, and its display casing; the game mirrors it as the BeatmapLanguage enum, and
+-- tests/Typebeat.WireCompat pins the two lists against each other.)
+--
+-- WHY '' AND NOT NULL, AND NOT 'unspecified'. Empty means "language not known yet", exactly as
+-- beatmaps.lyrics uses '' for "no searchable lyrics known" (018_lyrics_search.sql):
+--   * the language: operator compares for equality against a canonical name, so '' simply never
+--     matches, and a row nothing has determined a language for is invisible to the filter rather
+--     than a NULL special case scattered through every query;
+--   * it is the natural DEFAULT for the rows PUT /bss/beatmapsets inserts before any package has
+--     been uploaded (BssEndpoints), and for every set that predates this migration;
+--   * 'unspecified' is deliberately NOT a stored value. It exists only in the game's editor
+--     dropdown as the "you have not picked yet" state, and the client BLOCKS submission while it
+--     is selected, so it can never be a mapper's answer. The server normalises an incoming
+--     'unspecified' (or anything unrecognised) back to '' (BeatmapLanguages.Normalize).
+--
+-- HOW IT GETS FILLED. Two ways, and they do not fight:
+--   1. Uploads. The game writes [Metadata] Language: into every .osu it encodes; the parser reads
+--      it (BeatmapPackageParser) and PackageIngest writes the primary difficulty's value onto the
+--      set. An upload that reports NO language (any pre-task-58 client) leaves the stored value
+--      alone rather than clearing it, so an old client re-submitting a map cannot wipe a language
+--      that is already known.
+--   2. Backfill. Packages/LanguageBackfill.cs sweeps at startup, detects the language of every set
+--      still on '' from the lyric text already stored in beatmaps.lyrics, and writes the result.
+--      It only ever touches rows that are still '', so a mapper's own answer always wins, and it
+--      leaves rows it cannot confidently classify at '' to be retried on the next boot.
+--
+-- No backfill is expressible here for the same reason 016/018 could not do theirs in SQL: the
+-- detector is a C# heuristic over the lyric text (script census plus stopword scoring), not a
+-- query.
+ALTER TABLE beatmapsets ADD COLUMN language text NOT NULL DEFAULT '';
+
+-- The listing filters on equality against a single canonical name and never scans the unset rows
+-- (they can never match), so a partial index keeps the whole thing off the not-yet-classified
+-- majority while the backfill is still working through them.
+CREATE INDEX idx_beatmapsets_language ON beatmapsets (language) WHERE language <> '';
