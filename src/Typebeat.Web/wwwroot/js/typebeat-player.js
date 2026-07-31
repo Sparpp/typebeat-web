@@ -69,8 +69,10 @@
 
     // The sung-position polyline for one line (mirrors TypingLine's sungPoints constructor):
     // (startTime, 0), each cell's (target, cellIndex), (singEndTime, cellCount), with times
-    // clamped monotonic non-decreasing. Every core cell is typeable after normalization, so
-    // every cell contributes a point, exactly as the C# does for its typeable cells.
+    // clamped monotonic non-decreasing. Every cell of the DEFAULT stream is typeable (normalize
+    // strips anything outside the typeable surface and the supported marks, and the derivation then
+    // removes the marks), so every cell contributes a point, exactly as the C# does for its
+    // typeable cells.
     function buildSungPoints(line) {
         const points = [{ t: line.startTime, i: 0 }];
         let last = line.startTime;

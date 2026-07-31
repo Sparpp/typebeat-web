@@ -129,20 +129,21 @@ public class PackageParserTest
     [Test]
     public void Parse_LyricsText_PreservesCasingAndLineStructure()
     {
-        // The stored haystack doubles as the set page's display text: the author's casing must
-        // survive and each [Lyrics] line must stay its own '\n'-separated line (search is
-        // unaffected: per-word ILIKE is case-insensitive and % crosses newlines). Untypeable
-        // punctuation still normalizes away as everywhere else.
+        // The stored haystack doubles as the set page's display text, so it carries the AUTHOR'S
+        // form: casing survives, the supported punctuation survives (better display, and search is
+        // unaffected because a per-word ILIKE '%word%' still matches a word with a mark stuck to
+        // it), and each [Lyrics] line stays its own '\n'-separated line. Unsupported chars still
+        // normalize away as everywhere else.
         const string lyrics =
             """
             {"version":2,"song_end_ms":9000}
             {"text":"Neon SKYLINE, glowing!","start_ms":1000,"end_ms":3000}
-            {"text":"we Type at Night","start_ms":4000,"end_ms":8000}
+            {"text":"we Type* at Night","start_ms":4000,"end_ms":8000}
             """;
 
         var diff = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: lyrics)));
 
-        Assert.That(diff.LyricsText, Is.EqualTo("Neon SKYLINE glowing\nwe Type at Night"));
+        Assert.That(diff.LyricsText, Is.EqualTo("Neon SKYLINE, glowing!\nwe Type at Night"));
     }
 
     [Test]

@@ -39,6 +39,17 @@ public static class LyricPace
     /// lyrics: search operator's haystack and the set page's lyrics display text;
     /// 018_lyrics_search.sql). As at v7 the arithmetic is unchanged; the bump revisits every
     /// row to fill the new column.
+    ///
+    /// <para>NOT bumped for the punctuation change (backlog 59), deliberately. The arithmetic now
+    /// runs on <see cref="Typeability.ToDefaultStream"/> of each line rather than the line itself,
+    /// which is a no-op (bar case, which no count sees) for any text carrying no hyphen and no
+    /// mark. Every blob the game's own encoder wrote holds exactly such text, because the old
+    /// normalizer stripped the marks before they were ever stored. Blobs the .osz conversion tool
+    /// produced re-emit the ALIGNER's raw line objects, which do carry marks, so re-parsing those
+    /// would now yield punctuated lines and different word/cell counts. Leaving VERSION alone is
+    /// what keeps the backfill away from them: existing rows are not touched, and only a re-upload
+    /// re-derives. Bump to 9 when the intent is deliberately to re-derive every stored map against
+    /// the punctuated text.</para>
     /// </summary>
     public const int VERSION = 8;
 
@@ -65,7 +76,14 @@ public static class LyricPace
         {
             // Cell arithmetic mirrors TypingLine.FromLyricLine: every typeable char is a
             // cell, plus one typeable space cell per token gap.
-            string[] tokens = line.RawText.Split(' ');
+            //
+            // Measured on the DEFAULT stream, never the authored (punctuated, cased) line: a map's
+            // pace has to be the pace of the play everyone shares, not of the harder Literate
+            // variant, and it has to stay comparable with every figure computed before punctuation
+            // existed. For a hyphen-free, mark-free line, which is every line of every blob written
+            // before then, ToDefaultStream is exactly ToLowerInvariant, and case cannot change a
+            // count, so those rows recompute byte-identically and VERSION does not move.
+            string[] tokens = Typeability.ToDefaultStream(line.RawText).Split(' ');
 
             int cells = tokens.Length - 1;
             int words = 0;

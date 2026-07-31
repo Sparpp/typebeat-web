@@ -43,10 +43,12 @@ public class FreestyleParityTest
 
             Assert.That(Str(root, "normalizeDefault"), Is.EqualTo("RB rock roll"));
 
-            // Opted in, the markers survive; everything else normalizes exactly as before
-            // (punctuation dropped, whitespace collapsed and trimmed).
+            // Opted in, the markers survive; whitespace still collapses and trims, and the
+            // supported punctuation is now KEPT (the stored line is the author's form) and derived
+            // away by the default stream instead.
             Assert.That(Str(root, "normalizeKept"), Is.EqualTo("R&B rock & roll"));
-            Assert.That(Str(root, "normalizeKeptPunctuation"), Is.EqualTo("hey &you"));
+            Assert.That(Str(root, "normalizeKeptPunctuation"), Is.EqualTo("hey, &you!"));
+            Assert.That(Str(root, "defaultStreamKeptPunctuation"), Is.EqualTo("hey &you"));
         });
     }
 

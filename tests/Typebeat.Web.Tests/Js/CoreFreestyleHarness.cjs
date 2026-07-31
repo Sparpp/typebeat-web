@@ -309,6 +309,7 @@ const out = {
     normalizeDefault: TB.normalize('R&B rock & roll'),
     normalizeKept: TB.normalize('R&B rock & roll', true),
     normalizeKeptPunctuation: TB.normalize('  hey,   &you!  ', true),
+    defaultStreamKeptPunctuation: TB.toDefaultStream(TB.normalize('  hey,   &you!  ', true)),
 
     // Flattening: the slot is a cell, timed like a letter.
     freestyleShape: cellShape(build(FREESTYLE_OSU)),
