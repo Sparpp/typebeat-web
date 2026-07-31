@@ -202,11 +202,72 @@ public class LyricPaceTest
     {
         Assert.Multiple(() =>
         {
-            // Diacritics stripped, punctuation removed, whitespace collapsed (LyricBeatmap.cs:90-149).
-            Assert.That(Typeability.Normalize("Héllo,  wörld!"), Is.EqualTo("Hello world"));
-            Assert.That(Typeability.Normalize("don’t stop"), Is.EqualTo("dont stop"));
+            // Diacritics stripped, whitespace collapsed, SUPPORTED punctuation kept: the stored
+            // line is the author's form (Typeability.Normalize in the game).
+            Assert.That(Typeability.Normalize("Héllo,  wörld!"), Is.EqualTo("Hello, world!"));
+            Assert.That(Typeability.Normalize("don’t stop"), Is.EqualTo("don't stop"));
+
+            // Unsupported chars still vanish outright.
+            Assert.That(Typeability.Normalize("a*b/c"), Is.EqualTo("abc"));
+
             Assert.That(Typeability.StripBackingVocals("go (ooh) now [aah]"), Is.EqualTo("go  now "));
             Assert.That(Typeability.Normalize(Typeability.StripBackingVocals("(all backing)")), Is.Empty);
+        });
+    }
+
+    [Test]
+    public void ToDefaultStream_MatchesGameAuthority()
+    {
+        Assert.Multiple(() =>
+        {
+            // Golden strings shared with the game's LiteratePunctuationTest: the normative example,
+            // and the rules around it (Typeability.ToDefaultStream).
+            Assert.That(Typeability.ToDefaultStream("The bad-cat sat."), Is.EqualTo("the bad cat sat"));
+            Assert.That(Typeability.ToDefaultStream("don't stop"), Is.EqualTo("dont stop"));
+            Assert.That(Typeability.ToDefaultStream("Hello, world!"), Is.EqualTo("hello world"));
+
+            // Every mark except the hyphen simply disappears; the hyphen is a WORD BREAK.
+            Assert.That(Typeability.ToDefaultStream("a,b.c'd?e!f;g:h(i)j[k]l\"m"), Is.EqualTo("abcdefghijklm"));
+            Assert.That(Typeability.ToDefaultStream("a-b"), Is.EqualTo("a b"));
+
+            // A hyphen next to a space collapses the run; at either edge it separates nothing.
+            Assert.That(Typeability.ToDefaultStream("a - b"), Is.EqualTo("a b"));
+            Assert.That(Typeability.ToDefaultStream("-a-"), Is.EqualTo("a"));
+
+            // Stronger than idempotence, and the reason no stored row moves: for any line with no
+            // hyphen and no mark, which is every line the game's encoder ever wrote, the derivation
+            // is exactly ToLowerInvariant.
+            foreach (string s in new[] { "the bad cat sat", "me & you", "Neon SKYLINE glowing", "" })
+                Assert.That(Typeability.ToDefaultStream(s), Is.EqualTo(s.ToLowerInvariant()));
+        });
+    }
+
+    private static LyricLine paceLine(string text) => new LyricLine
+    {
+        RawText = text,
+        StartTime = 0,
+        EndTime = 3000,
+        SingEndTime = 3000,
+        Units = [new TimedUnit { Text = text, StartTime = 0, EndTime = 3000 }],
+    };
+
+    [Test]
+    public void Pace_MeasuresTheDefaultStreamNotTheAuthoredLine()
+    {
+        // "The bad-cat sat." is 3 authored tokens but 4 words / 15 cells in the stream the player
+        // types, and the pace has to describe the play everyone shares.
+        var punctuated = LyricPace.Compute([paceLine("The bad-cat sat.")]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(punctuated.WordCount, Is.EqualTo(4));
+            Assert.That(punctuated.TypeableCellCount, Is.EqualTo("the bad cat sat".Length));
+
+            // A mark-free line counts exactly as it always did (the v8 rows cannot move).
+            var plain = LyricPace.Compute([paceLine("The bad cat sat")]);
+
+            Assert.That(plain.WordCount, Is.EqualTo(4));
+            Assert.That(plain.TypeableCellCount, Is.EqualTo(15));
         });
     }
 
@@ -222,10 +283,12 @@ public class LyricPaceTest
             Assert.That(Typeability.IsCell(Typeability.FREESTYLE_MARKER), Is.True);
 
             // Golden strings shared with the browser core's harness (FreestyleParityTest) and the
-            // game's FreestyleCharTest: opted out, the markers vanish like any other punctuation.
+            // game's FreestyleCharTest: opted out, the markers vanish (the ampersand is NOT one of
+            // the supported marks, so it is still stripped outright).
             Assert.That(Typeability.Normalize("R&B rock & roll"), Is.EqualTo("RB rock roll"));
             Assert.That(Typeability.Normalize("R&B rock & roll", keepFreestyleMarkers: true), Is.EqualTo("R&B rock & roll"));
-            Assert.That(Typeability.Normalize("  hey,   &you!  ", keepFreestyleMarkers: true), Is.EqualTo("hey &you"));
+            Assert.That(Typeability.Normalize("  hey,   &you!  ", keepFreestyleMarkers: true), Is.EqualTo("hey, &you!"));
+            Assert.That(Typeability.ToDefaultStream("hey, &you!"), Is.EqualTo("hey &you"));
 
             // Counting follows IsCell, so a kept marker is a cell; a default-normalized text has
             // no markers to count and is byte-identical to the historical typeable-only count.

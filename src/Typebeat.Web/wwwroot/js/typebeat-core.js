@@ -38,6 +38,22 @@
 
     function isFreestyle(ch) { return ch === FREESTYLE_MARKER; }
 
+    // The punctuation type!beat supports inside an authored lyric line, defined ONCE here (mirrors
+    // Typeability.PUNCTUATION): comma, period, apostrophe, hyphen, question mark, exclamation mark,
+    // semicolon, colon, round brackets, square brackets, straight double quote.
+    //
+    // A map stores the AUTHOR'S form: punctuated and case-sensitive. What the player types (and
+    // sees) is derived from it: verbatim under the desktop client's LITERATE mod, and through
+    // toDefaultStream otherwise. Deliberately outside isTypeable, so a mark never counts as a plain
+    // typeable char for the interpolation weights or the cell counts.
+    const PUNCTUATION = ",.'-?!;:()[]\"";
+
+    // The one supported mark that reads as a WORD BREAK rather than as decoration: without
+    // Literate, "bad-cat" is typed "bad cat", not "badcat" (mirrors Typeability.WORD_BREAK).
+    const WORD_BREAK = '-';
+
+    function isPunctuation(ch) { return PUNCTUATION.indexOf(ch) >= 0; }
+
     // A char that occupies a typeable CELL: a normal typeable char, or a freestyle slot. This is
     // what the line flattening and the text statistics count; isTypeable stays the narrower
     // "this exact glyph must be typed" predicate (mirrors Typeability.IsCell).
@@ -70,32 +86,116 @@
         return n;
     }
 
-    // NFD-fold diacritics, map curly punctuation to ASCII, DROP every non-space
-    // char that isn't typeable, collapse whitespace, trim. So "don't" -> "dont",
-    // "well-being" -> "wellbeing". The typed surface is only [a-z0-9 ].
+    // NFD-fold diacritics, map curly quotes/apostrophes and en/em dashes to their ASCII forms, KEEP
+    // the supported punctuation, DROP every other non-space char that isn't typeable, collapse
+    // whitespace, trim (mirrors Typeability.Normalize).
+    //
+    // The result is the AUTHOR'S form of the line: original case, supported marks intact. It is
+    // what a map stores. It is NOT what the player types here: the browser always plays vanilla,
+    // and buildCells derives the default stream from it (see projectDefault).
     //
     // keepFreestyleMarkers additionally preserves FREESTYLE_MARKERs, which are otherwise stripped
-    // like any other untypeable punctuation. The only caller that opts in is the decoder of a line
+    // like any other unsupported char. The only caller that opts in is the decoder of a line
     // the map explicitly flagged ("freestyle": true), so an ampersand that merely occurs in a
     // song's lyrics ("R&B") still disappears exactly as it always has.
     function normalize(s, keepFreestyleMarkers = false) {
         if (s == null) return '';
         s = stripBackingVocals(s);
         s = s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+        // The variant sets are the C# switch verbatim (U+2018 U+2019 U+201A U+2032 /
+        // U+201C U+201D U+201E U+2033 / U+2013 U+2014 U+2015 U+2212). They were allowed to drift
+        // while an unmapped variant was dropped as untypeable on both sides either way; now that
+        // the ASCII forms SURVIVE normalization, a missing variant is a real divergence.
         s = s
-            .replace(/[‘’‛′]/g, "'")
-            .replace(/[“”″]/g, '"')
-            .replace(/[–—―]/g, '-')
+            .replace(/[‘’‚′]/g, "'")
+            .replace(/[“”„″]/g, '"')
+            .replace(/[–—―−]/g, '-')
             .replace(/ /g, ' ');
         let out = '';
         for (const ch of s) {
             if (isTypeable(ch)) out += ch;
             else if (/\s/.test(ch)) out += ' ';
+            else if (isPunctuation(ch)) out += ch;
             else if (keepFreestyleMarkers && isFreestyle(ch)) out += ch;
-            // else: dropped entirely (punctuation etc.)
+            // else: dropped entirely (unsupported punctuation etc.)
         }
         return out.replace(/\s+/g, ' ').trim();
     }
+
+    // The DEFAULT (no-Literate) typed char for one authored char, or null when the default stream
+    // deletes it (mirrors Typeability.DefaultChar): WORD_BREAK becomes a SPACE, every other
+    // supported mark disappears, everything else folds to lower case.
+    function defaultChar(ch) {
+        if (ch === WORD_BREAK) return ' ';
+        if (isPunctuation(ch)) return null;
+        return fold(ch);
+    }
+
+    // THE derivation (mirrors Typeability.ProjectDefault): projects an authored line onto the
+    // DEFAULT typed stream, returning { text, sources } where sources[i] is the index in raw the
+    // i-th output char came from (so a cell keeps the timing slot of the authored char behind it).
+    //
+    // Spaces are handled a RUN at a time (consecutive space-producing chars, authored spaces and
+    // hyphens alike, with deleted marks skipped over). A run with NO hyphen in it is emitted
+    // verbatim, space for space, which is what makes the projection exactly toLowerCase for every
+    // hyphen-free, mark-free line, i.e. every line of every map written before punctuation existed;
+    // the default path cannot have moved under them. A run that DOES contain a hyphen collapses to
+    // one space ("a - b" is "a b"), and to none at either end of the line ("-a-" is "a"), where it
+    // would separate nothing. A collapsed run reports its FIRST space-producing index.
+    function projectDefault(raw) {
+        const out = { text: '', sources: [] };
+        if (!raw) return out;
+
+        let wroteAny = false;
+        let i = 0;
+
+        while (i < raw.length) {
+            const c = defaultChar(raw[i]);
+            if (c === null) { i++; continue; }
+
+            if (c !== ' ') {
+                out.text += c;
+                out.sources.push(i);
+                wroteAny = true;
+                i++;
+                continue;
+            }
+
+            let hasBreak = false;
+            let firstSpace = -1;
+            let end = i;
+
+            while (end < raw.length) {
+                const d = defaultChar(raw[end]);
+                if (d === null) { end++; continue; } // a deleted mark inside the run does not end it
+                if (d !== ' ') break;
+                if (raw[end] === WORD_BREAK) hasBreak = true;
+                if (firstSpace < 0) firstSpace = end;
+                end++;
+            }
+
+            if (!hasBreak) {
+                for (let k = i; k < end; k++) {
+                    if (defaultChar(raw[k]) !== ' ') continue;
+                    out.text += ' ';
+                    out.sources.push(k);
+                    wroteAny = true;
+                }
+            } else if (wroteAny && end < raw.length) {
+                out.text += ' ';
+                out.sources.push(firstSpace);
+            }
+
+            i = end;
+        }
+
+        return out;
+    }
+
+    // The DEFAULT (no-Literate) typed stream of an authored line: lower-cased, hyphens turned into
+    // word breaks, every other supported mark deleted (mirrors Typeability.ToDefaultStream).
+    // "The bad-cat sat." becomes "the bad cat sat".
+    function toDefaultStream(raw) { return projectDefault(raw).text; }
 
     // ---------------------------------------------------------------------------
     // Parse the ".osu"-derived type!beat lyric text.
@@ -242,11 +342,29 @@
         return timeLo + (j - segIndexLo) / (segIndexHi - segIndexLo) * (timeHi - timeLo);
     }
 
-    // Expand a line's tokens+units into per-char cells (mirrors TypingLine.FromLyricLine).
-    // After normalization every char occupies a cell (isCell: a typeable char, or a freestyle
-    // slot), so the punctuation passes are no-ops here and a token's cell count is its length.
-    function buildCells(tokens, units, estimated, granularity) {
-        const cells = [];
+    // Expand a line's AUTHORED text + units into per-char cells (mirrors TypingLine.FromLyricLine
+    // exactly; this is the scoring-fidelity seam, so it is written pass for pass).
+    //
+    // literate selects WHICH STREAM the cells carry. Off (the only mode the browser player uses,
+    // see buildBeatmap): the cells are projectDefault of the authored text, so capitals fold, a
+    // hyphen becomes a typed space and every other supported mark is gone. On: one cell per
+    // authored char, marks and capitals included, every one of them typeable.
+    //
+    // Letter timings are IDENTICAL either way: the per-word char spread counts only isCell chars
+    // (never punctuation), so the mod adds cells without moving any of the existing ones.
+    function buildCells(text, units, estimated, granularity, literate) {
+        const n = text.length;
+        const expected = new Array(n);
+        const typeableFlags = new Array(n).fill(false);
+        const targets = new Array(n).fill(null);
+        const tiers = new Array(n).fill(granularity);
+
+        // Pass 1: walk the authored text token by token (spaces delimit tokens; token m maps to
+        // units[m]). Punctuation is placed but left UNTIMED, and is excluded from k, so adding a
+        // mark to a word never moves the letters around it.
+        const tokens = text.split(' ');
+        let pos = 0;
+
         for (let m = 0; m < tokens.length; m++) {
             const unit = units.length > 0 ? units[Math.min(m, units.length - 1)] : null;
             const unitStart = unit ? unit.start : 0;
@@ -255,23 +373,90 @@
             const boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
             const tier = (estimated || conf < LOW_CONFIDENCE_SCORE) ? 'Line' : granularity;
             const token = tokens[m];
-            // k = number of cells in this token, freestyle slots included: the player presses a key
-            // for them, so they take a share of the word's time like any letter.
-            const k = token.length;
-            for (let j = 0; j < k; j++) {
-                cells.push(newCell(token[j], syllableCharTarget(unitStart, unitEnd, boundaries, k, j), tier));
+
+            // k = number of cells in this token, freestyle slots included (the player presses a key
+            // for them, so they take a share of the word's time like any letter), marks excluded.
+            let k = 0;
+            for (let t = 0; t < token.length; t++) if (isCell(token[t])) k++;
+
+            let j = 0;
+            for (let t = 0; t < token.length; t++) {
+                const ch = token[t];
+                expected[pos] = ch;
+                tiers[pos] = tier;
+                if (isCell(ch)) {
+                    typeableFlags[pos] = true;
+                    targets[pos] = syllableCharTarget(unitStart, unitEnd, boundaries, k, j);
+                    j++;
+                }
+                pos++;
             }
+
             if (m < tokens.length - 1) {
-                cells.push(newCell(' ', unitEnd, tier)); // inter-word space cell
+                expected[pos] = ' '; // inter-word space cell: preceding unit's end
+                typeableFlags[pos] = true;
+                targets[pos] = unitEnd;
+                tiers[pos] = tier;
+                pos++;
             }
         }
-        // Guard: targets non-decreasing.
-        let run = -Infinity;
-        for (const c of cells) { if (c.target < run) c.target = run; else run = c.target; }
+
+        // Pass 2: time the chars pass 1 left untimed, which after normalize are exactly the
+        // supported marks. A run of them between two timed chars is spread EVENLY across the gap
+        // (mark m of a run of len takes prev + (m+1)*(next-prev)/(len+1)); a run with nothing after
+        // it attaches to the PRECEDING char's target, one with nothing before it to the FOLLOWING.
+        for (let i = 0; i < n; i++) {
+            if (targets[i] !== null) continue;
+
+            let end = i;
+            while (end + 1 < n && targets[end + 1] === null) end++;
+
+            const before = i > 0 ? targets[i - 1] : null;
+            const after = end + 1 < n ? targets[end + 1] : null;
+            const len = end - i + 1;
+
+            for (let q = 0; q < len; q++) {
+                targets[i + q] = before !== null
+                    ? (after !== null ? before + (q + 1) * (after - before) / (len + 1) : before)
+                    : (after !== null ? after : 0);
+            }
+
+            i = end;
+        }
+
+        // Guard: targets non-decreasing (clamp to previous if data is inverted).
+        for (let i = 1; i < n; i++) {
+            if (targets[i] < targets[i - 1]) targets[i] = targets[i - 1];
+        }
+
+        const cells = [];
+
+        if (literate) {
+            // One cell per authored char, all of them typed. A mark is a first-class typeable cell.
+            for (let i = 0; i < n; i++) {
+                cells.push(newCell(expected[i], targets[i], tiers[i], typeableFlags[i] || isPunctuation(expected[i])));
+            }
+        } else {
+            // The default stream. Each surviving char keeps the timing and judge tier of the
+            // authored char it came from, so a hyphen-turned-space lands on the interpolated slot
+            // the hyphen held between the two letters it separated.
+            const projected = projectDefault(text);
+            for (let i = 0; i < projected.text.length; i++) {
+                const src = projected.sources[i];
+                const ch = projected.text[i];
+                cells.push(newCell(ch, targets[src], tiers[src], isCell(ch)));
+            }
+        }
+
         return cells;
     }
 
-    function buildBeatmap(parsed) {
+    // literate mirrors the desktop client's Literate mod: the cells become the authored line
+    // verbatim (marks and capitals typed) rather than the derived default stream. The browser
+    // player NEVER passes it (see play.js / mountPlayer): /play is always vanilla. It exists so
+    // buildCells stays a line-for-line mirror of TypingLine.FromLyricLine and so the JS-vs-C#
+    // fidelity harness can pin both branches, exactly as engine.caseSensitive already does.
+    function buildBeatmap(parsed, literate = false) {
         const header = parsed.header || {};
         const songEndMs = isFinite(header.song_end_ms) ? header.song_end_ms : null;
 
@@ -288,7 +473,12 @@
             // "&", decodes unchanged.
             const freestyle = o.freestyle === true;
             const normalized = normalize(o.text, freestyle);
-            if (normalized.length === 0) continue;
+            // A line with nothing to TYPE is dropped, and the previous line extends over its span.
+            // Tested on the DEFAULT stream, not on the normalized text, because a line that is
+            // nothing but punctuation ("...") now normalizes non-empty yet still gives the player no
+            // cell at all. The two conditions coincide exactly for every other input, so this is the
+            // same rule the parser has always applied (mirrors LyricTiming.TryParseRawLine).
+            if (toDefaultStream(normalized).length === 0) continue;
             if (!isFinite(+o.start_ms)) continue;
 
             const startMs = +o.start_ms;
@@ -350,7 +540,7 @@
                 ? buildExplicitUnits(tokens, line.words, start, endTime)
                 : interpolateUnits(line.text, start, singEndTime);
 
-            const cells = buildCells(tokens, units, line.estimated, granularity);
+            const cells = buildCells(line.text, units, line.estimated, granularity, literate);
 
             const firstTarget = cells.length ? cells[0].target : start;
             const activationTime = Math.max(start, firstTarget - CUE_LEAD_MS);
@@ -387,12 +577,15 @@
         };
     }
 
-    function newCell(expected, target, tier) {
+    function newCell(expected, target, tier, typeable) {
         return {
             expected: expected,
             target: target,
             tier: tier,
-            typeable: true,          // after normalization every cell is typeable
+            // Normally true: every char of the default stream is typeable, and under Literate every
+            // authored char is. False only for a char outside both the typeable surface and the
+            // supported marks, which normalize strips, so it is the defensive auto-skip path.
+            typeable: typeable !== false,
             // FREESTYLE cell: any key but space satisfies it and the char the player actually
             // pressed lands in typedChar and stays on screen. Judgement is otherwise a completely
             // normal typeable cell (same windows, points, combo, completion), and a space is
@@ -815,11 +1008,13 @@
 
     global.TypeBeatCore = {
         // low-level
-        isTypeable, isFreestyle, isCell, normalize, parseLyricOsu, buildBeatmap, syllableCharTarget,
+        isTypeable, isFreestyle, isCell, isPunctuation, normalize,
+        defaultChar, projectDefault, toDefaultStream,
+        parseLyricOsu, buildBeatmap, syllableCharTarget,
         TypingEngine, computeScore, rankFromCompletion,
         windowsFor, classify, toHitResult,
         freestyleTick, freestyleGlyph,
-        constants: { CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER, SHIMMER_INTERVAL_MS },
+        constants: { CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER, SHIMMER_INTERVAL_MS, PUNCTUATION, WORD_BREAK },
         // the renderer/high-level mount is attached in typebeat-player.js
     };
 })(window);

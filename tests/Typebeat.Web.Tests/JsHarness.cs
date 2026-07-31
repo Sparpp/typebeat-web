@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 
 namespace Typebeat.Web.Tests;
@@ -42,6 +43,12 @@ public static class JsHarness
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            // Node writes UTF-8; without this the redirected pipe is decoded with the console's
+            // default code page (cp1252 on a Windows dev box) and every non-ASCII char in a
+            // harness's output arrives as mojibake. Harmless while the harnesses were ASCII-only;
+            // fatal for the punctuation guard, which round-trips curly quotes and diacritics.
+            StandardOutputEncoding = new UTF8Encoding(false),
+            StandardErrorEncoding = new UTF8Encoding(false),
         };
         psi.ArgumentList.Add(harness);
         psi.ArgumentList.Add(corePath);
