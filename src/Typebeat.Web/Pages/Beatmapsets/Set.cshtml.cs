@@ -3,6 +3,7 @@ using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json.Linq;
 using Typebeat.Web.Data;
+using Typebeat.Web.Packages;
 
 namespace Typebeat.Web.Pages.Beatmapsets;
 
@@ -72,7 +73,11 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                    EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId) AS IsFavourited,
                    -- Pre-M3 sets (backfilled by migration 004) have live diffs but no uploaded
                    -- package: the Download button must not render a dead /download link for them.
-                   EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS HasPackage
+                   EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS HasPackage,
+                   -- LAST on purpose: Dapper binds a positional record's constructor parameters to
+                   -- the reader's columns BY POSITION, so a new column has to be appended at the
+                   -- same index in both this SELECT and SetDetails.
+                   s.language         AS Language
             FROM beatmapsets s
             JOIN users u ON u.id = s.owner_id
             WHERE s.id = @id
@@ -303,13 +308,17 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         long Id, string Title, string Artist, string? TitleUnicode, string? ArtistUnicode, string Source, string Tags, string Description,
         string Status, bool Explicit, string Creator, bool OwnerRestricted, long OwnerId, string? CoverKey, string? PreviewUrl,
         int PlayCount, int FavouriteCount, int DownloadCount, double? Bpm,
-        DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited, bool HasPackage)
+        DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited, bool HasPackage, string Language)
     {
         public string StatusLabel => BeatmapsetDisplay.StatusLabel(Status);
         public string PillClass => BeatmapsetDisplay.PillClass(Status);
         public string? CoverUrl => CoverKey is null ? null : $"/{CoverKey}/cover.jpg";
         public IEnumerable<string> TagList =>
             Tags.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct();
+
+        /// <summary>Display casing of the stored language, or null when the set has none yet
+        /// (019_language.sql), in which case the page renders no language chip at all.</summary>
+        public string? LanguageDisplay => BeatmapLanguages.DisplayName(Language);
 
         /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
         public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);

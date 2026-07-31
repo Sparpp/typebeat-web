@@ -104,6 +104,12 @@ await PaceBackfill.RunAsync(
     app.Services.GetRequiredService<IFileStore>(),
     app.Logger);
 
+// Detect the song language of every set that still has none (019_language.sql), offline, from the
+// lyric text the backfill above is what fills in, so it MUST run after it. Only ever writes rows
+// that are still unset, so a mapper's own language tag is never overwritten. No-op once every set
+// is either classified or known-unclassifiable.
+await LanguageBackfill.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
+
 // Re-rank scores the pre-task-47 play-time gate unranked purely for using the in-game skip button
 // (016_refund_skip_gate.sql). Must run AFTER the backfill: it reads beatmaps.skippable_s, which the
 // backfill is what fills in. No-op once every victim is recorded in score_refunds.

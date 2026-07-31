@@ -440,6 +440,95 @@ public class BeatmapSearchQueryTest
         Assert.That(param["op0"], Is.EqualTo(@"%100\%%"));
     }
 
+    // ---- language operator ----
+
+    [Test]
+    public void LanguageOperator_HasALangAlias()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(BeatmapSearchQuery.Parse("language:japanese").TextFilters.Single().Field, Is.EqualTo(FilterField.Language));
+            Assert.That(BeatmapSearchQuery.Parse("lang:japanese").TextFilters.Single().Field, Is.EqualTo(FilterField.Language));
+        });
+    }
+
+    [TestCase("lang:japanese", "japanese")]
+    [TestCase("lang:Japanese", "japanese")]
+    [TestCase("lang:JAPANESE", "japanese")]
+    [TestCase("lang:jp", "japanese")]
+    [TestCase("lang:ja", "japanese")]
+    [TestCase("lang:en", "english")]
+    [TestCase("lang:eng", "english")]
+    [TestCase("lang:kr", "korean")]
+    [TestCase("lang:cn", "chinese")]
+    [TestCase("lang:de", "german")]
+    [TestCase("lang:deutsch", "german")]
+    [TestCase("lang:ru", "russian")]
+    [TestCase("language:instrumental", "instrumental")]
+    [TestCase("lang:inst", "instrumental")]
+    public void LanguageOperator_FoldsAliasesOntoCanonicalNames(string query, string expected)
+    {
+        // Normalised at PARSE time, so the SQL builder only ever sees a canonical name and the
+        // whole alias table is exercised by one pure test rather than by SQL string matching.
+        Assert.That(BeatmapSearchQuery.Parse(query).TextFilters.Single().Value, Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void LanguageOperator_UnknownValue_DegradesToFreeText()
+    {
+        // Same contract as a malformed numeric or boolean value: never an error, never a filter
+        // that silently matches nothing.
+        var q = BeatmapSearchQuery.Parse("lang:klingon");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(q.HasOperators, Is.False);
+            Assert.That(q.FreeText, Is.EqualTo("lang:klingon"));
+        });
+    }
+
+    [Test]
+    public void LanguageOperator_UnspecifiedIsNotAValue()
+    {
+        // 'unspecified' is the game editor's "not chosen yet" state and is never stored, so it
+        // must not become a filter that matches the unset rows.
+        var q = BeatmapSearchQuery.Parse("lang:unspecified");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(q.HasOperators, Is.False);
+            Assert.That(q.FreeText, Is.EqualTo("lang:unspecified"));
+        });
+    }
+
+    [Test]
+    public void Sql_Language_IsSetScopedEquality_NotAnIlike()
+    {
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("lang:jp"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sql, Does.Contain("AND s.language = @op0"));
+            Assert.That(sql, Does.Not.Contain("ILIKE"));
+            Assert.That(sql, Does.Not.Contain("EXISTS"));
+            Assert.That(param["op0"], Is.EqualTo("japanese"));
+        });
+    }
+
+    [Test]
+    public void Sql_Language_StacksWithOtherOperators()
+    {
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("lang:korean artist:iu star:>4"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sql, Does.Contain("s.language = @op0"));
+            Assert.That(param["op0"], Is.EqualTo("korean"));
+            Assert.That(sql, Does.Contain("s.artist ILIKE @op1"));
+            Assert.That(sql, Does.Contain("b.difficulty_rating > @op2"));
+        });
+    }
+
     // ---- boolean operator (explicit:) ----
 
     [Test]

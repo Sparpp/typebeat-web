@@ -152,7 +152,7 @@ public static class BeatmapPackageParser
         string title = string.Empty, titleUnicode = string.Empty;
         string artist = string.Empty, artistUnicode = string.Empty;
         string creator = string.Empty, versionName = string.Empty;
-        string source = string.Empty, tags = string.Empty;
+        string source = string.Empty, tags = string.Empty, language = string.Empty;
         long? beatmapId = null, beatmapSetId = null;
         string? background = null, video = null;
         double? bpm = null;
@@ -197,6 +197,11 @@ public static class BeatmapPackageParser
                         case "Version": versionName = value; break;
                         case "Source": source = value; break;
                         case "Tags": tags = value; break;
+                        // Song language (019_language.sql): the mapper's editor choice, written by
+                        // the game's encoder ONLY when it is a real language, so its absence here
+                        // means "not stated" and never "not a language". Kept as the raw text;
+                        // PackageIngest folds it onto the canonical vocabulary.
+                        case "Language": language = value; break;
                         case "BeatmapID": beatmapId = parseLong(value); break;
                         case "BeatmapSetID": beatmapSetId = parseLong(value); break;
                     }
@@ -263,6 +268,7 @@ public static class BeatmapPackageParser
             VersionName = versionName,
             Source = source,
             Tags = tags,
+            Language = language,
             BeatmapId = beatmapId,
             BeatmapSetId = beatmapSetId,
             BackgroundFilename = background,

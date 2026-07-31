@@ -435,6 +435,132 @@ public class PackageIngestDbTest
         Assert.That(stale, Is.Zero);
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Song language (019_language.sql): ingest writes the mapper's tag, the backfill fills the rest.
+    // ---------------------------------------------------------------------------------------------
+
+    [Test]
+    [Order(7)]
+    public async Task LanguageBackfill_DetectsFromStoredLyrics_AndLeavesUnclassifiableRowsUnset()
+    {
+        await using var conn = await db.OpenAsync();
+
+        // Nothing so far has stated a language: the ingested packages carry no [Metadata]
+        // Language: line, which is exactly the pre-task-58 client shape.
+        string before = await conn.ExecuteScalarAsync<string>(
+            "SELECT language FROM beatmapsets WHERE id = @setId", new { setId });
+        Assert.That(before, Is.Empty, "a package with no Language: line must leave the set unset");
+
+        // Two more sets, written straight into beatmaps.lyrics: the backfill reads that column and
+        // nothing else (no blobs, no network). One classifiable, one deliberately not.
+        long japaneseSetId = await newSetWithLyricsAsync(conn, "jp.osu",
+            "夜空に光る星を数えて\n君の声がまだ聞こえてる\nこの道の先に何があっても");
+
+        long vocaliseSetId = await newSetWithLyricsAsync(conn, "hum.osu",
+            "ooh ooh ooh aah aah ooh\nna na na na na ooh aah\nna na na ooh ooh aah aah na");
+
+        await LanguageBackfill.RunAsync(db, NullLogger.Instance);
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await languageOf(conn, japaneseSetId), Is.EqualTo("japanese"));
+            Assert.That(await languageOf(conn, vocaliseSetId), Is.Empty,
+                "unclassifiable rows stay unset and are retried next boot, never guessed");
+            // End-to-end: the set ingested above sings "Neon SKYLINE / we Type at Night" (its
+            // second difficulty, added at Order(5)), so the lyrics the INGEST path wrote are what
+            // the detector reads, with no extra plumbing in between.
+            Assert.That(await languageOf(conn, setId), Is.EqualTo("english"));
+        });
+
+        // Idempotent: a second sweep only ever looks at rows that are still unset, so the answers
+        // above cannot churn.
+        await LanguageBackfill.RunAsync(db, NullLogger.Instance);
+
+        Assert.That(await languageOf(conn, japaneseSetId), Is.EqualTo("japanese"));
+    }
+
+    private async Task<long> newSetWithLyricsAsync(NpgsqlConnection conn, string filename, string lyrics)
+    {
+        long id = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO beatmapsets (owner_id, status, intended_status) VALUES (@uploaderId, 'pending', 'pending') RETURNING id",
+            new { uploaderId });
+
+        // checksum_md5 is UNIQUE across the table, so each synthetic difficulty needs its own.
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO beatmaps (set_id, checksum_md5, filename, lyrics)
+            VALUES (@id, md5(@filename), @filename, @lyrics)
+            """,
+            new { id, filename, lyrics });
+
+        return id;
+    }
+
+    private static async Task<string> languageOf(NpgsqlConnection conn, long id)
+        => await conn.ExecuteScalarAsync<string>("SELECT language FROM beatmapsets WHERE id = @id", new { id });
+
+    [Test]
+    [Order(8)]
+    public async Task Ingest_StoresTheMappersLanguage_AndAnOldClientCannotClearIt()
+    {
+        await using var conn = await db.OpenAsync();
+
+        var withLanguage = new (string, byte[])[]
+        {
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+                title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId,
+                language: "Japanese", previewTime: 3500))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+        };
+
+        await ingestAsync(withLanguage);
+
+        Assert.That(await conn.ExecuteScalarAsync<string>(
+                "SELECT language FROM beatmapsets WHERE id = @setId", new { setId }),
+            Is.EqualTo("japanese"), "the mapper's tag is folded to canonical case and stored");
+
+        // The regression this guards: a pre-task-58 client re-submitting the same map writes no
+        // Language: line at all, and must NOT wipe what is already known.
+        var withoutLanguage = new (string, byte[])[]
+        {
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+                title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId,
+                previewTime: 4500))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+        };
+
+        await ingestAsync(withoutLanguage);
+
+        Assert.That(await conn.ExecuteScalarAsync<string>(
+                "SELECT language FROM beatmapsets WHERE id = @setId", new { setId }),
+            Is.EqualTo("japanese"), "an upload that states no language must leave the stored one alone");
+    }
+
+    [Test]
+    [Order(9)]
+    public async Task LanguageBackfill_NeverOverwritesAMapperSuppliedLanguage()
+    {
+        await using var conn = await db.OpenAsync();
+
+        // English lyrics on a set the mapper has tagged 'instrumental': a deliberate disagreement.
+        // The mapper wins, always.
+        await conn.ExecuteAsync(
+            "UPDATE beatmapsets SET language = 'instrumental' WHERE id = @setId", new { setId });
+        await conn.ExecuteAsync(
+            """
+            UPDATE beatmaps
+            SET lyrics = 'I know you never wanted me to say the words out loud
+            but all the time we had is gone and I am still here'
+            WHERE id = 1001
+            """);
+
+        await LanguageBackfill.RunAsync(db, NullLogger.Instance);
+
+        Assert.That(await conn.ExecuteScalarAsync<string>(
+                "SELECT language FROM beatmapsets WHERE id = @setId", new { setId }),
+            Is.EqualTo("instrumental"));
+    }
+
     private static string readEmbeddedMigration(string name)
     {
         var assembly = typeof(Db).GetTypeInfo().Assembly;

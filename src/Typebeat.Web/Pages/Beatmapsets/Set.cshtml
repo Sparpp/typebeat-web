@@ -157,12 +157,18 @@
         @* Plain text by design: default Razor encoding + pre-line = XSS-safe line breaks. *@
         <div class="set-description">@Model.Set.Description</div>
     }
-    @if (Model.Set.TagList.Any() || Model.Set.Source.Length > 0)
+    @if (Model.Set.TagList.Any() || Model.Set.Source.Length > 0 || Model.Set.LanguageDisplay is not null)
     {
         <div class="tag-chips">
             @if (Model.Set.Source.Length > 0)
             {
                 <span class="chip"><span class="chip-label">source</span><span class="chip-value">@Model.Set.Source</span></span>
+            }
+            @* Links back into the listing with the operator that finds the rest of them. Rendered
+               only when the set actually has a language (unset sets show nothing at all). *@
+            @if (Model.Set.LanguageDisplay is string languageDisplay)
+            {
+                <a class="chip" href="/beatmapsets?q=@Uri.EscapeDataString($"language:{Model.Set.Language}")"><span class="chip-label">language</span><span class="chip-value">@languageDisplay</span></a>
             }
             @foreach (string tag in Model.Set.TagList)
             {

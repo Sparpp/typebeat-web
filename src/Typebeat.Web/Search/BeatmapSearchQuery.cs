@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Typebeat.Web.Packages;
 
 namespace Typebeat.Web.Search;
 
@@ -72,6 +73,20 @@ public sealed class BeatmapSearchQuery
                 text.Add(new TextFilter(field, value));
                 return true;
 
+            case FieldKind.Language:
+                // The only closed-vocabulary text field: the value is folded onto a canonical
+                // language name here (so "lang:JP" and "language:Japanese" are the same filter,
+                // and the SQL builder receives something it can compare for equality), and an
+                // unrecognised one degrades to free text like every other malformed operator
+                // value, so "lang:klingon" searches for the word instead of matching nothing.
+                string canonical = BeatmapLanguages.Normalize(value);
+
+                if (canonical.Length == 0)
+                    return false;
+
+                text.Add(new TextFilter(field, canonical));
+                return true;
+
             case FieldKind.Numeric:
                 if (NumericFilter.TryParse(field, value) is { } nf)
                 {
@@ -141,13 +156,13 @@ public sealed class BeatmapSearchQuery
 
 public enum FilterField
 {
-    Title, Artist, Creator, Source, Tag, Lyrics,
+    Title, Artist, Creator, Source, Tag, Lyrics, Language,
     Stars, Wpm, Cpm, Length, Bpm,
     Date,
     Explicit,
 }
 
-internal enum FieldKind { Text, Numeric, Date, Bool }
+internal enum FieldKind { Text, Numeric, Date, Bool, Language }
 
 /// <summary>Keyword → field whitelist. The single source of truth for which keys are operators.</summary>
 internal static class Fields
@@ -163,6 +178,9 @@ internal static class Fields
         ["tags"] = FilterField.Tag,
         ["lyrics"] = FilterField.Lyrics,
         ["lyric"] = FilterField.Lyrics,
+        // Song language (019_language.sql). "lang" is the short form everyone actually types.
+        ["language"] = FilterField.Language,
+        ["lang"] = FilterField.Language,
         ["star"] = FilterField.Stars,
         ["stars"] = FilterField.Stars,
         ["wpm"] = FilterField.Wpm,
@@ -183,6 +201,7 @@ internal static class Fields
     {
         FilterField.Title or FilterField.Artist or FilterField.Creator
             or FilterField.Source or FilterField.Tag or FilterField.Lyrics => FieldKind.Text,
+        FilterField.Language => FieldKind.Language,
         FilterField.Date => FieldKind.Date,
         FilterField.Explicit => FieldKind.Bool,
         _ => FieldKind.Numeric,
@@ -191,7 +210,11 @@ internal static class Fields
 
 public enum Comparator { Eq, Lt, Lte, Gt, Gte, Range }
 
-/// <summary>A substring (ILIKE) filter on a text column: <c>title:</c>, <c>artist:</c>, etc.</summary>
+/// <summary>
+/// A substring (ILIKE) filter on a text column: <c>title:</c>, <c>artist:</c>, etc. The one
+/// exception is <see cref="FilterField.Language"/>, whose <see cref="Value"/> is already folded to
+/// a canonical language name at parse time and is compared for EQUALITY by the SQL builder.
+/// </summary>
 public sealed record TextFilter(FilterField Field, string Value);
 
 /// <summary>

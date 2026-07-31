@@ -274,6 +274,12 @@ public sealed class PackageIngest(
                 artist_unicode = @artistUnicode,
                 source = @source,
                 tags = @tags,
+                -- Song language (019_language.sql). A package that reports NO language (every
+                -- pre-task-58 client, which never wrote the [Metadata] Language: line) must LEAVE
+                -- the stored value alone rather than clearing it: an old client re-submitting a
+                -- map would otherwise wipe whatever the mapper or the backfill had established.
+                -- SET expressions read the row's pre-update value, so this reads the old language.
+                language = coalesce(nullif(@language, ''), language),
                 has_video = @hasVideo,
                 bpm = @bpm,
                 current_version = @versionNo,
@@ -289,6 +295,11 @@ public sealed class PackageIngest(
                 artistUnicode = primary.ArtistUnicode,
                 source = primary.Source,
                 tags = primary.Tags,
+                // Folded onto the canonical vocabulary here, so an unrecognised or "unspecified"
+                // value from any client lands as '' (= leave whatever is stored) rather than in
+                // the column. The primary difficulty speaks for the set, exactly as it does for
+                // title/artist/source/tags.
+                language = BeatmapLanguages.Normalize(primary.Language),
                 hasVideo = package.HasVideo,
                 bpm = primary.Bpm,
                 versionNo,

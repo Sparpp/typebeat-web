@@ -11,7 +11,8 @@ namespace Typebeat.Web.Search;
 /// generated SQL match <see cref="Pages.BeatmapsetCardSql"/>: <c>s</c> = beatmapsets,
 /// <c>u</c> = owner. Per-difficulty filters (the stars/wpm/cpm/length numerics and the lyrics:
 /// words) resolve through an EXISTS over <c>beatmaps</c>, so a set matches when ONE of its live
-/// difficulties satisfies all of them together.
+/// difficulties satisfies all of them together; everything else (including language:) is
+/// set-scoped.
 /// </summary>
 public static class BeatmapSearchSql
 {
@@ -47,9 +48,18 @@ public static class BeatmapSearchSql
             return name;
         }
 
+        // Song language is a set property and a closed vocabulary, so it is the one text filter
+        // that compares for EQUALITY rather than ILIKE: the parser already folded the user's
+        // input onto a canonical name (BeatmapLanguages), so there is nothing left to match
+        // loosely, and equality is what the partial index in 019_language.sql serves. Sets whose
+        // language is still unset hold '', which no canonical name equals, so they are simply
+        // invisible to this filter.
+        foreach (var f in query.TextFilters.Where(f => f.Field == FilterField.Language))
+            sql.Append("\nAND s.language = @").Append(Next(f.Value));
+
         // Lyrics text lives per difficulty (beatmaps.lyrics), so lyrics: joins the per-difficulty
         // EXISTS below rather than the set-scoped clauses here.
-        foreach (var f in query.TextFilters.Where(f => f.Field != FilterField.Lyrics))
+        foreach (var f in query.TextFilters.Where(f => f.Field is not (FilterField.Lyrics or FilterField.Language)))
         {
             string p = Next("%" + EscapeLike(f.Value) + "%");
             string clause = f.Field switch
