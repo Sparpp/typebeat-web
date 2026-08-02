@@ -6,3 +6,8 @@
 deploy/.env
 tests
 external
+# Server-side backups: deploy/backup.sh writes its tarballs to backups/ INSIDE the deploy
+# checkout on the prod box, and the image build runs there with the checkout as its context.
+# Without this exclusion the context balloons by ~2x the appdata volume (tens of GB) and
+# COPY . . fills the disk. Nothing in the image needs them.
+backups

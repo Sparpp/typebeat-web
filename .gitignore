@@ -6,3 +6,6 @@ obj/
 appsettings.Local.json
 deploy/.env
 .claude/
+# deploy/backup.sh writes prod backups into backups/ inside the server checkout; they must
+# never be tracked (and .dockerignore keeps them out of the image build context).
+backups/
