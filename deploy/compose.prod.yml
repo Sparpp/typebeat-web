@@ -43,6 +43,9 @@ services:
       # repo's build-linux.yml workflow always deploys the AppImage under the stable name
       # typebeat-linux.AppImage, so set TYPEBEAT_GAME_DOWNLOAD_LINUX once in deploy/.env.
       TYPEBEAT_GAME_DOWNLOAD_LINUX: "${TYPEBEAT_GAME_DOWNLOAD_LINUX:-}"
+      # Shared key for the Discord bot's private score feed (GET /api/v2/scores/recent).
+      # Unset = the endpoint 404s and the feature is simply off, so this is safe to leave blank.
+      TYPEBEAT_BUDDY_KEY: "${TYPEBEAT_BUDDY_KEY:-}"
       # Email verification (M2). With a Resend API key the app sends real 6-digit codes; without
       # one it logs codes to the container log (docker logs typebeat-web-app-1) so verification
       # still works. See docs/email-setup.md for the one-time Resend + DNS setup. Empty = log mode.

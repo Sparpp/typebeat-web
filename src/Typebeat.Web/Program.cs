@@ -232,6 +232,10 @@ BssEndpoints.Map(app);
 MediaEndpoints.Map(app);
 AlignEndpoints.Map(app);
 
+// Private score feed for the Discord bot (discord-buddybot). Self-disables (404s) unless
+// TYPEBEAT_BUDDY_KEY is configured, so a deploy that has not opted in exposes nothing.
+BuddyEndpoints.Map(app);
+
 // The in-browser web player's backend (score tokens/submission + map/audio serving). Additive;
 // cookie-session authed, mirrors the bearer score flow in ScoreEndpoints.
 PlayEndpoints.Map(app);
