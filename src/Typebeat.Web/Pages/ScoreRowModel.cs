@@ -3,7 +3,7 @@ namespace Typebeat.Web.Pages;
 /// <summary>
 /// View model for the shared score-row partial (Pages/Shared/_ScoreRow.cshtml): one full-width
 /// list item: map thumb, "{title} [{artist}]" set link, grade, accuracy, mods, score, date,
-/// used by the profile page's Pinned/Best/Recent score sections.
+/// used by the profile page's Pinned/Best/First places/Recent score sections.
 /// </summary>
 /// <param name="CoverUrl">Site-relative list-cover URL, or null → gradient placeholder.</param>
 /// <param name="Rank">Raw ScoreRank string from scores.rank (X/XH read as SS, like the game).</param>

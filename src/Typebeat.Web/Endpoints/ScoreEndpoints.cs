@@ -503,9 +503,11 @@ public static class ScoreEndpoints
             return WireJson.Ok(new ScoresCollectionWire { ScoreCount = 0, Scores = [], UserScore = null });
 
         // Best score per user (DISTINCT ON over ix_scores_leaderboard), passed plays on the selected
-        // board only, then the global ordering by total score. Failed scores never appear.
+        // board only, then the global ordering by total score. Failed scores never appear. Both the
+        // eligibility and the ordering come from BeatmapLeaderboard, the one board definition the
+        // set page and the profile's first places read too.
         var rows = (await conn.QueryAsync<LeaderboardRow>(
-            """
+            $"""
             SELECT best.id                 AS scoreId,
                    best.user_id            AS userId,
                    best.total_score        AS totalScore,
@@ -529,10 +531,10 @@ public static class ScoreEndpoints
                        u.username, u.country_code, u.avatar_key
                 FROM scores s
                 JOIN users u ON u.id = s.user_id
-                WHERE s.beatmap_id = @beatmapId AND s.ranked = @wantRanked AND s.passed
-                ORDER BY s.user_id, s.total_score DESC, s.id ASC
+                WHERE s.beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("s")}
+                ORDER BY s.user_id, {BeatmapLeaderboard.Order("s")}
             ) best
-            ORDER BY best.total_score DESC, best.id ASC
+            ORDER BY {BeatmapLeaderboard.Order("best")}
             LIMIT @limit
             """,
             new { beatmapId, limit, wantRanked })).ToList();
@@ -541,12 +543,12 @@ public static class ScoreEndpoints
 
         // Total distinct participants (osu-web's score_count reflects the full board, not the page).
         int scoreCount = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(DISTINCT user_id) FROM scores WHERE beatmap_id = @beatmapId AND ranked = @wantRanked AND passed",
+            $"SELECT COUNT(DISTINCT user_id) FROM scores WHERE beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("scores")}",
             new { beatmapId, wantRanked });
 
         // The caller's own best score + its global position, if they have one.
         var callerBest = await conn.QuerySingleOrDefaultAsync<LeaderboardRow>(
-            """
+            $"""
             SELECT s.id                 AS scoreId,
                    s.user_id            AS userId,
                    s.total_score        AS totalScore,
@@ -563,8 +565,8 @@ public static class ScoreEndpoints
                    u.avatar_key         AS avatarKey
             FROM scores s
             JOIN users u ON u.id = s.user_id
-            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND s.ranked = @wantRanked AND s.passed
-            ORDER BY s.total_score DESC, s.id ASC
+            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND {BeatmapLeaderboard.OnBoard("s")}
+            ORDER BY {BeatmapLeaderboard.Order("s")}
             LIMIT 1
             """,
             new { beatmapId, userId = user.Id, wantRanked });
@@ -590,11 +592,11 @@ public static class ScoreEndpoints
     private static async Task<int?> ComputeUserPosition(System.Data.Common.DbConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long userId)
     {
         var best = await conn.QuerySingleOrDefaultAsync<BestScoreRow>(
-            """
+            $"""
             SELECT s.id AS id, s.total_score AS totalScore
             FROM scores s
-            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND s.ranked AND s.passed
-            ORDER BY s.total_score DESC, s.id ASC
+            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND {BeatmapLeaderboard.OnBoard("s", "true")}
+            ORDER BY {BeatmapLeaderboard.Order("s")}
             LIMIT 1
             """,
             new { beatmapId, userId }, tx);
@@ -613,16 +615,15 @@ public static class ScoreEndpoints
     private static async Task<int> PositionOf(System.Data.Common.DbConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long totalScore, long scoreId, bool wantRanked)
     {
         return await conn.ExecuteScalarAsync<int>(
-            """
+            $"""
             SELECT 1 + COUNT(*)
             FROM (
                 SELECT DISTINCT ON (s.user_id) s.user_id, s.total_score, s.id
                 FROM scores s
-                WHERE s.beatmap_id = @beatmapId AND s.ranked = @wantRanked AND s.passed
-                ORDER BY s.user_id, s.total_score DESC, s.id ASC
+                WHERE s.beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("s")}
+                ORDER BY s.user_id, {BeatmapLeaderboard.Order("s")}
             ) b
-            WHERE b.total_score > @totalScore
-               OR (b.total_score = @totalScore AND b.id < @scoreId)
+            WHERE {BeatmapLeaderboard.Outranks("b")}
             """,
             new { beatmapId, totalScore, scoreId, wantRanked }, tx);
     }
