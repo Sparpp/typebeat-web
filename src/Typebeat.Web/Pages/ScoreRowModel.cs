@@ -3,7 +3,7 @@ namespace Typebeat.Web.Pages;
 /// <summary>
 /// View model for the shared score-row partial (Pages/Shared/_ScoreRow.cshtml): one full-width
 /// list item: map thumb, "{title} [{artist}]" set link, grade, accuracy, mods, score, date,
-/// used by the profile page's Best/Recent score sections.
+/// used by the profile page's Pinned/Best/Recent score sections.
 /// </summary>
 /// <param name="CoverUrl">Site-relative list-cover URL, or null → gradient placeholder.</param>
 /// <param name="Rank">Raw ScoreRank string from scores.rank (X/XH read as SS, like the game).</param>
@@ -32,6 +32,17 @@ public sealed record ScoreRowModel(
     DateTime Date,
     string ModsJson)
 {
+    /// <summary>
+    /// Render the pin/unpin control on this row (the profile does, for the signed-in owner of the
+    /// score). Set in C# AFTER the query, never mapped: this and <see cref="IsPinned"/> are plain
+    /// properties rather than constructor parameters precisely so they stay out of the positional
+    /// Dapper mapping every score-row SELECT relies on. Do not alias a column to either name.
+    /// </summary>
+    public bool ShowPinControl { get; set; }
+
+    /// <summary>This score is currently pinned, so the control reads "unpin".</summary>
+    public bool IsPinned { get; set; }
+
     public string GradeLabel => Rank switch
     {
         "X" or "XH" => "SS",

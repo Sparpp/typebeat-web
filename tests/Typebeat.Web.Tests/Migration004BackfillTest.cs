@@ -131,7 +131,7 @@ public class Migration004BackfillTest
     }
 
     [Test]
-    public async Task Migrations_AppliedInOrder_001Through019()
+    public async Task Migrations_AppliedInOrder_001Through022()
     {
         await using var conn = await dataSource.OpenConnectionAsync();
 
@@ -157,6 +157,7 @@ public class Migration004BackfillTest
             "017_rate_gate_refund.sql",
             "018_lyrics_search.sql",
             "019_language.sql",
+            "022_score_pins.sql",
         }));
     }
 

@@ -9,9 +9,14 @@ namespace Typebeat.Web.Pages.Users;
 /// <summary>
 /// User profile (/users/{id} and /users/{name}): cover band (preset gradient keyed by user id),
 /// avatar, joined/last-seen, the stats card (global rank by user_stats.total_score, totals grid,
-/// grade counts), and stacked sections: Best scores / Recent scores / Most played / Maps /
+/// grade counts), and stacked sections: Pinned / Best scores / Recent scores / Most played / Maps /
 /// Favourites (card partial reuse). A name URL canonical-redirects to the id URL; an all-digit
 /// path segment always reads as an id (so a digits-only USERNAME is only reachable by id).
+///
+/// Pinned scores (task 63) are this page's own feature end to end: the section query below, and
+/// the Pin/Unpin POST handlers the owner-only control on each score row submits to. All of the
+/// rules (yours, ranked, at most <see cref="ScorePins.MaxPins"/>) are enforced in
+/// <see cref="ScorePins"/>, server-side; the control's visibility is only cosmetic.
 ///
 /// Grade counts follow osu semantics: each map contributes only the user's BEST ranked+passed
 /// score (the same per-map-best fold the leaderboards use), not every play, so the row reads
@@ -51,6 +56,16 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
     public GradeCounts Grades { get; private set; } = new(0, 0, 0, 0, 0, 0);
 
+    /// <summary>
+    /// Scores this user pinned, newest pin first, shown above every other section. Empty for a
+    /// user with no pins (the view then renders no section at all), and empty for everyone while
+    /// the pinned scores are all currently invisible (see the section query).
+    /// </summary>
+    public IReadOnlyList<ScoreRowModel> PinnedScores { get; private set; } = [];
+
+    /// <summary>Set from the ?pin= redirect after a refused pin (PRG); shown above the section.</summary>
+    public string? PinNotice { get; private set; }
+
     public IReadOnlyList<ScoreRowModel> BestScores { get; private set; } = [];
     public IReadOnlyList<ScoreRowModel> RecentScores { get; private set; } = [];
     public IReadOnlyList<MostPlayedRow> MostPlayed { get; private set; } = [];
@@ -63,8 +78,16 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
     public bool IsOwnProfile => CurrentUser?.Id == ProfileUser.Id;
 
-    public async Task<IActionResult> OnGetAsync(string idOrName)
+    public async Task<IActionResult> OnGetAsync(string idOrName, string? pin = null)
     {
+        // Refused pins come back here by redirect (PRG), same shape as /settings?saved=.
+        PinNotice = pin switch
+        {
+            "limit" => $"You can pin up to {ScorePins.MaxPins} scores. Unpin one to make room.",
+            "unranked" => "That score is not ranked, so it cannot be pinned.",
+            _ => null,
+        };
+
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
         if (!long.TryParse(idOrName, NumberStyles.None, CultureInfo.InvariantCulture, out long id))
@@ -193,6 +216,30 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                    best.mods       AS ModsJson
             """;
 
+        // Pinned: the user's own curation, newest pin first, capped by the pin cap itself.
+        // Gated by exactly the filters the other score sections use (ranked scores on browsable
+        // sets), so a score that is deleted, unranked by an admin, or on a set that gets hidden
+        // simply stops appearing here, like it stops appearing under Best/Recent. Its pin row
+        // survives (and still counts against the cap) unless the SCORE row goes, which cascades.
+        PinnedScores = (await conn.QueryAsync<ScoreRowModel>(
+            $"""
+             {score_row_select}
+             FROM (
+                 SELECT sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
+                        sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay,
+                        p.pinned_at
+                 FROM score_pins p
+                 JOIN scores sc ON sc.id = p.score_id
+                 WHERE p.user_id = @id AND sc.ranked
+             ) best
+             JOIN beatmaps b ON b.id = best.beatmap_id
+             JOIN beatmapsets s ON s.id = b.set_id
+             WHERE s.status IN ('pending', 'unranked', 'ranked')
+             ORDER BY best.pinned_at DESC, best.id DESC
+             LIMIT {ScorePins.MaxPins}
+             """,
+            new { id })).ToList();
+
         BestScores = (await conn.QueryAsync<ScoreRowModel>(
             $"""
              {score_row_select}
@@ -230,6 +277,20 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              LIMIT {score_section_size}
              """,
             new { id })).ToList();
+
+        // Pin controls, on your own profile only: every score row this page renders is yours and
+        // ranked (all three queries filter sc.ranked), so each one is pinnable, and the control
+        // reads "unpin" for the ones already pinned.
+        if (viewerId != 0 && viewerId == id)
+        {
+            var pinnedIds = await ScorePins.PinnedScoreIdsAsync(conn, id);
+
+            foreach (var row in PinnedScores.Concat(BestScores).Concat(RecentScores))
+            {
+                row.ShowPinControl = true;
+                row.IsPinned = pinnedIds.Contains(row.ScoreId);
+            }
+        }
 
         MostPlayed = (await conn.QueryAsync<MostPlayedRow>(
             $"""
@@ -292,6 +353,43 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         ViewData["MetaDescription"] = $"{ProfileUser.Username}'s type!beat profile: scores, maps and favourites.";
 
         return Page();
+    }
+
+    /// <summary>
+    /// Pin one of your own scores (the control on each score row). The {idOrName} in the URL is
+    /// whichever profile the form was rendered on and is deliberately IGNORED: the pin belongs to
+    /// the session user, so the answer is always their own profile. Anonymous → /login, like the
+    /// favourite toggle. Refusals come back as a ?pin= notice, except "not yours", which is a 404
+    /// because only a forged POST can produce it.
+    /// </summary>
+    public async Task<IActionResult> OnPostPinAsync(long scoreId)
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        var result = await ScorePins.PinAsync(conn, CurrentUser.Id, scoreId, HttpContext.RequestAborted);
+
+        return result switch
+        {
+            PinResult.NotYours => NotFound(),
+            PinResult.NotRanked => Redirect($"/users/{CurrentUser.Id}?pin=unranked#pinned"),
+            PinResult.LimitReached => Redirect($"/users/{CurrentUser.Id}?pin=limit#pinned"),
+            _ => Redirect($"/users/{CurrentUser.Id}#pinned"),
+        };
+    }
+
+    /// <summary>Unpin one of your own scores; a no-op if it was not pinned.</summary>
+    public async Task<IActionResult> OnPostUnpinAsync(long scoreId)
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+        await ScorePins.UnpinAsync(conn, CurrentUser.Id, scoreId);
+
+        return Redirect($"/users/{CurrentUser.Id}#pinned");
     }
 
     // ---- display helpers ----

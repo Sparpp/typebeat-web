@@ -1854,6 +1854,30 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     white-space: nowrap;
 }
 
+/* Pin/unpin slot: rendered only on your own rows (all of them, so the column can't jog), and
+   deliberately styled as the same quiet text action the replay link is rather than as another
+   button, so the row keeps one vocabulary. */
+.score-row__pinform {
+    flex-shrink: 0;
+    display: flex;
+}
+
+.score-row__pin {
+    min-width: 44px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--text-sm);
+    text-align: right;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.score-row__pin:hover { color: var(--violet-bright); }
+.score-row__pin.is-on { color: var(--violet); }
+
 /* Mods a score used, small osu-style coloured badges (see _ModIcons.cshtml), coloured by
    mod category: red = harder, green = easier, violet = automation. */
 .mod-icons {

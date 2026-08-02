@@ -43,6 +43,29 @@
 
 <div class="profile-grid">
     <div class="profile-main">
+        @* Pinned: the owner's own curation, above everything else. Hidden entirely when there is
+           nothing pinned (no heading, no empty state), since a visitor has no reason to be told
+           about a section that only its owner can fill. The anchor stays either way so the
+           pin/unpin redirect has somewhere to land. *@
+        <div id="pinned">
+            @if (Model.PinNotice is string pinNotice)
+            {
+                <div class="alert-error">@pinNotice</div>
+            }
+            @if (Model.PinnedScores.Count > 0)
+            {
+                <section class="profile-section">
+                    <h2>Pinned</h2>
+                    <div class="score-list">
+                        @foreach (var row in Model.PinnedScores)
+                        {
+                            <partial name="_ScoreRow" model="row" />
+                        }
+                    </div>
+                </section>
+            }
+        </div>
+
         <section class="profile-section">
             <h2>Best scores</h2>
             @if (Model.BestScores.Count == 0)
