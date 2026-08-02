@@ -43,6 +43,21 @@ public sealed record ScoreRowModel(
     /// <summary>This score is currently pinned, so the control reads "unpin".</summary>
     public bool IsPinned { get; set; }
 
+    /// <summary>
+    /// How many times other players watched this score's replay (<c>scores.replay_views</c>,
+    /// 025_replay_views.sql). Zero renders nothing, so a section that does not care about the
+    /// number simply never shows one; the profile's "Most viewed replays" section sets it from its
+    /// own ranking query.
+    ///
+    /// <para>
+    /// Set in C# AFTER the query, never mapped, for the same reason <see cref="ShowPinControl"/>
+    /// is: the score-row SELECT is materialized through this record's constructor, and Dapper
+    /// requires a constructor matching the WHOLE column list, so an extra column would break every
+    /// row rather than land here. Do not alias a column to this name either.
+    /// </para>
+    /// </summary>
+    public long ReplayViews { get; set; }
+
     public string GradeLabel => Rank switch
     {
         "X" or "XH" => "SS",

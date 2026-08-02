@@ -210,6 +210,32 @@
             }
         </section>
 
+        @* Most viewed replays (025_replay_views.sql): the plays other people came back to watch.
+           Sits with the other score lists rather than with the charts, and directly above the
+           chart of the same data over time. Hidden entirely when nothing of theirs was ever
+           watched, which is every profile until views start landing. *@
+        @if (Model.MostViewedReplays.Count > 0)
+        {
+            <section class="profile-section" id="most-viewed-replays">
+                <h2>Most viewed replays</h2>
+                <div class="score-list">
+                    @foreach (var row in Model.MostViewedReplays)
+                    {
+                        <partial name="_ScoreRow" model="row" />
+                    }
+                </div>
+            </section>
+        }
+
+        @* The same views, per month. Hidden on the same condition as the list above. *@
+        @if (Model.ReplayViewsChart is BarChartModel replayViews)
+        {
+            <section class="profile-section" id="replay-views">
+                <h2>Replay views</h2>
+                <partial name="_BarChart" model="replayViews" />
+            </section>
+        }
+
         @* Play history (024_play_history.sql), next to Most played because they answer the same
            question from two directions: what you played, and when. Hidden entirely for a user
            with no recorded month, like Pinned: an empty chart states nothing. *@
@@ -278,6 +304,7 @@
             <div class="stat-row"><span class="stat-row__label">Play count</span><span class="stat-row__value">@Model.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Maps played</span><span class="stat-row__value">@Model.MapsPlayed.ToString("N0", CultureInfo.InvariantCulture) / @Model.RankedMapPool.ToString("N0", CultureInfo.InvariantCulture) ranked</span></div>
             <div class="stat-row"><span class="stat-row__label">First places</span><span class="stat-row__value">@Model.FirstPlaceCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
+            <div class="stat-row" title="how many times other players watched this player's replays; their own downloads never count"><span class="stat-row__label">Replays watched by others</span><span class="stat-row__value">@Model.ReplayViewCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Play time</span><span class="stat-row__value">@ProfileModel.FormatPlayTime(Model.PlayTimeS)</span></div>
             <div class="stat-row"><span class="stat-row__label">Accuracy</span><span class="stat-row__value">@(Model.Accuracy is double acc ? (acc * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%" : "-")</span></div>
             <div class="grade-counts" title="per-map best grades">

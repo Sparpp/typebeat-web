@@ -1941,6 +1941,16 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     white-space: nowrap;
 }
 
+/* Watch count, only on the "Most viewed replays" section's rows (every row there has one, so
+   nothing jogs). Quiet: the number is the section's whole point, not a competing metric. */
+.score-row__views {
+    flex-shrink: 0;
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
 /* Replay download slot. Fixed width and always rendered (empty when the play has no stored
    replay) so the date/score columns don't jog left and right down the list. */
 .score-row__replay {

@@ -11,10 +11,9 @@ namespace Typebeat.Web.Pages.Users;
 /// User profile (/users/{id} and /users/{name}): cover band (preset gradient keyed by user id),
 /// avatar, joined/last-seen, the stats card (global rank by user_stats.total_score, totals grid,
 /// grade counts), and stacked sections: Pinned / Best scores / First places / Recent scores /
-/// Most played / Play history / Maps / Favourites (card partial reuse). A name URL
-/// canonical-redirects to the id
-/// URL; an all-digit path segment always reads as an id (so a digits-only USERNAME is only
-/// reachable by id).
+/// Most played / Most viewed replays / Replay views / Play history / Maps / Favourites (card
+/// partial reuse). A name URL canonical-redirects to the id URL; an all-digit path segment always
+/// reads as an id (so a digits-only USERNAME is only reachable by id).
 ///
 /// Pinned scores (task 63) are this page's own feature end to end: the section query below, and
 /// the Pin/Unpin POST handlers the owner-only control on each score row submits to. All of the
@@ -31,6 +30,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 {
     private const int score_section_size = 20;
     private const int most_played_size = 10;
+    private const int most_viewed_size = 10;
     private const int card_section_size = 12;
 
     /// <summary>Distinct neon-karaoke cover-band presets (profile-cover--N in site.css).</summary>
@@ -87,6 +87,26 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
     public IReadOnlyList<ScoreRowModel> RecentScores { get; private set; } = [];
     public IReadOnlyList<MostPlayedRow> MostPlayed { get; private set; } = [];
+
+    /// <summary>
+    /// Times other players have watched this user's replays, all time (<see cref="ReplayViews"/>);
+    /// the stats card's "Replays watched by others". Zero for everyone whose replays nobody has
+    /// watched, and for everyone at all until views start landing after 025 deploys.
+    /// </summary>
+    public long ReplayViewCount { get; private set; }
+
+    /// <summary>
+    /// The user's most-watched scores, most views first, capped at <see cref="most_viewed_size"/>.
+    /// Empty when nothing of theirs has been watched, which hides the whole section.
+    /// </summary>
+    public IReadOnlyList<ScoreRowModel> MostViewedReplays { get; private set; } = [];
+
+    /// <summary>
+    /// Views per month for the Replay views chart (<see cref="ReplayViews"/>), or null when no
+    /// month has any, which hides that section. Null rather than an empty model, like
+    /// <see cref="PlayHistoryChart"/>, so the view has one thing to test.
+    /// </summary>
+    public BarChartModel? ReplayViewsChart { get; private set; }
 
     /// <summary>
     /// Plays per month for the Play History chart (<see cref="PlayHistory"/>), or null when the
@@ -337,14 +357,81 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              """,
             new { id })).ToList();
 
+        // Most viewed replays (025_replay_views.sql): the same score rows, ordered by how often
+        // OTHER players watched them. The total is read first and gates the query, because for
+        // almost every user it is zero and there is then nothing to look for.
+        //
+        // Visibility matches the other score sections exactly (ranked scores on browsable sets), so
+        // a score that gets unranked or whose set is hidden leaves this list like it leaves
+        // Best/Recent. The stats-card total deliberately does NOT follow it out: those views
+        // happened, and the number is "how often your replays were watched", not "how often the
+        // scores currently listed below were watched".
+        ReplayViewCount = await ReplayViews.TotalForUserAsync(conn, id, HttpContext.RequestAborted);
+
+        if (ReplayViewCount > 0)
+        {
+            // Two steps, deliberately. The ranking is its own query over scores alone, which the
+            // partial index (user_id, replay_views DESC, id) answers without touching a join; the
+            // rows are then hydrated through the SHARED score-row select, unchanged. Selecting the
+            // count as a 17th column instead is what one would try first and it does not work: the
+            // score-row select is mapped onto a positional record, and Dapper demands a constructor
+            // matching the WHOLE column list, so one extra column makes every row fail to
+            // materialize. The count is attached in C# afterwards, like the pin flags.
+            var ranked = (await conn.QueryAsync<(long ScoreId, int Views)>(
+                $"""
+                 SELECT id AS ScoreId, replay_views AS Views
+                 FROM scores
+                 WHERE user_id = @id AND replay_views > 0 AND ranked
+                 ORDER BY replay_views DESC, id ASC
+                 LIMIT {most_viewed_size}
+                 """,
+                new { id })).ToList();
+
+            if (ranked.Count > 0)
+            {
+                long[] ids = ranked.Select(r => r.ScoreId).ToArray();
+
+                var hydrated = (await conn.QueryAsync<ScoreRowModel>(
+                    $"""
+                     {score_row_select}
+                     FROM (
+                         SELECT sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
+                                sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
+                         FROM scores sc
+                         WHERE sc.id = ANY(@ids)
+                     ) best
+                     JOIN beatmaps b ON b.id = best.beatmap_id
+                     JOIN beatmapsets s ON s.id = b.set_id
+                     WHERE s.status IN ('pending', 'unranked', 'ranked')
+                     """,
+                    new { ids })).ToDictionary(r => r.ScoreId);
+
+                // Ordered by the ranking query, not by the hydration query: a score whose set has
+                // since been hidden simply drops out (the section then shows fewer rows than the
+                // cap), exactly as it drops out of Best and Recent.
+                var rows = new List<ScoreRowModel>(ranked.Count);
+
+                foreach (var (scoreId, views) in ranked)
+                {
+                    if (!hydrated.TryGetValue(scoreId, out var row))
+                        continue;
+
+                    row.ReplayViews = views;
+                    rows.Add(row);
+                }
+
+                MostViewedReplays = rows;
+            }
+        }
+
         // Pin controls, on your own profile only: every score row this page renders is yours and
-        // ranked (all four section queries are ranked-only, first places doubly so), so each one is
+        // ranked (all five section queries are ranked-only, first places doubly so), so each one is
         // pinnable, and the control reads "unpin" for the ones already pinned.
         if (viewerId != 0 && viewerId == id)
         {
             var pinnedIds = await ScorePins.PinnedScoreIdsAsync(conn, id);
 
-            foreach (var row in PinnedScores.Concat(BestScores).Concat(FirstPlaces).Concat(RecentScores))
+            foreach (var row in PinnedScores.Concat(BestScores).Concat(FirstPlaces).Concat(RecentScores).Concat(MostViewedReplays))
             {
                 row.ShowPinControl = true;
                 row.IsPinned = pinnedIds.Contains(row.ScoreId);
@@ -375,6 +462,15 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         // A user with nothing recorded gets no chart at all, and the view renders no section.
         var playMonths = await PlayHistory.ForUserAsync(conn, id, ct: HttpContext.RequestAborted);
         PlayHistoryChart = playMonths.Count > 0 ? PlayHistory.Chart(playMonths) : null;
+
+        // Replay views over time, the same treatment for the other rollup (025_replay_views.sql).
+        // Skipped outright when the total is zero: no rows can exist, so the query would be a
+        // guaranteed miss on the profile of every user who has never been watched.
+        if (ReplayViewCount > 0)
+        {
+            var viewMonths = await ReplayViews.ForUserAsync(conn, id, ct: HttpContext.RequestAborted);
+            ReplayViewsChart = viewMonths.Count > 0 ? ReplayViews.Chart(viewMonths) : null;
+        }
 
         // ---- card sections ----
 

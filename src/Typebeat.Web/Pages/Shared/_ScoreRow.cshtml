@@ -42,6 +42,12 @@
     <partial name="_ModIcons" model="Model.Mods" />
     <span class="score-row__score">@Model.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span>
     <span class="score-row__date faint">@Model.Date.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</span>
+    @* Watch count, on the sections that ask for it (the profile's "Most viewed replays"); zero is
+       rendered as nothing at all, so the ordinary score row keeps exactly the columns it had. *@
+    @if (Model.ReplayViews > 0)
+    {
+        <span class="score-row__views" title="times other players watched this replay">@Model.ReplayViews.ToString("N0", CultureInfo.InvariantCulture) @(Model.ReplayViews == 1 ? "view" : "views")</span>
+    }
     @* Replays only exist for plays whose client uploaded one; the slot is reserved either way so
        rows with and without a replay stay aligned. *@
     <span class="score-row__replay">
