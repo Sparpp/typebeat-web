@@ -1,8 +1,10 @@
 using System.Globalization;
 using Dapper;
 using Microsoft.AspNetCore.Http.Features;
+using Npgsql;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Scoring;
 using Typebeat.Web.Storage;
 using Typebeat.Web.Wire;
 
@@ -15,7 +17,11 @@ namespace Typebeat.Web.Endpoints;
 ///    body (application/octet-stream). 204 on success, 404 unknown score, 403 non-owner,
 ///    413 over the size cap. Idempotent: the owner may re-upload and the newer bytes win.
 ///  - GET /api/v2/scores/{scoreId}/replay: public (leaderboards are public), streams the stored
-///    bytes back verbatim as application/octet-stream, 404 when nothing is stored.
+///    bytes back verbatim as application/octet-stream, 404 when nothing is stored. This is the
+///    ONLY path that serves replay bytes anywhere (the game client's watch-replay action and the
+///    website's "replay" / "Download" links all come here), so it is also where a view is counted
+///    for the profile's "Replays watched by others": see <see cref="countViewAsync"/>. The wire
+///    contract is untouched by that, a counted view changes nothing about the response.
 ///
 /// Storage: the bytes are a NAMED object at <c>replays/{scoreId}.osr</c>
 /// (<see cref="StoreKeys.Replay"/>) and <c>scores.replay_key</c> is the index over it (migration
@@ -131,14 +137,16 @@ public static class ReplayEndpoints
     // ---------------------------------------------------------------------------------------------
     // GET: stream a stored replay back. Public, no auth.
     // ---------------------------------------------------------------------------------------------
-    private static async Task<IResult> DownloadAsync(long scoreId, HttpContext ctx, Db db, IFileStore store)
+    private static async Task<IResult> DownloadAsync(long scoreId, HttpContext ctx, Db db, IFileStore store, ILoggerFactory loggerFactory)
     {
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
-        string? key = await conn.ExecuteScalarAsync<string?>(
-            "SELECT replay_key FROM scores WHERE id = @scoreId", new { scoreId });
+        // The owner comes back with the key because the view counter needs it: "watched by others"
+        // is decided here, where the requester is known, and nowhere else.
+        var row = await conn.QuerySingleOrDefaultAsync<(string? Key, long OwnerId)?>(
+            "SELECT replay_key AS Key, user_id AS OwnerId FROM scores WHERE id = @scoreId", new { scoreId });
 
-        if (key is null)
+        if (row is not { Key: string key })
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");
 
         var stream = await store.OpenObjectReadAsync(key, ctx.RequestAborted);
@@ -148,9 +156,50 @@ public static class ReplayEndpoints
         if (stream == null)
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");
 
+        await countViewAsync(ctx, conn, scoreId, row.Value.OwnerId, loggerFactory);
+
         // fileDownloadName is for the website's download link; the game client reads the body and
         // ignores Content-Disposition entirely.
         return Results.Stream(stream, "application/octet-stream", fileDownloadName: $"typebeat-{scoreId}.osr");
+    }
+
+    /// <summary>
+    /// Credits one "replay watched by others" view for a serve that is about to happen, when the
+    /// requester qualifies (see <see cref="ReplayViews"/> and 025_replay_views.sql for the full
+    /// rule). Identity is read the same way the beatmapset download endpoint reads it: the website
+    /// session cookie first, then a bearer token, which is what the game client carries on every
+    /// API request. An anonymous requester counts nothing and is not an error.
+    ///
+    /// <para>
+    /// Counted at the point the bytes are handed over, not on completion: the response streams
+    /// after this handler returns, so "did they finish it" is not knowable here, and a replay is a
+    /// few tens of KB anyway. Range requests cannot inflate this either, the stream is served
+    /// without range processing, and the per-day dedup would absorb them regardless.
+    /// </para>
+    ///
+    /// <para>
+    /// FAILURES ARE SWALLOWED, deliberately. A counter is a nice-to-have on top of the thing the
+    /// caller actually asked for; losing a view is invisible, while turning a watchable replay into
+    /// a 500 because (say) the score row was deleted between the two statements is not.
+    /// </para>
+    /// </summary>
+    private static async Task countViewAsync(
+        HttpContext ctx, NpgsqlConnection conn, long scoreId, long ownerId, ILoggerFactory loggerFactory)
+    {
+        var viewer = ctx.SessionUser() ?? await ctx.ResolveBearerAsync();
+
+        if (viewer is null || viewer.Id == ownerId)
+            return;
+
+        try
+        {
+            await ReplayViews.RecordAsync(conn, scoreId, ownerId, viewer.Id, ctx.RequestAborted);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            loggerFactory.CreateLogger("ReplayViews").LogWarning(
+                e, "Score {ScoreId}: the replay was served but its view could not be counted.", scoreId);
+        }
     }
 
     // ---- helpers ----

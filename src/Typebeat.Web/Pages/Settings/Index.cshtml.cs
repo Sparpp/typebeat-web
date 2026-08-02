@@ -241,6 +241,11 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
         -- (anonymized), but the profile section they were arranged for does not.
         DELETE FROM score_pins            WHERE user_id = @id;
         DELETE FROM beatmapset_downloads  WHERE user_id = @id;
+        -- Which replays this person WATCHED is personal activity, like their downloads, so the
+        -- ledger rows go. The view counters they contributed to belong to the players who were
+        -- watched (scores.replay_views, user_month_replay_views) and are deliberately left alone:
+        -- somebody else's profile must not lose numbers because a viewer erased their account.
+        DELETE FROM replay_views          WHERE viewer_id = @id;
         DELETE FROM score_tokens          WHERE user_id = @id;
         DELETE FROM email_tokens          WHERE user_id = @id;
         DELETE FROM oauth_tokens          WHERE user_id = @id;
