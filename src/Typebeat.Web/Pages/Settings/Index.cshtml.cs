@@ -17,8 +17,8 @@ namespace Typebeat.Web.Pages.Settings;
 ///  - Avatar / Banner: an uploaded image, resized to a fixed JPEG by <see cref="ProfileMedia"/>
 ///    and stored under a version-stamped key; the superseded object is deleted so blobs don't leak.
 ///  - Delete: GDPR erasure. ANONYMIZES rather than hard-deletes: scrubs every personal column,
-///    drops the user's auth/session rows and personal activity (tokens, favourites, download
-///    logs), and renames to 'deleted_{id}'. The row is KEPT so the maps they uploaded and the
+///    drops the user's auth/session rows and personal activity (tokens, favourites, score pins,
+///    download logs), and renames to 'deleted_{id}'. The row is KEPT so the maps they uploaded and the
 ///    (now-anonymous) scores/moderation records referencing them stay valid. Requires typing the
 ///    exact username to confirm, then signs the browser out.
 /// </summary>
@@ -237,6 +237,9 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
          WHERE id IN (SELECT set_id FROM favourites WHERE user_id = @id);
 
         DELETE FROM favourites            WHERE user_id = @id;
+        -- Pins are personal curation, not score data: the scores themselves survive erasure
+        -- (anonymized), but the profile section they were arranged for does not.
+        DELETE FROM score_pins            WHERE user_id = @id;
         DELETE FROM beatmapset_downloads  WHERE user_id = @id;
         DELETE FROM score_tokens          WHERE user_id = @id;
         DELETE FROM email_tokens          WHERE user_id = @id;

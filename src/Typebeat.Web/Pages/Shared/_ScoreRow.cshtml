@@ -1,9 +1,14 @@
 @using System.Globalization
 @model ScoreRowModel
 @{
-    bool preferOriginal = Context.SessionUser()?.PreferOriginalMetadata ?? false;
+    var rowUser = Context.SessionUser();
+    bool preferOriginal = rowUser?.PreferOriginalMetadata ?? false;
     string displayTitle = Model.DisplayTitle(preferOriginal);
     string displayArtist = Model.DisplayArtist(preferOriginal);
+    // Pin control: own-score-only, so the form posts to the signed-in user's OWN profile page
+    // (that is the only place these rows carry the control, and the handler acts on the session
+    // user regardless of whose profile the POST names).
+    bool showPin = Model.ShowPinControl && rowUser is not null;
 }
 <div class="score-row">
     <div class="score-row__thumb">
@@ -45,4 +50,19 @@
             <a href="/api/v2/scores/@Model.ScoreId/replay" title="Download this replay (.osr)">replay</a>
         }
     </span>
+    @* Pin/unpin, owner-only. A plain form POST with the antiforgery token the form tag helper
+       injects, then POST-redirect-GET: unlike the favourite heart, a pin CHANGES THE PAGE
+       (a row appears in or leaves the Pinned section above), so there is nothing an in-place
+       JS toggle could correctly update. No JS involved at all. *@
+    @if (showPin)
+    {
+        <form class="score-row__pinform" method="post" asp-page="/Users/Profile"
+              asp-route-idOrName="@rowUser!.Id" asp-page-handler="@(Model.IsPinned ? "Unpin" : "Pin")">
+            <input type="hidden" name="scoreId" value="@Model.ScoreId" />
+            <button type="submit" class="score-row__pin @(Model.IsPinned ? "is-on" : "")"
+                    title="@(Model.IsPinned ? "Unpin this score from your profile" : "Pin this score to your profile")">
+                @(Model.IsPinned ? "unpin" : "pin")
+            </button>
+        </form>
+    }
 </div>
