@@ -124,6 +124,14 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
     public bool IsOwnProfile => CurrentUser?.Id == ProfileUser.Id;
 
     /// <summary>
+    /// The order the sections render in: THIS profile's owner's stored order (026_profile_order.sql)
+    /// resolved against the known section set, or the default for the (vast majority of) users who
+    /// have never reordered. It is the owner's layout for every visitor, not the viewer's: whose
+    /// profile you are looking at decides, exactly like osu-web's profile_order.
+    /// </summary>
+    public IReadOnlyList<string> SectionOrder { get; private set; } = ProfileSections.Default;
+
+    /// <summary>
     /// Follower/following counts (header links) plus whether the viewer already follows this user
     /// and/or watches them as a mapper (which way the Follow button and the bell are flipped).
     /// </summary>
@@ -174,6 +182,14 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             return NotFound();
 
         ProfileUser = user;
+
+        // The section order, read on its own rather than as a 9th column on the query above: that
+        // one materializes the positional UserHeader record, where appending a column means
+        // appending a constructor parameter (the Dapper landmine this file already lives with),
+        // and the section order is not header data. One extra primary-key lookup on a page that
+        // already runs a dozen aggregate queries.
+        SectionOrder = ProfileSections.Resolve(await conn.ExecuteScalarAsync<string[]?>(
+            "SELECT profile_order FROM users WHERE id = @id", new { id }));
 
         long viewerId = CurrentUser?.Id ?? 0;
 
@@ -550,6 +566,49 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         await ScorePins.UnpinAsync(conn, CurrentUser.Id, scoreId);
 
         return Redirect($"/users/{CurrentUser.Id}#pinned");
+    }
+
+    // ---- section order ----
+
+    /// <summary>
+    /// Stores the whole section order in one write (task 68). Like the pin handlers, the
+    /// {idOrName} in the URL is IGNORED: the order belongs to the session user, so the only
+    /// profile this can ever rewrite is their own, and a signed-in visitor POSTing at somebody
+    /// else's profile URL just rearranges their own page. Anonymous goes to /login.
+    ///
+    /// <paramref name="order"/> is the full list, in the new order, as the client read it back out
+    /// of the DOM (repeated <c>order</c> form fields). Validation is
+    /// <see cref="ProfileSections.TrySanitize"/>'s: unknown ids, an empty list, or more entries
+    /// than there are sections are REFUSED outright with 400, so garbage never reaches the column;
+    /// an order equal to the default stores null, which is the same thing but survives a future
+    /// section being added.
+    /// </summary>
+    public async Task<IActionResult> OnPostReorderAsync(string[]? order)
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        if (!ProfileSections.TrySanitize(order, out string[]? stored))
+            return BadRequest();
+
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        // Two statements rather than one with a nullable array parameter: Dapper hands an array
+        // straight to Npgsql as a text[] (that is why ANY(@ids) works above), but a NULL one
+        // arrives as an untyped DBNull, and "back to the default" is worth spelling out in SQL
+        // instead of relying on Postgres inferring the column's type for it.
+        if (stored is null)
+            await conn.ExecuteAsync("UPDATE users SET profile_order = NULL WHERE id = @id", new { id = CurrentUser.Id });
+        else
+            await conn.ExecuteAsync("UPDATE users SET profile_order = @stored WHERE id = @id", new { stored, id = CurrentUser.Id });
+
+        // The fetch path only needs to know it landed; the page it is on already shows the new
+        // order (the client moved the DOM before asking). The plain-POST path (a replayed request,
+        // curl) gets the profile back, re-rendered from the stored order.
+        if (string.Equals(Request.Headers["X-Requested-With"], "fetch", StringComparison.Ordinal))
+            return new JsonResult(new { order = stored ?? ProfileSections.Default.ToArray() });
+
+        return Redirect($"/users/{CurrentUser.Id}");
     }
 
     // ---- follow / watch toggles ----

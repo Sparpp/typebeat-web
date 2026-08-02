@@ -1699,6 +1699,85 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 .profile-section h2 { margin: 0 0 var(--space-3); }
 
+/* ---- Section reordering (owner only: Pages/Users/_SectionHandle.cshtml + js/profile-reorder.js) ----
+   The heading row is a flex line so the control group can sit at its right edge without the
+   heading losing its own margin (every section keeps the vertical rhythm it had before). */
+
+.profile-section__head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+}
+
+.profile-section__head h2 { flex: 1 1 auto; }
+
+/* Hidden until profile-reorder.js marks the column reorderable, so a browser with JS off shows no
+   controls rather than dead ones. */
+.section-reorder { display: none; }
+
+.is-reorderable .section-reorder {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+/* The controls are chrome, not content: they fade in with the section they belong to, and stay up
+   while one of them holds focus so a keyboard user never chases an invisible button. */
+.is-reorderable .profile-section:hover .section-reorder,
+.is-reorderable .profile-section:focus-within .section-reorder,
+.is-reorderable [data-section-id].is-dragging .section-reorder { opacity: 1; }
+
+/* Native HTML5 drag-and-drop does not fire for touch at all, so below the narrow breakpoint the
+   whole group goes away rather than offering a grip that cannot work (osu's hidden-xs). The move
+   buttons go with it: the feature is either all there or not there. */
+@media (max-width: 700px) {
+    .is-reorderable .section-reorder { display: none; }
+}
+
+.section-reorder__grip {
+    cursor: grab;
+    padding: 0 var(--space-1);
+    color: var(--text-faint);
+    line-height: 1;
+    user-select: none;
+}
+
+.section-reorder__grip:hover { color: var(--violet); }
+
+.section-reorder__move {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-faint);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--text-xs);
+    line-height: 1;
+    padding: 2px 4px;
+}
+
+.section-reorder__move:hover {
+    color: var(--violet);
+    border-color: var(--line-bright);
+}
+
+/* The dragged section is its own drop preview: it travels through its siblings under the pointer,
+   so the gap you see IS where it will land, and nothing has to keep a placeholder in sync. */
+   The selector is the data attribute, not .profile-section: the Pinned block's draggable element
+   is the wrapper div that owns the #pinned anchor, and it is a section like any other here. */
+[data-section-id].is-dragging,
+[data-section-id].is-dragging * { cursor: grabbing; }
+
+[data-section-id].is-dragging {
+    opacity: 0.55;
+    outline: 1px dashed var(--line-bright);
+    outline-offset: var(--space-2);
+}
+
+.profile-reorder-status { margin: 0 0 var(--space-4); }
+
 .profile-empty { margin: 0; }
 
 .profile-section .show-more { margin-top: var(--space-4); }

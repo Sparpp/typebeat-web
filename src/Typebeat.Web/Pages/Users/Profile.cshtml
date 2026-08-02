@@ -1,9 +1,18 @@
 @page "/users/{idOrName}"
 @using System.Globalization
+@using Microsoft.AspNetCore.Html
+@using Typebeat.Web.Pages.Users
 @model Typebeat.Web.Pages.Users.ProfileModel
 @{
     // Where a no-JS follow/watch submit sends the user back to (this profile, query string kept).
     string followReturnUrl = Model.Request.Path + Model.Request.QueryString;
+
+    // Owner-only chrome: the reorder handles, the hidden form that carries their antiforgery
+    // token, and the script that wires them. Everything else on this page is identical for
+    // every visitor, including the section ORDER, which is the owner's and is served to all.
+    bool owner = Model.IsOwnProfile;
+
+    bool preferOriginal = Model.CurrentUser?.PreferOriginalMetadata ?? false;
 }
 
 <section class="profile-header">
@@ -91,56 +100,80 @@
     </section>
 }
 
-<div class="profile-grid">
-    <div class="profile-main">
-        @* Pinned: the owner's own curation, above everything else. Hidden entirely when there is
-           nothing pinned (no heading, no empty state), since a visitor has no reason to be told
-           about a section that only its owner can fill. The anchor stays either way so the
-           pin/unpin redirect has somewhere to land. *@
-        <div id="pinned">
-            @* Own profile only: the notice is only ever produced by the owner's own refused POST,
-               so a hand-typed ?pin= on somebody else's profile must not paint one there. *@
-            @if (Model.IsOwnProfile && Model.PinNotice is string pinNotice)
-            {
-                <div class="alert-error">@pinNotice</div>
-            }
-            @if (Model.PinnedScores.Count > 0)
-            {
-                <section class="profile-section">
-                    <h2>Pinned</h2>
-                    <div class="score-list">
-                        @foreach (var row in Model.PinnedScores)
-                        {
-                            <partial name="_ScoreRow" model="row" />
-                        }
-                    </div>
-                </section>
-            }
-        </div>
+@{
+    @* ---- The section blocks ----------------------------------------------------------------
+       One templated Razor delegate per section, keyed by its slug in ProfileSections. This
+       dictionary IS the join between the stored order array (026_profile_order.sql) and this
+       page's markup, the way osu-web's data-page-id joins its order array to its React blocks:
+       the loop below walks Model.SectionOrder and renders whatever each id names, so reordering
+       is a server-side property of the list and never of the markup.
 
-        <section class="profile-section">
-            <h2>Best scores</h2>
-            @if (Model.BestScores.Count == 0)
-            {
-                <p class="profile-empty muted">No scores yet, the keyboard is waiting.</p>
-            }
-            else
-            {
+       Every block carries data-section-id, which is what profile-reorder.js reads back out of
+       the DOM after a drag. Sections that hide themselves when empty leave an EMPTY, hidden slot
+       carrying the same attribute on the owner's own page, so a section that has nothing to show
+       today still holds its place in the order the owner drags out (without one, it would drop
+       out of the submitted array and reappear at the bottom the day it fills up).
+    *@
+    var blocks = new Dictionary<string, Func<object?, IHtmlContent>>(StringComparer.Ordinal);
+
+    @* Pinned: the owner's own curation. Hidden entirely when there is nothing pinned (no heading,
+       no empty state), since a visitor has no reason to be told about a section that only its
+       owner can fill. The anchor stays either way so the pin/unpin redirect has somewhere to land,
+       which also makes this the one section that never needs a separate empty slot. *@
+    blocks[ProfileSections.Pinned] = @<div id="pinned" data-section-id="@ProfileSections.Pinned">
+        @* Own profile only: the notice is only ever produced by the owner's own refused POST,
+           so a hand-typed ?pin= on somebody else's profile must not paint one there. *@
+        @if (owner && Model.PinNotice is string pinNotice)
+        {
+            <div class="alert-error">@pinNotice</div>
+        }
+        @if (Model.PinnedScores.Count > 0)
+        {
+            <section class="profile-section">
+                <div class="profile-section__head">
+                    <h2>Pinned</h2>
+                    <partial name="_SectionHandle" model='new SectionHandle(owner, "Pinned")' />
+                </div>
                 <div class="score-list">
-                    @foreach (var row in Model.BestScores)
+                    @foreach (var row in Model.PinnedScores)
                     {
                         <partial name="_ScoreRow" model="row" />
                     }
                 </div>
-            }
-        </section>
+            </section>
+        }
+    </div>;
 
-        @* First places: the maps this user currently tops. Hidden entirely when there are none,
-           like Pinned, since "no first places" is the ordinary case and needs no empty state. *@
+    blocks[ProfileSections.BestScores] = @<section class="profile-section" id="best-scores" data-section-id="@ProfileSections.BestScores">
+        <div class="profile-section__head">
+            <h2>Best scores</h2>
+            <partial name="_SectionHandle" model='new SectionHandle(owner, "Best scores")' />
+        </div>
+        @if (Model.BestScores.Count == 0)
+        {
+            <p class="profile-empty muted">No scores yet, the keyboard is waiting.</p>
+        }
+        else
+        {
+            <div class="score-list">
+                @foreach (var row in Model.BestScores)
+                {
+                    <partial name="_ScoreRow" model="row" />
+                }
+            </div>
+        }
+    </section>;
+
+    @* First places: the maps this user currently tops. Hidden entirely when there are none,
+       like Pinned, since "no first places" is the ordinary case and needs no empty state. *@
+    blocks[ProfileSections.FirstPlaces] = @<text>
         @if (Model.FirstPlaces.Count > 0)
         {
-            <section class="profile-section">
-                <h2>First places</h2>
+            <section class="profile-section" id="first-places" data-section-id="@ProfileSections.FirstPlaces">
+                <div class="profile-section__head">
+                    <h2>First places</h2>
+                    <partial name="_SectionHandle" model='new SectionHandle(owner, "First places")' />
+                </div>
                 <div class="score-list">
                     @foreach (var row in Model.FirstPlaces)
                     {
@@ -153,71 +186,85 @@
                 }
             </section>
         }
+        else if (owner)
+        {
+            <div class="profile-section-slot" data-section-id="@ProfileSections.FirstPlaces" hidden></div>
+        }
+    </text>;
 
-        <section class="profile-section">
+    blocks[ProfileSections.RecentScores] = @<section class="profile-section" id="recent-scores" data-section-id="@ProfileSections.RecentScores">
+        <div class="profile-section__head">
             <h2>Recent scores</h2>
-            @if (Model.RecentScores.Count == 0)
-            {
-                <p class="profile-empty muted">Nothing typed lately.</p>
-            }
-            else
-            {
-                <div class="score-list">
-                    @foreach (var row in Model.RecentScores)
-                    {
-                        <partial name="_ScoreRow" model="row" />
-                    }
-                </div>
-            }
-        </section>
+            <partial name="_SectionHandle" model='new SectionHandle(owner, "Recent scores")' />
+        </div>
+        @if (Model.RecentScores.Count == 0)
+        {
+            <p class="profile-empty muted">Nothing typed lately.</p>
+        }
+        else
+        {
+            <div class="score-list">
+                @foreach (var row in Model.RecentScores)
+                {
+                    <partial name="_ScoreRow" model="row" />
+                }
+            </div>
+        }
+    </section>;
 
-        <section class="profile-section">
+    blocks[ProfileSections.MostPlayed] = @<section class="profile-section" id="most-played" data-section-id="@ProfileSections.MostPlayed">
+        <div class="profile-section__head">
             <h2>Most played</h2>
-            @{ bool preferOriginalMostPlayed = Model.CurrentUser?.PreferOriginalMetadata ?? false; }
-            @if (Model.MostPlayed.Count == 0)
-            {
-                <p class="profile-empty muted">No plays on record yet.</p>
-            }
-            else
-            {
-                <div class="score-list">
-                    @foreach (var row in Model.MostPlayed)
-                    {
-                        string mpTitle = row.DisplayTitle(preferOriginalMostPlayed);
-                        string mpArtist = row.DisplayArtist(preferOriginalMostPlayed);
-                        <div class="score-row">
-                            <div class="score-row__thumb">
-                                @if (row.CoverUrl is not null)
-                                {
-                                    <img src="@row.CoverUrl" alt="" loading="lazy" />
-                                }
-                                else
-                                {
-                                    <div class="cover-fallback" aria-hidden="true"></div>
-                                }
-                            </div>
-                            <a class="score-row__map" href="/beatmapsets/@row.SetId" title="@mpTitle [@mpArtist]">
-                                @mpTitle <span class="score-row__artist">[@mpArtist]</span>
-                            </a>
-                            @if (row.Explicit)
+            <partial name="_SectionHandle" model='new SectionHandle(owner, "Most played")' />
+        </div>
+        @if (Model.MostPlayed.Count == 0)
+        {
+            <p class="profile-empty muted">No plays on record yet.</p>
+        }
+        else
+        {
+            <div class="score-list">
+                @foreach (var row in Model.MostPlayed)
+                {
+                    string mpTitle = row.DisplayTitle(preferOriginal);
+                    string mpArtist = row.DisplayArtist(preferOriginal);
+                    <div class="score-row">
+                        <div class="score-row__thumb">
+                            @if (row.CoverUrl is not null)
                             {
-                                <partial name="_ExplicitBadge" />
+                                <img src="@row.CoverUrl" alt="" loading="lazy" />
                             }
-                            <span class="score-row__plays">@row.Plays.ToString("N0", CultureInfo.InvariantCulture) plays</span>
+                            else
+                            {
+                                <div class="cover-fallback" aria-hidden="true"></div>
+                            }
                         </div>
-                    }
-                </div>
-            }
-        </section>
+                        <a class="score-row__map" href="/beatmapsets/@row.SetId" title="@mpTitle [@mpArtist]">
+                            @mpTitle <span class="score-row__artist">[@mpArtist]</span>
+                        </a>
+                        @if (row.Explicit)
+                        {
+                            <partial name="_ExplicitBadge" />
+                        }
+                        <span class="score-row__plays">@row.Plays.ToString("N0", CultureInfo.InvariantCulture) plays</span>
+                    </div>
+                }
+            </div>
+        }
+    </section>;
 
-        @* Most viewed replays (025_replay_views.sql): the plays other people came back to watch.
-           Sits with the other score lists rather than with the charts, and directly above the
-           chart of the same data over time. Hidden entirely when nothing of theirs was ever
-           watched, which is every profile until views start landing. *@
+    @* Most viewed replays (025_replay_views.sql): the plays other people came back to watch.
+       Sits with the other score lists rather than with the charts, and directly above the
+       chart of the same data over time. Hidden entirely when nothing of theirs was ever
+       watched, which is every profile until views start landing. *@
+    blocks[ProfileSections.MostViewedReplays] = @<text>
         @if (Model.MostViewedReplays.Count > 0)
         {
-            <section class="profile-section" id="most-viewed-replays">
-                <h2>Most viewed replays</h2>
+            <section class="profile-section" id="most-viewed-replays" data-section-id="@ProfileSections.MostViewedReplays">
+                <div class="profile-section__head">
+                    <h2>Most viewed replays</h2>
+                    <partial name="_SectionHandle" model='new SectionHandle(owner, "Most viewed replays")' />
+                </div>
                 <div class="score-list">
                     @foreach (var row in Model.MostViewedReplays)
                     {
@@ -226,70 +273,126 @@
                 </div>
             </section>
         }
+        else if (owner)
+        {
+            <div class="profile-section-slot" data-section-id="@ProfileSections.MostViewedReplays" hidden></div>
+        }
+    </text>;
 
-        @* The same views, per month. Hidden on the same condition as the list above. *@
+    @* The same views, per month. Hidden on the same condition as the list above. *@
+    blocks[ProfileSections.ReplayViews] = @<text>
         @if (Model.ReplayViewsChart is BarChartModel replayViews)
         {
-            <section class="profile-section" id="replay-views">
-                <h2>Replay views</h2>
+            <section class="profile-section" id="replay-views" data-section-id="@ProfileSections.ReplayViews">
+                <div class="profile-section__head">
+                    <h2>Replay views</h2>
+                    <partial name="_SectionHandle" model='new SectionHandle(owner, "Replay views")' />
+                </div>
                 <partial name="_BarChart" model="replayViews" />
             </section>
         }
+        else if (owner)
+        {
+            <div class="profile-section-slot" data-section-id="@ProfileSections.ReplayViews" hidden></div>
+        }
+    </text>;
 
-        @* Play history (024_play_history.sql), next to Most played because they answer the same
-           question from two directions: what you played, and when. Hidden entirely for a user
-           with no recorded month, like Pinned: an empty chart states nothing. *@
+    @* Play history (024_play_history.sql), next to Most played because they answer the same
+       question from two directions: what you played, and when. Hidden entirely for a user
+       with no recorded month, like Pinned: an empty chart states nothing. *@
+    blocks[ProfileSections.PlayHistory] = @<text>
         @if (Model.PlayHistoryChart is BarChartModel playHistory)
         {
-            <section class="profile-section" id="play-history">
-                <h2>Play history</h2>
+            <section class="profile-section" id="play-history" data-section-id="@ProfileSections.PlayHistory">
+                <div class="profile-section__head">
+                    <h2>Play history</h2>
+                    <partial name="_SectionHandle" model='new SectionHandle(owner, "Play history")' />
+                </div>
                 <partial name="_BarChart" model="playHistory" />
             </section>
         }
+        else if (owner)
+        {
+            <div class="profile-section-slot" data-section-id="@ProfileSections.PlayHistory" hidden></div>
+        }
+    </text>;
 
-        <section class="profile-section">
+    blocks[ProfileSections.Maps] = @<section class="profile-section" id="maps" data-section-id="@ProfileSections.Maps">
+        <div class="profile-section__head">
             <h2>Maps</h2>
-            @if (Model.Maps.Count == 0)
-            {
-                <p class="profile-empty muted">No maps uploaded yet.</p>
-            }
-            else
-            {
-                <div class="card-grid">
-                    @foreach (var set in Model.Maps)
-                    {
-                        <partial name="_BeatmapsetCard" model="set" />
-                    }
-                </div>
-                @if (Model.HasMoreMaps)
+            <partial name="_SectionHandle" model='new SectionHandle(owner, "Maps")' />
+        </div>
+        @if (Model.Maps.Count == 0)
+        {
+            <p class="profile-empty muted">No maps uploaded yet.</p>
+        }
+        else
+        {
+            <div class="card-grid">
+                @foreach (var set in Model.Maps)
                 {
-                    <div class="show-more">
-                        <a class="btn btn-ghost" href="/beatmapsets?q=@Uri.EscapeDataString(Model.ProfileUser.Username)">show all maps</a>
-                    </div>
+                    <partial name="_BeatmapsetCard" model="set" />
                 }
+            </div>
+            @if (Model.HasMoreMaps)
+            {
+                <div class="show-more">
+                    <a class="btn btn-ghost" href="/beatmapsets?q=@Uri.EscapeDataString(Model.ProfileUser.Username)">show all maps</a>
+                </div>
             }
-        </section>
+        }
+    </section>;
 
-        <section class="profile-section">
+    blocks[ProfileSections.Favourites] = @<section class="profile-section" id="favourites" data-section-id="@ProfileSections.Favourites">
+        <div class="profile-section__head">
             <h2>Favourites</h2>
-            @if (Model.Favourites.Count == 0)
-            {
-                <p class="profile-empty muted">No favourites yet.</p>
-            }
-            else
-            {
-                <div class="card-grid">
-                    @foreach (var set in Model.Favourites)
-                    {
-                        <partial name="_BeatmapsetCard" model="set" />
-                    }
-                </div>
-                @if (Model.HasMoreFavourites)
+            <partial name="_SectionHandle" model='new SectionHandle(owner, "Favourites")' />
+        </div>
+        @if (Model.Favourites.Count == 0)
+        {
+            <p class="profile-empty muted">No favourites yet.</p>
+        }
+        else
+        {
+            <div class="card-grid">
+                @foreach (var set in Model.Favourites)
                 {
-                    <p class="profile-empty faint">Showing the latest @Model.Favourites.Count favourites.</p>
+                    <partial name="_BeatmapsetCard" model="set" />
                 }
+            </div>
+            @if (Model.HasMoreFavourites)
+            {
+                <p class="profile-empty faint">Showing the latest @Model.Favourites.Count favourites.</p>
             }
-        </section>
+        }
+    </section>;
+}
+
+<div class="profile-grid">
+    <div class="profile-main" data-profile-sections>
+        @if (owner)
+        {
+            @* The persist path, owner-only. The form is never submitted as a form (there is no
+               no-JS ordering story: you cannot drag without a pointer), it exists so the fetch in
+               profile-reorder.js can lift a real antiforgery token and a real handler URL out of
+               it, exactly like the follow/favourite toggles do. Its presence is also what tells
+               the script this visitor is the owner. *@
+            <form class="js-reorder-form" method="post" asp-page="/Users/Profile"
+                  asp-route-idOrName="@Model.ProfileUser.Id" asp-page-handler="Reorder" hidden></form>
+            @* Empty and hidden until something goes wrong: a failed persist rewinds the DOM and
+               says so here, since a silently-reverted drag would read as the page being broken. *@
+            <p class="profile-reorder-status" data-reorder-status role="status" aria-live="polite" hidden></p>
+        }
+
+        @foreach (string sectionId in Model.SectionOrder)
+        {
+            @* An id with no block cannot happen (SectionOrder is filtered to known ids), but the
+               loop refuses to guess rather than throwing on a stored array from the future. *@
+            if (blocks.TryGetValue(sectionId, out var block))
+            {
+                @block(null)
+            }
+        }
     </div>
 
     <aside class="profile-side">
@@ -318,3 +421,11 @@
         </div>
     </aside>
 </div>
+
+@if (owner)
+{
+    @* Owner-only, and page-local rather than in _Layout: nobody else's profile has anything for
+       it to wire, and no other page has sections at all. Loaded like Play/Index.cshtml loads its
+       own scripts. *@
+    <script src="~/js/profile-reorder.js" asp-append-version="true" defer></script>
+}
