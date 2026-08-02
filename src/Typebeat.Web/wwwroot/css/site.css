@@ -2014,6 +2014,18 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .score-row__completion { color: var(--violet); }
 .score-row__acc { color: var(--text-muted); }
 
+/* pp, opt-in per row (Pages/ScoreRowModel.cs, only the profile's Best scores section sets it).
+   Same quiet metadata voice as accuracy; a 0pp play (custom rate, not yet priced) is real and
+   stays visible, just faded further so it doesn't read as a competing number. */
+.score-row__pp {
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.score-row__pp--zero { color: var(--text-faint); }
+
 .score-row__mods {
     color: var(--violet-bright);
     font-size: var(--text-sm);

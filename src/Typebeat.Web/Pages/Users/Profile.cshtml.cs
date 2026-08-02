@@ -330,6 +330,23 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              """,
             new { id })).ToList();
 
+        // pp per Best-scores row (scores.pp, docs/pp.md), opt-in only on this section: a second
+        // small query keyed by score id, merged onto the already-hydrated rows in C#, the same
+        // shape as the replay-views ranking below and for the identical reason (see the doc
+        // comment on ScoreRowModel.Pp). 0 is a real value (unpriced/custom-rate plays) so it is
+        // set unconditionally for every row, never left null once a row is known to be here.
+        if (BestScores.Count > 0)
+        {
+            long[] bestScoreIds = BestScores.Select(r => r.ScoreId).ToArray();
+
+            var ppByScoreId = (await conn.QueryAsync<(long ScoreId, double Pp)>(
+                "SELECT id AS ScoreId, pp AS Pp FROM scores WHERE id = ANY(@bestScoreIds)",
+                new { bestScoreIds })).ToDictionary(r => r.ScoreId, r => r.Pp);
+
+            foreach (var row in BestScores)
+                row.Pp = ppByScoreId.GetValueOrDefault(row.ScoreId);
+        }
+
         // First places: the maps whose leaderboard rank-1 row is this user's. Defined by the BOARD,
         // not by pp or by score size, and built from the same BeatmapLeaderboard fragments the game
         // client's board and the set page's board are built from, so "first place" here always

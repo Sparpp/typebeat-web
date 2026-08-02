@@ -39,6 +39,12 @@
     <span class="grade @Model.GradeClass">@Model.GradeLabel</span>
     <span class="score-row__completion" title="completion: the % of the map typed; what the grade is awarded on">@((Model.Completion * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
     <span class="score-row__acc" title="accuracy: timing quality">@((Model.Accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
+    @* pp, opt-in per row (only the Best scores section sets this today; see ScoreRowModel.Pp).
+       0 is an honest value (a custom-rate or not-yet-priced play), it still renders, just quieter. *@
+    @if (Model.Pp is double pp)
+    {
+        <span class="score-row__pp @(pp <= 0 ? "score-row__pp--zero" : "")" title="performance points">@pp.ToString("N0", CultureInfo.InvariantCulture)pp</span>
+    }
     <partial name="_ModIcons" model="Model.Mods" />
     <span class="score-row__score">@Model.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span>
     <span class="score-row__date faint">@Model.Date.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</span>
