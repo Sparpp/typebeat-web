@@ -24,6 +24,7 @@
     <script src="~/js/preview-player.js" asp-append-version="true" defer></script>
     <script src="~/js/favourite.js" asp-append-version="true" defer></script>
     <script src="~/js/follow.js" asp-append-version="true" defer></script>
+    <script src="~/js/notifications.js" asp-append-version="true" defer></script>
 </head>
 <body>
 <header class="site-nav">
@@ -33,17 +34,16 @@
             <a href="/play">play</a>
             <a href="/beatmapsets">beatmaps</a>
             <a href="/rankings">rankings</a>
-            @if (sessionUser is not null)
-            {
-                @* Signed-in only: /watching is a view of YOUR watchlist and redirects to /login
-                   for everyone else, so an anonymous nav slot would just be a login trap. *@
-                <a href="/watching">watching</a>
-            }
+            @* No "watching" tab here any more (task 70). The notifications page it pointed at is
+               now reached from the bell in .nav-auth below, which is where a personal, unread-count
+               surface belongs: the main nav is the site's public map, one entry per place anybody
+               can go. *@
             <a href="/download">download</a>
         </div>
         <div class="nav-auth">
             @if (sessionUser is not null)
             {
+                <partial name="_NotificationBell" />
                 <a class="user-chip" href="/users/@sessionUser.Id">
                     @if (sessionUser.AvatarKey is string avatarKey)
                     {

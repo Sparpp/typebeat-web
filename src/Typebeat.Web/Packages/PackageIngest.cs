@@ -3,6 +3,7 @@ using Dapper;
 using Npgsql;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages.Lyrics;
+using Typebeat.Web.Social;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Packages;
@@ -194,8 +195,10 @@ public sealed class PackageIngest(
                     new { setId });
 
                 // Still refresh liveness + publish: a retry after an interrupted first upload
-                // lands here and must finish the job (publish the set, settle diff liveness).
-                await refreshLivenessAndPublishAsync(conn, package, setId);
+                // lands here and must finish the job (publish the set, settle diff liveness,
+                // notify watchers). An identical resubmission of an ALREADY published set flips
+                // nothing, so it notifies nobody, which is the whole point of the latch.
+                await refreshLivenessAndPublishAsync(conn, package, setId, ownerId.Value, ct);
 
                 // Repair path: versions recorded before the assemble-before-commit invariant
                 // existed (or damaged by operator error) can have a package_key with no object
@@ -393,7 +396,7 @@ public sealed class PackageIngest(
         // ---- diff liveness + publish, still inside the transaction (crossing submissions must
         //      never NULL a diff the newer current version contains). ----
 
-        await refreshLivenessAndPublishAsync(conn, package, setId);
+        await refreshLivenessAndPublishAsync(conn, package, setId, ownerId.Value, ct);
 
         // ---- artifacts: download package, covers, preview, BEFORE the commit, so a version
         //      row is only ever durable with its package object already in the store (a crash
@@ -457,8 +460,35 @@ public sealed class PackageIngest(
     /// ever clears rows of this set), and a set still 'hidden' is published by its first
     /// successful upload ('removed' is deliberately never touched: takedowns are final).
     /// Runs inside the ingest transaction so crossing submissions serialize with the version cut.
+    ///
+    /// <para>
+    /// THE PUBLISH LATCH, and why the watcher notification hangs off it. The status UPDATE is
+    /// guarded by <c>status = 'hidden'</c>, the pre-publish shell a set is created in
+    /// (BssEndpoints' INSERT), and NO code path anywhere puts a set back into it: the only other
+    /// status writes in the repo are the BSS PUT's pending/unranked intent switch (which cannot
+    /// produce 'hidden'), the reviewer's pending &lt;-&gt; ranked transitions, and takedowns to
+    /// 'removed', which are an admin-SQL lever and deliberately final. So this statement's row
+    /// count is exactly "this set became publicly visible for the first time", once per set for
+    /// the life of the set, and it is therefore the honest trigger for "a mapper you watch
+    /// uploaded something". Hanging the fan-out off <c>CutNewVersion</c> instead would notify
+    /// every watcher on every re-upload of an existing map; hanging it off the PUT that creates
+    /// the set would notify them about a draft nobody can open yet.
+    /// </para>
+    ///
+    /// <para>
+    /// The one thing the latch cannot defend against is somebody hand-running SQL to put a
+    /// published set back to 'hidden' and letting it republish. 027's partial unique index covers
+    /// that case: the second fan-out inserts nothing rather than re-notifying.
+    /// </para>
+    ///
+    /// <para>
+    /// The fan-out runs INSIDE this transaction, so notifications and the publish they announce
+    /// commit together: a rolled-back upload cannot leave a badge pointing at a set that never
+    /// went live, and a crash between them is not representable.
+    /// </para>
     /// </summary>
-    private static async Task refreshLivenessAndPublishAsync(NpgsqlConnection conn, ParsedPackage package, long setId)
+    private static async Task refreshLivenessAndPublishAsync(
+        NpgsqlConnection conn, ParsedPackage package, long setId, long ownerId, CancellationToken ct)
     {
         long[] liveIds = package.Difficulties.Select(d => d.BeatmapId!.Value).ToArray();
 
@@ -470,9 +500,12 @@ public sealed class PackageIngest(
         // promotes the set from the website (migration 005). The published status is the creator's
         // wizard choice: 'pending' (awaiting review) or 'unranked' (not intended for ranking),
         // recorded on the set at PUT time (migration 012).
-        await conn.ExecuteAsync(
+        int published = await conn.ExecuteAsync(
             "UPDATE beatmapsets SET status = intended_status WHERE id = @setId AND status = 'hidden'",
             new { setId });
+
+        if (published > 0)
+            await Notifications.FanOutMapperUploadAsync(conn, setId, ownerId, ct);
     }
 
     /// <summary>

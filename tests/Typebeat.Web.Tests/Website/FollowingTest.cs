@@ -378,7 +378,8 @@ public class FollowingTest
             Assert.That(html, Does.Contain($"data-user-id=\"{mapperBravoId}\""));
             Assert.That(html, Does.Not.Contain($"data-user-id=\"{mapperCharlieId}\""));
 
-            // The nav gains its signed-in-only entry point.
+            // The page is reachable from the chrome: task 70 moved that entry point out of the
+            // main nav and into the header bell, which links here.
             Assert.That(html, Does.Contain("href=\"/watching\""));
         });
     }
@@ -409,7 +410,7 @@ public class FollowingTest
     }
 
     [Test]
-    public async Task Nav_HidesWatchingFromSignedOutVisitors()
+    public async Task Chrome_HidesWatchingFromSignedOutVisitors()
     {
         using var response = await WebsiteFixture.Client.GetAsync("/");
         string html = await response.Content.ReadAsStringAsync();

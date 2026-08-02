@@ -1,0 +1,38 @@
+@using Typebeat.Web.Social
+@model IReadOnlyList<NotificationRowModel>
+@*
+    The dropdown's contents, fetched on first open from /watching?handler=Panel rather than
+    rendered into every page's layout.
+
+    That split is the whole reason the badge stays cheap: the layout runs ONE capped index count
+    for the number on the bell, and the list query (which joins beatmapsets and users per row)
+    only ever runs for someone who actually opened the panel. Rendering it into the layout would
+    pay that join on every page view of the site to serve a panel most views never open.
+*@
+<div class="notif-panel__head">
+    <span class="notif-panel__title">notifications</span>
+    @if (Model.Any(row => row.IsUnread))
+    {
+        <form class="js-notif-readall" method="post" asp-page="/Watching" asp-page-handler="ReadAll">
+            <button type="submit" class="notif-panel__readall">mark all read</button>
+        </form>
+    }
+</div>
+
+@if (Model.Count == 0)
+{
+    <p class="notif-panel__empty faint">
+        Nothing yet. Ring the bell on a mapper's profile and their new maps land here.
+    </p>
+}
+else
+{
+    <div class="notif-list">
+        @foreach (var row in Model)
+        {
+            <partial name="_NotificationRow" model="row" />
+        }
+    </div>
+}
+
+<a class="notif-panel__all" href="/watching">see all notifications</a>

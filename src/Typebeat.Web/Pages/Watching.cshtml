@@ -1,11 +1,47 @@
 @page "/watching"
 @model Typebeat.Web.Pages.WatchingModel
 
-<h1>Watched mappers</h1>
+<h1>Notifications</h1>
 <p class="faint">
-    New maps from the mappers you watch, newest first. Ring the bell on anyone's profile to add
-    them here.
+    Everything the bell has caught, newest first, plus the mappers you watch and what they have
+    been uploading. Ring the bell on anyone's profile to add them here.
 </p>
+
+@* The notification list, page 1 only (page 2+ is somebody walking back through the upload feed
+   below, where repeating the newest-first notifications above it would be noise). This is the
+   "see all" target of the header dropdown, rendered from the same row partial the dropdown uses,
+   so the two surfaces cannot drift. *@
+@if (Model.PageNumber == 1)
+{
+    <section class="profile-section">
+        <div class="notif-page__head">
+            <h2>Recent</h2>
+            @if (Model.Notes.Any(note => note.IsUnread))
+            {
+                <form class="js-notif-readall" method="post" asp-page="/Watching" asp-page-handler="ReadAll">
+                    <button type="submit" class="btn btn-ghost btn-small">mark all read</button>
+                </form>
+            }
+        </div>
+
+        @if (Model.Notes.Count == 0)
+        {
+            <p class="profile-empty muted">
+                Nothing here yet. Notifications start when a mapper you watch publishes a new map;
+                anything uploaded before then is in the feed below.
+            </p>
+        }
+        else
+        {
+            <div class="notif-list notif-list--page">
+                @foreach (var note in Model.Notes)
+                {
+                    <partial name="_NotificationRow" model="note" />
+                }
+            </div>
+        }
+    </section>
+}
 
 @if (Model.WatchedCount == 0)
 {

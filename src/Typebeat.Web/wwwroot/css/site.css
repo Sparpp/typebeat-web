@@ -2730,3 +2730,216 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     /* The identity column already wraps here; let the actions drop under it rather than squeeze. */
     .profile-header__actions { margin-left: 0; }
 }
+
+/* ---- Notification bell + dropdown (task 70) ---- */
+
+/* The bell sits in .nav-auth next to the user chip and is the anchor for its dropdown, so it is
+   the positioned ancestor the panel hangs off. */
+.notif-bell {
+    position: relative;
+    display: inline-flex;
+}
+
+/* Reuses .bell-btn wholesale (the profile bell): same square, same dim-until-lit treatment, so
+   the two bells on the site read as the same control. is-on = you have unread. */
+.notif-bell__btn { position: relative; }
+
+/* Unread count, pinned to the bell's top-right corner. Rendered only when non-zero, so there is
+   no "hidden at zero" state to keep in sync. */
+.notif-bell__badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding-inline: 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-full);
+    background: var(--violet);
+    color: var(--on-accent);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    /* The badge only ever renders when the count is non-zero, which is exactly when the bell
+       carries .is-on and has therefore already dropped .bell-btn's grayscale filter. (A child
+       cannot undo an ancestor's filter, so this has to hold rather than be corrected here.) */
+}
+
+.notif-panel {
+    position: absolute;
+    top: calc(100% + var(--space-2));
+    right: 0;
+    width: min(360px, calc(100vw - var(--space-5)));
+    max-height: min(70vh, 520px);
+    overflow-y: auto;
+    padding: var(--space-2);
+    background: var(--bg-raised);
+    border: 1px solid var(--line-bright);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    /* .site-nav is z-index 10 and sticky; the panel has to clear the page under it. */
+    z-index: 20;
+}
+
+.notif-panel[hidden] { display: none; }
+
+.notif-panel__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-1) var(--space-2) var(--space-2);
+    border-bottom: 1px solid var(--line);
+}
+
+.notif-panel__title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    text-transform: lowercase;
+}
+
+.notif-panel__head form { margin: 0; }
+
+.notif-panel__readall {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--text-xs);
+    cursor: pointer;
+}
+
+.notif-panel__readall:hover { color: var(--violet-bright); }
+
+.notif-panel__empty {
+    padding: var(--space-4) var(--space-2);
+    margin: 0;
+    font-size: var(--text-sm);
+}
+
+.notif-panel__all {
+    display: block;
+    padding: var(--space-2);
+    border-top: 1px solid var(--line);
+    text-align: center;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+.notif-panel__all:hover { color: var(--violet-bright); }
+
+/* ---- Notification rows (shared by the dropdown and /watching) ---- */
+
+.notif-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.notif-list form { margin: 0; }
+
+/* The row is a submit button (it POSTs itself read, then redirects), so every button default has
+   to be undone before it can look like a list item. */
+.notif-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.notif-row:hover { background: var(--surface-2); }
+
+.notif-row.is-unread { background: rgba(201, 242, 77, 0.06); }
+
+.notif-row.is-unread:hover { background: rgba(201, 242, 77, 0.12); }
+
+.notif-row__cover {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+    background: var(--surface-2);
+}
+
+.notif-row__cover--fallback { background: var(--grad-primary); opacity: 0.35; }
+
+.notif-row__body {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.notif-row__text {
+    font-size: var(--text-sm);
+    line-height: 1.35;
+    color: var(--text-muted);
+    /* Two lines, then ellipsis: a long "artist - title" must not turn one notification into a
+       paragraph inside a 360px dropdown. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.notif-row__actor,
+.notif-row__subject {
+    color: var(--text);
+    font-weight: 700;
+}
+
+.notif-row__meta { font-size: var(--text-xs); }
+
+.notif-row__dot {
+    width: 7px;
+    height: 7px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--violet);
+}
+
+/* On /watching the same rows sit in a normal page section rather than a floating panel, so they
+   get the card treatment the other sections use. */
+.notif-list--page {
+    gap: var(--space-1);
+    padding: var(--space-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+}
+
+.notif-page__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.notif-page__head h2 { margin-bottom: var(--space-3); }
+
+.notif-page__head form { margin: 0; }
+
+@media (max-width: 560px) {
+    /* .nav-auth drops its margin-left:auto here and the nav wraps, so the bell ends up near the
+       LEFT edge. A panel anchored to the bell's right edge would then hang off-screen to the
+       left, so it anchors left instead and clamps to the viewport. */
+    .notif-panel {
+        right: auto;
+        left: 0;
+        width: min(360px, calc(100vw - var(--space-4)));
+    }
+}
