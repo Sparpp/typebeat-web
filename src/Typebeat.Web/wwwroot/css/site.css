@@ -2367,3 +2367,168 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     .tb-hud-sync { display: none; }
     .tb-gap-track { width: 72px; }
 }
+
+/* ==========================================================================
+   Following + mapper watching (task 64)
+   Appended as its own block rather than woven into the profile section above,
+   so it reads as one feature and stays easy to lift back out.
+   ========================================================================== */
+
+/* ---- Profile header: follower/following counters + the two toggles ---- */
+
+/* Counters sit under the joined/last-seen line, inside the identity column. */
+.profile-header__social {
+    display: flex;
+    gap: var(--space-4);
+    margin-top: var(--space-2);
+}
+
+.profile-social {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.profile-social:hover { color: var(--text); text-decoration: none; }
+
+.profile-social__num {
+    font-family: var(--font-display);
+    font-weight: 700;
+    color: var(--text);
+}
+
+/* Right-hand action cluster (follow + bell, or the owner's own links). margin-left:auto keeps it
+   pinned to the far edge exactly as the lone "edit profile" button used to be. */
+.profile-header__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-left: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+/* "edit profile" used to be the bar's own last child and pushed itself right with margin-left:auto
+   (line ~2013). It now sits INSIDE the actions cluster, which does the pushing, so that inherited
+   auto margin would only blow a gap between it and its neighbour. */
+.profile-header__actions .profile-header__edit { margin-left: 0; }
+
+/* Already-following state: the ghost button gains the accent hairline so "following" reads as an
+   ON toggle rather than a second, weaker call to action. */
+.btn-ghost.is-on {
+    border-color: var(--violet);
+    color: var(--violet-bright);
+}
+
+/* The bell. Square icon button sized to sit level with a .btn-small, dim until it is ringing. */
+.bell-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 1px solid var(--line-bright);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--text-base);
+    line-height: 1;
+    cursor: pointer;
+    text-decoration: none; /* the signed-out variant is an <a> to /login, not a <button> */
+    /* Colour emoji ignore `color`; drop the saturation instead so the OFF state reads as off. */
+    filter: grayscale(1);
+    opacity: 0.7;
+    transition: border-color .12s ease, filter .12s ease, opacity .12s ease;
+}
+
+.bell-btn:hover {
+    border-color: var(--violet);
+    opacity: 1;
+    text-decoration: none;
+}
+
+.bell-btn.is-on {
+    border-color: var(--violet);
+    background: rgba(201, 242, 77, 0.12);
+    filter: none;
+    opacity: 1;
+}
+
+/* ---- User rows (follower/following lists, watched-mapper strip) ---- */
+
+/* Same rhythm as .score-list / .score-row, one row per person instead of per play. */
+.user-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.user-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+}
+
+.user-row:hover { border-color: var(--line-bright); }
+
+.user-row__avatar-link {
+    display: inline-flex;
+    flex-shrink: 0;
+}
+
+.user-row__avatar {
+    display: block;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--surface-2);
+}
+
+/* Initial-letter disc, the small sibling of .avatar-fallback (56px) used by the podium. */
+.user-row__avatar--fallback {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--violet);
+    color: var(--on-accent);
+    font-family: var(--font-display);
+    font-size: var(--text-base);
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.user-row__who {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.user-row__name {
+    font-family: var(--font-display);
+    font-weight: 700;
+}
+
+.user-row__meta { font-size: var(--text-xs); }
+
+.user-row__maps { flex-shrink: 0; }
+
+/* ---- Follower / following list pages ---- */
+
+.follow-list h1 { margin-bottom: var(--space-2); }
+
+.follow-list > p { margin-bottom: var(--space-5); }
+
+@media (max-width: 560px) {
+    /* The identity column already wraps here; let the actions drop under it rather than squeeze. */
+    .profile-header__actions { margin-left: 0; }
+}

@@ -3,6 +3,7 @@ using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
+using Typebeat.Web.Social;
 
 namespace Typebeat.Web.Pages.Users;
 
@@ -78,6 +79,12 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
     public bool IsOwnProfile => CurrentUser?.Id == ProfileUser.Id;
 
+    /// <summary>
+    /// Follower/following counts (header links) plus whether the viewer already follows this user
+    /// and/or watches them as a mapper (which way the Follow button and the bell are flipped).
+    /// </summary>
+    public ProfileFollowState FollowState { get; private set; } = ProfileFollowState.Empty;
+
     public async Task<IActionResult> OnGetAsync(string idOrName, string? pin = null)
     {
         // Refused pins come back here by redirect (PRG), same shape as /settings?saved=.
@@ -125,6 +132,10 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         ProfileUser = user;
 
         long viewerId = CurrentUser?.Id ?? 0;
+
+        // ---- header: follow / watch state ----
+
+        FollowState = await Follows.ProfileStateAsync(conn, id, viewerId, HttpContext.RequestAborted);
 
         // ---- stats card ----
 
@@ -390,6 +401,65 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         await ScorePins.UnpinAsync(conn, CurrentUser.Id, scoreId);
 
         return Redirect($"/users/{CurrentUser.Id}#pinned");
+    }
+
+    // ---- follow / watch toggles ----
+
+    /// <summary>Follow button: toggles the 'user' edge from viewer to this profile.</summary>
+    public Task<IActionResult> OnPostFollowAsync(string idOrName, string? returnUrl)
+        => toggleFollowAsync(idOrName, Follows.UserKind, returnUrl);
+
+    /// <summary>
+    /// Bell: toggles the 'mapper' edge, which puts this user's future uploads in the viewer's
+    /// /watching feed. Deliberately allowed on any profile, including one with no maps yet
+    /// (023_follows.sql explains why), so nothing here checks for beatmapsets.
+    /// </summary>
+    public Task<IActionResult> OnPostWatchAsync(string idOrName, string? returnUrl)
+        => toggleFollowAsync(idOrName, Follows.MapperKind, returnUrl);
+
+    /// <summary>
+    /// Shared body of the two toggles. Mirrors the favourite button on the set page: signed-out
+    /// posts bounce to /login, a fetch()-driven submit gets JSON back so the header updates in
+    /// place, and a plain form submit redirects for the no-JS path.
+    ///
+    /// The route parameter is the page's <c>{idOrName}</c>, but only the numeric id form is
+    /// accepted here: the button is always rendered with the resolved id, so a name in this slot
+    /// is not a real user action, and quietly resolving it would give the write path a second
+    /// identity lookup to keep in sync with the GET's.
+    /// </summary>
+    private async Task<IActionResult> toggleFollowAsync(string idOrName, string kind, string? returnUrl)
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        if (!long.TryParse(idOrName, NumberStyles.None, CultureInfo.InvariantCulture, out long targetId))
+            return NotFound();
+
+        // Self-follow is rejected before the write (the table's CHECK would otherwise turn a
+        // hand-crafted post into a 500). Nothing renders these buttons on your own profile.
+        if (targetId == CurrentUser.Id)
+            return BadRequest();
+
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        // Restricted users are delisted site-wide, and their profile 404s, so they cannot be
+        // followed either.
+        bool followable = await conn.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS (SELECT 1 FROM users WHERE id = @targetId AND NOT restricted)",
+            new { targetId });
+
+        if (!followable)
+            return NotFound();
+
+        bool on = await Follows.ToggleAsync(conn, CurrentUser.Id, targetId, kind, HttpContext.RequestAborted);
+
+        if (string.Equals(Request.Headers["X-Requested-With"], "fetch", StringComparison.Ordinal))
+        {
+            var state = await Follows.ProfileStateAsync(conn, targetId, CurrentUser.Id, HttpContext.RequestAborted);
+            return new JsonResult(new { on, kind, followers = state.Followers, following = state.Following });
+        }
+
+        return Redirect(Url.IsLocalUrl(returnUrl) ? returnUrl : $"/users/{targetId}");
     }
 
     // ---- display helpers ----
