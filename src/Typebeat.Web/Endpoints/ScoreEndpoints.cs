@@ -113,7 +113,8 @@ public static class ScoreEndpoints
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
             """
-            SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS
+            SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
+                   b.difficulty_rating AS baseStars, b.sr_dt AS srDt, b.sr_ht AS srHt
             FROM beatmaps b
             JOIN beatmapsets bs ON bs.id = b.set_id
             WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
@@ -198,7 +199,11 @@ public static class ScoreEndpoints
             return WireJson.Error(status_unprocessable, "invalid token");
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-            "SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS FROM beatmaps WHERE id = @beatmapId",
+            """
+            SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS,
+                   difficulty_rating AS baseStars, sr_dt AS srDt, sr_ht AS srHt
+            FROM beatmaps WHERE id = @beatmapId
+            """,
             new { beatmapId }, tx);
 
         if (beatmap is null)
@@ -303,19 +308,45 @@ public static class ScoreEndpoints
         // tampered payload can't bloat the row while the score-affecting rate still survives.
         string modsJson = SerializeMods(mods);
 
+        // Performance points for this play (docs/pp.md, Scoring/PerformancePoints.cs). Computed here
+        // rather than on read because it is a pure function of values that never change again once
+        // written, except the map's star ratings; when THOSE move, PaceBackfill/PackageIngest stamp
+        // this row's pp_version back to 0 and PpBackfill recomputes it at the next boot.
+        //
+        // "Settled" is the whole reason the version is not stamped unconditionally: a base-rate
+        // DT/HT play on a map whose sr_dt/sr_ht is not stored yet CANNOT be priced, so it is written
+        // at version 0 (pp 0 for now) and picked up by the backfill once the column is filled,
+        // instead of freezing at zero. Eligibility itself is inherited from the ranked flag computed
+        // above, so fails, unranked mods and out-of-bounds submissions earn nothing for free.
+        // Reading the mods back out of the json just serialized (rather than off the normalized list)
+        // is deliberate: it is byte-for-byte the input PpBackfill will later see for this row, so
+        // the two paths cannot disagree about what a play was played with.
+        var (pp, ppSettled) = PerformancePoints.ForScore(
+            ranked,
+            ScoreMods.Parse(modsJson),
+            PerformancePoints.CountNotes(statistics),
+            storedAccuracy,
+            storedMaxCombo,
+            beatmap.BaseStars,
+            beatmap.SrDt,
+            beatmap.SrHt);
+
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO scores
                 (user_id, beatmap_id, ruleset_id, total_score, accuracy, completion, max_combo, rank, passed,
-                 ranked, preserve, mods, statistics, maximum_statistics, build_id, started_at, ended_at)
+                 ranked, preserve, mods, statistics, maximum_statistics, build_id, started_at, ended_at,
+                 pp, pp_version)
             VALUES
                 (@userId, @beatmapId, 0, @totalScore, @accuracy, @completion, @maxCombo, @rank, @passed,
                  @ranked, @preserve, CAST(@mods AS jsonb), CAST(@statistics AS jsonb), CAST(@maximumStatistics AS jsonb),
-                 @buildId, @startedAt, @endedAt)
+                 @buildId, @startedAt, @endedAt, @pp, @ppVersion)
             RETURNING id
             """,
             new
             {
+                pp,
+                ppVersion = ppSettled ? PerformancePoints.VERSION : 0,
                 userId = user.Id,
                 beatmapId,
                 totalScore = storedTotal,
@@ -667,7 +698,11 @@ public static class ScoreEndpoints
 
     // ---- Dapper row shapes ----
 
-    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS);
+    // Appended, never reordered: Dapper maps positional records by position (BaseStars/SrDt/SrHt
+    // are the 020_performance_points.sql additions).
+    private sealed record BeatmapRow(
+        long Id, string ChecksumMd5, double DrainLengthS, double SkippableS,
+        double BaseStars, double? SrDt, double? SrHt);
 
     private sealed record BestScoreRow(long Id, long TotalScore);
 

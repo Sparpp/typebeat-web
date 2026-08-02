@@ -4,12 +4,20 @@ using Npgsql;
 namespace Typebeat.Web.Scoring;
 
 /// <summary>
-/// The one global-ranking definition, shared by the /rankings board, the website profile stats
-/// card, and the game client's user endpoint, so all three agree on a player's rank. There is no
-/// pp yet: a player's "ranked score" is the sum of their best score per RANKED map (a
+/// The one CUMULATIVE-SCORE ranking definition, shared by the /rankings Score tab, the website
+/// profile stats card, and the game client's user endpoint, so all three agree on a player's score
+/// rank. A player's "ranked score" is the sum of their best score per RANKED map (a
 /// best-per-(user, beatmap) fold over ranked+passed scores on sets in status 'ranked'), and their
-/// global rank is the dense_rank by that score among non-restricted, non-deleted users. Ties share
-/// a rank; a player with no qualifying score is unranked (null).
+/// rank is the dense_rank by that score among non-restricted, non-deleted users. Ties share a
+/// rank; a player with no qualifying score is unranked (null).
+///
+/// <para>
+/// THIS IS NO LONGER THE MAIN GLOBAL RANKING (task 61). <see cref="PpRanking"/> is: /rankings now
+/// leads with total pp and keeps this board as its second, score-farming tab. The two are separate
+/// metrics on purpose, so nothing here changed; the profile card and the client user endpoint still
+/// read this one, and surfacing pp on those is a deliberate follow-up rather than an accident of
+/// this file.
+/// </para>
 /// </summary>
 public static class GlobalRanking
 {

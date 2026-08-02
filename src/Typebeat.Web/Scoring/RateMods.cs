@@ -42,6 +42,17 @@ public static class RateMods
         ["HT"] = new Range(0.50, 0.99, 0.75),
     };
 
+    /// <summary>
+    /// Double Time / Nightcore's base rate, 1.50x: the slider default, and the ONLY up-rate that
+    /// earns pp (docs/pp.md). Every other DT rate still ranks on the score leaderboards, it just
+    /// prices at 0 pp, which is what keeps the server's stored rate-adjusted star ratings down to
+    /// one per direction.
+    /// </summary>
+    public static readonly double DoubleTimeBaseRate = ranges["DT"].Default;
+
+    /// <summary>Half Time's base rate, 0.75x: the down-rate counterpart of <see cref="DoubleTimeBaseRate"/>.</summary>
+    public static readonly double HalfTimeBaseRate = ranges["HT"].Default;
+
     /// <summary>The slowest rate any rate mod can be submitted at (Half Time's floor, 0.50x).</summary>
     public static readonly double SlowestRate = ranges.Values.Min(r => r.Min);
 

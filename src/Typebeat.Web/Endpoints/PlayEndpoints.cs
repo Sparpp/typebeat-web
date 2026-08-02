@@ -147,7 +147,8 @@ public static class PlayEndpoints
         var beatmap = request.SetId > 0
             ? await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 """
-                SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS
+                SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
+                       b.difficulty_rating AS baseStars
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked') AND b.filename LIKE '%.osu'
@@ -157,7 +158,8 @@ public static class PlayEndpoints
                 new { setId = request.SetId })
             : await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 """
-                SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS
+                SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
+                       b.difficulty_rating AS baseStars
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
@@ -250,7 +252,11 @@ public static class PlayEndpoints
         long beatmapId = token.BeatmapId;
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-            "SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS FROM beatmaps WHERE id = @beatmapId",
+            """
+            SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS,
+                   difficulty_rating AS baseStars
+            FROM beatmaps WHERE id = @beatmapId
+            """,
             new { beatmapId }, tx);
 
         if (beatmap is null)
@@ -307,19 +313,36 @@ public static class PlayEndpoints
         string rank = passed ? recomputed.Rank : "F";
         var endedAt = DateTimeOffset.UtcNow;
 
+        // Performance points (docs/pp.md). The browser player stores a hardcoded empty mod stack
+        // (below), so there is no mod multiplier and no rate to price: the play is always valued at
+        // the map's base star rating, which is never NULL, so this row is always settled at the
+        // current version and the backfill never has to revisit it.
+        var (pp, ppSettled) = PerformancePoints.ForScore(
+            ranked,
+            mods: [],
+            PerformancePoints.CountNotes(statistics),
+            storedAccuracy,
+            storedMaxCombo,
+            beatmap.BaseStars,
+            starsDoubleTime: null,
+            starsHalfTime: null);
+
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO scores
                 (user_id, beatmap_id, ruleset_id, total_score, accuracy, completion, max_combo, rank, passed,
-                 ranked, preserve, mods, statistics, maximum_statistics, build_id, started_at, ended_at)
+                 ranked, preserve, mods, statistics, maximum_statistics, build_id, started_at, ended_at,
+                 pp, pp_version)
             VALUES
                 (@userId, @beatmapId, 0, @totalScore, @accuracy, @completion, @maxCombo, @rank, @passed,
                  @ranked, @preserve, '[]'::jsonb, CAST(@statistics AS jsonb), CAST(@maximumStatistics AS jsonb),
-                 @buildId, @startedAt, @endedAt)
+                 @buildId, @startedAt, @endedAt, @pp, @ppVersion)
             RETURNING id
             """,
             new
             {
+                pp,
+                ppVersion = ppSettled ? PerformancePoints.VERSION : 0,
                 userId = user.Id,
                 beatmapId,
                 totalScore = storedTotal,
@@ -542,7 +565,10 @@ public static class PlayEndpoints
 
     // ---- Dapper row shapes ----
 
-    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS);
+    // Appended, never reordered: Dapper maps positional records by position (BaseStars is the
+    // 020_performance_points.sql addition; this player never sends rate mods, so sr_dt/sr_ht are
+    // not read here).
+    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS, double BaseStars);
 
     private sealed record BuildRow(long Id, bool Blocked);
 

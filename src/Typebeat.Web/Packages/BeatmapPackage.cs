@@ -1,4 +1,5 @@
 using Typebeat.Web.Packages.Lyrics;
+using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Packages;
 
@@ -57,6 +58,21 @@ public sealed class ParsedDifficulty
     // [Lyrics]-derived.
     public required IReadOnlyList<LyricLine> Lines { get; init; }
     public required LyricPace.PaceStatistics Pace { get; init; }
+
+    private double? srDoubleTime;
+    private double? srHalfTime;
+
+    /// <summary>
+    /// Star rating at Double Time's BASE clock rate (1.50x), stored on the beatmap row as
+    /// <c>beatmaps.sr_dt</c>. pp prices a rate play exclusively through the rating recomputed at its
+    /// rate (docs/pp.md), and only the base rates are pp-eligible, so the server needs exactly this
+    /// one figure per direction and never does rate maths at query time. Computed lazily and cached:
+    /// <see cref="LyricDifficulty.Compute"/> is a full pass over the map's words.
+    /// </summary>
+    public double SrDoubleTime => srDoubleTime ??= LyricDifficulty.Compute(Lines, RateMods.DoubleTimeBaseRate);
+
+    /// <summary>Star rating at Half Time's base clock rate (0.75x); <c>beatmaps.sr_ht</c>.</summary>
+    public double SrHalfTime => srHalfTime ??= LyricDifficulty.Compute(Lines, RateMods.HalfTimeBaseRate);
 
     /// <summary>Last lyric line's hard end, seconds (0 for an empty map).</summary>
     public double TotalLengthS => Lines.Count > 0 ? Lines[^1].EndTime / 1000 : 0;

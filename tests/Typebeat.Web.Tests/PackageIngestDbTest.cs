@@ -5,6 +5,7 @@ using Npgsql;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Packages.Lyrics;
+using Typebeat.Web.Scoring;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Tests;
@@ -559,6 +560,184 @@ public class PackageIngestDbTest
         Assert.That(await conn.ExecuteScalarAsync<string>(
                 "SELECT language FROM beatmapsets WHERE id = @setId", new { setId }),
             Is.EqualTo("instrumental"));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Performance points (020_performance_points.sql): the rate-adjusted star ratings ingest writes
+    // and PaceBackfill fills, and the pp sweep that hangs off them.
+    // ---------------------------------------------------------------------------------------------
+
+    [Test]
+    [Order(10)]
+    public async Task Ingest_StoresTheRateAdjustedStarRatings()
+    {
+        await using var conn = await db.OpenAsync();
+
+        var row = await conn.QuerySingleAsync<(double Base, double? Dt, double? Ht)>(
+            "SELECT difficulty_rating AS Base, sr_dt AS Dt, sr_ht AS Ht FROM beatmaps WHERE id = 1001");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(row.Dt, Is.Not.Null, "sr_dt is written at ingest, never derived at query time");
+            Assert.That(row.Ht, Is.Not.Null);
+
+            // Exactly LyricDifficulty at the two BASE rates, the only two ratings pp ever needs.
+            Assert.That(row.Dt!.Value, Is.EqualTo(starsAtRate(RateMods.DoubleTimeBaseRate)).Within(1e-9));
+            Assert.That(row.Ht!.Value, Is.EqualTo(starsAtRate(RateMods.HalfTimeBaseRate)).Within(1e-9));
+
+            // All three differ, i.e. the rate genuinely moves the rating rather than the columns
+            // being copies of the base one. (No DIRECTION is asserted: this fixture's map is two
+            // words long, and on a map that short the duration weighting in LyricDifficulty's soft
+            // maximum outweighs the strain increase, so up-rating it actually rates LOWER. That is
+            // the difficulty model's own behaviour on degenerate input, not pp's business; the
+            // pp-side contract, "a harder rating is worth more pp", is pinned in
+            // PerformancePointsTest where the ratings are inputs.)
+            Assert.That(row.Dt.Value, Is.Not.EqualTo(row.Base).Within(1e-6));
+            Assert.That(row.Ht.Value, Is.Not.EqualTo(row.Base).Within(1e-6));
+            Assert.That(row.Dt.Value, Is.Not.EqualTo(row.Ht.Value).Within(1e-6));
+        });
+    }
+
+    [Test]
+    [Order(11)]
+    public async Task PaceBackfill_FillsMissingRateStarRatings_WithoutAPaceVersionBump()
+    {
+        await using var conn = await db.OpenAsync();
+
+        // The state every existing row is in the moment 020 deploys: pace numbers already current,
+        // the two new columns NULL. The sweep must still visit the row, which is precisely what the
+        // second staleness arm buys: no LyricPace.VERSION bump was needed (and so no punctuation
+        // re-derivation of .osz-conversion blobs rode along, task 59).
+        await conn.ExecuteAsync("UPDATE beatmaps SET sr_dt = NULL, sr_ht = NULL WHERE id = 1001");
+
+        int paceVersionBefore = await conn.ExecuteScalarAsync<int>(
+            "SELECT pace_version FROM beatmaps WHERE id = 1001");
+        Assert.That(paceVersionBefore, Is.EqualTo(LyricPace.VERSION),
+            "this row is not stale by pace version; only the new columns are missing");
+
+        await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        var row = await conn.QuerySingleAsync<(double? Dt, double? Ht, int PaceVersion)>(
+            "SELECT sr_dt AS Dt, sr_ht AS Ht, pace_version AS PaceVersion FROM beatmaps WHERE id = 1001");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(row.Dt, Is.EqualTo(starsAtRate(RateMods.DoubleTimeBaseRate)).Within(1e-9));
+            Assert.That(row.Ht, Is.EqualTo(starsAtRate(RateMods.HalfTimeBaseRate)).Within(1e-9));
+            Assert.That(row.PaceVersion, Is.EqualTo(LyricPace.VERSION), "the pace stamp did not have to move");
+        });
+
+        // Idempotent: with both arms satisfied this row is no longer a candidate at all.
+        await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        Assert.That(await conn.ExecuteScalarAsync<int>(
+                "SELECT count(*) FROM beatmaps WHERE id = 1001 AND (sr_dt IS NULL OR sr_ht IS NULL)"),
+            Is.Zero);
+    }
+
+    [Test]
+    [Order(12)]
+    public async Task PpBackfill_ComputesStoredPp_AndPaceBackfillInvalidatesItWhenStarsMove()
+    {
+        await using var conn = await db.OpenAsync();
+
+        long playerId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO users (username, email, password_hash, country_code)
+            VALUES ('pp typist', 'pp.typist@example.com', 'x', 'US')
+            RETURNING id
+            """);
+
+        // Three plays on the same map: a no-mod ranked one, a base-rate DT one (priced off sr_dt),
+        // and one at a CUSTOM rate, which stays exactly as it is on the score boards and earns 0 pp.
+        long noMod = await insertPlayAsync(conn, playerId, "[]");
+        long baseRateDt = await insertPlayAsync(conn, playerId, """[{"acronym":"DT","settings":{"speed_change":1.5}}]""");
+        long customRateDt = await insertPlayAsync(conn, playerId, """[{"acronym":"DT","settings":{"speed_change":1.75}}]""");
+        long unranked = await insertPlayAsync(conn, playerId, "[]", ranked: false);
+
+        Assert.That(await ppOf(conn, noMod), Is.Zero, "nothing is priced before the sweep runs");
+
+        await PpBackfill.RunAsync(db, NullLogger.Instance);
+
+        var beatmap = await conn.QuerySingleAsync<(double Base, double Dt)>(
+            "SELECT difficulty_rating AS Base, sr_dt AS Dt FROM beatmaps WHERE id = 1001");
+
+        // 100 great + 20 miss = 120 notes; ignore_hit is not a note (see insertPlayAsync).
+        double expectedNoMod = PerformancePoints.Compute(beatmap.Base, 120, 20, 0.9, 100, []);
+        double expectedDt = PerformancePoints.Compute(beatmap.Dt, 120, 20, 0.9, 100, []);
+
+        double noModPp = await ppOf(conn, noMod);
+        double dtPp = await ppOf(conn, baseRateDt);
+        double customPp = await ppOf(conn, customRateDt);
+        double unrankedPp = await ppOf(conn, unranked);
+        int stillStale = await conn.ExecuteScalarAsync<int>(
+            "SELECT count(*) FROM scores WHERE pp_version < @v", new { v = PerformancePoints.VERSION });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(noModPp, Is.EqualTo(expectedNoMod).Within(1e-9));
+            Assert.That(dtPp, Is.EqualTo(expectedDt).Within(1e-9));
+            // The point of the pair: the base-rate DT play is priced off sr_dt, NOT off the base
+            // rating. (Which way it moves is the difficulty model's business, see the ingest test.)
+            Assert.That(dtPp, Is.Not.EqualTo(noModPp).Within(1e-6));
+            Assert.That(customPp, Is.Zero, "a custom rate is pp-ineligible");
+            Assert.That(unrankedPp, Is.Zero);
+
+            // Everything settled, including the ineligible ones, so nothing is rescanned forever.
+            Assert.That(stillStale, Is.Zero);
+        });
+
+        // A second sweep has nothing to do and changes nothing.
+        double before = await ppOf(conn, noMod);
+        await PpBackfill.RunAsync(db, NullLogger.Instance);
+        Assert.That(await ppOf(conn, noMod), Is.EqualTo(before));
+
+        // INVALIDATION: when the map's ratings are rewritten, every pp set on it must be recomputed
+        // rather than left pointing at a rating that no longer exists.
+        await conn.ExecuteAsync(
+            "UPDATE beatmaps SET difficulty_rating = 9.9, sr_dt = NULL, sr_ht = NULL, pace_version = 1 WHERE id = 1001");
+
+        await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        Assert.That(await conn.ExecuteScalarAsync<int>(
+                "SELECT count(*) FROM scores WHERE beatmap_id = 1001 AND pp_version = 0"),
+            Is.GreaterThan(0), "rewriting a map's stars hands its scores back to the pp sweep");
+
+        await PpBackfill.RunAsync(db, NullLogger.Instance);
+
+        Assert.That(await ppOf(conn, noMod), Is.EqualTo(before).Within(1e-9),
+            "recomputed against the same reparsed blob, so the value comes back identical");
+    }
+
+    /// <summary>A ranked, passed play: 100 great + 20 miss + 8 ignore_hit, 90% acc, 100 combo.</summary>
+    private static async Task<long> insertPlayAsync(NpgsqlConnection conn, long userId, string modsJson, bool ranked = true)
+        => await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO scores
+                (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
+                 mods, statistics, maximum_statistics)
+            VALUES
+                (@userId, 1001, 500000, 0.9, 0.83, 100, 'B', true, @ranked,
+                 CAST(@modsJson AS jsonb),
+                 '{"great":100,"miss":20,"ignore_hit":8}'::jsonb,
+                 '{"great":120,"ignore_hit":8}'::jsonb)
+            RETURNING id
+            """,
+            new { userId, modsJson, ranked });
+
+    private static async Task<double> ppOf(NpgsqlConnection conn, long scoreId)
+        => await conn.ExecuteScalarAsync<double>("SELECT pp FROM scores WHERE id = @scoreId", new { scoreId });
+
+    /// <summary>
+    /// The seeded difficulty's stars at a given clock rate, straight from the model. The synthetic
+    /// package's [Lyrics] payload is fixed (SyntheticPackage.PaceRegressionLyrics), so this is the
+    /// same input the ingested blob carries.
+    /// </summary>
+    private static double starsAtRate(double rate)
+    {
+        var parsed = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
+
+        return LyricDifficulty.Compute(parsed.Lines, rate);
     }
 
     private static string readEmbeddedMigration(string name)

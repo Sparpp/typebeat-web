@@ -1,11 +1,13 @@
 using System.Net;
 using System.Net.Http.Headers;
 using Dapper;
+using Microsoft.Extensions.Logging.Abstractions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Npgsql;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Tests.Website;
@@ -238,6 +240,74 @@ public class VariableRateScoreTest
             Assert.That((long)nerfedHalfTime["total_score"]!, Is.EqualTo(100_000));
         });
     }
+
+    // ---- performance points (task 61) ----
+
+    [Test]
+    public async Task PerformancePoints_AreWrittenAtSubmission_AndOnlyForBaseRatePlays()
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        // The state of every map the moment 020 deploys: a base rating, no rate ratings yet.
+        await conn.ExecuteAsync(
+            "UPDATE beatmaps SET difficulty_rating = 2.0, sr_dt = NULL, sr_ht = NULL WHERE id = @beatmapId",
+            new { beatmapId });
+
+        // No mods: priced immediately off difficulty_rating, which is never null.
+        var noMod = await SubmitAsync(total: clean_base, mods: []);
+
+        // Base-rate Double Time (1.50x): pp-ELIGIBLE, but unpriceable until sr_dt exists. It must
+        // be left stale rather than stamped at zero, which is the whole point of pp_version.
+        var baseRate = await SubmitAsync(total: (long)Math.Round(clean_base * 1.23), mods: [Mod("DT", ("speed_change", 1.5))]);
+
+        // A custom rate: still ranked on the score board, permanently worth 0 pp, and SETTLED, so
+        // the backfill never revisits it.
+        var customRate = await SubmitAsync(total: (long)Math.Round(clean_base * 1.345), mods: [Mod("DT", ("speed_change", 1.75))]);
+
+        var noModStored = await ppRowAsync(conn, noMod);
+        var baseRateStored = await ppRowAsync(conn, baseRate);
+        var customRateStored = await ppRowAsync(conn, customRate);
+
+        // 10 greats, no misses, accuracy 1, full combo of 10.
+        double expectedNoMod = PerformancePoints.Compute(2.0, 10, 0, 1.0, 10, []);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((bool)baseRate["ranked"]!, Is.True);
+            Assert.That((bool)customRate["ranked"]!, Is.True, "a custom rate still ranks on the score board");
+
+            Assert.That(noModStored.Pp, Is.EqualTo(expectedNoMod).Within(1e-9));
+            Assert.That(noModStored.Version, Is.EqualTo(PerformancePoints.VERSION));
+
+            Assert.That(baseRateStored.Pp, Is.Zero);
+            Assert.That(baseRateStored.Version, Is.Zero, "unpriceable, so left for the backfill rather than frozen at zero");
+
+            Assert.That(customRateStored.Pp, Is.Zero);
+            Assert.That(customRateStored.Version, Is.EqualTo(PerformancePoints.VERSION), "ineligible forever, so settled");
+        });
+
+        // The rate rating lands (in production: PaceBackfill, from the stored .osu blob) and the
+        // sweep prices the play that was waiting on it.
+        await conn.ExecuteAsync("UPDATE beatmaps SET sr_dt = 3.5 WHERE id = @beatmapId", new { beatmapId });
+
+        await PpBackfill.RunAsync(new Db(dataSource), NullLogger.Instance);
+
+        var backfilled = await ppRowAsync(conn, baseRate);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(backfilled.Pp, Is.EqualTo(PerformancePoints.Compute(3.5, 10, 0, 1.0, 10, [])).Within(1e-9),
+                "priced off sr_dt, not off the base rating");
+            Assert.That(backfilled.Version, Is.EqualTo(PerformancePoints.VERSION));
+
+            // And the settled rows were not disturbed.
+            Assert.That(ppRowAsync(conn, customRate).GetAwaiter().GetResult().Pp, Is.Zero);
+        });
+    }
+
+    private static async Task<(double Pp, int Version)> ppRowAsync(NpgsqlConnection conn, JObject submitted)
+        => await conn.QuerySingleAsync<(double, int)>(
+            "SELECT pp, pp_version FROM scores WHERE id = @id", new { id = (long)submitted["id"]! });
 
     // ---- display ----
 
