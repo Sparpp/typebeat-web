@@ -413,6 +413,11 @@ public static class ScoreEndpoints
                     playTime = (long)Math.Round(Math.Min(elapsedSeconds, beatmap.DrainLengthS), MidpointRounding.AwayFromZero),
                     hitCounts = MergeHitCounts(existingHitCounts, statistics)
                 }, tx);
+
+            // Play history (024_play_history.sql): the same play, credited to its UTC month for
+            // the profile's Play History chart. Deliberately inside this block and nowhere else,
+            // so the chart's total and the play_count printed above it move as one number.
+            await PlayHistory.RecordPlayAsync(conn, tx, user.Id, endedAt, ctx.RequestAborted);
         }
 
         await conn.ExecuteAsync(

@@ -397,6 +397,10 @@ public static class PlayEndpoints
                     playTime = (long)Math.Round(Math.Min(elapsedSeconds, beatmap.DrainLengthS), MidpointRounding.AwayFromZero),
                     hitCounts = MergeHitCounts(existingHitCounts, statistics)
                 }, tx);
+
+            // Play history (024_play_history.sql), same rule as the game client's path: browser
+            // plays are real plays, so they land in the same monthly rollup the profile charts.
+            await PlayHistory.RecordPlayAsync(conn, tx, user.Id, endedAt, ctx.RequestAborted);
         }
 
         await conn.ExecuteAsync(

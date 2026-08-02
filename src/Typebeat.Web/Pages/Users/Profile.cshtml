@@ -210,6 +210,17 @@
             }
         </section>
 
+        @* Play history (024_play_history.sql), next to Most played because they answer the same
+           question from two directions: what you played, and when. Hidden entirely for a user
+           with no recorded month, like Pinned: an empty chart states nothing. *@
+        @if (Model.PlayHistoryChart is BarChartModel playHistory)
+        {
+            <section class="profile-section" id="play-history">
+                <h2>Play history</h2>
+                <partial name="_BarChart" model="playHistory" />
+            </section>
+        }
+
         <section class="profile-section">
             <h2>Maps</h2>
             @if (Model.Maps.Count == 0)

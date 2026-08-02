@@ -1,0 +1,94 @@
+@model BarChartModel
+@*
+    Shared bar chart: server-rendered inline SVG, no JavaScript and no external assets, over an
+    ordered categorical axis. All geometry comes from the model (Pages/BarChartModel.cs); this
+    file is markup only.
+
+    The hover layer is the per-bar <title>, which every browser renders as a native tooltip and
+    every screen reader announces, so an interactive chart costs no script. Below it, a collapsed
+    <details> carries the same numbers as a plain table: the accessible alternative to the plot,
+    and the answer for anyone who wants to read exact values off a 24-bar chart.
+*@
+@{
+    string left = BarChartModel.Px(BarChartModel.PlotLeft);
+    string right = BarChartModel.Px(BarChartModel.PlotRight);
+    string baseline = BarChartModel.Px(BarChartModel.Baseline);
+    string topLine = BarChartModel.Px(BarChartModel.TopLine);
+    string tickX = BarChartModel.Px(BarChartModel.AxisLabelX);
+}
+
+<figure class="bar-chart">
+    <svg class="bar-chart__svg" viewBox="0 0 @BarChartModel.ViewWidth @BarChartModel.ViewHeight"
+         role="img" aria-label="@Model.AriaLabel">
+
+        @* Axis: the baseline the columns are measured from, and one gridline at the round ceiling. *@
+        <line class="bar-chart__grid" x1="@left" y1="@topLine" x2="@right" y2="@topLine" />
+        <line class="bar-chart__axis" x1="@left" y1="@baseline" x2="@right" y2="@baseline" />
+
+        <text class="bar-chart__tick" x="@tickX" y="@BarChartModel.Px(BarChartModel.TopLine + 4)" text-anchor="end">@BarChartModel.Num(Model.AxisMax)</text>
+        <text class="bar-chart__tick" x="@tickX" y="@BarChartModel.Px(BarChartModel.Baseline + 4)" text-anchor="end">0</text>
+
+        @foreach (var slot in Model.Slots)
+        {
+            @* A zero slot still exists on the axis: a flat stub on the baseline keeps the period
+               visible and hoverable instead of silently dropping out of the sequence. *@
+            if (slot.IsZero)
+            {
+                <rect class="bar-chart__zero" x="@BarChartModel.Px(slot.X)"
+                      y="@BarChartModel.Px(BarChartModel.Baseline - BarChartModel.ZeroStubHeight)"
+                      width="@BarChartModel.Px(slot.Width)" height="@BarChartModel.Px(BarChartModel.ZeroStubHeight)">
+                    <title>@Model.Tooltip(slot.Bar)</title>
+                </rect>
+            }
+            else
+            {
+                <path class="bar-chart__bar@(slot.IsPeak ? " is-peak" : "")" d="@slot.Path">
+                    <title>@Model.Tooltip(slot.Bar)</title>
+                </path>
+            }
+
+            @* The <g> wrappers are not decoration: Razor reserves the bare tag name "text" for its
+               own markup-transition syntax, so an SVG <text> that OPENS a markup block has to be
+               nested inside a real element. <g> is the SVG no-op group, so it costs nothing. *@
+            if (slot.AxisLabel is string axisLabel)
+            {
+                <g><text class="bar-chart__label" x="@BarChartModel.Px(slot.CenterX)"
+                         y="@BarChartModel.Px(BarChartModel.Baseline + 16)" text-anchor="middle">@axisLabel</text></g>
+            }
+        }
+
+        @* The one direct label: the peak. Everything else is carried by the axis and the tooltips. *@
+        @if (Model.Peak > 0)
+        {
+            var peakSlot = Model.Slots.First(s => s.IsPeak);
+            <g><text class="bar-chart__peak" x="@BarChartModel.Px(Model.PeakLabelX)"
+                     y="@BarChartModel.Px(peakSlot.Y - 7)" text-anchor="middle">@BarChartModel.Num(Model.Peak)</text></g>
+        }
+    </svg>
+
+    @if (Model.Caption is string caption)
+    {
+        <figcaption class="bar-chart__caption faint">@caption</figcaption>
+    }
+
+    <details class="bar-chart__data">
+        <summary>view as table</summary>
+        <table class="bar-chart__table">
+            <thead>
+                <tr>
+                    <th scope="col">Period</th>
+                    <th scope="col">@Model.ValueNoun</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var bar in Model.Bars)
+                {
+                    <tr>
+                        <th scope="row">@bar.Period</th>
+                        <td>@BarChartModel.Num(bar.Value)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </details>
+</figure>
