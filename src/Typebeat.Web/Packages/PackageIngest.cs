@@ -324,10 +324,12 @@ public sealed class PackageIngest(
                 """
                 INSERT INTO beatmaps
                     (id, set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s,
-                     difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics)
+                     difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics,
+                     sr_dt, sr_ht)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
-                     @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics)
+                     @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
+                     @srDt, @srHt)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -341,7 +343,15 @@ public sealed class PackageIngest(
                     wpm = EXCLUDED.wpm,
                     pace_version = EXCLUDED.pace_version,
                     skippable_s = EXCLUDED.skippable_s,
-                    lyrics = EXCLUDED.lyrics
+                    lyrics = EXCLUDED.lyrics,
+                    sr_dt = EXCLUDED.sr_dt,
+                    sr_ht = EXCLUDED.sr_ht;
+
+                -- A re-upload can move this difficulty's star ratings, and the stored per-score pp
+                -- is a function of them, so hand every score set on this map back to PpBackfill
+                -- (020_performance_points.sql). Same invalidation PaceBackfill performs; without it
+                -- a re-uploaded map would keep pricing its old plays at the previous difficulty.
+                UPDATE scores SET pp_version = 0 WHERE beatmap_id = @id AND pp_version <> 0;
                 """,
                 new
                 {
@@ -363,6 +373,11 @@ public sealed class PackageIngest(
                     // The lyrics: search operator's haystack, also rendered by the set page's
                     // lyrics section (018_lyrics_search.sql).
                     lyrics = diff.LyricsText,
+                    // The star ratings at Double Time's and Half Time's BASE clock rates, the only
+                    // rate ratings pp ever needs (020_performance_points.sql, docs/pp.md). Written
+                    // here so no rate maths ever happens at query time.
+                    srDt = diff.SrDoubleTime,
+                    srHt = diff.SrHalfTime,
                 });
         }
 

@@ -121,6 +121,13 @@ await SkipGateRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger)
 // by this one. No-op once every victim is recorded in score_refunds.
 await RateGateRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
 
+// Recompute stored per-score pp for rows below the current PerformancePoints.VERSION
+// (020_performance_points.sql). Runs LAST of the sweeps: it reads beatmaps.sr_dt / sr_ht, which
+// PaceBackfill is what fills in (and which it stamps every affected score back to version 0 for),
+// and it reads scores.ranked, which the two refund sweeps above may have just flipped on. No-op
+// once every score is current.
+await PpBackfill.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
+
 // Which email path is live (helps confirm prod is actually sending, not just logging codes).
 // The log fallback means verification/login codes are NOT delivered; the site still says
 // "sent", so make it a startup WARNING behind the proxy (i.e. a real deployment), where that

@@ -12,6 +12,18 @@ namespace Typebeat.Web.Packages;
 /// wpm / difficulty_rating / word_count / char_count rewritten. Idempotent and self-healing:
 /// a row that fails (missing blob, parse error) is logged and left at its old version, so the
 /// next boot retries it; everything else proceeds.
+///
+/// <para>
+/// STALENESS HAS TWO ARMS (020_performance_points.sql). Besides an out-of-date
+/// <see cref="LyricPace.VERSION"/>, a row is also stale when its RATE-ADJUSTED star ratings
+/// (<c>sr_dt</c> / <c>sr_ht</c>, what pp prices a Double Time / Half Time play at) have never been
+/// filled in. The second arm exists precisely so filling those columns did NOT need a VERSION bump:
+/// bumping to 9 would additionally re-derive every stored map against the punctuated text and move
+/// the word/cell counts of .osz-conversion blobs (see the VERSION doc comment, task 59), which is a
+/// deliberate separate decision and must not ride along with a pp deploy. The two stay decoupled,
+/// and a genuine v9 bump later still recomputes the rate ratings for free because they ride the
+/// same UPDATE.
+/// </para>
 /// </summary>
 public static class PaceBackfill
 {
@@ -26,7 +38,7 @@ public static class PaceBackfill
                 JOIN beatmapsets s ON s.id = b.set_id
                 JOIN set_versions sv ON sv.set_id = s.id AND sv.version_no = s.current_version
                 JOIN version_files vf ON vf.version_id = sv.id AND vf.filename = b.filename
-                WHERE b.pace_version < @version
+                WHERE b.pace_version < @version OR b.sr_dt IS NULL OR b.sr_ht IS NULL
                 """,
                 new { version = LyricPace.VERSION }))
             .ToList();
@@ -51,6 +63,10 @@ public static class PaceBackfill
 
                 var diff = BeatmapPackageParser.ParseDifficulty(row.Filename, content);
 
+                // One statement: rewrite the row, then invalidate the pp of every score set on it.
+                // The stored per-score pp is a function of the map's star ratings, so a rewritten
+                // rating must never leave a stale pp behind; stamping pp_version back to 0 hands
+                // those rows to PpBackfill, which runs later in the same startup (Program.cs).
                 await conn.ExecuteAsync(
                     """
                     UPDATE beatmaps
@@ -60,8 +76,12 @@ public static class PaceBackfill
                         wpm = @wpm,
                         skippable_s = @skippableS,
                         lyrics = @lyrics,
+                        sr_dt = @srDt,
+                        sr_ht = @srHt,
                         pace_version = @paceVersion
-                    WHERE id = @id
+                    WHERE id = @id;
+
+                    UPDATE scores SET pp_version = 0 WHERE beatmap_id = @id AND pp_version <> 0;
                     """,
                     new
                     {
@@ -76,6 +96,11 @@ public static class PaceBackfill
                         // v8: the lyrics: search haystack. Rows the backfill cannot reach keep '',
                         // i.e. invisible to lyrics: searches (018_lyrics_search.sql).
                         lyrics = diff.LyricsText,
+                        // 020: the two rate-adjusted star ratings pp prices DT/HT plays at. Rows
+                        // the backfill cannot reach keep NULL, i.e. their rate plays earn no pp
+                        // yet and are retried rather than frozen at zero (PpBackfill).
+                        srDt = diff.SrDoubleTime,
+                        srHt = diff.SrHalfTime,
                         paceVersion = LyricPace.VERSION,
                     });
 

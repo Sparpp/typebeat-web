@@ -1,20 +1,67 @@
 @page "/rankings"
 @using System.Globalization
+@using Typebeat.Web.Pages.Rankings
 @model Typebeat.Web.Pages.Rankings.IndexModel
 @{
+    bool performance = Model.Board == IndexModel.PerformanceBoard;
+
     ViewData["Title"] = "Rankings";
-    ViewData["MetaDescription"] = "type!beat global rankings: cumulative best scores across every ranked map.";
+    ViewData["MetaDescription"] = performance
+        ? "type!beat global rankings: performance points across every ranked map."
+        : "type!beat global rankings: cumulative best scores across every ranked map.";
 }
 
 <section class="rankings">
     <h1>Rankings</h1>
-    <p class="faint">Cumulative score, your best score on each ranked map added up, sets the ranking. Total cumulative score is every play you've ever submitted added up, and doesn't affect your rank.</p>
 
-    @if (Model.Rows.Count == 0)
+    <div class="lb-tabs" role="tablist">
+        <a class="lb-tab @(performance ? "is-active" : "")" href="/rankings">Performance</a>
+        <a class="lb-tab @(performance ? "" : "is-active")" href="/rankings?board=@IndexModel.ScoreBoard">Score</a>
+    </div>
+
+    @if (performance)
+    {
+        <p class="faint">Performance points, pp, rank you on how hard the maps you clear are and how cleanly you clear them. Your best play on each ranked map counts once, and later plays count for less, so grinding one map or a pile of easy ones gets you nowhere.</p>
+    }
+    else
+    {
+        <p class="faint">Cumulative score, your best score on each ranked map added up, is a volume board and does not set your global rank. Total cumulative score is every play you've ever submitted added up.</p>
+    }
+
+    @if (Model.IsEmpty)
     {
         <div class="empty-state">
             <h3>No scores yet</h3>
             <p>Set a score on any ranked map and this board is yours.</p>
+        </div>
+    }
+    else if (performance)
+    {
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>Rank</th>
+                    <th>Player</th>
+                    <th>pp</th>
+                    <th>Ranked plays</th>
+                    <th>Cumulative score</th>
+                </tr>
+                </thead>
+                <tbody>
+                @for (int i = 0; i < Model.PerformanceRows.Count; i++)
+                {
+                    var row = Model.PerformanceRows[i];
+                    <tr>
+                        <td class="num">#@(i + 1)</td>
+                        <td><a href="/users/@row.UserId">@row.Username</a></td>
+                        <td class="num">@row.TotalPp.ToString("N0", CultureInfo.InvariantCulture)pp</td>
+                        <td class="num">@row.PpPlayCount.ToString("N0", CultureInfo.InvariantCulture)</td>
+                        <td class="num">@row.CumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
         </div>
     }
     else
@@ -31,9 +78,9 @@
                 </tr>
                 </thead>
                 <tbody>
-                @for (int i = 0; i < Model.Rows.Count; i++)
+                @for (int i = 0; i < Model.ScoreRows.Count; i++)
                 {
-                    var row = Model.Rows[i];
+                    var row = Model.ScoreRows[i];
                     <tr>
                         <td class="num">#@(i + 1)</td>
                         <td><a href="/users/@row.UserId">@row.Username</a></td>
