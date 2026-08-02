@@ -135,6 +135,25 @@
             }
         </section>
 
+        @* First places: the maps this user currently tops. Hidden entirely when there are none,
+           like Pinned, since "no first places" is the ordinary case and needs no empty state. *@
+        @if (Model.FirstPlaces.Count > 0)
+        {
+            <section class="profile-section">
+                <h2>First places</h2>
+                <div class="score-list">
+                    @foreach (var row in Model.FirstPlaces)
+                    {
+                        <partial name="_ScoreRow" model="row" />
+                    }
+                </div>
+                @if (Model.FirstPlaceCount > Model.FirstPlaces.Count)
+                {
+                    <p class="profile-empty faint">Showing @Model.FirstPlaces.Count.ToString("N0", CultureInfo.InvariantCulture) of @Model.FirstPlaceCount.ToString("N0", CultureInfo.InvariantCulture) first places.</p>
+                }
+            </section>
+        }
+
         <section class="profile-section">
             <h2>Recent scores</h2>
             @if (Model.RecentScores.Count == 0)
@@ -247,6 +266,7 @@
             <div class="stat-row"><span class="stat-row__label">Total score</span><span class="stat-row__value">@Model.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Play count</span><span class="stat-row__value">@Model.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Maps played</span><span class="stat-row__value">@Model.MapsPlayed.ToString("N0", CultureInfo.InvariantCulture) / @Model.RankedMapPool.ToString("N0", CultureInfo.InvariantCulture) ranked</span></div>
+            <div class="stat-row"><span class="stat-row__label">First places</span><span class="stat-row__value">@Model.FirstPlaceCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Play time</span><span class="stat-row__value">@ProfileModel.FormatPlayTime(Model.PlayTimeS)</span></div>
             <div class="stat-row"><span class="stat-row__label">Accuracy</span><span class="stat-row__value">@(Model.Accuracy is double acc ? (acc * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%" : "-")</span></div>
             <div class="grade-counts" title="per-map best grades">

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json.Linq;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
+using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Pages.Beatmapsets;
 
@@ -120,7 +121,8 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         Diff = Diffs.FirstOrDefault(d => d.Id == diff) ?? Diffs.FirstOrDefault();
 
         // Global leaderboard: best ranked+passed score per user across the set's difficulties
-        // (same DISTINCT ON shape as the game-facing endpoint in ScoreEndpoints). Only ranked
+        // (the same eligibility and ordering the game-facing endpoint in ScoreEndpoints reads,
+        // both built from BeatmapLeaderboard so they cannot drift). Only ranked
         // sets have one; pending plays are stored unranked, and the page renders an "unlocks
         // when ranked" note instead, so don't even run the query for non-ranked sets.
         // Per-difficulty leaderboard: best passed score per user on the SELECTED beatmap (each
@@ -130,7 +132,7 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         bool wantRanked = Board == "ranked";
         if (Set.Status == "ranked" && Diff is not null)
             Scores = (await conn.QueryAsync<ScoreRow>(
-            """
+            $"""
             SELECT best.id           AS ScoreId,
                    best.user_id      AS UserId,
                    best.username     AS Username,
@@ -152,10 +154,10 @@ public sealed class SetModel(Db db) : TypebeatPageModel
                        u.username::text AS username, u.avatar_key
                 FROM scores sc
                 JOIN users u ON u.id = sc.user_id
-                WHERE sc.beatmap_id = @beatmapId AND sc.passed AND sc.ranked = @wantRanked
-                ORDER BY sc.user_id, sc.total_score DESC, sc.id ASC
+                WHERE sc.beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("sc")}
+                ORDER BY sc.user_id, {BeatmapLeaderboard.Order("sc")}
             ) best
-            ORDER BY best.total_score DESC, best.id ASC
+            ORDER BY {BeatmapLeaderboard.Order("best")}
             LIMIT 50
             """,
                 new { beatmapId = Diff.Id, wantRanked })).ToList();

@@ -10,9 +10,10 @@ namespace Typebeat.Web.Pages.Users;
 /// <summary>
 /// User profile (/users/{id} and /users/{name}): cover band (preset gradient keyed by user id),
 /// avatar, joined/last-seen, the stats card (global rank by user_stats.total_score, totals grid,
-/// grade counts), and stacked sections: Pinned / Best scores / Recent scores / Most played / Maps /
-/// Favourites (card partial reuse). A name URL canonical-redirects to the id URL; an all-digit
-/// path segment always reads as an id (so a digits-only USERNAME is only reachable by id).
+/// grade counts), and stacked sections: Pinned / Best scores / First places / Recent scores /
+/// Most played / Maps / Favourites (card partial reuse). A name URL canonical-redirects to the id
+/// URL; an all-digit path segment always reads as an id (so a digits-only USERNAME is only
+/// reachable by id).
 ///
 /// Pinned scores (task 63) are this page's own feature end to end: the section query below, and
 /// the Pin/Unpin POST handlers the owner-only control on each score row submits to. All of the
@@ -68,6 +69,21 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
     public string? PinNotice { get; private set; }
 
     public IReadOnlyList<ScoreRowModel> BestScores { get; private set; } = [];
+
+    /// <summary>
+    /// Scores where this user CURRENTLY holds #1 on a ranked map's leaderboard (see
+    /// <see cref="BeatmapLeaderboard.FirstPlacesOfUserSql"/>), newest score first, capped at
+    /// <see cref="score_section_size"/> rows; <see cref="FirstPlaceCount"/> is the uncapped total.
+    /// </summary>
+    public IReadOnlyList<ScoreRowModel> FirstPlaces { get; private set; } = [];
+
+    /// <summary>
+    /// How many first places the user holds in total (the stats card's number, and what the
+    /// section's "showing N of M" note counts against). Recomputed on every view, so losing a #1
+    /// to somebody else's better score drops it here the moment that score lands.
+    /// </summary>
+    public int FirstPlaceCount { get; private set; }
+
     public IReadOnlyList<ScoreRowModel> RecentScores { get; private set; } = [];
     public IReadOnlyList<MostPlayedRow> MostPlayed { get; private set; } = [];
 
@@ -168,13 +184,13 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         // Grade counts + accuracy from the SAME per-map-best fold (see class doc).
         var gradeRows = (await conn.QueryAsync<(string Rank, long Count, double AccuracySum)>(
-            """
+            $"""
             SELECT best.rank AS Rank, count(*) AS Count, sum(best.accuracy) AS AccuracySum
             FROM (
                 SELECT DISTINCT ON (sc.beatmap_id) sc.rank, sc.accuracy
                 FROM scores sc
-                WHERE sc.user_id = @id AND sc.ranked AND sc.passed
-                ORDER BY sc.beatmap_id, sc.total_score DESC, sc.id ASC
+                WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
+                ORDER BY sc.beatmap_id, {BeatmapLeaderboard.Order("sc")}
             ) best
             GROUP BY best.rank
             """,
@@ -259,8 +275,8 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                         sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
                         sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
                  FROM scores sc
-                 WHERE sc.user_id = @id AND sc.ranked AND sc.passed
-                 ORDER BY sc.beatmap_id, sc.total_score DESC, sc.id ASC
+                 WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
+                 ORDER BY sc.beatmap_id, {BeatmapLeaderboard.Order("sc")}
              ) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
@@ -269,6 +285,30 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              LIMIT {score_section_size}
              """,
             new { id })).ToList();
+
+        // First places: the maps whose leaderboard rank-1 row is this user's. Defined by the BOARD,
+        // not by pp or by score size, and built from the same BeatmapLeaderboard fragments the game
+        // client's board and the set page's board are built from, so "first place" here always
+        // means "top of that board" (tie-break included). Computed on read: no table, no migration.
+        //
+        // Two reads of one definition: the total (the stats card, and the section's "of M" note)
+        // and the capped page of rows. No set-status filter is needed on the outer query, first
+        // places only exist on 'ranked' sets, which is a subset of what the other sections show.
+        FirstPlaceCount = await conn.ExecuteScalarAsync<int>(
+            $"SELECT count(*) FROM ({BeatmapLeaderboard.FirstPlacesOfUserSql}) fp",
+            new { id });
+
+        if (FirstPlaceCount > 0)
+            FirstPlaces = (await conn.QueryAsync<ScoreRowModel>(
+                $"""
+                 {score_row_select}
+                 FROM ({BeatmapLeaderboard.FirstPlacesOfUserSql}) best
+                 JOIN beatmaps b ON b.id = best.beatmap_id
+                 JOIN beatmapsets s ON s.id = b.set_id
+                 ORDER BY best.ended_at DESC, best.id DESC
+                 LIMIT {score_section_size}
+                 """,
+                new { id })).ToList();
 
         // Recent plays include fails (rank F renders like the game), still ranked-only so
         // admin-unranked scores never resurface.
@@ -290,13 +330,13 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             new { id })).ToList();
 
         // Pin controls, on your own profile only: every score row this page renders is yours and
-        // ranked (all three queries filter sc.ranked), so each one is pinnable, and the control
-        // reads "unpin" for the ones already pinned.
+        // ranked (all four section queries are ranked-only, first places doubly so), so each one is
+        // pinnable, and the control reads "unpin" for the ones already pinned.
         if (viewerId != 0 && viewerId == id)
         {
             var pinnedIds = await ScorePins.PinnedScoreIdsAsync(conn, id);
 
-            foreach (var row in PinnedScores.Concat(BestScores).Concat(RecentScores))
+            foreach (var row in PinnedScores.Concat(BestScores).Concat(FirstPlaces).Concat(RecentScores))
             {
                 row.ShowPinControl = true;
                 row.IsPinned = pinnedIds.Contains(row.ScoreId);
