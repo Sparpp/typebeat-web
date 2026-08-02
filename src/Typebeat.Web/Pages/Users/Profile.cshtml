@@ -1,6 +1,10 @@
 @page "/users/{idOrName}"
 @using System.Globalization
 @model Typebeat.Web.Pages.Users.ProfileModel
+@{
+    // Where a no-JS follow/watch submit sends the user back to (this profile, query string kept).
+    string followReturnUrl = Model.Request.Path + Model.Request.QueryString;
+}
 
 <section class="profile-header">
     @if (Model.ProfileUser.CoverUrl is string coverUrl)
@@ -26,10 +30,56 @@
                 Joined @Model.ProfileUser.CreatedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
                 &middot; Last seen @ProfileModel.LastSeenLabel(Model.ProfileUser.LastVisit)
             </div>
+            <div class="profile-header__social">
+                <a class="profile-social" href="/users/@Model.ProfileUser.Id/followers">
+                    <span class="profile-social__num" data-follower-count>@Model.FollowState.Followers.ToString("N0", CultureInfo.InvariantCulture)</span>
+                    <span class="profile-social__label">@(Model.FollowState.Followers == 1 ? "follower" : "followers")</span>
+                </a>
+                <a class="profile-social" href="/users/@Model.ProfileUser.Id/following">
+                    <span class="profile-social__num" data-following-count>@Model.FollowState.Following.ToString("N0", CultureInfo.InvariantCulture)</span>
+                    <span class="profile-social__label">following</span>
+                </a>
+            </div>
         </div>
         @if (Model.IsOwnProfile)
         {
-            <a class="btn btn-ghost btn-small profile-header__edit" href="/settings">edit profile</a>
+            <div class="profile-header__actions">
+                <a class="btn btn-ghost btn-small" href="/watching">watched mappers</a>
+                <a class="btn btn-ghost btn-small profile-header__edit" href="/settings">edit profile</a>
+            </div>
+        }
+        else
+        {
+            <div class="profile-header__actions">
+                @if (Model.CurrentUser is not null)
+                {
+                    <form class="js-follow-form" method="post" asp-page="/Users/Profile"
+                          asp-route-idOrName="@Model.ProfileUser.Id" asp-page-handler="Follow">
+                        <input type="hidden" name="returnUrl" value="@followReturnUrl" />
+                        <button type="submit" class="btn btn-small @(Model.FollowState.ViewerFollows ? "btn-ghost is-on" : "btn-primary")"
+                                data-follow-btn data-follow-kind="user">
+                            @(Model.FollowState.ViewerFollows ? "following" : "follow")
+                        </button>
+                    </form>
+                    <form class="js-follow-form" method="post" asp-page="/Users/Profile"
+                          asp-route-idOrName="@Model.ProfileUser.Id" asp-page-handler="Watch">
+                        <input type="hidden" name="returnUrl" value="@followReturnUrl" />
+                        <button type="submit" class="bell-btn @(Model.FollowState.ViewerWatches ? "is-on" : "")"
+                                data-follow-btn data-follow-kind="mapper"
+                                title="@(Model.FollowState.ViewerWatches ? "Stop watching this mapper" : "Watch this mapper for new maps")"
+                                aria-label="@(Model.FollowState.ViewerWatches ? "Stop watching this mapper" : "Watch this mapper for new maps")">
+                            <span aria-hidden="true">&#128276;</span>
+                        </button>
+                    </form>
+                }
+                else
+                {
+                    <a class="btn btn-primary btn-small" href="/login" title="Sign in to follow">follow</a>
+                    <a class="bell-btn" href="/login" title="Sign in to watch this mapper" aria-label="Sign in to watch this mapper">
+                        <span aria-hidden="true">&#128276;</span>
+                    </a>
+                }
+            </div>
         }
     </div>
 </section>

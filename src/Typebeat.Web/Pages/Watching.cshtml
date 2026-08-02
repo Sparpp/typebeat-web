@@ -1,0 +1,63 @@
+@page "/watching"
+@model Typebeat.Web.Pages.WatchingModel
+
+<h1>Watched mappers</h1>
+<p class="faint">
+    New maps from the mappers you watch, newest first. Ring the bell on anyone's profile to add
+    them here.
+</p>
+
+@if (Model.WatchedCount == 0)
+{
+    <div class="empty-state">
+        <h3>No bells rung yet.</h3>
+        <p>
+            Find a mapper you like on the <a href="/beatmapsets">beatmap listing</a>, open their
+            profile, and hit the bell. Their uploads show up here.
+        </p>
+    </div>
+}
+else
+{
+    <section class="profile-section">
+        <h2>Watching @Model.WatchedCount</h2>
+        <div class="user-list">
+            @foreach (var mapper in Model.Mappers)
+            {
+                <partial name="_UserRow" model="mapper" />
+            }
+        </div>
+    </section>
+
+    <section class="profile-section">
+        <h2>Recent uploads</h2>
+        @if (Model.Sets.Count == 0)
+        {
+            <p class="profile-empty muted">
+                @(Model.HasPrevious ? "Nothing further back than this." : "Nothing uploaded yet. The bell is armed.")
+            </p>
+        }
+        else
+        {
+            <div class="card-grid">
+                @foreach (var set in Model.Sets)
+                {
+                    <partial name="_BeatmapsetCard" model="set" />
+                }
+            </div>
+        }
+        @if (Model.HasPrevious || Model.HasNext)
+        {
+            <div class="show-more">
+                @if (Model.HasPrevious)
+                {
+                    <a class="btn btn-ghost" href="/watching?page=@(Model.PageNumber - 1)">newer</a>
+                }
+                @if (Model.HasNext)
+                {
+                    <a class="btn btn-ghost" href="/watching?page=@(Model.PageNumber + 1)">older</a>
+                }
+            </div>
+        }
+    </section>
+}

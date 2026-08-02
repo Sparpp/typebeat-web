@@ -1,0 +1,26 @@
+@using System.Globalization
+@using Typebeat.Web.Pages.Users
+@model UserRowModel
+<div class="user-row" data-user-id="@Model.Id">
+    <a class="user-row__avatar-link" href="/users/@Model.Id" aria-hidden="true" tabindex="-1">
+        @if (Model.AvatarUrl is string avatarUrl)
+        {
+            <img class="user-row__avatar" src="@avatarUrl" alt="" loading="lazy" />
+        }
+        else
+        {
+            <span class="user-row__avatar user-row__avatar--fallback">@Model.Username[..1]</span>
+        }
+    </a>
+    <div class="user-row__who">
+        <a class="user-row__name" href="/users/@Model.Id">@Model.Username</a>
+        <span class="user-row__meta faint">
+            Joined @Model.CreatedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
+            &middot; Last seen @ProfileModel.LastSeenLabel(Model.LastVisit)
+        </span>
+    </div>
+    @if (Model.MapCount > 0)
+    {
+        <span class="pill pill--accent user-row__maps">@Model.MapCount.ToString("N0", CultureInfo.InvariantCulture) @(Model.MapCount == 1 ? "map" : "maps")</span>
+    }
+</div>

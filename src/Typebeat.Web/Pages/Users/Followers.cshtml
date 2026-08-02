@@ -1,0 +1,32 @@
+@page "/users/{id:long}/followers"
+@model Typebeat.Web.Pages.Users.FollowersModel
+
+<section class="follow-list">
+    <h1>Followers</h1>
+    <p class="faint">
+        <a href="/users/@Model.Owner.Id">@Model.Owner.Username</a>
+        &middot; @Model.CountLabel("follower", "followers")
+        &middot; <a href="/users/@Model.Owner.Id/following">following</a>
+    </p>
+
+    @if (Model.Users.Count == 0)
+    {
+        <div class="empty-state">
+            <h3>Nobody yet.</h3>
+            <p>The first follower is out there, somewhere, mid-song.</p>
+        </div>
+    }
+    else
+    {
+        <div class="user-list">
+            @foreach (var user in Model.Users)
+            {
+                <partial name="_UserRow" model="user" />
+            }
+        </div>
+        @if (Model.Truncated)
+        {
+            <p class="profile-empty faint">Showing the most recent @Model.Users.Count followers.</p>
+        }
+    }
+</section>
