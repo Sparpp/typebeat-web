@@ -58,6 +58,24 @@ public sealed record ScoreRowModel(
     /// </summary>
     public long ReplayViews { get; set; }
 
+    /// <summary>
+    /// This score's stored performance points (<c>scores.pp</c>, docs/pp.md), or null to render no
+    /// pp element at all. Only the profile's Best scores section sets this today; every other
+    /// section (Pinned, First places, Recent, Most viewed replays) leaves it null on purpose, since
+    /// pp is not yet a thing those sections surface. 0 is a legitimate, shown value (a custom-rate
+    /// or not-yet-priced play), it is only null that means "opt out".
+    ///
+    /// <para>
+    /// Set in C# AFTER the query, never mapped, for the same reason <see cref="ShowPinControl"/> and
+    /// <see cref="ReplayViews"/> are: the score-row SELECT hydrates this record positionally through
+    /// Dapper, so appending a column here would break materialization for every section that shares
+    /// the select. The profile page instead runs a second small query keyed by score id over just
+    /// the rows that opt in, and merges the values onto the already-hydrated rows. Do not alias a
+    /// column to this name either.
+    /// </para>
+    /// </summary>
+    public double? Pp { get; set; }
+
     public string GradeLabel => Rank switch
     {
         "X" or "XH" => "SS",
