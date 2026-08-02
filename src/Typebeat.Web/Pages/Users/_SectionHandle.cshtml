@@ -1,0 +1,29 @@
+@model Typebeat.Web.Pages.Users.SectionHandle
+@*
+    The per-section reorder control, rendered ONLY on your own profile (osu-web's withEdit): every
+    other visitor gets byte-identical section markup minus this, and profile-reorder.js never
+    initializes for them because the hidden form it needs is owner-only too.
+
+    Three controls, one job. The grip is the drag surface (profile-reorder.js flips the section's
+    draggable attribute on while the pointer is on it); the two buttons are the same reorder for
+    anyone not using a mouse, and they hit the same persist path. The grip is aria-hidden because
+    it offers a keyboard user nothing the buttons do not, and native HTML5 drag-and-drop has no
+    keyboard story at all.
+
+    The whole group is display:none until profile-reorder.js marks the column reorderable, so a
+    browser with JS off shows no controls instead of dead ones, and it is hidden on narrow screens
+    (osu's hidden-xs): HTML5 drag-and-drop does not fire for touch at all, so offering a grip there
+    would be a lie. The buttons go with it rather than staying as a touch-only path, so the feature
+    is either all there or not there.
+*@
+@if (Model.Owner)
+{
+    <div class="section-reorder" data-reorder-controls>
+        <button type="button" class="section-reorder__move" data-reorder-move="up"
+                title="Move up" aria-label="Move @Model.Label up">&#9650;</button>
+        <span class="section-reorder__grip" data-reorder-handle aria-hidden="true"
+              title="Drag to reorder">&#9776;</span>
+        <button type="button" class="section-reorder__move" data-reorder-move="down"
+                title="Move down" aria-label="Move @Model.Label down">&#9660;</button>
+    </div>
+}

@@ -1,0 +1,37 @@
+-- Profile section order (task 68), osu-web parity: the profile owner drags their profile's
+-- sections into the order they want, and every visitor to that profile sees that order.
+--
+-- ---------------------------------------------------------------------------------------------
+-- ONE ARRAY IS THE LAYOUT. This column holds the whole thing: an ordered list of section slugs
+-- (the ids in Pages/Users/ProfileSections.cs, which are also the page's anchors: 'pinned',
+-- 'best-scores', ...). There is deliberately NO per-section visibility flag anywhere: whether a
+-- section shows at all is a property of the section (Pinned and First places hide themselves when
+-- empty, Best scores always renders), independent of where in the column it sits. osu-web's
+-- user_profile_customization.extras_order is the same idea; this is the one-column version of it,
+-- because typebeat-web has no customization table and one preference does not justify inventing
+-- one (011_user_preferences.sql set the house pattern: a preference is a column on users).
+--
+-- ---------------------------------------------------------------------------------------------
+-- WHY text[] AND NOT jsonb. The value is an ordered list of short ASCII slugs and nothing else.
+-- A Postgres array is exactly that type, is ordered by definition, and Npgsql reads and writes it
+-- as a plain string[] with no serializer in between. jsonb would buy nothing here and would cost
+-- a shape check on every read (jsonb can hold an object, a number, or a nested mess; text[]
+-- cannot), plus a parse step in C#. Validation of the CONTENTS (known ids only, deduplicated,
+-- never longer than the known-section count) is ProfileSections.Sanitize's job on the write path,
+-- server-side, because the ids are an application concept the database has no list of.
+--
+-- ---------------------------------------------------------------------------------------------
+-- WHY NULLABLE, AND WHY NOTHING IS BACKFILLED. NULL means "this user has never reordered", which
+-- is every user today and will stay the overwhelming majority. It renders as the default order,
+-- and it is what the write path stores again when a user drags their sections back into exactly
+-- the default order. That last rule is not tidiness, it is forward compatibility: a stored array
+-- is interpreted as "these ids first, then everything else in default order", so a user holding a
+-- literal copy of today's default would get TOMORROW's new section appended at the bottom instead
+-- of in the slot it was designed for, while a user holding NULL simply gets the new default. A
+-- DEFAULT '{}' would have the same trap with extra steps, so there is no default and no backfill.
+--
+-- Unknown ids in a stored array are ignored on render, and known ids missing from it are appended
+-- in default order (ProfileSections.Resolve). Together those two rules mean a future migration can
+-- add or remove a section without touching a single stored row.
+ALTER TABLE users
+    ADD COLUMN profile_order text[];

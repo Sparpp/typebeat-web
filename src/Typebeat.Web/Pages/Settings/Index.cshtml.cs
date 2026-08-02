@@ -260,6 +260,9 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
             avatar_key    = NULL,
             cover_key     = NULL,
             description   = '',
+            -- The section order (026_profile_order.sql) is personal curation, same reasoning as
+            -- the pins above: an erased account's profile goes back to the default layout.
+            profile_order = NULL,
             is_admin      = false,
             map_reviewer  = false,
             verified_at   = NULL,
