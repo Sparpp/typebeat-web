@@ -1,0 +1,49 @@
+@using Typebeat.Web.Social
+@model NotificationRowModel
+@*
+    One notification. The SAME markup backs the header dropdown and the /watching list, because
+    the row is not a link: it is a POST that marks itself read and THEN redirects to its target,
+    and duplicating that form was the only way the two surfaces could drift into "the panel marks
+    read but the page does not".
+
+    No JavaScript is involved in a click. A plain form submit already does the whole job
+    (mark read, go to the set), so notifications work identically with scripting off; the panel's
+    JS only decides whether the dropdown opens instead of navigating to /watching.
+*@
+@{
+    bool preferOriginal = Context.SessionUser()?.PreferOriginalMetadata ?? false;
+}
+<form method="post" asp-page="/Watching" asp-page-handler="Read">
+    <input type="hidden" name="id" value="@Model.Id" />
+    <button type="submit" class="notif-row @(Model.IsUnread ? "is-unread" : "")">
+        @if (Model.SetCoverUrl is string cover)
+        {
+            <img class="notif-row__cover" src="@cover" alt="" loading="lazy" />
+        }
+        else
+        {
+            <span class="notif-row__cover notif-row__cover--fallback" aria-hidden="true"></span>
+        }
+        <span class="notif-row__body">
+            <span class="notif-row__text">
+                @if (Model.Kind == Notifications.MapperUploadKind)
+                {
+                    <span class="notif-row__actor">@(Model.ActorName ?? "A mapper")</span>
+                    <span>uploaded</span>
+                    <span class="notif-row__subject">@Model.DisplayArtist(preferOriginal) - @Model.DisplayTitle(preferOriginal)</span>
+                }
+                else
+                {
+                    @* Unknown kind: a row written by a newer deploy than this template. Say
+                       something true rather than nothing; the click still resolves. *@
+                    <span>You have a new notification.</span>
+                }
+            </span>
+            <span class="notif-row__meta faint">@Model.AgeLabel()</span>
+        </span>
+        @if (Model.IsUnread)
+        {
+            <span class="notif-row__dot" aria-label="unread" title="unread"></span>
+        }
+    </button>
+</form>

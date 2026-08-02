@@ -1,0 +1,42 @@
+@using Typebeat.Web.Social
+@*
+    The header bell, signed-in only (the layout renders this partial inside its signed-in branch;
+    an anonymous visitor has no notifications and no endpoint here would answer them anything).
+
+    The control is an <a href="/watching">, not a <button>: with scripting off, or before
+    notifications.js loads, or if the panel fetch fails, clicking the bell goes to the
+    notifications page, which shows the same list server-rendered. The dropdown is strictly an
+    enhancement layered on top of a link that already works.
+
+    Exactly one query per page render lives here: a capped count over the partial unread index
+    (Notifications.UnreadCountAsync). The panel's contents are NOT rendered here; they are fetched
+    from /watching?handler=Panel the first time the dropdown opens.
+*@
+@{
+    var bellUser = Context.SessionUser();
+    int unread = bellUser is null ? 0 : await Notifications.UnreadCountAsync(Context, bellUser.Id);
+}
+@if (bellUser is not null)
+{
+    <div class="notif-bell" data-notif>
+        <a class="bell-btn notif-bell__btn @(unread > 0 ? "is-on" : "")"
+           href="/watching"
+           data-notif-toggle
+           aria-haspopup="true"
+           aria-expanded="false"
+           title="Notifications"
+           aria-label="@(unread > 0 ? $"Notifications, {unread} unread" : "Notifications")">
+            <span aria-hidden="true">&#128276;</span>
+            @if (unread > 0)
+            {
+                @* Rendered only when there is something to show, so "hidden at zero" is the
+                   absence of the element rather than a styling rule that could be defeated.
+                   notifications.js removes it after a successful mark-all-read. *@
+                <span class="notif-bell__badge" data-notif-badge>@Notifications.BadgeLabel(unread)</span>
+            }
+        </a>
+        <div class="notif-panel" data-notif-panel hidden>
+            <p class="notif-panel__empty faint" data-notif-placeholder>Loading...</p>
+        </div>
+    </div>
+}
