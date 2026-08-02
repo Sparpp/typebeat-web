@@ -10,9 +10,10 @@ namespace Typebeat.Web.Pages.Users;
 /// <summary>
 /// User profile (/users/{id} and /users/{name}): cover band (preset gradient keyed by user id),
 /// avatar, joined/last-seen, the stats card (global rank by user_stats.total_score, totals grid,
-/// grade counts), and stacked sections: Pinned / Best scores / Recent scores / Most played / Maps /
-/// Favourites (card partial reuse). A name URL canonical-redirects to the id URL; an all-digit
-/// path segment always reads as an id (so a digits-only USERNAME is only reachable by id).
+/// grade counts), and stacked sections: Pinned / Best scores / Recent scores / Most played /
+/// Play history / Maps / Favourites (card partial reuse). A name URL canonical-redirects to the id
+/// URL; an all-digit path segment always reads as an id (so a digits-only USERNAME is only
+/// reachable by id).
 ///
 /// Pinned scores (task 63) are this page's own feature end to end: the section query below, and
 /// the Pin/Unpin POST handlers the owner-only control on each score row submits to. All of the
@@ -70,6 +71,13 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
     public IReadOnlyList<ScoreRowModel> BestScores { get; private set; } = [];
     public IReadOnlyList<ScoreRowModel> RecentScores { get; private set; } = [];
     public IReadOnlyList<MostPlayedRow> MostPlayed { get; private set; } = [];
+
+    /// <summary>
+    /// Plays per month for the Play History chart (<see cref="PlayHistory"/>), or null when the
+    /// user has no recorded month at all, which hides the whole section. Null rather than an empty
+    /// model so the view has one thing to test.
+    /// </summary>
+    public BarChartModel? PlayHistoryChart { get; private set; }
 
     public IReadOnlyList<BeatmapsetCardModel> Maps { get; private set; } = [];
     public bool HasMoreMaps { get; private set; }
@@ -322,6 +330,11 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              LIMIT {most_played_size}
              """,
             new { id })).ToList();
+
+        // Play history: the monthly rollup, gap-filled into a continuous axis (024_play_history.sql).
+        // A user with nothing recorded gets no chart at all, and the view renders no section.
+        var playMonths = await PlayHistory.ForUserAsync(conn, id, ct: HttpContext.RequestAborted);
+        PlayHistoryChart = playMonths.Count > 0 ? PlayHistory.Chart(playMonths) : null;
 
         // ---- card sections ----
 

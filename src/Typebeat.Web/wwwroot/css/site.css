@@ -1703,6 +1703,103 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 .profile-section .show-more { margin-top: var(--space-4); }
 
+/* ---- Bar chart (shared partial: Pages/Shared/_BarChart.cshtml) ----
+   One series, so the bars wear the site accent and nothing needs a legend; every piece of TEXT
+   wears a text token, never the data colour. The SVG carries a fixed viewBox and scales to the
+   column, so the type scales with it (no font-size fights at breakpoints). */
+
+.bar-chart {
+    margin: 0;
+}
+
+.bar-chart__svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible; /* the peak label lives in the top padding */
+}
+
+.bar-chart__bar {
+    fill: var(--violet);
+    fill-opacity: 0.72;
+    transition: fill-opacity 120ms ease;
+}
+
+.bar-chart__bar:hover,
+.bar-chart__bar.is-peak {
+    fill-opacity: 1;
+}
+
+/* A period with no data: a flat stub on the baseline, in the recessive line colour so it can
+   never be misread as a small value. */
+.bar-chart__zero {
+    fill: var(--line-bright);
+}
+
+.bar-chart__axis,
+.bar-chart__grid {
+    stroke: var(--line);
+    stroke-width: 1;
+}
+
+.bar-chart__axis {
+    stroke: var(--line-bright);
+}
+
+.bar-chart__tick,
+.bar-chart__label {
+    fill: var(--text-faint);
+    font-family: var(--font-display);
+    font-size: 11px;
+}
+
+.bar-chart__peak {
+    fill: var(--text);
+    font-family: var(--font-display);
+    font-size: 12px;
+}
+
+.bar-chart__caption {
+    margin-top: var(--space-2);
+    font-size: var(--text-xs);
+}
+
+/* The table view: present for anyone who wants exact values (or cannot use the plot), collapsed
+   so it never competes with the chart above it. */
+.bar-chart__data {
+    margin-top: var(--space-2);
+}
+
+.bar-chart__data > summary {
+    color: var(--text-faint);
+    font-size: var(--text-xs);
+    cursor: pointer;
+}
+
+.bar-chart__data > summary:hover {
+    color: var(--text-muted);
+}
+
+.bar-chart__table {
+    margin-top: var(--space-2);
+    border-collapse: collapse;
+    font-size: var(--text-xs);
+}
+
+.bar-chart__table th,
+.bar-chart__table td {
+    padding: 2px var(--space-3) 2px 0;
+    text-align: left;
+    font-weight: 400;
+    color: var(--text-muted);
+}
+
+.bar-chart__table thead th {
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
 /* ---- Stats card ---- */
 
 .profile-rank {
