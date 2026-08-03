@@ -37,6 +37,13 @@ public class RankingsPageTest
     private long runnerUpId;
     private long tieFirstId;
     private long tieSecondId;
+    private long rateModId;
+
+    /// <summary>The rate-mod probe map's three ratings, all distinct and unique to this test so an
+    /// assertion on the rendered number cannot match any other row.</summary>
+    private const double base_stars = 2.22;
+    private const double dt_stars = 7.77;
+    private const double ht_stars = 1.11;
 
     /// <summary>How many distinct ranked maps the decay player set a play on (deliberately > 10).</summary>
     private const int decay_plays = 12;
@@ -123,6 +130,14 @@ public class RankingsPageTest
         await insertScoreAsync(conn, topPlayId, topMapP, 700_000, pp: 5900);
         await insertScoreAsync(conn, topPlayId, topMapQ, 600_000, pp: 5000);
         await insertScoreAsync(conn, runnerUpId, topMapP, 750_000, pp: 5500);
+
+        // A Double Time play, on a map whose three star ratings are all distinct and unique to this
+        // test. pp prices rate exclusively through the rating recomputed at the play's clock rate
+        // (docs/pp.md), so the board must show sr_dt here, never the base rating.
+        rateModId = await insertUserAsync(conn, "rk ratemod");
+
+        long rateMap = await insertBeatmapAsync(conn, topSet, stars: base_stars, srDt: dt_stars, srHt: ht_stars);
+        await insertScoreAsync(conn, rateModId, rateMap, 450_000, pp: 4500, mods: """[{"acronym":"DT"}]""");
 
         // Equal pp on two different maps: the tie must break on the EARLIER submission, so the
         // board is a total order and never reshuffles between renders.
@@ -481,6 +496,27 @@ public class RankingsPageTest
     }
 
     [Test]
+    public async Task TopPlays_ShowsTheStarRatingThePlayWasPricedAt_NotTheBaseOne()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync("/rankings?board=plays");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            // The row is on the board, and it is the DT one (the mod badge carries its rate).
+            Assert.That(html, Does.Contain($"href=\"/users/{rateModId}\""));
+            Assert.That(html, Does.Contain("1.50x"));
+
+            // pp prices DT/HT through the rating recomputed at the play's clock rate and NEVER as a
+            // flat multiplier (docs/pp.md), so the column must read sr_dt. Showing the base rating
+            // beside a pp it did not produce is exactly what a future refactor would regress to.
+            Assert.That(html, Does.Contain("&#9733; " + dt_stars.ToString("0.0#", CultureInfo.InvariantCulture)));
+            Assert.That(html, Does.Not.Contain("&#9733; " + base_stars.ToString("0.0#", CultureInfo.InvariantCulture)));
+            Assert.That(html, Does.Not.Contain("&#9733; " + ht_stars.ToString("0.0#", CultureInfo.InvariantCulture)));
+        });
+    }
+
+    [Test]
     public async Task TopPlays_ListsOnePlayerOnSeveralRows()
     {
         using var response = await WebsiteFixture.Client.GetAsync("/rankings?board=plays");
@@ -525,20 +561,21 @@ public class RankingsPageTest
             """,
             new { ownerId = PublicSiteSeed.MapperId, title, status });
 
-    private static async Task<long> insertBeatmapAsync(NpgsqlConnection conn, long setId)
+    private static async Task<long> insertBeatmapAsync(NpgsqlConnection conn, long setId,
+        double stars = 3.0, double? srDt = null, double? srHt = null)
         => await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmaps
                 (set_id, version_name, checksum_md5, total_length_s, drain_length_s,
-                 difficulty_rating, filename, word_count, char_count, wpm)
-            VALUES (@setId, 'type!beat', @checksum, 90, 80, 3.0, 'map.osu', 100, 500, 75)
+                 difficulty_rating, sr_dt, sr_ht, filename, word_count, char_count, wpm)
+            VALUES (@setId, 'type!beat', @checksum, 90, 80, @stars, @srDt, @srHt, 'map.osu', 100, 500, 75)
             RETURNING id
             """,
-            new { setId, checksum = Guid.NewGuid().ToString("N") });
+            new { setId, checksum = Guid.NewGuid().ToString("N"), stars, srDt, srHt });
 
     private static async Task insertScoreAsync(NpgsqlConnection conn, long userId, long beatmapId,
         long totalScore, double pp = 0, bool ranked = true, bool passed = true,
-        string statistics = """{"great":100}""")
+        string statistics = """{"great":100}""", string mods = "[]")
         => await conn.ExecuteAsync(
             """
             INSERT INTO scores
@@ -546,7 +583,7 @@ public class RankingsPageTest
                  mods, statistics, maximum_statistics, pp, pp_version)
             VALUES
                 (@userId, @beatmapId, @totalScore, 0.95, 0.97, 50, 'A', @passed, @ranked,
-                 '[]'::jsonb, @statistics::jsonb, '{"great":103}'::jsonb, @pp, @ppVersion)
+                 @mods::jsonb, @statistics::jsonb, '{"great":103}'::jsonb, @pp, @ppVersion)
             """,
-            new { userId, beatmapId, totalScore, passed, ranked, pp, statistics, ppVersion = PerformancePoints.VERSION });
+            new { userId, beatmapId, totalScore, passed, ranked, pp, statistics, mods, ppVersion = PerformancePoints.VERSION });
 }

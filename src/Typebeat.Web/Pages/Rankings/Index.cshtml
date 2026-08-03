@@ -98,7 +98,10 @@
                     <th>Rank</th>
                     <th>Player</th>
                     <th>Map</th>
-                    <th>Stars</th>
+                    @* Not the map's base rating on a rate-modded row: pp prices Double Time and
+                       Half Time exclusively through the rating recomputed at the play's clock rate
+                       (docs/pp.md), so this column shows the rating the pp beside it came from. *@
+                    <th title="star rating at the play's clock rate: the rating its pp was priced from">Stars</th>
                     <th>pp</th>
                     <th>Grade</th>
                     <th>Completion</th>
@@ -135,7 +138,12 @@
                                 <span class="faint">&middot; @row.Version</span>
                             }
                         </td>
-                        <td class="num" style="color:@DifficultyColour.ForStars(row.Stars)">&#9733; @row.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</td>
+                        <td class="num">
+                            @if (row.EffectiveStars is double stars)
+                            {
+                                <span style="color:@DifficultyColour.ForStars(stars)">&#9733; @stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
+                            }
+                        </td>
                         <td class="num">@row.Pp.ToString("N0", CultureInfo.InvariantCulture)pp</td>
                         <td><span class="grade @row.GradeClass">@row.GradeLabel</span></td>
                         <td class="num">@((row.Completion * 100).ToString("0.00", CultureInfo.InvariantCulture))%</td>

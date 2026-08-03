@@ -69,7 +69,9 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         string? ArtistUnicode,
         bool Explicit,
         string? Version,
-        double Stars,
+        double BaseStars,
+        double? StarsDoubleTime,
+        double? StarsHalfTime,
         string Rank,
         double Completion,
         double Accuracy,
@@ -87,6 +89,35 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
 
         public string GradeLabel => GradeDisplay.Label(Rank);
         public string GradeClass => GradeDisplay.CssClass(Rank);
+
+        /// <summary>
+        /// The star rating THIS PLAY'S pp WAS PRICED FROM: the map's rating recomputed at the play's
+        /// clock rate for Double Time / Half Time, the base rating otherwise. Resolved through
+        /// <see cref="PerformancePoints.StarsFor"/>, the same call
+        /// <see cref="PerformancePoints.ForScore"/> makes, rather than by reading
+        /// <c>difficulty_rating</c> directly: docs/pp.md prices rate EXCLUSIVELY through the
+        /// recomputed rating and never as a flat multiplier, so on a DT row the base rating is not
+        /// the number the pp came from, and showing it would misexplain the board's dominant term.
+        ///
+        /// <para>
+        /// Never null in practice. <see cref="PerformancePoints.ForScore"/> returns 0 pp whenever
+        /// <see cref="PerformancePoints.StarsFor"/> yields no rating (a custom rate, a multi-rate
+        /// stack, or a map whose <c>sr_dt</c>/<c>sr_ht</c> is not stored yet), and the board only
+        /// carries plays with <c>pp &gt; 0</c>, so every row here priced from one of the three
+        /// stored ratings and the sr columns only ever go from null to filled. It stays nullable
+        /// anyway, and renders as an empty cell, because the honest answer to "which rating is this"
+        /// is nothing rather than a number that did not price the play.
+        /// </para>
+        ///
+        /// <para>
+        /// Read from the map's CURRENT ratings, so a re-ingest that moves a map's stars before
+        /// <see cref="Packages.PpBackfill"/> re-prices its scores shows the new rating beside an
+        /// older pp. That staleness window is a property of every stored pp, not of this column,
+        /// and the current rating is the more useful of the two to show.
+        /// </para>
+        /// </summary>
+        public double? EffectiveStars
+            => PerformancePoints.StarsFor(Mods, BaseStars, StarsDoubleTime, StarsHalfTime).Stars;
 
         private JObject? statistics;
         private JObject Statistics => statistics ??= JObject.Parse(string.IsNullOrEmpty(StatisticsJson) ? "{}" : StatisticsJson);
@@ -175,15 +206,18 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
             // the plays that actually count, and twenty near-identical retries of one map by one
             // player collapse to the single best of them instead of filling the page.
             //
-            // The LIMIT lands BEFORE the display joins: the inner select reads only the covering
-            // index's columns (id / user_id / beatmap_id / pp), and the 50 surviving ids are then
-            // hydrated by primary key.
+            // The LIMIT lands BEFORE the display joins: the inner select reads only the four
+            // columns the pp fragments carry (id / user_id / beatmap_id / pp), and just the 50
+            // survivors are hydrated by primary key. The per-map fold underneath is served by
+            // ix_scores_pp (020_performance_points.sql); this board's global pp ordering is NOT,
+            // since that index leads with user_id, so the folded set is sorted. It is a sort over
+            // the eligible plays, the same set the Performance board already folds on every render.
             PlayRows = (await conn.QueryAsync<PlayRow>(
                     $"""
                      SELECT top.id AS ScoreId,
                             top.pp AS Pp,
                             u.id AS UserId,
-                            u.username::text AS Username,
+                            u.username AS Username,
                             bs.id AS SetId,
                             bs.title AS Title,
                             bs.artist AS Artist,
@@ -191,7 +225,9 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                             bs.artist_unicode AS ArtistUnicode,
                             bs.explicit AS Explicit,
                             b.version_name AS Version,
-                            b.difficulty_rating AS Stars,
+                            b.difficulty_rating AS BaseStars,
+                            b.sr_dt AS StarsDoubleTime,
+                            b.sr_ht AS StarsHalfTime,
                             sc.rank AS Rank,
                             sc.completion AS Completion,
                             sc.accuracy AS Accuracy,
