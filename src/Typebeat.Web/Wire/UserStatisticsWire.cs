@@ -51,19 +51,26 @@ public static class UserStatisticsWire
     /// SS/S/A counts + mean accuracy (0–100) over the user's best ranked+passed score per map; the
     /// same per-map-best fold the website profile uses. B/C/D exist in our grading but have no slot
     /// in the client grade_counts DTO, so they are folded away here.
+    ///
+    /// <para>
+    /// The fold is built from <see cref="BeatmapLeaderboard"/>'s own fragments rather than a fourth
+    /// hand-written copy of "ranked and passed, best score first", so a change to what a board row
+    /// means (or to its tie-break) moves the in-game grade counts and the website's together
+    /// instead of silently splitting them.
+    /// </para>
     /// </summary>
     private static async Task<(int Ss, int S, int A, double AccuracyPercent)> gradeCountsAsync(
         NpgsqlConnection conn, long userId, CancellationToken ct)
     {
         var rows = await conn.QueryAsync<(string Rank, long Count, double AccSum)>(
             new CommandDefinition(
-                """
+                $"""
                 SELECT best.rank AS Rank, count(*) AS Count, sum(best.accuracy) AS AccSum
                 FROM (
                     SELECT DISTINCT ON (sc.beatmap_id) sc.rank, sc.accuracy
                     FROM scores sc
-                    WHERE sc.user_id = @userId AND sc.ranked AND sc.passed
-                    ORDER BY sc.beatmap_id, sc.total_score DESC, sc.id ASC
+                    WHERE sc.user_id = @userId AND {BeatmapLeaderboard.OnBoard("sc", "true")}
+                    ORDER BY sc.beatmap_id, {BeatmapLeaderboard.Order("sc")}
                 ) best
                 GROUP BY best.rank
                 """,
