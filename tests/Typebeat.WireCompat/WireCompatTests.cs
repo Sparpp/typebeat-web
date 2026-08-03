@@ -11,6 +11,11 @@ using typebeat.Game.Rulesets.Scoring;
 using typebeat.Game.Scoring;
 using osu.Framework.Extensions;
 
+// The server's two ranking metrics, aliased so the client's own Online/Scoring namespaces above
+// can't collide with them.
+using GlobalRanking = Typebeat.Web.Scoring.GlobalRanking;
+using PpRanking = Typebeat.Web.Scoring.PpRanking;
+
 namespace Typebeat.WireCompat;
 
 /// <summary>
@@ -128,10 +133,27 @@ public class WireCompatTests
         {
             var stats = me.Statistics;                 // getter never returns null
             _ = stats.DisplayAccuracy;                 // computed from hit_accuracy
-            _ = stats.GlobalRank;                      // nullable, server sends null
+            _ = stats.GlobalRank;                      // nullable: null while the player is unranked
             _ = stats.PP;
             _ = stats.Level.Current;
         }, "reading the login statistics must not throw");
+
+        // The login payload carries the REAL statistics, the same ones the profile fetch serves
+        // (UserStatisticsWire), not a zeroed placeholder: this response is what lands in the
+        // client's api.LocalUser for the whole session, so a stand-in there is a wrong number that
+        // nothing ever corrects. Asserted against the DB rather than a literal so the test does not
+        // depend on how many scores other tests have submitted by now.
+        await using var db = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString);
+        await db.OpenAsync();
+
+        var performance = await PpRanking.ForUserAsync(db, ServerFixture.PlayerUserId);
+
+        Assert.That(me.Statistics.PP, Is.Not.Null);
+        Assert.That((double)me.Statistics.PP!.Value,
+            Is.EqualTo(Math.Round(performance.TotalPp, 2, MidpointRounding.AwayFromZero)).Within(1e-9),
+            "the login payload's pp must be the same total the profile fetch serves");
+        Assert.That(me.Statistics.GlobalRank, Is.EqualTo(performance.GlobalRank is { } r ? (int?)(int)r : null),
+            "and its global_rank the same pp rank");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -431,14 +453,21 @@ public class WireCompatTests
     }
 
     // ---------------------------------------------------------------------------------------------
-    // (f2) GET /api/v2/users/{id} → APIUser. The profile overlay's fetch; without it the client
-    // spins forever (no Failure handler on GetUserRequest). Runs after the score loop so the
-    // player has a ranked score to rank.
+    // (f2) GET /api/v2/users/{id} → APIUser. The profile overlay's fetch, and the one
+    // LocalUserStatisticsProvider polls for the local player; without it the client spins forever
+    // (no Failure handler on GetUserRequest). Runs after the score loop so the player has a ranked
+    // score to rank.
     // ---------------------------------------------------------------------------------------------
     [Test]
     [Order(3)]
     public async Task GetUser_DeserializesAsAPIUser_WithRankedStatisticsAndPlaymode()
     {
+        // A rival that outranks the player on CUMULATIVE SCORE while losing to them on pp: a huge
+        // total_score carrying a token 0.01pp. Without it the two boards would agree on #1 and the
+        // global_rank assertion below would prove nothing. Its map lives on its own ranked set so no
+        // other test's leaderboard, position or grade count moves.
+        await seedScoreRivalAsync();
+
         using var req = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/users/{ServerFixture.PlayerUserId}?key=id");
         using var resp = await client.SendAsync(req);
 
@@ -463,9 +492,101 @@ public class WireCompatTests
             _ = stats.GradesCount[ScoreRank.S];
         }, "reading the profile statistics must not throw");
 
-        // The score loop submitted a single 400k play on the ranked seed map → global rank #1.
-        Assert.That(user.Statistics.GlobalRank, Is.EqualTo(1));
+        // The score loop submitted a single 400k play on the ranked seed map.
         Assert.That(user.Statistics.RankedScore, Is.EqualTo(400_000));
+
+        await using var db = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString);
+        await db.OpenAsync();
+
+        var performance = await PpRanking.ForUserAsync(db, ServerFixture.PlayerUserId);
+        var cumulative = await GlobalRanking.ForUserAsync(db, ServerFixture.PlayerUserId);
+
+        Assert.That(cumulative.GlobalRank, Is.EqualTo(2), "the rival must outrank the player on cumulative score");
+        Assert.That(performance.GlobalRank, Is.EqualTo(1), "and lose to them on pp");
+
+        // THE call this task made: the client's single rank slot carries the pp rank, not the
+        // cumulative-score rank. Every client surface reading global_rank pairs it with pp (profile
+        // header, results-screen Overall Ranking, the toolbar delta), and the website has led with
+        // pp since task 61. The score metric is still on the wire as ranked_score, above.
+        Assert.That(user.Statistics.GlobalRank, Is.EqualTo(1),
+            "global_rank must be the pp rank; #2 would mean the cumulative-score rank leaked into it");
+        Assert.That(user.Statistics.IsRanked, Is.True, "is_ranked must track the rank it is sent with");
+
+        // Total pp: the real weighted aggregate, at the 2dp the wire serves it.
+        Assert.That(user.Statistics.PP, Is.Not.Null, "pp must never be null; a player with none is sent 0");
+        Assert.That((double)user.Statistics.PP!.Value,
+            Is.EqualTo(Math.Round(performance.TotalPp, 2, MidpointRounding.AwayFromZero)).Within(1e-9));
+        Assert.That(performance.TotalPp, Is.GreaterThan(0), "the fixture play is ranked on a ranked map, so it earns pp");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // (f3) A user who has never earned pp: the brand-new-account case. pp is 0 (a number, not null:
+    // the toolbar's delta display falls back to `Before.PP ?? After.PP`, so a null "before" would
+    // render a player's very first pp as a gain of nothing), while global_rank is null, which is the
+    // client's existing convention for unranked (a dash in GlobalRankDisplay, a hidden counter in
+    // the toolbar). Uses the seeded set owner, who has no scores at all.
+    // ---------------------------------------------------------------------------------------------
+    [Test]
+    [Order(4)]
+    public async Task GetUser_WithNoPerformancePoints_SendsZeroPpAndNullRank()
+    {
+        using var req = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/users/{ServerFixture.OwnerUserId}?key=id");
+        using var resp = await client.SendAsync(req);
+
+        string body = await resp.Content.ReadAsStringAsync();
+        Assert.That(resp.IsSuccessStatusCode, Is.True, $"users status {(int)resp.StatusCode}: {body}");
+
+        var user = JsonConvert.DeserializeObject<APIUser>(body);
+
+        Assert.That(user, Is.Not.Null);
+        Assert.That(user!.Statistics.PP, Is.EqualTo(0m), "no pp-earning play is worth exactly 0, not unknown");
+        Assert.That(user.Statistics.GlobalRank, Is.Null, "unranked stays null rather than becoming rank #0");
+        Assert.That(user.Statistics.IsRanked, Is.False);
+    }
+
+    /// <summary>
+    /// Inserts a second ranked set + map + user carrying one enormous-score, near-zero-pp play, so
+    /// the cumulative-score board and the pp board disagree about who is first.
+    /// </summary>
+    private static async Task seedScoreRivalAsync()
+    {
+        await using var db = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString);
+        await db.OpenAsync();
+
+        long setId = await Dapper.SqlMapper.ExecuteScalarAsync<long>(db,
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist, status)
+            VALUES (@ownerId, 'Wire Compat Rival', 'Harness', 'ranked')
+            RETURNING id
+            """,
+            new { ownerId = ServerFixture.OwnerUserId });
+
+        long beatmapId = await Dapper.SqlMapper.ExecuteScalarAsync<long>(db,
+            """
+            INSERT INTO beatmaps
+                (set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s, difficulty_rating)
+            VALUES (@setId, 'type!beat', 0, '33333333333333333333333333333333', 60, 30, 1.5)
+            RETURNING id
+            """,
+            new { setId });
+
+        long rivalId = await Dapper.SqlMapper.ExecuteScalarAsync<long>(db,
+            """
+            INSERT INTO users (username, email, password_hash, country_code)
+            VALUES ('wc_rival', 'wc_rival@example.com', 'x', 'US')
+            RETURNING id
+            """);
+
+        await Dapper.SqlMapper.ExecuteAsync(db,
+            """
+            INSERT INTO scores
+                (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
+                 mods, statistics, maximum_statistics, pp)
+            VALUES
+                (@rivalId, @beatmapId, 5000000, 0.99, 1.0, 400, 'X', true, true,
+                 '[]'::jsonb, '{"great":400}'::jsonb, '{"great":400}'::jsonb, 0.01)
+            """,
+            new { rivalId, beatmapId });
     }
 
     // ---------------------------------------------------------------------------------------------

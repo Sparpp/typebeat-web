@@ -18,8 +18,13 @@ public static class UserWire
     /// <summary>
     /// The APIMe payload for GET /api/v2/me/. <paramref name="scheme"/>/<paramref name="host"/>
     /// come from the incoming request so the avatar URL is served back from this same host.
+    /// <paramref name="statistics"/> is the SAME <see cref="ProfileStatistics"/> object the profile
+    /// fetch serves (built by <see cref="UserStatisticsWire.ForUserAsync"/>), not a zeroed stand-in:
+    /// the login response lands in the client's <c>api.LocalUser</c> and is read straight back out
+    /// by anything holding an APIUser for the local player, so a placeholder there is simply a
+    /// wrong number waiting to be printed.
     /// </summary>
-    public static object Me(AuthedUser user, string scheme, string host) => new
+    public static object Me(AuthedUser user, string scheme, string host, object statistics) => new
     {
         id = user.Id,
         username = user.Username,
@@ -30,7 +35,7 @@ public static class UserWire
         is_bot = false,
         is_active = true,
         playmode = PlayMode,
-        statistics = ZeroedStatistics(),
+        statistics,
         // APIMe reads this (defaults to empty string); no score-processing pipeline in M1.
         score_processing_notice_url = "",
     };
@@ -79,23 +84,48 @@ public static class UserWire
         object Statistics);
 
     /// <summary>
-    /// A populated UserStatistics (Users/UserStatistics.cs). global_rank/ranked_score come from the
-    /// shared cumulative metric; grade_counts only carries ss/s/a (the client DTO has no b/c/d);
-    /// hit_accuracy is a 0–100 percentage (the client divides by 100 for display).
+    /// A populated UserStatistics (Users/UserStatistics.cs). grade_counts only carries ss/s/a (the
+    /// client DTO has no b/c/d); hit_accuracy is a 0–100 percentage (the client divides by 100 for
+    /// display).
+    ///
+    /// <para>
+    /// <c>global_rank</c> IS THE pp RANK (<see cref="Scoring.PpRanking"/>), not the cumulative-score
+    /// rank. The client has exactly one rank slot and every surface that reads it pairs it with pp:
+    /// the profile header prints "Global Ranking" beside a "pp" value, the results screen's Overall
+    /// Ranking panel puts the rank change next to the pp change, and the toolbar shows the two
+    /// deltas side by side. Filling that slot with the score rank would make a play read "+37pp,
+    /// rank unchanged" (or worse, moved for an unrelated reason). It also matches osu, where this
+    /// field has always been the pp rank, and the website, which has led with pp since task 61. The
+    /// cumulative-score metric is NOT lost from the client: its VALUE still ships as
+    /// <c>ranked_score</c> (and the results screen has a row for it); only its rank has no slot,
+    /// and that board lives on the website.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>pp</c> is ALWAYS a number, 0 for a player with no pp-earning play, because a weighted sum
+    /// over no plays genuinely is 0; it is not unknown. Null would be actively harmful here: the
+    /// toolbar's delta display falls back to <c>Before.PP ?? After.PP</c>, so a null "before" would
+    /// render a player's FIRST pp ever as a gain of nothing. <c>global_rank</c> stays null when
+    /// unranked, which is the client's existing convention for "no rank" (a dash in
+    /// GlobalRankDisplay, a hidden counter in the toolbar), and <c>is_ranked</c> tracks it so the
+    /// payload cannot claim to be ranked and rankless at once.
+    /// </para>
     /// </summary>
     public static object ProfileStatistics(
-        long? globalRank, long rankedScore, long totalScore, int playCount, long playTimeS,
+        double totalPp, long? ppRank, long rankedScore, long totalScore, int playCount, long playTimeS,
         double accuracyPercent, int ss, int s, int a) => new
     {
         level = new { current = 1, progress = 0 },
-        pp = 0,
-        global_rank = globalRank is { } r ? (int?)(int)r : null,
+        // 2dp, as osu serves it: the client rounds to whole pp for display, and pinning the wire to
+        // a stable number keeps the login and profile payloads byte-identical for the same user.
+        pp = Math.Round(totalPp, 2, MidpointRounding.AwayFromZero),
+        global_rank = ppRank is { } r ? (int?)(int)r : null,
         ranked_score = rankedScore,
         hit_accuracy = accuracyPercent,
         play_count = playCount,
         play_time = (int?)playTimeS,
         total_score = totalScore,
-        is_ranked = globalRank is not null,
+        is_ranked = ppRank is not null,
         grade_counts = new { ss, s, a },
     };
 
@@ -109,20 +139,4 @@ public static class UserWire
         => avatarKey is null
             ? $"{scheme}://{host}/img/default-avatar.png"
             : $"{scheme}://{host}/{avatarKey}";
-
-    /// <summary>
-    /// A zeroed UserStatistics (Users/UserStatistics.cs). global_rank stays null so the client
-    /// renders the local user as unranked rather than rank #0.
-    /// </summary>
-    public static object ZeroedStatistics() => new
-    {
-        level = new { current = 1, progress = 0 },
-        pp = 0,
-        global_rank = (int?)null,
-        ranked_score = 0L,
-        hit_accuracy = 0.0,
-        play_count = 0,
-        total_score = 0L,
-        is_ranked = false,
-    };
 }
