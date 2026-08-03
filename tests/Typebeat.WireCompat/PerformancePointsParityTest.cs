@@ -368,8 +368,10 @@ public class PerformancePointsParityTest
     {
         Assert.Multiple(() =>
         {
-            Assert.That(ClientPp.DOUBLE_TIME_BASE_RATE, Is.EqualTo(Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate));
-            Assert.That(ClientPp.HALF_TIME_BASE_RATE, Is.EqualTo(Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate));
+            // Server side first: its values are the mods' slider ranges read at runtime, the
+            // client's are compile-time constants, and NUnit wants the constant to be the expected.
+            Assert.That(Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate, Is.EqualTo(ClientPp.DOUBLE_TIME_BASE_RATE));
+            Assert.That(Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate, Is.EqualTo(ClientPp.HALF_TIME_BASE_RATE));
 
             // And those are the mods' own slider defaults, not a third copy of the numbers.
             Assert.That(new TypeBeatModDoubleTime().SpeedChange.Default, Is.EqualTo(ClientPp.DOUBLE_TIME_BASE_RATE));
