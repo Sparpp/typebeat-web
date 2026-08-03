@@ -528,10 +528,11 @@ public class PerformancePointsParityTest
             double? clientStars = ClientPp.StarsFor(client, clientStack);
             var serverStars = ServerPp.StarsFor(serverStack, baseStars, dtStars, htStars);
 
-            // What the in-game counter would show (0 when the play's rate makes it ineligible)...
-            double clientPp = clientStars is double stars
+            // What the in-game counter would show (nothing at all when the play's rate makes it
+            // ineligible, which is the same "no price exists" the server reports as a null)...
+            double? clientPp = clientStars is double stars
                 ? ClientPp.ForPlay(stars, clientCounts, accuracy, maxCombo, clientStack)
-                : 0;
+                : null;
 
             // ...against what the server would write to scores.pp for the very same play.
             var (serverPp, settled) = ServerPp.ForScore(
@@ -564,7 +565,7 @@ public class PerformancePointsParityTest
         Assert.Multiple(() =>
         {
             Assert.That(ClientPp.StarsFor(client, customRate), Is.Null, "the client shows no number at all");
-            Assert.That(serverPp, Is.Zero, "and the server stores nothing");
+            Assert.That(serverPp, Is.Null, "and the server prices nothing at all, which is not a price of zero");
         });
     }
 

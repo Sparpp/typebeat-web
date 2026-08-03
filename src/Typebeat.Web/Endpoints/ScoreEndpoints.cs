@@ -345,7 +345,10 @@ public static class ScoreEndpoints
             """,
             new
             {
-                pp,
+                // The column is NOT NULL, so a play the formula never ran for (unranked, or a
+                // custom rate) stores 0. That stored 0 is NOT what goes on the wire; see the
+                // response below.
+                pp = pp ?? 0,
                 ppVersion = ppSettled ? PerformancePoints.VERSION : 0,
                 userId = user.Id,
                 beatmapId,
@@ -444,20 +447,24 @@ public static class ScoreEndpoints
             Passed = passed,
             EndedAt = endedAt,
             Position = position,
-            // What this play was actually priced at, so the game can show the authoritative number
-            // on its results screen instead of re-deriving one. Note the two DIFFERENT nulls this
-            // has to keep apart, since the client renders them differently:
-            //   - an INELIGIBLE play (unranked score / unranked map / unranked mod / a fail) is a
-            //     settled 0. It is sent as 0, not null: the server has priced it, and the answer is
-            //     "nothing". The client turns that into its own "-" using gates it can evaluate
-            //     itself, and prints a plain 0 for the refusals only the server knows about.
-            //   - an UNSETTLED play (a base-rate DT/HT run on a map whose sr_dt/sr_ht is not stored
-            //     yet) has no price yet at all. The stored 0 is a placeholder that PpBackfill will
-            //     overwrite at the next boot, so asserting it here would freeze the results screen
-            //     on a number the database itself is about to disagree with. Sent as null, which
-            //     tells the client to price the play locally, which it can: unlike the server it
-            //     computes star ratings on demand rather than reading three stored columns.
-            Pp = ppSettled ? pp : null,
+            // What this play was priced at, so the game can show the authoritative number on its
+            // results screen instead of re-deriving one. Sent EXACTLY as PerformancePoints.ForScore
+            // returned it, which makes the wire contract a single sentence: a non-null pp means the
+            // server ran the formula for this play and this is the answer, and nothing else does.
+            //
+            // So a null here is never "worth zero". It is one of:
+            //   - REFUSED (unranked score, which covers an unranked map, an unranked mod, a fail and
+            //     every anti-cheat gate; or a custom rate). No number can describe it, and the game
+            //     shows a dash rather than a 0 that would read as an earned score of nothing.
+            //   - NOT PRICED YET (a base-rate DT/HT run on a map whose sr_dt/sr_ht is not stored
+            //     yet). The 0 sitting in the column is a placeholder PpBackfill overwrites at the
+            //     next boot, so asserting it would freeze the results screen on a number the
+            //     database is about to disagree with. The game prices the play itself instead,
+            //     which it can: unlike this server it computes star ratings on demand rather than
+            //     reading three stored columns.
+            // A genuinely priced play worth 0 (a give-up run on a ranked map) still sends 0, and
+            // the game prints it, because that IS its price.
+            Pp = pp,
             // Always false here by construction: the score id is minted by this very insert, so
             // the client cannot have uploaded its replay yet. It uploads right after reading this
             // response (PUT /api/v2/scores/{id}/replay), and the leaderboard reports it from then on.

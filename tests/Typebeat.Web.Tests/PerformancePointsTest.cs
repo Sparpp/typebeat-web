@@ -402,7 +402,7 @@ public class PerformancePointsTest
     }
 
     [Test]
-    public void ForScore_CustomRatePlayEarnsNoPpButStillSettles()
+    public void ForScore_CustomRatePlayIsNotPricedAtAllButStillSettles()
     {
         var (pp, settled) = PerformancePoints.ForScore(
             ranked: true,
@@ -416,7 +416,10 @@ public class PerformancePointsTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(pp, Is.Zero);
+            // NULL, not 0. The formula never ran, so there is no price to report; the caller stores
+            // 0 because the column is NOT NULL, and the wire sends null so the game can say "no pp
+            // was ever on offer" instead of "you earned zero".
+            Assert.That(pp, Is.Null);
             Assert.That(settled, Is.True);
         });
     }
@@ -456,7 +459,7 @@ public class PerformancePointsTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(pp, Is.Zero);
+            Assert.That(pp, Is.Null, "no rating means no price, which is not the same as a price of zero");
             Assert.That(settled, Is.False, "an unpriced row must be left stale so the backfill retries it");
         });
     }
@@ -471,7 +474,7 @@ public class PerformancePointsTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(pp, Is.Zero);
+            Assert.That(pp, Is.Null);
             Assert.That(settled, Is.True);
         });
     }
@@ -484,7 +487,7 @@ public class PerformancePointsTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(pp, Is.Zero);
+            Assert.That(pp, Is.Null, "refused outright: an unranked play is never priced, it is not priced at zero");
             Assert.That(settled, Is.True, "nothing about an unranked row will change; it must not be rescanned forever");
         });
     }

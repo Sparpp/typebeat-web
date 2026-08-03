@@ -127,11 +127,11 @@ public class RankedApprovalTest
             // caller has no ranked score here. The unranked board carries its own positions.
             Assert.That(submitted["position"]!.Type, Is.EqualTo(JTokenType.Null));
 
-            // pp, though, is a settled 0 rather than a null (backlog 75): an unranked play HAS been
-            // priced, at nothing, and the game needs that to differ from "not priced at all", which
-            // is what tells it to price the play itself.
-            Assert.That(submitted["pp"]!.Type, Is.Not.EqualTo(JTokenType.Null), "an unranked play is priced, at zero");
-            Assert.That((double)submitted["pp"]!, Is.Zero);
+            // pp is null too (backlog 75), for its own reason: the server refuses to price an
+            // unranked play at all. It stores 0 because the column is NOT NULL, but sending that 0
+            // would tell the game "you earned zero" for a play that was never eligible to earn
+            // anything, so the wire carries nothing and the game renders a dash.
+            Assert.That(submitted["pp"]!.Type, Is.EqualTo(JTokenType.Null), "an unranked play is never priced");
         });
 
         await using (var conn = await dataSource.OpenConnectionAsync())

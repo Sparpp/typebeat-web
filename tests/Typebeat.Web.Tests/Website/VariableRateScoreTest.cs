@@ -286,8 +286,10 @@ public class VariableRateScoreTest
             Assert.That(customRateStored.Version, Is.EqualTo(PerformancePoints.VERSION), "ineligible forever, so settled");
         });
 
-        // What the SUBMIT RESPONSE tells the game (backlog 75). Three stored states, three distinct
-        // wire values, and the game renders each differently, so none may collapse into another.
+        // What the SUBMIT RESPONSE tells the game (backlog 75). The wire contract is one sentence:
+        // a non-null pp means the server RAN THE FORMULA for this play, and that is the answer. Two
+        // of these three rows never ran it, and both must say so the same way, because the game
+        // renders "no price exists" (a dash) differently from "priced at zero".
         Assert.Multiple(() =>
         {
             // Priced: the authoritative number, the one the leaderboards count. The game shows it
@@ -295,16 +297,20 @@ public class VariableRateScoreTest
             Assert.That(noMod["pp"]!.Type, Is.Not.EqualTo(JTokenType.Null));
             Assert.That((double)noMod["pp"]!, Is.EqualTo(expectedNoMod).Within(1e-9));
 
-            // Ineligible forever: a settled 0 travels as 0, not as null. The server HAS priced this
-            // play, and the answer is "nothing".
-            Assert.That(customRate["pp"]!.Type, Is.Not.EqualTo(JTokenType.Null));
-            Assert.That((double)customRate["pp"]!, Is.Zero);
+            // Ineligible forever. The 0 in the column is storage, not a price: sending it would
+            // read as "you earned zero" for a play no number can describe.
+            Assert.That(customRate["pp"]!.Type, Is.EqualTo(JTokenType.Null));
 
-            // Not priced yet: null, never the placeholder 0 sitting in the column. Asserting that 0
-            // would freeze the game's results screen on a number PpBackfill is about to overwrite;
-            // null instead tells the client to price the play itself, which it can, since it
-            // computes star ratings on demand rather than reading three stored columns.
+            // Not priced yet. The 0 in the column is a placeholder PpBackfill overwrites at the
+            // next boot, so asserting it would freeze the game's results screen on a number the
+            // database is about to disagree with. Null instead tells the game to price the play
+            // itself, which it can: it computes star ratings on demand rather than reading three
+            // stored columns.
             Assert.That(baseRate["pp"]!.Type, Is.EqualTo(JTokenType.Null));
+
+            // And the STORED column is untouched by any of this: still 0 for both, still NOT NULL.
+            Assert.That(customRateStored.Pp, Is.Zero);
+            Assert.That(baseRateStored.Pp, Is.Zero);
         });
 
         // The rate rating lands (in production: PaceBackfill, from the stored .osu blob) and the

@@ -100,9 +100,10 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         /// the number the pp came from, and showing it would misexplain the board's dominant term.
         ///
         /// <para>
-        /// Never null in practice. <see cref="PerformancePoints.ForScore"/> returns 0 pp whenever
-        /// <see cref="PerformancePoints.StarsFor"/> yields no rating (a custom rate, a multi-rate
-        /// stack, or a map whose <c>sr_dt</c>/<c>sr_ht</c> is not stored yet), and the board only
+        /// Never null in practice. <see cref="PerformancePoints.ForScore"/> prices nothing at all,
+        /// and its callers store 0, whenever <see cref="PerformancePoints.StarsFor"/> yields no
+        /// rating (a custom rate, a multi-rate stack, or a map whose <c>sr_dt</c>/<c>sr_ht</c> is
+        /// not stored yet), and the board only
         /// carries plays with <c>pp &gt; 0</c>, so every row here priced from one of the three
         /// stored ratings and the sr columns only ever go from null to filled. It stays nullable
         /// anyway, and renders as an empty cell, because the honest answer to "which rating is this"

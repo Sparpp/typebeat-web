@@ -392,11 +392,27 @@ public static class PerformancePoints
     /// <summary>
     /// pp straight from a stored score row: the whole per-play pipeline in one call, shared by the
     /// submission paths and by <see cref="Packages.PpBackfill"/> so the two can never disagree.
-    /// Returns 0 and <c>settled = false</c> when the play's star rating is not stored yet, which
-    /// tells the caller to leave the row stale for the backfill rather than stamping it.
+    ///
+    /// <para><c>Pp</c> IS NULL WHENEVER THE FORMULA DID NOT RUN, which is a different thing from it
+    /// running and returning 0, and the two must not be conflated:</para>
+    /// <list type="bullet">
+    /// <item><c>(value, settled: true)</c>: priced. <c>value</c> may legitimately be 0 (a give-up
+    /// run on a ranked map earns exactly that), and it is an assertion: this play is worth this.</item>
+    /// <item><c>(null, settled: true)</c>: REFUSED, permanently. An unranked score, or a custom
+    /// rate, can never be priced at all. The caller stores 0 (the column is NOT NULL) but must not
+    /// report that 0 as a price: <c>scores/{id}</c> style responses send null, and the game turns
+    /// that into "no pp was ever on offer" rather than "you earned zero".</item>
+    /// <item><c>(null, settled: false)</c>: NOT PRICED YET. The play's rate star rating is not
+    /// stored, so the row is left stale (pp 0, version 0) for <see cref="Packages.PpBackfill"/>
+    /// rather than being stamped at a value it would have to disagree with later.</item>
+    /// </list>
+    ///
+    /// <para>Callers writing the <c>pp</c> column coalesce with <c>?? 0</c>; callers putting the
+    /// value on the wire send it as-is, so a non-null pp on the wire always means "the server
+    /// priced this play, and this is the answer".</para>
     /// </summary>
     /// <param name="ranked">The score's stored <c>ranked</c> flag: an unranked play earns nothing.</param>
-    public static (double Pp, bool Settled) ForScore(
+    public static (double? Pp, bool Settled) ForScore(
         bool ranked,
         IReadOnlyList<ScoreMod>? mods,
         NoteCounts notes,
@@ -407,12 +423,12 @@ public static class PerformancePoints
         double? starsHalfTime)
     {
         if (!ranked)
-            return (0, true);
+            return (null, true);
 
         var stars = StarsFor(mods, baseStars, starsDoubleTime, starsHalfTime);
 
         if (stars.Stars is not double effective)
-            return (0, !stars.Pending);
+            return (null, !stars.Pending);
 
         return (Compute(effective, notes.Notes, notes.Misses, accuracy, maxCombo, mods, notes.Mistypes), true);
     }

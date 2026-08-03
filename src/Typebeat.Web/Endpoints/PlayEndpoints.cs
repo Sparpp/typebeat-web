@@ -341,7 +341,9 @@ public static class PlayEndpoints
             """,
             new
             {
-                pp,
+                // The column is NOT NULL: a play the formula never ran for (unranked here, since
+                // the browser player has no mods to make it rate-ineligible) stores 0.
+                pp = pp ?? 0,
                 ppVersion = ppSettled ? PerformancePoints.VERSION : 0,
                 userId = user.Id,
                 beatmapId,
