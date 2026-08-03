@@ -174,3 +174,20 @@ values any stored row differently.
 recorded. Every surface renders the mistype count only for a play that carries it (absence is not
 zero). Note the one place absence is recoverable: re-simulating an old REPLAY produces the count,
 since the wrong keys were always in the input stream.
+
+## Amendment (2026-08-03): pp reaches the game client (backlog 74, 75, 76)
+
+The "separate follow-up" promised above has landed. Nothing in the formula or the aggregation
+changed; what changed is who can see the numbers.
+
+* The game got its own mirror of the per-play formula
+  (`typebeat.Game.Rulesets.TypeBeat/Scoring/PerformancePoints.cs`), pinned against this one by
+  `tests/Typebeat.WireCompat/PerformancePointsParityTest.cs`.
+* The submit response carries the play's pp, under a one-sentence contract: a non-null value means
+  the server ran the formula and that is the answer (0 included); null means it did not run it.
+* **`statistics.global_rank` on the client wire is now the pp RANK, not the cumulative-score rank.**
+  The client has exactly one rank slot and every surface reading it pairs it with pp, osu defines
+  the field that way, and the website has led with pp since task 61. The cumulative metric keeps its
+  VALUE on the wire as `ranked_score`; only its rank has no client slot, and that board lives on the
+  website. `statistics.pp` is the read-time `PpRanking` total, always a number (0 for a player with
+  no pp-earning play, never null), while `global_rank` stays null while unranked.
