@@ -17,7 +17,7 @@ Per play:
 
 ```
 pp = C · SR_eff^2.70
-       · (1 − miss/notes)^7.5              # cleanliness (misses)
+       · (1 − (miss+mistypes)/(notes+mistypes))^7.5   # cleanliness (see the 2026-08-03 amendment)
        · max(0.1, 1 + 0.70·log10(notes/100))   # length bonus (clamped)
        · acc^1.30                          # accuracy (timing quality)
        · (maxcombo/notes)^0.55             # combo
@@ -30,8 +30,9 @@ Factor by factor, in descending priority:
 
 * **SR_eff^2.70**: difficulty is the primary driver. SR_eff is the map's star rating
   **recomputed at the play's clock rate** for DT/HT (see mods below), not the base SR.
-* **(1 − miss/notes)^7.5**: misses are the sharp cleanliness signal. This is what stops a
-  sloppy high-SR play from farming pp. A give-up run (e.g. 900+ misses) collapses to ~0.
+* **cleanliness^7.5**: misses, and since the 2026-08-03 amendment wrong keypresses, are the sharp
+  cleanliness signal. This is what stops a sloppy high-SR play from farming pp. A give-up run (e.g.
+  900+ misses) collapses to ~0.
 * **Length**: the standard osu log bonus, rewarding sustained play over long maps. Clamped to
   a small positive floor: the raw term crosses zero around 4 notes, and no play should ever
   compute to zero or negative pp from length alone.
@@ -132,3 +133,44 @@ the opposite of what cumulative score rewards today.
 * `notes` excludes `ignore_hit`; length and FL factors carry floor clamps.
 * pp only from ranked scores on ranked maps; fails and unranked mods excluded by inheritance.
 * Website rankings swap + score tab first; in-game pp display is a separate follow-up task.
+
+## Amendment (2026-08-03): the cleanliness term prices MISTYPES (backlog 72)
+
+Wrong keypresses used to be invisible in a submitted score. In the default (strict) input mode the
+client rejected a wrong key without raising any judgement, so `statistics` carried only
+great/ok/meh/miss, the server recomputed a spotless accuracy, and the only surviving trace was a
+broken `max_combo`. Backlog 72 persists them as their own statistics key, and pp is where they are
+priced. The cleanliness factor becomes:
+
+```
+(1 − (miss + mistypes)/(notes + mistypes))^7.5     # cleanliness (misses AND wrong keypresses)
+```
+
+Nothing else in the formula changes.
+
+**Definitions added:**
+
+* `mistypes` is the `combo_break` key of `statistics`: one per wrong KEYPRESS (not per cell, and
+  the same in both input modes). It is `HitResult.ComboBreak`, the base ruleset's combo-only,
+  non-accuracy-affecting result, so the server's `ScoringContract` already ignores it everywhere:
+  accuracy, completion and rank keep their exact previous meanings and an SS is still reachable
+  after a stumble.
+* `notes` **still** excludes mistypes; it remains `great + ok + meh + miss`, the map's cell count.
+  This is deliberate. Feeding keypresses into `notes` would grow the LENGTH bonus and shrink the
+  COMBO denominator, so mashing would partly pay for itself. Only the cleanliness term sees them.
+
+**Why both sides of the fraction.** `miss ≤ notes` always, so adding the same count to numerator and
+denominator can only move the ratio towards 1, never past it: the base stays in `[0, 1]` for any
+mistype count, however absurd, and the term can never go negative (which, under a fractional
+exponent, would not merely be wrong but non-real).
+
+**Why no `VERSION` bump.** A bump forces `PpBackfill` to reprice every stored row at startup, and no
+stored row can move: no client emitted `combo_break` before this change, so `CountNotes` reads 0 for
+all of them and the amended term is algebraically identical to the original at 0. The bump would buy
+a full sweep that rewrites every row with the value it already holds. Bump it the moment a change
+values any stored row differently.
+
+**History.** Old plays simply lack the stat; there is no backfill, because the presses were never
+recorded. Every surface renders the mistype count only for a play that carries it (absence is not
+zero). Note the one place absence is recoverable: re-simulating an old REPLAY produces the count,
+since the wrong keys were always in the input stream.

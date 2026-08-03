@@ -40,6 +40,16 @@ namespace Typebeat.Web.Scoring;
 ///
 /// Everything here is a pure function of the three transmitted quantities; no DB, no throwing on
 /// hostile input (score-submit must never 500 for tamper-shaped data).
+///
+/// <para><b>MISTYPES</b> (backlog 72). A wrong keypress arrives as the <c>combo_break</c> key in
+/// <c>statistics</c>, and every classifier below already answers false for it: it is not
+/// accuracy-affecting, not a hit, not combo-increasing, not a bonus, and carries base score 0. That
+/// is load-bearing, not incidental. It keeps accuracy, completion and rank byte-identical to what
+/// they were before the stat existed (so old and new scores stay comparable), and it keeps the key
+/// out of the <c>accuracyJudged &gt; accuracyMax</c> invariant below, which would otherwise UNRANK
+/// every mistyped play: mistypes have no counterpart in <c>maximum_statistics</c> (that stays one
+/// great per cell), so counting them as judgements would make any mistyped play look like it
+/// contained more cells than the map has. Do not add <c>combo_break</c> to any table here.</para>
 /// </summary>
 public static class ScoringContract
 {

@@ -357,6 +357,16 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         public int Miss => Statistics.Value<int?>("miss") ?? 0;
 
         /// <summary>
+        /// Wrong keypresses (backlog 72), or null when this play does not CARRY the stat: every
+        /// score submitted before it existed simply has no key, and a clean play has none either
+        /// (both the client and the browser engine omit zero-valued entries). Null renders as
+        /// nothing rather than a fabricated 0, and is deliberately shown BESIDE Miss, never folded
+        /// into it: a miss is a character the song left behind and costs completion and grade, a
+        /// mistype is a wrong key the player pressed and costs combo and pp only.
+        /// </summary>
+        public int? Mistypes => Statistics.Value<int?>("combo_break");
+
+        /// <summary>
         /// Mod badges from the mods jsonb ([{acronym, settings}] wire shape), each carrying the
         /// track rate when it is a rate mod (see <see cref="ScoreMods.Parse"/>).
         /// </summary>
