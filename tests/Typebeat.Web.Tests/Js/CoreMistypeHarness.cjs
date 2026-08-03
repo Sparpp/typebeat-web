@@ -48,6 +48,9 @@ const WRONG_KEY = 'z';
  * Plays the map on target, pressing `wrongBefore` wrong keys immediately before each of the first
  * `mistypedCells` cells, and stopping `skipTrailing` cells short of the end (those seal as misses).
  *
+ * `wrongBeforeCell` places wrong keys at exact positions instead: { cellIndex: count }, 0-based,
+ * applied on top of (and independently of) the leading-run options above.
+ *
  * The wrong keys are spread one cell apart on purpose: 13 CONSECUTIVE wrong keys fail the run, and
  * this harness is about a play that survives to submit.
  */
@@ -55,6 +58,7 @@ function play(options) {
     const wrongBefore = options.wrongBefore || 0;
     const mistypedCells = options.mistypedCells || 0;
     const skipTrailing = options.skipTrailing || 0;
+    const wrongBeforeCell = options.wrongBeforeCell || {};
 
     const beatmap = TB.buildBeatmap(TB.parseLyricOsu(OSU), false);
     const engine = new TB.TypingEngine(beatmap);
@@ -78,6 +82,9 @@ function play(options) {
                     engine.processKey(WRONG_KEY, cell.target);
             }
 
+            for (let i = 0; i < (wrongBeforeCell[typedCells] || 0); i++)
+                engine.processKey(WRONG_KEY, cell.target);
+
             engine.processKey(cell.expected, cell.target);
             typedCells++;
         }
@@ -89,6 +96,10 @@ function play(options) {
     return {
         totalCells: cells.length,
         engineMistypes: engine.mistypes,
+        // The engine's OWN live combo peak (what the HUD counts up). Separate account from the
+        // score processor's HighestCombo below, but in strict vanilla play they must agree: both
+        // break on a rejected key and on a missed cell, and neither moves on an inert retype.
+        engineMaxCombo: engine.maxCombo,
         consecutiveWrongKeys: engine.consecutiveWrongKeys,
         failed: engine.failed,
         passed: score.passed,
@@ -118,7 +129,20 @@ const out = {
 
     // Mistypes AND real misses together: the two are independent stats and neither may absorb the
     // other.
-    mistypedAndMissed: play({ wrongBefore: 1, mistypedCells: 7, skipTrailing: 3 })
+    mistypedAndMissed: play({ wrongBefore: 1, mistypedCells: 7, skipTrailing: 3 }),
+
+    // --- combo-break positions (backlog 73) --------------------------------------------------
+    // One wrong key on the FIRST cell: the submitted combo was already 0, so this costs nothing at
+    // all. It is still a mistype, and still costs pp.
+    firstCellMistyped: play({ wrongBeforeCell: { 0: 1 } }),
+
+    // One wrong key on the LAST cell: the most expensive single stumble on this map, it throws
+    // away a 14 combo one cell from home.
+    lastCellMistyped: play({ wrongBeforeCell: { 14: 1 } }),
+
+    // Five wrong keys CLUSTERED on one cell (the eighth). Five keypresses, but one break: what the
+    // combo costs is the position of the break, not how many keys were mashed at it.
+    clusteredMistyped: play({ wrongBeforeCell: { 7: 5 } })
 };
 
 process.stdout.write(JSON.stringify(out));

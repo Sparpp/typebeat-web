@@ -680,6 +680,9 @@
 
             const stats = liveStats(engine);
             scoreEl.textContent = fmtInt(engine.score);
+            // The engine's own live combo, which breaks on a wrong key as you watch. The results
+            // screen shows the SUBMITTED peak instead (computeScore's maxCombo, off the score
+            // processor mirror); the two agree in strict vanilla play, which is all /play has.
             comboEl.textContent = engine.combo + 'x';
             accEl.textContent = Math.round(stats.completion * 100) + '%';
             wpmEl.textContent = Math.round(rolling.value(engine.liveWpm));
