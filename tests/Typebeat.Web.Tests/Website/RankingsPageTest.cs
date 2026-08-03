@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Text.RegularExpressions;
 using Dapper;
 using Npgsql;
 using Typebeat.Web.Scoring;
@@ -7,19 +8,23 @@ using Typebeat.Web.Scoring;
 namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
-/// Global rankings page, both boards:
+/// Global rankings page, all three boards:
 ///
 /// <list type="bullet">
 /// <item>the MAIN board, total pp: best-pp play per ranked map, decay-weighted over all of them
 /// (<see cref="PpRanking"/>, docs/pp.md);</item>
 /// <item>the score board (<c>?board=score</c>), unchanged: cumulative score = sum of best-per-map
 /// scores on RANKED maps only.</item>
+/// <item>the top-plays board (<c>?board=plays</c>): INDIVIDUAL scores by pp descending, one row per
+/// (player, map), so one player can hold several rows.</item>
 /// </list>
 ///
 /// The pp rows are seeded with EXPLICIT pp values rather than by playing maps, so the aggregation
 /// is tested independently of the per-play formula (which <c>PerformancePointsTest</c> owns).
 /// Seeds its own users/sets (unique names) on top of <see cref="PublicSiteSeed"/> and asserts only
-/// on those rows, so it never depends on (or disturbs) the shared fixtures' counts.
+/// on those rows, so it never depends on (or disturbs) the shared fixtures' counts. The top-plays
+/// seeds use deliberately HUGE pp values (thousands) so they cannot be pushed off the board's
+/// LIMIT by whatever the rest of the suite happens to have submitted into the shared database.
 /// </summary>
 [NonParallelizable]
 public class RankingsPageTest
@@ -28,6 +33,17 @@ public class RankingsPageTest
     private long bobId;
     private long dedupId;
     private long decayId;
+    private long topPlayId;
+    private long runnerUpId;
+    private long tieFirstId;
+    private long tieSecondId;
+    private long rateModId;
+
+    /// <summary>The rate-mod probe map's three ratings, all distinct and unique to this test so an
+    /// assertion on the rendered number cannot match any other row.</summary>
+    private const double base_stars = 2.22;
+    private const double dt_stars = 7.77;
+    private const double ht_stars = 1.11;
 
     /// <summary>How many distinct ranked maps the decay player set a play on (deliberately > 10).</summary>
     private const int decay_plays = 12;
@@ -94,6 +110,41 @@ public class RankingsPageTest
             long map = await insertBeatmapAsync(conn, decaySet);
             await insertScoreAsync(conn, decayId, map, 250_000, pp: decay_play_pp);
         }
+
+        // ---- top-plays board ----
+        //
+        // Two players sharing one map plus a second map for the leader, so the board has to order
+        // SCORES (not players) and let one player hold more than one row. The leader's second play
+        // on map P is the dedup probe: same map, same player, lower pp, must never be listed.
+        topPlayId = await insertUserAsync(conn, "rk topplay");
+        runnerUpId = await insertUserAsync(conn, "rk runnerup");
+        tieFirstId = await insertUserAsync(conn, "rk tiefirst");
+        tieSecondId = await insertUserAsync(conn, "rk tiesecond");
+
+        long topSet = await insertSetAsync(conn, "Rankings Top Plays Set", "ranked");
+        long topMapP = await insertBeatmapAsync(conn, topSet);
+        long topMapQ = await insertBeatmapAsync(conn, topSet);
+
+        await insertScoreAsync(conn, topPlayId, topMapP, 800_000, pp: 6000,
+            statistics: """{"great":100,"miss":3,"combo_break":7}""");
+        await insertScoreAsync(conn, topPlayId, topMapP, 700_000, pp: 5900);
+        await insertScoreAsync(conn, topPlayId, topMapQ, 600_000, pp: 5000);
+        await insertScoreAsync(conn, runnerUpId, topMapP, 750_000, pp: 5500);
+
+        // A Double Time play, on a map whose three star ratings are all distinct and unique to this
+        // test. pp prices rate exclusively through the rating recomputed at the play's clock rate
+        // (docs/pp.md), so the board must show sr_dt here, never the base rating.
+        rateModId = await insertUserAsync(conn, "rk ratemod");
+
+        long rateMap = await insertBeatmapAsync(conn, topSet, stars: base_stars, srDt: dt_stars, srHt: ht_stars);
+        await insertScoreAsync(conn, rateModId, rateMap, 450_000, pp: 4500, mods: """[{"acronym":"DT"}]""");
+
+        // Equal pp on two different maps: the tie must break on the EARLIER submission, so the
+        // board is a total order and never reshuffles between renders.
+        long tieMapA = await insertBeatmapAsync(conn, topSet);
+        long tieMapB = await insertBeatmapAsync(conn, topSet);
+        await insertScoreAsync(conn, tieFirstId, tieMapA, 400_000, pp: 4000);
+        await insertScoreAsync(conn, tieSecondId, tieMapB, 400_000, pp: 4000);
     }
 
     /// <summary>Σ pp·decay^i over the seeded equal-value plays: 100 · (1 − 0.85^12) / 0.15.</summary>
@@ -228,25 +279,33 @@ public class RankingsPageTest
     }
 
     [Test]
-    public async Task Rankings_BothTabsAreLinkedFromEitherBoard()
+    public async Task Rankings_AllThreeTabsAreLinkedFromEveryBoard()
     {
         using var performance = await WebsiteFixture.Client.GetAsync("/rankings");
         using var score = await WebsiteFixture.Client.GetAsync("/rankings?board=score");
+        using var plays = await WebsiteFixture.Client.GetAsync("/rankings?board=plays");
 
         string performanceHtml = await performance.Content.ReadAsStringAsync();
         string scoreHtml = await score.Content.ReadAsStringAsync();
+        string playsHtml = await plays.Content.ReadAsStringAsync();
 
         Assert.Multiple(() =>
         {
-            foreach (string html in new[] { performanceHtml, scoreHtml })
+            foreach (string html in new[] { performanceHtml, scoreHtml, playsHtml })
             {
                 Assert.That(html, Does.Contain("href=\"/rankings\""));
                 Assert.That(html, Does.Contain("href=\"/rankings?board=score\""));
+                Assert.That(html, Does.Contain("href=\"/rankings?board=plays\""));
             }
 
             // Exactly one tab is active per board, and it is the right one.
             Assert.That(performanceHtml, Does.Contain("<a class=\"lb-tab is-active\" href=\"/rankings\">Performance</a>"));
             Assert.That(scoreHtml, Does.Contain("<a class=\"lb-tab is-active\" href=\"/rankings?board=score\">Score</a>"));
+            Assert.That(playsHtml, Does.Contain("<a class=\"lb-tab is-active\" href=\"/rankings?board=plays\">Top plays</a>"));
+
+            // The tab strip's order: Top plays sits to the RIGHT of Score.
+            Assert.That(playsHtml.IndexOf(">Score</a>", StringComparison.Ordinal),
+                Is.LessThan(playsHtml.IndexOf(">Top plays</a>", StringComparison.Ordinal)));
         });
     }
 
@@ -296,6 +355,179 @@ public class RankingsPageTest
         });
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Top plays (?board=plays): individual SCORES by pp, one row per (player, map).
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The board's row set, read straight off the database through the very fragments the page
+    /// embeds, so the eligibility and dedup assertions below test the shared definition rather than
+    /// a copy of it.
+    /// </summary>
+    private static async Task<List<(long ScoreId, long UserId, double Pp)>> topPlaysAsync(NpgsqlConnection conn)
+        => (await conn.QueryAsync<(long ScoreId, long UserId, double Pp)>(
+            $"""
+             SELECT best.id AS ScoreId, best.user_id AS UserId, best.pp AS Pp
+             FROM ({PpRanking.BestPerMapSql}) best
+             ORDER BY {PpRanking.TopPlaysOrder("best")}
+             """)).ToList();
+
+    [Test]
+    public async Task TopPlays_OrdersByPpDescending_WithATotalTieBreak()
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        var rows = await topPlaysAsync(conn);
+
+        Assert.Multiple(() =>
+        {
+            // Monotonically non-increasing pp, and strictly increasing score id inside a tie: the
+            // order is TOTAL, so a LIMIT always cuts in the same place.
+            for (int i = 1; i < rows.Count; i++)
+            {
+                Assert.That(rows[i].Pp, Is.LessThanOrEqualTo(rows[i - 1].Pp), $"row {i} out of pp order");
+
+                if (rows[i].Pp == rows[i - 1].Pp)
+                    Assert.That(rows[i].ScoreId, Is.GreaterThan(rows[i - 1].ScoreId), $"row {i} broke the tie backwards");
+            }
+
+            // The seeded equal-pp pair specifically: the earlier submission wins.
+            int first = rows.FindIndex(r => r.UserId == tieFirstId);
+            int second = rows.FindIndex(r => r.UserId == tieSecondId);
+
+            Assert.That(first, Is.GreaterThanOrEqualTo(0));
+            Assert.That(second, Is.GreaterThan(first), "equal pp must break on the earlier score id");
+        });
+    }
+
+    [Test]
+    public async Task TopPlays_KeepsOneRowPerMapButLetsAPlayerHoldSeveral()
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        var mine = (await topPlaysAsync(conn)).Where(r => r.UserId == topPlayId).ToList();
+
+        Assert.Multiple(() =>
+        {
+            // Two maps, three plays: the 5900 retry on the same map as the 6000 folds away, and the
+            // player still holds BOTH of their per-map bests (no per-user dedup).
+            Assert.That(mine.Select(r => r.Pp), Is.EqualTo(new[] { 6000d, 5000d }));
+        });
+    }
+
+    [Test]
+    public async Task TopPlays_ExcludesUnrankedFailedNonRankedSetAndDelistedAccounts()
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        var rows = await topPlaysAsync(conn);
+        var pps = rows.Select(r => r.Pp).ToList();
+        var users = rows.Select(r => r.UserId).ToHashSet();
+
+        long restrictedId = await conn.ExecuteScalarAsync<long>(
+            "SELECT id FROM users WHERE username = 'rk restricted'");
+        long deletedId = await conn.ExecuteScalarAsync<long>(
+            "SELECT id FROM users WHERE username = 'rk deleted'");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pps, Does.Not.Contain(8888d), "a score with ranked = false must not be a top play");
+            Assert.That(pps, Does.Not.Contain(7777d), "a failed score must not be a top play");
+            Assert.That(pps, Does.Not.Contain(5555d), "a play on a PENDING set must not be a top play");
+
+            Assert.That(users, Does.Not.Contain(restrictedId));
+            Assert.That(users, Does.Not.Contain(deletedId));
+            Assert.That(pps, Does.Not.Contain(9111d));
+            Assert.That(pps, Does.Not.Contain(9222d));
+
+            // The board is not empty for the wrong reason: the eligible seeds are all there.
+            Assert.That(pps, Does.Contain(6000d));
+            Assert.That(pps, Does.Contain(5500d));
+        });
+    }
+
+    [Test]
+    public async Task TopPlays_RendersScoreRowsOrderedByPp()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync("/rankings?board=plays");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+            // Players and their maps, on the same link targets the other boards and the score rows
+            // elsewhere on the site use.
+            Assert.That(html, Does.Contain($"href=\"/users/{topPlayId}\""));
+            Assert.That(html, Does.Contain($"href=\"/users/{runnerUpId}\""));
+            Assert.That(html, Does.Contain("Rankings Top Plays Set"));
+
+            // pp, invariant-culture N0 like every other pp on the site.
+            Assert.That(html, Does.Contain("6,000pp"));
+            Assert.That(html, Does.Contain("5,500pp"));
+            Assert.That(html, Does.Contain("5,000pp"));
+
+            // 6000 (topplay) > 5500 (runnerup) > 5000 (topplay again).
+            Assert.That(html.IndexOf("6,000pp", StringComparison.Ordinal),
+                Is.LessThan(html.IndexOf("5,500pp", StringComparison.Ordinal)));
+            Assert.That(html.IndexOf("5,500pp", StringComparison.Ordinal),
+                Is.LessThan(html.IndexOf("5,000pp", StringComparison.Ordinal)));
+
+            // The retry on an already-listed map, and everything ineligible, stay off the page.
+            Assert.That(html, Does.Not.Contain("5,900pp"));
+            Assert.That(html, Does.Not.Contain("8,888pp"));
+            Assert.That(html, Does.Not.Contain("7,777pp"));
+            Assert.That(html, Does.Not.Contain("5,555pp"));
+            Assert.That(html, Does.Not.Contain("rk restricted"));
+            Assert.That(html, Does.Not.Contain("rk deleted"));
+
+            // Score-shaped columns, not the per-user aggregate ones.
+            Assert.That(html, Does.Contain("<th>Map</th>"));
+            Assert.That(html, Does.Contain("<th>Grade</th>"));
+            Assert.That(html, Does.Not.Contain("<th>Cumulative score</th>"));
+
+            // The mistype column appears because one seeded play carries the stat (docs/pp.md:
+            // absence is not zero, so it is a conditional column exactly like the set page's).
+            Assert.That(html, Does.Contain("<th>Mistype</th>"));
+        });
+    }
+
+    [Test]
+    public async Task TopPlays_ShowsTheStarRatingThePlayWasPricedAt_NotTheBaseOne()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync("/rankings?board=plays");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            // The row is on the board, and it is the DT one (the mod badge carries its rate).
+            Assert.That(html, Does.Contain($"href=\"/users/{rateModId}\""));
+            Assert.That(html, Does.Contain("1.50x"));
+
+            // pp prices DT/HT through the rating recomputed at the play's clock rate and NEVER as a
+            // flat multiplier (docs/pp.md), so the column must read sr_dt. Showing the base rating
+            // beside a pp it did not produce is exactly what a future refactor would regress to.
+            Assert.That(html, Does.Contain("&#9733; " + dt_stars.ToString("0.0#", CultureInfo.InvariantCulture)));
+            Assert.That(html, Does.Not.Contain("&#9733; " + base_stars.ToString("0.0#", CultureInfo.InvariantCulture)));
+            Assert.That(html, Does.Not.Contain("&#9733; " + ht_stars.ToString("0.0#", CultureInfo.InvariantCulture)));
+        });
+    }
+
+    [Test]
+    public async Task TopPlays_ListsOnePlayerOnSeveralRows()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync("/rankings?board=plays");
+        string html = await response.Content.ReadAsStringAsync();
+
+        int rows = Regex.Matches(html, Regex.Escape($"href=\"/users/{topPlayId}\"")).Count;
+
+        Assert.That(rows, Is.EqualTo(2),
+            "a player with two eligible maps holds two rows: this board ranks plays, not players");
+    }
+
     [Test]
     public async Task Rankings_LinkedFromSiteNav()
     {
@@ -329,19 +561,21 @@ public class RankingsPageTest
             """,
             new { ownerId = PublicSiteSeed.MapperId, title, status });
 
-    private static async Task<long> insertBeatmapAsync(NpgsqlConnection conn, long setId)
+    private static async Task<long> insertBeatmapAsync(NpgsqlConnection conn, long setId,
+        double stars = 3.0, double? srDt = null, double? srHt = null)
         => await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmaps
                 (set_id, version_name, checksum_md5, total_length_s, drain_length_s,
-                 difficulty_rating, filename, word_count, char_count, wpm)
-            VALUES (@setId, 'type!beat', @checksum, 90, 80, 3.0, 'map.osu', 100, 500, 75)
+                 difficulty_rating, sr_dt, sr_ht, filename, word_count, char_count, wpm)
+            VALUES (@setId, 'type!beat', @checksum, 90, 80, @stars, @srDt, @srHt, 'map.osu', 100, 500, 75)
             RETURNING id
             """,
-            new { setId, checksum = Guid.NewGuid().ToString("N") });
+            new { setId, checksum = Guid.NewGuid().ToString("N"), stars, srDt, srHt });
 
     private static async Task insertScoreAsync(NpgsqlConnection conn, long userId, long beatmapId,
-        long totalScore, double pp = 0, bool ranked = true, bool passed = true)
+        long totalScore, double pp = 0, bool ranked = true, bool passed = true,
+        string statistics = """{"great":100}""", string mods = "[]")
         => await conn.ExecuteAsync(
             """
             INSERT INTO scores
@@ -349,7 +583,7 @@ public class RankingsPageTest
                  mods, statistics, maximum_statistics, pp, pp_version)
             VALUES
                 (@userId, @beatmapId, @totalScore, 0.95, 0.97, 50, 'A', @passed, @ranked,
-                 '[]'::jsonb, '{"great":100}'::jsonb, '{"great":103}'::jsonb, @pp, @ppVersion)
+                 @mods::jsonb, @statistics::jsonb, '{"great":103}'::jsonb, @pp, @ppVersion)
             """,
-            new { userId, beatmapId, totalScore, passed, ranked, pp, ppVersion = PerformancePoints.VERSION });
+            new { userId, beatmapId, totalScore, passed, ranked, pp, statistics, mods, ppVersion = PerformancePoints.VERSION });
 }

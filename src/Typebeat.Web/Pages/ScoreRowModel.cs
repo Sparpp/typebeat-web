@@ -76,14 +76,9 @@ public sealed record ScoreRowModel(
     /// </summary>
     public double? Pp { get; set; }
 
-    public string GradeLabel => Rank switch
-    {
-        "X" or "XH" => "SS",
-        "SH" => "S",
-        _ => Rank,
-    };
+    public string GradeLabel => GradeDisplay.Label(Rank);
 
-    public string GradeClass => "grade--" + GradeLabel.ToLowerInvariant();
+    public string GradeClass => GradeDisplay.CssClass(Rank);
 
     /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
     public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);
@@ -98,4 +93,28 @@ public sealed record ScoreRowModel(
     public IReadOnlyList<ScoreMod> Mods => mods ??= ScoreMods.Parse(ModsJson);
 
     private IReadOnlyList<ScoreMod>? mods;
+}
+
+/// <summary>
+/// Grade wording shared by every surface that shows one (the score-row partial, the set page's
+/// leaderboard and podium, the /rankings top-plays board), so no two of them label the same stored
+/// rank differently.
+///
+/// <para>
+/// The stored value is the client's own ScoreRank string. The hidden-mod variants XH and SH are
+/// silver-grade skins of X and S, not separate grades, so they READ as SS and S exactly like the
+/// game shows them; anything else renders as itself (A/B/C/D, and F for a fail).
+/// </para>
+/// </summary>
+public static class GradeDisplay
+{
+    public static string Label(string rank) => rank switch
+    {
+        "X" or "XH" => "SS",
+        "SH" => "S",
+        _ => rank,
+    };
+
+    /// <summary>The grade's colour class (site.css <c>.grade--ss</c> … <c>.grade--f</c>).</summary>
+    public static string CssClass(string rank) => "grade--" + Label(rank).ToLowerInvariant();
 }
