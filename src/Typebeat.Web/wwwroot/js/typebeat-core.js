@@ -633,6 +633,98 @@
     }
 
     // ---------------------------------------------------------------------------
+    // ScoreProcessorMirror: the SUBMITTED-score accounting, mirroring osu's
+    // ScoreProcessor (ScoreProcessor.ApplyResultInternal / updateScore) as the desktop client
+    // runs it under TypeBeatScoreProcessor.
+    //
+    // This is a running, INCREMENTAL account kept during play, exactly like the C# one, and that
+    // is load-bearing rather than stylistic: the combo portion of the total score accumulates
+    // per judgement using the combo value AT THAT MOMENT (GetComboScoreChange reads
+    // result.ComboAfterJudgement), so a combo break costs every contribution that follows it.
+    // An end-of-play reconstruction from the per-cell result stream CANNOT reproduce that,
+    // because a rejected wrong key leaves no cell result behind to reconstruct from: it is a
+    // break that happened between two results. That reconstruction is what this file used to do,
+    // and it is why a browser play used to submit a higher max_combo and total_score than the
+    // desktop client for the identical mistyped performance (see backlog 72/73).
+    //
+    // What moves the C# processor, in the order the events happen (all four events below are
+    // routed by TypeBeatPlayfield, which subscribes to the engine):
+    //
+    //   1. TypeBeatPlayfield.onCharJudged -> DrawableTypeBeatHitObject.ApplyCharJudgement ->
+    //      DrawableTypeBeatCharObject.ApplyEngineResult -> ApplyResult(toHitResult(type)).
+    //      Perfect/Good/Ok become Great/Ok/Meh, which INCREASE combo; Premature/Lagging become
+    //      Miss, which BREAKS it. The cell drawable applies at most ONE result ever (`if (Judged)
+    //      return;`), so a backspace-and-retype (an inert retype here) moves nothing.
+    //   2. TypeBeatPlayfield.onWrongKeyRejected -> scoreProcessor.Combo.Value = 0. A rejected key
+    //      raises no judgement at all, so the break is mirrored by hand; nothing else moves (no
+    //      result count, no accuracy, no portion). STRICT input mode only, which is the only mode
+    //      the browser player has. In allow-wrong-input mode the wrong char instead lands in the
+    //      cell and breaks combo through the ordinary Miss judgement of path 1, so the accounting
+    //      below covers both modes with no branch.
+    //   3. TypeBeatPlayfield.onMistyped -> TypeBeatScoreProcessor.RecordMistype. Counting only,
+    //      by design: the combo break is deliberately NOT folded in here, it is already carried by
+    //      path 2 (strict) or path 1 (allow-wrong-input), and doing it twice would corrupt the
+    //      second case. The count is engine-side here (engine.mistypes) for the same reason.
+    //   4. DrawableTypeBeatHitObject.ApplySealResults, when the engine seals a line: every
+    //      still-unjudged cell gets a Miss, in cell order, and then the LINE object itself resolves
+    //      as IgnoreHit. IgnoreHit is not scorable, does not affect combo and does not affect
+    //      accuracy, so the line objects are inert and are not modelled at all.
+    //
+    // Judgement rewind (ScoreProcessor.RevertResultInternal) has no counterpart: gameplay here is
+    // never rewound, and neither is the desktop client's outside replay seeking.
+    // ---------------------------------------------------------------------------
+
+    // ScoreProcessor.GetBaseScoreForResult for the four results a type!beat cell can take.
+    const HIT_BASE_SCORE = { great: 300, ok: 100, meh: 50, miss: 0 };
+
+    // Every cell judgement declares MaxResult = Great (TypeBeatCharJudgement), which is what both
+    // the accuracy denominator (currentMaximumBaseScore) and the combo-portion weight
+    // (GetComboScoreChange) are taken from, whatever the result actually was.
+    const MAX_RESULT_BASE_SCORE = 300;
+
+    // ScoreProcessor.COMBO_EXPONENT.
+    const COMBO_EXPONENT = 0.5;
+
+    class ScoreProcessorMirror {
+        constructor() {
+            this.combo = 0;              // ScoreProcessor.Combo
+            this.highestCombo = 0;       // ScoreProcessor.HighestCombo, submitted as max_combo
+            this.comboPortion = 0;       // currentComboPortion
+            this.baseScore = 0;          // currentBaseScore
+            this.maximumBaseScore = 0;   // currentMaximumBaseScore
+            this.judgementCount = 0;     // currentAccuracyJudgementCount
+            this.counts = { great: 0, ok: 0, meh: 0, miss: 0 }; // ScoreResultCounts
+        }
+
+        // ScoreProcessor.ApplyResultInternal, for the accuracy-affecting basic results a cell can
+        // take (great/ok/meh/miss). All four are scorable, none is a bonus, and all four affect
+        // combo: the three hits increase it, a miss breaks it.
+        applyResult(result) {
+            this.counts[result]++;
+
+            if (result === 'miss') this.combo = 0;
+            else this.combo++;
+
+            if (this.combo > this.highestCombo) this.highestCombo = this.combo;
+
+            this.maximumBaseScore += MAX_RESULT_BASE_SCORE;
+            this.judgementCount++;
+            this.baseScore += HIT_BASE_SCORE[result];
+
+            // GetComboScoreChange: the MAX result's base score weighted by the combo AFTER this
+            // judgement. A miss therefore contributes 300 * 0^0.5 = 0, and every later hit is
+            // weighted by a combo that this break restarted from zero.
+            this.comboPortion += MAX_RESULT_BASE_SCORE * Math.pow(this.combo, COMBO_EXPONENT);
+        }
+
+        // TypeBeatPlayfield.onWrongKeyRejected: `scoreProcessor.Combo.Value = 0`, and nothing else.
+        // HighestCombo needs no update (it only ever grows, and this only shrinks Combo).
+        breakCombo() {
+            this.combo = 0;
+        }
+    }
+
+    // ---------------------------------------------------------------------------
     // TypingEngine: the frame-driven gameplay/judgement core.
     // ---------------------------------------------------------------------------
     const COMBO_CAP = 50;
@@ -656,6 +748,11 @@
             this.activeLineIndex = -1;
             this.caretIndex = 0;
             this.nextSealIndex = 0;
+            // The engine's OWN live combo/score (TypingEngine.Combo / Score): what the HUD shows.
+            // The submitted numbers do not come from here; they come from the score processor
+            // mirror below, which the engine drives at exactly the points TypeBeatPlayfield drives
+            // the real one. In strict vanilla play the two combos happen to track each other, but
+            // they are separate accounts with separate rules and only one of them is submitted.
             this.combo = 0;
             this.maxCombo = 0;
             this.score = 0;
@@ -668,6 +765,10 @@
             this.finished = false;
             this.failed = false;
             this.counts = {};                 // JudgementType -> count (scored only)
+            // The osu-side account the SUBMITTED score is read off (computeScore); the stand-in for
+            // the TypeBeatScoreProcessor a Player would cache. Fed incrementally from here, exactly
+            // where TypeBeatPlayfield feeds the real one.
+            this.processor = new ScoreProcessorMirror();
             // Mods (TypingEngine.CaseSensitive / MashingEnabled). The browser player always plays
             // vanilla and never turns these on; they exist so processKey stays a line-for-line
             // mirror of the C# and so the freestyle exemptions in it are pinned by the JS-vs-C#
@@ -725,6 +826,10 @@
                     c.state = 'missed';
                     c.judgeType = 'Miss';
                     missed++;
+                    // DrawableTypeBeatHitObject.ApplySealResults: every still-unjudged cell of the
+                    // line takes a Miss, in cell order, at seal time. (The line object's own
+                    // IgnoreHit result follows, and is scoring-inert, so it is not modelled.)
+                    this.processor.applyResult('miss');
                 }
             }
             if (missed > 0) {
@@ -811,6 +916,11 @@
                 this.errorCount++;
                 this.consecutiveWrongKeys++;
                 this.combo = 0;
+                // ...and the SUBMITTED combo breaks with it (TypeBeatPlayfield.onWrongKeyRejected
+                // sets scoreProcessor.Combo.Value = 0). No judgement is raised, so this is the only
+                // trace the rejected key leaves in the score account: it lowers max_combo and every
+                // combo-portion contribution that comes after it.
+                this.processor.breakCombo();
                 // ...and it is a MISTYPE (TypingEngine.Mistyped -> TypeBeatScoreProcessor
                 // .RecordMistype): the one thing about a rejected key that outlives the play,
                 // reported to the server as the combo_break statistics key by computeScore.
@@ -831,6 +941,9 @@
             let type, points = 0;
 
             if (inertRetype) {
+                // Scoring-inert on BOTH accounts: the engine leaves its own combo/score alone, and
+                // no result reaches the processor, because the cell drawable already carries one
+                // (DrawableTypeBeatCharObject.ApplyEngineResult: `if (Judged) return;`).
                 const d = cell.firstCorrectDelta;
                 type = classify(d, w);
                 cell.state = 'correct';
@@ -858,6 +971,11 @@
                 cell.firstCorrectDelta = delta;
                 cell.judgeType = type;
                 this.counts[type] = (this.counts[type] || 0) + 1;
+                // The cell's one-and-only osu result, applied the moment it is judged: this is
+                // TypeBeatPlayfield.onCharJudged -> ApplyCharJudgement -> ApplyResult. Perfect/
+                // Good/Ok increase the submitted combo, Premature/Lagging break it (they map to
+                // Miss), and the combo portion is weighted by the combo as it stands right here.
+                this.processor.applyResult(toHitResult(type));
             }
 
             const judgedIndex = this.caretIndex;
@@ -905,58 +1023,39 @@
         const beatmap = engine.beatmap;
         const total = beatmap.totalCells;
 
-        // Per-cell osu result, in order. The FIRST correct judgement stands for a cell, even
-        // if later backspaced (firstCorrectDelta), matching the drawable's "first result stands".
-        // A rejected wrong key never produced a cell result, so it never appears here.
-        const results = [];
+        // The running account the play built up, judgement by judgement, wrong key by wrong key
+        // (see ScoreProcessorMirror). Nothing is reconstructed here: reconstruction is precisely
+        // what cannot see a rejected key.
+        const processor = engine.processor;
+        const great = processor.counts.great;
+        const ok = processor.counts.ok;
+        const meh = processor.counts.meh;
+        const miss = processor.counts.miss;
+        const judged = processor.judgementCount; // == great + ok + meh + miss
+
+        // Whole-map accuracy (for display/completion); server overrides the submitted value.
+        const acc = total > 0 ? processor.baseScore / (MAX_RESULT_BASE_SCORE * total) : 1;
+
+        // The maximum combo portion, i.e. what an all-Great run of the whole map accumulates
+        // (ScoreProcessor.maximumComboPortion, stored from the autoplay simulation). One nested
+        // char object exists per TYPEABLE cell (TypeBeatHitObject.CreateNestedHitObjects skips the
+        // rest), so the simulated combo runs 1..N over exactly those cells.
+        let maxComboCounter = 0, maxComboPortion = 0;
         for (const line of engine.lines) {
             for (const cell of line.cells) {
                 if (!cell.typeable) continue;
-                if (cell.firstCorrectDelta !== null) {
-                    results.push(toHitResult(classify(cell.firstCorrectDelta, windowsFor(cell.tier))));
-                } else if (cell.state === 'missed') {
-                    results.push('miss');
-                } else {
-                    results.push(null); // never judged (unreached on a failed run)
-                }
+                maxComboCounter++;
+                maxComboPortion += MAX_RESULT_BASE_SCORE * Math.pow(maxComboCounter, COMBO_EXPONENT);
             }
         }
 
-        let great = 0, ok = 0, meh = 0, miss = 0;
-        for (const r of results) {
-            if (r === 'great') great++;
-            else if (r === 'ok') ok++;
-            else if (r === 'meh') meh++;
-            else if (r === 'miss') miss++;
-        }
-        const judged = great + ok + meh + miss;
-
-        // Whole-map accuracy (for display/completion); server overrides the submitted value.
-        const acc = total > 0 ? (300 * great + 100 * ok + 50 * meh) / (300 * total) : 1;
-
-        // Combo portions + max combo from the ordered result stream. Combo breaks only on a
-        // Miss cell (never on a rejected wrong key; those aren't in `results`); unreached (null)
-        // cells contribute nothing. maxComboPortion is the whole-map (all-Great) maximum.
-        let combo = 0, comboPortion = 0, maxComboCounter = 0, maxComboPortion = 0, maxCombo = 0;
-        for (const r of results) {
-            maxComboCounter++;
-            maxComboPortion += 300 * Math.sqrt(maxComboCounter);
-            if (r === 'great' || r === 'ok' || r === 'meh') {
-                combo++;
-                if (combo > maxCombo) maxCombo = combo;
-                comboPortion += 300 * Math.sqrt(combo);
-            } else if (r === 'miss') {
-                combo = 0;
-            }
-            // null (unreached): leave combo as-is; it accrues no portion.
-        }
-        const comboProgress = maxComboPortion > 0 ? comboPortion / maxComboPortion : 1;
+        const comboProgress = maxComboPortion > 0 ? processor.comboPortion / maxComboPortion : 1;
         const accuracyProgress = total > 0 ? judged / total : 1;
 
         // total_score uses the JUDGED-only accuracy denominator (ScoreProcessor.Accuracy =
         // currentBaseScore / currentMaximumBaseScore, judged cells only); equals whole-map
         // accuracy for a completed play, differs only for a failed/incomplete (unranked) run.
-        const accJudged = judged > 0 ? (300 * great + 100 * ok + 50 * meh) / (300 * judged) : 1;
+        const accJudged = processor.maximumBaseScore > 0 ? processor.baseScore / processor.maximumBaseScore : 1;
         const totalWithoutMods = Math.round(500000 * accJudged * comboProgress + 500000 * Math.pow(accJudged, 5) * accuracyProgress);
         const totalScore = totalWithoutMods; // scoreMultiplier = 1 (no mods)
 
@@ -984,7 +1083,9 @@
             totalScore: totalScore,
             totalScoreWithoutMods: totalWithoutMods,
             accuracy: acc,
-            maxCombo: maxCombo,
+            // ScoreProcessor.HighestCombo, submitted as max_combo: the longest run of judged cells
+            // uninterrupted by a missed cell OR a rejected wrong key.
+            maxCombo: processor.highestCombo,
             completion: completion,
             rank: passed ? rankFromCompletion(completion) : 'F',
             statistics: statistics,
