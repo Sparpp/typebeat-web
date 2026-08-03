@@ -132,6 +132,11 @@ public sealed class MultiplayerScoreWire
     [JsonProperty("position")]
     public int? Position { get; init; }
 
+    // The play's performance points, binding to the client's MultiplayerScore.PP and from there to
+    // ScoreInfo.PP, which is what the game's results screen shows. Nullable and meaningfully so:
+    // 0 is a priced play worth nothing (an ineligible submission, or simply a bad run), null is a
+    // play this server has not priced at all and the client should price itself. See the comment at
+    // the assignment in ScoreEndpoints.SubmitScore.
     [JsonProperty("pp")]
     public double? Pp { get; init; }
 

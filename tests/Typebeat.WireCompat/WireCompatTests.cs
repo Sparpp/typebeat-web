@@ -260,6 +260,22 @@ public class WireCompatTests
             Assert.That(counts.beatmapPlays, Is.EqualTo(counts.scoreRows), "beatmaps.play_count must track submitted plays");
             Assert.That(counts.setPlays, Is.GreaterThanOrEqualTo(counts.beatmapPlays), "beatmapsets.play_count must include its beatmaps' plays");
         }
+
+        // The play's pp reaches the client through MultiplayerScore.PP, which SubmittingPlayer
+        // copies onto ScoreInfo.PP and the results screen shows in preference to its own local
+        // calculation (backlog 75). Pinned against the value the server actually STORED, since the
+        // two must be the same number: the results screen would otherwise print something the
+        // leaderboards disagree with.
+        await using (var db = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString))
+        {
+            await db.OpenAsync();
+            double stored = await Dapper.SqlMapper.ExecuteScalarAsync<double>(db,
+                "SELECT pp FROM scores WHERE id = @id", new { id = result.ID });
+
+            Assert.That(result.PP, Is.Not.Null, "a priced play must not read as unpriced on the wire");
+            Assert.That(result.PP!.Value, Is.EqualTo(stored).Within(1e-9));
+            Assert.That(stored, Is.GreaterThan(0), "the fixture play is ranked on a ranked map, so it earns pp");
+        }
     }
 
     // A completed play with a NON-DEFAULT rate mod (DT at 1.01x) must submit, RANK, and keep its

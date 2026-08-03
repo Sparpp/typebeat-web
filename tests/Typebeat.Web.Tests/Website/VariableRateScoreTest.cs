@@ -286,6 +286,27 @@ public class VariableRateScoreTest
             Assert.That(customRateStored.Version, Is.EqualTo(PerformancePoints.VERSION), "ineligible forever, so settled");
         });
 
+        // What the SUBMIT RESPONSE tells the game (backlog 75). Three stored states, three distinct
+        // wire values, and the game renders each differently, so none may collapse into another.
+        Assert.Multiple(() =>
+        {
+            // Priced: the authoritative number, the one the leaderboards count. The game shows it
+            // instead of re-deriving one.
+            Assert.That(noMod["pp"]!.Type, Is.Not.EqualTo(JTokenType.Null));
+            Assert.That((double)noMod["pp"]!, Is.EqualTo(expectedNoMod).Within(1e-9));
+
+            // Ineligible forever: a settled 0 travels as 0, not as null. The server HAS priced this
+            // play, and the answer is "nothing".
+            Assert.That(customRate["pp"]!.Type, Is.Not.EqualTo(JTokenType.Null));
+            Assert.That((double)customRate["pp"]!, Is.Zero);
+
+            // Not priced yet: null, never the placeholder 0 sitting in the column. Asserting that 0
+            // would freeze the game's results screen on a number PpBackfill is about to overwrite;
+            // null instead tells the client to price the play itself, which it can, since it
+            // computes star ratings on demand rather than reading three stored columns.
+            Assert.That(baseRate["pp"]!.Type, Is.EqualTo(JTokenType.Null));
+        });
+
         // The rate rating lands (in production: PaceBackfill, from the stored .osu blob) and the
         // sweep prices the play that was waiting on it.
         await conn.ExecuteAsync("UPDATE beatmaps SET sr_dt = 3.5 WHERE id = @beatmapId", new { beatmapId });
