@@ -9,7 +9,8 @@ namespace Typebeat.Web.Pages.Users;
 
 /// <summary>
 /// User profile (/users/{id} and /users/{name}): cover band (preset gradient keyed by user id),
-/// avatar, joined/last-seen, the stats card (global rank by user_stats.total_score, totals grid,
+/// avatar, joined/last-seen, the stats card (BOTH global ranks, pp as the headline and cumulative
+/// score as a labelled second, each beside the metric it is drawn from; totals grid;
 /// grade counts), and stacked sections: Pinned / Best scores / First places / Recent scores /
 /// Most played / Most viewed replays / Replay views / Play history / Maps / Favourites (card
 /// partial reuse). A name URL canonical-redirects to the id URL; an all-digit path segment always
@@ -38,11 +39,28 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
     public UserHeader ProfileUser { get; private set; } = null!;
 
-    /// <summary>Global rank by cumulative ranked score (<see cref="GlobalRanking"/>); null → unranked.</summary>
+    /// <summary>
+    /// Rank on the SCORE board, by cumulative ranked score (<see cref="GlobalRanking"/>); null →
+    /// unranked. No longer the card's headline: since task 61 the site's main board is pp, so this
+    /// is the second rank, and it is labelled as such (see <see cref="PpRank"/>).
+    /// </summary>
     public long? GlobalRank { get; private set; }
 
     /// <summary>Sum of best score per ranked map; the metric global rank is drawn from.</summary>
     public long RankedScore { get; private set; }
+
+    /// <summary>
+    /// Rank on the PERFORMANCE board, by total pp (<see cref="PpRanking"/>), the card's headline
+    /// rank because it is the site's main ranking (/rankings leads with it). null → unranked,
+    /// exactly the shape <see cref="GlobalRank"/> uses, and rendered with the same "Unranked" word.
+    /// </summary>
+    public long? PpRank { get; private set; }
+
+    /// <summary>
+    /// Total pp (docs/pp.md), the metric <see cref="PpRank"/> is drawn from, shown beside it. 0 for
+    /// a user with no pp-earning play, which is also the user who is unranked on that board.
+    /// </summary>
+    public double TotalPp { get; private set; }
 
     public long TotalScore { get; private set; }
     public int PlayCount { get; private set; }
@@ -69,6 +87,14 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
     /// <summary>Set from the ?pin= redirect after a refused pin (PRG); shown above the section.</summary>
     public string? PinNotice { get; private set; }
 
+    /// <summary>
+    /// The user's best plays BY PP (task 77): their best-pp play on each map, pp descending, capped
+    /// at <see cref="score_section_size"/>. The only section that fills
+    /// <see cref="ScoreRowModel.Pp"/>, and the only one whose row order is that number. It is the
+    /// profile's local view of the /rankings performance board, so the two agree on which play of
+    /// yours is your best; the cumulative-score board's answer to that question is no longer what
+    /// this section shows.
+    /// </summary>
     public IReadOnlyList<ScoreRowModel> BestScores { get; private set; } = [];
 
     /// <summary>
@@ -199,9 +225,16 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         // ---- stats card ----
 
+        // Two ranks, one per board, each read from that board's single source of truth: no query
+        // for either metric lives on this page (task 78). They are separate metrics on purpose, so
+        // being #1 on one and unranked on the other is a real, renderable state.
         var ranking = await GlobalRanking.ForUserAsync(conn, id, HttpContext.RequestAborted);
         GlobalRank = ranking.GlobalRank;
         RankedScore = ranking.RankedScore;
+
+        var performance = await PpRanking.ForUserAsync(conn, id, HttpContext.RequestAborted);
+        PpRank = performance.GlobalRank;
+        TotalPp = performance.TotalPp;
 
         // Value tuple defaults to all-zero when the user_stats row doesn't exist yet.
         (TotalScore, PlayCount, PlayTimeS) = await conn.QuerySingleOrDefaultAsync<(long, int, long)>(
@@ -311,21 +344,40 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
              """,
             new { id })).ToList();
 
+        // Best scores: the pp board's view of this user, not the score board's (task 77). Both the
+        // per-map fold and the section's order lead with pp, so the number each row headlines is
+        // also the number that put it where it is, and the list reads as the same thing /rankings
+        // sums (PpRanking: best-pp play per ranked map, pp descending).
+        //
+        // ORDERED IN SQL, ABOVE THE LIMIT, deliberately. pp is fetched by a separate query below
+        // (it cannot ride the shared score-row SELECT, see ScoreRowModel.Pp), and the obvious
+        // shortcut, re-sorting the fetched rows in C#, is WRONG: "the top 20 by total score,
+        // re-sorted by pp" is a different SET from "the top 20 by pp", and it is the second one
+        // this section is supposed to show. A big-score 0pp play would displace a genuine top-20 pp
+        // play out of the list entirely, and no amount of re-sorting afterwards brings it back. The
+        // fix costs nothing: pp only has to be a column of the inner subquery to be ORDER BY-able
+        // here, and the outer SELECT list (the positionally-mapped one) is untouched.
+        //
+        // TIE-BREAK: pp DESC, then the leaderboard's own order (total_score DESC, id ASC), which is
+        // total because score ids are unique. pp ties are not an edge case here: every custom-rate
+        // and not-yet-priced play sits at exactly 0, and that whole tail then keeps precisely the
+        // order this section had before, best score first, instead of being shuffled by submission
+        // time. Where pp differs, the order agrees with PpRanking's by construction.
         BestScores = (await conn.QueryAsync<ScoreRowModel>(
             $"""
              {score_row_select}
              FROM (
                  SELECT DISTINCT ON (sc.beatmap_id)
                         sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
-                        sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
+                        sc.pp, sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
                  FROM scores sc
                  WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
-                 ORDER BY sc.beatmap_id, {BeatmapLeaderboard.Order("sc")}
+                 ORDER BY sc.beatmap_id, sc.pp DESC, {BeatmapLeaderboard.Order("sc")}
              ) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
              WHERE s.status IN ('pending', 'unranked', 'ranked')
-             ORDER BY best.total_score DESC, best.id ASC
+             ORDER BY best.pp DESC, best.total_score DESC, best.id ASC
              LIMIT {score_section_size}
              """,
             new { id })).ToList();
@@ -333,8 +385,11 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         // pp per Best-scores row (scores.pp, docs/pp.md), opt-in only on this section: a second
         // small query keyed by score id, merged onto the already-hydrated rows in C#, the same
         // shape as the replay-views ranking below and for the identical reason (see the doc
-        // comment on ScoreRowModel.Pp). 0 is a real value (unpriced/custom-rate plays) so it is
-        // set unconditionally for every row, never left null once a row is known to be here.
+        // comment on ScoreRowModel.Pp). It reads the column the query above already ORDERed by,
+        // which is redundant only in the sense that a primary-key lookup of at most
+        // score_section_size rows is: the alternative is a 17th column on the shared SELECT, which
+        // breaks every other section that shares it. 0 is a real value (unpriced/custom-rate plays)
+        // so it is set unconditionally for every row, never left null once a row is known to be here.
         if (BestScores.Count > 0)
         {
             long[] bestScoreIds = BestScores.Select(r => r.ScoreId).ToArray();

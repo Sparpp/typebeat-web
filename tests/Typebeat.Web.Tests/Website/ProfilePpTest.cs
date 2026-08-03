@@ -5,11 +5,14 @@ using Npgsql;
 namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
-/// pp on the profile's Best scores section (task 71): each row there shows its stored
-/// <c>scores.pp</c> (docs/pp.md), rounded to a whole number with a "pp" suffix, and every other
-/// score section (Recent, at minimum) shows nothing for the same underlying score, since
-/// <see cref="Typebeat.Web.Pages.ScoreRowModel.Pp"/> is opt-in per section, not a column on the
-/// shared row select.
+/// pp on the profile: the Best scores section (task 71) and the Player stats card (task 78).
+///
+/// Each Best row shows its stored <c>scores.pp</c> (docs/pp.md), rounded to a whole number with a
+/// "pp" suffix, and every other score section (Recent, at minimum) shows nothing for the same
+/// underlying score, since <see cref="Typebeat.Web.Pages.ScoreRowModel.Pp"/> is opt-in per section,
+/// not a column on the shared row select. The card carries the user's pp total and pp rank beside
+/// the (now labelled) cumulative-score rank. The section's ORDER is
+/// <see cref="ProfileBestScoresOrderTest"/>'s.
 ///
 /// Own throwaway user/set, own beatmaps, low score totals so nothing here can move
 /// <see cref="ProfilePageTest"/>'s or <see cref="RankingsPageTest"/>'s exact-figure assertions.
@@ -77,6 +80,41 @@ public class ProfilePpTest
         });
     }
 
+    /// <summary>
+    /// The Player stats card carries the pp total and the pp RANK (task 78), read from the same
+    /// <see cref="Typebeat.Web.Scoring.PpRanking"/> the /rankings performance board is built from,
+    /// and it says which rank is which: the performance rank is the headline (that board is the
+    /// site's main ranking) and the cumulative-score rank is a labelled row beside the score it is
+    /// computed from, so neither number can be mistaken for the other.
+    /// </summary>
+    [Test]
+    public async Task StatsCard_HeadlinesThePpRank_WithTotalPp_AndLabelsTheScoreRank()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync($"/users/{ownerId}");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        string card = statsCard(html);
+
+        Assert.Multiple(() =>
+        {
+            // Total pp: 219.4 (the one priced play) weighted at decay^0, rounded like the board.
+            // The 0pp play contributes nothing, so this is the whole total.
+            Assert.That(card, Does.Contain("Performance rank"));
+            Assert.That(card, Does.Contain("profile-rank__pp"));
+            Assert.That(card, Does.Contain(">219pp<"));
+
+            // One priced play is enough to be ranked on that board.
+            Assert.That(card, Does.Contain("profile-rank__value\">#"));
+            Assert.That(card, Does.Not.Contain("profile-rank__value\">Unranked<"));
+
+            // The cumulative-score rank is still here, still real, and no longer unlabelled.
+            Assert.That(card, Does.Contain(">Score rank</span>"));
+            Assert.That(card, Does.Contain(">Ranked score</span>"));
+        });
+    }
+
     [Test]
     public async Task OtherSections_NeverShowPp()
     {
@@ -105,6 +143,19 @@ public class ProfilePpTest
 
         int end = html.IndexOf("</section>", start, StringComparison.Ordinal);
         Assert.That(end, Is.GreaterThan(-1), $"{marker}'s section must close");
+
+        return html[start..end];
+    }
+
+    /// <summary>The Player stats card's markup, sliced off the side column so a card assertion
+    /// cannot match the identical figure on a score row below.</summary>
+    private static string statsCard(string html)
+    {
+        int start = html.IndexOf("profile-stats", StringComparison.Ordinal);
+        Assert.That(start, Is.GreaterThan(-1), "the profile must render the stats card");
+
+        int end = html.IndexOf("</aside>", start, StringComparison.Ordinal);
+        Assert.That(end, Is.GreaterThan(-1), "the side column must close");
 
         return html[start..end];
     }

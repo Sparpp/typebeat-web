@@ -53,6 +53,12 @@
     --warn: #f2c14d;
     --bad: #ff6a5a;
 
+    /* gold: the "top of the pile" colour, apart from both the lime accent and the amber
+       warn signal. It was already in this file twice over as the SS grade's literal; it is a
+       token now because pp (the site's main ranking metric) wears the same gold, and the two
+       must not drift into two nearly-identical golds. */
+    --gold: #ffd75e;
+
     /* "gradient" token kept for fills that reference it; Caret is flat, so this
        is a near-flat lime (no violet→magenta sweep anymore). */
     --grad-primary: linear-gradient(90deg, var(--violet-deep), var(--violet));
@@ -1517,7 +1523,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     font-weight: 800;
 }
 
-.grade--ss { color: #ffd75e; }
+.grade--ss { color: var(--gold); }
 .grade--s  { color: #e9eae4; }
 .grade--a  { color: var(--good); }
 .grade--b  { color: #5eb3ff; }
@@ -1901,6 +1907,16 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     color: var(--violet-bright);
 }
 
+/* Total pp, under the performance rank it is drawn from. Gold, like pp on the score rows, so the
+   metric keeps one colour across the page; a size below the rank, because the rank is the
+   headline and this is what produced it. */
+.profile-rank__pp {
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    font-weight: 700;
+    color: var(--gold);
+}
+
 .grade-counts {
     display: flex;
     justify-content: space-between;
@@ -2015,16 +2031,24 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .score-row__acc { color: var(--text-muted); }
 
 /* pp, opt-in per row (Pages/ScoreRowModel.cs, only the profile's Best scores section sets it).
-   Same quiet metadata voice as accuracy; a 0pp play (custom rate, not yet priced) is real and
-   stays visible, just faded further so it doesn't read as a competing number. */
+   THE row's headline number, since that section is now ordered by it: gold (the same --gold the
+   SS grade wears, the site's "top of the pile" colour) and a step larger than the row's other
+   figures, so the eye lands on the number the position is drawn from. A 0pp play (custom rate,
+   not yet priced) is real and stays visible, just faded right back so it doesn't shout the one
+   thing it hasn't earned; it keeps the size so the column can't jog down the list. */
 .score-row__pp {
+    flex-shrink: 0;
     font-family: var(--font-display);
-    font-size: var(--text-sm);
-    color: var(--text-muted);
+    font-size: var(--text-lg);
+    font-weight: 700;
+    color: var(--gold);
     white-space: nowrap;
 }
 
-.score-row__pp--zero { color: var(--text-faint); }
+.score-row__pp--zero {
+    color: var(--text-faint);
+    font-weight: 400;
+}
 
 .score-row__mods {
     color: var(--violet-bright);

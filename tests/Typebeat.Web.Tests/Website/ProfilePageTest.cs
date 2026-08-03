@@ -6,7 +6,7 @@ using Typebeat.Web.Auth;
 namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
-/// User profile page: header + stats card (global rank / totals / grade counts), the five
+/// User profile page: header + stats card (both global ranks / totals / grade counts), the five
 /// sections (best/recent scores, most played, maps, favourites), name→id canonical redirect,
 /// hidden-map visibility, empty states, and the throttled users.last_visit touch.
 ///
@@ -97,9 +97,16 @@ public class ProfilePageTest
             Assert.That(html, Does.Contain("profile-cover--"));
             Assert.That(html, Does.Contain("profile-avatar--fallback"));
 
-            // Stats card: dense rank #2 (rival holds #1), totals grid, computed accuracy
-            // (mean over per-map bests: (0.95 + 0.90) / 2), grade counts S=1 B=1.
-            Assert.That(html, Does.Contain("profile-rank__value\">#2<"));
+            // Stats card: the headline rank is the PERFORMANCE one (task 78), and star has no
+            // priced play at all (these fixtures insert scores directly, so pp stays at its column
+            // default), which is the unranked-on-that-board case: "Unranked" and 0pp. The
+            // cumulative-score rank, dense rank #2 because rival's 900k tops star's 800k, is now a
+            // LABELLED stat row rather than the unlabelled headline. Then the totals grid, computed
+            // accuracy (mean over per-map bests: (0.95 + 0.90) / 2), grade counts S=1 B=1.
+            Assert.That(html, Does.Contain("profile-rank__value\">Unranked<"));
+            Assert.That(html, Does.Contain("profile-rank__pp"));
+            Assert.That(html, Does.Contain(">0pp<"));
+            Assert.That(html, Does.Contain(">Score rank</span><span class=\"stat-row__value\">#2<"));
             Assert.That(html, Does.Contain("5,000,000"));
             Assert.That(html, Does.Contain(">42<"));
             Assert.That(html, Does.Contain("2h 0m"));
@@ -182,7 +189,13 @@ public class ProfilePageTest
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(html, Does.Contain(WebsiteFixture.SeededUsername));
-            Assert.That(html, Does.Contain("Unranked"));
+
+            // Both boards say the same word for a player who is on neither of them, and the pp
+            // total under the headline reads 0pp rather than blank (the same convention Ranked
+            // score follows with its 0).
+            Assert.That(html, Does.Contain("profile-rank__value\">Unranked<"));
+            Assert.That(html, Does.Contain(">Score rank</span><span class=\"stat-row__value\">Unranked<"));
+            Assert.That(html, Does.Contain(">0pp<"));
             Assert.That(html, Does.Contain("No scores yet"));
             Assert.That(html, Does.Contain("No maps uploaded yet"));
             Assert.That(html, Does.Contain("No favourites yet"));

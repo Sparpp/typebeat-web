@@ -39,7 +39,8 @@
     <span class="grade @Model.GradeClass">@Model.GradeLabel</span>
     <span class="score-row__completion" title="completion: the % of the map typed; what the grade is awarded on">@((Model.Completion * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
     <span class="score-row__acc" title="accuracy: timing quality">@((Model.Accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture))%</span>
-    @* pp, opt-in per row (only the Best scores section sets this today; see ScoreRowModel.Pp).
+    @* pp, opt-in per row (only the Best scores section sets this today; see ScoreRowModel.Pp),
+       and on that section the row's headline figure, since it is what the section is ordered by.
        0 is an honest value (a custom-rate or not-yet-priced play), it still renders, just quieter. *@
     @if (Model.Pp is double pp)
     {
