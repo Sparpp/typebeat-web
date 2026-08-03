@@ -4,11 +4,22 @@
 @model Typebeat.Web.Pages.Rankings.IndexModel
 @{
     bool performance = Model.Board == IndexModel.PerformanceBoard;
+    bool score = Model.Board == IndexModel.ScoreBoard;
+    bool plays = Model.Board == IndexModel.PlaysBoard;
+
+    bool preferOriginal = Model.CurrentUser?.PreferOriginalMetadata ?? false;
+
+    // The mistype column exists only once some play on the board carries the stat; rows that
+    // predate it leave their cell blank rather than claiming a clean run (docs/pp.md).
+    bool anyMistypes = Model.PlayRows.Any(p => p.Mistypes is not null);
 
     ViewData["Title"] = "Rankings";
-    ViewData["MetaDescription"] = performance
-        ? "type!beat global rankings: performance points across every ranked map."
-        : "type!beat global rankings: cumulative best scores across every ranked map.";
+    ViewData["MetaDescription"] = Model.Board switch
+    {
+        IndexModel.ScoreBoard => "type!beat global rankings: cumulative best scores across every ranked map.",
+        IndexModel.PlaysBoard => "type!beat global rankings: the biggest performance-point plays ever set.",
+        _ => "type!beat global rankings: performance points across every ranked map.",
+    };
 }
 
 <section class="rankings">
@@ -16,19 +27,31 @@
 
     <div class="lb-tabs" role="tablist">
         <a class="lb-tab @(performance ? "is-active" : "")" href="/rankings">Performance</a>
-        <a class="lb-tab @(performance ? "" : "is-active")" href="/rankings?board=@IndexModel.ScoreBoard">Score</a>
+        <a class="lb-tab @(score ? "is-active" : "")" href="/rankings?board=@IndexModel.ScoreBoard">Score</a>
+        <a class="lb-tab @(plays ? "is-active" : "")" href="/rankings?board=@IndexModel.PlaysBoard">Top plays</a>
     </div>
 
     @if (performance)
     {
         <p class="faint">Performance points, pp, rank you on how hard the maps you clear are and how cleanly you clear them. Your best play on each ranked map counts once, and later plays count for less, so grinding one map or a pile of easy ones gets you nowhere.</p>
     }
-    else
+    else if (score)
     {
         <p class="faint">Cumulative score, your best score on each ranked map added up, is a volume board and does not set your global rank. Total cumulative score is every play you've ever submitted added up.</p>
     }
+    else
+    {
+        <p class="faint">The biggest single plays ever set, worth the most pp. These are scores, not players: one player can hold several rows if they own several of the hardest maps, though only their best play on each map is listed.</p>
+    }
 
-    @if (Model.IsEmpty)
+    @if (Model.IsEmpty && plays)
+    {
+        <div class="empty-state">
+            <h3>No plays yet</h3>
+            <p>Nothing has earned pp yet. Clear a ranked map and the top of this board is yours.</p>
+        </div>
+    }
+    else if (Model.IsEmpty)
     {
         <div class="empty-state">
             <h3>No scores yet</h3>
@@ -58,6 +81,79 @@
                         <td class="num">@row.TotalPp.ToString("N0", CultureInfo.InvariantCulture)pp</td>
                         <td class="num">@row.PpPlayCount.ToString("N0", CultureInfo.InvariantCulture)</td>
                         <td class="num">@row.CumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+    else if (plays)
+    {
+        @* Score-shaped rows, so this table is the set page's leaderboard table with a Map column
+           and pp in place of total score: same cells, same formatting, same link targets. *@
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>Rank</th>
+                    <th>Player</th>
+                    <th>Map</th>
+                    <th>Stars</th>
+                    <th>pp</th>
+                    <th>Grade</th>
+                    <th>Completion</th>
+                    <th>Accuracy</th>
+                    <th>Combo</th>
+                    <th>Miss</th>
+                    @if (anyMistypes)
+                    {
+                        <th>Mistype</th>
+                    }
+                    <th>Mods</th>
+                    <th>Date</th>
+                    <th>Replay</th>
+                </tr>
+                </thead>
+                <tbody>
+                @for (int i = 0; i < Model.PlayRows.Count; i++)
+                {
+                    var row = Model.PlayRows[i];
+                    string displayTitle = row.DisplayTitle(preferOriginal);
+                    string displayArtist = row.DisplayArtist(preferOriginal);
+                    <tr>
+                        <td class="num">#@(i + 1)</td>
+                        <td><a href="/users/@row.UserId">@row.Username</a></td>
+                        <td>
+                            <a href="/beatmapsets/@row.SetId" title="@displayTitle [@displayArtist]">@displayTitle</a>
+                            @if (row.Explicit)
+                            {
+                                <partial name="_ExplicitBadge" />
+                            }
+                            <span class="faint">[@displayArtist]</span>
+                            @if (!string.IsNullOrEmpty(row.Version))
+                            {
+                                <span class="faint">&middot; @row.Version</span>
+                            }
+                        </td>
+                        <td class="num" style="color:@DifficultyColour.ForStars(row.Stars)">&#9733; @row.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</td>
+                        <td class="num">@row.Pp.ToString("N0", CultureInfo.InvariantCulture)pp</td>
+                        <td><span class="grade @row.GradeClass">@row.GradeLabel</span></td>
+                        <td class="num">@((row.Completion * 100).ToString("0.00", CultureInfo.InvariantCulture))%</td>
+                        <td class="num">@((row.Accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture))%</td>
+                        <td class="num">@row.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</td>
+                        <td class="num">@row.Miss</td>
+                        @if (anyMistypes)
+                        {
+                            <td class="num">@(row.Mistypes?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>
+                        }
+                        <td><partial name="_ModIcons" model="row.Mods" /></td>
+                        <td>@row.EndedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</td>
+                        <td>
+                            @if (row.HasReplay)
+                            {
+                                <a href="/api/v2/scores/@row.ScoreId/replay" title="Download this replay (.osr)">Download</a>
+                            }
+                        </td>
                     </tr>
                 }
                 </tbody>

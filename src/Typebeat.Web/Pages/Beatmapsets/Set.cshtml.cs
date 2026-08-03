@@ -301,10 +301,11 @@ public sealed class SetModel(Db db) : TypebeatPageModel
     public static string FormatPercent(double fraction)
         => (fraction * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%";
 
-    /// <summary>The client's ScoreRank strings; X is the perfect rank, shown as SS like the game.</summary>
-    public static string GradeLabel(string rank) => rank == "X" ? "SS" : rank;
+    /// <summary>The client's ScoreRank strings; X is the perfect rank, shown as SS like the game.
+    /// Delegates to <see cref="GradeDisplay"/>, the one mapping every grade surface reads.</summary>
+    public static string GradeLabel(string rank) => GradeDisplay.Label(rank);
 
-    public static string GradeClass(string rank) => "grade--" + (rank == "X" ? "ss" : rank.ToLowerInvariant());
+    public static string GradeClass(string rank) => GradeDisplay.CssClass(rank);
 
     public sealed record SetDetails(
         long Id, string Title, string Artist, string? TitleUnicode, string? ArtistUnicode, string Source, string Tags, string Description,

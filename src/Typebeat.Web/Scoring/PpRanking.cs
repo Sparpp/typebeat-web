@@ -40,6 +40,72 @@ public static class PpRanking
         PerformancePoints.DECAY.ToString("0.############", CultureInfo.InvariantCulture);
 
     /// <summary>
+    /// EVERY PLAY THAT EARNS pp, one row per play. The single definition of pp eligibility, so a
+    /// set an admin un-ranks, a score an admin un-ranks, a fail, a custom-rate (unpriced) play and
+    /// a restricted or deleted account all drop out of every pp surface at once:
+    ///
+    /// <list type="bullet">
+    /// <item>the play is on its map's RANKED board (<see cref="BeatmapLeaderboard.OnBoard"/>: it
+    /// passed and its stored <c>ranked</c> flag is set);</item>
+    /// <item>its set is CURRENTLY <c>'ranked'</c>, re-read per request rather than trusted from the
+    /// stored flag, so un-ranking a set takes effect with no recompute;</item>
+    /// <item>it was priced above zero. Per docs/pp.md a custom-rate play is pp-INELIGIBLE (it still
+    /// ranks on the score boards), and a not-yet-priced row is stored 0, so both are excluded by
+    /// the same predicate;</item>
+    /// <item>the account is LISTED: not restricted, not deleted. This is the global-ranking
+    /// delisting rule, deliberately absent from <see cref="BeatmapLeaderboard"/> (per-map boards
+    /// keep restricted players' rows; global rankings do not).</item>
+    /// </list>
+    ///
+    /// <para>
+    /// Columns: <c>id</c>, <c>user_id</c>, <c>beatmap_id</c>, <c>pp</c> (double precision), and
+    /// nothing else. Embed as a subquery and join <c>scores</c> back on <c>id</c> for display
+    /// columns AFTER the caller's <c>LIMIT</c>, never before: the partial index
+    /// <c>ix_scores_pp (user_id, beatmap_id, pp DESC) WHERE ranked AND passed AND pp &gt; 0</c>
+    /// (020_performance_points.sql) covers exactly this row set.
+    /// </para>
+    /// </summary>
+    public static readonly string EligiblePlaysSql =
+        $"""
+         SELECT s.id, s.user_id, s.beatmap_id, s.pp
+         FROM scores s
+         JOIN beatmaps b ON b.id = s.beatmap_id
+         JOIN beatmapsets bs ON bs.id = b.set_id
+         JOIN users u ON u.id = s.user_id
+         WHERE {BeatmapLeaderboard.OnBoard("s", "true")}
+           AND bs.status = 'ranked'
+           AND s.pp > 0
+           AND NOT u.restricted AND u.deleted_at IS NULL
+         """;
+
+    /// <summary>
+    /// <see cref="EligiblePlaysSql"/> folded to ONE play per (user, map): the player's BEST-pp play
+    /// on each ranked map, ties broken by the earlier submission (lower id), so the fold is total
+    /// and picks exactly one row. This is the unit every pp surface counts in, per docs/pp.md:
+    /// without it, replays of one hard map would fill a player's whole list.
+    ///
+    /// <para>
+    /// Columns are <see cref="EligiblePlaysSql"/>'s. Shared by <see cref="PerUserTotalSql"/> (which
+    /// weights and sums it per user) and by the /rankings top-plays board (which sorts it globally),
+    /// so the two cannot disagree about which play represents a player on a map.
+    /// </para>
+    /// </summary>
+    public static readonly string BestPerMapSql =
+        $"""
+         SELECT DISTINCT ON (e.user_id, e.beatmap_id) e.id, e.user_id, e.beatmap_id, e.pp
+         FROM ({EligiblePlaysSql}) e
+         ORDER BY e.user_id, e.beatmap_id, e.pp DESC, e.id ASC
+         """;
+
+    /// <summary>
+    /// The TOP-PLAYS board's ordering over <see cref="BestPerMapSql"/>: biggest pp first, a tie
+    /// broken by the EARLIER submission (lower score id), the same tie-break
+    /// <see cref="BeatmapLeaderboard.Order"/> uses. Score ids are unique, so this order is TOTAL:
+    /// the board reads the same on every render and a <c>LIMIT</c> always cuts in the same place.
+    /// </summary>
+    public static string TopPlaysOrder(string play) => $"{play}.pp DESC, {play}.id ASC";
+
+    /// <summary>
     /// Per-user total pp. Yields columns <c>user_id</c>, <c>total_pp</c> (double precision),
     /// <c>pp_play_count</c> (bigint, the number of deduped plays that contributed); only users with
     /// at least one pp-earning play appear. Embed as a subquery: it is the single source of truth
@@ -54,17 +120,8 @@ public static class PpRanking
              SELECT best.user_id,
                     best.pp,
                     row_number() OVER (PARTITION BY best.user_id ORDER BY best.pp DESC, best.id ASC) AS rn
-             FROM (
-                 SELECT DISTINCT ON (s.user_id, s.beatmap_id) s.user_id, s.beatmap_id, s.pp, s.id
-                 FROM scores s
-                 JOIN beatmaps b ON b.id = s.beatmap_id
-                 JOIN beatmapsets bs ON bs.id = b.set_id
-                 WHERE s.ranked AND s.passed AND bs.status = 'ranked' AND s.pp > 0
-                 ORDER BY s.user_id, s.beatmap_id, s.pp DESC, s.id ASC
-             ) best
+             FROM ({BestPerMapSql}) best
          ) weighted
-         JOIN users u ON u.id = weighted.user_id
-         WHERE NOT u.restricted AND u.deleted_at IS NULL
          GROUP BY weighted.user_id
          """;
 
