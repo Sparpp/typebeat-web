@@ -126,6 +126,12 @@ public class RankedApprovalTest
             // No RANKED position: the submit response's position is the ranked board's, and the
             // caller has no ranked score here. The unranked board carries its own positions.
             Assert.That(submitted["position"]!.Type, Is.EqualTo(JTokenType.Null));
+
+            // pp is null too (backlog 75), for its own reason: the server refuses to price an
+            // unranked play at all. It stores 0 because the column is NOT NULL, but sending that 0
+            // would tell the game "you earned zero" for a play that was never eligible to earn
+            // anything, so the wire carries nothing and the game renders a dash.
+            Assert.That(submitted["pp"]!.Type, Is.EqualTo(JTokenType.Null), "an unranked play is never priced");
         });
 
         await using (var conn = await dataSource.OpenConnectionAsync())
@@ -203,6 +209,9 @@ public class RankedApprovalTest
         {
             Assert.That((bool)submitted["ranked"]!, Is.True);
             Assert.That((int)submitted["position"]!, Is.EqualTo(1));
+
+            // And now that the map is ranked, the same clean play is priced for real.
+            Assert.That((double)submitted["pp"]!, Is.GreaterThan(0), "a ranked play on a ranked map earns pp");
         });
 
         var leaderboard = await GetLeaderboardAsync();

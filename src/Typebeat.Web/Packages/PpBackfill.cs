@@ -92,7 +92,10 @@ public static class PpBackfill
 
                 await conn.ExecuteAsync(
                     "UPDATE scores SET pp = @pp, pp_version = @version WHERE id = @id",
-                    new { id = row.ScoreId, pp, version = PerformancePoints.VERSION });
+                    // The column is NOT NULL. A settled null is a play the formula refused to run
+                    // for (unranked, or a custom rate), which stores 0 and stamps the current
+                    // version so it drops out of the stale set for good.
+                    new { id = row.ScoreId, pp = pp ?? 0, version = PerformancePoints.VERSION });
 
                 written++;
             }

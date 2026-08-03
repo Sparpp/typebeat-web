@@ -132,6 +132,12 @@ public sealed class MultiplayerScoreWire
     [JsonProperty("position")]
     public int? Position { get; init; }
 
+    // The play's performance points, binding to the client's MultiplayerScore.PP and from there to
+    // ScoreInfo.PP, which is what the game's results screen shows. Nullable and meaningfully so:
+    // a NUMBER (0 included) means the server ran the formula for this play and that is the answer;
+    // NULL means it did not, either because the play can never be priced or because it cannot be
+    // priced yet. The client must not read null as zero. See the comment at the assignment in
+    // ScoreEndpoints.SubmitScore.
     [JsonProperty("pp")]
     public double? Pp { get; init; }
 
