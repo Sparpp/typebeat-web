@@ -11,6 +11,10 @@
     (relative path today; a git submodule in CI) drags in osu.Framework et al., expected and
     fine for a test project. typebeat.Game is built with its OWN Directory.Build.props (it lives
     in the typebeat-osu tree), so none of its analyzer/nullable settings leak into this project.
+
+    The typebeat RULESET is referenced too (backlog 74): the mirrored halves of the scoring code
+    (PerformancePoints, LyricDifficulty, the mods) live there, not in typebeat.Game, and this is
+    the only project that can hold the two repos' copies against each other.
   -->
 
   <PropertyGroup>
@@ -54,10 +58,18 @@
          external/typebeat-osu submodule. -->
     <TypebeatGameProject Condition="Exists('..\..\..\typebeat-osu\typebeat.Game\typebeat.Game.csproj')">..\..\..\typebeat-osu\typebeat.Game\typebeat.Game.csproj</TypebeatGameProject>
     <TypebeatGameProject Condition="'$(TypebeatGameProject)' == ''">..\..\external\typebeat-osu\typebeat.Game\typebeat.Game.csproj</TypebeatGameProject>
+
+    <!-- Same two-step resolution for the typebeat RULESET, which is where the mirrored halves of
+         the scoring code live (PerformancePoints, LyricDifficulty, the mods). Kept as its own
+         property rather than derived from the one above so a caller can point either at a
+         worktree independently. -->
+    <TypebeatRulesetProject Condition="Exists('..\..\..\typebeat-osu\typebeat.Game.Rulesets.TypeBeat\typebeat.Game.Rulesets.TypeBeat.csproj')">..\..\..\typebeat-osu\typebeat.Game.Rulesets.TypeBeat\typebeat.Game.Rulesets.TypeBeat.csproj</TypebeatRulesetProject>
+    <TypebeatRulesetProject Condition="'$(TypebeatRulesetProject)' == ''">..\..\external\typebeat-osu\typebeat.Game.Rulesets.TypeBeat\typebeat.Game.Rulesets.TypeBeat.csproj</TypebeatRulesetProject>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="$(TypebeatGameProject)" />
+    <ProjectReference Include="$(TypebeatRulesetProject)" />
   </ItemGroup>
 
 </Project>
