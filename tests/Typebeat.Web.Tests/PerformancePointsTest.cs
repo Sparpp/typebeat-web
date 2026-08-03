@@ -504,6 +504,124 @@ public class PerformancePointsTest
         });
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Mistypes (backlog 72): the cleanliness term learns about wrong keypresses.
+    // ---------------------------------------------------------------------------------------------
+
+    [Test]
+    public void CountNotes_ReadsMistypesFromTheComboBreakKeyWithoutCountingThemAsNotes()
+    {
+        var counts = PerformancePoints.CountNotes(new Dictionary<string, int>
+        {
+            ["great"] = 300,
+            ["ok"] = 40,
+            ["meh"] = 10,
+            ["miss"] = 50,
+            ["combo_break"] = 137,
+        });
+
+        Assert.Multiple(() =>
+        {
+            // notes stays the map's CELL count. Letting keypresses in would inflate the LENGTH
+            // bonus and shrink the COMBO denominator, paying a masher twice for mashing.
+            Assert.That(counts.Notes, Is.EqualTo(400));
+            Assert.That(counts.Misses, Is.EqualTo(50));
+            Assert.That(counts.Mistypes, Is.EqualTo(137));
+        });
+    }
+
+    [Test]
+    public void CountNotes_AMissingMistypeKeyIsNotZeroGuessedButSimplyAbsent()
+    {
+        // Every score submitted before the stat existed omits the key entirely, and must price
+        // exactly as it always did.
+        var old = PerformancePoints.CountNotes(new Dictionary<string, int> { ["great"] = 100, ["miss"] = 10 });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(old.Mistypes, Is.Zero);
+            Assert.That(PerformancePoints.CountNotes("""{"great":100,"miss":10}""").Mistypes, Is.Zero);
+            Assert.That(PerformancePoints.CountNotes("""{"great":100,"miss":10,"combo_break":9}""").Mistypes, Is.EqualTo(9));
+        });
+    }
+
+    [Test]
+    public void CountNotes_NegativeMistypeCountsContributeNothing()
+        => Assert.That(PerformancePoints.CountNotes(new Dictionary<string, int> { ["great"] = 100, ["combo_break"] = -50 }).Mistypes, Is.Zero);
+
+    [Test]
+    public void Compute_ZeroMistypesIsBitwiseTheOldFormula()
+    {
+        // The VERSION decision rests on this: with no mistypes the new cleanliness term collapses
+        // to (1 - miss/notes)^7.5 EXACTLY, so no stored row's pp can move and a startup reprice
+        // would rewrite every row with the value it already holds.
+        foreach (int misses in new[] { 0, 1, 17, 250, 500 })
+        {
+            double withArgument = PerformancePoints.Compute(4.2, 500, misses, 0.87, 400, no_mods, mistypes: 0);
+            double withoutArgument = PerformancePoints.Compute(4.2, 500, misses, 0.87, 400, no_mods);
+
+            Assert.That(withArgument, Is.EqualTo(withoutArgument), $"misses={misses}");
+        }
+    }
+
+    [Test]
+    public void Compute_MistypesCostPpAndMonotonicallySo()
+    {
+        double clean = PerformancePoints.Compute(4, 500, 0, 0.9, 500, no_mods, mistypes: 0);
+        double few = PerformancePoints.Compute(4, 500, 0, 0.9, 500, no_mods, mistypes: 10);
+        double many = PerformancePoints.Compute(4, 500, 0, 0.9, 500, no_mods, mistypes: 100);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(few, Is.LessThan(clean), "this is the point of the stat: sloppy play stops farming pp");
+            Assert.That(many, Is.LessThan(few));
+            Assert.That(many, Is.GreaterThan(0));
+        });
+    }
+
+    [Test]
+    public void Compute_TheCleannessTermStaysInRangeForAnyMistypeCount()
+    {
+        // LANDMINE 6, closed by the decision to add mistypes to BOTH sides of the fraction: misses
+        // <= notes, so (miss+mistypes)/(notes+mistypes) can approach 1 but never pass it. An
+        // absurd mistype count must therefore decay pp towards zero, never produce a negative base,
+        // a NaN, or (with the 7.5 exponent on a negative base) an imaginary result.
+        foreach (int notes in new[] { 1, 10, 500 })
+        foreach (int misses in new[] { 0, notes / 2, notes })
+        foreach (int mistypes in new[] { -1, 0, 1, notes * 1000, int.MaxValue })
+        {
+            double pp = PerformancePoints.Compute(6, notes, misses, 0.9, notes, no_mods, mistypes);
+
+            Assert.That(pp, Is.Not.NaN, $"notes={notes} miss={misses} mistypes={mistypes}");
+            Assert.That(double.IsFinite(pp), Is.True, $"notes={notes} miss={misses} mistypes={mistypes}");
+            Assert.That(pp, Is.GreaterThanOrEqualTo(0), $"notes={notes} miss={misses} mistypes={mistypes}");
+        }
+    }
+
+    [Test]
+    public void ForScore_PricesTheMistypesCarriedOnTheCounts()
+    {
+        var clean = PerformancePoints.ForScore(true, no_mods, new PerformancePoints.NoteCounts(500, 0), 0.9, 500, 4, null, null);
+        var messy = PerformancePoints.ForScore(true, no_mods, new PerformancePoints.NoteCounts(500, 0, 60), 0.9, 500, 4, null, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(clean.Settled, Is.True);
+            Assert.That(messy.Settled, Is.True);
+            Assert.That(messy.Pp, Is.LessThan(clean.Pp));
+            Assert.That(messy.Pp, Is.EqualTo(PerformancePoints.Compute(4, 500, 0, 0.9, 500, no_mods, 60)).Within(1e-12));
+        });
+    }
+
+    [Test]
+    public void Version_IsNotBumpedForAStatNoStoredRowCanCarry()
+    {
+        // Deliberate: see the VERSION docs. Bumping forces PpBackfill to reprice every row at boot,
+        // and the mistype term is provably a no-op on all of them (no client emitted combo_break
+        // before it existed). Bump it the moment a change values any stored row differently.
+        Assert.That(PerformancePoints.VERSION, Is.EqualTo(1));
+    }
+
     [Test]
     public void Decay_IsTheDocumentedStartingValue()
     {

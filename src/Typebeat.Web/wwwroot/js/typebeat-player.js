@@ -807,7 +807,10 @@
                 statCell('accuracy', fmtPct(results.accuracy)) +
                 statCell('max combo', results.maxCombo + 'x') +
                 statCell('wpm', Math.round(results.wpm)) +
-                statCell('misses', results.counts.miss);
+                statCell('misses', results.counts.miss) +
+                // Beside misses, never folded into them: a miss is a character the song left
+                // behind, a mistype is a wrong key you pressed, and only the first costs you rank.
+                statCell('mistypes', results.counts.mistypes);
             card.appendChild(grid);
             const status = el('div', 'tb-submit-status', '');
             card.appendChild(status);

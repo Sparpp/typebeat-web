@@ -9,12 +9,25 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <code>
 /// pp = 4.0 · SR_eff^2.70
-///          · (1 − miss/notes)^7.5                  cleanliness
-///          · max(0.1, 1 + 0.70·log10(notes/100))   length, floored
-///          · acc^1.30                              timing quality
-///          · (maxcombo/notes)^0.55                 combo
+///          · (1 − (miss+mistypes)/(notes+mistypes))^7.5   cleanliness
+///          · max(0.1, 1 + 0.70·log10(notes/100))          length, floored
+///          · acc^1.30                                     timing quality
+///          · (maxcombo/notes)^0.55                        combo
 ///          · modMult
 /// </code>
+///
+/// <para>
+/// MISTYPES (wrong keypresses, the <c>combo_break</c> statistics key, backlog 72) are priced in the
+/// CLEANLINESS term only, and only there. Before they were persisted, a wrong key left no trace in
+/// a submitted score but a broken combo, so a sloppy high-SR play farmed nearly the pp of a clean
+/// one, which is the exact thing the cleanliness term exists to prevent. Adding them to BOTH sides
+/// of the fraction keeps it inside [0, 1] no matter how much the player mashes (misses ≤ notes, so
+/// the numerator can never outrun the denominator), and mistypes deliberately do NOT enter
+/// <c>notes</c>: notes is the map's cell count, and letting keypresses inflate it would hand a
+/// masher a bigger LENGTH bonus and a smaller COMBO denominator, paying for the mashing twice over.
+/// A play carrying no mistype count at all (every score submitted before the stat existed) collapses
+/// the term to its original <c>(1 − miss/notes)^7.5</c> exactly, so no stored row's pp moves.
+/// </para>
 ///
 /// <para>
 /// The ordering of the factors is the ordering of what the system values: difficulty sets the
@@ -57,6 +70,16 @@ public static class PerformancePoints
     /// <para>Rows are ALSO invalidated back to 0 whenever the beatmap they were set on has its star
     /// ratings rewritten (ingest, or the pace/SR sweep in <see cref="Packages.PaceBackfill"/>), so a
     /// pp value can never outlive the SR it was computed from.</para>
+    ///
+    /// <para>NOT bumped for the mistype term (backlog 72), deliberately. A bump exists to force a
+    /// reprice of rows the arithmetic would now value differently, and no stored row qualifies: the
+    /// mistype count lives in the <c>combo_break</c> statistics key, which no client ever emitted
+    /// before that change, so <see cref="CountNotes"/> reads 0 for every existing row and the new
+    /// cleanliness term is algebraically the old one at 0. Bumping would therefore buy a full
+    /// startup sweep that provably rewrites every row with the value it already holds. The proof
+    /// rests on exactly one fact, worth restating if this is ever revisited: no historic row can
+    /// carry a non-zero <c>combo_break</c>. Bump this the moment a change values ANY stored row
+    /// differently.</para>
     /// </summary>
     public const int VERSION = 1;
 
@@ -111,8 +134,18 @@ public static class PerformancePoints
 
     private const string miss_key = "miss";
 
-    /// <summary>Notes and misses for a play, as the formula defines them.</summary>
-    public readonly record struct NoteCounts(int Notes, int Misses);
+    /// <summary>
+    /// The MISTYPE key: wrong keypresses, persisted by the client under
+    /// <c>HitResult.ComboBreak</c> (backlog 72). Not a note, not accuracy-affecting, and absent
+    /// entirely from every score submitted before it existed.
+    /// </summary>
+    private const string mistype_key = "combo_break";
+
+    /// <summary>
+    /// Notes, misses and mistypes for a play, as the formula defines them. <see cref="Mistypes"/>
+    /// defaults to 0 so a play that carries no mistype count prices exactly as it always did.
+    /// </summary>
+    public readonly record struct NoteCounts(int Notes, int Misses, int Mistypes = 0);
 
     /// <summary>
     /// The star rating a play should be priced at, or why there is none.
@@ -135,8 +168,9 @@ public static class PerformancePoints
     }
 
     /// <summary>
-    /// Notes and misses from a play's <c>statistics</c> dictionary. Negative counts (tamper-shaped)
-    /// contribute nothing rather than subtracting.
+    /// Notes, misses and mistypes from a play's <c>statistics</c> dictionary. Negative counts
+    /// (tamper-shaped) contribute nothing rather than subtracting, and a missing
+    /// <c>combo_break</c> key (every pre-backlog-72 score) reads as 0 mistypes.
     /// </summary>
     public static NoteCounts CountNotes(IReadOnlyDictionary<string, int>? statistics)
     {
@@ -156,7 +190,9 @@ public static class PerformancePoints
                 misses += count;
         }
 
-        return new NoteCounts(notes, misses);
+        int mistypes = statistics.TryGetValue(mistype_key, out int mistypeCount) && mistypeCount > 0 ? mistypeCount : 0;
+
+        return new NoteCounts(notes, misses, mistypes);
     }
 
     /// <summary>
@@ -180,9 +216,9 @@ public static class PerformancePoints
             return default;
         }
 
-        var counts = new Dictionary<string, int>(note_keys.Length, StringComparer.Ordinal);
+        var counts = new Dictionary<string, int>(note_keys.Length + 1, StringComparer.Ordinal);
 
-        foreach (string key in note_keys)
+        foreach (string key in note_keys.Append(mistype_key))
         {
             if (parsed[key] is { Type: JTokenType.Integer } token)
                 counts[key] = token.Value<int>();
@@ -311,8 +347,13 @@ public static class PerformancePoints
     /// <paramref name="maxCombo"/> the stored <c>scores.max_combo</c>.
     ///
     /// <para>Inputs are clamped rather than trusted: misses and combo into <c>[0, notes]</c> (the
-    /// theoretical max combo of a typing map IS its note count) and accuracy into <c>[0, 1]</c>.
-    /// The result is guaranteed finite and non-negative.</para>
+    /// theoretical max combo of a typing map IS its note count), mistypes to non-negative (they have
+    /// no upper bound: a player can press as many wrong keys as they like) and accuracy into
+    /// <c>[0, 1]</c>. The result is guaranteed finite and non-negative.</para>
+    ///
+    /// <para><paramref name="mistypes"/> defaults to 0, which is both what a play from before the
+    /// stat existed carries and the value at which the cleanliness term is identical to the
+    /// original one.</para>
     /// </summary>
     public static double Compute(
         double starRating,
@@ -320,7 +361,8 @@ public static class PerformancePoints
         int misses,
         double accuracy,
         int maxCombo,
-        IReadOnlyList<ScoreMod>? mods)
+        IReadOnlyList<ScoreMod>? mods,
+        int mistypes = 0)
     {
         // No notes describes no play; a zero or non-finite rating prices nothing.
         if (notes <= 0 || !double.IsFinite(starRating) || starRating <= 0)
@@ -328,10 +370,16 @@ public static class PerformancePoints
 
         misses = Math.Clamp(misses, 0, notes);
         maxCombo = Math.Clamp(maxCombo, 0, notes);
+        mistypes = Math.Max(mistypes, 0);
         accuracy = double.IsFinite(accuracy) ? Math.Clamp(accuracy, 0, 1) : 0;
 
         double difficulty = Math.Pow(starRating, sr_exponent);
-        double cleanliness = Math.Pow(1.0 - (double)misses / notes, miss_exponent);
+
+        // misses ≤ notes after the clamp above, so adding the same mistype count to both sides can
+        // only pull the ratio TOWARDS 1 and never past it: the base stays in [0, 1] and the term
+        // stays in [0, 1] for any mistype count, however absurd. notes is untouched by design (see
+        // the class docs): only this term prices mistypes.
+        double cleanliness = Math.Pow(1.0 - (double)(misses + mistypes) / (notes + mistypes), miss_exponent);
         double length = LengthBonus(notes);
         double timing = Math.Pow(accuracy, accuracy_exponent);
         double combo = Math.Pow((double)maxCombo / notes, combo_exponent);
@@ -366,6 +414,6 @@ public static class PerformancePoints
         if (stars.Stars is not double effective)
             return (0, !stars.Pending);
 
-        return (Compute(effective, notes.Notes, notes.Misses, accuracy, maxCombo, mods), true);
+        return (Compute(effective, notes.Notes, notes.Misses, accuracy, maxCombo, mods, notes.Mistypes), true);
     }
 }

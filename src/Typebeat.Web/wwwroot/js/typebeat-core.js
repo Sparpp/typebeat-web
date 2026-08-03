@@ -685,6 +685,10 @@
 
         get health() { return Math.max(0, 1 - this.consecutiveWrongKeys / WRONG_KEY_FAIL_STREAK); }
 
+        // Wrong KEYPRESSES so far: the play's persisted mistype stat (TypingEngine.Mistypes).
+        // The browser player is always strict, so every one of them was a rejected key.
+        get mistypes() { return this.counts.WrongChar || 0; }
+
         get liveAccuracy() { return this.totalKeypresses > 0 ? this.correctKeypresses / this.totalKeypresses : 1; }
 
         countCorrectCells() {
@@ -807,6 +811,9 @@
                 this.errorCount++;
                 this.consecutiveWrongKeys++;
                 this.combo = 0;
+                // ...and it is a MISTYPE (TypingEngine.Mistyped -> TypeBeatScoreProcessor
+                // .RecordMistype): the one thing about a rejected key that outlives the play,
+                // reported to the server as the combo_break statistics key by computeScore.
                 this.counts.WrongChar = (this.counts.WrongChar || 0) + 1;
                 if (this.onComboBroken) this.onComboBroken();
                 if (this.onWrongKey) this.onWrongKey(c, this.caretIndex);
@@ -956,11 +963,21 @@
         const completion = total > 0 ? (great + ok + meh) / total : 1;
         const passed = engine.finished && !engine.failed;
 
+        // Wrong keypresses ride along as their own key. HitResult.ComboBreak is combo-only and
+        // NOT accuracy-affecting on either side, so adding it changes no other number here and the
+        // server's ScoringContract recomputes the identical accuracy / completion / rank; it is
+        // priced only in pp's cleanliness term. maximumStatistics stays one great per cell, so
+        // mashing can never inflate the denominator of anything.
+        // Zero is omitted exactly as the other keys are, matching the desktop client, which strips
+        // zero-valued entries before submitting (SoloScoreInfo.ForSubmission).
+        const mistypes = engine.mistypes;
+
         const statistics = {};
         if (great) statistics.great = great;
         if (ok) statistics.ok = ok;
         if (meh) statistics.meh = meh;
         if (miss) statistics.miss = miss;
+        if (mistypes) statistics.combo_break = mistypes;
 
         return {
             passed: passed,
@@ -973,7 +990,7 @@
             statistics: statistics,
             maximumStatistics: { great: total },
             // convenience for the results screen
-            counts: { great, ok, meh, miss },
+            counts: { great, ok, meh, miss, mistypes },
             wpm: engine.liveWpm
         };
     }

@@ -270,6 +270,68 @@ public class ScoringContractTest
         });
     }
 
+    // ---- mistypes (combo_break), backlog 72 ----
+
+    [Test]
+    public void Mistypes_DoNotUnrankTheirOwnPlay()
+    {
+        // LANDMINE 1. StatisticsValid fails when accuracy-affecting judged counts exceed
+        // maximum_statistics. A mistype has no counterpart there (maximum_statistics stays one
+        // great per cell), so counting combo_break as a judgement would make any mistyped play look
+        // like it contained more cells than the map has, and unrank every one of them. 400 mistypes
+        // on a 10-cell map is deliberately absurd: it must still be a perfectly valid submission.
+        var r = ScoringContract.Recompute(
+            Dict(("great", 10), ("combo_break", 400)),
+            Dict(("great", 10)),
+            maxCombo: 10);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.StatisticsValid, Is.True);
+            Assert.That(r.Accuracy, Is.EqualTo(1.0).Within(1e-12));
+            Assert.That(r.Completion, Is.EqualTo(1.0).Within(1e-12));
+            Assert.That(r.Rank, Is.EqualTo("X"), "typing every cell is an SS, stumbles included");
+            Assert.That(r.TheoreticalMaxCombo, Is.EqualTo(10), "a mistype is not a combo-increasing hit");
+        });
+    }
+
+    [Test]
+    public void Mistypes_RecomputeToExactlyWhatTheSameScoreWithoutThemDoes()
+    {
+        // Two statements in one: the new key changes nothing the contract computes, AND an OLD
+        // client that omits it entirely is handled identically. Whole-record equality, so a future
+        // field cannot quietly start reacting to it.
+        var maximums = Dict(("great", 200));
+
+        var withoutKey = ScoringContract.Recompute(
+            Dict(("great", 150), ("ok", 20), ("meh", 10), ("miss", 20)), maximums, maxCombo: 60);
+
+        var withKey = ScoringContract.Recompute(
+            Dict(("great", 150), ("ok", 20), ("meh", 10), ("miss", 20), ("combo_break", 73)), maximums, maxCombo: 60);
+
+        var withZeroKey = ScoringContract.Recompute(
+            Dict(("great", 150), ("ok", 20), ("meh", 10), ("miss", 20), ("combo_break", 0)), maximums, maxCombo: 60);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(withKey, Is.EqualTo(withoutKey));
+            Assert.That(withZeroKey, Is.EqualTo(withoutKey));
+        });
+    }
+
+    [Test]
+    public void Mistypes_NegativeCountIsStillTamperShaped()
+    {
+        // The key is ignored for every numeric purpose, but not for the sanity check: a negative
+        // count describes no play and must not pass as a valid submission.
+        var r = ScoringContract.Recompute(
+            Dict(("great", 10), ("combo_break", -5)),
+            Dict(("great", 10)),
+            maxCombo: 10);
+
+        Assert.That(r.StatisticsValid, Is.False);
+    }
+
     [Test]
     public void MixedFailedPlay_JudgedAccuracyUsesJudgedDenominator()
     {
