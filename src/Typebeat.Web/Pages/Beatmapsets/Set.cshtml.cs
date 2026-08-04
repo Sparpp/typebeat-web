@@ -21,7 +21,7 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// DMCA'd mapper deserves to see the Removed pill instead of a dead link; the download
 /// endpoint already granted the owner the same access).
 /// </summary>
-public sealed class SetModel(Db db) : TypebeatPageModel
+public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageModel
 {
     private const int max_report_reason_length = 4000;
 
@@ -274,6 +274,29 @@ public sealed class SetModel(Db db) : TypebeatPageModel
         int changed = await conn.ExecuteAsync(
             "UPDATE beatmapsets SET status = @to, updated_at = now() WHERE id = @id AND status = @from",
             new { id, from, to });
+
+        if (changed == 1)
+        {
+            // Record the review in the audit table. Until now nothing wrote here, so there was no
+            // way to ask "which sets were ranked since X": beatmapsets carries only updated_at,
+            // which any edit bumps. This row IS that history, and its monotonic id is what the
+            // Discord bot's ranked-map feed cursors over (BuddyEndpoints), the same way the score
+            // feed cursors over scores.id. Best-effort: the transition itself already committed,
+            // and a failed audit insert must not 500 a successful rank.
+            try
+            {
+                await conn.ExecuteAsync(
+                    """
+                    INSERT INTO moderation_actions (actor_id, set_id, action, note)
+                    VALUES (@actorId, @id, @action, @note)
+                    """,
+                    new { actorId = CurrentUser.Id, id, action = to == "ranked" ? "rank" : "unrank", note = $"{from} -> {to}" });
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning(e, "Set {SetId} transitioned {From}->{To} but the audit row failed.", id, from, to);
+            }
+        }
 
         if (changed == 0)
         {

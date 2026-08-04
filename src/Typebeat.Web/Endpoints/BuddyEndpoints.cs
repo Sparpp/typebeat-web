@@ -34,21 +34,125 @@ public static class BuddyEndpoints
     public static void Map(IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v2/scores/recent", RecentAsync);
+        app.MapGet("/api/v2/beatmapsets/newly-ranked", NewlyRankedAsync);
     }
 
-    private static async Task<IResult> RecentAsync(HttpContext ctx, Db db, IConfiguration config)
+    /// <summary>
+    /// Sets that were RANKED since the caller's cursor, newest last.
+    ///
+    /// <para>Cursored over <c>moderation_actions.id</c> rather than any column on the set itself.
+    /// That is deliberate: <c>beatmapsets</c> has no ranked-at timestamp, and <c>updated_at</c> is
+    /// bumped by any edit, so it cannot distinguish "was ranked" from "the mapper fixed a typo".
+    /// The audit row is the only monotonic record of the transition, which also makes this feed
+    /// idempotent under re-ranking: unrank-then-rank writes a second row and is announced again,
+    /// which is correct, while a set edited after ranking is not.</para>
+    ///
+    /// <para>The set's CURRENT status is re-checked at read time, so a set ranked and then
+    /// unranked before the bot polled is never announced.</para>
+    /// </summary>
+    private static async Task<IResult> NewlyRankedAsync(HttpContext ctx, Db db, IConfiguration config)
+    {
+        if (!Authorised(ctx, config, out IResult? failure))
+            return failure!;
+
+        long afterId = 0;
+        if (long.TryParse(ctx.Request.Query["after_id"], NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedAfter))
+            afterId = Math.Max(0, parsedAfter);
+
+        int limit = default_limit;
+        if (int.TryParse(ctx.Request.Query["limit"], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedLimit))
+            limit = Math.Clamp(parsedLimit, 1, max_limit);
+
+        await using var conn = await db.OpenAsync(ctx.RequestAborted);
+
+        var rows = await conn.QueryAsync<RankedSetRow>(
+            """
+            SELECT ma.id                                        AS EventId,
+                   bs.id                                        AS SetId,
+                   bs.artist                                    AS Artist,
+                   bs.title                                     AS Title,
+                   bs.language                                  AS Language,
+                   bs.explicit                                  AS Explicit,
+                   bs.cover_key                                 AS CoverKey,
+                   owner.username                               AS Creator,
+                   actor.username                               AS RankedBy,
+                   ma.created_at                                AS RankedAt,
+                   (SELECT count(*) FROM beatmaps b WHERE b.set_id = bs.id)          AS DifficultyCount,
+                   (SELECT min(b.difficulty_rating) FROM beatmaps b WHERE b.set_id = bs.id) AS MinStars,
+                   (SELECT max(b.difficulty_rating) FROM beatmaps b WHERE b.set_id = bs.id) AS MaxStars,
+                   (SELECT max(b.total_length_s) FROM beatmaps b WHERE b.set_id = bs.id)    AS LengthSeconds
+            FROM moderation_actions ma
+            JOIN beatmapsets bs ON bs.id = ma.set_id
+            JOIN users owner    ON owner.id = bs.owner_id
+            JOIN users actor    ON actor.id = ma.actor_id
+            WHERE ma.id > @afterId
+              AND ma.action = 'rank'
+              -- still ranked now: a rank later reverted must not be announced
+              AND bs.status = 'ranked'
+            ORDER BY ma.id
+            LIMIT @limit
+            """,
+            new { afterId, limit });
+
+        var list = rows.ToList();
+
+        return Results.Json(new
+        {
+            cursor = list.Count > 0 ? list[^1].EventId : afterId,
+            count = list.Count,
+            sets = list,
+        });
+    }
+
+    /// <summary>Shared key check for every endpoint here. Returns false with the response to send.</summary>
+    private static bool Authorised(HttpContext ctx, IConfiguration config, out IResult? failure)
     {
         string? expected = config["TYPEBEAT_BUDDY_KEY"];
 
-        // Not configured = feature off. 404 (not 401) so an un-opted-in deployment does not even
-        // advertise that the endpoint exists.
         if (string.IsNullOrWhiteSpace(expected))
-            return Results.NotFound();
+        {
+            failure = Results.NotFound();
+            return false;
+        }
 
         string? provided = ctx.Request.Headers[KEY_HEADER];
 
         if (string.IsNullOrEmpty(provided) || !CryptographicEquals(provided, expected))
-            return Results.Unauthorized();
+        {
+            failure = Results.Unauthorized();
+            return false;
+        }
+
+        failure = null;
+        return true;
+    }
+
+    /// <summary>Mapped by NAME, as with <see cref="RecentScoreRow"/>.</summary>
+    public sealed class RankedSetRow
+    {
+        /// <summary>The audit row's id: the cursor, NOT the set id (a set can be ranked twice).</summary>
+        public long EventId { get; set; }
+        public long SetId { get; set; }
+        public string? Artist { get; set; }
+        public string? Title { get; set; }
+        public string? Language { get; set; }
+        public bool Explicit { get; set; }
+        public string? CoverKey { get; set; }
+        public string? Creator { get; set; }
+        public string? RankedBy { get; set; }
+        public DateTimeOffset RankedAt { get; set; }
+        public int DifficultyCount { get; set; }
+        public double? MinStars { get; set; }
+        public double? MaxStars { get; set; }
+        public double? LengthSeconds { get; set; }
+    }
+
+    private static async Task<IResult> RecentAsync(HttpContext ctx, Db db, IConfiguration config)
+    {
+        // Not configured = feature off, and the check 404s rather than 401s so an un-opted-in
+        // deployment does not even advertise that the endpoint exists.
+        if (!Authorised(ctx, config, out IResult? failure))
+            return failure!;
 
         long afterId = 0;
         if (long.TryParse(ctx.Request.Query["after_id"], NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedAfter))
