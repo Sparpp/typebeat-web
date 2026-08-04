@@ -73,7 +73,11 @@ public static class BeatmapLeaderboard
     ///
     /// <para>
     /// Columns: <c>id</c>, <c>beatmap_id</c>, <c>user_id</c>, <c>rank</c>, <c>completion</c>,
-    /// <c>accuracy</c>, <c>total_score</c>, <c>ended_at</c>, <c>mods</c> (text), <c>has_replay</c>.
+    /// <c>accuracy</c>, <c>total_score</c>, <c>max_combo</c>, <c>passed</c>, <c>ranked</c>,
+    /// <c>pp</c>, <c>ended_at</c>, <c>mods</c> (text), <c>statistics</c> (text),
+    /// <c>maximum_statistics</c> (text), <c>has_replay</c>. Callers project the subset they render;
+    /// the list is wide enough to serve the game client's score rows as well as the website's,
+    /// which is the point of there being one definition rather than two.
     /// </para>
     ///
     /// <para>
@@ -95,11 +99,14 @@ public static class BeatmapLeaderboard
     public static readonly string FirstPlacesOfUserSql =
         $"""
          SELECT board.id, board.beatmap_id, board.user_id, board.rank, board.completion, board.accuracy,
-                board.total_score, board.ended_at, board.mods, board.has_replay
+                board.total_score, board.max_combo, board.passed, board.ranked, board.pp,
+                board.ended_at, board.mods, board.statistics, board.maximum_statistics, board.has_replay
          FROM (
              SELECT DISTINCT ON (sc.beatmap_id)
                     sc.id, sc.beatmap_id, sc.user_id, sc.rank, sc.completion, sc.accuracy,
-                    sc.total_score, sc.ended_at, sc.mods::text AS mods,
+                    sc.total_score, sc.max_combo, sc.passed, sc.ranked, sc.pp,
+                    sc.ended_at, sc.mods::text AS mods,
+                    sc.statistics::text AS statistics, sc.maximum_statistics::text AS maximum_statistics,
                     sc.replay_key IS NOT NULL AS has_replay
              FROM scores sc
              JOIN beatmaps bm ON bm.id = sc.beatmap_id

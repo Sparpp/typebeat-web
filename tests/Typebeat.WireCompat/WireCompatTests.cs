@@ -590,6 +590,218 @@ public class WireCompatTests
     }
 
     // ---------------------------------------------------------------------------------------------
+    // (f4) The profile overlay's SECTION fetches (task 83). Every one of these routes was missing
+    // before, which is why the five sections were switched off; the two that are back on drive
+    // GET users/{id}/scores/{pinned,best,firsts,recent} and users/{id}/beatmapsets/most_played.
+    // Each must come back as a JSON ARRAY that the client's own list element type can parse.
+    // ---------------------------------------------------------------------------------------------
+    [Test]
+    [Order(5)]
+    public async Task ProfileScoreSections_DeserializeAsSoloScoreInfo_WithBeatmapMetadataAndPp()
+    {
+        // Pin the player's ranked play so the Pinned subsection has a row to serve. Written
+        // directly rather than through the website's POST handler: this harness is the CLIENT's
+        // contract, and the pin is fixture data, not the thing under test.
+        await using (var db = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString))
+        {
+            await db.OpenAsync();
+            await Dapper.SqlMapper.ExecuteAsync(db,
+                """
+                INSERT INTO score_pins (score_id, user_id)
+                SELECT s.id, s.user_id FROM scores s
+                WHERE s.user_id = @userId AND s.ranked
+                ORDER BY s.id
+                LIMIT 1
+                ON CONFLICT DO NOTHING
+                """,
+                new { userId = ServerFixture.PlayerUserId });
+        }
+
+        foreach (string type in new[] { "best", "firsts", "recent", "pinned" })
+        {
+            var scores = await getScoresAsync(type);
+
+            Assert.That(scores, Is.Not.Null, $"{type} must deserialize as a score list");
+            Assert.That(scores!, Is.Not.Empty, $"the seeded player has a ranked play, so {type} must not be empty");
+
+            var score = scores[0];
+
+            // DrawableProfileScore does Score.Beatmap.AsNonNull() and then reads Metadata off it,
+            // which resolves through the NESTED beatmapset. A payload without it is not an empty
+            // row, it is a crash on every profile that opens.
+            Assert.That(score.Beatmap, Is.Not.Null, $"{type} rows must carry their beatmap");
+            Assert.That(score.Beatmap!.BeatmapSet, Is.Not.Null, $"{type} rows must carry the nested beatmapset");
+            Assert.That(score.Beatmap.Metadata.Title, Is.EqualTo("Wire Compat"));
+            Assert.That(score.Beatmap.Metadata.Artist, Is.EqualTo("Harness"));
+            Assert.That(score.Beatmap.DifficultyName, Is.EqualTo("type!beat"));
+
+            // The pp column only renders at all when the map's status grants pp AND the score is
+            // ranked AND preserve is set AND it is not "processed with no pp". All four are the
+            // server's to state, and three of them default to the value that HIDES pp.
+            Assert.That(score.Beatmap.Status, Is.EqualTo(BeatmapOnlineStatus.Ranked));
+            Assert.That(score.Ranked, Is.True);
+            Assert.That(score.Preserve, Is.True, "preserve defaults to false, which would suppress pp on every row");
+            Assert.That(score.Processed, Is.True);
+            Assert.That(score.PP, Is.Not.Null.And.GreaterThan(0), "the seeded play is ranked on a ranked map");
+
+            Assert.That(score.TotalScore, Is.EqualTo(400_000));
+            Assert.That(score.UserID, Is.EqualTo((int)ServerFixture.PlayerUserId));
+            Assert.That(score.EndedAt, Is.Not.EqualTo(default(DateTimeOffset)), "the date line renders from ended_at");
+        }
+    }
+
+    [Test]
+    [Order(6)]
+    public async Task ProfileMostPlayed_DeserializesAsAPIUserMostPlayedBeatmap_WithSiblingSet()
+    {
+        using var req = ServerFixture.Authed(HttpMethod.Get,
+            $"/api/v2/users/{ServerFixture.PlayerUserId}/beatmapsets/most_played?offset=0&limit=51");
+        using var resp = await client.SendAsync(req);
+
+        string body = await resp.Content.ReadAsStringAsync();
+        Assert.That(resp.IsSuccessStatusCode, Is.True, $"most_played status {(int)resp.StatusCode}: {body}");
+
+        var rows = JsonConvert.DeserializeObject<List<APIUserMostPlayedBeatmap>>(body);
+
+        Assert.That(rows, Is.Not.Null);
+        // The ranked seed map and the pending one: most played counts EVERY play, ranked or not.
+        Assert.That(rows!, Is.Not.Empty);
+
+        var top = rows[0];
+
+        Assert.That(top.PlayCount, Is.GreaterThan(0));
+        Assert.That(top.BeatmapSet, Is.Not.Null, "the set must be a SIBLING key, not only nested");
+
+        // BeatmapInfo's getter reassigns beatmap.BeatmapSet from the sibling every read, so this
+        // is where a nested-only payload would silently null the set back out.
+        Assert.That(top.BeatmapInfo, Is.Not.Null);
+        Assert.That(top.BeatmapInfo.BeatmapSet, Is.Not.Null);
+        Assert.That(top.BeatmapInfo.Metadata.Title, Is.Not.Empty);
+        Assert.That(top.BeatmapInfo.DifficultyName, Is.EqualTo("type!beat"));
+    }
+
+    // The OTHER half of task 83, and the half that makes a revived section honest rather than
+    // merely populated: PaginatedProfileSubsection.GetCount reads these counters straight off the
+    // user payload to print the number beside each subsection heading. A count that disagrees with
+    // the list under it is the failure the endpoints and the counters had to land together to avoid.
+    [Test]
+    [Order(7)]
+    public async Task GetUser_SectionCounts_MatchTheListsTheSectionsFetch()
+    {
+        using var req = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/users/{ServerFixture.PlayerUserId}?key=id");
+        using var resp = await client.SendAsync(req);
+
+        string body = await resp.Content.ReadAsStringAsync();
+        Assert.That(resp.IsSuccessStatusCode, Is.True, $"users status {(int)resp.StatusCode}: {body}");
+
+        var user = JsonConvert.DeserializeObject<APIUser>(body);
+        Assert.That(user, Is.Not.Null);
+
+        Assert.That(user!.ScoresBestCount, Is.EqualTo((await getScoresAsync("best")).Count));
+        Assert.That(user.ScoresFirstCount, Is.EqualTo((await getScoresAsync("firsts")).Count));
+        Assert.That(user.ScoresRecentCount, Is.EqualTo((await getScoresAsync("recent")).Count));
+        Assert.That(user.ScoresPinnedCount, Is.EqualTo((await getScoresAsync("pinned")).Count));
+
+        Assert.That(user.ScoresBestCount, Is.GreaterThan(0), "a zero here would prove nothing about the pairing");
+
+        using var mostPlayedReq = ServerFixture.Authed(HttpMethod.Get,
+            $"/api/v2/users/{ServerFixture.PlayerUserId}/beatmapsets/most_played?offset=0&limit=51");
+        using var mostPlayedResp = await client.SendAsync(mostPlayedReq);
+
+        var mostPlayed = JsonConvert.DeserializeObject<List<APIUserMostPlayedBeatmap>>(
+            await mostPlayedResp.Content.ReadAsStringAsync());
+
+        Assert.That(user.BeatmapPlayCountsCount, Is.EqualTo(mostPlayed!.Count));
+        Assert.That(user.BeatmapPlayCountsCount, Is.GreaterThan(0));
+
+        // The two graph subsections read their series off the user object and fetch nothing. They
+        // hide below two points, so the assertion is only that the key is present and parseable.
+        Assert.That(user.MonthlyPlayCounts, Is.Not.Null, "monthly_playcounts must be an array, not absent");
+        Assert.That(user.MonthlyPlayCounts, Is.Not.Empty, "the player has submitted, so a month is recorded");
+        Assert.That(user.MonthlyPlayCounts[0].Date, Is.Not.EqualTo(default(DateTime)));
+        Assert.That(user.MonthlyPlayCounts.Sum(m => m.Count), Is.GreaterThan(0));
+
+        // Nobody has watched a replay in this harness, so the other series is legitimately empty.
+        Assert.That(user.ReplaysWatchedCounts, Is.Not.Null);
+    }
+
+    // Route hygiene, the "worse than a 404" finding of task 81: users/{id}/{ruleset} is two
+    // segments wide and used to swallow every other two-segment users path, answering a USER
+    // OBJECT where the caller wanted a list. The sections that are staying off must fail as
+    // missing routes, not as unparseable ones.
+    [Test]
+    [Order(8)]
+    public async Task UnservedUserSubroutes_404_RatherThanReturningAUserObject()
+    {
+        foreach (string path in new[] { "kudosu", "recent_activity", "not-a-ruleset" })
+        {
+            using var req = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/users/{ServerFixture.PlayerUserId}/{path}");
+            using var resp = await client.SendAsync(req);
+
+            Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), $"users/{{id}}/{path} must 404");
+        }
+
+        // ...while BOTH shapes GetUserRequest can actually build still resolve to the profile
+        // payload. Its target is interpolated as `users/{lookup}/{Ruleset?.ShortName}`, so a null
+        // ruleset produces a TRAILING SLASH and an empty final segment, which is the form
+        // LocalUserStatisticsProvider, ChannelManager and ScoreImporter send. If validating the
+        // ruleset segment had caught that one, every one of those would have started 404ing.
+        foreach (string suffix in new[] { "/typebeat", "/" })
+        {
+            using var okReq = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/users/{ServerFixture.PlayerUserId}{suffix}?key=id");
+            using var okResp = await client.SendAsync(okReq);
+
+            Assert.That(okResp.IsSuccessStatusCode, Is.True, $"users/{{id}}{suffix} must still be the profile fetch");
+            Assert.That(JsonConvert.DeserializeObject<APIUser>(await okResp.Content.ReadAsStringAsync())?.Id,
+                Is.EqualTo((int)ServerFixture.PlayerUserId));
+        }
+
+        // An unknown score type is a missing route too, not an empty list: an empty list is a real
+        // answer about a real section, and a typo must not be able to impersonate one.
+        using var badTypeReq = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/users/{ServerFixture.PlayerUserId}/scores/nonsense");
+        using var badTypeResp = await client.SendAsync(badTypeReq);
+
+        Assert.That(badTypeResp.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // A restricted account is invisible site-wide, and its SECTIONS have to be too. Answering
+        // an empty array would confirm the account exists, which is the one thing 404 is hiding.
+        long restrictedId;
+
+        await using (var db = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString))
+        {
+            await db.OpenAsync();
+            restrictedId = await Dapper.SqlMapper.ExecuteScalarAsync<long>(db,
+                """
+                INSERT INTO users (username, email, password_hash, country_code, restricted)
+                VALUES ('wc_restricted', 'wc_restricted@example.com', 'x', 'US', true)
+                RETURNING id
+                """);
+        }
+
+        foreach (string path in new[] { "scores/best", "beatmapsets/most_played" })
+        {
+            using var req = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/users/{restrictedId}/{path}");
+            using var resp = await client.SendAsync(req);
+
+            Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.NotFound),
+                $"a restricted user's {path} must 404, not answer []");
+        }
+    }
+
+    /// <summary>One profile score section, parsed with the client's own list element type.</summary>
+    private static async Task<List<SoloScoreInfo>> getScoresAsync(string type)
+    {
+        using var req = ServerFixture.Authed(HttpMethod.Get,
+            $"/api/v2/users/{ServerFixture.PlayerUserId}/scores/{type}?offset=0&limit=51&mode=typebeat");
+        using var resp = await client.SendAsync(req);
+
+        string body = await resp.Content.ReadAsStringAsync();
+        Assert.That(resp.IsSuccessStatusCode, Is.True, $"scores/{type} status {(int)resp.StatusCode}: {body}");
+
+        return JsonConvert.DeserializeObject<List<SoloScoreInfo>>(body) ?? [];
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // (g) MD5 identity: the client's ComputeMD5Hash over the fixture bytes == the stored checksum.
     // ---------------------------------------------------------------------------------------------
     [Test]

@@ -2,6 +2,7 @@ using System.Globalization;
 using Dapper;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Scoring;
 using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
@@ -17,14 +18,35 @@ namespace Typebeat.Web.Endpoints;
 /// <para>The <c>?key=id|username</c> hint (GetUserRequest) disambiguates a numeric username from an
 /// id; absent, an all-digit lookup is treated as an id. Restricted/deleted users 404 (the overlay
 /// shows "user not found" rather than hanging).</para>
+///
+/// <para>
+/// THE <c>{ruleset}</c> SEGMENT IS VALIDATED, and that is a fix rather than pedantry. This server
+/// has exactly one ruleset, so the handler has nothing to do with the value; the route however is
+/// two segments wide and therefore swallows every other two-segment <c>users/{id}/...</c> path the
+/// client can construct. Task 81 found the consequence: <c>users/{id}/kudosu</c> and
+/// <c>users/{id}/recent_activity</c> did not 404, they matched HERE and answered a user object,
+/// which is worse than a 404 because the caller is expecting a list and gets a deserialisation
+/// failure instead of a plain "no such route". Anything that is not this server's ruleset now 404s.
+/// </para>
 /// </summary>
 public static class UserEndpoints
 {
     public static void Map(IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v2/users/{lookup}", Handle).RequireBearer();
-        app.MapGet("/api/v2/users/{lookup}/{ruleset}", Handle).RequireBearer();
+        app.MapGet("/api/v2/users/{lookup}/{ruleset}", HandleWithRuleset).RequireBearer();
     }
+
+    /// <summary>
+    /// The two-segment form. <c>GetUserRequest</c> builds its target as
+    /// <c>users/{lookup}/{ruleset?.ShortName}</c>, so the segment is either this server's ruleset
+    /// or empty (which routes to the one-segment overload instead); anything else is not a profile
+    /// fetch at all and must not be answered as one.
+    /// </summary>
+    private static Task<IResult> HandleWithRuleset(string lookup, string ruleset, HttpContext ctx, Db db)
+        => string.Equals(ruleset, UserWire.PlayMode, StringComparison.OrdinalIgnoreCase)
+            ? Handle(lookup, ctx, db)
+            : Task.FromResult(WireJson.Error(StatusCodes.Status404NotFound, "not found"));
 
     private static async Task<IResult> Handle(string lookup, HttpContext ctx, Db db)
     {
@@ -43,11 +65,35 @@ public static class UserEndpoints
 
         object statistics = await UserStatisticsWire.ForUserAsync(conn, row.Id, ctx.RequestAborted);
 
+        // The profile overlay's five subsection counters, from the same fragments the section
+        // endpoints page over (ProfileScoreEndpoints). Landed WITH those endpoints, never before
+        // them: a section whose list works and whose count does not is a wrong number on screen.
+        var sections = await ProfileScores.CountsForUserAsync(conn, row.Id, ctx.RequestAborted);
+
+        // The two graph subsections read their series off the user object rather than fetching.
+        var playMonths = await PlayHistory.ForUserAsync(conn, row.Id, ct: ctx.RequestAborted);
+        var viewMonths = await ReplayViews.ForUserAsync(conn, row.Id, ct: ctx.RequestAborted);
+
         var profile = new UserWire.UserProfile(
-            row.Id, row.Username, row.CountryCode, row.AvatarKey, row.IsAdmin, row.CreatedAt, row.LastVisit, statistics);
+            row.Id, row.Username, row.CountryCode, row.AvatarKey, row.IsAdmin, row.CreatedAt, row.LastVisit, statistics,
+            sections,
+            playMonths.Select(m => history(m.Month, m.Plays)).ToList(),
+            viewMonths.Select(m => history(m.Month, m.Views)).ToList());
 
         return WireJson.Ok(UserWire.User(profile, ctx.Request.Scheme, ctx.Request.Host.Value ?? string.Empty));
     }
+
+    /// <summary>
+    /// One point of a profile history graph. The client binds <c>start_date</c> to a plain
+    /// <c>DateTime</c> and only ever reads its month, so the month's first day is sent with no time
+    /// and no offset; an instant with a zone would invite a timezone shift across the boundary the
+    /// rollups were deliberately bucketed in UTC to avoid (024_play_history.sql).
+    /// </summary>
+    private static UserHistoryCountWire history(DateOnly month, long count) => new()
+    {
+        StartDate = month.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+        Count = count,
+    };
 
     // The play/score aggregates that used to be joined in here now come from
     // UserStatisticsWire.ForUserAsync, which reads user_stats itself so the login payload gets the

@@ -320,26 +320,27 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                    best.mods       AS ModsJson
             """;
 
+        // What each section's row-set fragment (Scoring/ProfileScores) has to project for the
+        // SELECT above to read it back off the `best` subquery. pp rides along for every section
+        // even though only Best orders by it: one column list keeps the fragments interchangeable
+        // here, and the cost is one double per row already being fetched.
+        const string section_columns =
+            """
+            sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.pp,
+            sc.ended_at, sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
+            """;
+
         // Pinned: the user's own curation, newest pin first, capped by the pin cap itself.
-        // Gated by exactly the filters the other score sections use (ranked scores on browsable
-        // sets), so a score that is deleted, unranked by an admin, or on a set that gets hidden
-        // simply stops appearing here, like it stops appearing under Best/Recent. Its pin row
-        // survives (and still counts against the cap) unless the SCORE row goes, which cascades.
+        // WHICH rows those are is ProfileScores', not this page's: the game client's profile
+        // overlay serves the same section from the same fragment, so the two cannot drift.
         PinnedScores = (await conn.QueryAsync<ScoreRowModel>(
             $"""
              {score_row_select}
-             FROM (
-                 SELECT sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
-                        sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay,
-                        p.pinned_at
-                 FROM score_pins p
-                 JOIN scores sc ON sc.id = p.score_id
-                 WHERE p.user_id = @id AND sc.ranked
-             ) best
+             FROM ({ProfileScores.PinnedOfUser(section_columns)}) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE s.status IN ('pending', 'unranked', 'ranked')
-             ORDER BY best.pinned_at DESC, best.id DESC
+             WHERE {ProfileScores.OnVisibleSet("s")}
+             ORDER BY {ProfileScores.PinnedOrder}
              LIMIT {ScorePins.MaxPins}
              """,
             new { id })).ToList();
@@ -363,21 +364,17 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         // and not-yet-priced play sits at exactly 0, and that whole tail then keeps precisely the
         // order this section had before, best score first, instead of being shuffled by submission
         // time. Where pp differs, the order agrees with PpRanking's by construction.
+        //
+        // Both the fold and the order now live in ProfileScores, shared with the game client's
+        // "Best performance" subsection, which is the same section on a different screen.
         BestScores = (await conn.QueryAsync<ScoreRowModel>(
             $"""
              {score_row_select}
-             FROM (
-                 SELECT DISTINCT ON (sc.beatmap_id)
-                        sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
-                        sc.pp, sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
-                 FROM scores sc
-                 WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
-                 ORDER BY sc.beatmap_id, sc.pp DESC, {BeatmapLeaderboard.Order("sc")}
-             ) best
+             FROM ({ProfileScores.BestOfUser(section_columns)}) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE s.status IN ('pending', 'unranked', 'ranked')
-             ORDER BY best.pp DESC, best.total_score DESC, best.id ASC
+             WHERE {ProfileScores.OnVisibleSet("s")}
+             ORDER BY {ProfileScores.BestOrder}
              LIMIT {score_section_size}
              """,
             new { id })).ToList();
@@ -421,26 +418,21 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                  FROM ({BeatmapLeaderboard.FirstPlacesOfUserSql}) best
                  JOIN beatmaps b ON b.id = best.beatmap_id
                  JOIN beatmapsets s ON s.id = b.set_id
-                 ORDER BY best.ended_at DESC, best.id DESC
+                 ORDER BY {ProfileScores.FirstPlacesOrder}
                  LIMIT {score_section_size}
                  """,
                 new { id })).ToList();
 
         // Recent plays include fails (rank F renders like the game), still ranked-only so
-        // admin-unranked scores never resurface.
+        // admin-unranked scores never resurface. Shared with the client's Historical section.
         RecentScores = (await conn.QueryAsync<ScoreRowModel>(
             $"""
              {score_row_select}
-             FROM (
-                 SELECT sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
-                        sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
-                 FROM scores sc
-                 WHERE sc.user_id = @id AND sc.ranked
-             ) best
+             FROM ({ProfileScores.RecentOfUser(section_columns)}) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE s.status IN ('pending', 'unranked', 'ranked')
-             ORDER BY best.ended_at DESC, best.id DESC
+             WHERE {ProfileScores.OnVisibleSet("s")}
+             ORDER BY {ProfileScores.RecentOrder}
              LIMIT {score_section_size}
              """,
             new { id })).ToList();
@@ -526,6 +518,10 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             }
         }
 
+        // Most played, per BEATMAP (a set with several difficulties contributes one row each), from
+        // the same aggregate the client's Historical section pages over. The display columns come
+        // from a join rather than from the GROUP BY, which is what lets one definition serve two
+        // very different projections without either of them repeating the grouping key.
         MostPlayed = (await conn.QueryAsync<MostPlayedRow>(
             $"""
              SELECT s.id     AS SetId,
@@ -535,13 +531,11 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                     s.artist_unicode AS ArtistUnicode,
                     s.explicit       AS Explicit,
                     CASE WHEN s.cover_key IS NOT NULL THEN '/' || s.cover_key || '/list.jpg' END AS CoverUrl,
-                    count(*) AS Plays
-             FROM scores sc
-             JOIN beatmaps b ON b.id = sc.beatmap_id
+                    mp.plays AS Plays
+             FROM ({ProfileScores.MostPlayedOfUserSql}) mp
+             JOIN beatmaps b ON b.id = mp.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE sc.user_id = @id AND s.status IN ('pending', 'unranked', 'ranked')
-             GROUP BY sc.beatmap_id, s.id, s.title, s.artist, s.title_unicode, s.artist_unicode, s.explicit, s.cover_key
-             ORDER BY count(*) DESC, s.id ASC
+             ORDER BY {ProfileScores.MostPlayedOrder}
              LIMIT {most_played_size}
              """,
             new { id })).ToList();
