@@ -43,7 +43,31 @@ public static class UserWire
     /// <summary>
     /// The APIUser payload for GET /api/v2/users/{lookup} (GetUserRequest): the profile overlay's
     /// fetch. A superset of <see cref="Me"/> with the header fields the profile page reads
-    /// (join_date, cover, last_visit) and real <see cref="ProfileStatistics"/>.
+    /// (join_date, cover, last_visit), real <see cref="ProfileStatistics"/>, and the profile
+    /// SECTION data the overlay's subsections read straight off the user object.
+    ///
+    /// <para>
+    /// THE SECTION COUNTS (<c>scores_*_count</c>, <c>beatmap_playcounts_count</c>) are not
+    /// decoration and not optional. <c>PaginatedProfileSubsection.GetCount</c> reads them here to
+    /// print the number beside each subsection heading, so an absent key defaults to 0 and a player
+    /// with plenty gets a confident zero over a list of their own scores, which is the fabricated
+    /// number tasks 74, 75 and 80 removed elsewhere. They are computed by
+    /// <see cref="Scoring.ProfileScores.CountsForUserAsync"/> from the SAME fragments the section
+    /// endpoints page over, so the heading and the rows under it always agree.
+    /// </para>
+    ///
+    /// <para>
+    /// THE HISTORY ARRAYS (<c>monthly_playcounts</c>, <c>replays_watched_counts</c>) feed the two
+    /// graph subsections, which fetch nothing of their own. They hide themselves below two data
+    /// points, so a new account gets no chart rather than a flat line of one bar.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>profile_order</c> is deliberately NOT sent. The website stores a per-user section order,
+    /// but over its own finer-grained vocabulary (<c>pinned</c>, <c>best-scores</c>, ...), which
+    /// names nothing the client has (<c>top_ranks</c>, <c>historical</c>); forwarding it would land
+    /// on the client's "no usable order was stated" fallback and change nothing.
+    /// </para>
     /// </summary>
     public static object User(UserProfile p, string scheme, string host) => new
     {
@@ -68,6 +92,15 @@ public static class UserWire
         badges = Array.Empty<object>(),
         groups = Array.Empty<object>(),
         statistics = p.Statistics,
+
+        // Profile sections. Counts first, then the two graph series.
+        scores_pinned_count = p.Sections.Pinned,
+        scores_best_count = p.Sections.Best,
+        scores_first_count = p.Sections.FirstPlaces,
+        scores_recent_count = p.Sections.Recent,
+        beatmap_playcounts_count = p.Sections.MostPlayed,
+        monthly_playcounts = p.MonthlyPlayCounts,
+        replays_watched_counts = p.ReplaysWatchedCounts,
     };
 
     /// <summary>Everything the user endpoint needs to render a full profile payload.
@@ -81,7 +114,10 @@ public static class UserWire
         bool IsAdmin,
         DateTime JoinedAt,
         DateTime? LastVisit,
-        object Statistics);
+        object Statistics,
+        Scoring.ProfileScores.SectionCounts Sections,
+        IReadOnlyList<UserHistoryCountWire> MonthlyPlayCounts,
+        IReadOnlyList<UserHistoryCountWire> ReplaysWatchedCounts);
 
     /// <summary>
     /// A populated UserStatistics (Users/UserStatistics.cs). grade_counts only carries ss/s/a (the

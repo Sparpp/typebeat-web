@@ -693,15 +693,21 @@ public static class ScoreEndpoints
         AvatarUrl = UserWire.AvatarUrl(ctx.Request.Scheme, ctx.Request.Host.Value ?? string.Empty, avatarKey),
     };
 
-    private static Dictionary<string, int> ParseCounts(string? json)
+    /// <summary>
+    /// The stored statistics jsonb as the client's HitResult-keyed counts. Internal because the
+    /// profile score rows (<see cref="ProfileScoreEndpoints"/>) carry the same two blobs and must
+    /// decode them identically; a second copy is a second thing to keep in step.
+    /// </summary>
+    internal static Dictionary<string, int> ParseCounts(string? json)
         => JsonConvert.DeserializeObject<Dictionary<string, int>>(json ?? "{}") ?? new Dictionary<string, int>();
 
     /// <summary>
     /// The stored mods jsonb (<c>[{"acronym":"DT","settings":{"speed_change":1.5}}]</c>) passed
     /// straight through to the leaderboard wire, so the client's ModIcon strip renders on global
     /// scores exactly as it does for local plays, rate pill included. Empty/null → no mods.
+    /// Internal for the same reason as <see cref="ParseCounts"/>.
     /// </summary>
-    private static object[] ParseMods(string? json)
+    internal static object[] ParseMods(string? json)
         => string.IsNullOrWhiteSpace(json)
             ? Array.Empty<object>()
             : JsonConvert.DeserializeObject<object[]>(json) ?? Array.Empty<object>();

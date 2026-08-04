@@ -218,6 +218,7 @@ OAuthEndpoints.Map(app);
 RegistrationEndpoints.Map(app);
 MeEndpoints.Map(app);
 UserEndpoints.Map(app);
+ProfileScoreEndpoints.Map(app);
 StubEndpoints.Map(app);
 NotificationsSocket.Map(app);
 BeatmapLookupEndpoints.Map(app);
