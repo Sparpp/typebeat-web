@@ -6,9 +6,9 @@ namespace Typebeat.Web.Pages;
 
 /// <summary>
 /// Landing page: hero (slogan, live stats line, download/sign-up CTAs) plus a "newest maps" strip
-/// of up to 8 published sets rendered with the shared card partial. The download button links
-/// straight to /download/game (there is no dedicated download page) and only shows when a build
-/// is actually stored.
+/// of up to 8 published sets rendered with the shared card partial. The download button links to
+/// the /download page, which picks the platform; it only shows when at least one platform's build
+/// is actually stored, otherwise a signed-out visitor gets the sign-up CTA in its place.
 /// </summary>
 public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) : TypebeatPageModel
 {
@@ -16,7 +16,7 @@ public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) :
     public long ScoresTotal { get; private set; }
     public long Maps { get; private set; }
 
-    /// <summary>True when a game build is configured and present; gates the hero download button.</summary>
+    /// <summary>True when SOME platform's game build is configured and present; gates the hero download button.</summary>
     public bool GameDownloadAvailable { get; private set; }
 
     /// <summary>Set after an account-deletion redirect (?deleted=1) to show a farewell note.</summary>
@@ -28,9 +28,7 @@ public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) :
     {
         AccountDeleted = HttpContext.Request.Query.ContainsKey("deleted");
 
-        string? gameFile = config["TYPEBEAT_GAME_DOWNLOAD"];
-        GameDownloadAvailable = !string.IsNullOrEmpty(gameFile)
-            && await store.ObjectExistsAsync(StoreKeys.Download(gameFile), HttpContext.RequestAborted);
+        GameDownloadAvailable = await AnyGameDownloadAvailableAsync(config, store, HttpContext.RequestAborted);
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
@@ -55,5 +53,30 @@ public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) :
             LIMIT 8
             """,
             new { viewerId = CurrentUser?.Id ?? 0 })).ToList();
+    }
+
+    /// <summary>
+    /// True as soon as ANY platform's build is both configured and stored. The hero CTA just sends
+    /// the visitor to /download, which does the per-platform work, so asking about Windows alone
+    /// hid the front-page entry point whenever only a Linux or macOS build was published.
+    ///
+    /// Deliberately not <see cref="DownloadModel"/>'s resolver: that one opens each object to get a
+    /// byte length for its size caption, and the hero has no size to show. Existence is the cheaper
+    /// question, and the loop stops at the first platform that answers yes rather than probing all
+    /// three on every request. An unset key is skipped, never treated as an answer.
+    ///
+    /// Public and static purely so it can be pinned without booting a second test host.
+    /// </summary>
+    public static async Task<bool> AnyGameDownloadAvailableAsync(IConfiguration config, IFileStore store, CancellationToken ct = default)
+    {
+        foreach (string configKey in GameDownloadKeys.All)
+        {
+            string? fileName = config[configKey];
+
+            if (!string.IsNullOrEmpty(fileName) && await store.ObjectExistsAsync(StoreKeys.Download(fileName), ct))
+                return true;
+        }
+
+        return false;
     }
 }

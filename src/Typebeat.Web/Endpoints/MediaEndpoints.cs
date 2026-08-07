@@ -74,11 +74,11 @@ public static class MediaEndpoints
         // links here per-platform. 404 when the platform's build is unconfigured or unstored.
         // Anonymous: anyone can grab the game.
         app.MapGet("/download/game", (HttpContext ctx, IConfiguration config, IFileStore store)
-            => DownloadArtifactAsync(ctx, config, store, "TYPEBEAT_GAME_DOWNLOAD"));
+            => DownloadArtifactAsync(ctx, config, store, GameDownloadKeys.Windows));
         app.MapGet("/download/game-linux", (HttpContext ctx, IConfiguration config, IFileStore store)
-            => DownloadArtifactAsync(ctx, config, store, "TYPEBEAT_GAME_DOWNLOAD_LINUX"));
+            => DownloadArtifactAsync(ctx, config, store, GameDownloadKeys.Linux));
         app.MapGet("/download/game-macos", (HttpContext ctx, IConfiguration config, IFileStore store)
-            => DownloadArtifactAsync(ctx, config, store, "TYPEBEAT_GAME_DOWNLOAD_MACOS"));
+            => DownloadArtifactAsync(ctx, config, store, GameDownloadKeys.Macos));
 
         // The Velopack update feed (downloads/releases/{file}): the release manifest + full
         // package the installed client's VelopackUpdateManager polls (SimpleWebSource at
