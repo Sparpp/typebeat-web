@@ -2,7 +2,7 @@
 @model DownloadModel
 @{
     ViewData["Title"] = "Download";
-    ViewData["MetaDescription"] = "Get type!beat for Windows or Linux, the free rhythm game "
+    ViewData["MetaDescription"] = "Get type!beat for Windows, macOS or Linux, the free rhythm game "
         + "where the lyrics are the notes and your keyboard is the instrument.";
 }
 
@@ -13,12 +13,16 @@
     {
         <p class="hero-sub">Install, run, type. Your account and scores are shared with the web.</p>
 
+        @* Three cards in a two-column grid, so auto-placement puts macOS under Windows and leaves
+           the slot under Linux empty: the trio reads as an L. Card order here IS the layout, do
+           not reorder without re-checking .download-grid in site.css. *@
         <div class="download-grid">
             <partial name="_DownloadCard" model="(Model.Windows, Model.DetectedOs)" />
             <partial name="_DownloadCard" model="(Model.Linux, Model.DetectedOs)" />
+            <partial name="_DownloadCard" model="(Model.Macos, Model.DetectedOs)" />
         </div>
 
-        <p class="hero-note">Builds aren't code-signed yet, so Windows SmartScreen (or a Linux "allow to run" prompt) may warn on first launch.</p>
+        <p class="hero-note">Builds aren't code-signed yet, so your OS may warn on first launch.</p>
     }
     else
     {
@@ -38,7 +42,7 @@
     <div class="step card">
         <div class="step__num">1</div>
         <h3>Install &amp; run</h3>
-        <p class="muted">Windows: run the installer. Linux: make the <span class="faint">.AppImage</span> executable and launch it. It auto-updates itself from here on.</p>
+        <p class="muted">Windows: run the installer. macOS: open the <span class="faint">.pkg</span>. Linux: make the <span class="faint">.AppImage</span> executable and launch it. It auto-updates itself from here on.</p>
     </div>
     <div class="step card">
         <div class="step__num">2</div>

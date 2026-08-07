@@ -43,6 +43,10 @@ services:
       # repo's build-linux.yml workflow always deploys the AppImage under the stable name
       # typebeat-linux.AppImage, so set TYPEBEAT_GAME_DOWNLOAD_LINUX once in deploy/.env.
       TYPEBEAT_GAME_DOWNLOAD_LINUX: "${TYPEBEAT_GAME_DOWNLOAD_LINUX:-}"
+      # macOS counterpart (the /download page's macOS card + /download/game-macos). The game
+      # repo's build-macos.yml workflow always deploys the installer under the stable name
+      # typebeat-macos.pkg, so set TYPEBEAT_GAME_DOWNLOAD_MACOS once in deploy/.env.
+      TYPEBEAT_GAME_DOWNLOAD_MACOS: "${TYPEBEAT_GAME_DOWNLOAD_MACOS:-}"
       # Shared key for the Discord bot's private score feed (GET /api/v2/scores/recent).
       # Unset = the endpoint 404s and the feature is simply off, so this is safe to leave blank.
       TYPEBEAT_BUDDY_KEY: "${TYPEBEAT_BUDDY_KEY:-}"

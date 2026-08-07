@@ -1533,7 +1533,9 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 /* ---- Download page ---- */
 
-/* Download page: one card per platform (Windows / Linux). */
+/* Download page: one card per platform (Windows / Linux / macOS). Deliberately two columns for
+   three cards, so the third (macOS, emitted last in Download.cshtml) lands under Windows and the
+   slot under Linux stays empty: the trio reads as an L. */
 .download-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

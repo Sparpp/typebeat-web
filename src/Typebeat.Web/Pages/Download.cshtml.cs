@@ -5,21 +5,23 @@ namespace Typebeat.Web.Pages;
 
 /// <summary>
 /// Game download page (/download). Presents the per-platform installers: Windows (Velopack
-/// Setup.exe, downloads/{TYPEBEAT_GAME_DOWNLOAD}) and Linux (AppImage,
-/// downloads/{TYPEBEAT_GAME_DOWNLOAD_LINUX}), and highlights the visitor's own OS. The actual
-/// bytes stream from the /download/game and /download/game-linux endpoints (MediaEndpoints);
-/// this page only decides which buttons to show and their sizes. A platform with no configured
-/// or stored build renders a "coming soon" state instead of a dead link.
+/// Setup.exe, downloads/{TYPEBEAT_GAME_DOWNLOAD}), Linux (AppImage,
+/// downloads/{TYPEBEAT_GAME_DOWNLOAD_LINUX}) and macOS (Velopack .pkg,
+/// downloads/{TYPEBEAT_GAME_DOWNLOAD_MACOS}), and highlights the visitor's own OS. The actual
+/// bytes stream from the /download/game, /download/game-linux and /download/game-macos endpoints
+/// (MediaEndpoints); this page only decides which buttons to show and their sizes. A platform
+/// with no configured or stored build renders a "coming soon" state instead of a dead link.
 /// </summary>
 public sealed class DownloadModel(IFileStore store, IConfiguration config) : TypebeatPageModel
 {
     public PlatformDownload Windows { get; private set; } = PlatformDownload.Unavailable("windows");
     public PlatformDownload Linux { get; private set; } = PlatformDownload.Unavailable("linux");
+    public PlatformDownload Macos { get; private set; } = PlatformDownload.Unavailable("macos");
 
-    /// <summary>The visitor's detected OS ("windows" / "linux"), or null when unknown; drives which card is featured.</summary>
+    /// <summary>The visitor's detected OS ("windows" / "macos" / "linux"), or null when unknown; drives which card is featured.</summary>
     public string? DetectedOs { get; private set; }
 
-    public bool AnyAvailable => Windows.Available || Linux.Available;
+    public bool AnyAvailable => Windows.Available || Linux.Available || Macos.Available;
 
     public async Task OnGetAsync()
     {
@@ -27,6 +29,7 @@ public sealed class DownloadModel(IFileStore store, IConfiguration config) : Typ
 
         Windows = await resolve("windows", "TYPEBEAT_GAME_DOWNLOAD", "/download/game");
         Linux = await resolve("linux", "TYPEBEAT_GAME_DOWNLOAD_LINUX", "/download/game-linux");
+        Macos = await resolve("macos", "TYPEBEAT_GAME_DOWNLOAD_MACOS", "/download/game-macos");
     }
 
     private async Task<PlatformDownload> resolve(string os, string configKey, string href)
@@ -45,11 +48,27 @@ public sealed class DownloadModel(IFileStore store, IConfiguration config) : Typ
         return new PlatformDownload(os, true, fileName, stream.Length, href);
     }
 
-    /// <summary>Coarse OS sniff from the User-Agent, only to feature the matching card; both stay available.</summary>
-    private static string? DetectOs(string userAgent)
+    /// <summary>
+    /// Coarse OS sniff from the User-Agent, only to feature the matching card; all three stay
+    /// available regardless. Public purely so the mobile-exclusion rules below can be unit tested;
+    /// it is not a Razor Pages handler (those are the On* methods) and binds to nothing.
+    /// </summary>
+    public static string? DetectOs(string userAgent)
     {
         if (userAgent.Contains("Windows", StringComparison.OrdinalIgnoreCase))
             return "windows";
+
+        // Desktop Mac UAs say "Macintosh; Intel Mac OS X ..." on every browser. iOS UAs carry
+        // "like Mac OS X" too ("iPhone; CPU iPhone OS 17_0 like Mac OS X"), and there is no iOS
+        // build, so exclude them the same way the Linux branch excludes Android below. Known
+        // unfixable gap: an iPad in desktop mode sends a UA byte-identical to a Mac's, so it is
+        // reported as macOS. Nothing server-side can tell those apart.
+        if ((userAgent.Contains("Macintosh", StringComparison.OrdinalIgnoreCase)
+                || userAgent.Contains("Mac OS X", StringComparison.OrdinalIgnoreCase))
+            && !userAgent.Contains("iPhone", StringComparison.OrdinalIgnoreCase)
+            && !userAgent.Contains("iPad", StringComparison.OrdinalIgnoreCase)
+            && !userAgent.Contains("iPod", StringComparison.OrdinalIgnoreCase))
+            return "macos";
 
         // Android UAs also contain "Linux"; exclude them (no Android build) so mobile isn't mislabelled.
         if (userAgent.Contains("Linux", StringComparison.OrdinalIgnoreCase)

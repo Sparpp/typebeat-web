@@ -94,6 +94,20 @@ The `/download` page shows "coming soon" until both of these are true:
    `docker compose -f deploy/compose.prod.yml up -d` recreates the app container so the
    variable (forwarded by compose.prod.yml's environment block) reaches the app.
 
+Each platform card is independent and has its own key; a platform with no key set (or no file
+stored) just shows "coming soon" rather than a dead link. The Linux and macOS artifacts are
+published by the game repo's `build-linux.yml` / `build-macos.yml` workflows under stable,
+un-versioned names, so their keys are set once and never change:
+
+| Key | Card | Value the workflow publishes |
+|-----|------|------------------------------|
+| `TYPEBEAT_GAME_DOWNLOAD` | Windows | (whatever the Windows installer is named) |
+| `TYPEBEAT_GAME_DOWNLOAD_LINUX` | Linux | `typebeat-linux.AppImage` |
+| `TYPEBEAT_GAME_DOWNLOAD_MACOS` | macOS | `typebeat-macos.pkg` |
+
+All three must be declared in `compose.prod.yml`'s `environment:` block: compose does not forward
+undeclared host env vars, so an `.env` entry with no matching declaration is silently ignored.
+
 ## Notes
 
 - The app auto-migrates (`Data/Migrations/*.sql`) and auto-creates the `citext` extension on
