@@ -1795,7 +1795,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 }
 
 /* The dragged section is its own drop preview: it travels through its siblings under the pointer,
-   so the gap you see IS where it will land, and nothing has to keep a placeholder in sync. */
+   so the gap you see IS where it will land, and nothing has to keep a placeholder in sync.
    The selector is the data attribute, not .profile-section: the Pinned block's draggable element
    is the wrapper div that owns the #pinned anchor, and it is a section like any other here. */
 [data-section-id].is-dragging,
