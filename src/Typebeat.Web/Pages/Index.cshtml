@@ -3,7 +3,7 @@
 @model IndexModel
 @{
     ViewData["MetaDescription"] = "type!beat is a free rhythm game played on your keyboard: "
-        + "the lyrics are the notes. Download for Windows or Linux, grab community maps and chase the leaderboards.";
+        + "the lyrics are the notes. Download for Windows, macOS or Linux, grab community maps and chase the leaderboards.";
 }
 
 @if (Model.AccountDeleted)
@@ -27,7 +27,7 @@
     </div>
     @if (Model.GameDownloadAvailable)
     {
-        <p class="hero-note">Installer isn't signed yet and will trigger Windows SmartScreen :(</p>
+        <p class="hero-note">Builds aren't signed yet, so your OS may warn on first launch :(</p>
     }
     <p class="hero-stats">
         <span><strong>@Model.Players.ToString("N0", CultureInfo.InvariantCulture)</strong> registered players</span>

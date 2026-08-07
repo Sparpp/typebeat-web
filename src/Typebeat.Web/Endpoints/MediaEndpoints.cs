@@ -69,13 +69,16 @@ public static class MediaEndpoints
             => ServeImmutableImageAsync(StoreKeys.UserCover(userId, version), ctx, store));
 
         // The game-client release artifacts (downloads/{TYPEBEAT_GAME_DOWNLOAD}, the Velopack
-        // Windows Setup.exe; downloads/{TYPEBEAT_GAME_DOWNLOAD_LINUX}, the Linux AppImage). The
-        // /download page links here per-platform. 404 when the platform's build is unconfigured or
-        // unstored. Anonymous: anyone can grab the game.
+        // Windows Setup.exe; downloads/{TYPEBEAT_GAME_DOWNLOAD_LINUX}, the Linux AppImage;
+        // downloads/{TYPEBEAT_GAME_DOWNLOAD_MACOS}, the macOS .pkg installer). The /download page
+        // links here per-platform. 404 when the platform's build is unconfigured or unstored.
+        // Anonymous: anyone can grab the game.
         app.MapGet("/download/game", (HttpContext ctx, IConfiguration config, IFileStore store)
             => DownloadArtifactAsync(ctx, config, store, "TYPEBEAT_GAME_DOWNLOAD"));
         app.MapGet("/download/game-linux", (HttpContext ctx, IConfiguration config, IFileStore store)
             => DownloadArtifactAsync(ctx, config, store, "TYPEBEAT_GAME_DOWNLOAD_LINUX"));
+        app.MapGet("/download/game-macos", (HttpContext ctx, IConfiguration config, IFileStore store)
+            => DownloadArtifactAsync(ctx, config, store, "TYPEBEAT_GAME_DOWNLOAD_MACOS"));
 
         // The Velopack update feed (downloads/releases/{file}): the release manifest + full
         // package the installed client's VelopackUpdateManager polls (SimpleWebSource at
@@ -151,7 +154,7 @@ public static class MediaEndpoints
 
         // Attachment disposition + Content-Length + range (seekable FileStream); a download
         // manager's segmented/resumed fetch works. Content type follows the artifact (installer
-        // exe / AppImage today, zip historically).
+        // exe / AppImage / pkg today, zip historically).
         string contentType = fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
             ? "application/zip"
             : "application/octet-stream";
