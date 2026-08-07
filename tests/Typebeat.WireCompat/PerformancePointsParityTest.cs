@@ -130,6 +130,55 @@ public class PerformancePointsParityTest
     }
 
     [Test]
+    public void TheTwoSplitPenaltyTermsAgreeExactlyIncludingTheDecidedWorkedExamples()
+    {
+        // Backlog 89 split one penalty term into two, which is a fresh seam: the miss term and the
+        // mistyping term could now drift apart INDEPENDENTLY, and a spread that only ever moves both
+        // at once could miss it. Each case below holds one of the two counts fixed while the other
+        // moves, and the two headline cases the rebalance was decided on are stated as exact values
+        // so this file also pins WHAT the split is worth, not merely that both halves agree.
+        //
+        // Nothing else in the formula reads either count, so pp divided by the same play with
+        // neither is exactly (1 - miss/notes)^8.5 * (1 - mistypes/(notes+mistypes))^3.5.
+        const int notes = 500;
+
+        double clientSpotless = ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, 0);
+        double serverSpotless = ServerPp.Compute(4, notes, 0, 0.9, notes, no_server_mods, 0);
+
+        Assert.That(clientSpotless, Is.EqualTo(serverSpotless), "the spotless baseline itself must agree");
+
+        foreach ((int misses, int mistypes) in new[]
+                 {
+                     (60, 80),   // the first decided example: 0.880^8.5 * 0.862^3.5
+                     (10, 20),   // the second: 0.980^8.5 * 0.962^3.5
+                     (0, 0), (0, 1), (0, 80), (0, 5000),      // mistypes alone
+                     (1, 0), (60, 0), (250, 0), (500, 0),     // misses alone
+                     (500, 5000),                             // both at once, at the extreme
+                 })
+        {
+            double client = ClientPp.Compute(4, notes, misses, 0.9, notes, no_client_mods, mistypes);
+            double server = ServerPp.Compute(4, notes, misses, 0.9, notes, no_server_mods, mistypes);
+
+            Assert.That(client, Is.EqualTo(server), $"miss={misses} mistypes={mistypes}");
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ClientPp.Compute(4, notes, 60, 0.9, notes, no_client_mods, 80) / clientSpotless,
+                Is.EqualTo(0.200678).Within(1e-6));
+            Assert.That(ClientPp.Compute(4, notes, 10, 0.9, notes, no_client_mods, 20) / clientSpotless,
+                Is.EqualTo(0.734184).Within(1e-6));
+
+            // Zero mistypes leaves the mistyping term at exactly 1.0 on both sides, so the play is
+            // priced by its misses alone.
+            Assert.That(ClientPp.Compute(4, notes, 60, 0.9, notes, no_client_mods, 0) / clientSpotless,
+                Is.EqualTo(Math.Pow(1.0 - 60 / 500.0, 8.5)).Within(1e-12));
+            Assert.That(ServerPp.Compute(4, notes, 60, 0.9, notes, no_server_mods, 0) / serverSpotless,
+                Is.EqualTo(Math.Pow(1.0 - 60 / 500.0, 8.5)).Within(1e-12));
+        });
+    }
+
+    [Test]
     public void TheTwoFormulasAgreeOnDegenerateInput()
     {
         // Neither side may ever produce NaN, Infinity or a negative number, and they must reach the
@@ -193,7 +242,7 @@ public class PerformancePointsParityTest
             [HitResult.IgnoreHit] = 12,
             [HitResult.IgnoreMiss] = 3,
             [HitResult.LargeBonus] = 7,
-            // The MISTYPE stat: priced in the cleanliness term only, never a note.
+            // The MISTYPE stat: priced by its own term, never a note.
             [HitResult.ComboBreak] = 137,
         };
 

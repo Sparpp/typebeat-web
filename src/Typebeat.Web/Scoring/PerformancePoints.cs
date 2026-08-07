@@ -9,7 +9,8 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <code>
 /// pp = 4.0 · SR_eff^2.70
-///          · (1 − (miss+mistypes)/(notes+mistypes))^7.5   cleanliness
+///          · (1 − miss/notes)^8.5                         cleanliness
+///          · (1 − mistypes/(notes+mistypes))^3.5          mistyping
 ///          · max(0.1, 1 + 0.70·log10(notes/100))          length, floored
 ///          · acc^1.30                                     timing quality
 ///          · (maxcombo/notes)^0.55                        combo
@@ -17,16 +18,30 @@ namespace Typebeat.Web.Scoring;
 /// </code>
 ///
 /// <para>
-/// MISTYPES (wrong keypresses, the <c>combo_break</c> statistics key, backlog 72) are priced in the
-/// CLEANLINESS term only, and only there. Before they were persisted, a wrong key left no trace in
-/// a submitted score but a broken combo, so a sloppy high-SR play farmed nearly the pp of a clean
-/// one, which is the exact thing the cleanliness term exists to prevent. Adding them to BOTH sides
-/// of the fraction keeps it inside [0, 1] no matter how much the player mashes (misses ≤ notes, so
-/// the numerator can never outrun the denominator), and mistypes deliberately do NOT enter
-/// <c>notes</c>: notes is the map's cell count, and letting keypresses inflate it would hand a
-/// masher a bigger LENGTH bonus and a smaller COMBO denominator, paying for the mashing twice over.
-/// A play carrying no mistype count at all (every score submitted before the stat existed) collapses
-/// the term to its original <c>(1 − miss/notes)^7.5</c> exactly, so no stored row's pp moves.
+/// MISSES and MISTYPES are priced by SEPARATE terms (backlog 89), and neither appears in the
+/// other's. CLEANLINESS is dropped cells alone, over the plain note count, at the steeper exponent
+/// 8.5. MISTYPING (wrong keypresses, the <c>combo_break</c> statistics key, backlog 72) is its own
+/// factor at 3.5. Between backlog 72 and 89 the two rode inside one fraction, which quietly made
+/// each penalty depend on the other: a mistype pulled the miss ratio towards its own value, so a
+/// player with a heavy mistype count was charged LESS per dropped cell than a clean one. Split, a
+/// play's misses cost the same whatever its keypresses did, and vice versa.
+/// </para>
+///
+/// <para>
+/// Why the mistype term keeps mistypes on BOTH sides of its fraction while the miss term does not:
+/// misses are bounded by <c>notes</c> (a play cannot drop more cells than the map has), but
+/// keypresses are UNBOUNDED, so <c>1 − mistypes/notes</c> would run negative and a fractional
+/// exponent on a negative base is not merely wrong but non-real. Putting the count in the
+/// denominator too bounds the base to [0, 1] for any mistype count, however absurd, and it decays
+/// towards 0 rather than exploding. Do not "simplify" that denominator away.
+/// </para>
+///
+/// <para>
+/// Mistypes deliberately do NOT enter <c>notes</c>, which stays <c>great + ok + meh + miss</c>, the
+/// map's cell count. Letting keypresses inflate it would hand a masher a bigger LENGTH bonus and a
+/// smaller COMBO denominator, paying for the mashing twice over. A play carrying no mistype count at
+/// all (every score submitted before the stat existed) collapses the mistyping term to exactly 1.0,
+/// so such a play is priced by <c>(1 − miss/notes)^8.5</c> alone.
 /// </para>
 ///
 /// <para>
@@ -65,23 +80,29 @@ public static class PerformancePoints
     /// <summary>
     /// Bumped whenever this file's arithmetic changes shape. Stamped on score rows
     /// (<c>scores.pp_version</c>) when their pp is written; rows below it are recomputed at startup
-    /// by <see cref="Packages.PpBackfill"/>. v1 = the initial formula (docs/pp.md).
+    /// by <see cref="Packages.PpBackfill"/>.
+    ///
+    /// <list type="bullet">
+    /// <item>v1 = the initial formula (docs/pp.md), including the backlog-72 mistype term.</item>
+    /// <item>v2 = the backlog-89 rebalance: the miss exponent rises 7.5 to 8.5, and mistypes leave
+    /// the cleanliness fraction for a term of their own at exponent 3.5.</item>
+    /// </list>
     ///
     /// <para>Rows are ALSO invalidated back to 0 whenever the beatmap they were set on has its star
     /// ratings rewritten (ingest, or the pace/SR sweep in <see cref="Packages.PaceBackfill"/>), so a
     /// pp value can never outlive the SR it was computed from.</para>
     ///
-    /// <para>NOT bumped for the mistype term (backlog 72), deliberately. A bump exists to force a
-    /// reprice of rows the arithmetic would now value differently, and no stored row qualifies: the
-    /// mistype count lives in the <c>combo_break</c> statistics key, which no client ever emitted
-    /// before that change, so <see cref="CountNotes"/> reads 0 for every existing row and the new
-    /// cleanliness term is algebraically the old one at 0. Bumping would therefore buy a full
-    /// startup sweep that provably rewrites every row with the value it already holds. The proof
-    /// rests on exactly one fact, worth restating if this is ever revisited: no historic row can
-    /// carry a non-zero <c>combo_break</c>. Bump this the moment a change values ANY stored row
-    /// differently.</para>
+    /// <para>The mistype term (backlog 72) deliberately did NOT bump, and the reason is worth
+    /// keeping because it is exactly the reason v2 HAD to: a bump exists to force a reprice of rows
+    /// the arithmetic would now value differently, and back then no stored row qualified. The
+    /// mistype count lives in the <c>combo_break</c> statistics key, which no client had ever
+    /// emitted, so <see cref="CountNotes"/> read 0 for every existing row and the amended term was
+    /// algebraically the old one at 0. That argument does not survive backlog 89: raising the miss
+    /// exponent reprices every stored row carrying even ONE miss, whatever its mistype count, so
+    /// there is no set of rows the change provably leaves alone. Bump this the moment a change
+    /// values ANY stored row differently.</para>
     /// </summary>
-    public const int VERSION = 1;
+    public const int VERSION = 2;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -99,7 +120,8 @@ public static class PerformancePoints
 
     private const double scale = 4.0;              // C: global scale, does not affect ranking order
     private const double sr_exponent = 2.70;
-    private const double miss_exponent = 7.5;
+    private const double miss_exponent = 8.5;
+    private const double mistype_exponent = 3.5;
     private const double length_weight = 0.70;
     private const double length_floor = 0.1;
     private const double accuracy_exponent = 1.30;
@@ -137,7 +159,8 @@ public static class PerformancePoints
     /// <summary>
     /// The MISTYPE key: wrong keypresses, persisted by the client under
     /// <c>HitResult.ComboBreak</c> (backlog 72). Not a note, not accuracy-affecting, and absent
-    /// entirely from every score submitted before it existed.
+    /// entirely from every score submitted before it existed. Priced by its own term since
+    /// backlog 89.
     /// </summary>
     private const string mistype_key = "combo_break";
 
@@ -352,8 +375,8 @@ public static class PerformancePoints
     /// <c>[0, 1]</c>. The result is guaranteed finite and non-negative.</para>
     ///
     /// <para><paramref name="mistypes"/> defaults to 0, which is both what a play from before the
-    /// stat existed carries and the value at which the cleanliness term is identical to the
-    /// original one.</para>
+    /// stat existed carries and the value at which the mistyping term is exactly 1.0, leaving the
+    /// play priced by its misses alone.</para>
     /// </summary>
     public static double Compute(
         double starRating,
@@ -375,16 +398,23 @@ public static class PerformancePoints
 
         double difficulty = Math.Pow(starRating, sr_exponent);
 
-        // misses ≤ notes after the clamp above, so adding the same mistype count to both sides can
-        // only pull the ratio TOWARDS 1 and never past it: the base stays in [0, 1] and the term
-        // stays in [0, 1] for any mistype count, however absurd. notes is untouched by design (see
-        // the class docs): only this term prices mistypes.
-        double cleanliness = Math.Pow(1.0 - (double)(misses + mistypes) / (notes + mistypes), miss_exponent);
+        // Dropped cells, and nothing else: misses ≤ notes after the clamp above, so the base sits
+        // in [0, 1] and the term with it. What a miss costs does not depend on the keypresses.
+        double cleanliness = Math.Pow(1.0 - (double)misses / notes, miss_exponent);
+
+        // Wrong keypresses, and nothing else. The count is UNBOUNDED, so it sits on both sides of
+        // the fraction: that is what keeps the base in [0, 1] and decaying towards 0 rather than
+        // running negative under a fractional exponent. The sum is taken in DOUBLE, because
+        // notes + mistypes as ints would overflow on a tamper-shaped count and flip the sign of the
+        // ratio, turning the penalty into a bonus. At zero mistypes this is exactly 1.0. notes is
+        // untouched by design (see the class docs): only this term prices mistypes.
+        double mistyping = Math.Pow(1.0 - mistypes / ((double)notes + mistypes), mistype_exponent);
+
         double length = LengthBonus(notes);
         double timing = Math.Pow(accuracy, accuracy_exponent);
         double combo = Math.Pow((double)maxCombo / notes, combo_exponent);
 
-        double pp = scale * difficulty * cleanliness * length * timing * combo * ModMultiplier(mods, notes);
+        double pp = scale * difficulty * cleanliness * mistyping * length * timing * combo * ModMultiplier(mods, notes);
 
         return double.IsFinite(pp) && pp > 0 ? pp : 0;
     }
