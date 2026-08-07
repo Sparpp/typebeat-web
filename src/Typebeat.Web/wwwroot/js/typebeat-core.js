@@ -1065,7 +1065,7 @@
         // Wrong keypresses ride along as their own key. HitResult.ComboBreak is combo-only and
         // NOT accuracy-affecting on either side, so adding it changes no other number here and the
         // server's ScoringContract recomputes the identical accuracy / completion / rank; it is
-        // priced only in pp's cleanliness term. maximumStatistics stays one great per cell, so
+        // priced only by pp's own mistyping term. maximumStatistics stays one great per cell, so
         // mashing can never inflate the denominator of anything.
         // Zero is omitted exactly as the other keys are, matching the desktop client, which strips
         // zero-valued entries before submitting (SoloScoreInfo.ForSubmission).

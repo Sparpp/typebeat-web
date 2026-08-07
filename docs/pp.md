@@ -17,7 +17,8 @@ Per play:
 
 ```
 pp = C · SR_eff^2.70
-       · (1 − (miss+mistypes)/(notes+mistypes))^7.5   # cleanliness (see the 2026-08-03 amendment)
+       · (1 − miss/notes)^8.5                  # cleanliness (see the 2026-08-07 amendment)
+       · (1 − mistypes/(notes+mistypes))^3.5   # mistyping  (see the 2026-08-07 amendment)
        · max(0.1, 1 + 0.70·log10(notes/100))   # length bonus (clamped)
        · acc^1.30                          # accuracy (timing quality)
        · (maxcombo/notes)^0.55             # combo
@@ -30,9 +31,11 @@ Factor by factor, in descending priority:
 
 * **SR_eff^2.70**: difficulty is the primary driver. SR_eff is the map's star rating
   **recomputed at the play's clock rate** for DT/HT (see mods below), not the base SR.
-* **cleanliness^7.5**: misses, and since the 2026-08-03 amendment wrong keypresses, are the sharp
-  cleanliness signal. This is what stops a sloppy high-SR play from farming pp. A give-up run (e.g.
-  900+ misses) collapses to ~0.
+* **cleanliness^8.5**: dropped cells are the sharp cleanliness signal. This is what stops a sloppy
+  high-SR play from farming pp. A give-up run (e.g. 900+ misses) collapses to ~0.
+* **mistyping^3.5**: wrong keypresses, priced separately since the 2026-08-07 amendment. Real but
+  much gentler than a dropped cell: a stumble you recover from is not the same failure as never
+  typing the cell at all.
 * **Length**: the standard osu log bonus, rewarding sustained play over long maps. Clamped to
   a small positive floor: the raw term crosses zero around 4 notes, and no play should ever
   compute to zero or negative pp from length alone.
@@ -136,6 +139,11 @@ the opposite of what cumulative score rewards today.
 
 ## Amendment (2026-08-03): the cleanliness term prices MISTYPES (backlog 72)
 
+> **Partly superseded by the 2026-08-07 amendment below.** Mistypes are still priced, and still
+> excluded from `notes`, but they no longer live in the cleanliness fraction and the `VERSION`
+> argument at the end of this section no longer holds. Read the 2026-08-07 amendment for the
+> arithmetic in force.
+
 Wrong keypresses used to be invisible in a submitted score. In the default (strict) input mode the
 client rejected a wrong key without raising any judgement, so `statistics` carried only
 great/ok/meh/miss, the server recomputed a spotless accuracy, and the only surviving trace was a
@@ -191,3 +199,51 @@ changed; what changed is who can see the numbers.
   VALUE on the wire as `ranked_score`; only its rank has no client slot, and that board lives on the
   website. `statistics.pp` is the read-time `PpRanking` total, always a number (0 for a player with
   no pp-earning play, never null), while `global_rank` stays null while unranked.
+
+## Amendment (2026-08-07): misses and mistypes are priced SEPARATELY (backlog 89)
+
+The 2026-08-03 amendment folded wrong keypresses into the cleanliness fraction. That worked, but it
+coupled the two penalties: because a mistype was added to both the numerator and the denominator of
+the MISS ratio, a player carrying a heavy mistype count was charged less per dropped cell than a
+clean player was. The two failures are different failures, so they now get one term each:
+
+```
+BEFORE:  (1 − (miss + mistypes)/(notes + mistypes))^7.5
+
+AFTER:   (1 − miss/notes)^8.5  ·  (1 − mistypes/(notes + mistypes))^3.5
+```
+
+Nothing else in the formula changes: SR, length, accuracy, combo, the mod multipliers, eligibility
+and the aggregation are all untouched.
+
+* **Cleanliness reverts to misses over plain `notes`**, at the steeper exponent **8.5**. A dropped
+  cell is the harshest thing a play can carry and this is where that is said.
+* **Mistypes move entirely into their own factor** at exponent **3.5**. They are NOT priced in both
+  terms; they appear nowhere in the cleanliness term any more.
+
+**The net effect is that plays carrying mistypes are worth MORE than before, not less.** That is
+deliberate and was decided with the numbers in front of the decision. Removing mistypes from both
+sides of the miss ratio softens that term by more than the 7.5-to-8.5 rise tightens it:
+
+| play | old cleanliness | new cleanliness x mistyping | change |
+|------|-----------------|------------------------------|--------|
+| `notes=500, miss=60, mistype=80` | `0.759^7.5 = 0.126` | `0.880^8.5 x 0.862^3.5 = 0.201` | +59% |
+| `notes=500, miss=10, mistype=20` | `0.942^7.5 = 0.640` | `0.980^8.5 x 0.962^3.5 = 0.734` | +15% |
+
+A play with NO mistypes moves the other way, and only because of the exponent: its mistyping term is
+exactly 1.0, so it is priced by `(1 − miss/notes)^8.5` alone, strictly below the old `^7.5` for any
+non-zero miss count and identical to it at zero misses.
+
+**Why the mistype term keeps mistypes in its denominator** (unchanged reasoning from the 2026-08-03
+amendment, and the reason the new term is not simply the miss term with another exponent): misses
+are bounded by `notes`, but keypresses are UNBOUNDED. `1 − mistypes/notes` would go negative, and a
+fractional exponent on a negative base is not merely wrong but non-real. Keeping the count on both
+sides bounds the base to `[0, 1]` for any mistype count, however absurd, and decays it towards 0.
+`notes` still excludes mistypes, for the same reason as before: feeding keypresses into it would
+grow the LENGTH bonus and shrink the COMBO denominator, so mashing would partly pay for itself.
+
+**`VERSION` bumps to 2, and this time it must.** The 2026-08-03 amendment did not bump, on the proof
+that no stored row could carry a non-zero `combo_break` and so no stored value could move. That
+proof does not survive this change: raising the miss exponent reprices every stored row carrying
+even one miss, mistypes or not. `PpBackfill` therefore repasses every `scores` row at the next boot;
+no migration is needed, since migration 020 already created the `pp_version` column.
