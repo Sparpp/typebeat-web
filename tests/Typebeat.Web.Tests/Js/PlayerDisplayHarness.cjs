@@ -93,6 +93,60 @@ function playOneLatePress() {
     return engine;
 }
 
+// --- the sync tint (LyricLineDisplay.CorrectCharColour, re-expressed in the site's tokens) ---
+// A run that lands one cell of each kind the ramp has to tell apart: dead on target (full hit
+// colour), half quality (mid ramp), and a press so late it is Lagging, which is still a CORRECT
+// cell but must keep .tb-c-off's flat warn tint instead of joining the ramp.
+function playMixedTiming() {
+    const map = build(abcdOsu);
+    const engine = new TB.TypingEngine(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);   // target 1000, delta 0     -> q 1
+    engine.update(2100);
+    engine.processKey('b', 2100);   // target 1500, delta +600  -> q 0.5 (Ok-late window 1200)
+    engine.processKey(' ', 2100);   // target 2000, delta +100
+    engine.processKey('c', 2100);   // target 2000, delta +100
+    engine.update(3800);
+    engine.processKey('d', 3800);   // target 2500, delta +1300 -> past the Ok edge, Lagging
+    return engine;
+}
+
+// Backspace over a correct cell: the engine clears its judged delta, so the tint must come off
+// with it and the glyph go back to untyped rather than keeping the brightness it had earned.
+function playThenBackspace() {
+    const map = build(abcdOsu);
+    const engine = new TB.TypingEngine(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    engine.processBackspace();
+    return engine;
+}
+
+// A freestyle cell ('&' authors a slot any key fills), typed dead on target so the ONLY reason it
+// could miss the ramp is the deliberate exclusion.
+const freestyleOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":20000}\n' +
+    '{"text":"a&b","start_ms":1000,"end_ms":4000,"freestyle":true,' +
+    '"words":[{"text":"a&b","start_ms":1000,"end_ms":4000,"score":1}]}\n';
+
+function playFreestyle() {
+    const map = build(freestyleOsu);
+    const engine = new TB.TypingEngine(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);   // ordinary cell, dead on target
+    engine.update(2000);
+    engine.processKey('z', 2000);   // the free slot, also dead on target
+    return engine;
+}
+
+// Class + tint exactly as paintRow would write them, for every cell of a line.
+function paint(engine, lineIndex) {
+    return engine.lines[lineIndex].cells.map(c => ({
+        cls: D.cellClass(c, false, false),
+        fill: D.cellFill(c)
+    }));
+}
+
 // --- rolling WPM ring ---
 function ring(pushes) {
     const r = D.makeRollingWpm(D.constants.ROLLING_WPM_WINDOW);
@@ -160,6 +214,18 @@ const out = {
     syncAtLateEdge: D.syncQuality(wordWindows.ol, wordWindows),
     syncPastLateEdge: D.syncQuality(wordWindows.ol * 2, wordWindows),
     syncAtEarlyEdge: D.syncQuality(-wordWindows.oe, wordWindows),
+
+    // Sync tint: the ramp itself, then the classes/fills paintRow would write on real runs.
+    syncTintFloor: D.constants.SYNC_TINT_FLOOR,
+    rampAt: [0, 0.25, 0.5, 0.75, 1].map(D.syncTintFill),
+    // Same, as bare numbers, so the C# side can assert the ramp never goes backwards.
+    rampCurve: Array.from({ length: 21 }, (_, i) => parseFloat(D.syncTintFill(i / 20))),
+    rampClamped: [-1, 2, NaN].map(D.syncTintFill),
+
+    mixedPaint: paint(playMixedTiming(), 0),
+    sealedPaint: paint(playOneKeyThenSeal(), 0),
+    backspacedPaint: paint(playThenBackspace(), 0),
+    freestylePaint: paint(playFreestyle(), 0),
 
     // Live HUD readouts off real engine runs.
     perfectStats: D.liveStats(perfect),

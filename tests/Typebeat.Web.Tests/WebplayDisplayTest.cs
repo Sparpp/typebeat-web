@@ -229,6 +229,175 @@ public class WebplayDisplayTest
         });
     }
 
+    private static string Cls(JsonElement paint, int i) => paint[i].GetProperty("cls").GetString()!;
+
+    private static string? Fill(JsonElement paint, int i)
+    {
+        var e = paint[i].GetProperty("fill");
+        return e.ValueKind == JsonValueKind.Null ? null : e.GetString();
+    }
+
+    /// <summary>
+    /// The sync tint ramp (LyricLineDisplay.CorrectCharColour, re-expressed in the site's own
+    /// tokens): a correct char is filled by how in sync the keypress was, so the trail behind the
+    /// caret reads as brightness.
+    ///
+    /// <para>The FLOOR is the load-bearing part. SyncQuality returns exactly 0 at the Ok-window
+    /// edges and stays there beyond them while the cell is still Correct, so an unfloored ramp
+    /// would paint a character the player DID type in precisely the untyped colour (0%), which is
+    /// a legibility regression rather than feedback. The top of the ramp is a contract in the
+    /// other direction: quality 1 must give 100%, which mixes to var(--violet) itself, so nothing
+    /// about a perfectly timed line changed when the ramp landed.</para>
+    /// </summary>
+    [Test]
+    public void SyncTintRampIsFlooredMonotonicAndExactAtItsEnds()
+    {
+        var root = Harness();
+        var curve = JsHarness.Doubles(root, "rampCurve");
+
+        Assert.Multiple(() =>
+        {
+            // The browser floor is NOT the desktop's 0.35: that ramp is walked in linear light,
+            // this one in oklab, so the number was ported by outcome (see SYNC_TINT_FLOOR).
+            Assert.That(Num(root, "syncTintFloor"), Is.EqualTo(0.5));
+
+            Assert.That(JsHarness.Strings(root, "rampAt"),
+                Is.EqualTo(new[] { "50.00%", "62.50%", "75.00%", "87.50%", "100%" }));
+
+            // Quality 0 lands on the floor, and the floor is emphatically not the untyped end.
+            Assert.That(curve[0], Is.EqualTo(50));
+            Assert.That(curve[0], Is.GreaterThan(0));
+            // Quality 1 lands exactly on the full hit colour.
+            Assert.That(curve[^1], Is.EqualTo(100));
+
+            // Brightness rises with quality, everywhere, never flat and never backwards.
+            for (int i = 1; i < curve.Length; i++)
+                Assert.That(curve[i], Is.GreaterThan(curve[i - 1]), $"ramp went backwards at {i}");
+
+            // Out-of-range and NaN clamp to the ends rather than escaping the ramp.
+            Assert.That(JsHarness.Strings(root, "rampClamped"),
+                Is.EqualTo(new[] { "50.00%", "100%", "50.00%" }));
+        });
+    }
+
+    /// <summary>
+    /// The ramp on a real run: dead on target is the full hit colour, a press at half quality is
+    /// half way up from the floor, and every cell in between is somewhere on the ramp.
+    /// </summary>
+    [Test]
+    public void CorrectCharsAreFilledByHowInSyncTheKeypressWas()
+    {
+        var paint = Harness().GetProperty("mixedPaint");
+
+        Assert.Multiple(() =>
+        {
+            // 'a' on target: quality 1, so the colour .tb-c-hit shipped before the ramp existed.
+            Assert.That(Cls(paint, 0), Is.EqualTo("tb-c tb-c-hit"));
+            Assert.That(Fill(paint, 0), Is.EqualTo("100%"));
+
+            // 'b' at +600ms against a 1200ms Ok-late window: quality 0.5, so half of the ramp
+            // above the 50% floor, i.e. 75%. This is the assertion that makes the tint continuous
+            // rather than the two-bucket approximation /play shipped before.
+            Assert.That(Cls(paint, 1), Is.EqualTo("tb-c tb-c-hit"));
+            Assert.That(Fill(paint, 1), Is.EqualTo("75.00%"));
+
+            // +100ms: high quality, but distinctly not the full colour.
+            Assert.That(Fill(paint, 2), Is.EqualTo("95.83%"));
+            Assert.That(Fill(paint, 3), Is.EqualTo("95.83%"));
+        });
+    }
+
+    /// <summary>
+    /// Everything the ramp deliberately does NOT touch.
+    ///
+    /// <para>An OFF-TIME press (Premature/Lagging) still lands the cell Correct, but the browser
+    /// gives it .tb-c-off's flat warn tint: a browser-only affordance the desktop does not have,
+    /// and folding it into the ramp would throw it away. MISSED and UNTYPED cells have no
+    /// keypress to be in sync with, and a BACKSPACE clears the judged delta, so the tint has to
+    /// come off with it rather than leaving the glyph holding brightness it no longer owns.</para>
+    /// </summary>
+    [Test]
+    public void OffTimeMissedAndBackspacedCellsTakeNoSyncTint()
+    {
+        var root = Harness();
+        var mixed = root.GetProperty("mixedPaint");
+        var sealedPaint = root.GetProperty("sealedPaint");
+        var backspaced = root.GetProperty("backspacedPaint");
+
+        Assert.Multiple(() =>
+        {
+            // 'd' at +1300ms, past the 1200ms Ok edge: correct, but off-time.
+            Assert.That(Cls(mixed, 4), Is.EqualTo("tb-c tb-c-off"));
+            Assert.That(Fill(mixed, 4), Is.Null);
+
+            Assert.That(Cls(sealedPaint, 0), Is.EqualTo("tb-c tb-c-hit"));
+            Assert.That(Fill(sealedPaint, 0), Is.EqualTo("100%"));
+            Assert.That(Cls(sealedPaint, 1), Is.EqualTo("tb-c tb-c-miss"));
+            Assert.That(Fill(sealedPaint, 1), Is.Null);
+
+            // Typed, then backspaced: back to untyped, and the fill goes with it.
+            Assert.That(Cls(backspaced, 0), Is.EqualTo("tb-c tb-c-todo"));
+            Assert.That(Fill(backspaced, 0), Is.Null);
+        });
+    }
+
+    /// <summary>
+    /// FREESTYLE cells are excluded from the ramp, matching the desktop exclusion and for the same
+    /// reason: their colour is an IDENTITY signal ("this slot was free") that has to keep saying so
+    /// for the rest of the play, not a state signal. The cell below is typed DEAD ON TARGET, so the
+    /// only thing that can keep it off the ramp is the exclusion itself.
+    /// </summary>
+    [Test]
+    public void FreestyleCellsAreExcludedFromTheSyncTint()
+    {
+        var paint = Harness().GetProperty("freestylePaint");
+
+        Assert.Multiple(() =>
+        {
+            // The ordinary cell next to it, typed identically, does take the ramp.
+            Assert.That(Cls(paint, 0), Is.EqualTo("tb-c tb-c-hit"));
+            Assert.That(Fill(paint, 0), Is.EqualTo("100%"));
+
+            Assert.That(Cls(paint, 1), Is.EqualTo("tb-c tb-c-hit tb-c-free"));
+            Assert.That(Fill(paint, 1), Is.Null);
+        });
+    }
+
+    /// <summary>
+    /// The other half of the ramp lives in CSS, and the split is deliberate: JS writes only the
+    /// position (--tb-sync-fill), the mix is done against the site's own design TOKENS so neither
+    /// endpoint is duplicated as a literal that could drift from the theme.
+    ///
+    /// <para>This is not a port of the desktop's colours. /play re-skins gameplay onto the site
+    /// palette, so the desktop's grey-to-off-white literals must never appear here; and the
+    /// cascade order is load-bearing, because .tb-c-free has to keep beating the ramp at equal
+    /// specificity.</para>
+    /// </summary>
+    [Test]
+    public void SyncTintMixesTheSiteTokensAndLosesToFreestyle()
+    {
+        string css = File.ReadAllText(Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "css", "site.css"));
+
+        int mix = css.IndexOf("color-mix(in oklab, var(--violet) var(--tb-sync-fill, 100%), var(--text-muted))", StringComparison.Ordinal);
+        int free = css.IndexOf(".tb-c-free, .tb-line-cur .tb-c-free", StringComparison.Ordinal);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(mix, Is.GreaterThan(-1), "the .tb-c-hit ramp must mix the todo and hit TOKENS, not literals");
+            // A browser without color-mix() must still get the flat accent, never the inherited grey.
+            Assert.That(css, Does.Contain(".tb-c-hit  { color: var(--violet); }"));
+            // The off-time bucket stays a flat, distinct warn tint: it is outside the ramp.
+            Assert.That(css, Does.Contain(".tb-c-off  { color: var(--warn); }"));
+
+            Assert.That(free, Is.GreaterThan(mix), "the freestyle colour must still win over the ramp by cascade order");
+
+            // The desktop's UntypedChar / TypedChar. Copying them across would collide with
+            // meanings this palette has already assigned.
+            Assert.That(css, Does.Not.Contain("#646669"));
+            Assert.That(css, Does.Not.Contain("#d1d0c5"));
+        });
+    }
+
     /// <summary>
     /// The load-bearing invariant: the presentation layer is display only. The same perfect run,
     /// driven through the untouched scorer after the display helpers have read it, still submits a

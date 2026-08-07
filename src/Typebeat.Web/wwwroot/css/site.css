@@ -2407,7 +2407,18 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 /* inline-block so a Perfect hit can scale the glyph in place (PlayJudgementFeedback). */
 .tb-c { display: inline-block; transition: color .06s linear; }
 .tb-c-todo { color: var(--text-muted); }
+/* SYNC TINT (LyricLineDisplay.CorrectCharColour). A correct char is not a constant colour: it is
+   filled on a continuous ramp by how in sync the keypress was, so the trail behind the caret reads
+   as brightness. The player writes the ramp position into --tb-sync-fill per cell (see
+   typebeat-player.js: syncTintFill / cellFill, and SYNC_TINT_FLOOR for why the floor exists and
+   how it was chosen); the mix is done here so both endpoints stay the site's own design tokens
+   rather than being duplicated as literals in JS.
+   Two properties matter. The default of 100% means an untinted span is exactly var(--violet), the
+   colour this rule shipped before the ramp existed, which is also the fallback for the (impossible)
+   correct-cell-with-no-delta. And the first declaration is the pre-color-mix() fallback: a browser
+   that drops the second must not fall through to the inherited .tb-line-cur grey. */
 .tb-c-hit  { color: var(--violet); }
+.tb-c-hit  { color: color-mix(in oklab, var(--violet) var(--tb-sync-fill, 100%), var(--text-muted)); }
 .tb-c-off  { color: var(--warn); }
 /* Missed at seal: the desktop dims the untyped glyph (alpha 0.4) rather than recolouring it,
    which keeps a sealed line readable instead of turning it into a wall of red. */
@@ -2416,7 +2427,13 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 /* FREESTYLE cells: any key fills them and the pressed char is kept. They wear the desktop
    client's freestyle colour in BOTH states (shimmering placeholder while open, the player's
    own char once filled), so the slot stays recognisable on a finished line. Listed after the
-   state rules, and duplicated at .tb-line-cur specificity, so the colour wins in every state. */
+   state rules, and duplicated at .tb-line-cur specificity, so the colour wins in every state.
+   DELIBERATELY outside the sync tint above, matching the desktop exclusion: this violet is an
+   IDENTITY signal ("this slot was free"), not a state signal, and it has to keep saying that for
+   the rest of the play, so dimming it by how in sync the press was would fight the one thing it
+   exists to say. Being flat (it reads no --tb-sync-fill) and later in the cascade at equal
+   specificity, it beats .tb-c-hit's mix outright; cellFill() also returns null for these cells, so
+   the exclusion holds even if the two rules were ever reordered. */
 .tb-c-free, .tb-line-cur .tb-c-free { color: #c792ea; }
 
 .tb-c-pop { animation: tbPop 140ms ease-out; }
