@@ -9,8 +9,8 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <code>
 /// pp = 4.0 · SR_eff^2.70
-///          · (1 − miss/notes)^8.5                         cleanliness
-///          · (1 − mistypes/(notes+mistypes))^3.5          mistyping
+///          · (1 − miss/notes)^10                          cleanliness
+///          · (1 − mistypes/(notes+mistypes))^6            mistyping
 ///          · max(0.1, 1 + 0.70·log10(notes/100))          length, floored
 ///          · acc^1.30                                     timing quality
 ///          · (maxcombo/notes)^0.55                        combo
@@ -20,11 +20,18 @@ namespace Typebeat.Web.Scoring;
 /// <para>
 /// MISSES and MISTYPES are priced by SEPARATE terms (backlog 89), and neither appears in the
 /// other's. CLEANLINESS is dropped cells alone, over the plain note count, at the steeper exponent
-/// 8.5. MISTYPING (wrong keypresses, the <c>combo_break</c> statistics key, backlog 72) is its own
-/// factor at 3.5. Between backlog 72 and 89 the two rode inside one fraction, which quietly made
+/// 10. MISTYPING (wrong keypresses, the <c>combo_break</c> statistics key, backlog 72) is its own
+/// factor at 6. Between backlog 72 and 89 the two rode inside one fraction, which quietly made
 /// each penalty depend on the other: a mistype pulled the miss ratio towards its own value, so a
 /// player with a heavy mistype count was charged LESS per dropped cell than a clean one. Split, a
 /// play's misses cost the same whatever its keypresses did, and vice versa.
+/// </para>
+///
+/// <para>
+/// A mistype is still the cheaper of the two failures (6 against 10): a stumble you recover from is
+/// not the same thing as never typing the cell at all. Backlog 95 raised both exponents (8.5 to 10,
+/// 3.5 to 6), so the gap between them is now a good deal narrower than it was, and a heavy mistype
+/// count is no longer close to free.
 /// </para>
 ///
 /// <para>
@@ -41,7 +48,7 @@ namespace Typebeat.Web.Scoring;
 /// map's cell count. Letting keypresses inflate it would hand a masher a bigger LENGTH bonus and a
 /// smaller COMBO denominator, paying for the mashing twice over. A play carrying no mistype count at
 /// all (every score submitted before the stat existed) collapses the mistyping term to exactly 1.0,
-/// so such a play is priced by <c>(1 − miss/notes)^8.5</c> alone.
+/// so such a play is priced by <c>(1 − miss/notes)^10</c> alone.
 /// </para>
 ///
 /// <para>
@@ -102,6 +109,10 @@ public static class PerformancePoints
     /// <see cref="HalfTimeMultiplier"/> on top of its <c>sr_ht</c> rating, which makes the
     /// down-rate factor the reciprocal of the up-rate one on the same map (or a flat 0.70 cut where
     /// that reciprocal would be a BUFF). Reprices every stored HT row and nothing else.</item>
+    /// <item>v4 = the backlog-95 penalty rebalance: the miss exponent rises 8.5 to 10 and the
+    /// mistype exponent 3.5 to 6. Both terms are exactly 1.0 at a count of zero whatever the
+    /// exponent, so a spotless play is priced bit-identically; every stored row carrying even ONE
+    /// miss or ONE mistype is repriced, which is what forces the bump.</item>
     /// </list>
     ///
     /// <para>Rows are ALSO invalidated back to 0 whenever the beatmap they were set on has its star
@@ -118,7 +129,7 @@ public static class PerformancePoints
     /// there is no set of rows the change provably leaves alone. Bump this the moment a change
     /// values ANY stored row differently.</para>
     /// </summary>
-    public const int VERSION = 3;
+    public const int VERSION = 4;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -136,8 +147,8 @@ public static class PerformancePoints
 
     private const double scale = 4.0;              // C: global scale, does not affect ranking order
     private const double sr_exponent = 2.70;
-    private const double miss_exponent = 8.5;
-    private const double mistype_exponent = 3.5;
+    private const double miss_exponent = 10.0;
+    private const double mistype_exponent = 6.0;
     private const double length_weight = 0.70;
     private const double length_floor = 0.1;
     private const double accuracy_exponent = 1.30;
