@@ -17,8 +17,8 @@ Per play:
 
 ```
 pp = C · SR_eff^2.70
-       · (1 − miss/notes)^8.5                  # cleanliness (see the 2026-08-07 amendment)
-       · (1 − mistypes/(notes+mistypes))^3.5   # mistyping  (see the 2026-08-07 amendment)
+       · (1 − miss/notes)^10                   # cleanliness (see the backlog-95 amendment)
+       · (1 − mistypes/(notes+mistypes))^6     # mistyping   (see the backlog-95 amendment)
        · max(0.1, 1 + 0.70·log10(notes/100))   # length bonus (clamped)
        · acc^1.30                          # accuracy (timing quality)
        · (maxcombo/notes)^0.55             # combo
@@ -32,11 +32,12 @@ Factor by factor, in descending priority:
 
 * **SR_eff^2.70**: difficulty is the primary driver. SR_eff is the map's star rating
   **recomputed at the play's clock rate** for DT/HT (see mods below), not the base SR.
-* **cleanliness^8.5**: dropped cells are the sharp cleanliness signal. This is what stops a sloppy
+* **cleanliness^10**: dropped cells are the sharp cleanliness signal. This is what stops a sloppy
   high-SR play from farming pp. A give-up run (e.g. 900+ misses) collapses to ~0.
-* **mistyping^3.5**: wrong keypresses, priced separately since the 2026-08-07 amendment. Real but
-  much gentler than a dropped cell: a stumble you recover from is not the same failure as never
-  typing the cell at all.
+* **mistyping^6**: wrong keypresses, priced separately since the backlog-89 amendment. Still the
+  cheaper of the two failures (6 against 10), because a stumble you recover from is not the same
+  failure as never typing the cell at all, but only moderately so: the backlog-95 amendment
+  narrowed the gap a long way, and a heavy mistype count is no longer close to free.
 * **Length**: the standard osu log bonus, rewarding sustained play over long maps. Clamped to
   a small positive floor: the raw term crosses zero around 4 notes, and no play should ever
   compute to zero or negative pp from length alone.
@@ -205,6 +206,11 @@ changed; what changed is who can see the numbers.
 
 ## Amendment (2026-08-07): misses and mistypes are priced SEPARATELY (backlog 89)
 
+> **Numbers partly superseded by the backlog-95 amendment below.** The SHAPE of the formula is
+> exactly as this section describes it, and the reasoning for two separate terms still holds, but
+> both exponents have since risen (8.5 to 10, 3.5 to 6), so the worked values in the table below are
+> the values as of this amendment, not the values in force. Read the backlog-95 amendment for those.
+
 The 2026-08-03 amendment folded wrong keypresses into the cleanliness fraction. That worked, but it
 coupled the two penalties: because a mistype was added to both the numerator and the denominator of
 the MISS ratio, a player carrying a heavy mistype count was charged less per dropped cell than a
@@ -304,3 +310,49 @@ have to disagree with.
 **`VERSION` bumps to 3.** Every stored Half Time row is now worth less than the value beside it, so
 the bump is mandatory. `PpBackfill` repasses every `scores` row at the next boot, reading only
 columns; no migration is needed.
+
+## Amendment (2026-08-07): both penalty exponents rise (backlog 95)
+
+The backlog-89 amendment above gave misses and mistypes a term each, which was the right shape but
+left both terms too soft. Both exponents rise, and nothing else in the formula moves:
+
+```
+BEFORE:  (1 − miss/notes)^8.5  ·  (1 − mistypes/(notes + mistypes))^3.5
+
+AFTER:   (1 − miss/notes)^10   ·  (1 − mistypes/(notes + mistypes))^6
+```
+
+SR, length, accuracy, combo, the mod multipliers, the Half Time mirror multiplier of the amendment
+above, eligibility and the aggregation are all untouched. So is the SHAPE of both terms, including
+the mistype count sitting on both sides of its own fraction, for the reason the backlog-89 amendment
+gives: keypresses are unbounded, and a fractional exponent on a negative base is non-real.
+
+**Read this together with backlog 89, not on its own.** Splitting the terms apart SOFTENED sloppy
+plays considerably, which was deliberate and was signed off with the numbers in view. This change
+more than takes that back. Against the pre-split baseline:
+
+| play | before 89 (`^7.5` combined) | after 89 (`^8.5`, `^3.5`) | now (`^10`, `^6`) |
+|------|-----------------------------|---------------------------|-------------------|
+| `notes=500, miss=60, mistype=80` | `0.125946` | `0.200678` | `0.114309` |
+| `notes=500, miss=10, mistype=20` | `0.640391` | `0.734184` | `0.645745` |
+
+So the net of the two changes together is: **a near-clean play is roughly where it always was**
+(0.640391 to 0.645745, +0.8%), while **a sloppy play is hit harder than it has ever been**
+(0.125946 to 0.114309, below even the pre-split value). A reader looking only at this diff would see
+-43% and -12% and miss that the first of those is a return past a starting point rather than a raw
+cut.
+
+**Mistypes stay cheaper than misses, but by much less.** 6 against 10 still says what backlog 89
+wanted it to say, that a stumble you recover from is not the same failure as never typing the cell
+at all. It no longer says "much gentler", though, and the prose above has been softened
+accordingly: 80 mistypes on a 500-note map now cost 59% of a play's pp where they cost 41% of it
+before (the term goes `0.594836` to `0.410442`).
+
+**Nothing with a zero count moves at all.** Both bases are exactly 1.0 at a count of zero, and 1.0
+raised to any exponent is exactly 1.0, so a play with no misses AND no mistypes is priced
+BIT-identically before and after. That is the cheapest check that a change here is confined to the
+two terms, and it is pinned by a test in each repo.
+
+**`VERSION` bumps to 4, and it must.** Every stored row carrying even one miss or one mistype is
+now worth something different, which is the whole test for a bump. `PpBackfill` repasses every
+`scores` row at the next boot, reading only columns; no migration is needed.
