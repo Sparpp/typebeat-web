@@ -100,10 +100,18 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         /// the number the pp came from, and showing it would misexplain the board's dominant term.
         ///
         /// <para>
+        /// FROM, not "equal to", on a Half Time row: since backlog 90 an HT play is priced from
+        /// <c>sr_ht</c> and then multiplied by <see cref="PerformancePoints.HalfTimeMultiplier"/>,
+        /// so this rating is the play's difficulty but no longer its whole price. The column stays
+        /// the rating rather than becoming some penalty-adjusted number, because a star rating is
+        /// what a player reads it as; the header tooltip carries the caveat.
+        /// </para>
+        ///
+        /// <para>
         /// Never null in practice. <see cref="PerformancePoints.ForScore"/> prices nothing at all,
         /// and its callers store 0, whenever <see cref="PerformancePoints.StarsFor"/> yields no
-        /// rating (a custom rate, a multi-rate stack, or a map whose <c>sr_dt</c>/<c>sr_ht</c> is
-        /// not stored yet), and the board only
+        /// rating (a custom rate, a multi-rate stack, or a map missing a rating the play needs:
+        /// <c>sr_dt</c> for a DT play, BOTH <c>sr_ht</c> and <c>sr_dt</c> for an HT one), and the board only
         /// carries plays with <c>pp &gt; 0</c>, so every row here priced from one of the three
         /// stored ratings and the sr columns only ever go from null to filled. It stays nullable
         /// anyway, and renders as an empty cell, because the honest answer to "which rating is this"

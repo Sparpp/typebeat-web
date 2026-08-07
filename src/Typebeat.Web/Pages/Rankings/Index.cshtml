@@ -98,10 +98,13 @@
                     <th>Rank</th>
                     <th>Player</th>
                     <th>Map</th>
-                    @* Not the map's base rating on a rate-modded row: pp prices Double Time and
-                       Half Time exclusively through the rating recomputed at the play's clock rate
-                       (docs/pp.md), so this column shows the rating the pp beside it came from. *@
-                    <th title="star rating at the play's clock rate: the rating its pp was priced from">Stars</th>
+                    @* Not the map's base rating on a rate-modded row: pp prices a rate play through
+                       the rating recomputed at the play's clock rate (docs/pp.md), so this column
+                       shows the rating the pp beside it came from. Half Time is the one rate that
+                       is NOT priced by its rating alone: since the 2026-08-07 amendment it takes a
+                       further mirror penalty on top, so the tooltip says "from" rather than
+                       claiming this rating is the whole price. *@
+                    <th title="star rating at the play's clock rate: the rating its pp was priced from (Half Time is then cut further, see docs/pp.md)">Stars</th>
                     <th>pp</th>
                     <th>Grade</th>
                     <th>Completion</th>

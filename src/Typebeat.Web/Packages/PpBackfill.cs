@@ -21,7 +21,9 @@ namespace Typebeat.Web.Packages;
 /// <list type="number">
 /// <item>PaceBackfill is what FILLS <c>beatmaps.sr_dt</c> / <c>sr_ht</c>. A DT/HT play whose rate
 /// rating is still NULL cannot be priced, so it is deliberately left stale (pp 0, version 0) and
-/// retried on the next boot rather than being stamped at zero forever.</item>
+/// retried on the next boot rather than being stamped at zero forever. Since backlog 90 a HALF TIME
+/// play needs BOTH columns, <c>sr_ht</c> to price it and <c>sr_dt</c> to mirror against; a map
+/// carrying only one of the two therefore leaves its HT plays pending.</item>
 /// <item>PaceBackfill is also what INVALIDATES rows: when it rewrites a beatmap's ratings it stamps
 /// every score on that map back to version 0, so a stored pp can never outlive the star rating it
 /// was computed from.</item>
