@@ -72,6 +72,14 @@ public static class JsHarness
         return JsonDocument.Parse(stdout).RootElement;
     }
 
+    public static string?[] Strings(JsonElement root, string key)
+    {
+        var list = new List<string?>();
+        foreach (var e in root.GetProperty(key).EnumerateArray())
+            list.Add(e.ValueKind == JsonValueKind.Null ? null : e.GetString());
+        return list.ToArray();
+    }
+
     public static double[] Doubles(JsonElement root, string key)
     {
         var list = new List<double>();
