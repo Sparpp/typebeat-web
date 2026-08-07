@@ -27,9 +27,9 @@ public sealed class DownloadModel(IFileStore store, IConfiguration config) : Typ
     {
         DetectedOs = DetectOs(Request.Headers.UserAgent.ToString());
 
-        Windows = await resolve("windows", "TYPEBEAT_GAME_DOWNLOAD", "/download/game");
-        Linux = await resolve("linux", "TYPEBEAT_GAME_DOWNLOAD_LINUX", "/download/game-linux");
-        Macos = await resolve("macos", "TYPEBEAT_GAME_DOWNLOAD_MACOS", "/download/game-macos");
+        Windows = await resolve("windows", GameDownloadKeys.Windows, "/download/game");
+        Linux = await resolve("linux", GameDownloadKeys.Linux, "/download/game-linux");
+        Macos = await resolve("macos", GameDownloadKeys.Macos, "/download/game-macos");
     }
 
     private async Task<PlatformDownload> resolve(string os, string configKey, string href)
