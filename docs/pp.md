@@ -17,13 +17,13 @@ Per play:
 
 ```
 pp = C · SR_eff^2.70
-       · (1 − miss/notes)^10                   # cleanliness (see the backlog-95 amendment)
-       · (1 − mistypes/(notes+mistypes))^6     # mistyping   (see the backlog-95 amendment)
-       · max(0.1, 1 + 0.70·log10(notes/100))   # length bonus (clamped)
-       · acc^1.30                          # accuracy (timing quality)
-       · (maxcombo/notes)^0.55             # combo
-       · modMult                           # NOT for DT/HT; rate lives in SR_eff only
-       · rateMult                          # 1.0 except base-rate HT (see the 2026-08-07 Half Time amendment)
+       · (1 − (miss/notes)^2)^10                 # cleanliness
+       · (1 − (mistypes/(notes+mistypes))^2)^6   # mistyping
+       · max(0.1, 1 + 0.70·log10(notes/100))     # length bonus (clamped)
+       · acc^1.30                                # accuracy (timing quality)
+       · (maxcombo/notes)^0.55                   # combo
+       · modMult                                 # NOT for DT/HT; rate lives in SR_eff only
+       · rateMult                                # 1.0 except base-rate HT (see the Half Time amendment)
 
 C = 4.0    # global scale constant, does not affect ranking order
 ```
@@ -32,12 +32,15 @@ Factor by factor, in descending priority:
 
 * **SR_eff^2.70**: difficulty is the primary driver. SR_eff is the map's star rating
   **recomputed at the play's clock rate** for DT/HT (see mods below), not the base SR.
-* **cleanliness^10**: dropped cells are the sharp cleanliness signal. This is what stops a sloppy
-  high-SR play from farming pp. A give-up run (e.g. 900+ misses) collapses to ~0.
-* **mistyping^6**: wrong keypresses, priced separately since the backlog-89 amendment. Still the
-  cheaper of the two failures (6 against 10), because a stumble you recover from is not the same
-  failure as never typing the cell at all, but only moderately so: the backlog-95 amendment
-  narrowed the gap a long way, and a heavy mistype count is no longer close to free.
+* **cleanliness^10**: dropped cells. The RATIO is squared inside the term since the 2026-08-08
+  amendment, which makes this a deliberately forgiving curve near the top: a play that drops a few
+  percent of the map keeps nearly all of its pp, and the term only bites hard once a large share of
+  the map is gone. A give-up run (e.g. 900+ misses) still collapses to ~0.
+* **mistyping^6**: wrong keypresses, priced separately since the backlog-89 amendment, and with its
+  ratio squared since the 2026-08-08 one. Still the cheaper of the two failures (6 against 10),
+  because a stumble you recover from is not the same failure as never typing the cell at all. Under
+  the squared ratio a moderate mistype count is close to free again; that is the intended shape, not
+  an oversight.
 * **Length**: the standard osu log bonus, rewarding sustained play over long maps. Clamped to
   a small positive floor: the raw term crosses zero around 4 notes, and no play should ever
   compute to zero or negative pp from length alone.
@@ -313,6 +316,12 @@ columns; no migration is needed.
 
 ## Amendment (2026-08-07): both penalty exponents rise (backlog 95)
 
+> **Numbers superseded by the 2026-08-08 amendment below.** Both exponents are still 10 and 6, and
+> every word about why the two terms are separate still holds, but each penalty RATIO is now
+> SQUARED inside its own term. That softens both worked values below by far more than this
+> amendment tightened them, so the table here is the table as of this amendment, not the values in
+> force. Read the 2026-08-08 amendment for those.
+
 The backlog-89 amendment above gave misses and mistypes a term each, which was the right shape but
 left both terms too soft. Both exponents rise, and nothing else in the formula moves:
 
@@ -356,3 +365,53 @@ two terms, and it is pinned by a test in each repo.
 **`VERSION` bumps to 4, and it must.** Every stored row carrying even one miss or one mistype is
 now worth something different, which is the whole test for a bump. `PpBackfill` repasses every
 `scores` row at the next boot, reading only columns; no migration is needed.
+
+## Amendment (2026-08-08): both penalty RATIOS are squared (backlog 96)
+
+Backlog 89 gave misses and mistypes a term each, and backlog 95 then raised both exponents. This
+change leaves the exponents exactly where 95 put them, 10 and 6, and squares the RATIO inside
+each term instead.
+
+**This is a large softening, and it runs opposite to backlog 89 and 95. That is intended.**
+Squaring a value that already sits in `[0, 1]` makes it smaller, so `1 - r^2` is larger than `1 -
+r` and both penalties shrink. Both ratios are still bounded by `[0, 1]` (squaring cannot leave
+that interval), so both terms are still bounded by `[0, 1]` for any input, and both are still
+exactly `1.0` at a count of zero.
+
+**Read the table against the pre-89 baseline, not against the row before it.** Backlog 89
+softened sloppy plays, backlog 95 took that back with interest, and this change goes past both.
+The sloppy play lands at about six times what 95 left it at, and at about six times its pre-89
+value as well; the near-clean play is now within 1.3% of a spotless one where it used to keep
+64%. Misses and mistypes are now a gentle signal rather than the dominant one, and difficulty,
+length, accuracy and combo carry correspondingly more of the ranking.
+
+**A count of zero still moves nothing at all.** Both bases are exactly `1.0` at zero, and `1.0`
+raised to any exponent is exactly `1.0`, so a play with no misses AND no mistypes is priced
+BIT-identically before and after. That is the cheapest check that the change is confined to the
+two terms, and it is pinned by a test in each repo.
+
+**The mistype denominator is still summed in `double`, and that matters MORE now, not less.**
+`notes + mistypes` as `int` overflows on a tamper-shaped count and drives the ratio below `-1`;
+`1 - r^2` is then NEGATIVE, which under a fractional exponent is not merely wrong but non-real.
+Squaring changes what the bug would cost (the old shape turned the penalty into a large BONUS,
+this one would produce a negative base) but not that it must be prevented. The `int.MaxValue`
+degenerate case is still swept by a test in each repo.
+
+```
+BEFORE:  (1 − miss/notes)^10  ·  (1 − mistypes/(notes + mistypes))^6
+
+AFTER:   (1 − (miss/notes)^2)^10  ·  (1 − (mistypes/(notes + mistypes))^2)^6
+```
+
+SR, length, accuracy, combo, the mod multipliers, the Half Time mirror multiplier, eligibility
+and the aggregation are all untouched. The mistype count still sits on both sides of its own
+fraction, for the reason the backlog-89 amendment gives: keypresses are unbounded, and a
+fractional exponent on a negative base is non-real.
+
+| play | before 89 (`^7.5` combined) | after 89 (`^8.5`, `^3.5`) | before | after | change |
+|------|--------|--------|--------|--------|--------|
+| `notes=500, miss=60, mistype=80` | `0.125946` | `0.200678` | `0.114309` | `0.770823` | +574% |
+| `notes=500, miss=10, mistype=20` | `0.640391` | `0.734184` | `0.645745` | `0.987200` | +53% |
+
+**`VERSION` bumps to 5.** Every stored row the change values differently is repriced by
+`PpBackfill` at the next boot, reading only columns; no migration is needed.
