@@ -23,6 +23,7 @@ pp = C · SR_eff^2.70
        · acc^1.30                          # accuracy (timing quality)
        · (maxcombo/notes)^0.55             # combo
        · modMult                           # NOT for DT/HT; rate lives in SR_eff only
+       · rateMult                          # 1.0 except base-rate HT (see the 2026-08-07 Half Time amendment)
 
 C = 4.0    # global scale constant, does not affect ranking order
 ```
@@ -64,7 +65,9 @@ stored `ranked = false` and therefore earn no pp.
 ## Mods
 
 * **DT / HT**: rate is priced **exclusively through SR_eff** (SR recomputed at the play's clock
-  rate); there is NO flat DT/HT multiplier in modMult, so nothing double-counts. DECIDED:
+  rate); there is NO flat DT/HT multiplier in modMult, so nothing double-counts. **Half Time
+  additionally carries the mirror penalty of the 2026-08-07 amendment below**, which is still not in
+  modMult (it needs all three star ratings, which modMult does not have). DECIDED:
   only the **base rates** (DT 1.5x, HT 0.75x) are pp-eligible. A custom rate makes the play
   **pp-ineligible only**: it still ranks on the score leaderboards exactly as today (the
   variable-rate ranking feature is preserved, no retroactive unranking), it just earns 0 pp.
@@ -247,3 +250,57 @@ that no stored row could carry a non-zero `combo_break` and so no stored value c
 proof does not survive this change: raising the miss exponent reprices every stored row carrying
 even one miss, mistypes or not. `PpBackfill` therefore repasses every `scores` row at the next boot;
 no migration is needed, since migration 020 already created the `pp_version` column.
+
+## Amendment (2026-08-07): Half Time carries a mirror penalty (backlog 90)
+
+Rate has always been priced **exclusively through `SR_eff`**, and it still is for Double Time. That
+is not a neutral choice for the down-rate, though, and the numbers say so. Because pp scales as
+`SR^2.70`, each base rate already carries an emergent factor relative to the same play at 1.00x:
+
+```
+D = (sr_dt / sr_base)^2.70      # what Double Time is already worth on this map
+H = (sr_ht / sr_base)^2.70      # what Half Time already costs on this map
+```
+
+On a typical map D is much further above 1 than H is below it. On the parity fixture's spread
+(`sr_base = 4.2`, `sr_dt = 6.1`, `sr_ht = 3.4`), `D = 2.739` and `H = 0.565`: speeding up pays
+**+174%** while slowing down costs only **-43%**. Half Time was therefore the cheap way to keep a
+hard map's difficulty term while typing at a comfortable pace.
+
+A base-rate Half Time play now takes one extra multiplier on top of its `sr_ht` rating:
+
+```
+m_mirror = 1 / (D · H)
+
+m = 0.70          if m_mirror > 1     # the mirror would BUFF Half Time: flat 30% cut instead
+m = m_mirror      otherwise           # the mirror is a nerf: use it exactly
+```
+
+With `m = m_mirror`, Half Time's **total** rate factor is `H · 1/(D·H) = 1/D`, exactly the
+reciprocal of Double Time's, computed per map rather than guessed at. On the fixture spread above,
+`m = 0.646` and HT's total factor becomes `0.365`, i.e. **-63%** where it used to be -43%.
+
+**The guard is load-bearing, not defensive.** The mirror is a buff exactly when `1/D > H`, i.e.
+`D·H < 1`, i.e. `sr_dt · sr_ht < sr_base²`: a map whose SR curve is concave in log-rate, where
+slowing down helps far more than speeding up hurts. That is precisely the map an unguarded mirror
+would **reward** for using Half Time. Worked example, `sr_base = 4.2`, `sr_dt = 4.5`, `sr_ht = 2.0`:
+`D = 1.205`, `H = 0.135`, so `m_mirror = 6.15` and the total factor would jump from 0.135 to 0.830, a
+six-fold buff. Clamped, it is `0.70 · 0.135 = 0.094`, still a nerf.
+
+**It is not `min(m_mirror, 0.70)`.** A mirror multiplier of 0.90 is a mild, correct nerf and is used
+as is; taking a minimum would deepen every mild nerf into a flat 30% cut and throw away the per-map
+symmetry the term exists for. The clamp applies only on the wrong side of 1.0.
+
+**Nothing else moves.** Double Time, Nightcore and no-mod plays are multiplied by exactly 1.0.
+`modMult` still carries no rate term at all, which is deliberate: it takes only the mods and a note
+count, and this needs all three star ratings. Custom rates stay pp-ineligible and never reach the
+term. Eligibility, aggregation and every other factor are untouched.
+
+**A new data dependency.** Pricing a Half Time play now needs `sr_dt` as well as `sr_ht`. A map with
+`sr_ht` stored but `sr_dt` still null is `Pending`, exactly as a map with neither is: the row is left
+stale for `PpBackfill` to retry on a later boot rather than priced at a value the next sweep would
+have to disagree with.
+
+**`VERSION` bumps to 3.** Every stored Half Time row is now worth less than the value beside it, so
+the bump is mandatory. `PpBackfill` repasses every `scores` row at the next boot, reading only
+columns; no migration is needed.

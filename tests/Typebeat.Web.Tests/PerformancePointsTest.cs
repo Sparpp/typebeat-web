@@ -436,12 +436,256 @@ public class PerformancePointsTest
         Assert.Multiple(() =>
         {
             Assert.That(dtPp, Is.EqualTo(PerformancePoints.Compute(6, 500, 0, 0.9, 500, [])).Within(1e-9));
-            Assert.That(htPp, Is.EqualTo(PerformancePoints.Compute(3, 500, 0, 0.9, 500, [])).Within(1e-9));
+
+            // Half Time is sr_ht AND the mirror multiplier on top of it (backlog 90); Double Time
+            // and no-mod are the rating alone.
+            Assert.That(htPp, Is.EqualTo(
+                PerformancePoints.Compute(3, 500, 0, 0.9, 500, [], 0, PerformancePoints.HalfTimeMultiplier(4, 6, 3))).Within(1e-9));
             Assert.That(noModPp, Is.EqualTo(reference_pp).Within(1e-5));
 
             // The rate lands entirely in the star rating: harder up-rate, easier down-rate.
             Assert.That(dtPp, Is.GreaterThan(noModPp));
             Assert.That(htPp, Is.LessThan(noModPp));
+        });
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The Half Time mirror penalty (backlog 90). A base-rate HT play is priced by sr_ht AND by
+    // 1/(D·H), the reciprocal of what Double Time is emergently worth on the same map, so the two
+    // rates are equal and opposite per map. The buff guard is the interesting half.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>What Double Time is emergently worth on a map, purely through SR^2.70.</summary>
+    private static double doubleTimeFactor(double baseStars, double starsDoubleTime)
+        => Math.Pow(starsDoubleTime / baseStars, 2.70);
+
+    /// <summary>What Half Time is emergently worth on a map, before the mirror penalty.</summary>
+    private static double halfTimeFactor(double baseStars, double starsHalfTime)
+        => Math.Pow(starsHalfTime / baseStars, 2.70);
+
+    [Test]
+    public void HalfTimeMultiplier_IsTheReciprocalOfTheDoubleTimeFactorOnTheDecidedSpread()
+    {
+        // The parity fixture's own spread, and the numbers the change was decided on: DT is already
+        // worth +174% here while HT only costs -43%, which is exactly the asymmetry being closed.
+        const double basestars = 4.2, dt = 6.1, ht = 3.4;
+
+        double d = doubleTimeFactor(basestars, dt);
+        double h = halfTimeFactor(basestars, ht);
+        double m = PerformancePoints.HalfTimeMultiplier(basestars, dt, ht);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(d, Is.EqualTo(2.739160).Within(1e-6), "the premise: Double Time is +174% on this map");
+            Assert.That(h, Is.EqualTo(0.565223).Within(1e-6), "and Half Time is only -43% before this change");
+
+            Assert.That(m, Is.EqualTo(1.0 / (d * h)).Within(1e-12), "the mirror is used, not the clamp");
+            Assert.That(m, Is.EqualTo(0.645896).Within(1e-6));
+
+            // The whole point: HT's TOTAL rate factor is now exactly 1/D.
+            Assert.That(m * h, Is.EqualTo(1.0 / d).Within(1e-12));
+            Assert.That(m * h, Is.EqualTo(0.365075).Within(1e-6));
+        });
+    }
+
+    [Test]
+    public void HalfTimeMultiplier_ClampsToAFlatCutWhereTheMirrorWouldBuffHalfTime()
+    {
+        // A map whose SR curve is concave in log-rate: sr_dt · sr_ht < sr_base², so slowing down
+        // helps far more than speeding up hurts, and the unguarded mirror would REWARD Half Time on
+        // exactly this map. This is what the guard exists for.
+        const double basestars = 4.2, dt = 4.5, ht = 2.0;
+
+        double d = doubleTimeFactor(basestars, dt);
+        double h = halfTimeFactor(basestars, ht);
+        double mirror = 1.0 / (d * h);
+        double m = PerformancePoints.HalfTimeMultiplier(basestars, dt, ht);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(dt * ht, Is.LessThan(basestars * basestars), "the premise of the concave case");
+            Assert.That(mirror, Is.GreaterThan(1), "the unguarded mirror is a buff here");
+            Assert.That(mirror * h, Is.EqualTo(0.830041).Within(1e-6), "and it would raise HT's factor six-fold");
+
+            Assert.That(m, Is.EqualTo(0.70).Within(1e-12), "so the flat cut is used instead");
+
+            // And the outcome is a NERF against what this play is worth today, not a buff.
+            Assert.That(m * h, Is.LessThan(h));
+            Assert.That(m * h, Is.EqualTo(0.094429).Within(1e-6));
+        });
+    }
+
+    [Test]
+    public void HalfTimeMultiplier_UsesAMildMirrorAsIsRatherThanDeepeningItToTheClamp()
+    {
+        // THE ANTI-Math.Min CASE. This spread's mirror sits strictly between 0.70 and 1.0: it is a
+        // mild, correct nerf and must be applied exactly. Math.Min(mirror, 0.70) would return 0.70
+        // here and quietly throw away the per-map symmetry the term exists for.
+        const double basestars = 4.0, dt = 4.5, ht = 3.7;
+
+        double mirror = 1.0 / (doubleTimeFactor(basestars, dt) * halfTimeFactor(basestars, ht));
+        double m = PerformancePoints.HalfTimeMultiplier(basestars, dt, ht);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(mirror, Is.GreaterThan(0.70).And.LessThan(1.0), "the premise: a mild nerf, not a buff");
+            Assert.That(mirror, Is.EqualTo(0.898060).Within(1e-6));
+
+            Assert.That(m, Is.EqualTo(mirror).Within(1e-12));
+            Assert.That(m, Is.Not.EqualTo(0.70).Within(1e-6), "a Math.Min would have collapsed this to the flat cut");
+        });
+    }
+
+    [TestCase(0.0, 6.0, 3.0)]
+    [TestCase(-4.0, 6.0, 3.0)]
+    [TestCase(4.0, 0.0, 3.0)]
+    [TestCase(4.0, -6.0, 3.0)]
+    [TestCase(4.0, 6.0, 0.0)]
+    [TestCase(4.0, 6.0, -3.0)]
+    [TestCase(double.NaN, 6.0, 3.0)]
+    [TestCase(4.0, double.NaN, 3.0)]
+    [TestCase(4.0, 6.0, double.NaN)]
+    [TestCase(double.PositiveInfinity, 6.0, 3.0)]
+    [TestCase(4.0, double.PositiveInfinity, 3.0)]
+    [TestCase(4.0, 6.0, double.PositiveInfinity)]
+    public void HalfTimeMultiplier_IsZeroOnDegenerateRatingsRatherThanNaN(double baseStars, double dt, double ht)
+    {
+        // A negative rating under a fractional exponent is not merely wrong but non-real, and a NaN
+        // multiplier would survive Compute's own guard by poisoning the product. The file's rule is
+        // that a degenerate play yields 0, never NaN, Infinity or a negative.
+        double m = PerformancePoints.HalfTimeMultiplier(baseStars, dt, ht);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(double.IsFinite(m), Is.True);
+            Assert.That(m, Is.EqualTo(0));
+        });
+    }
+
+    [Test]
+    public void HalfTimeMultiplier_IsFiniteAndNonNegativeOverAWideSpread()
+    {
+        double[] ratings = [0, -1, 1e-9, 0.5, 1, 4.2, 10, 1e9, double.NaN, double.PositiveInfinity, double.NegativeInfinity];
+
+        foreach (double baseStars in ratings)
+        foreach (double dt in ratings)
+        foreach (double ht in ratings)
+        {
+            double m = PerformancePoints.HalfTimeMultiplier(baseStars, dt, ht);
+
+            string context = $"base={baseStars} dt={dt} ht={ht}";
+
+            Assert.That(double.IsFinite(m), Is.True, context);
+            Assert.That(m, Is.GreaterThanOrEqualTo(0), context);
+        }
+    }
+
+    [Test]
+    public void StarsFor_OnlyHalfTimeCarriesARateMultiplier()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PerformancePoints.StarsFor([], 4.2, 6.1, 3.4).Multiplier, Is.EqualTo(1.0), "no mods");
+            Assert.That(PerformancePoints.StarsFor([new ScoreMod("LT", null)], 4.2, 6.1, 3.4).Multiplier, Is.EqualTo(1.0), "a non-rate mod");
+            Assert.That(PerformancePoints.StarsFor([new ScoreMod("DT", 1.50)], 4.2, 6.1, 3.4).Multiplier, Is.EqualTo(1.0), "Double Time");
+            Assert.That(PerformancePoints.StarsFor([new ScoreMod("NC", 1.50)], 4.2, 6.1, 3.4).Multiplier, Is.EqualTo(1.0), "Nightcore");
+
+            Assert.That(PerformancePoints.StarsFor([new ScoreMod("HT", 0.75)], 4.2, 6.1, 3.4).Multiplier,
+                Is.EqualTo(PerformancePoints.HalfTimeMultiplier(4.2, 6.1, 3.4)).Within(1e-12));
+        });
+    }
+
+    [Test]
+    public void StarsFor_HalfTimeWithNoSrDtIsPendingRatherThanPricedOffSrHtAlone()
+    {
+        // The new data dependency: an HT play needs sr_dt to mirror against. Pricing it off sr_ht
+        // alone would stamp a value the very next SR sweep has to disagree with, so the row is left
+        // stale for PpBackfill exactly as a map with no rate rating at all is.
+        var stars = PerformancePoints.StarsFor([new ScoreMod("HT", 0.75)], baseStars: 4.2, starsDoubleTime: null, starsHalfTime: 3.4);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(stars.Stars, Is.Null);
+            Assert.That(stars.Pending, Is.True, "not settled: the sweep will fill sr_dt and this must be retried");
+        });
+    }
+
+    [Test]
+    public void StarsFor_DoubleTimeStillDoesNotCareAboutSrHt()
+    {
+        // The dependency runs one way only. An up-rate play is priced off sr_dt and nothing else,
+        // so a map that has sr_dt but not sr_ht still prices its DT plays.
+        var stars = PerformancePoints.StarsFor([new ScoreMod("DT", 1.50)], baseStars: 4.2, starsDoubleTime: 6.1, starsHalfTime: null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(stars.Stars, Is.EqualTo(6.1));
+            Assert.That(stars.Pending, Is.False);
+            Assert.That(stars.Multiplier, Is.EqualTo(1.0));
+        });
+    }
+
+    [Test]
+    public void ForScore_HalfTimePaysTheMirrorPenaltyAndIsExactlyDoubleTimesReciprocal()
+    {
+        var counts = new PerformancePoints.NoteCounts(500, 12, 30);
+
+        var (nomod, _) = PerformancePoints.ForScore(true, [], counts, 0.9, 480, 4.2, 6.1, 3.4);
+        var (dt, _) = PerformancePoints.ForScore(true, [new ScoreMod("DT", 1.50)], counts, 0.9, 480, 4.2, 6.1, 3.4);
+        var (ht, _) = PerformancePoints.ForScore(true, [new ScoreMod("HT", 0.75)], counts, 0.9, 480, 4.2, 6.1, 3.4);
+
+        // Every non-rate factor is shared, so the ratios ARE the rate factors.
+        double upFactor = dt!.Value / nomod!.Value;
+        double downFactor = ht!.Value / nomod.Value;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(upFactor, Is.EqualTo(2.739160).Within(1e-6));
+            Assert.That(downFactor, Is.EqualTo(0.365075).Within(1e-6));
+
+            // Equal and opposite by construction, which is the whole point of the mirror.
+            Assert.That(downFactor, Is.EqualTo(1.0 / upFactor).Within(1e-9));
+
+            // And it is strictly harsher than pricing off sr_ht alone used to be.
+            Assert.That(ht.Value, Is.LessThan(PerformancePoints.Compute(3.4, 500, 12, 0.9, 480, [], 30)));
+        });
+    }
+
+    [Test]
+    public void ForScore_ADegenerateRatingOnAHalfTimePlayEarnsZeroRatherThanNaN()
+    {
+        foreach ((double baseStars, double? dt, double? ht) in new (double, double?, double?)[]
+                 {
+                     (0, 6.0, 3.0), (-4, 6.0, 3.0), (4, -6.0, 3.0), (4, 6.0, -3.0),
+                     (double.NaN, 6.0, 3.0), (4, double.NaN, 3.0), (4, 6.0, double.NaN),
+                 })
+        {
+            var (pp, settled) = PerformancePoints.ForScore(
+                true, [new ScoreMod("HT", 0.75)], new PerformancePoints.NoteCounts(500, 0), 0.9, 500, baseStars, dt, ht);
+
+            string context = $"base={baseStars} dt={dt} ht={ht}";
+
+            Assert.That(settled, Is.True, context);
+            Assert.That(pp, Is.Not.Null, context);
+            Assert.That(double.IsFinite(pp!.Value), Is.True, context);
+            Assert.That(pp.Value, Is.EqualTo(0), context);
+        }
+    }
+
+    [Test]
+    public void Compute_TakesTheRateMultiplierAsAPlainFactorAndDefaultsItToOne()
+    {
+        double bare = PerformancePoints.Compute(4, 500, 12, 0.9, 480, no_mods, 30);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(PerformancePoints.Compute(4, 500, 12, 0.9, 480, no_mods, 30, 1), Is.EqualTo(bare));
+            Assert.That(PerformancePoints.Compute(4, 500, 12, 0.9, 480, no_mods, 30, 0.7), Is.EqualTo(bare * 0.7).Within(1e-9));
+
+            // Hostile values fall out through the same finite/positive guard as everything else.
+            Assert.That(PerformancePoints.Compute(4, 500, 12, 0.9, 480, no_mods, 30, double.NaN), Is.EqualTo(0));
+            Assert.That(PerformancePoints.Compute(4, 500, 12, 0.9, 480, no_mods, 30, -1), Is.EqualTo(0));
+            Assert.That(PerformancePoints.Compute(4, 500, 12, 0.9, 480, no_mods, 30, double.PositiveInfinity), Is.EqualTo(0));
         });
     }
 
@@ -717,12 +961,13 @@ public class PerformancePointsTest
     [Test]
     public void Version_IsBumpedBecauseTheRebalanceRepricesStoredRows()
     {
+        // v3 = backlog 90, the Half Time mirror penalty, which reprices every stored HT row.
         // v2 = backlog 89. The mistype term (backlog 72) deliberately did NOT bump, on the proof
         // that no stored row could carry a combo_break count and so no stored value could move.
         // That proof does not survive a steeper MISS exponent, which reprices every stored row with
         // even one miss, so PpBackfill has to sweep. If this moves, so do the game's
         // PerformancePoints.VERSION and docs/pp.md.
-        Assert.That(PerformancePoints.VERSION, Is.EqualTo(2));
+        Assert.That(PerformancePoints.VERSION, Is.EqualTo(3));
     }
 
     [Test]
