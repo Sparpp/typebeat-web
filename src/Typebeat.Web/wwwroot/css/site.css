@@ -79,11 +79,32 @@
     --text-3xl: 2.25rem;
     --text-4xl: clamp(2.5rem, 6vw, 3.5rem);
 
-    /* radii: sharper than neon (Caret uses ~8px, not pills) */
-    --radius-sm: 5px;
-    --radius-md: 8px;
-    --radius-lg: 12px;
+    /* radii: FLAT. Every rounded square on the site now takes hard corners, so the three BOX radii
+       below are all 0. They are kept as named tokens rather than deleted (which would mean editing
+       the 40-odd `border-radius: var(--radius-*)` call sites) for the same reason the --violet*
+       names above were kept: one decision, one place, reversible without touching a single
+       component rule. A call site reading `var(--radius-md)` is therefore not a leftover, it is a
+       box opting into whatever the site's box radius currently is, which is none.
+
+       --radius-full is NOT a box radius and is deliberately untouched: it is the capsule value that
+       status pills, filter/tab pills, count badges and progress-bar ends need in order to stay
+       round. Zeroing it would square off things that were never rounded squares. Circles (avatars,
+       the preview disc, the unread dot) set 50% directly and are likewise untouched. */
+    --radius-sm: 0;
+    --radius-md: 0;
+    --radius-lg: 0;
     --radius-full: 999px;
+
+    /* THE ONE DELIBERATE EXCEPTION to the flat rule above: the top toolbar (.site-nav) keeps a
+       softened hit area on its nav links, so the bar reads as a distinct layer of chrome sitting
+       over the now hard-edged page. This is intended contrast, not a stray radius that escaped the
+       flattening pass: do NOT fold it back into --radius-sm.
+
+       Scoped to chrome that ONLY the toolbar has. Shared controls that merely appear in the bar
+       (.btn on sign in/settings, .bell-btn, the .user-chip capsule, the avatar circle) stay on the
+       site-wide treatment, because each has a twin elsewhere on the site and the two must not
+       drift apart, .bell-btn especially: the nav bell and the profile bell are one control. */
+    --radius-nav: 5px;
 
     /* spacing */
     --space-1: 4px;
@@ -229,11 +250,13 @@ img { max-width: 100%; }
     gap: var(--space-4);
 }
 
+/* The toolbar exception (see --radius-nav in :root). The rest of the site is square; these links
+   are the one place that keeps a rounded hit area, on purpose. */
 .nav-links a {
     color: var(--text-muted);
     font-weight: 600;
     padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-nav);
 }
 
 .nav-links a:hover {
@@ -2117,7 +2140,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     justify-content: center;
     min-width: 24px;
     padding: 1px 5px;
-    border-radius: 5px;
+    border-radius: 0;             /* square like every other box (see the radii tokens) */
     font-family: var(--font-display);
     font-size: 11px;
     font-weight: 700;
@@ -2132,9 +2155,10 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .mod-icon--other { background: #9aa0aa; }
 
 /* Rate mods (DT/NC/HT) are ranked at every speed and paid a different multiplier at each, so the
-   exact rate rides on the badge in a pill welded to the acronym, matching the game's ModIcon. The
-   pill deepens with --rate-intensity (0 = as good as no-mod, 1 = the slider's far end) so a 2.00x
-   sprint reads darker than a 1.05x nudge before the number itself is read. */
+   exact rate rides on the badge in a slab welded to the acronym, matching the game's ModIcon. The
+   slab deepens with --rate-intensity (0 = as good as no-mod, 1 = the slider's far end) so a 2.00x
+   sprint reads darker than a 1.05x nudge before the number itself is read. It is a box inside a
+   box, so it squares off with its parent .mod-icon rather than keeping a lone soft corner. */
 .mod-icon--rated {
     gap: 4px;
     padding-right: 2px;
@@ -2142,7 +2166,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 .mod-icon__rate {
     padding: 0 4px;
-    border-radius: 4px;
+    border-radius: 0;
     background: rgba(0, 0, 0, 0.14);
     background: rgba(0, 0, 0, calc(0.08 + 0.12 * var(--rate-intensity, 0)));
     font-size: 10px;
