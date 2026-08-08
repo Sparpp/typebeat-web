@@ -182,26 +182,26 @@ public class PerformancePointsParityTest
         Assert.Multiple(() =>
         {
             Assert.That(ClientPp.Compute(4, notes, 60, 0.9, notes, no_client_mods, 80) / clientSpotless,
-                Is.EqualTo(0.003729).Within(1e-6)); // pp[f.penalty(500, 60, 80)]
+                Is.EqualTo(0.000000).Within(1e-6)); // pp[f.penalty(500, 60, 80)]
             Assert.That(ClientPp.Compute(4, notes, 10, 0.9, notes, no_client_mods, 20) / clientSpotless,
-                Is.EqualTo(0.468755).Within(1e-6)); // pp[f.penalty(500, 10, 20)]
+                Is.EqualTo(0.052744).Within(1e-6)); // pp[f.penalty(500, 10, 20)]
 
             // Zero mistypes leaves the mistyping term at exactly 1.0 on both sides, so the play is
             // priced by its misses alone. Ten misses, not the sixty this used to use: sixty was past
             // the backlog-97 cliff, so both sides would have been asserted to equal zero and the
             // restatement would have stopped saying anything about the arithmetic that produced it.
             Assert.That(ClientPp.Compute(4, notes, 10, 0.9, notes, no_client_mods, 0) / clientSpotless,
-                Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.2) / 500.0), 10)).Within(1e-12)); // pp:const count_power=1.2 miss_exponent=10
+                Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.6) / 500.0), 10)).Within(1e-12)); // pp:const count_power=1.6 miss_exponent=10
             Assert.That(ServerPp.Compute(4, notes, 10, 0.9, notes, no_server_mods, 0) / serverSpotless,
-                Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.2) / 500.0), 10)).Within(1e-12)); // pp:const count_power=1.2 miss_exponent=10
+                Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.6) / 500.0), 10)).Within(1e-12)); // pp:const count_power=1.6 miss_exponent=10
 
             // And BOTH sides reach the clamped zero from the same input, which is the seam the
             // clamp itself opens: a mirror missing the Math.Max would produce a non-real result
             // here rather than a zero, and nothing else in this file would catch it. The thresholds
             // are the CURRENT cliffs, so a mirror at the old power would fail the two below the
             // cliff rather than the two at it.
-            const int missCliff = 178; // pp[math.ceil(f.miss_cliff(500))]
-            const int mistypeCliff = 249; // pp[math.ceil(f.mistype_cliff(500))]
+            const int missCliff = 49; // pp[math.ceil(f.miss_cliff(500))]
+            const int mistypeCliff = 52; // pp[math.ceil(f.mistype_cliff(500))]
 
             Assert.That(ClientPp.Compute(4, notes, missCliff, 0.9, notes, no_client_mods, 0), Is.Zero);
             Assert.That(ServerPp.Compute(4, notes, missCliff, 0.9, notes, no_server_mods, 0), Is.Zero);
@@ -287,8 +287,8 @@ public class PerformancePointsParityTest
             // worth and not merely that the two halves agree.
 
             // The mirror branch, on the fixture spread used further down this file.
-            Assert.That(ClientPp.HalfTimeMultiplier(4.2, 6.1, 3.4), Is.EqualTo(0.645896).Within(1e-6)); // pp[f.half_time_multiplier(4.2, 6.1, 3.4)]
-            Assert.That(ServerPp.HalfTimeMultiplier(4.2, 6.1, 3.4), Is.EqualTo(0.645896).Within(1e-6)); // pp[f.half_time_multiplier(4.2, 6.1, 3.4)]
+            Assert.That(ClientPp.HalfTimeMultiplier(4.2, 6.1, 3.4), Is.EqualTo(0.656438).Within(1e-6)); // pp[f.half_time_multiplier(4.2, 6.1, 3.4)]
+            Assert.That(ServerPp.HalfTimeMultiplier(4.2, 6.1, 3.4), Is.EqualTo(0.656438).Within(1e-6)); // pp[f.half_time_multiplier(4.2, 6.1, 3.4)]
 
             // The CLAMPED branch: sr_dt · sr_ht < sr_base², so an unguarded mirror would BUFF Half
             // Time on this map. Both sides must take the flat cut, not the mirror.
@@ -298,8 +298,8 @@ public class PerformancePointsParityTest
             // A mild mirror, strictly between the clamp and 1.0: used AS IS on both sides. A
             // Math.Min on either side would return 0.70 here and the two would still agree with
             // each other, which is why the value itself is pinned as well as the parity.
-            Assert.That(ClientPp.HalfTimeMultiplier(4.0, 4.5, 3.7), Is.EqualTo(0.898060).Within(1e-6)); // pp[f.half_time_multiplier(4.0, 4.5, 3.7)]
-            Assert.That(ServerPp.HalfTimeMultiplier(4.0, 4.5, 3.7), Is.EqualTo(0.898060).Within(1e-6)); // pp[f.half_time_multiplier(4.0, 4.5, 3.7)]
+            Assert.That(ClientPp.HalfTimeMultiplier(4.0, 4.5, 3.7), Is.EqualTo(0.901644).Within(1e-6)); // pp[f.half_time_multiplier(4.0, 4.5, 3.7)]
+            Assert.That(ServerPp.HalfTimeMultiplier(4.0, 4.5, 3.7), Is.EqualTo(0.901644).Within(1e-6)); // pp[f.half_time_multiplier(4.0, 4.5, 3.7)]
         });
     }
 
@@ -775,7 +775,7 @@ public class PerformancePointsParityTest
             double up = doubleTime / nomod;
             double down = halfTimePrice / nomod;
 
-            double mirror = 1.0 / (Math.Pow(dtStars / baseStars, 2.70) * Math.Pow(htStars / baseStars, 2.70)); // pp:const sr_exponent=2.70*2
+            double mirror = 1.0 / (Math.Pow(dtStars / baseStars, 2.60) * Math.Pow(htStars / baseStars, 2.60)); // pp:const sr_exponent=2.60*2
 
             Assert.That(mirror, Is.LessThan(1.0), "the premise: this fixture map is not a concave one");
             Assert.That(ClientPp.HalfTimeMultiplier(baseStars, dtStars, htStars), Is.EqualTo(mirror).Within(1e-12),
