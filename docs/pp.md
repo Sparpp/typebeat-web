@@ -16,21 +16,21 @@ profile) is a separate follow-up with wire + client changes.
 Per play:
 
 ```
-pp = C · SR_eff^2.70
-       · max(0, 1 − miss^1.2/notes)^10                 # cleanliness
-       · max(0, 1 − mistypes^1.2/(notes+mistypes))^6   # mistyping
-       · max(0.1, 1 + 0.70·log10(notes/100))           # length bonus (clamped)
+pp = C · SR_eff^2.60
+       · max(0, 1 − miss^1.6/notes)^10                 # cleanliness
+       · max(0, 1 − mistypes^1.6/(notes+mistypes))^8   # mistyping
+       · max(0.1, 1 + 0.50·log10(notes/100))           # length bonus (clamped)
        · acc^1.30                                      # accuracy (timing quality)
-       · (maxcombo/notes)^0.55                         # combo
+       · (maxcombo/notes)^0.75                         # combo
        · modMult                                       # NOT for DT/HT; rate lives in SR_eff only
        · rateMult                                      # 1.0 except base-rate HT (see the Half Time amendment)
 
-C = 4.0    # global scale constant, does not affect ranking order
+C = 3.0    # global scale constant, does not affect ranking order
 ```
 
 Factor by factor, in descending priority:
 
-* **SR_eff^2.70**: difficulty is the primary driver. SR_eff is the map's star rating
+* **SR_eff^2.60**: difficulty is the primary driver. SR_eff is the map's star rating
   **recomputed at the play's clock rate** for DT/HT (see mods below), not the base SR.
 * **cleanliness^10**: dropped cells. The raw COUNT carries a power, not the ratio, since the
   backlog-97 amendment, and that power is `count_power = 1.2` since the backlog-101 one. That makes
@@ -39,7 +39,7 @@ Factor by factor, in descending priority:
   than letting it go negative. Past that point a play earns exactly nothing from any factor, and
   well before it the term is already negligible. A give-up run (e.g. 900+ misses) collapses to
   exactly 0.
-* **mistyping^6**: wrong keypresses, priced separately since the backlog-89 amendment, and with its
+* **mistyping^8**: wrong keypresses, priced separately since the backlog-89 amendment, and with its
   own count under the same power since the backlog-97 one. Still the cheaper of the two failures
   (6 against 10), because a stumble you recover from is not the same failure as never typing the
   cell at all, and because the count sits in its denominator too, which pushes its cliff out to the
@@ -49,12 +49,14 @@ Factor by factor, in descending priority:
   and 6: it alone decides at what count each term reaches its cliff, and how that cliff scales with
   map size. See the backlog-101 amendment for the two arguments that fix it at 1.2.
 * **Length**: the standard osu log bonus, rewarding sustained play over long maps. Clamped to
-  a small positive floor: the raw term crosses zero around 4 notes, and no play should ever
-  compute to zero or negative pp from length alone.
+  a small positive floor so no play ever computes to zero or negative pp from length alone. At a
+  weight of 0.50 the raw term crosses zero at exactly 1 note and the 0.1 floor at ~1.585, so the
+  clamp is close to vestigial; at the old 0.70 those crossings sat at ~3.73 and ~5.18 notes. The
+  floor stays because it is the guard, not because it currently fires often.
 * **acc^1.30**: deliberately **gentle**, unlike osu. In type!beat real accuracies live at
   55–93%, not 97–100%, so an osu-style steep curve (acc^6+) would crush everything and make
   accuracy dominate. Keep the exponent around 1–2.
-* **(maxcombo/notes)^0.55**: mild. Combo overlaps with misses (a miss breaks combo), so it's
+* **(maxcombo/notes)^0.75**: mild. Combo overlaps with misses (a miss breaks combo), so it's
   only a light signal on top, not a second heavy penalty. Combo can also break without a miss
   (a badly-timed hit), so it still matters, and it distinguishes spread-out misses from one
   choke that dropped several.
