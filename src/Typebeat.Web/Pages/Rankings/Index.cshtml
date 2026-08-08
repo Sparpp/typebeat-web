@@ -31,19 +31,6 @@
         <a class="lb-tab @(plays ? "is-active" : "")" href="/rankings?board=@IndexModel.PlaysBoard">Top plays</a>
     </div>
 
-    @if (performance)
-    {
-        <p class="faint">Performance points, pp, rank you on how hard the maps you clear are and how cleanly you clear them. Your best play on each ranked map counts once, and later plays count for less, so grinding one map or a pile of easy ones gets you nowhere.</p>
-    }
-    else if (score)
-    {
-        <p class="faint">Cumulative score, your best score on each ranked map added up, is a volume board and does not set your global rank. Total cumulative score is every play you've ever submitted added up.</p>
-    }
-    else
-    {
-        <p class="faint">The biggest single plays ever set, worth the most pp. These are scores, not players: one player can hold several rows if they own several of the hardest maps, though only their best play on each map is listed.</p>
-    }
-
     @if (Model.IsEmpty && plays)
     {
         <div class="empty-state">
