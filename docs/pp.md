@@ -17,13 +17,13 @@ Per play:
 
 ```
 pp = C · SR_eff^2.70
-       · (1 − (miss/notes)^2)^10                 # cleanliness
-       · (1 − (mistypes/(notes+mistypes))^2)^6   # mistyping
-       · max(0.1, 1 + 0.70·log10(notes/100))     # length bonus (clamped)
-       · acc^1.30                                # accuracy (timing quality)
-       · (maxcombo/notes)^0.55                   # combo
-       · modMult                                 # NOT for DT/HT; rate lives in SR_eff only
-       · rateMult                                # 1.0 except base-rate HT (see the Half Time amendment)
+       · max(0, 1 − miss^2/notes)^10                 # cleanliness
+       · max(0, 1 − mistypes^2/(notes+mistypes))^6   # mistyping
+       · max(0.1, 1 + 0.70·log10(notes/100))         # length bonus (clamped)
+       · acc^1.30                                    # accuracy (timing quality)
+       · (maxcombo/notes)^0.55                       # combo
+       · modMult                                     # NOT for DT/HT; rate lives in SR_eff only
+       · rateMult                                    # 1.0 except base-rate HT (see the Half Time amendment)
 
 C = 4.0    # global scale constant, does not affect ranking order
 ```
@@ -32,15 +32,17 @@ Factor by factor, in descending priority:
 
 * **SR_eff^2.70**: difficulty is the primary driver. SR_eff is the map's star rating
   **recomputed at the play's clock rate** for DT/HT (see mods below), not the base SR.
-* **cleanliness^10**: dropped cells. The RATIO is squared inside the term since the 2026-08-08
-  amendment, which makes this a deliberately forgiving curve near the top: a play that drops a few
-  percent of the map keeps nearly all of its pp, and the term only bites hard once a large share of
-  the map is gone. A give-up run (e.g. 900+ misses) still collapses to ~0.
+* **cleanliness^10**: dropped cells. The raw COUNT is squared, not the ratio, since the backlog-97
+  amendment, which makes this a very steep curve and a CLAMPED one: the base
+  `1 - miss^2/notes` reaches zero at `miss = sqrt(notes)`, i.e. 23 misses on a 500-note map, and
+  `max(0, ...)` holds it there rather than letting it go negative. Past that point a play earns
+  exactly nothing from any factor, and well before it the term is already negligible. A give-up run
+  (e.g. 900+ misses) collapses to exactly 0.
 * **mistyping^6**: wrong keypresses, priced separately since the backlog-89 amendment, and with its
-  ratio squared since the 2026-08-08 one. Still the cheaper of the two failures (6 against 10),
-  because a stumble you recover from is not the same failure as never typing the cell at all. Under
-  the squared ratio a moderate mistype count is close to free again; that is the intended shape, not
-  an oversight.
+  own count squared since the backlog-97 one. Still the cheaper of the two failures (6 against 10),
+  because a stumble you recover from is not the same failure as never typing the cell at all, and
+  because the count sits in its denominator too, which pushes its cliff out to the positive root of
+  `m^2 - m - notes = 0` (23 mistypes at 500 notes) rather than to `sqrt(notes)`.
 * **Length**: the standard osu log bonus, rewarding sustained play over long maps. Clamped to
   a small positive floor: the raw term crosses zero around 4 notes, and no play should ever
   compute to zero or negative pp from length alone.
@@ -368,6 +370,10 @@ now worth something different, which is the whole test for a bump. `PpBackfill` 
 
 ## Amendment (2026-08-08): both penalty RATIOS are squared (backlog 96)
 
+> SUPERSEDED by the backlog-97 amendment below. Squaring the RATIO was a misreading of the intent:
+> it made both penalties WEAKER, where what was meant was the raw COUNT squared, which makes them
+> stronger. The exponents 10 and 6 this amendment left in place are the ones 97 keeps.
+
 Backlog 89 gave misses and mistypes a term each, and backlog 95 then raised both exponents. This
 change leaves the exponents exactly where 95 put them, 10 and 6, and squares the RATIO inside
 each term instead.
@@ -414,4 +420,62 @@ fractional exponent on a negative base is non-real.
 | `notes=500, miss=10, mistype=20` | `0.640391` | `0.734184` | `0.645745` | `0.987200` | +53% |
 
 **`VERSION` bumps to 5.** Every stored row the change values differently is repriced by
+`PpBackfill` at the next boot, reading only columns; no migration is needed.
+
+## Amendment (2026-08-08): both penalty COUNTS are squared, not the ratios (backlog 97)
+
+Backlog 96 squared the RATIO inside each penalty term. That was a misreading of the intent and
+it ran the wrong way: a value already in `[0, 1]` gets SMALLER when squared, so `1 - r^2` is
+LARGER than `1 - r`, and both penalties WEAKENED. What was meant was the raw COUNT squared,
+which is what this amendment does. The exponents stay exactly where backlog 95 put them, 10 and
+6.
+
+**The `max(0, ...)` clamp is required rather than decorative, and it is a cliff.** A squared
+count over an unsquared denominator is not bounded by `[0, 1]` at all. The cleanliness base
+crosses zero at `miss = sqrt(notes)` and runs NEGATIVE past it; misses really can equal `notes`,
+so that is the ordinary case and not a hostile-input guard, and a fractional exponent on a
+negative base is not merely wrong but non-real. The mistyping base crosses zero at the positive
+root of `m^2 - m - notes = 0`, i.e. `(1 + sqrt(1 + 4*notes))/2`, which is later than the miss
+cliff because the count sits in the denominator too. On a 500-note map that is 23 misses
+(`sqrt(500)` is 22.36) and 23 mistypes (22.87). The clamped form was chosen knowingly, cliff and
+all.
+
+**ESSENTIALLY EVERY REAL PLAY NOW SCORES ZERO AT THESE EXPONENTS, AND THAT IS KNOWN.** The
+figures, on a 500-note map: at 10 misses and 20 mistypes the miss term is `0.8^10 = 0.107374`
+and the mistype term `0.230769^6 = 1.5103e-4`, so the play keeps about `1.62e-05` of a spotless
+one. At 60 misses and 80 mistypes both bases clamp and the play keeps exactly `0`. At 22 misses,
+one below the cliff and with no mistypes at all, the base is `0.032` and the term about
+`1.1e-15`. This is not an oversight and it is not to be "fixed" by lowering the exponents; it is
+recorded here, with the figures, so the record shows it was known when the change was made.
+
+**Both numerators are computed in `double`,** written `(double)x * x` and never `x * x`.
+Mistypes are unbounded, so `mistypes * mistypes` as an `int` overflows catastrophically (at
+`int.MaxValue` the true square is about 4.6e18), and a tamper-shaped note count could do the
+same to `misses * misses`. In `double`, `int.MaxValue` mistypes give a ratio of about 2.1e9, so
+the base clamps to a well-defined zero rather than wrapping into a NaN or, worse, a bonus. The
+`notes + mistypes` sum is still taken in `double` for the same reason, independently of the
+numerator.
+
+**A count of zero still moves nothing at all.** `max(0, 1 - 0)` is exactly `1.0`, and `1.0`
+raised to any exponent is exactly `1.0`, so a play with no misses AND no mistypes is priced
+BIT-identically before and after. That is the cheapest check that the change is confined to the
+two terms, and it is pinned by a test in each repo.
+
+```
+BEFORE:  (1 − (miss/notes)^2)^10  ·  (1 − (mistypes/(notes + mistypes))^2)^6
+
+AFTER:   max(0, 1 − miss^2/notes)^10  ·  max(0, 1 − mistypes^2/(notes + mistypes))^6
+```
+
+SR, length, accuracy, combo, the mod multipliers, the Half Time mirror multiplier, eligibility
+and the aggregation are all untouched. The mistype count still sits on both sides of its own
+fraction, for the reason the backlog-89 amendment gives: keypresses are unbounded, and a
+fractional exponent on a negative base is non-real.
+
+| play | before 89 (`^7.5` combined) | after 89 (`^8.5`, `^3.5`) | after 95 (linear) | before | after | change |
+|------|--------|--------|--------|--------|--------|--------|
+| `notes=500, miss=60, mistype=80` | `0.125946` | `0.200678` | `0.114309` | `0.770823` | `0.000000` | -100% |
+| `notes=500, miss=10, mistype=20` | `0.640391` | `0.734184` | `0.645745` | `0.987200` | `0.000016` | -100% |
+
+**`VERSION` bumps to 6.** Every stored row the change values differently is repriced by
 `PpBackfill` at the next boot, reading only columns; no migration is needed.

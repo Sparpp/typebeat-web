@@ -662,9 +662,13 @@ public class PackageIngestDbTest
         var beatmap = await conn.QuerySingleAsync<(double Base, double Dt)>(
             "SELECT difficulty_rating AS Base, sr_dt AS Dt FROM beatmaps WHERE id = 1001");
 
-        // 100 great + 20 miss = 120 notes; ignore_hit is not a note (see insertPlayAsync).
-        double expectedNoMod = PerformancePoints.Compute(beatmap.Base, 120, 20, 0.9, 100, []);
-        double expectedDt = PerformancePoints.Compute(beatmap.Dt, 120, 20, 0.9, 100, []);
+        // 112 great + 8 miss = 120 notes; ignore_hit is not a note (see insertPlayAsync). EIGHT
+        // misses, not the twenty this fixture used to carry: the backlog-97 miss cliff on a
+        // 120-note map is sqrt(120) = 10.95, so twenty priced the whole play to zero and the
+        // no-mod/DT comparison below (a PLUMBING check that the DT row is priced off sr_dt) became
+        // 0 against 0.
+        double expectedNoMod = PerformancePoints.Compute(beatmap.Base, 120, 8, 0.9, 100, []);
+        double expectedDt = PerformancePoints.Compute(beatmap.Dt, 120, 8, 0.9, 100, []);
 
         double noModPp = await ppOf(conn, noMod);
         double dtPp = await ppOf(conn, baseRateDt);
@@ -719,7 +723,7 @@ public class PackageIngestDbTest
             VALUES
                 (@userId, 1001, 500000, 0.9, 0.83, 100, 'B', true, @ranked,
                  CAST(@modsJson AS jsonb),
-                 '{"great":100,"miss":20,"ignore_hit":8}'::jsonb,
+                 '{"great":112,"miss":8,"ignore_hit":8}'::jsonb,
                  '{"great":120,"ignore_hit":8}'::jsonb)
             RETURNING id
             """,
