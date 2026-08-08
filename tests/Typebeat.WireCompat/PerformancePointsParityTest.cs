@@ -139,7 +139,13 @@ public class PerformancePointsParityTest
         // so this file also pins WHAT the split is worth, not merely that both halves agree.
         //
         // Nothing else in the formula reads either count, so pp divided by the same play with
-        // neither is exactly (1 - (miss/notes)^2)^10 * (1 - (mistypes/(notes+mistypes))^2)^6.
+        // neither is exactly
+        // max(0, 1 - miss^2/notes)^10 * max(0, 1 - mistypes^2/(notes+mistypes))^6.
+        //
+        // Backlog 97 put a CLAMP in both terms, which is a fresh seam of its own: a mirror that
+        // clamped and one that did not would agree on every play under the cliff and disagree on
+        // every play past it. The spread below therefore straddles both cliffs deliberately (22 and
+        // 23 are either side of each), and the exact values are stated on both sides.
         const int notes = 500;
 
         double clientSpotless = ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, 0);
@@ -149,10 +155,11 @@ public class PerformancePointsParityTest
 
         foreach ((int misses, int mistypes) in new[]
                  {
-                     (60, 80),   // the first decided example: (1 - 0.120^2)^10 * (1 - 0.138^2)^6
-                     (10, 20),   // the second: (1 - 0.020^2)^10 * (1 - 0.038^2)^6
-                     (0, 0), (0, 1), (0, 80), (0, 5000),      // mistypes alone
-                     (1, 0), (60, 0), (250, 0), (500, 0),     // misses alone
+                     (60, 80),   // the first decided example: both bases clamp, so this is 0
+                     (10, 20),   // the second: 0.8^10 * 0.2308^6, both counts under their cliffs
+                     (0, 0), (0, 1), (0, 22), (0, 23), (0, 80), (0, 5000),   // mistypes alone
+                     (1, 0), (22, 0), (23, 0), (60, 0), (250, 0), (500, 0),  // misses alone
+                     (22, 22), (23, 23),                      // either side of both cliffs at once
                      (500, 5000),                             // both at once, at the extreme
                  })
         {
@@ -165,16 +172,26 @@ public class PerformancePointsParityTest
         Assert.Multiple(() =>
         {
             Assert.That(ClientPp.Compute(4, notes, 60, 0.9, notes, no_client_mods, 80) / clientSpotless,
-                Is.EqualTo(0.770823).Within(1e-6)); // pp[f.penalty(500, 60, 80)]
+                Is.EqualTo(0.000000).Within(1e-6)); // pp[f.penalty(500, 60, 80)]
             Assert.That(ClientPp.Compute(4, notes, 10, 0.9, notes, no_client_mods, 20) / clientSpotless,
-                Is.EqualTo(0.987200).Within(1e-6)); // pp[f.penalty(500, 10, 20)]
+                Is.EqualTo(0.000016).Within(1e-6)); // pp[f.penalty(500, 10, 20)]
 
             // Zero mistypes leaves the mistyping term at exactly 1.0 on both sides, so the play is
-            // priced by its misses alone.
-            Assert.That(ClientPp.Compute(4, notes, 60, 0.9, notes, no_client_mods, 0) / clientSpotless,
-                Is.EqualTo(Math.Pow(1.0 - Math.Pow(60 / 500.0, 2), 10)).Within(1e-12)); // pp:const miss_exponent=10 miss_ratio_power=2
-            Assert.That(ServerPp.Compute(4, notes, 60, 0.9, notes, no_server_mods, 0) / serverSpotless,
-                Is.EqualTo(Math.Pow(1.0 - Math.Pow(60 / 500.0, 2), 10)).Within(1e-12)); // pp:const miss_exponent=10 miss_ratio_power=2
+            // priced by its misses alone. Ten misses, not the sixty this used to use: sixty is past
+            // the cliff, so both sides would be asserted to equal zero and the restatement would
+            // stop saying anything about the arithmetic that produced it.
+            Assert.That(ClientPp.Compute(4, notes, 10, 0.9, notes, no_client_mods, 0) / clientSpotless,
+                Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - 10.0 * 10.0 / 500.0), 10)).Within(1e-12)); // pp:const miss_exponent=10
+            Assert.That(ServerPp.Compute(4, notes, 10, 0.9, notes, no_server_mods, 0) / serverSpotless,
+                Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - 10.0 * 10.0 / 500.0), 10)).Within(1e-12)); // pp:const miss_exponent=10
+
+            // And BOTH sides reach the clamped zero from the same input, which is the seam the
+            // clamp itself opens: a mirror missing the Math.Max would produce a non-real result
+            // here rather than a zero, and nothing else in this file would catch it.
+            Assert.That(ClientPp.Compute(4, notes, 23, 0.9, notes, no_client_mods, 0), Is.Zero);
+            Assert.That(ServerPp.Compute(4, notes, 23, 0.9, notes, no_server_mods, 0), Is.Zero);
+            Assert.That(ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, 23), Is.Zero);
+            Assert.That(ServerPp.Compute(4, notes, 0, 0.9, notes, no_server_mods, 23), Is.Zero);
         });
     }
 
@@ -695,9 +712,13 @@ public class PerformancePointsParityTest
         double dtStars = ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate);
         double htStars = ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate);
 
+        // 400 notes, twelve of them missed, fifteen mistypes. The counts moved down from 20 and 74
+        // for backlog 97: on a 400-note map the miss cliff is sqrt(400) = 20 exactly and the mistype
+        // cliff is 20.5, so the old fixture priced to zero on every rate at once and the mirror it
+        // exists to check could not be read off the ratios at all.
         var play = new Dictionary<HitResult, int>
         {
-            [HitResult.Great] = 300, [HitResult.Ok] = 60, [HitResult.Meh] = 20, [HitResult.Miss] = 20, [HitResult.ComboBreak] = 74,
+            [HitResult.Great] = 308, [HitResult.Ok] = 60, [HitResult.Meh] = 20, [HitResult.Miss] = 12, [HitResult.ComboBreak] = 15,
         };
 
         double Price(IReadOnlyList<Mod> stack)
