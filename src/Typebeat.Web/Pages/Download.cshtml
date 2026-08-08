@@ -11,8 +11,6 @@
 
     @if (Model.AnyAvailable)
     {
-        <p class="hero-sub">Install, run, type. Your account and scores are shared with the web.</p>
-
         @* Three cards in a two-column grid, so auto-placement puts macOS under Windows and leaves
            the slot under Linux empty: the trio reads as an L. Card order here IS the layout, do
            not reorder without re-checking .download-grid in site.css. *@
@@ -36,22 +34,4 @@
         </div>
         <p class="hero-note">Grab an account now and be ready on day one.</p>
     }
-</section>
-
-<section class="steps">
-    <div class="step card">
-        <div class="step__num">1</div>
-        <h3>Install &amp; run</h3>
-        <p class="muted">Windows: run the installer. macOS: open the <span class="faint">.pkg</span>. Linux: make the <span class="faint">.AppImage</span> executable and launch it. It auto-updates itself from here on.</p>
-    </div>
-    <div class="step card">
-        <div class="step__num">2</div>
-        <h3>Create an account</h3>
-        <p class="muted">In the game or <a href="/register">right here</a>, one account for both, and it puts your scores on the leaderboards.</p>
-    </div>
-    <div class="step card">
-        <div class="step__num">3</div>
-        <h3>Grab some maps</h3>
-        <p class="muted"><a href="/beatmapsets">Browse the listing</a>, download a few songs, and type along.</p>
-    </div>
 </section>
