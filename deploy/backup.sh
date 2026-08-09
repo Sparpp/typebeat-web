@@ -25,12 +25,22 @@
 set -euo pipefail
 
 MODE=${1:-db}
-DIR=/opt/typebeat-web/backups
+DIR=/mnt/typebeat-backups
 PW=$(grep POSTGRES_PASSWORD /opt/typebeat-web/deploy/.env | cut -d= -f2)
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 MIN_FREE_GB=10
 
-mkdir -p "$DIR"
+# The backups live on a SEPARATE Hetzner volume (scsi-0HC_Volume_106574543, 100 GB, mounted by
+# fstab with nofail), not on the root disk. Refuse to run if it is not actually mounted: without
+# this check a detached or unmounted volume turns every backup into a write onto the 75 GB root
+# disk, which is precisely the failure that took the site down on 2026-08-09, just wearing a
+# different hat. Deliberately NOT mkdir -p: creating the mount point on the root disk is the bug,
+# not the fix.
+if ! mountpoint -q "$DIR"; then
+  echo "backup ABORTED ($MODE): $DIR is not a mount point, so the backup volume is not mounted." >&2
+  echo "  check: lsblk; mount -a; df -h $DIR" >&2
+  exit 1
+fi
 
 # Free-space guard: skip + log instead of filling the disk Postgres runs on.
 FREE_GB=$(df -BG --output=avail "$DIR" | tail -n 1 | tr -dc '0-9')
