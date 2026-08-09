@@ -849,6 +849,13 @@
 
         update(time) {
             // (1) accrue active typing time using this frame's span.
+            //
+            // The C# TypingEngine.Update takes a clockRate here and accrues dt / rate, because a
+            // speed-adjusting mod makes beatmap milliseconds and real ones diverge and every WPM
+            // readout is otherwise wrong by 1/rate. This mirror deliberately has no such parameter:
+            // the browser player offers no rate mods at all (nothing here touches playbackRate), so
+            // its rate is permanently 1 and the two accumulators agree. Adding one here is the
+            // first thing to do if browser play ever gains a speed mod.
             if (this.lastUpdateTime !== null && this.activeLineIndex >= 0 && !this.finished && !this.isLineComplete(this.activeLineIndex)) {
                 this.activeTimeMs += Math.max(0, time - this.lastUpdateTime);
             }
