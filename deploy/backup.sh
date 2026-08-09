@@ -16,6 +16,12 @@
 # wedged database), and the server itself prunes assembled per-version download packages
 # beyond the latest two per set (PackageIngest, they are reassemblable from the
 # content-addressed blobs).
+#
+# MIN_FREE_GB IS A FLOOR, NOT THE REAL GUARD, and on 2026-08-09 that distinction took the site
+# down. /data had grown until an appdata tar was ~16 GB, so 10 GB free passed the check and the
+# write then filled the disk anyway: a fixed threshold cannot protect against an archive that
+# outgrows it. The appdata branch therefore sizes its own preflight from the PREVIOUS archive
+# plus 20%, which tracks the data as it grows, and prunes before writing rather than after.
 set -euo pipefail
 
 MODE=${1:-db}
@@ -48,11 +54,40 @@ case "$MODE" in
     # Weekly snapshot of uploaded beatmap blobs/covers/previews/packages: the appdata volume,
     # mounted at /data in the app container (TYPEBEAT_FILE_ROOT). tar ships with the aspnet
     # base image (Debian).
-    docker exec typebeat-web-app-1 tar czf - -C / data > "$DIR/appdata_$TS.tar.gz"
+    #
+    # ORDER MATTERS, AND GETTING IT WRONG TOOK THE SITE DOWN (2026-08-09). This used to write the
+    # new tar and prune afterwards, so the peak requirement was THREE archives (two old plus the
+    # one being written) even though the retention cap is two. At ~16 GB per archive on a 75 GB
+    # disk shared with pgdata and the docker images, that peak filled the filesystem, the tar died
+    # mid-write, Postgres went unhealthy and every request 500'd. Pruning FIRST caps the peak at
+    # two, which is what the disk math in the header assumed all along.
+    #
+    # Keep the newest 1 before writing, so this run's tar makes 2. Count-based, not mtime-based:
+    # a few skipped weeks must never age out the only copies we have.
+    ls -1t "$DIR"/appdata_*.tar.gz 2>/dev/null | tail -n +2 | xargs -r rm -f
 
-    # Keep the newest 2 tars. Count-based, not mtime-based: a few skipped weeks must never
-    # age out the only copies we have.
-    ls -1t "$DIR"/appdata_*.tar.gz 2>/dev/null | tail -n +3 | xargs -r rm -f
+    # Refuse to start if the free space cannot hold an archive about the size of the last one
+    # (plus 20%). Failing loudly on a Sunday morning is enormously better than filling the disk
+    # out from under Postgres, which is what happens when tar is allowed to run out of room.
+    LAST_SIZE=$(stat -c %s "$(ls -1t "$DIR"/appdata_*.tar.gz 2>/dev/null | head -1)" 2>/dev/null || echo 0)
+    NEED_KB=$(( (LAST_SIZE / 1024) * 12 / 10 ))
+    FREE_KB=$(df -Pk "$DIR" | awk 'NR==2 {print $4}')
+    if [ "$NEED_KB" -gt 0 ] && [ "$FREE_KB" -lt "$NEED_KB" ]; then
+      echo "backup ABORTED: appdata needs ~$((NEED_KB/1024/1024)) GB free, have $((FREE_KB/1024/1024)) GB" >&2
+      exit 1
+    fi
+
+    # Write to a .partial name and only publish it on success, so a truncated archive can never
+    # be mistaken for a backup, and can never occupy one of the two retention slots. That second
+    # failure is the quiet one: the corrupt tar sorts NEWEST, so the next prune would have kept it
+    # and deleted a good copy.
+    PARTIAL="$DIR/appdata_$TS.tar.gz.partial"
+    trap 'rm -f "$PARTIAL"' EXIT
+
+    docker exec typebeat-web-app-1 tar czf - -C / data > "$PARTIAL"
+    gzip -t "$PARTIAL" || { echo "backup FAILED: appdata archive is corrupt, discarding" >&2; exit 1; }
+    mv "$PARTIAL" "$DIR/appdata_$TS.tar.gz"
+    trap - EXIT
 
     echo "backup ok: appdata_$TS.tar.gz"
     ;;
