@@ -50,6 +50,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Typebeat.Web\Typebeat.Web.csproj" />
+
+    <!-- The score-recalculation tool (backlog 114) is tested here for the same reason this project
+         exists: it is the only place both repos compile, and the tool spans them (the game's engine
+         re-derives the statistics, the server's ScoringContract and PerformancePoints value them).
+         The tool resolves the game through the SAME two overridable properties below, so it never
+         drags in a second copy. -->
+    <ProjectReference Include="..\..\tools\score-recalc\Typebeat.Tools.ScoreRecalc.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
