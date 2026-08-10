@@ -48,6 +48,14 @@ public static class LyricPace
     /// punctuated text and their word and cell counts move with it. That was always what a bump
     /// to 9 would mean; taking the star change forced the decision, and it has been taken
     /// deliberately rather than absorbed by accident.
+    /// v10 = the star arithmetic changes again (backlog 127): `per_char_floor_ms` 25 to 50 and
+    /// `star_scale` 0.1675 to 0.23. The floor is the one that matters, because unlike a rescale it
+    /// changes SHAPE and therefore ORDER: it raises the minimum window a word can be judged over,
+    /// which lowers the load of the fastest words most, so short dense difficulties fall relative
+    /// to sustained ones. Measured over the live ranked catalogue every rating rises (mean 1.27x,
+    /// range 2.72 to 7.81), no base rating clamps, and the pool reorders by up to 7 places. As at
+    /// v9 the bump exists to make the sweep re-rate every stored row and hand its scores to
+    /// PpBackfill.
     ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
@@ -61,7 +69,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 9;
+    public const int VERSION = 10;
 
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;

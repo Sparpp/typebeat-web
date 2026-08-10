@@ -219,7 +219,7 @@ public class PackageIngestDbTest
             Assert.That(beatmap.WordCount, Is.EqualTo(2));
             Assert.That(beatmap.CharCount, Is.EqualTo(5));
             Assert.That((double)beatmap.Wpm, Is.EqualTo(40).Within(1e-6));
-            Assert.That(beatmap.Difficulty, Is.EqualTo(0.46).Within(0.01)); // strain-based stars
+            Assert.That(beatmap.Difficulty, Is.EqualTo(0.63).Within(0.01)); // strain-based stars
             Assert.That(beatmap.Lyrics, Is.EqualTo("ab cd")); // the lyrics: search haystack
         });
 
@@ -421,7 +421,7 @@ public class PackageIngestDbTest
         {
             // The regression package: "ab cd" over a 3000 ms boundary window.
             Assert.That((double)row.Wpm, Is.EqualTo(40).Within(1e-6));
-            Assert.That(row.Difficulty, Is.EqualTo(0.46).Within(0.01)); // strain-based stars
+            Assert.That(row.Difficulty, Is.EqualTo(0.63).Within(0.01)); // strain-based stars
             Assert.That(row.WordCount, Is.EqualTo(2));
             Assert.That(row.CharCount, Is.EqualTo(5));
             Assert.That(row.Lyrics, Is.EqualTo("ab cd")); // v8 fills the lyrics: haystack
