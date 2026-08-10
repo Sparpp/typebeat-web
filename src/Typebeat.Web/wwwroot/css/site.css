@@ -2418,6 +2418,14 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .tb-c-hit  { color: var(--violet); }
 .tb-c-hit  { color: color-mix(in oklab, var(--violet) var(--tb-sync-fill, 100%), var(--text-muted)); }
 .tb-c-off  { color: var(--warn); }
+/* Typed WRONG (the default input model since backlog 107: the char lands in the cell instead of
+   being rejected, and backspace can take it back). The desktop paints the EXPECTED glyph in its
+   error red rather than showing the char the player actually pressed
+   (LyricLineDisplay: TypeBeatStyle.ErrorChar), so cellText() keeps returning cell.expected and only
+   the colour changes. --bad is this site's own coral, which is the same signal in the site's
+   palette; it is deliberately NOT dimmed like .tb-c-miss, because a wrong char is something the
+   player can still go back and fix. */
+.tb-c-wrong, .tb-line-cur .tb-c-wrong { color: var(--bad); }
 /* Missed at seal: the desktop dims the untyped glyph (alpha 0.4) rather than recolouring it,
    which keeps a sealed line readable instead of turning it into a wall of red. */
 .tb-c-miss { color: var(--text-muted); opacity: .4; }

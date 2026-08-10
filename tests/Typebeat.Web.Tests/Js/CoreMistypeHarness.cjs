@@ -62,6 +62,14 @@ function play(options) {
 
     const beatmap = TB.buildBeatmap(TB.parseLyricOsu(OSU), false);
     const engine = new TB.TypingEngine(beatmap);
+    // These runs pin the REJECTION model (the desktop client's Gatekeeper mod, and the browser's
+    // only model before backlog 107), which is what the golden combo/score table in
+    // MistypeParityTest was derived from. Kept as its own fixture rather than rewritten: the
+    // rejection path still ships, still has to account identically, and its play loop only makes
+    // sense here (a wrong key that is typed THROUGH consumes the cell, so "press a wrong key, then
+    // press the right one" would type into the following cell). CoreAllowWrongHarness.cjs is the
+    // default model's fixture.
+    engine.allowWrongInput = false;
 
     const cells = [];
     for (const line of beatmap.lines) for (const cell of line.cells) cells.push({ line, cell });

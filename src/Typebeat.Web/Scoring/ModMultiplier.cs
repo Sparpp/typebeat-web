@@ -14,10 +14,11 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
-/// Per-mod values, mirroring the calculator: No Fail 0.5, Sudden Death 1.0 (absent), Flashlight 1.05,
-/// Literate 1.05, Fletcher 0.98, Muted 1.0 (absent), Mashing 0.1 (unranked, still priced for
-/// display parity), and the rate mods on the continuous <see cref="RateMultiplier"/> curve. The
-/// fattest RANKED stack is DT@2.00 (1.46) x FL (1.05) x LT (1.05) = 1.60965.
+/// Per-mod values, mirroring the calculator: No Fail 0.5, Sudden Death 1.0 (absent), Gatekeeper 1.0
+/// (absent), Flashlight 1.05, Literate 1.05, Fletcher 0.98, Muted 1.0 (absent), Mashing 0.1
+/// (unranked, still priced for display parity), and the rate mods on the continuous
+/// <see cref="RateMultiplier"/> curve. The fattest RANKED stack is unchanged by a 1.0x mod:
+/// DT@2.00 (1.46) x FL (1.05) x LT (1.05) = 1.60965.
 /// </para>
 ///
 /// <para>
@@ -96,6 +97,11 @@ public static class ModMultiplier
         {
             "NF" => 0.5,
             "SD" => 1.0,
+            // Gatekeeper (backlog 107): the strict wrong-key model, which used to be the client's
+            // default and is now a ranked mod. Listed at 1.0 rather than left to fall through to
+            // UNKNOWN_MOD_MULTIPLIER, so a GK play is bounded exactly like the no-mod play it scores
+            // as instead of being allowed a 2.0x ceiling it can never justify.
+            "GK" => 1.0,
             // Trimmed from the old flashlight's 1.2x with the character-window rework (task 36);
             // must match the game calculator's value.
             "FL" => 1.05,

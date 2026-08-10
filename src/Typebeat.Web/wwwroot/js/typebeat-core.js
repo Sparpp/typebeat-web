@@ -592,11 +592,19 @@
             // rejected exactly as a wrong key on any other cell is. Mirrors TypingCell.IsFreestyle,
             // which is (IsTypeable && marker) and so is exactly this here.
             freestyle: isFreestyle(expected),
-            state: 'untyped',        // untyped | correct | missed
-            judgeType: null,         // Perfect | Good | Ok | Premature | Lagging | Miss
+            state: 'untyped',        // untyped | correct | wrong | missed | autoskip
+            judgeType: null,         // Perfect | Good | Ok | Premature | Lagging | Miss | WrongChar
             typedChar: null,
             judgedDelta: null,
-            firstCorrectDelta: null
+            firstCorrectDelta: null,
+            // Mirrors DrawableTypeBeatCharObject.Judged, i.e. "this cell has already handed the
+            // score processor its one and only result". ApplyEngineResult bails on an already-judged
+            // cell (`if (Judged) return;`) and ApplySealResults goes through the same call, so a cell
+            // contributes to the submitted account exactly once whatever happens to it afterwards.
+            // Only reachable with allowWrongInput on: a cell can be judged WRONG, then backspaced,
+            // then retyped correctly (or left to seal), and each of those would otherwise apply a
+            // second result the desktop client never applies.
+            judged: false
         };
     }
 
@@ -657,10 +665,12 @@
     //      return;`), so a backspace-and-retype (an inert retype here) moves nothing.
     //   2. TypeBeatPlayfield.onWrongKeyRejected -> scoreProcessor.Combo.Value = 0. A rejected key
     //      raises no judgement at all, so the break is mirrored by hand; nothing else moves (no
-    //      result count, no accuracy, no portion). STRICT input mode only, which is the only mode
-    //      the browser player has. In allow-wrong-input mode the wrong char instead lands in the
-    //      cell and breaks combo through the ordinary Miss judgement of path 1, so the accounting
-    //      below covers both modes with no branch.
+    //      result count, no accuracy, no portion). This is the GATEKEEPER path, plus the two space
+    //      cases every model rejects. In the DEFAULT allow-wrong-input model the wrong char instead
+    //      lands in the cell and breaks combo through the ordinary Miss judgement of path 1, so the
+    //      accounting below covers both models with no branch of its own. The two are NOT
+    //      interchangeable: path 1 also spends a judgement and 300 points of accuracy denominator on
+    //      the cell, which is exactly why the same performance scores differently under the mod.
     //   3. TypeBeatPlayfield.onMistyped -> TypeBeatScoreProcessor.RecordMistype. Counting only,
     //      by design: the combo break is deliberately NOT folded in here, it is already carried by
     //      path 2 (strict) or path 1 (allow-wrong-input), and doing it twice would corrupt the
@@ -743,6 +753,7 @@
                     c.typedChar = null;
                     c.judgedDelta = null;
                     c.firstCorrectDelta = null;
+                    c.judged = false;
                 }
             }
             this.activeLineIndex = -1;
@@ -751,7 +762,7 @@
             // The engine's OWN live combo/score (TypingEngine.Combo / Score): what the HUD shows.
             // The submitted numbers do not come from here; they come from the score processor
             // mirror below, which the engine drives at exactly the points TypeBeatPlayfield drives
-            // the real one. In strict vanilla play the two combos happen to track each other, but
+            // the real one. In vanilla play the two combos happen to track each other, but
             // they are separate accounts with separate rules and only one of them is submitted.
             this.combo = 0;
             this.maxCombo = 0;
@@ -776,6 +787,14 @@
             // the UI would also mean wiring the submitted mods payload (both are unranked).
             this.caseSensitive = false;       // Literate: the typed char must match the exact case
             this.mashingEnabled = false;      // Mashing (Relax): any key is the right key
+            // The wrong-key MODEL, and unlike the two above this one is ON, because it is the
+            // DEFAULT gameplay on both sides since backlog 107: a wrong (non-space) char is typed
+            // through and marked wrong instead of being rejected, and backspace can take it back.
+            // The desktop client turns it off only for the Gatekeeper mod (acronym GK), and the
+            // browser has no mods payload at all, so /play is permanently non-Gatekeeper, which is
+            // exactly the default the shared leaderboards are now judged under. If /play ever grows
+            // a mods payload, this is the flag GK would clear.
+            this.allowWrongInput = true;
             // event hooks (optional; set by the renderer)
             this.onCharJudged = null;
             this.onWrongKey = null;
@@ -784,10 +803,16 @@
             this.onFailed = null;
         }
 
+        // The mash guard, and it survives the backlog-107 flip on both sides for the same reason:
+        // the streak only ever grows on the REJECTION path, and the two space cases (a space pressed
+        // on a lyric char, any key pressed on a word gap) take that path in every model. So a
+        // browser player mashing space still fails at 13 exactly as a desktop one does, while a
+        // player mashing LETTERS no longer fails at all unless they picked Gatekeeper.
         get health() { return Math.max(0, 1 - this.consecutiveWrongKeys / WRONG_KEY_FAIL_STREAK); }
 
         // Wrong KEYPRESSES so far: the play's persisted mistype stat (TypingEngine.Mistypes).
-        // The browser player is always strict, so every one of them was a rejected key.
+        // Counted per keypress in BOTH models, so it means the same thing whether the key was
+        // typed through (the default, and everything the browser can do) or rejected.
         get mistypes() { return this.counts.WrongChar || 0; }
 
         get liveAccuracy() { return this.totalKeypresses > 0 ? this.correctKeypresses / this.totalKeypresses : 1; }
@@ -816,6 +841,16 @@
             return time >= line.endTime && (time >= line.endTime + line.sealGraceMs || this.noTypeableUntyped(line));
         }
 
+        // DrawableTypeBeatCharObject.ApplyEngineResult: a cell hands the score processor its ONE
+        // result and every later attempt on the same cell is dropped (`if (Judged) return;`). Every
+        // processor.applyResult in this engine goes through here, so the submitted account can never
+        // hold two entries for one cell however the play reaches it.
+        applyCellResult(cell, result) {
+            if (cell.judged) return;
+            cell.judged = true;
+            this.processor.applyResult(result);
+        }
+
         sealLine(idx) {
             const line = this.lines[idx];
             let missed = 0;
@@ -826,11 +861,19 @@
                     c.state = 'missed';
                     c.judgeType = 'Miss';
                     missed++;
-                    // DrawableTypeBeatHitObject.ApplySealResults: every still-unjudged cell of the
-                    // line takes a Miss, in cell order, at seal time. (The line object's own
-                    // IgnoreHit result follows, and is scoring-inert, so it is not modelled.)
-                    this.processor.applyResult('miss');
                 }
+
+                // DrawableTypeBeatHitObject.ApplySealResults: EVERY nested char drawable of the line
+                // (one per typeable cell) takes a Miss at seal time, in cell order, and each is a
+                // no-op on a cell that already carries a result. (The line object's own IgnoreHit
+                // result follows, and is scoring-inert, so it is not modelled.) That is `judged`
+                // exactly, which is why the guard is not the state test above: with allowWrongInput
+                // the two came apart. A cell typed WRONG and then backspaced is 'untyped' with no
+                // firstCorrectDelta, so it seals as Missed for display and for completion, but the
+                // drawable already took its Miss when the wrong char landed, and a second one here
+                // would double-count it against the desktop.
+                if (c.typeable && !c.judged)
+                    this.applyCellResult(c, 'miss');
             }
             if (missed > 0) {
                 this.combo = 0;
@@ -913,12 +956,53 @@
             // pressed char kept in typedChar.
             // SPACE is carved out (backlog 50): it is the word-advance key, not a glyph a player
             // means to leave sitting in a lyric, so it falls through to the ordinary non-match path
-            // below and is rejected exactly as a wrong key on any other cell would be.
+            // below and is judged exactly as a wrong key on any other cell would be. The strict
+            // rejection is the only outcome available to it, because the allow-wrong-input path
+            // already refuses to type a space through (c !== ' ').
             const matched = (cell.freestyle && c !== ' ') ||
                 (this.caseSensitive ? c === cell.expected : fold(c) === fold(cell.expected));
 
             if (!matched) {
-                // Wrong key, REJECTED. Costs a keypress + combo + streak; caret unmoved.
+                // DEFAULT (allowWrongInput): a wrong LETTER is typed through, marked wrong,
+                // backspaceable, instead of rejected. The space key stays strict on BOTH sides (no
+                // wrong space, and no wrong char consuming a word boundary), and this path never
+                // feeds the mash-fail streak, so the browser has no 13-key fail at all, which is
+                // correct: that guard belongs to the rejection model (the Gatekeeper mod) and the
+                // browser can never be in it.
+                if (this.allowWrongInput && c !== ' ' && cell.expected !== ' ') {
+                    this.totalKeypresses++;
+                    this.errorCount++;
+                    this.combo = 0;
+                    this.counts.WrongChar = (this.counts.WrongChar || 0) + 1;
+
+                    cell.state = 'wrong';
+                    cell.typedChar = c;
+                    cell.judgeType = 'WrongChar';
+
+                    this.caretIndex++;
+                    this.autoSkipForward();
+
+                    if (this.onComboBroken) this.onComboBroken();
+                    // The CELL's own judgement, exactly as in the C#: CharJudged carries a WrongChar,
+                    // TypeBeatPlayfield.onCharJudged hands it to ApplyCharJudgement, and
+                    // DrawableTypeBeatHitObject.toHitResult maps WrongChar to HitResult.Miss. So the
+                    // submitted account takes a real Miss here (which is also what keeps Sudden Death
+                    // failing on the desktop), NOT the bare combo break a rejected key leaves.
+                    this.applyCellResult(cell, 'miss');
+                    // NEITHER renderer hook fires here, and both omissions mirror the desktop.
+                    // onWrongKey is the REJECTED-key feedback (shake + the char popping off the
+                    // caret, mirroring LyricStage.onWrongKeyRejected), which the desktop does not
+                    // play for a char it accepted into a cell; the cell painting itself wrong is the
+                    // feedback on both sides. onCharJudged is this renderer's rolling-WPM tap, and
+                    // the C# pushRollingSample() sits on the ACCEPTED path only, below the branch we
+                    // are in, so logging a wrong char here would drift the browser's WPM readout
+                    // away from the desktop's.
+                    return true;
+                }
+
+                // GATEKEEPER (strict). Wrong key REJECTED: costs a keypress + combo + streak; caret
+                // unmoved. Unreachable from the browser for a letter, reached for the two space
+                // cases the default path refuses above.
                 this.totalKeypresses++;
                 this.errorCount++;
                 this.consecutiveWrongKeys++;
@@ -950,7 +1034,9 @@
             if (inertRetype) {
                 // Scoring-inert on BOTH accounts: the engine leaves its own combo/score alone, and
                 // no result reaches the processor, because the cell drawable already carries one
-                // (DrawableTypeBeatCharObject.ApplyEngineResult: `if (Judged) return;`).
+                // (DrawableTypeBeatCharObject.ApplyEngineResult: `if (Judged) return;`). The branch
+                // below relies on the SAME guard rather than on this condition, because with
+                // allowWrongInput a cell can carry a result without ever having been correct.
                 const d = cell.firstCorrectDelta;
                 type = classify(d, w);
                 cell.state = 'correct';
@@ -982,7 +1068,12 @@
                 // TypeBeatPlayfield.onCharJudged -> ApplyCharJudgement -> ApplyResult. Perfect/
                 // Good/Ok increase the submitted combo, Premature/Lagging break it (they map to
                 // Miss), and the combo portion is weighted by the combo as it stands right here.
-                this.processor.applyResult(toHitResult(type));
+                // Guarded, because a cell typed WRONG and then backspaced comes back through here
+                // with firstCorrectDelta still null: the engine counters above DO move (the C# takes
+                // the same non-inert branch), but the drawable is already Judged, so the processor
+                // must not take a second result. Without the guard a backspace-and-fix would inflate
+                // the browser's judged count and out-score the identical desktop play.
+                this.applyCellResult(cell, toHitResult(type));
             }
 
             const judgedIndex = this.caretIndex;

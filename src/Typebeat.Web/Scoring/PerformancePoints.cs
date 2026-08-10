@@ -539,7 +539,7 @@ public static class PerformancePoints
                 "FL" => FlashlightMultiplier(notes),
                 "FT" => fletcher_multiplier,
                 "NF" => no_fail_multiplier,
-                // SD / MU are explicitly 1.0, matching their score multipliers. Anything else
+                // SD / GK / MU are explicitly 1.0, matching their score multipliers. Anything else
                 // (including a mod a newer client ships before this table learns it) is neutral:
                 // an unknown mod must never silently inflate or deflate a ranking.
                 _ => 1.0,

@@ -200,8 +200,17 @@ public class FreestyleParityTest
             Assert.That(Num(r, "combo"), Is.EqualTo(2));
             Assert.That(Num(r, "liveAccuracy"), Is.EqualTo(1.0));
 
-            Assert.That(Str(r, "controlState"), Is.EqualTo("untyped"));
-            Assert.That(Num(r, "controlWrongKeys"), Is.EqualTo(1));
+            // The control, on the DEFAULT model (backlog 107): the capital still does not match, so
+            // it is typed through as a wrong char and counted as a mistype, and the mash-fail streak
+            // stays at 0 because that guard belongs to the rejection model.
+            Assert.That(Str(r, "controlState"), Is.EqualTo("wrong"));
+            Assert.That(Str(r, "controlTypedChar"), Is.EqualTo("A"));
+            Assert.That(Num(r, "controlMistypes"), Is.EqualTo(1));
+            Assert.That(Num(r, "controlWrongKeys"), Is.Zero);
+
+            // ...and the rejection branch, which the desktop's Gatekeeper mod still reaches.
+            Assert.That(Str(r, "strictControlState"), Is.EqualTo("untyped"));
+            Assert.That(Num(r, "strictControlWrongKeys"), Is.EqualTo(1));
         });
     }
 
