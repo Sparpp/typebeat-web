@@ -93,6 +93,10 @@ public class RateMultiplierTest
         {
             Assert.That(ModMultiplier.For("NF", null), Is.EqualTo(0.5));
             Assert.That(ModMultiplier.For("SD", null), Is.EqualTo(1.0));
+            // Gatekeeper (backlog 107): ranked, and priced at exactly 1.0 rather than left to the
+            // unknown-mod allowance, so a GK play is bounded like the no-mod play it scores as.
+            Assert.That(ModMultiplier.For("GK", null), Is.EqualTo(1.0));
+            Assert.That(ModMultiplier.For("gk", null), Is.EqualTo(1.0));
             Assert.That(ModMultiplier.For("FL", null), Is.EqualTo(1.05));
             Assert.That(ModMultiplier.For("LT", null), Is.EqualTo(1.05));
             Assert.That(ModMultiplier.For("FT", null), Is.EqualTo(0.98));
@@ -127,8 +131,9 @@ public class RateMultiplierTest
         Assert.That(fattest, Is.LessThan(ModMultiplier.STACK_CAP), "the backstop must never bite a reachable stack");
 
         // Adding the neutral / trimming ranked mods cannot beat it.
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("SD", null), ("MU", null)]),
-            Is.EqualTo(fattest).Within(1e-9));
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("SD", null), ("MU", null), ("GK", null)]),
+            Is.EqualTo(fattest).Within(1e-9),
+            "a 1.0x mod cannot move the ceiling, which is why adding Gatekeeper reprices nothing");
         Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("FT", null)]),
             Is.LessThan(fattest));
         Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("NF", null)]),

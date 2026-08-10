@@ -93,6 +93,7 @@ public class PerformancePointsParityTest
         new TypeBeatModNightcore(),
         new TypeBeatModFlashlight(),
         new TypeBeatModLiterate(),
+        new TypeBeatModGatekeeper(),
         new TypeBeatModFletcher(),
         new TypeBeatModMashing(),
         new TypeBeatModMuted(),

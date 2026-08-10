@@ -202,9 +202,17 @@ function literate() {
     const accepted = engine.processKey('Q', 2000);
     const cell = engine.lines[0].cells[1];
 
+    // Wrong case on an ORDINARY cell still does not MATCH; since backlog 107 the default model
+    // types the offending char through as a wrong cell instead of rejecting it. Both facts are
+    // asserted, and the strict control below keeps the rejection branch covered too.
     const control = activeEngine();
     control.caseSensitive = true;
-    control.processKey('A', 1000); // wrong case on an ORDINARY cell: rejected
+    control.processKey('A', 1000);
+
+    const strictControl = activeEngine();
+    strictControl.caseSensitive = true;
+    strictControl.allowWrongInput = false;
+    strictControl.processKey('A', 1000);
 
     return {
         accepted: accepted,
@@ -213,7 +221,11 @@ function literate() {
         combo: engine.combo,
         liveAccuracy: engine.liveAccuracy,
         controlState: control.lines[0].cells[0].state,
-        controlWrongKeys: control.consecutiveWrongKeys
+        controlTypedChar: control.lines[0].cells[0].typedChar,
+        controlMistypes: control.mistypes,
+        controlWrongKeys: control.consecutiveWrongKeys,
+        strictControlState: strictControl.lines[0].cells[0].state,
+        strictControlWrongKeys: strictControl.consecutiveWrongKeys
     };
 }
 

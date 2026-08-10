@@ -280,6 +280,10 @@
             // Typed but off-time (Premature/Lagging) scores as a miss; desktop draws it like
             // any other correct char, the browser keeps a distinct warn tint as a free hint.
             cls += (jt === 'Perfect' || jt === 'Good' || jt === 'Ok') ? ' tb-c-hit' : ' tb-c-off';
+        } else if (cell.state === 'wrong') {
+            // Typed through wrong (the default model). The desktop shows the EXPECTED glyph in
+            // error red, not the char that was pressed, so only the colour changes here.
+            cls += ' tb-c-wrong';
         } else if (cell.state === 'missed') {
             cls += ' tb-c-miss';
         } else {
@@ -420,7 +424,18 @@
         function onKeyDown(e) {
             if (!running || !engine) return;
             if (e.ctrlKey || e.altKey || e.metaKey) return;
-            if (e.key === 'Backspace') { e.preventDefault(); engine.processBackspace(); return; }
+            // Backspace, gated exactly as TypeBeatPlayfield's key handler gates it: erasing only
+            // ever has something to undo where a wrong char can land, so it reads the engine's
+            // allowWrongInput flag rather than a rule of its own. That flag is on for every browser
+            // play (the browser has no mods payload and so can never be Gatekeeper), which means
+            // backspace is LIVE here, where under the old strict-only model it was inert. The key is
+            // still swallowed either way, and the engine is still where the erase is decided:
+            // processBackspace no-ops when there is nothing behind the caret.
+            if (e.key === 'Backspace') {
+                e.preventDefault();
+                if (engine.allowWrongInput) engine.processBackspace();
+                return;
+            }
             if (e.repeat) return;
             let ch = null;
             if (e.key === ' ' || e.code === 'Space') ch = ' ';
