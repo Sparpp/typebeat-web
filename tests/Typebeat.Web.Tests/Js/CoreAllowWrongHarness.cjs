@@ -5,9 +5,10 @@
 // is now judged under, on the SAME leaderboards as desktop scores.
 //
 // CoreMistypeHarness.cjs is the sibling fixture for the rejection model (it sets allowWrongInput
-// off explicitly). The two models are NOT interchangeable, and the difference is the point: a
-// rejected key leaves nothing but a combo break, while a typed-through one also spends a judgement
-// and 300 points of accuracy denominator on the cell it lands in.
+// off explicitly). Since backlog 109 the two models account for the KEYPRESS identically (a combo
+// break plus a mistype, and no judgement result either way); what still differs is the CELL, which
+// rejection leaves waiting for the player and the default model consumes, so a typo left alone
+// costs the cell at the seal while a rejected key never costs one at all.
 //
 // Usage: node CoreAllowWrongHarness.cjs <absolute path to typebeat-core.js>
 
@@ -93,7 +94,12 @@ function play(script, probeAt) {
                         typedChar: cell.typedChar,
                         caretIndex: engine.caretIndex,
                         consecutiveWrongKeys: engine.consecutiveWrongKeys,
-                        mistypes: engine.mistypes
+                        mistypes: engine.mistypes,
+                        // The backlog-109 pair: the cell has handed the processor NOTHING (its
+                        // result is deferred), yet the submitted combo has already broken.
+                        judged: cell.judged,
+                        processorCombo: engine.processor.combo,
+                        processorJudged: engine.processor.judgementCount
                     };
                 }
 
@@ -143,14 +149,21 @@ const out = {
     // both are one HitResult.Miss on the last cell; only the mistype count tells them apart.
     lastCellSkipped: play({ 14: 'skip' }),
 
-    // Typed wrong, then backspaced and never fixed. The cell seals Missed for display, but it has
-    // ALREADY handed the processor its one result, so the submitted account must be identical to
-    // the two runs above rather than carrying two misses.
+    // Typed wrong, then backspaced and never fixed. The cell is 'untyped' again for display, and
+    // still unjudged, so the seal misses it: the submitted account must be identical to the two runs
+    // above rather than carrying two misses.
     lastCellWrongThenErased: play({ 14: 'wrongErase' }),
 
-    // Typed wrong mid-line, then backspaced and retyped correctly. The retype moves the engine's
-    // own counters (it was never correct before, so it is not an inert retype) but must NOT hand the
-    // processor a second result: the cell is already judged.
+    // A typo left sitting MID-LINE. The combo break lands on the keypress and the cell's miss lands
+    // at the seal, i.e. after every later cell has been judged, so this is the run that says the two
+    // no longer have to happen together. It is also the regression pin for "an uncorrected typo
+    // costs what it always cost": the account is byte-identical to what the OLD model produced for
+    // this play, because nothing scores between the break and the miss.
+    midCellTypedWrong: play({ 5: 'wrong' }, 5),
+
+    // Typed wrong mid-line, then backspaced and retyped correctly. Since backlog 109 the typo spent
+    // no result, so the retype IS the cell's first and only one: it earns a real Great, and the play
+    // recovers the cell, its completion and its rank. The mistype and the combo break it cost stay.
     midCellWrongThenFixed: play({ 5: 'wrongFix' }, 5),
 
     // A WORD GAP still refuses a wrong key in every model, so this one is rejected: caret held, no

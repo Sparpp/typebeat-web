@@ -14,12 +14,18 @@ namespace Typebeat.Web.Tests;
 /// judged under a model no desktop player uses, so the boards would quietly mix two scoring systems.
 /// This fixture is what says the browser now judges wrong keys the way the desktop does.</para>
 ///
-/// <para>The claim being pinned, on both sides: a typed-through wrong char consumes its cell and is
-/// judged <c>JudgementType.WrongChar</c>, which <c>DrawableTypeBeatHitObject.toHitResult</c> maps to
-/// <c>HitResult.Miss</c>. So it is worth EXACTLY one miss on that cell, no more (a fix or an erase
-/// cannot buy a second result, because the cell drawable applies one result ever) and no less (it
-/// is not the bare combo break a REJECTED key leaves). Space stays strict in both models on both
-/// sides, and the mash-fail streak stays on the rejection path only.</para>
+/// <para>The claim being pinned, on both sides, and it MOVED in backlog 109: a typed-through wrong
+/// char consumes its cell but resolves NOTHING. A miss is a character the line ran out of time on; a
+/// typo is a typo, and the player can still backspace and get the cell right, so the cell's one osu
+/// result is DEFERRED. Fix it and the retype is that result (a real Great, recovering completion and
+/// rank); leave it and the seal misses it exactly like a cell nobody touched. Either way the cell is
+/// worth exactly one result, because the cell drawable applies one result ever.</para>
+///
+/// <para>The keypress itself costs a mistype and a combo break in BOTH models, and in neither does
+/// that break travel on a judgement result, so both sides mirror it by hand into the score processor
+/// (<c>TypeBeatPlayfield.onMistyped</c>). That is what stops <c>max_combo</c> counting on through the
+/// rest of the line after a break the engine has already taken. Space stays strict in both models on
+/// both sides, and the mash-fail streak stays on the rejection path only.</para>
 ///
 /// <para>As in <see cref="MistypeParityTest"/>, nothing is hardcoded twice: the Node harness runs
 /// real plays through the SHIPPED JS and the dictionaries it emits are fed to the server's own
@@ -63,6 +69,13 @@ public class AllowWrongInputParityTest
             Assert.That(probe.GetProperty("caretIndex").GetInt32(), Is.EqualTo(6), "the wrong key consumed cell 5");
             Assert.That(probe.GetProperty("mistypes").GetInt32(), Is.EqualTo(1), "it is still a mistype");
 
+            // ...and the backlog-109 pair, at the instant the wrong key lands: the cell has handed
+            // the score processor NOTHING (five judgements, one per cell before it, and the cell
+            // itself unjudged), while the submitted combo has ALREADY broken.
+            Assert.That(probe.GetProperty("judged").GetBoolean(), Is.False, "a typo resolves no cell");
+            Assert.That(probe.GetProperty("processorJudged").GetInt32(), Is.EqualTo(5));
+            Assert.That(probe.GetProperty("processorCombo").GetInt32(), Is.Zero, "the break is mirrored by hand");
+
             // ...and the mash-fail streak did NOT move. That guard only ever accrued on the
             // rejection path, so it is now Gatekeeper-only, which the browser can never select.
             Assert.That(probe.GetProperty("consecutiveWrongKeys").GetInt32(), Is.Zero);
@@ -71,20 +84,21 @@ public class AllowWrongInputParityTest
     }
 
     /// <summary>
-    /// The headline equivalence, and the reason no golden combo table has to be re-derived by hand
-    /// for the new branch: a wrong char typed into the last cell costs the submitted score exactly
-    /// what never typing that cell at all costs, because both are one Miss in the same place in the
-    /// judgement stream. Only the mistype count, which is priced by pp and by nothing else, tells
-    /// the two apart.
+    /// An UNCORRECTED typo costs the submitted score exactly what never typing that cell at all
+    /// costs, because both end as one Miss in the same place in the judgement stream. Only the
+    /// mistype count, which is priced by pp and by nothing else, tells the two apart.
     ///
-    /// <para>This test states what the DESKTOP does, which is the whole job of this file, and NOT
-    /// that a typo ought to be worth a miss. Backlog 109 asks precisely that question ("a miss is a
-    /// character the player never typed, a typo is a typo"), so if the desktop ever stops mapping
-    /// <c>WrongChar</c> to <c>HitResult.Miss</c>, this assertion is expected to move with it rather
-    /// than to hold it back.</para>
+    /// <para>Backlog 109 kept this deliberately, having asked the question it used to be an artefact
+    /// of ("a miss is a character the player never typed, a typo is a typo"). The alternative, never
+    /// letting a typo be a miss, would drop the cell out of <c>notes</c> and quietly move accuracy,
+    /// the combo ratio and the pp length term. So a typo you go back for costs a mistype and a
+    /// combo, and one you leave costs a mistype and a cell. What changed is that the cell is now
+    /// spent at the SEAL, on the play's evidence, rather than at the keypress on a guess: the
+    /// <c>lastCell*</c> runs below put the typo on the final cell precisely so the two timings
+    /// coincide and the equivalence is exact.</para>
     /// </summary>
     [Test]
-    public void ATypedThroughWrongCharCostsExactlyWhatAMissedCellCosts()
+    public void AnUncorrectedTypoCostsExactlyWhatAMissedCellCosts()
     {
         var root = Harness();
 
@@ -115,32 +129,41 @@ public class AllowWrongInputParityTest
     }
 
     /// <summary>
-    /// The guard that keeps a cell to ONE result however the play reaches it
-    /// (<c>DrawableTypeBeatCharObject.ApplyEngineResult</c>: <c>if (Judged) return;</c>). Two ways
-    /// to break it, and both are worse than a wrong number: a second result pushes the judged count
-    /// past <c>maximum_statistics</c>, which fails <c>StatisticsValid</c> and stores the play
-    /// UNRANKED. Backspacing is not an exotic path any more, it is what the default model expects
-    /// the player to do about a typo.
+    /// Every cell accounts for EXACTLY one result however the play reaches it, which is the guard in
+    /// <c>DrawableTypeBeatCharObject.ApplyEngineResult</c> (<c>if (Judged) return;</c>) plus the fact
+    /// that a typo now takes none. Getting this wrong is worse than a wrong number in either
+    /// direction: a second result pushes the judged count past <c>maximum_statistics</c>, which fails
+    /// <c>StatisticsValid</c> and stores the play UNRANKED, and a missing one leaves a cell nobody
+    /// ever judged. Backspacing is not an exotic path, it is what the default model expects the
+    /// player to do about a typo.
     /// </summary>
     [Test]
-    public void FixingOrErasingAWrongCharCannotBuyASecondResult()
+    public void EveryCellAccountsForExactlyOneResultHoweverTheTypoEnds()
     {
         var root = Harness();
 
         Assert.Multiple(() =>
         {
-            foreach (string name in new[] { "lastCellTypedWrong", "lastCellWrongThenErased", "midCellWrongThenFixed" })
+            foreach (string name in new[] { "lastCellTypedWrong", "lastCellWrongThenErased", "midCellTypedWrong", "midCellWrongThenFixed" })
             {
-                var stats = Dict(root.GetProperty(name), "statistics");
+                var run = root.GetProperty(name);
+                var stats = Dict(run, "statistics");
 
                 Assert.That(stats.GetValueOrDefault("great") + stats.GetValueOrDefault("miss"), Is.EqualTo(15),
                     $"{name}: the 15 cells must account for exactly 15 judgements");
-                Assert.That(stats.GetValueOrDefault("miss"), Is.EqualTo(1), name);
-                Assert.That(Recompute(root.GetProperty(name)).StatisticsValid, Is.True, name);
+                Assert.That(Recompute(run).StatisticsValid, Is.True, name);
             }
 
-            // Erasing without fixing lands the cell back in Missed, which is what the player sees,
-            // yet the submitted account is byte-identical to leaving the wrong char sitting there.
+            // Left alone, the cell is a miss...
+            foreach (string name in new[] { "lastCellTypedWrong", "lastCellWrongThenErased", "midCellTypedWrong" })
+                Assert.That(Dict(root.GetProperty(name), "statistics").GetValueOrDefault("miss"), Is.EqualTo(1), name);
+
+            // ...and fixed, it is a Great instead. One result either way, never two and never none.
+            Assert.That(Dict(root.GetProperty("midCellWrongThenFixed"), "statistics"), Does.Not.ContainKey("miss"));
+
+            // Erasing without fixing lands the cell back in 'untyped', which is what the player sees,
+            // and the seal then misses it, so the submitted account is byte-identical to leaving the
+            // wrong char sitting there.
             var erased = root.GetProperty("lastCellWrongThenErased");
             var wrong = root.GetProperty("lastCellTypedWrong");
             Assert.That(erased.GetProperty("totalScore").GetInt64(), Is.EqualTo(wrong.GetProperty("totalScore").GetInt64()));
@@ -149,27 +172,81 @@ public class AllowWrongInputParityTest
     }
 
     /// <summary>
-    /// Backspacing and retyping recovers the CELL (completion counts it, the player sees it fixed)
-    /// but not the submitted judgement, and the two combo accounts part company over it: the engine's
-    /// own live combo, which the HUD counts up, takes the retype, while the score processor's does
-    /// not, because no result reached it. That asymmetry is the desktop client's, not an artefact of
-    /// the mirror, and it is stated here so nobody "fixes" one side of it.
+    /// The trap deferring the result opens, and the reason this is not a two-line change. osu's combo
+    /// is maintained INCREMENTALLY off judgement results, so a wrong keypress that raises no result
+    /// leaves the submitted <c>max_combo</c> nothing to break it, and it would count straight on
+    /// through a break the engine has already taken. Both sides mirror the break by hand instead.
+    ///
+    /// <para><c>midCellTypedWrong</c> is where that is visible: the typo is on cell 5 of 15 and is
+    /// never fixed, so the break must land on the keypress while the cell's miss lands at the seal,
+    /// nine judgements later. Submitted <c>max_combo</c> is 9 (cells 6..14). Without the hand-written
+    /// break it would be 15, and the browser would out-score the identical desktop play on the shared
+    /// leaderboards. The engine's own live combo agrees at 9, which is the whole point: the two
+    /// accounts are separate, and they have to reach the same number here.</para>
     /// </summary>
     [Test]
-    public void AFixedTypoRecoversTheCellButNotTheJudgement()
+    public void TheSubmittedComboBreaksAtTheTypoNotAtTheSeal()
+    {
+        var root = Harness();
+        var run = root.GetProperty("midCellTypedWrong");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(run.GetProperty("maxCombo").GetInt32(), Is.EqualTo(9),
+                "the submitted combo restarts at the typo, not at the seal that eventually misses it");
+            Assert.That(run.GetProperty("engineMaxCombo").GetInt32(), Is.EqualTo(9), "and the HUD combo agrees");
+            Assert.That(run.GetProperty("maxCombo").GetInt32(),
+                Is.LessThan(root.GetProperty("clean").GetProperty("maxCombo").GetInt32()));
+
+            // The whole submitted account is byte-identical to what the OLD model produced for this
+            // play: nothing scores between the break and the miss, so moving the miss to the seal
+            // moved no number. An uncorrected typo costs exactly what it always cost.
+            Assert.That(run.GetProperty("totalScore").GetInt64(), Is.EqualTo(673_408));
+            Assert.That(Dict(run, "statistics"),
+                Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 14, ["miss"] = 1, ["combo_break"] = 1 }));
+        });
+    }
+
+    /// <summary>
+    /// THE point of backlog 109: backspacing and retyping recovers the cell for real. It ends green
+    /// on screen, it ends a Great in the statistics, and completion and the rank recover with it,
+    /// because the typo never spent the cell's one result. Before, the fix went green while the
+    /// statistics kept a miss for ever, so the play could see an A it had typed an X's worth of.
+    ///
+    /// <para>The two combo accounts also stop parting company over it: the HUD's live combo and the
+    /// submitted one both read 10, where the submitted one used to lag at 9. What the fix does NOT
+    /// buy back is the mistake itself, which is right: the mistype is still counted (and still priced
+    /// by pp) and the combo it broke is still broken.</para>
+    /// </summary>
+    [Test]
+    public void AFixedTypoRecoversTheCellTheJudgementAndTheRank()
     {
         var root = Harness();
         var fixedRun = root.GetProperty("midCellWrongThenFixed");
+        var leftRun = root.GetProperty("midCellTypedWrong");
 
         Assert.Multiple(() =>
         {
             Assert.That(fixedRun.GetProperty("cellStates").GetString(), Does.Not.Contain("wrong"),
                 "every cell ends up correct on screen");
-            Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(14.0 / 15.0).Within(1e-12),
-                "completion still reads the judgement, not the final cell state");
+            Assert.That(Dict(fixedRun, "statistics").GetValueOrDefault("great"), Is.EqualTo(15),
+                "...and the judgement agrees with the screen now");
+
+            Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(1).Within(1e-12));
+            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"));
 
             Assert.That(fixedRun.GetProperty("engineMaxCombo").GetInt32(), Is.EqualTo(10), "the HUD combo takes the retype");
-            Assert.That(fixedRun.GetProperty("maxCombo").GetInt32(), Is.EqualTo(9), "the SUBMITTED combo does not");
+            Assert.That(fixedRun.GetProperty("maxCombo").GetInt32(), Is.EqualTo(10), "and so does the SUBMITTED combo");
+
+            // The identical play with the typo left alone does not recover: the recovery is earned by
+            // going back for the cell, not handed out for having typed the rest of the line.
+            Assert.That(leftRun.GetProperty("completion").GetDouble(), Is.EqualTo(14.0 / 15.0).Within(1e-12));
+            Assert.That(leftRun.GetProperty("rank").GetString(), Is.EqualTo("A"));
+
+            // What the fix does not buy back.
+            Assert.That(Dict(fixedRun, "statistics")[mistype_key], Is.EqualTo(1));
+            Assert.That(fixedRun.GetProperty("totalScore").GetInt64(),
+                Is.LessThan(root.GetProperty("clean").GetProperty("totalScore").GetInt64()));
         });
     }
 
@@ -222,9 +299,15 @@ public class AllowWrongInputParityTest
     /// 1..14 then a miss contributing 300·0^0.5 = 0. Portion 300·36.596213 = 10978.863976,
     /// comboProgress 0.904297993. Judged accuracy is 14·300/(15·300) = 0.933333, accuracyProgress
     /// 15/15 = 1, so total = round(500000·0.933333·0.904297993 + 500000·0.933333^5) = 776129.</item>
-    /// <item><c>midCellWrongThenFixed</c>: greats at combo 1..5, the miss, then greats at 1..9 (the
-    /// retype contributes nothing). Portion 300·(Σ(1..5)√i + Σ(1..9)√i) = 8306.499862,
-    /// comboProgress 0.684182914, same accuracy, total = 673408.</item>
+    /// <item><c>midCellTypedWrong</c>: greats at combo 1..5, the typo (a hand-written break, no
+    /// result), greats at combo 1..9, and only THEN the seal's miss at combo 0, contributing 0.
+    /// Portion 300·(Σ(1..5)√i + Σ(1..9)√i) = 8306.499862, comboProgress 0.684182914, same accuracy,
+    /// total = 673408. Identical to what the old model produced for this play, because the miss
+    /// moved to a place where it weighted nothing either way.</item>
+    /// <item><c>midCellWrongThenFixed</c>: greats at combo 1..5, the typo, then greats at combo
+    /// 1..10, the first of which IS the fixed cell (its own first and only result). Portion
+    /// 300·(Σ(1..5)√i + Σ(1..10)√i) = 9255.183160, comboProgress 0.762323276, and now accuracy is a
+    /// flat 1 because nothing missed, so total = round(500000·0.762323276 + 500000) = 881162.</item>
     /// <item><c>wrongKeyOnWordGap</c>: 15 greats, one rejected key breaking combo before cell 3, so
     /// combo runs 1..3 then 1..12. Portion 10018.580688, comboProgress 0.825202173, accuracy 1,
     /// total = round(500000·0.825202173 + 500000) = 912601.</item>
@@ -244,7 +327,8 @@ public class AllowWrongInputParityTest
             ("lastCellTypedWrong", 14, 776_129, 1),
             ("lastCellSkipped", 14, 776_129, 0),
             ("lastCellWrongThenErased", 14, 776_129, 1),
-            ("midCellWrongThenFixed", 9, 673_408, 1),
+            ("midCellTypedWrong", 9, 673_408, 1),
+            ("midCellWrongThenFixed", 10, 881_162, 1),
             ("wrongKeyOnWordGap", 12, 912_601, 1),
             ("spaceKeyOnLetter", 15, 1_000_000, 1),
         ];

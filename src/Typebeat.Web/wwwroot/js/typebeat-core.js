@@ -601,9 +601,9 @@
             // score processor its one and only result". ApplyEngineResult bails on an already-judged
             // cell (`if (Judged) return;`) and ApplySealResults goes through the same call, so a cell
             // contributes to the submitted account exactly once whatever happens to it afterwards.
-            // Only reachable with allowWrongInput on: a cell can be judged WRONG, then backspaced,
-            // then retyped correctly (or left to seal), and each of those would otherwise apply a
-            // second result the desktop client never applies.
+            // Since backlog 109 a wrong char sets nothing here, so the flag is also what says a typo
+            // is still OPEN: fix it and the retype is the cell's first result, leave it and the seal
+            // (or a word skip) is.
             judged: false
         };
     }
@@ -661,20 +661,21 @@
     //   1. TypeBeatPlayfield.onCharJudged -> DrawableTypeBeatHitObject.ApplyCharJudgement ->
     //      DrawableTypeBeatCharObject.ApplyEngineResult -> ApplyResult(toHitResult(type)).
     //      Perfect/Good/Ok become Great/Ok/Meh, which INCREASE combo; Premature/Lagging become
-    //      Miss, which BREAKS it. The cell drawable applies at most ONE result ever (`if (Judged)
-    //      return;`), so a backspace-and-retype (an inert retype here) moves nothing.
-    //   2. TypeBeatPlayfield.onWrongKeyRejected -> scoreProcessor.Combo.Value = 0. A rejected key
-    //      raises no judgement at all, so the break is mirrored by hand; nothing else moves (no
-    //      result count, no accuracy, no portion). This is the GATEKEEPER path, plus the two space
-    //      cases every model rejects. In the DEFAULT allow-wrong-input model the wrong char instead
-    //      lands in the cell and breaks combo through the ordinary Miss judgement of path 1, so the
-    //      accounting below covers both models with no branch of its own. The two are NOT
-    //      interchangeable: path 1 also spends a judgement and 300 points of accuracy denominator on
-    //      the cell, which is exactly why the same performance scores differently under the mod.
-    //   3. TypeBeatPlayfield.onMistyped -> TypeBeatScoreProcessor.RecordMistype. Counting only,
-    //      by design: the combo break is deliberately NOT folded in here, it is already carried by
-    //      path 2 (strict) or path 1 (allow-wrong-input), and doing it twice would corrupt the
-    //      second case. The count is engine-side here (engine.mistypes) for the same reason.
+    //      Miss, which BREAKS it. A WrongChar becomes NOTHING (backlog 109): ApplyCharJudgement
+    //      returns before applying anything, so a typo defers its cell's result instead of spending
+    //      it on a Miss. The cell drawable applies at most ONE result ever (`if (Judged) return;`),
+    //      so a backspace-and-retype after a typo is that cell's real (first) result, while an
+    //      inert retype of an already-correct cell moves nothing.
+    //   2. TypeBeatPlayfield.onMistyped -> scoreProcessor.Combo.Value = 0, and
+    //      TypeBeatScoreProcessor.RecordMistype. One seam for BOTH input models since backlog 109,
+    //      because neither raises a result for a wrong keypress any more: a rejected key never did,
+    //      and a typed-through one no longer does. osu's combo is maintained incrementally off
+    //      results, so the break has to be mirrored by hand or max_combo would count on through it.
+    //      Nothing else moves: no result count, no accuracy, no combo portion, and RecordMistype is
+    //      a pure counter (routing it through ApplyResult would move the judged count too).
+    //   3. TypeBeatPlayfield.onWrongKeyRejected -> the mash-guard HP drain only, which is why this
+    //      mirror has no counterpart for it beyond engine.consecutiveWrongKeys: the browser models
+    //      health as a derived read (see `health`), not as an account.
     //   4. DrawableTypeBeatHitObject.ApplySealResults, when the engine seals a line: every
     //      still-unjudged cell gets a Miss, in cell order, and then the LINE object itself resolves
     //      as IgnoreHit. IgnoreHit is not scorable, does not affect combo and does not affect
@@ -727,8 +728,10 @@
             this.comboPortion += MAX_RESULT_BASE_SCORE * Math.pow(this.combo, COMBO_EXPONENT);
         }
 
-        // TypeBeatPlayfield.onWrongKeyRejected: `scoreProcessor.Combo.Value = 0`, and nothing else.
-        // HighestCombo needs no update (it only ever grows, and this only shrinks Combo).
+        // TypeBeatPlayfield.onMistyped: `scoreProcessor.Combo.Value = 0`, and nothing else. Every
+        // wrong keypress in either input model comes through here, because none of them raises a
+        // judgement result. HighestCombo needs no update (it only ever grows, this only shrinks
+        // Combo), which is exactly why a break mirrored here cannot inflate max_combo.
         breakCombo() {
             this.combo = 0;
         }
@@ -864,11 +867,17 @@
             const line = this.lines[idx];
             let missed = 0;
             for (const c of line.cells) {
-                // A cell that was ever typed correctly keeps its first result (firstCorrectDelta
-                // stands, even if later backspaced); only never-correct cells seal as Miss.
-                if (c.typeable && c.state === 'untyped' && c.firstCorrectDelta === null) {
-                    c.state = 'missed';
-                    c.judgeType = 'Miss';
+                // The engine's own miss count (TypingEngine.Update's seal loop), which drives the
+                // HUD combo below and nothing that is submitted. A cell the line ran out of time on,
+                // and (backlog 109) a cell left sitting WRONG: a typo does not resolve its cell any
+                // more, it defers it, so a typo nobody went back for is a miss exactly like a cell
+                // nobody typed. An untyped cell becomes 'missed' (dimmed); a wrong one KEEPS
+                // 'wrong', so the line still shows which character went wrong.
+                if (c.typeable && (c.state === 'untyped' || c.state === 'wrong')) {
+                    if (c.state === 'untyped') {
+                        c.state = 'missed';
+                        c.judgeType = 'Miss';
+                    }
                     missed++;
                 }
 
@@ -876,11 +885,9 @@
                 // (one per typeable cell) takes a Miss at seal time, in cell order, and each is a
                 // no-op on a cell that already carries a result. (The line object's own IgnoreHit
                 // result follows, and is scoring-inert, so it is not modelled.) That is `judged`
-                // exactly, which is why the guard is not the state test above: with allowWrongInput
-                // the two came apart. A cell typed WRONG and then backspaced is 'untyped' with no
-                // firstCorrectDelta, so it seals as Missed for display and for completion, but the
-                // drawable already took its Miss when the wrong char landed, and a second one here
-                // would double-count it against the desktop.
+                // exactly, which is why the guard is not the state test above: the two come apart
+                // for a cell typed correctly and then BACKSPACED, which is 'untyped' again and so is
+                // counted a miss for display, while its drawable keeps the Great it already took.
                 if (c.typeable && !c.judged)
                     this.applyCellResult(c, 'miss');
             }
@@ -924,13 +931,18 @@
                     continue;
                 }
 
-                // Already Correct or Wrong keeps the judgement it earned and the one result its cell
-                // drawable already took (applyCellResult's `judged` guard is the same rule): a Great
-                // cannot be revoked, and a wrong char has already taken its Miss.
-                if (c.state !== 'untyped') continue;
+                // A cell that has already handed its drawable the one result it will ever have keeps
+                // it: a Great cannot be revoked (applyCellResult's `judged` guard is the same rule).
+                // A cell typed WRONG is no longer in that group (backlog 109): a typo spends no
+                // result, it only defers one, and abandoning the word is the player deciding it will
+                // never be corrected. So it is given up here like any unresolved cell, keeping
+                // 'wrong' on screen while its judgement becomes a Miss.
+                if (c.state !== 'untyped' && c.state !== 'wrong') continue;
 
-                c.state = 'missed';
-                c.judgeType = 'Miss';
+                if (c.state === 'untyped') {
+                    c.state = 'missed';
+                    c.judgeType = 'Miss';
+                }
                 missed++;
 
                 // The C# announces each abandoned cell IMMEDIATELY (CharJudged carrying a Miss ->
@@ -1062,12 +1074,20 @@
                     this.autoSkipForward();
 
                     if (this.onComboBroken) this.onComboBroken();
-                    // The CELL's own judgement, exactly as in the C#: CharJudged carries a WrongChar,
-                    // TypeBeatPlayfield.onCharJudged hands it to ApplyCharJudgement, and
-                    // DrawableTypeBeatHitObject.toHitResult maps WrongChar to HitResult.Miss. So the
-                    // submitted account takes a real Miss here (which is also what keeps Sudden Death
-                    // failing on the desktop), NOT the bare combo break a rejected key leaves.
-                    this.applyCellResult(cell, 'miss');
+                    // NO result for the cell (backlog 109), exactly as in the C#: the CELL's
+                    // judgement still travels on CharJudged for the stage, but
+                    // DrawableTypeBeatHitObject.ApplyCharJudgement returns before applying anything
+                    // for a WrongChar. A miss is a character the line ran out of time on; a typo is a
+                    // typo, and backspace can still fix this one, so the cell's one result is
+                    // DEFERRED: the fix earns its real Great/Ok/Meh, and only a typo left alone takes
+                    // a Miss, at the seal.
+                    //
+                    // Which leaves the submitted COMBO with nothing to break it, because osu's combo
+                    // is maintained incrementally off results. So the break is mirrored by hand here,
+                    // exactly as the rejection path below does it (TypeBeatPlayfield.onMistyped,
+                    // which fires for both models). Without this the browser's max_combo would count
+                    // on through the rest of the line after a break the engine has already taken.
+                    this.processor.breakCombo();
                     // NEITHER renderer hook fires here, and both omissions mirror the desktop.
                     // onWrongKey is the REJECTED-key feedback (shake + the char popping off the
                     // caret, mirroring LyricStage.onWrongKeyRejected), which the desktop does not
@@ -1086,9 +1106,10 @@
                 this.errorCount++;
                 this.consecutiveWrongKeys++;
                 this.combo = 0;
-                // ...and the SUBMITTED combo breaks with it (TypeBeatPlayfield.onWrongKeyRejected
-                // sets scoreProcessor.Combo.Value = 0). No judgement is raised, so this is the only
-                // trace the rejected key leaves in the score account: it lowers max_combo and every
+                // ...and the SUBMITTED combo breaks with it (TypeBeatPlayfield.onMistyped sets
+                // scoreProcessor.Combo.Value = 0), the same hand-written break the typed-through
+                // path above now makes. No judgement is raised, so this is the only trace the
+                // rejected key leaves in the score account: it lowers max_combo and every
                 // combo-portion contribution that comes after it.
                 this.processor.breakCombo();
                 // ...and it is a MISTYPE (TypingEngine.Mistyped -> TypeBeatScoreProcessor
@@ -1147,11 +1168,13 @@
                 // TypeBeatPlayfield.onCharJudged -> ApplyCharJudgement -> ApplyResult. Perfect/
                 // Good/Ok increase the submitted combo, Premature/Lagging break it (they map to
                 // Miss), and the combo portion is weighted by the combo as it stands right here.
-                // Guarded, because a cell typed WRONG and then backspaced comes back through here
-                // with firstCorrectDelta still null: the engine counters above DO move (the C# takes
-                // the same non-inert branch), but the drawable is already Judged, so the processor
-                // must not take a second result. Without the guard a backspace-and-fix would inflate
-                // the browser's judged count and out-score the identical desktop play.
+                // Guarded rather than unconditional, because the guard is the mirror of
+                // ApplyEngineResult's `if (Judged) return;` and not of the inert-retype rule. A cell
+                // typed WRONG and then backspaced comes back through here with firstCorrectDelta
+                // still null AND with no result yet (backlog 109 defers it), so this call is where
+                // the fix is finally paid for: the cell earns its real Great/Ok/Meh, which is the
+                // whole point. The guard still matters for the cells the seal or a word skip missed
+                // first, which must not be re-judged.
                 this.applyCellResult(cell, toHitResult(type));
             }
 
@@ -1261,7 +1284,7 @@
             totalScoreWithoutMods: totalWithoutMods,
             accuracy: acc,
             // ScoreProcessor.HighestCombo, submitted as max_combo: the longest run of judged cells
-            // uninterrupted by a missed cell OR a rejected wrong key.
+            // uninterrupted by a missed cell OR a wrong keypress (in either input model).
             maxCombo: processor.highestCombo,
             completion: completion,
             rank: passed ? rankFromCompletion(completion) : 'F',
