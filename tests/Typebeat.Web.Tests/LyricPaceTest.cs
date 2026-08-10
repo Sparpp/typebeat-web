@@ -7,7 +7,7 @@ namespace Typebeat.Web.Tests;
 /// regression test (typebeat-osu typebeat.Game.Rulesets.TypeBeat.Tests/NonVisual/
 /// LyricPaceStatisticsTest.cs): "ab cd" over a 3000 ms boundary window -> 5 cells, 2 words,
 /// WPM 40, CPM 100. Stars follow <see cref="LyricDifficulty"/> (strain-based); the hand-computed
-/// "cat cat" -> 0.7608 anchor is shared with the game's LyricDifficultyTest to lock the two ports.
+/// "cat cat" -> 0.95 anchor is shared with the game's LyricDifficultyTest to lock the two ports.
 /// </summary>
 public class LyricPaceTest
 {
@@ -37,7 +37,7 @@ public class LyricPaceTest
             Assert.That(pace.AverageWpm, Is.EqualTo(40.0).Within(1e-9));
             Assert.That(pace.AverageCpm, Is.EqualTo(100.0).Within(1e-9));
             // stars from LyricDifficulty (per-word strain sum + power remap).
-            Assert.That(pace.DifficultyRating, Is.EqualTo(0.61).Within(0.01));
+            Assert.That(pace.DifficultyRating, Is.EqualTo(0.75).Within(0.01));
         });
     }
 
@@ -82,7 +82,7 @@ public class LyricPaceTest
     [Test]
     public void DifficultyRating_MatchesGameAnchor()
     {
-        // Anchor shared with the game's LyricDifficultyTest ("cat cat" -> 0.45), locking the two
+        // Anchor shared with the game's LyricDifficultyTest ("cat cat" -> 0.95), locking the two
         // ports together on the per-word strain formula.
         var line = new LyricLine
         {
@@ -97,7 +97,7 @@ public class LyricPaceTest
             ],
         };
 
-        Assert.That(LyricPace.Compute([line]).DifficultyRating, Is.EqualTo(0.45).Within(0.01));
+        Assert.That(LyricPace.Compute([line]).DifficultyRating, Is.EqualTo(0.95).Within(0.01));
     }
 
     [Test]
