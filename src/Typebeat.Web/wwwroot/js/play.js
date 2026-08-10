@@ -107,6 +107,9 @@
                         api.setSubmitStatus('<a href="/login">sign in</a> to submit your score to the leaderboard.', 'tb-status-muted');
                         return;
                     }
+                    // Cells TYPED, which deliberately excludes uncorrected typos: those are cells
+                    // the player finished wrongly, they count for nothing in completion, and a run
+                    // made entirely of them has hit no notes at all.
                     const hits = (results.counts.great + results.counts.ok + results.counts.meh);
                     if (hits <= 0 || results.totalScore <= 0) {
                         api.setSubmitStatus('score not submitted (no notes hit).', 'tb-status-muted');

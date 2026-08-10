@@ -381,6 +381,19 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         public int Miss => Statistics.Value<int?>("miss") ?? 0;
 
         /// <summary>
+        /// Cells the player typed WRONG and never went back for (backlog 124/126, the client's
+        /// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>, stored under the <c>good</c> key), or null
+        /// when the play does not CARRY the stat: every score set before the key existed simply has
+        /// no entry, and a play with none has none either. Null renders as nothing rather than a
+        /// fabricated 0, exactly like <see cref="Mistypes"/>.
+        ///
+        /// <para>Shown BESIDE Miss and never folded into it. Both cost completion and grade, since
+        /// neither is a cell the player typed, but a miss is a character the song left behind and a
+        /// typo is one they finished wrongly, and pp prices the two by different terms.</para>
+        /// </summary>
+        public int? Typos => Statistics.Value<int?>("good");
+
+        /// <summary>
         /// Wrong keypresses (backlog 72), or null when this play does not CARRY the stat: every
         /// score submitted before it existed simply has no key, and a clean play has none either
         /// (both the client and the browser engine omit zero-valued entries). Null renders as

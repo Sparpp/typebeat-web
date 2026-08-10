@@ -8,8 +8,10 @@
 // off explicitly). Since backlog 109 the two models account for the KEYPRESS identically (a combo
 // break plus a mistype, and no judgement result either way); what still differs is the CELL, which
 // rejection leaves waiting for the player and the default model consumes. Since backlog 124 a typo
-// left alone resolves that cell as a 'meh' at the seal rather than a miss, because the player did
-// finish the character, so it costs accuracy and not completion or rank.
+// left alone resolves that cell as its OWN result at the seal rather than a miss, and since backlog
+// 126 that result is the 'good' key and is NOT counted as a typed cell: the player finished the
+// character but got it wrong, so it costs accuracy and the miss count stays clean, while completion
+// and rank fall exactly as a miss makes them fall.
 //
 // Usage: node CoreAllowWrongHarness.cjs <absolute path to typebeat-core.js>
 
@@ -204,7 +206,19 @@ const out = {
     // combo once, at the keypress, so it must be 19, on the HUD's account as well as the submitted
     // one (backlog 123).
     twoLineClean: play({}, undefined, TWO_LINE_OSU),
-    twoLineMidCellTypedWrong: play({ 5: 'wrong' }, 5, TWO_LINE_OSU)
+    twoLineMidCellTypedWrong: play({ 5: 'wrong' }, 5, TWO_LINE_OSU),
+
+    // Backlog 126's forcing case: every LETTER cell typed wrong and left that way. The three word
+    // gaps are typed correctly, because a wrong key on a gap is still rejected and would hold the
+    // caret and derail every cell after it. So 12 of 15 cells end as uncorrected typos and the play
+    // typed 3 of them: completion 0.2 and a D. Under backlog 124 the same run read completion 1 and
+    // took an X, because every one of those cells resolved as a HIT and completion counted hits.
+    everyLetterTypedWrong: play({
+        0: 'wrong', 1: 'wrong', 2: 'wrong',
+        4: 'wrong', 5: 'wrong', 6: 'wrong',
+        8: 'wrong', 9: 'wrong', 10: 'wrong',
+        12: 'wrong', 13: 'wrong', 14: 'wrong'
+    })
 };
 
 process.stdout.write(JSON.stringify(out));
