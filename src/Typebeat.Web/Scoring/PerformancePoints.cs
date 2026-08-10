@@ -79,7 +79,8 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
-/// Mistypes deliberately do NOT enter <c>notes</c>, which stays <c>great + ok + meh + miss</c>, the
+/// Mistypes deliberately do NOT enter <c>notes</c>, which stays one entry per CELL
+/// (<c>great + ok + meh + good + miss</c>, where <c>good</c> is an uncorrected typo), the
 /// map's cell count. Letting keypresses inflate it would hand a masher a bigger LENGTH bonus and a
 /// smaller COMBO denominator, paying for the mashing twice over. A play carrying no mistype count at
 /// all (every score submitted before the stat existed) collapses the mistyping term to exactly 1.0,
@@ -279,12 +280,22 @@ public static class PerformancePoints
     private const double rate_epsilon = 1e-9;
 
     /// <summary>
-    /// The judgement keys that count as a NOTE. <c>ignore_hit</c> is deliberately absent: the
-    /// line containers are ignore_hit judgements and counting them would inflate <c>notes</c> and
-    /// dilute every single factor (cleanliness, length, combo). Anything else the base ruleset can
-    /// emit (ticks, bonuses) does not occur in a typing map and is not a note either.
+    /// The judgement keys that count as a NOTE, one per CELL of the map. <c>ignore_hit</c> is
+    /// deliberately absent: the line containers are ignore_hit judgements and counting them would
+    /// inflate <c>notes</c> and dilute every single factor (cleanliness, length, combo). Anything
+    /// else the base ruleset can emit (ticks, bonuses) does not occur in a typing map and is not a
+    /// note either.
+    ///
+    /// <para><c>good</c> is the UNCORRECTED TYPO key (backlog 124/126, the client's
+    /// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>), and it belongs here for the same reason the
+    /// others do: it is one cell of the map the player reached and finished, so leaving it out
+    /// would shorten the map pp thinks was played and inflate both the length term and the combo
+    /// ratio. It is deliberately NOT <see cref="miss_key"/>: a miss says the player was too slow to
+    /// finish the character at all, a typo says they finished it wrongly, and the mistype term
+    /// already prices the second. That split is the whole reason the typo has its own key, even
+    /// though <c>ScoringContract</c> makes it cost completion exactly as a miss does.</para>
     /// </summary>
-    private static readonly string[] note_keys = ["great", "ok", "meh", "miss"];
+    private static readonly string[] note_keys = ["great", "ok", "meh", "good", "miss"];
 
     private const string miss_key = "miss";
 

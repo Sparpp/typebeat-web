@@ -134,6 +134,15 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         public int Miss => Statistics.Value<int?>("miss") ?? 0;
 
         /// <summary>
+        /// Cells typed WRONG and never corrected (the <c>good</c> key, backlog 124/126), or null
+        /// when this play does not CARRY the stat. Absence is not zero, exactly as for
+        /// <see cref="Mistypes"/>, so the column only appears once some row on the board has one.
+        /// Beside Miss, never folded into it: both cost the grade, only one is a character the song
+        /// left behind.
+        /// </summary>
+        public int? Typos => Statistics.Value<int?>("good");
+
+        /// <summary>
         /// Wrong keypresses (docs/pp.md's 2026-08-03 amendment), or null when this play does not
         /// CARRY the stat: plays that predate it have no key at all, and absence is not zero. The
         /// column only appears once some row on the board carries one, exactly like the set page's

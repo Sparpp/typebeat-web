@@ -56,6 +56,51 @@ public class ScoringContractTest
         });
     }
 
+    /// <summary>
+    /// The uncorrected-typo key (backlog 124 and 126). Held against the two things it must sit
+    /// between: a <c>meh</c>, which is a cell TYPED (late, but right), and a <c>miss</c>, which is a
+    /// cell the line ran out of time on. The typo weighs the same as the meh for accuracy and costs
+    /// the same as the miss for completion, and stays its own key so pp can tell it from both.
+    /// </summary>
+    [Test]
+    public void UncorrectedTypos_CostCompletionLikeAMiss_AndAccuracyLikeAMeh()
+    {
+        var typo = ScoringContract.Recompute(Dict(("great", 9), ("good", 1)), Dict(("great", 10)), maxCombo: 9);
+        var meh = ScoringContract.Recompute(Dict(("great", 9), ("meh", 1)), Dict(("great", 10)), maxCombo: 10);
+        var miss = ScoringContract.Recompute(Dict(("great", 9), ("miss", 1)), Dict(("great", 10)), maxCombo: 9);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(typo.StatisticsValid, Is.True);
+
+            // Accuracy: (300·9 + 50) / 3000, i.e. the meh weight and NOT the base ruleset's 200 for
+            // `good`. The client re-weights the tier, and this table has to carry the same number.
+            Assert.That(typo.Accuracy, Is.EqualTo(2750.0 / 3000.0).Within(1e-12));
+            Assert.That(typo.Accuracy, Is.EqualTo(meh.Accuracy).Within(1e-12));
+
+            // Completion: 9 of 10 typed, exactly as the miss reads, and NOT the meh's 10 of 10.
+            Assert.That(typo.Completion, Is.EqualTo(0.9).Within(1e-12));
+            Assert.That(typo.Completion, Is.EqualTo(miss.Completion).Within(1e-12));
+            Assert.That(typo.Rank, Is.EqualTo("A"));
+            Assert.That(meh.Completion, Is.EqualTo(1.0).Within(1e-12));
+            Assert.That(meh.Rank, Is.EqualTo("X"));
+
+            // The typo is a JUDGEMENT, so it is in the denominator: a play made entirely of them is
+            // completion 0 and a D, not 1-over-nothing.
+            var allTypos = ScoringContract.Recompute(Dict(("good", 10)), Dict(("great", 10)), maxCombo: 0);
+            Assert.That(allTypos.StatisticsValid, Is.True, "one judgement per cell, so still in bounds");
+            Assert.That(allTypos.Completion, Is.Zero);
+            Assert.That(allTypos.Rank, Is.EqualTo("D"));
+
+            // ...and pp still counts it as a note that is not a miss, which is the whole reason it
+            // is not simply stored as a miss.
+            var counts = PerformancePoints.CountNotes(Dict(("great", 9), ("good", 1), ("combo_break", 1)));
+            Assert.That(counts.Notes, Is.EqualTo(10));
+            Assert.That(counts.Misses, Is.Zero);
+            Assert.That(counts.Mistypes, Is.EqualTo(1));
+        });
+    }
+
     [Test]
     public void Accuracy_MissesCountTowardDenominator_AndCompletion()
     {

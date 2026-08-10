@@ -3,9 +3,10 @@ namespace Typebeat.Web.Scoring;
 /// <summary>
 /// Server-side recompute + tamper-bounds for a submitted solo score.
 ///
-/// The client computes score/accuracy/combo with the standardised <c>ScoreProcessor</c> maths
-/// (typebeat's <c>TypeBeatScoreProcessor</c> subclass overrides ONLY the rank derivation, nothing
-/// numeric). What it actually submits over the wire is <c>ScoreInfo.TotalScore</c> (the
+/// The client computes score/accuracy/combo with the standardised <c>ScoreProcessor</c> maths.
+/// typebeat's <c>TypeBeatScoreProcessor</c> subclass changes only the rank derivation and ONE
+/// numeric weight, the uncorrected-typo tier's base score (see below); everything else is the base
+/// implementation. What it actually submits over the wire is <c>ScoreInfo.TotalScore</c> (the
 /// processor's <c>TotalScore</c> value) plus the per-result <c>statistics</c> /
 /// <c>maximum_statistics</c> dictionaries and <c>max_combo</c>.
 ///
@@ -18,12 +19,13 @@ namespace Typebeat.Web.Scoring;
 ///    numerator = Σ base(result)·count over <c>statistics</c>;
 ///    denominator = Σ base(maxResult)·count over <c>maximum_statistics</c>.
 ///    Both dictionaries are transmitted, so accuracy is exact; we OVERRIDE the submitted value.
-///  - <b>completion</b> and <b>rank</b>. Completion = typed cells (accuracy-affecting hits in
-///    <c>statistics</c>) over TOTAL map cells (accuracy-affecting counts in
-///    <c>maximum_statistics</c>). Rank is graded on completion, NOT accuracy: typing every
-///    character is an SS regardless of timing quality; only cells that scrolled past untyped
-///    (misses) cost the grade. Mirrors the client's <c>TypeBeatScoreProcessor</c>; keep the
-///    cutoffs in the two files in sync.
+///  - <b>completion</b> and <b>rank</b>. Completion = typed cells (accuracy-affecting judgements
+///    in <c>statistics</c> that <see cref="CountsAsTyped"/>) over TOTAL map cells
+///    (accuracy-affecting counts in <c>maximum_statistics</c>). Rank is graded on completion, NOT
+///    accuracy: typing every character RIGHT is an SS regardless of timing quality; what costs the
+///    grade is a cell the play did not type right, i.e. one that scrolled past untyped (a miss) or
+///    one left holding a wrong character (an uncorrected typo). Mirrors the client's
+///    <c>TypeBeatScoreProcessor</c>; keep the cutoffs in the two files in sync.
 ///  - <b>theoretical max combo</b>. Every combo-increasing judgement in <c>maximum_statistics</c>
 ///    (HitResult.IncreasesCombo = AffectsCombo &amp;&amp; IsHit, HitResult.cs:171-203). For a typing
 ///    map that is the note count. Submitted <c>max_combo</c> may not exceed it.
@@ -40,6 +42,25 @@ namespace Typebeat.Web.Scoring;
 ///
 /// Everything here is a pure function of the three transmitted quantities; no DB, no throwing on
 /// hostile input (score-submit must never 500 for tamper-shaped data).
+///
+/// <para><b>UNCORRECTED TYPOS</b> (backlog 124 and 126). A cell the player typed WRONG and never
+/// went back for arrives as the <c>good</c> key, which type!beat uses for nothing else. The client
+/// picked it because a cell may only ever resolve as one of great/ok/meh/good/miss (osu refuses any
+/// other result for a Great-max, Miss-min judgement) and the other four were taken; see the game's
+/// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>. Two consequences here, both deliberate:</para>
+/// <list type="bullet">
+/// <item>Its base score is <b>50</b>, not the base ruleset's 200. The client re-weights the tier
+/// (<c>TypeBeatScoreProcessor.GetBaseScoreForResult</c>) so a typo costs the most accuracy a judged
+/// cell can cost, i.e. exactly what it cost while it was stored as <c>meh</c>. This table has to
+/// carry the same number or every recomputed accuracy would come out above what the client showed.
+/// A type!beat map can never produce a genuine <c>good</c>, so nothing else is affected.</item>
+/// <item>It is accuracy-affecting and a judgement, so it is in completion's DENOMINATOR, but it is
+/// NOT typed (<see cref="CountsAsTyped"/>), so it is out of the numerator: an uncorrected typo costs
+/// completion and rank exactly as a miss does. It is still not a MISS, which is what lets
+/// <c>PerformancePoints</c> keep pricing it by the mistype term rather than the cleanliness one.
+/// Migration <c>008_completion_rank.sql</c> counts <c>good</c> as typed, which was right when it ran
+/// (it is a one-off backfill of rows that all predate this key) and must not be edited.</item>
+/// </list>
 ///
 /// <para><b>MISTYPES</b> (backlog 72). A wrong keypress arrives as the <c>combo_break</c> key in
 /// <c>statistics</c>, and every classifier below already answers false for it: it is not
@@ -136,7 +157,7 @@ public static class ScoringContract
                 judgedDenominator += (long)MaxBaseScore(key) * count;
                 accuracyJudged += count;
 
-                if (IsHit(key))
+                if (CountsAsTyped(key))
                     typedCells += count;
             }
 
@@ -237,7 +258,9 @@ public static class ScoringContract
     private static int BaseScore(string key) => key switch
     {
         "great" or "perfect" => 300,
-        "good" => 200,
+        // NOT the base ruleset's 200: in type!beat `good` is the uncorrected-typo tier and the
+        // client re-weights it to the meh value (see the class docs). Keep the two in step.
+        "good" => 50,
         "ok" => 100,
         "meh" => 50,
         "slider_tail_hit" => 150,
@@ -272,14 +295,27 @@ public static class ScoringContract
         _ => false,
     };
 
-    // HitResult.IsHit (HitResult.cs:308-…): a successful judgement. Among the accuracy-affecting
-    // keys this is everything except the miss family, the completion numerator ("cells typed").
+    // HitResult.IsHit (HitResult.cs:308-…): a successful judgement. Faithful to the base ruleset,
+    // which is why `good` is in it; the completion numerator uses CountsAsTyped instead.
     private static bool IsHit(string key) => key switch
     {
         "great" or "perfect" or "good" or "ok" or "meh"
             or "small_tick_hit" or "large_tick_hit" or "slider_tail_hit" => true,
         _ => false,
     };
+
+    /// <summary>
+    /// Whether a judged cell counts as TYPED, i.e. belongs in completion's numerator. Every hit does
+    /// EXCEPT the uncorrected-typo key: the player put a character in that cell and it was the wrong
+    /// one, so the cell is no more typed than one the line ran out of time on and it costs
+    /// completion, and therefore rank, exactly as a miss does (backlog 126).
+    ///
+    /// <para>Mirrors the client's <c>TypeBeatScoreProcessor.CountsAsTyped</c> and the browser
+    /// engine's <c>typebeat-core.js</c>. Split out from <see cref="IsHit"/> rather than folded into
+    /// it so that table stays a faithful copy of <c>HitResult.IsHit</c>: this is the one type!beat
+    /// rule that departs from the base ruleset's reading of the key.</para>
+    /// </summary>
+    private static bool CountsAsTyped(string key) => IsHit(key) && key != unfixed_typo_key;
 
     // HitResult.IncreasesCombo = AffectsCombo && IsHit (HitResult.cs:171-203). Misses and
     // combo_break affect combo but are not hits, so they do not increase it.
@@ -292,4 +328,11 @@ public static class ScoringContract
 
     // HitResult.IsBonus (HitResult.cs:267-278).
     private static bool IsBonus(string key) => key is "small_bonus" or "large_bonus";
+
+    /// <summary>
+    /// The statistics key an UNCORRECTED TYPO is stored under (the client's
+    /// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>, i.e. <c>HitResult.Good</c>). See the class docs
+    /// for why that member and not another.
+    /// </summary>
+    internal const string unfixed_typo_key = "good";
 }

@@ -99,6 +99,21 @@ public class ScoreRecalcTest
         return replay;
     }
 
+    /// <summary>A run typing every cell correctly except one, which is typed wrong and LEFT.</summary>
+    private static Replay UnfixedTypoReplay(IBeatmap map)
+    {
+        var targets = Targets(map);
+        var replay = new Replay();
+
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, true));
+
+        for (int i = 0; i < word.Length; i++)
+            replay.Frames.Add(new TypeBeatReplayFrame(targets[i], i == 2 ? 'q' : word[i]));
+
+        replay.Frames.Add(new TypeBeatReplayFrame(line_zero_end, 'z'));
+        return replay;
+    }
+
     /// <summary>The stored row a client of the OLD era would have produced for this run.</summary>
     private static StoredScore StoredFor(IBeatmap map, Replay replay, bool dropMistypeKey = false, double multiplier = 1)
     {
@@ -202,6 +217,52 @@ public class ScoreRecalcTest
 
             // The mistype is still on the record either way; only the CELL recovered.
             Assert.That(result.NewStatistics!["combo_break"], Is.EqualTo(1));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 126 against backlog 114's guarantee, which is the one that has to survive every
+    /// change to what a typo costs: <c>TypoRule.ImmediateMiss</c> must still reproduce a PRE-109
+    /// stored row byte for byte, or the tool loses its ability to check itself against history and
+    /// every row it touches becomes unverifiable.
+    ///
+    /// <para>The run here is the one whose treatment moved: a typo typed and LEFT. Under the old
+    /// rule the cell was a <c>miss</c>, and that is still exactly what the tool re-derives, key for
+    /// key. Under the new rule it is the <c>good</c> key: no miss, and completion 12/13 rather than
+    /// the 1 backlog 124 briefly gave it. So the row does NOT move on completion or rank, and moves
+    /// only on the miss count, and therefore on pp.</para>
+    /// </summary>
+    [Test]
+    public void AnUnfixedTypoRowReproducesUnderTheOldRuleAndTakesTheTypoKeyUnderTheNew()
+    {
+        var map = Beatmap();
+        var replay = UnfixedTypoReplay(map);
+        var stored = StoredFor(map, replay);
+
+        var result = Recalculation.Run(stored, Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            // The gate: reproduced exactly, so the row is safe to reprice.
+            Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
+            Assert.That(result.Recalculated, Is.True);
+            Assert.That(result.OldRuleStatistics, Is.EquivalentTo(WireCounts.Parse(stored.StatisticsJson)));
+
+            // Pre-109: the wrong char spent the cell on a Miss the instant it landed.
+            Assert.That(result.OldRuleStatistics!["miss"], Is.EqualTo(1));
+            Assert.That(result.OldRuleStatistics!["great"], Is.EqualTo(12));
+            Assert.That(result.OldRuleStatistics!.ContainsKey("good"), Is.False, "the pre-109 arm cannot emit the typo key");
+
+            // Now: the typo key, no miss, and the SAME completion and rank the old rule gave it,
+            // because backlog 126 makes a typo cost completion exactly as a miss does.
+            Assert.That(result.NewStatistics!["good"], Is.EqualTo(1));
+            Assert.That(result.NewStatistics!.GetValueOrDefault("miss"), Is.Zero);
+            Assert.That(result.NewStatistics!["great"], Is.EqualTo(12));
+            Assert.That(result.NewCompletion, Is.EqualTo(12 / 13.0).Within(1e-12));
+            Assert.That(result.NewCompletion, Is.EqualTo(stored.Completion).Within(1e-12));
+            Assert.That(result.NewRank, Is.EqualTo(stored.Rank));
+            Assert.That(result.NewStatisticsValid, Is.True);
+            Assert.That(result.NewTotalWithinBounds, Is.True);
         });
     }
 

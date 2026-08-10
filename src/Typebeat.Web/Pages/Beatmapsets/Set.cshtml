@@ -223,6 +223,7 @@
     {
         var top = Model.Scores[0];
         var anyMistypes = Model.Scores.Any(s => s.Mistypes is not null);
+        var anyTypos = Model.Scores.Any(s => s.Typos is not null);
         <div class="podium">
             <span class="podium__rank">#1</span>
             <a href="/users/@top.UserId" class="podium__avatar-link" aria-label="@top.Username">
@@ -250,6 +251,10 @@
                 <div class="podium-stat"><span class="podium-stat__label">Miss</span><span class="podium-stat__value">@top.Miss</span></div>
                 @* Only for a play that CARRIES the stat; a score from before it existed shows no
                    cell at all rather than a fabricated 0. *@
+                @if (top.Typos is int topTypos)
+                {
+                    <div class="podium-stat"><span class="podium-stat__label">Typo</span><span class="podium-stat__value">@topTypos</span></div>
+                }
                 @if (top.Mistypes is int topMistypes)
                 {
                     <div class="podium-stat"><span class="podium-stat__label">Mistype</span><span class="podium-stat__value">@topMistypes</span></div>
@@ -277,8 +282,12 @@
                     <th>Good</th>
                     <th>Ok</th>
                     <th>Miss</th>
-                    @* The column appears only once some play on this board carries the stat; rows
+                    @* The columns appear only once some play on this board carries the stat; rows
                        that predate it leave their cell blank rather than claiming a clean run. *@
+                    @if (anyTypos)
+                    {
+                        <th>Typo</th>
+                    }
                     @if (anyMistypes)
                     {
                         <th>Mistype</th>
@@ -304,6 +313,10 @@
                         <td class="num">@score.Good</td>
                         <td class="num">@score.Ok</td>
                         <td class="num">@score.Miss</td>
+                        @if (anyTypos)
+                        {
+                            <td class="num">@(score.Typos?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>
+                        }
                         @if (anyMistypes)
                         {
                             <td class="num">@(score.Mistypes?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>

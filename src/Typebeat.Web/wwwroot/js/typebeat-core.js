@@ -681,20 +681,29 @@
     //      as IgnoreHit. IgnoreHit is not scorable, does not affect combo and does not affect
     //      accuracy, so the line objects are inert and are not modelled at all. TWO results, not
     //      one (backlog 124, TypeBeatResultMapping.UnresolvedCellResult): a cell nobody typed is a
-    //      MISS, a cell left sitting WRONG is an unfixed TYPO, which is a `meh`, because the player
-    //      finished that character and only got it wrong. Cell order matters now that the two
-    //      differ, which is why the C# walks a SortedDictionary and this walks line.cells.
-    //      The typo's `meh` is a HIT, so it would extend the run the player rebuilt after the
+    //      MISS, a cell left sitting WRONG is an unfixed TYPO, which since backlog 126 is a key of
+    //      its OWN, `good` (TypeBeatResultMapping.UNFIXED_TYPO). Backlog 124 had spent `meh` on it,
+    //      which is also what a correct-but-late keypress resolves as, so no consumer of the
+    //      submitted statistics could tell the two apart; `good` is the only result a type!beat cell
+    //      may legally take that nothing else uses. Cell order matters now that the two differ,
+    //      which is why the C# walks a SortedDictionary and this walks line.cells.
+    //      The typo's result is a HIT, so it would extend the run the player rebuilt after the
     //      keypress that broke it; it is applied COMBO-NEUTRAL instead
     //      (TypeBeatPlayfield.onLineSealed -> TypeBeatScoreProcessor.MarkComboNeutral, which is
-    //      markComboNeutral and the branch in applyResult below).
+    //      markComboNeutral and the branch in applyResult below). It is a hit for accuracy and for
+    //      the note count, and NOT for completion (see computeScore), which is backlog 126: a cell
+    //      typed wrong is not a cell typed, and it costs rank exactly as a miss does.
     //
     // Judgement rewind (ScoreProcessor.RevertResultInternal) has no counterpart: gameplay here is
     // never rewound, and neither is the desktop client's outside replay seeking.
     // ---------------------------------------------------------------------------
 
-    // ScoreProcessor.GetBaseScoreForResult for the four results a type!beat cell can take.
-    const HIT_BASE_SCORE = { great: 300, ok: 100, meh: 50, miss: 0 };
+    // ScoreProcessor.GetBaseScoreForResult for the five results a type!beat cell can take. `good`
+    // is the uncorrected-typo tier and is 50, NOT the base game's 200: the client re-weights it
+    // (TypeBeatScoreProcessor.GetBaseScoreForResult) so a typo pays the most accuracy a judged cell
+    // can pay, i.e. exactly what it paid while backlog 124 stored it as a `meh`. The server's
+    // ScoringContract.BaseScore carries the same 50.
+    const HIT_BASE_SCORE = { great: 300, ok: 100, meh: 50, good: 50, miss: 0 };
 
     // Every cell judgement declares MaxResult = Great (TypeBeatCharJudgement), which is what both
     // the accuracy denominator (currentMaximumBaseScore) and the combo-portion weight
@@ -712,7 +721,7 @@
             this.baseScore = 0;          // currentBaseScore
             this.maximumBaseScore = 0;   // currentMaximumBaseScore
             this.judgementCount = 0;     // currentAccuracyJudgementCount
-            this.counts = { great: 0, ok: 0, meh: 0, miss: 0 }; // ScoreResultCounts
+            this.counts = { great: 0, ok: 0, meh: 0, good: 0, miss: 0 }; // ScoreResultCounts
             // TypeBeatScoreProcessor.comboNeutralCells: the cells whose combo consequence has
             // ALREADY been taken by hand, at the keypress that spoiled them, so the result they
             // finally resolve with must leave combo exactly as it finds it. The C# keys this by
@@ -723,8 +732,9 @@
         }
 
         // ScoreProcessor.ApplyResultInternal, for the accuracy-affecting basic results a cell can
-        // take (great/ok/meh/miss). All four are scorable, none is a bonus, and all four affect
-        // combo: the three hits increase it, a miss breaks it.
+        // take (great/ok/meh/good/miss). All five are scorable, none is a bonus, and all five
+        // affect combo: the four hits increase it, a miss breaks it. `good` only ever arrives
+        // combo-neutral, so its increment is suppressed below.
         applyResult(result, cell) {
             this.counts[result]++;
 
@@ -923,14 +933,14 @@
                 // 'untyped' again and so is counted a miss for display, while its drawable keeps the
                 // Great it already took.
                 //
-                // The result is a MISS for a cell nobody typed and a 'meh' for one left holding a
-                // wrong character (TypeBeatResultMapping.UnresolvedCellResult), and the 'meh' is
-                // marked COMBO-NEUTRAL immediately before it is applied, exactly as
+                // The result is a MISS for a cell nobody typed and a 'good' (the uncorrected-typo
+                // key, TypeBeatResultMapping.UNFIXED_TYPO) for one left holding a wrong character,
+                // and the typo is marked COMBO-NEUTRAL immediately before it is applied, exactly as
                 // TypeBeatPlayfield.onLineSealed does it.
                 if (c.typeable && !c.judged) {
                     if (c.state === 'wrong') {
                         this.processor.markComboNeutral(c);
-                        this.applyCellResult(c, 'meh');
+                        this.applyCellResult(c, 'good');
                     } else {
                         this.applyCellResult(c, 'miss');
                     }
@@ -1282,8 +1292,9 @@
         const great = processor.counts.great;
         const ok = processor.counts.ok;
         const meh = processor.counts.meh;
+        const typos = processor.counts.good; // uncorrected typos (TypeBeatResultMapping.UNFIXED_TYPO)
         const miss = processor.counts.miss;
-        const judged = processor.judgementCount; // == great + ok + meh + miss
+        const judged = processor.judgementCount; // == great + ok + meh + good + miss
 
         // Whole-map accuracy (for display/completion); server overrides the submitted value.
         const acc = total > 0 ? processor.baseScore / (MAX_RESULT_BASE_SCORE * total) : 1;
@@ -1311,6 +1322,11 @@
         const totalWithoutMods = Math.round(500000 * accJudged * comboProgress + 500000 * Math.pow(accJudged, 5) * accuracyProgress);
         const totalScore = totalWithoutMods; // scoreMultiplier = 1 (no mods)
 
+        // TypeBeatScoreProcessor.CountsAsTyped: every HIT except an uncorrected typo. A cell typed
+        // wrong is not a cell typed, so it is in the denominator and out of the numerator and costs
+        // completion, and therefore rank, exactly as a miss does (backlog 126). Between backlog 124
+        // and 126 `typos` was folded into `meh` and counted here, so a run typed entirely wrong read
+        // completion 1 and took an X.
         const completion = total > 0 ? (great + ok + meh) / total : 1;
         const passed = engine.finished && !engine.failed;
 
@@ -1327,6 +1343,7 @@
         if (great) statistics.great = great;
         if (ok) statistics.ok = ok;
         if (meh) statistics.meh = meh;
+        if (typos) statistics.good = typos;
         if (miss) statistics.miss = miss;
         if (mistypes) statistics.combo_break = mistypes;
 
@@ -1343,7 +1360,7 @@
             statistics: statistics,
             maximumStatistics: { great: total },
             // convenience for the results screen
-            counts: { great, ok, meh, miss, mistypes },
+            counts: { great, ok, meh, typos, miss, mistypes },
             wpm: engine.liveWpm
         };
     }

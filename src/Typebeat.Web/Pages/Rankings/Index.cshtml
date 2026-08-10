@@ -9,9 +9,10 @@
 
     bool preferOriginal = Model.CurrentUser?.PreferOriginalMetadata ?? false;
 
-    // The mistype column exists only once some play on the board carries the stat; rows that
-    // predate it leave their cell blank rather than claiming a clean run (docs/pp.md).
+    // The typo and mistype columns exist only once some play on the board carries the stat; rows
+    // that predate it leave their cell blank rather than claiming a clean run (docs/pp.md).
     bool anyMistypes = Model.PlayRows.Any(p => p.Mistypes is not null);
+    bool anyTypos = Model.PlayRows.Any(p => p.Typos is not null);
 
     ViewData["Title"] = "Rankings";
     ViewData["MetaDescription"] = Model.Board switch
@@ -98,6 +99,10 @@
                     <th>Accuracy</th>
                     <th>Combo</th>
                     <th>Miss</th>
+                    @if (anyTypos)
+                    {
+                        <th>Typo</th>
+                    }
                     @if (anyMistypes)
                     {
                         <th>Mistype</th>
@@ -140,6 +145,10 @@
                         <td class="num">@((row.Accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture))%</td>
                         <td class="num">@row.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</td>
                         <td class="num">@row.Miss</td>
+                        @if (anyTypos)
+                        {
+                            <td class="num">@(row.Typos?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>
+                        }
                         @if (anyMistypes)
                         {
                             <td class="num">@(row.Mistypes?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>
