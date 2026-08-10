@@ -7,8 +7,9 @@
 // CoreMistypeHarness.cjs is the sibling fixture for the rejection model (it sets allowWrongInput
 // off explicitly). Since backlog 109 the two models account for the KEYPRESS identically (a combo
 // break plus a mistype, and no judgement result either way); what still differs is the CELL, which
-// rejection leaves waiting for the player and the default model consumes, so a typo left alone
-// costs the cell at the seal while a rejected key never costs one at all.
+// rejection leaves waiting for the player and the default model consumes. Since backlog 124 a typo
+// left alone resolves that cell as a 'meh' at the seal rather than a miss, because the player did
+// finish the character, so it costs accuracy and not completion or rank.
 //
 // Usage: node CoreAllowWrongHarness.cjs <absolute path to typebeat-core.js>
 
@@ -162,25 +163,27 @@ const out = {
     // The reference: nothing wrong at all.
     clean: play({}),
 
-    // A wrong char typed into the LAST cell and left there. Chosen last on purpose: the miss it
-    // costs lands in the same place in the judgement stream as the seal-miss of `lastCellSkipped`
-    // below, which makes the two runs comparable number for number.
+    // A wrong char typed into the LAST cell and left there. Chosen last on purpose: the result it
+    // takes lands in the same place in the judgement stream as the seal-miss of `lastCellSkipped`
+    // below, so the two runs differ in the TIER and in nothing else.
     lastCellTypedWrong: play({ 14: 'wrong' }, 14),
 
-    // The same cell simply never typed. Every submitted number must match the run above, because
-    // both are one HitResult.Miss on the last cell; only the mistype count tells them apart.
+    // The same cell simply never typed, i.e. a character the player never finished. This is the
+    // MISS the run above is no longer (backlog 124), so it must cost completion and rank where the
+    // typo does not.
     lastCellSkipped: play({ 14: 'skip' }),
 
-    // Typed wrong, then backspaced and never fixed. The cell is 'untyped' again for display, and
-    // still unjudged, so the seal misses it: the submitted account must be identical to the two runs
-    // above rather than carrying two misses.
+    // Typed wrong, then backspaced and never fixed. The cell is 'untyped' again, which is a
+    // character the player did NOT finish, so the seal misses it and the submitted account must
+    // match `lastCellSkipped` exactly, mistype count aside. The distinction is drawn on the cell's
+    // state, not on its history.
     lastCellWrongThenErased: play({ 14: 'wrongErase' }),
 
-    // A typo left sitting MID-LINE. The combo break lands on the keypress and the cell's miss lands
-    // at the seal, i.e. after every later cell has been judged, so this is the run that says the two
-    // no longer have to happen together. It is also the regression pin for "an uncorrected typo
-    // costs what it always cost": the account is byte-identical to what the OLD model produced for
-    // this play, because nothing scores between the break and the miss.
+    // A typo left sitting MID-LINE. The combo break lands on the keypress and the cell's result
+    // lands at the seal, i.e. after every later cell has been judged, so this is the run that says
+    // the two no longer have to happen together. It is also where the combo-neutral mark is visible
+    // on one line: the seal's result is a HIT, and applied normally it would extend the rebuilt run
+    // from 9 to 10.
     midCellTypedWrong: play({ 5: 'wrong' }, 5),
 
     // Typed wrong mid-line, then backspaced and retyped correctly. Since backlog 109 the typo spent
@@ -196,9 +199,10 @@ const out = {
     spaceKeyOnLetter: play({ 0: 'reject' }, 0),
 
     // The two-line pair (backlog 122). Same typo on cell 5, left alone, but now with a line 1 for
-    // the combo run to carry into: line 0's cells 6..14 rebuild a run of 9, the seal misses cell 5,
+    // the combo run to carry into: line 0's cells 6..14 rebuild a run of 9, the seal resolves cell 5,
     // and line 1's ten cells either extend that run to 19 or start again from 1. The typo broke
-    // combo once, at the keypress, so it must be 19.
+    // combo once, at the keypress, so it must be 19, on the HUD's account as well as the submitted
+    // one (backlog 123).
     twoLineClean: play({}, undefined, TWO_LINE_OSU),
     twoLineMidCellTypedWrong: play({ 5: 'wrong' }, 5, TWO_LINE_OSU)
 };
