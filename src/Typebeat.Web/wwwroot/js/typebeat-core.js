@@ -677,13 +677,17 @@
     //      mirror has no counterpart for it beyond engine.consecutiveWrongKeys: the browser models
     //      health as a derived read (see `health`), not as an account.
     //   4. DrawableTypeBeatHitObject.ApplySealResults, when the engine seals a line: every
-    //      still-unjudged cell gets a Miss, in cell order, and then the LINE object itself resolves
+    //      still-unjudged cell resolves, in cell order, and then the LINE object itself resolves
     //      as IgnoreHit. IgnoreHit is not scorable, does not affect combo and does not affect
-    //      accuracy, so the line objects are inert and are not modelled at all. A cell left sitting
-    //      WRONG takes its Miss here without breaking combo, because the typo already broke it at
-    //      the keypress (backlog 122): TypeBeatPlayfield.onCharJudged prepays the cell and
-    //      TypeBeatScoreProcessor.ApplyScoreChange redeems it, which is prepayComboBreak and the
-    //      tail of applyResult below.
+    //      accuracy, so the line objects are inert and are not modelled at all. TWO results, not
+    //      one (backlog 124, TypeBeatResultMapping.UnresolvedCellResult): a cell nobody typed is a
+    //      MISS, a cell left sitting WRONG is an unfixed TYPO, which is a `meh`, because the player
+    //      finished that character and only got it wrong. Cell order matters now that the two
+    //      differ, which is why the C# walks a SortedDictionary and this walks line.cells.
+    //      The typo's `meh` is a HIT, so it would extend the run the player rebuilt after the
+    //      keypress that broke it; it is applied COMBO-NEUTRAL instead
+    //      (TypeBeatPlayfield.onLineSealed -> TypeBeatScoreProcessor.MarkComboNeutral, which is
+    //      markComboNeutral and the branch in applyResult below).
     //
     // Judgement rewind (ScoreProcessor.RevertResultInternal) has no counterpart: gameplay here is
     // never rewound, and neither is the desktop client's outside replay seeking.
@@ -709,12 +713,13 @@
             this.maximumBaseScore = 0;   // currentMaximumBaseScore
             this.judgementCount = 0;     // currentAccuracyJudgementCount
             this.counts = { great: 0, ok: 0, meh: 0, miss: 0 }; // ScoreResultCounts
-            // TypeBeatScoreProcessor.prepaidComboBreaks: the cells whose combo break has ALREADY
-            // been taken by hand, at the keypress that spoiled them. The C# keys this by
+            // TypeBeatScoreProcessor.comboNeutralCells: the cells whose combo consequence has
+            // ALREADY been taken by hand, at the keypress that spoiled them, so the result they
+            // finally resolve with must leave combo exactly as it finds it. The C# keys this by
             // (line, cell), which is what a TypeBeatCharObject carries; here the cell object itself
             // is the identity, and it is held on the PROCESSOR rather than on the cell for the same
             // reason: cells live on the shared beatmap and outlive a play, this account does not.
-            this.comboBreakPrepaid = new Set();
+            this.comboNeutral = new Set();
         }
 
         // ScoreProcessor.ApplyResultInternal, for the accuracy-affecting basic results a cell can
@@ -723,14 +728,21 @@
         applyResult(result, cell) {
             this.counts[result]++;
 
-            // ScoreProcessor sets result.ComboAtJudgement here, which is what a prepaid break is
-            // restored to below.
-            const comboAtJudgement = this.combo;
+            // TypeBeatScoreProcessor.MarkComboNeutral / ApplyScoreChange, folded into one branch
+            // here. The C# cannot do that (ApplyResultInternal is sealed, so it moves combo first
+            // and the ruleset hook puts it back afterwards), but the observable rule is this: an
+            // unfixed typo's result neither breaks the run nor extends it, and it takes its
+            // combo-portion weight from the combo it FOUND. Its break was already paid at the
+            // keypress (breakCombo below), which is the whole combo cost of getting a character
+            // wrong. highestCombo is skipped with it: unlike a suppressed break, a suppressed
+            // INCREMENT can raise a running maximum, so leaving it would inflate max_combo by one
+            // per typo.
+            if (!this.comboNeutral.has(cell)) {
+                if (result === 'miss') this.combo = 0;
+                else this.combo++;
 
-            if (result === 'miss') this.combo = 0;
-            else this.combo++;
-
-            if (this.combo > this.highestCombo) this.highestCombo = this.combo;
+                if (this.combo > this.highestCombo) this.highestCombo = this.combo;
+            }
 
             this.maximumBaseScore += MAX_RESULT_BASE_SCORE;
             this.judgementCount++;
@@ -738,25 +750,18 @@
 
             // GetComboScoreChange: the MAX result's base score weighted by the combo AFTER this
             // judgement. A miss therefore contributes 300 * 0^0.5 = 0, and every later hit is
-            // weighted by a combo that this break restarted from zero.
+            // weighted by a combo that this break restarted from zero. A combo-neutral cell moved
+            // nothing, so this is exactly the combo it found.
             this.comboPortion += MAX_RESULT_BASE_SCORE * Math.pow(this.combo, COMBO_EXPONENT);
-
-            // TypeBeatScoreProcessor.ApplyScoreChange (backlog 122), which runs at exactly this
-            // point of ApplyResultInternal: after the combo reset and after the combo portion has
-            // been accumulated from it, so the miss stays worth 0 and one Miss to every count, and
-            // only the combo the NEXT judgement is weighted by moves. A cell that prepaid its break
-            // at the typo does not pay it again when its deferred result finally lands.
-            // highestCombo needs no repair: it only ever grows, so a reset that never happened
-            // cannot have lowered it.
-            if (result === 'miss' && this.comboBreakPrepaid.has(cell)) this.combo = comboAtJudgement;
         }
 
-        // TypeBeatScoreProcessor.PrepayComboBreak: the caller has just broken combo by hand for the
-        // keypress that spoiled this cell, so the Miss the cell eventually takes must not break it
-        // again. Harmless if the cell is then FIXED: the retype resolves it with a great/ok/meh,
-        // which increases combo and never consults this set.
-        prepayComboBreak(cell) {
-            this.comboBreakPrepaid.add(cell);
+        // TypeBeatScoreProcessor.MarkComboNeutral: the result about to be applied to this cell must
+        // leave combo alone, because the cell's break was taken by hand at the keypress that spoiled
+        // it. Marked at the seam that APPLIES it (the seal), never at the keypress, which is what
+        // keeps a CORRECTED typo working: the retype resolves the cell with an ordinary
+        // combo-increasing hit that never consults this set.
+        markComboNeutral(cell) {
+            this.comboNeutral.add(cell);
         }
 
         // TypeBeatPlayfield.onMistyped: `scoreProcessor.Combo.Value = 0`, and nothing else. Every
@@ -900,27 +905,36 @@
             for (const c of line.cells) {
                 // The engine's own miss count (TypingEngine.Update's seal loop), which drives the
                 // HUD combo below and nothing that is submitted. A cell the line ran out of time on,
-                // and (backlog 109) a cell left sitting WRONG: a typo does not resolve its cell any
-                // more, it defers it, so a typo nobody went back for is a miss exactly like a cell
-                // nobody typed. An untyped cell becomes 'missed' (dimmed); a wrong one KEEPS
-                // 'wrong', so the line still shows which character went wrong.
-                if (c.typeable && (c.state === 'untyped' || c.state === 'wrong')) {
-                    if (c.state === 'untyped') {
-                        c.state = 'missed';
-                        c.judgeType = 'Miss';
-                    }
+                // and ONLY that (backlog 124, reversing the predicate backlog 109 widened): a cell
+                // left sitting WRONG is a character the player FINISHED, so it is a mistype and not
+                // a miss, it keeps 'wrong' on screen, and it does not break the HUD combo here,
+                // because its break was taken at the keypress. That is what puts the HUD combo back
+                // in agreement with the submitted max_combo (backlog 123).
+                if (c.typeable && c.state === 'untyped') {
+                    c.state = 'missed';
+                    c.judgeType = 'Miss';
                     missed++;
                 }
 
-                // DrawableTypeBeatHitObject.ApplySealResults: EVERY nested char drawable of the line
-                // (one per typeable cell) takes a Miss at seal time, in cell order, and each is a
-                // no-op on a cell that already carries a result. (The line object's own IgnoreHit
-                // result follows, and is scoring-inert, so it is not modelled.) That is `judged`
-                // exactly, which is why the guard is not the state test above: the two come apart
-                // for a cell typed correctly and then BACKSPACED, which is 'untyped' again and so is
-                // counted a miss for display, while its drawable keeps the Great it already took.
-                if (c.typeable && !c.judged)
-                    this.applyCellResult(c, 'miss');
+                // DrawableTypeBeatHitObject.ApplySealResults: EVERY still-unjudged nested char
+                // drawable of the line takes its result at seal time, in cell order, and the loop
+                // skips cells that already carry one. `judged` is deliberately not the state test
+                // above: the two come apart for a cell typed correctly and then BACKSPACED, which is
+                // 'untyped' again and so is counted a miss for display, while its drawable keeps the
+                // Great it already took.
+                //
+                // The result is a MISS for a cell nobody typed and a 'meh' for one left holding a
+                // wrong character (TypeBeatResultMapping.UnresolvedCellResult), and the 'meh' is
+                // marked COMBO-NEUTRAL immediately before it is applied, exactly as
+                // TypeBeatPlayfield.onLineSealed does it.
+                if (c.typeable && !c.judged) {
+                    if (c.state === 'wrong') {
+                        this.processor.markComboNeutral(c);
+                        this.applyCellResult(c, 'meh');
+                    } else {
+                        this.applyCellResult(c, 'miss');
+                    }
+                }
             }
             if (missed > 0) {
                 this.combo = 0;
@@ -962,18 +976,19 @@
                     continue;
                 }
 
-                // A cell that has already handed its drawable the one result it will ever have keeps
-                // it: a Great cannot be revoked (applyCellResult's `judged` guard is the same rule).
-                // A cell typed WRONG is no longer in that group (backlog 109): a typo spends no
-                // result, it only defers one, and abandoning the word is the player deciding it will
-                // never be corrected. So it is given up here like any unresolved cell, keeping
-                // 'wrong' on screen while its judgement becomes a Miss.
-                if (c.state !== 'untyped' && c.state !== 'wrong') continue;
+                // Only a cell nobody has put anything into is given up. A CORRECT one has already
+                // handed its drawable the one result it will ever have and a Great cannot be revoked
+                // (applyCellResult's `judged` guard is the same rule). A WRONG one is not given up
+                // either, and since backlog 124 that is for its own reason: a typed-through wrong
+                // character is a cell the player FINISHED, so abandoning the word cannot turn it
+                // into a miss. Its deferred result is decided at the seal like every other unfixed
+                // typo, which also leaves the promise intact that backspacing back into the word can
+                // still fix it. Backlog 109 had it given up here, because at the time the only fate
+                // available to an unfixed typo was a Miss.
+                if (c.state !== 'untyped') continue;
 
-                if (c.state === 'untyped') {
-                    c.state = 'missed';
-                    c.judgeType = 'Miss';
-                }
+                c.state = 'missed';
+                c.judgeType = 'Miss';
                 missed++;
 
                 // The C# announces each abandoned cell IMMEDIATELY (CharJudged carrying a Miss ->
@@ -1110,8 +1125,8 @@
                     // DrawableTypeBeatHitObject.ApplyCharJudgement returns before applying anything
                     // for a WrongChar. A miss is a character the line ran out of time on; a typo is a
                     // typo, and backspace can still fix this one, so the cell's one result is
-                    // DEFERRED: the fix earns its real Great/Ok/Meh, and only a typo left alone takes
-                    // a Miss, at the seal.
+                    // DEFERRED: the fix earns its real Great/Ok/Meh, and a typo left alone resolves
+                    // at the seal as an unfixed typo, a 'meh' and not a miss (backlog 124).
                     //
                     // Which leaves the submitted COMBO with nothing to break it, because osu's combo
                     // is maintained incrementally off results. So the break is mirrored by hand here,
@@ -1119,13 +1134,12 @@
                     // which fires for both models). Without this the browser's max_combo would count
                     // on through the rest of the line after a break the engine has already taken.
                     this.processor.breakCombo();
-                    // ...and that is the ONLY break this keypress costs (backlog 122). The cell's
-                    // deferred result is still a Miss when nobody fixes it, and osu breaks combo on
-                    // every Miss, so without prepaying the cell here the seal would cut the run a
-                    // SECOND time, after the player had rebuilt it through the rest of the line.
-                    // TypeBeatPlayfield.onCharJudged does this one event later, on the WrongChar
-                    // judgement this branch is what raises.
-                    this.processor.prepayComboBreak(cell);
+                    // ...and that is the ONLY break this keypress costs (backlog 122), and since
+                    // backlog 124 it is the cell's whole combo consequence in BOTH directions. The
+                    // cell's deferred result is now a hit, so the danger has flipped from a second
+                    // break to a free increment; sealLine handles it there, at the seam that applies
+                    // the result, rather than here, because a typo the player goes back for must
+                    // still earn its retype's combo normally.
                     // NEITHER renderer hook fires here, and both omissions mirror the desktop.
                     // onWrongKey is the REJECTED-key feedback (shake + the char popping off the
                     // caret, mirroring LyricStage.onWrongKeyRejected), which the desktop does not
