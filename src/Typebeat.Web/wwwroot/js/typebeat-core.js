@@ -679,7 +679,11 @@
     //   4. DrawableTypeBeatHitObject.ApplySealResults, when the engine seals a line: every
     //      still-unjudged cell gets a Miss, in cell order, and then the LINE object itself resolves
     //      as IgnoreHit. IgnoreHit is not scorable, does not affect combo and does not affect
-    //      accuracy, so the line objects are inert and are not modelled at all.
+    //      accuracy, so the line objects are inert and are not modelled at all. A cell left sitting
+    //      WRONG takes its Miss here without breaking combo, because the typo already broke it at
+    //      the keypress (backlog 122): TypeBeatPlayfield.onCharJudged prepays the cell and
+    //      TypeBeatScoreProcessor.ApplyScoreChange redeems it, which is prepayComboBreak and the
+    //      tail of applyResult below.
     //
     // Judgement rewind (ScoreProcessor.RevertResultInternal) has no counterpart: gameplay here is
     // never rewound, and neither is the desktop client's outside replay seeking.
@@ -705,13 +709,23 @@
             this.maximumBaseScore = 0;   // currentMaximumBaseScore
             this.judgementCount = 0;     // currentAccuracyJudgementCount
             this.counts = { great: 0, ok: 0, meh: 0, miss: 0 }; // ScoreResultCounts
+            // TypeBeatScoreProcessor.prepaidComboBreaks: the cells whose combo break has ALREADY
+            // been taken by hand, at the keypress that spoiled them. The C# keys this by
+            // (line, cell), which is what a TypeBeatCharObject carries; here the cell object itself
+            // is the identity, and it is held on the PROCESSOR rather than on the cell for the same
+            // reason: cells live on the shared beatmap and outlive a play, this account does not.
+            this.comboBreakPrepaid = new Set();
         }
 
         // ScoreProcessor.ApplyResultInternal, for the accuracy-affecting basic results a cell can
         // take (great/ok/meh/miss). All four are scorable, none is a bonus, and all four affect
         // combo: the three hits increase it, a miss breaks it.
-        applyResult(result) {
+        applyResult(result, cell) {
             this.counts[result]++;
+
+            // ScoreProcessor sets result.ComboAtJudgement here, which is what a prepaid break is
+            // restored to below.
+            const comboAtJudgement = this.combo;
 
             if (result === 'miss') this.combo = 0;
             else this.combo++;
@@ -726,6 +740,23 @@
             // judgement. A miss therefore contributes 300 * 0^0.5 = 0, and every later hit is
             // weighted by a combo that this break restarted from zero.
             this.comboPortion += MAX_RESULT_BASE_SCORE * Math.pow(this.combo, COMBO_EXPONENT);
+
+            // TypeBeatScoreProcessor.ApplyScoreChange (backlog 122), which runs at exactly this
+            // point of ApplyResultInternal: after the combo reset and after the combo portion has
+            // been accumulated from it, so the miss stays worth 0 and one Miss to every count, and
+            // only the combo the NEXT judgement is weighted by moves. A cell that prepaid its break
+            // at the typo does not pay it again when its deferred result finally lands.
+            // highestCombo needs no repair: it only ever grows, so a reset that never happened
+            // cannot have lowered it.
+            if (result === 'miss' && this.comboBreakPrepaid.has(cell)) this.combo = comboAtJudgement;
+        }
+
+        // TypeBeatScoreProcessor.PrepayComboBreak: the caller has just broken combo by hand for the
+        // keypress that spoiled this cell, so the Miss the cell eventually takes must not break it
+        // again. Harmless if the cell is then FIXED: the retype resolves it with a great/ok/meh,
+        // which increases combo and never consults this set.
+        prepayComboBreak(cell) {
+            this.comboBreakPrepaid.add(cell);
         }
 
         // TypeBeatPlayfield.onMistyped: `scoreProcessor.Combo.Value = 0`, and nothing else. Every
@@ -860,7 +891,7 @@
         applyCellResult(cell, result) {
             if (cell.judged) return;
             cell.judged = true;
-            this.processor.applyResult(result);
+            this.processor.applyResult(result, cell);
         }
 
         sealLine(idx) {
@@ -1088,6 +1119,13 @@
                     // which fires for both models). Without this the browser's max_combo would count
                     // on through the rest of the line after a break the engine has already taken.
                     this.processor.breakCombo();
+                    // ...and that is the ONLY break this keypress costs (backlog 122). The cell's
+                    // deferred result is still a Miss when nobody fixes it, and osu breaks combo on
+                    // every Miss, so without prepaying the cell here the seal would cut the run a
+                    // SECOND time, after the player had rebuilt it through the rest of the line.
+                    // TypeBeatPlayfield.onCharJudged does this one event later, on the WrongChar
+                    // judgement this branch is what raises.
+                    this.processor.prepayComboBreak(cell);
                     // NEITHER renderer hook fires here, and both omissions mirror the desktop.
                     // onWrongKey is the REJECTED-key feedback (shake + the char popping off the
                     // caret, mirroring LyricStage.onWrongKeyRejected), which the desktop does not

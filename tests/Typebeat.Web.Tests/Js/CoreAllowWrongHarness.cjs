@@ -41,6 +41,28 @@ const OSU =
     '{"text":"cat","start_ms":5000,"end_ms":7000,"score":1},' +
     '{"text":"sat","start_ms":7000,"end_ms":9000,"score":1}]}\n';
 
+// The same line 0, plus a SECOND line, which is the only shape on which the seal's combo break is
+// observable at all: with one line the deferred miss lands after every other cell has been judged,
+// so it cannot lower max_combo however it behaves, it can only cut the run short of the next line.
+// Line 1 is ten more cells ("on the mat": o0 n1 _2 t3 h4 e5 _6 m7 a8 t9), again with no 'z'.
+const TWO_LINE_OSU =
+    '[General]\n' +
+    'AudioFilename: a.mp3\n' +
+    '[Metadata]\n' +
+    'Title: t\n' +
+    'Artist: a\n' +
+    '[Lyrics]\n' +
+    '{"granularity":"word","version":2,"song_end_ms":30000}\n' +
+    '{"text":"the bad cat sat","start_ms":1000,"end_ms":9000,"words":[' +
+    '{"text":"the","start_ms":1000,"end_ms":3000,"score":1},' +
+    '{"text":"bad","start_ms":3000,"end_ms":5000,"score":1},' +
+    '{"text":"cat","start_ms":5000,"end_ms":7000,"score":1},' +
+    '{"text":"sat","start_ms":7000,"end_ms":9000,"score":1}]}\n' +
+    '{"text":"on the mat","start_ms":11000,"end_ms":17000,"words":[' +
+    '{"text":"on","start_ms":11000,"end_ms":13000,"score":1},' +
+    '{"text":"the","start_ms":13000,"end_ms":15000,"score":1},' +
+    '{"text":"mat","start_ms":15000,"end_ms":17000,"score":1}]}\n';
+
 const WRONG_KEY = 'z';
 
 /**
@@ -62,8 +84,8 @@ const WRONG_KEY = 'z';
  * `probeAt` names the cell index whose immediate post-press state is captured, which is how the
  * rejection cases prove nothing was written rather than merely that the totals came out right.
  */
-function play(script, probeAt) {
-    const beatmap = TB.buildBeatmap(TB.parseLyricOsu(OSU), false);
+function play(script, probeAt, osu) {
+    const beatmap = TB.buildBeatmap(TB.parseLyricOsu(osu || OSU), false);
     const engine = new TB.TypingEngine(beatmap);
 
     const cells = [];
@@ -171,7 +193,14 @@ const out = {
     wrongKeyOnWordGap: play({ 3: 'reject' }, 3),
 
     // ...and so does a SPACE pressed on a letter cell, the other half of the same carve-out.
-    spaceKeyOnLetter: play({ 0: 'reject' }, 0)
+    spaceKeyOnLetter: play({ 0: 'reject' }, 0),
+
+    // The two-line pair (backlog 122). Same typo on cell 5, left alone, but now with a line 1 for
+    // the combo run to carry into: line 0's cells 6..14 rebuild a run of 9, the seal misses cell 5,
+    // and line 1's ten cells either extend that run to 19 or start again from 1. The typo broke
+    // combo once, at the keypress, so it must be 19.
+    twoLineClean: play({}, undefined, TWO_LINE_OSU),
+    twoLineMidCellTypedWrong: play({ 5: 'wrong' }, 5, TWO_LINE_OSU)
 };
 
 process.stdout.write(JSON.stringify(out));

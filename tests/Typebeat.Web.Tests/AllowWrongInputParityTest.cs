@@ -208,6 +208,82 @@ public class AllowWrongInputParityTest
     }
 
     /// <summary>
+    /// Backlog 122, the other half of the test above. The break belongs to the KEYPRESS, and it
+    /// happens exactly once: the run the player builds through the rest of the line after an
+    /// uncorrected typo survives the seal and carries into the next line.
+    ///
+    /// <para>Backlog 109 had made it happen twice. Deferring the cell's result forced the keypress
+    /// break to be mirrored by hand, but the deferred result is still a Miss when nobody fixes the
+    /// cell, and osu resets combo on every Miss, so the seal cut the run a second time, nine cells
+    /// after the mistake. That is strictly harsher than the single pre-109 break, which is the
+    /// opposite of what deferring the result was for, and it is why 17 of 149 stored scores lost
+    /// total_score on recalculation.</para>
+    ///
+    /// <para>One line cannot show it: there the deferred miss lands after every other cell has been
+    /// judged, so it can only cut the run short of the NEXT line, which is what the two-line runs
+    /// exist for. Line 0's cells 6..14 rebuild a run of 9 and line 1 adds ten more, so the submitted
+    /// max_combo reads 19 if the run survived the seal and 10 if it did not.</para>
+    /// </summary>
+    [Test]
+    public void TheComboRunAfterAnUncorrectedTypoSurvivesTheSeal()
+    {
+        var root = Harness();
+        var run = root.GetProperty("twoLineMidCellTypedWrong");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(run.GetProperty("totalCells").GetInt32(), Is.EqualTo(25), "15 cells on line 0, 10 on line 1");
+
+            Assert.That(run.GetProperty("maxCombo").GetInt32(), Is.EqualTo(19),
+                "nine cells of line 0 after the typo, plus all ten of line 1: the seal does not cut the run");
+
+            // It really did break, once, where the player made the mistake.
+            Assert.That(root.GetProperty("twoLineClean").GetProperty("maxCombo").GetInt32(), Is.EqualTo(25));
+            Assert.That(run.GetProperty("maxCombo").GetInt32(),
+                Is.LessThan(root.GetProperty("twoLineClean").GetProperty("maxCombo").GetInt32()));
+
+            // The HUD's own live combo is a SEPARATE account with its own rules, and it still
+            // restarts at the seal (TypingEngine's seal loop breaks it for any missed cell, wrong
+            // ones included since backlog 109). Only the number pinned above is submitted, and only
+            // that one is what the shared leaderboards rank.
+            Assert.That(run.GetProperty("engineMaxCombo").GetInt32(), Is.EqualTo(10));
+        });
+    }
+
+    /// <summary>
+    /// What backlog 122 must NOT move. The cell still MISSES, so every quantity derived from the
+    /// result stream is exactly what an uncorrected typo always cost: one miss, one mistype, and
+    /// completion and rank short by that one cell. Only the combo the later judgements are weighted
+    /// by changed, which is why no pp constant moves with it.
+    ///
+    /// <para><see cref="TheSubmittedComboBreaksAtTheTypoNotAtTheSeal"/> is the same claim on the
+    /// single-line run, where it is even stronger: that whole account, total score included, is
+    /// byte-identical to what it was before.</para>
+    /// </summary>
+    [Test]
+    public void TheUncorrectedTypoAccountIsUnchangedApartFromCombo()
+    {
+        var root = Harness();
+        var run = root.GetProperty("twoLineMidCellTypedWrong");
+
+        Assert.Multiple(() =>
+        {
+            // notes = great + ok + meh + miss, one per cell, with the mistype counted apart.
+            Assert.That(Dict(run, "statistics"),
+                Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 24, ["miss"] = 1, ["combo_break"] = 1 }));
+
+            Assert.That(run.GetProperty("accuracy").GetDouble(), Is.EqualTo(24.0 / 25.0).Within(1e-12));
+            Assert.That(run.GetProperty("completion").GetDouble(), Is.EqualTo(24.0 / 25.0).Within(1e-12));
+            Assert.That(run.GetProperty("rank").GetString(), Is.EqualTo("S"));
+
+            // ...and the server agrees, recomputing the same play through its own contract.
+            var recomputed = Recompute(run);
+            Assert.That(recomputed.StatisticsValid, Is.True);
+            Assert.That(recomputed.Rank, Is.EqualTo("S"));
+        });
+    }
+
+    /// <summary>
     /// THE point of backlog 109: backspacing and retyping recovers the cell for real. It ends green
     /// on screen, it ends a Great in the statistics, and completion and the rank recover with it,
     /// because the typo never spent the cell's one result. Before, the fix went green while the
