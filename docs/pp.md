@@ -16,21 +16,21 @@ profile) is a separate follow-up with wire + client changes.
 Per play:
 
 ```
-pp = C · SR_eff^2.60
+pp = C · SR_eff^2.70
        · max(0, 1 − miss^1.6/notes)^10                 # cleanliness
-       · max(0, 1 − mistypes^1.6/(notes+mistypes))^8   # mistyping
+       · max(0, 1 − mistypes^1.6/(notes+mistypes))^4   # mistyping
        · max(0.1, 1 + 0.50·log10(notes/100))           # length bonus (clamped)
        · acc^1.30                                      # accuracy (timing quality)
        · (maxcombo/notes)^0.75                         # combo
        · modMult                                       # NOT for DT/HT; rate lives in SR_eff only
        · rateMult                                      # 1.0 except base-rate HT (see the Half Time amendment)
 
-C = 3.0    # global scale constant, does not affect ranking order
+C = 5.5    # global scale constant, does not affect ranking order
 ```
 
 Factor by factor, in descending priority:
 
-* **SR_eff^2.60**: difficulty is the primary driver. SR_eff is the map's star rating
+* **SR_eff^2.70**: difficulty is the primary driver. SR_eff is the map's star rating
   **recomputed at the play's clock rate** for DT/HT (see mods below), not the base SR.
 * **cleanliness^10**: dropped cells. The raw COUNT carries a power, not the ratio, since the
   backlog-97 amendment, and that power is `count_power = 1.2` since the backlog-101 one. That makes
@@ -39,7 +39,7 @@ Factor by factor, in descending priority:
   than letting it go negative. Past that point a play earns exactly nothing from any factor, and
   well before it the term is already negligible. A give-up run (e.g. 900+ misses) collapses to
   exactly 0.
-* **mistyping^8**: wrong keypresses, priced separately since the backlog-89 amendment, and with its
+* **mistyping^4**: wrong keypresses, priced separately since the backlog-89 amendment, and with its
   own count under the same power since the backlog-97 one. Still the cheaper of the two failures
   (6 against 10), because a stumble you recover from is not the same failure as never typing the
   cell at all, and because the count sits in its denominator too, which pushes its cliff out to the
@@ -550,4 +550,36 @@ fractional exponent on a negative base is non-real.
 | `notes=500, miss=10, mistype=20` | `0.645745` | `0.987200` | `0.000016` | `0.468755` | +2890437% |
 
 **`VERSION` bumps to 7.** Every stored row the change values differently is repriced by
+`PpBackfill` at the next boot, reading only columns; no migration is needed.
+
+## Amendment (2026-08-10): the global scale, the SR exponent and the mistype exponent are retuned (backlog 112)
+
+The backlog-112 retune of three constants, with the SHAPE untouched: the global scale rises 3.0
+to 5.5, sr_exponent 2.60 to 2.70, and mistype_exponent 8.0 to 4.0. count_power stays 1.6,
+miss_exponent stays 10, and the length, accuracy and combo terms and every mod multiplier are
+exactly as they were. scale and sr_exponent together are close to a pure rescale (they preserve
+ranking order among plays on the same map, and steepen it only mildly across difficulties), and
+roughly DOUBLE a clean mid-difficulty play. Halving the mistype exponent is the part that
+changes ORDER: a mistype-heavy play is repriced far more than double, because 8 was steep enough
+to price such plays at essentially nothing. Both penalty bases are still exactly 1.0 at a count
+of zero, so a spotless play moves only by the rescale, while every stored row carrying a mistype
+is repriced upwards, which is what forces the bump.
+
+```
+BEFORE:  max(0, 1 − miss^1.6/notes)^10  ·  max(0, 1 − mistypes^1.6/(notes + mistypes))^8
+
+AFTER:   max(0, 1 − miss^1.6/notes)^10  ·  max(0, 1 − mistypes^1.6/(notes + mistypes))^4
+```
+
+SR, length, accuracy, combo, the mod multipliers, the Half Time mirror multiplier, eligibility
+and the aggregation are all untouched. The mistype count still sits on both sides of its own
+fraction, for the reason the backlog-89 amendment gives: keypresses are unbounded, and a
+fractional exponent on a negative base is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, mistype=80` | `0.000000` | `0.000000` | 0% |
+| `notes=500, miss=10, mistype=20` | `0.052744` | `0.151677` | +188% |
+
+**`VERSION` bumps to 9.** Every stored row the change values differently is repriced by
 `PpBackfill` at the next boot, reading only columns; no migration is needed.
