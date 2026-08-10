@@ -795,6 +795,15 @@
             // exactly the default the shared leaderboards are now judged under. If /play ever grows
             // a mods payload, this is the flag GK would clear.
             this.allowWrongInput = true;
+            // "Space to skip current word" (TypeBeatRulesetSetting.SpaceSkipsWord, backlog 110): a
+            // space pressed inside a word abandons the rest of it as misses and moves on to the next
+            // word. DEFAULTED OFF, like caseSensitive/mashingEnabled above and for the same reason:
+            // the browser has no settings payload, so /play is permanently non-skipping and the
+            // default path stays byte-identical to the desktop's default. If /play ever grows one,
+            // this is the flag it sets, and it would ALSO have to travel in whatever the browser's
+            // equivalent of the replay CONFIG frame is (the desktop carries it as bit 1), because it
+            // changes how a recorded space is judged.
+            this.spaceSkipsWord = false;
             // event hooks (optional; set by the renderer)
             this.onCharJudged = null;
             this.onWrongKey = null;
@@ -890,6 +899,64 @@
             }
         }
 
+        // TypingEngine.skipCurrentWord. Abandon the whole word the caret is inside and leave the
+        // caret on the word gap after it (or at the end of the line, for a word with no gap).
+        // No `time` parameter, unlike the C#, which needs it only for the per-cell judgement deltas
+        // this mirror does not raise (see the onCharJudged note below).
+        skipCurrentWord() {
+            const cells = this.lines[this.activeLineIndex].cells;
+
+            // The word: the run between the typeable SPACE cells either side of the caret. The whole
+            // word rather than the tail from the caret, which gives up the same cells (everything
+            // behind the caret is already resolved) but says what the feature promises.
+            let start = this.caretIndex;
+            let end = this.caretIndex;
+            while (start > 0 && !(cells[start - 1].typeable && cells[start - 1].expected === ' ')) start--;
+            while (end < cells.length && !(cells[end].typeable && cells[end].expected === ' ')) end++;
+
+            let missed = 0;
+
+            for (let i = start; i < end; i++) {
+                const c = cells[i];
+
+                if (!c.typeable) {
+                    c.state = 'autoskip'; // exactly what autoSkipForward would have done to it
+                    continue;
+                }
+
+                // Already Correct or Wrong keeps the judgement it earned and the one result its cell
+                // drawable already took (applyCellResult's `judged` guard is the same rule): a Great
+                // cannot be revoked, and a wrong char has already taken its Miss.
+                if (c.state !== 'untyped') continue;
+
+                c.state = 'missed';
+                c.judgeType = 'Miss';
+                missed++;
+
+                // The C# announces each abandoned cell IMMEDIATELY (CharJudged carrying a Miss ->
+                // ApplyCharJudgement -> ApplyEngineResult), so the submitted account takes the miss
+                // here rather than at seal time and osu's combo breaks with the engine's instead of
+                // counting on to the end of the line. sealLine is then a no-op on these cells.
+                this.applyCellResult(c, 'miss');
+            }
+
+            this.caretIndex = end;
+
+            if (missed === 0) return;
+
+            // AT MOST ONE combo break for the whole word, the rule sealLine's misses follow. The
+            // processor's own combo was already broken by the first applyCellResult('miss').
+            this.combo = 0;
+            if (this.onComboBroken) this.onComboBroken();
+
+            // NO onCharJudged for the abandoned cells, deliberately, and the omission mirrors the
+            // wrong-char path above: that hook is this renderer's rolling-WPM tap, and the C#
+            // pushRollingSample() sits on the accepted-keypress path only, so tapping it here would
+            // drift the browser's WPM readout away from the desktop's. The cells repaint from state.
+            // engine `counts` is left alone too: it is the scored-only dict, and sealLine does not
+            // record its misses there either (the submitted miss count comes off the processor).
+        }
+
         update(time) {
             // (1) accrue active typing time using this frame's span.
             //
@@ -935,7 +1002,7 @@
             const line = this.lines[this.activeLineIndex];
             this.autoSkipForward();
             if (this.caretIndex >= line.cells.length) return false; // line fully typed
-            const cell = line.cells[this.caretIndex];
+            let cell = line.cells[this.caretIndex];
 
             // Mashing mod: any key is the right key; judge it as the caret cell's expected char.
             // A FREESTYLE cell is exempt: it already accepts any key, and rewriting c here would
@@ -947,6 +1014,18 @@
             if (this.mashingEnabled) {
                 if (!cell.freestyle) c = cell.expected;
                 else if (c === ' ') c = FREESTYLE_AUTO_CHAR;
+            }
+
+            // SPACE-SKIP (spaceSkipsWord), evaluated BEFORE the match: a space pressed while the
+            // caret sits on a lyric character abandons that word. The caret cell is typeable here
+            // (autoSkipForward ran above), so "expected is not a space" is exactly "inside a word",
+            // and a space pressed ON the word gap keeps its ordinary meaning. After the Mashing
+            // rewrite on purpose: mashing has already turned the press into the expected char, so
+            // this is unreachable under it.
+            if (this.spaceSkipsWord && c === ' ' && cell.expected !== ' ') {
+                this.skipCurrentWord();
+                if (this.caretIndex >= line.cells.length) return true; // the word ran to the line end
+                cell = line.cells[this.caretIndex]; // the word gap, judged as an ordinary space below
             }
 
             const delta = time - cell.target;
