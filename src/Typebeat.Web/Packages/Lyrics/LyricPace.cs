@@ -39,19 +39,29 @@ public static class LyricPace
     /// lyrics: search operator's haystack and the set page's lyrics display text;
     /// 018_lyrics_search.sql). As at v7 the arithmetic is unchanged; the bump revisits every
     /// row to fill the new column.
+    /// v9 = the star arithmetic really changes (backlog 115/119): per-word strain splits into a
+    /// fast decaying DENSITY plus a slow ENDURANCE moving average, and <c>star_scale</c> is
+    /// re-anchored on the live ranked catalogue. Every rating moves, so this bump exists to make
+    /// the backfill re-rate the whole catalogue and hand every score on it to
+    /// <see cref="PpBackfill"/>. IT ALSO SPENDS THE DEFERRAL BELOW: re-parsing the stored blob is
+    /// how the re-rate happens, so `.osz`-conversion maps are now re-derived against the
+    /// punctuated text and their word and cell counts move with it. That was always what a bump
+    /// to 9 would mean; taking the star change forced the decision, and it has been taken
+    /// deliberately rather than absorbed by accident.
     ///
-    /// <para>NOT bumped for the punctuation change (backlog 59), deliberately. The arithmetic now
+    /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
+    /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
+    /// arithmetic now
     /// runs on <see cref="Typeability.ToDefaultStream"/> of each line rather than the line itself,
     /// which is a no-op (bar case, which no count sees) for any text carrying no hyphen and no
     /// mark. Every blob the game's own encoder wrote holds exactly such text, because the old
     /// normalizer stripped the marks before they were ever stored. Blobs the .osz conversion tool
     /// produced re-emit the ALIGNER's raw line objects, which do carry marks, so re-parsing those
     /// would now yield punctuated lines and different word/cell counts. Leaving VERSION alone is
-    /// what keeps the backfill away from them: existing rows are not touched, and only a re-upload
-    /// re-derives. Bump to 9 when the intent is deliberately to re-derive every stored map against
-    /// the punctuated text.</para>
+    /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
+    /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 8;
+    public const int VERSION = 9;
 
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;

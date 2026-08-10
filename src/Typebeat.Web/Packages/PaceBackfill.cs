@@ -19,10 +19,11 @@ namespace Typebeat.Web.Packages;
 /// (<c>sr_dt</c> / <c>sr_ht</c>, what pp prices a Double Time / Half Time play at) have never been
 /// filled in. The second arm exists precisely so filling those columns did NOT need a VERSION bump:
 /// bumping to 9 would additionally re-derive every stored map against the punctuated text and move
-/// the word/cell counts of .osz-conversion blobs (see the VERSION doc comment, task 59), which is a
-/// deliberate separate decision and must not ride along with a pp deploy. The two stay decoupled,
-/// and a genuine v9 bump later still recomputes the rate ratings for free because they ride the
-/// same UPDATE.
+/// the word/cell counts of .osz-conversion blobs (see the VERSION doc comment, task 59), which was
+/// held back as a deliberate separate decision rather than riding along with a pp deploy. THAT
+/// DECISION HAS SINCE BEEN TAKEN: the backlog-115/119 star change needed the whole catalogue
+/// re-rated, VERSION is now 9, and the punctuated re-derive travelled with it knowingly. The rate
+/// ratings recompute for free either way, because they ride the same UPDATE.
 /// </para>
 /// </summary>
 public static class PaceBackfill
