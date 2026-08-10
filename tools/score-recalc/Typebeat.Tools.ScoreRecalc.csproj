@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Backlog 114: replay-driven score recalculation.
+
+    Backlog 109 changed what a typo does to a score (the cell's result is DEFERRED instead of
+    spent on a Miss), so every stored score's statistics/max_combo/accuracy/completion/rank were
+    priced against a model the client no longer uses. The pp backfill cannot fix that: it reprices
+    a given set of statistics, it does not re-derive them. Only replaying the run does.
+
+    Like tests/Typebeat.WireCompat, this compiles BOTH repos: the score has to be re-derived by the
+    game's own TypingEngine and TypeBeatScoreProcessor (typebeat.Game.Rulesets.TypeBeat), and then
+    valued by the server's own ScoringContract and PerformancePoints (Typebeat.Web). Nothing here
+    reimplements either half.
+
+    From a worktree neither game path below resolves (the sibling path lands inside
+    .claude/worktrees and external/typebeat-osu is an unpopulated gitlink), so pass the same two
+    overrides WireCompat documents:
+
+      -p:TypebeatGameProject='<game path>\typebeat.Game\typebeat.Game.csproj'
+      -p:TypebeatRulesetProject='<game path>\typebeat.Game.Rulesets.TypeBeat\typebeat.Game.Rulesets.TypeBeat.csproj'
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Typebeat.Tools.ScoreRecalc</RootNamespace>
+    <AssemblyName>Typebeat.Tools.ScoreRecalc</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Typebeat.Web\Typebeat.Web.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- Local dev prefers the LIVE sibling checkout of the game repo; CI has no sibling and falls
+         back to the pinned external/typebeat-osu submodule. Same two-step resolution, and the same
+         two independently overridable properties, as tests/Typebeat.WireCompat. -->
+    <TypebeatGameProject Condition="Exists('..\..\..\typebeat-osu\typebeat.Game\typebeat.Game.csproj')">..\..\..\typebeat-osu\typebeat.Game\typebeat.Game.csproj</TypebeatGameProject>
+    <TypebeatGameProject Condition="'$(TypebeatGameProject)' == ''">..\..\external\typebeat-osu\typebeat.Game\typebeat.Game.csproj</TypebeatGameProject>
+
+    <TypebeatRulesetProject Condition="Exists('..\..\..\typebeat-osu\typebeat.Game.Rulesets.TypeBeat\typebeat.Game.Rulesets.TypeBeat.csproj')">..\..\..\typebeat-osu\typebeat.Game.Rulesets.TypeBeat\typebeat.Game.Rulesets.TypeBeat.csproj</TypebeatRulesetProject>
+    <TypebeatRulesetProject Condition="'$(TypebeatRulesetProject)' == ''">..\..\external\typebeat-osu\typebeat.Game.Rulesets.TypeBeat\typebeat.Game.Rulesets.TypeBeat.csproj</TypebeatRulesetProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(TypebeatGameProject)" />
+    <ProjectReference Include="$(TypebeatRulesetProject)" />
+  </ItemGroup>
+
+</Project>
