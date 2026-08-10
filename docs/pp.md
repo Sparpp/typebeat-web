@@ -16,21 +16,21 @@ profile) is a separate follow-up with wire + client changes.
 Per play:
 
 ```
-pp = C · SR_eff^2.70
+pp = C · SR_eff^2.00
        · max(0, 1 − miss^1.6/notes)^10                 # cleanliness
        · max(0, 1 − mistypes^1.6/(notes+mistypes))^4   # mistyping
        · max(0.1, 1 + 0.50·log10(notes/100))           # length bonus (clamped)
-       · acc^1.75                                      # accuracy (timing quality)
-       · (maxcombo/notes)^1.50                         # combo
+       · acc^1.80                                      # accuracy (timing quality)
+       · (maxcombo/notes)^2.50                         # combo
        · modMult                                       # NOT for DT/HT; rate lives in SR_eff only
        · rateMult                                      # 1.0 except base-rate HT (see the Half Time amendment)
 
-C = 5.5    # global scale constant, does not affect ranking order
+C = 12.5    # global scale constant, does not affect ranking order
 ```
 
 Factor by factor, in descending priority:
 
-* **SR_eff^2.70**: difficulty is the primary driver. SR_eff is the map's star rating
+* **SR_eff^2.00**: difficulty is the primary driver. SR_eff is the map's star rating
   **recomputed at the play's clock rate** for DT/HT (see mods below), not the base SR.
 * **cleanliness^10**: dropped cells. The raw COUNT carries a power, not the ratio, since the
   backlog-97 amendment, and that power is `count_power = 1.2` since the backlog-101 one. That makes
@@ -53,10 +53,10 @@ Factor by factor, in descending priority:
   weight of 0.50 the raw term crosses zero at exactly 1 note and the 0.1 floor at ~1.585, so the
   clamp is close to vestigial; at the old 0.70 those crossings sat at ~3.73 and ~5.18 notes. The
   floor stays because it is the guard, not because it currently fires often.
-* **acc^1.75**: deliberately **gentle**, unlike osu. In type!beat real accuracies live at
+* **acc^1.80**: deliberately **gentle**, unlike osu. In type!beat real accuracies live at
   55–93%, not 97–100%, so an osu-style steep curve (acc^6+) would crush everything and make
   accuracy dominate. Keep the exponent around 1–2.
-* **(maxcombo/notes)^1.50**: mild. Combo overlaps with misses (a miss breaks combo), so it's
+* **(maxcombo/notes)^2.50**: mild. Combo overlaps with misses (a miss breaks combo), so it's
   only a light signal on top, not a second heavy penalty. Combo can also break without a miss
   (a badly-timed hit), so it still matters, and it distinguishes spread-out misses from one
   choke that dropped several.
@@ -586,6 +586,8 @@ fractional exponent on a negative base is non-real.
 
 ## Amendment (2026-08-10): Accuracy and combo are priced far more steeply (backlog 121)
 
+> Superseded by v11 before it ever shipped: a second sandbox export arrived first.
+
 v10 = accuracy exponent 1.30 to 1.75 and combo exponent 0.75 to 1.50. A spotless play is priced
 bit-identically (both bases are exactly 1.0 at a full combo and perfect accuracy, whatever the
 exponent), so this repositions everything BELOW an FC rather than rescaling the pool: a 97% play
@@ -608,4 +610,30 @@ fractional exponent on a negative base is non-real.
 | `notes=500, miss=10, mistype=20` | `0.151677` | `0.151677` | +0% |
 
 **`VERSION` bumps to 10.** Every stored row the change values differently is repriced by
+`PpBackfill` at the next boot, reading only columns; no migration is needed.
+
+## Amendment (2026-08-10): The difficulty curve flattens and accuracy/combo sharpen again (backlog 121, second export)
+
+v11 = scale 5.5 to 12.5, sr_exponent 2.70 to 2.00, accuracy_exponent 1.75 to 1.80,
+combo_exponent 1.50 to 2.50. v10 never shipped, so the meaningful comparison is against v9: the
+SR exponent drop flattens the difficulty curve so easy maps gain and hard maps lose, while the
+combo exponent sharpens what a broken combo costs.
+
+```
+BEFORE:  max(0, 1 − miss^1.6/notes)^10  ·  max(0, 1 − mistypes^1.6/(notes + mistypes))^4
+
+AFTER:   max(0, 1 − miss^1.6/notes)^10  ·  max(0, 1 − mistypes^1.6/(notes + mistypes))^4
+```
+
+SR, length, accuracy, combo, the mod multipliers, the Half Time mirror multiplier, eligibility
+and the aggregation are all untouched. The mistype count still sits on both sides of its own
+fraction, for the reason the backlog-89 amendment gives: keypresses are unbounded, and a
+fractional exponent on a negative base is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, mistype=80` | `0.000000` | `0.000000` | 0% |
+| `notes=500, miss=10, mistype=20` | `0.151677` | `0.151677` | +0% |
+
+**`VERSION` bumps to 11.** Every stored row the change values differently is repriced by
 `PpBackfill` at the next boot, reading only columns; no migration is needed.
