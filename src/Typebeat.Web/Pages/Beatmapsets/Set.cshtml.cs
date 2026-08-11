@@ -68,7 +68,9 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
                    s.play_count       AS PlayCount,
                    s.favourite_count  AS FavouriteCount,
                    s.download_count   AS DownloadCount,
-                   s.bpm::double precision AS Bpm,
+                   -- No s.bpm: the stats box's BPM row became the peak-WPM row (028_wpm_curve.sql),
+                   -- and nothing else on this page ever read it. The column is still on the set and
+                   -- still drives the bpm: search operator; it is only unread HERE.
                    s.submitted_at     AS SubmittedAt,
                    s.updated_at       AS UpdatedAt,
                    EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId) AS IsFavourited,
@@ -111,7 +113,12 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
                    b.char_count            AS CharCount,
                    b.wpm::double precision AS Wpm,
                    b.difficulty_rating     AS Stars,
-                   b.lyrics                AS Lyrics
+                   b.lyrics                AS Lyrics,
+                   -- 028_wpm_curve.sql. NULL on any row the pace backfill has not reached, and on
+                   -- any map too short to measure; DiffStats.HasCurve folds the two together.
+                   b.peak_wpm              AS PeakWpm,
+                   b.peak_cpm              AS PeakCpm,
+                   b.wpm_curve             AS WpmCurve
             FROM beatmaps b
             WHERE b.set_id = @id AND b.filename IS NOT NULL
             ORDER BY b.difficulty_rating DESC, b.id ASC
@@ -333,7 +340,7 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
     public sealed record SetDetails(
         long Id, string Title, string Artist, string? TitleUnicode, string? ArtistUnicode, string Source, string Tags, string Description,
         string Status, bool Explicit, string Creator, bool OwnerRestricted, long OwnerId, string? CoverKey, string? PreviewUrl,
-        int PlayCount, int FavouriteCount, int DownloadCount, double? Bpm,
+        int PlayCount, int FavouriteCount, int DownloadCount,
         DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited, bool HasPackage, string Language)
     {
         public string StatusLabel => BeatmapsetDisplay.StatusLabel(Status);
@@ -353,10 +360,94 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         public string DisplayArtist(bool preferOriginal) => MetadataDisplay.Pick(Artist, ArtistUnicode, preferOriginal);
     }
 
-    /// <summary><paramref name="Lyrics"/> is the stored per-difficulty lyric text (one lyric
-    /// line per '\n', author's casing; ParsedDifficulty.LyricsText), empty when unknown (blank
-    /// map, or the v8 backfill has not reached the row), which hides the lyrics section.</summary>
-    public sealed record DiffStats(long Id, string Name, double TotalLengthS, int? WordCount, int? CharCount, double? Wpm, double Stars, string Lyrics);
+    /// <summary>One difficulty's stats. <see cref="Lyrics"/> is the stored per-difficulty lyric
+    /// text (one lyric line per '\n', author's casing; ParsedDifficulty.LyricsText), empty when
+    /// unknown (blank map, or the v8 backfill has not reached the row), which hides the lyrics
+    /// section. <see cref="WpmCurve"/> and the two peaks come from 028_wpm_curve.sql and are null
+    /// together, on the same terms: either the v11 backfill has not reached this row yet, or the
+    /// map is too short for LyricWpmCurve to measure. Both mean "no graph", so the page tests
+    /// <see cref="HasPaceCurve"/> and shows a note instead.</summary>
+    /// <remarks>
+    /// PROPERTIES, not a positional record like <see cref="SetDetails"/> above, and the array is
+    /// why: Dapper matches a positional record's constructor by comparing each parameter's type
+    /// against the reader's, and Npgsql reports an array column's type as the bare
+    /// <see cref="Array"/> rather than <c>float[]</c>, so no constructor ever matches and the query
+    /// throws. Its property path is the tolerant one. The upside is that this record binds BY NAME,
+    /// so a new column can be added anywhere in the SELECT.
+    /// </remarks>
+    public sealed record DiffStats
+    {
+        public long Id { get; init; }
+        public string Name { get; init; } = string.Empty;
+        public double TotalLengthS { get; init; }
+        public int? WordCount { get; init; }
+        public int? CharCount { get; init; }
+        public double? Wpm { get; init; }
+        public double Stars { get; init; }
+        public string Lyrics { get; init; } = string.Empty;
+        public double? PeakWpm { get; init; }
+        public double? PeakCpm { get; init; }
+        public float[]? WpmCurve { get; init; }
+
+        /// <summary>A non-zero bar is never invisible, however small it is next to the peak
+        /// (<c>BarChartModel</c>'s min_visible_height, in the percentage units used here).</summary>
+        private const double min_visible_percent = 3;
+
+        private IReadOnlyList<PaceBar>? paceBars;
+
+        /// <summary>True when there is something to plot: at least one bar above zero.</summary>
+        public bool HasPaceCurve => WpmCurve is { Length: > 0 } curve && curve.Any(v => v > 0);
+
+        /// <summary>
+        /// The stored curve laid out for the graph: one bar per point, each a percentage of the
+        /// plot's height, tallest bar at 100. Computed here rather than in the .cshtml because
+        /// Razor is a poor place for arithmetic (no test can reach it, and every expression has to
+        /// fight the request's culture), the same split <c>BarChartModel</c> makes.
+        /// </summary>
+        public IReadOnlyList<PaceBar> PaceBars => paceBars ??= layOutPace();
+
+        private IReadOnlyList<PaceBar> layOutPace()
+        {
+            if (WpmCurve is not { Length: > 0 } curve)
+                return [];
+
+            float peak = curve.Max();
+
+            if (peak <= 0)
+                return [];
+
+            // Ties go to the FIRST occurrence, as in BarChartModel: with one bar to highlight, the
+            // earlier moment is the one a reader is less likely to infer from context.
+            int peakIndex = Array.IndexOf(curve, peak);
+
+            var bars = new List<PaceBar>(curve.Length);
+
+            for (int i = 0; i < curve.Length; i++)
+            {
+                double value = curve[i];
+
+                bars.Add(new PaceBar(
+                    HeightPercent: value <= 0 ? 0 : Math.Max(min_visible_percent, value / peak * 100),
+                    IsPeak: i == peakIndex,
+                    Label: value <= 0
+                        ? "no window here"
+                        : value.ToString("0", CultureInfo.InvariantCulture) + " WPM"));
+            }
+
+            return bars;
+        }
+    }
+
+    /// <summary>One bar of the WPM graph, in percent of the plot height (0 for an empty bucket).</summary>
+    public sealed record PaceBar(double HeightPercent, bool IsPeak, string Label)
+    {
+        /// <summary>A bucket no rolling window starts in. Drawn as a baseline stub by CSS, so it
+        /// carries no inline height at all and can never be misread as a small value.</summary>
+        public bool IsEmpty => HeightPercent <= 0;
+
+        /// <summary>Invariant CSS length, never the request's culture ("12,5%" is not a length).</summary>
+        public string HeightCss => HeightPercent.ToString("0.##", CultureInfo.InvariantCulture) + "%";
+    }
 
     /// <summary>
     /// One leaderboard row. Judgement counts come from the statistics jsonb (wire keys

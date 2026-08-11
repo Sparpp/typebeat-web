@@ -56,6 +56,12 @@ public static class LyricPace
     /// range 2.72 to 7.81), no base rating clamps, and the pool reorders by up to 7 places. As at
     /// v9 the bump exists to make the sweep re-rate every stored row and hand its scores to
     /// PpBackfill.
+    /// v11 = <c>beatmaps.peak_wpm</c>, <c>peak_cpm</c> and <c>wpm_curve</c> are written alongside
+    /// (<see cref="LyricWpmCurve"/>, the rolling-window pace the set page's WPM tab graphs;
+    /// 028_wpm_curve.sql). As at v7 and v8 the pace and star ARITHMETIC IS UNCHANGED, so every
+    /// column that already existed rewrites byte-identically and no rating and no pp value moves;
+    /// the bump exists purely to make the sweep revisit every row and fill the new columns from the
+    /// stored blob.
     ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
@@ -69,7 +75,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 10;
+    public const int VERSION = 11;
 
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;

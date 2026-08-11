@@ -74,6 +74,33 @@ public sealed class ParsedDifficulty
     /// <summary>Star rating at Half Time's base clock rate (0.75x); <c>beatmaps.sr_ht</c>.</summary>
     public double SrHalfTime => srHalfTime ??= LyricDifficulty.Compute(Lines, RateMods.HalfTimeBaseRate);
 
+    private LyricWpmCurve? wpmCurve;
+
+    /// <summary>
+    /// The map's rolling-window pace (<see cref="LyricWpmCurve"/>): the peak WPM and CPM a perfect
+    /// player would ever hit on it, plus the downsampled WPM curve over map time. Stored on the
+    /// beatmap row as <c>peak_wpm</c> / <c>peak_cpm</c> / <c>wpm_curve</c> (028_wpm_curve.sql) so
+    /// the set page can graph the map without reparsing its blob. Computed lazily and cached like
+    /// the rate ratings above: it is a full sweep over every cell of the map.
+    /// </summary>
+    public LyricWpmCurve WpmCurve => wpmCurve ??= LyricWpmCurve.Compute(Lines);
+
+    /// <summary>
+    /// <see cref="WpmCurve"/>'s peak WPM, or null when the map carried too little to measure (under
+    /// 30 typeable cells, or no span). NULL rather than 0 because 0 is a value a reader would take
+    /// literally; see 028_wpm_curve.sql.
+    /// </summary>
+    public double? PeakWpm => WpmCurve.IsEmpty ? null : WpmCurve.PeakWpm;
+
+    /// <summary>Peak CPM, on the same null-when-unmeasurable rule as <see cref="PeakWpm"/>.</summary>
+    public double? PeakCpm => WpmCurve.IsEmpty ? null : WpmCurve.PeakCpm;
+
+    /// <summary>
+    /// The WPM curve as the <c>real[]</c> the column holds (<c>float4</c> is well past what a bar
+    /// graph reads), or null when there is no curve to store.
+    /// </summary>
+    public float[]? WpmCurvePoints => WpmCurve.IsEmpty ? null : WpmCurve.Curve.Select(v => (float)v).ToArray();
+
     /// <summary>Last lyric line's hard end, seconds (0 for an empty map).</summary>
     public double TotalLengthS => Lines.Count > 0 ? Lines[^1].EndTime / 1000 : 0;
 

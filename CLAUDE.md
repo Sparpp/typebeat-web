@@ -105,6 +105,7 @@ WireCompat is where that is provable, because it is the only project that compil
 |---|---|
 | `src/Typebeat.Web/Scoring/PerformancePoints.cs` | `typebeat.Game.Rulesets.TypeBeat/Scoring/PerformancePoints.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/LyricDifficulty.cs` | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricDifficulty.cs` |
+| `src/Typebeat.Web/Packages/Lyrics/LyricWpmCurve.cs` | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricWpmCurve.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/InstrumentalGaps.cs` | `typebeat.Game.Rulesets.TypeBeat/Gameplay/InstrumentalGaps.cs` |
 | `src/Typebeat.Web/wwwroot/js/typebeat-core.js` | the C# `TypingEngine` / `TypeBeatScoreProcessor` |
 
@@ -118,6 +119,10 @@ WireCompat is where that is provable, because it is the only project that compil
 - **Completion-rank cutoffs** (X/S/A/B/C = 100/95/90/80/70) are mirrored in three places that must
   agree: the game's `TypeBeatScoreProcessor`, `ScoringContract.RankFromCompletion`, and migration
   `008_completion_rank.sql`.
+- **`LyricWpmCurve` is the map's rolling-window pace** (peak WPM, peak CPM, and the downsampled WPM
+  curve), computed locally by song select and stored here on the beatmap row for the set page's WPM
+  tab (`028_wpm_curve.sql`). It is deliberately NOT on the wire, so the mirror is the only thing
+  keeping the two readouts equal. It stores, so a change needs a `LyricPace.VERSION` bump too.
 - **`InstrumentalGaps` must stay in lockstep** with the game copy (`MIN_GAP_MS` 10000 and the
   perceived-gap/skip-window rules): the play-time anti-cheat gate subtracts the skip allowance it
   computes, so drift either re-unranks honest skip users or lets impossibly fast plays rank.
