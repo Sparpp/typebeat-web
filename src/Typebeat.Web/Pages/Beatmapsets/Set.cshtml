@@ -102,7 +102,26 @@
             </details>
         </div>
         <aside class="set-stats">
-            <h3 class="card-title">Map stats</h3>
+            @* The two tabs are RADIO INPUTS, and the panels below are both rendered server-side:
+               the whole toggle is one :checked sibling rule in site.css, so it costs no script and
+               keeps working with JavaScript off. Stats is checked, so that is what everyone lands
+               on; the inputs are visually hidden but still focusable, so the pair is reachable by
+               keyboard as the radio group it actually is. *@
+            @if (Model.Diff is not null)
+            {
+                <input class="stat-tab__radio" type="radio" name="set-stats-tab" id="set-stats-tab-stats" checked />
+                <input class="stat-tab__radio" type="radio" name="set-stats-tab" id="set-stats-tab-pace" />
+            }
+            <div class="set-stats__head">
+                <h3 class="card-title">Map stats</h3>
+                @if (Model.Diff is not null)
+                {
+                    <div class="stat-tabs">
+                        <label class="stat-tab stat-tab--stats" for="set-stats-tab-stats">Stats</label>
+                        <label class="stat-tab stat-tab--pace" for="set-stats-tab-pace">WPM</label>
+                    </div>
+                }
+            </div>
             @if (Model.Diffs.Count > 1)
             {
                 @* Difficulty selector, one pill per difficulty, coloured by rating; the selected
@@ -122,25 +141,80 @@
             }
             @if (Model.Diff is not null)
             {
-                <div class="stat-row"><span class="stat-row__label">Length</span><span class="stat-row__value">@SetModel.FormatLength(Model.Diff.TotalLengthS)</span></div>
-                @if (Model.Diff.WordCount is int words)
-                {
-                    <div class="stat-row"><span class="stat-row__label">Words</span><span class="stat-row__value">@words.ToString("N0", CultureInfo.InvariantCulture)</span></div>
-                }
-                @if (Model.Diff.CharCount is int chars)
-                {
-                    <div class="stat-row"><span class="stat-row__label">Characters</span><span class="stat-row__value">@chars.ToString("N0", CultureInfo.InvariantCulture)</span></div>
-                }
-                @if (Model.Set.Bpm is double bpm)
-                {
-                    <div class="stat-row"><span class="stat-row__label">BPM</span><span class="stat-row__value">@bpm.ToString("0.#", CultureInfo.InvariantCulture)</span></div>
-                }
-                <div class="stat-row">
-                    <span class="stat-row__label">@(Model.Diff.Wpm is double w ? $"{w.ToString("0", CultureInfo.InvariantCulture)} WPM" : "WPM")</span>
-                    <span class="stat-row__value" style="color:@DifficultyColour.ForStars(Model.Diff.Stars)">&#9733; @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
+                <div class="stat-panel stat-panel--stats">
+                    <div class="stat-row"><span class="stat-row__label">Length</span><span class="stat-row__value">@SetModel.FormatLength(Model.Diff.TotalLengthS)</span></div>
+                    @if (Model.Diff.WordCount is int words)
+                    {
+                        <div class="stat-row"><span class="stat-row__label">Words</span><span class="stat-row__value">@words.ToString("N0", CultureInfo.InvariantCulture)</span></div>
+                    }
+                    @if (Model.Diff.CharCount is int chars)
+                    {
+                        <div class="stat-row"><span class="stat-row__label">Characters</span><span class="stat-row__value">@chars.ToString("N0", CultureInfo.InvariantCulture)</span></div>
+                    }
+                    @* Peak first, then average, because the two are the same unit and read as a
+                       pair: the fastest stretch the map ever asks for, and what it asks on the
+                       whole. The peak is missing on any row the v11 backfill has not reached. *@
+                    @if (Model.Diff.PeakWpm is double peakWpm)
+                    {
+                        <div class="stat-row"><span class="stat-row__label">Peak WPM</span><span class="stat-row__value">@peakWpm.ToString("0", CultureInfo.InvariantCulture)</span></div>
+                    }
+                    @if (Model.Diff.Wpm is double averageWpm)
+                    {
+                        <div class="stat-row"><span class="stat-row__label">Average WPM</span><span class="stat-row__value">@averageWpm.ToString("0", CultureInfo.InvariantCulture)</span></div>
+                    }
+                    <div class="stat-row">
+                        <span class="stat-row__label">Stars</span>
+                        <span class="stat-row__value" style="color:@DifficultyColour.ForStars(Model.Diff.Stars)">&#9733; @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
+                    </div>
+                    <div class="meter" role="img" aria-label="difficulty @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture) of 10 stars">
+                        <div class="meter__fill" style="width:@Math.Clamp(Model.Diff.Stars / 10 * 100, 0, 100).ToString("0.#", CultureInfo.InvariantCulture)%;background:@DifficultyColour.ForStars(Model.Diff.Stars)"></div>
+                    </div>
                 </div>
-                <div class="meter" role="img" aria-label="difficulty @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture) of 10 stars">
-                    <div class="meter__fill" style="width:@Math.Clamp(Model.Diff.Stars / 10 * 100, 0, 100).ToString("0.#", CultureInfo.InvariantCulture)%;background:@DifficultyColour.ForStars(Model.Diff.Stars)"></div>
+                <div class="stat-panel stat-panel--pace">
+                    @if (Model.Diff.HasPaceCurve)
+                    {
+                        @* CSS bars, not an SVG: this panel is 240 px wide and the curve is 100
+                           points, so every bar is about two pixels and any axis text an SVG
+                           viewBox scaled down to fit would print is too small to read. Same
+                           colour, peak emphasis and hover-title idiom as the shared bar chart. *@
+                        <div class="wpm-graph" role="img"
+                             aria-label="typing pace across the map, peaking at @(Model.Diff.PeakWpm?.ToString("0", CultureInfo.InvariantCulture)) WPM">
+                            @foreach (var bar in Model.Diff.PaceBars)
+                            {
+                                if (bar.IsEmpty)
+                                {
+                                    <span class="wpm-graph__bar is-empty" title="@bar.Label"></span>
+                                }
+                                else
+                                {
+                                    <span class="wpm-graph__bar @(bar.IsPeak ? "is-peak" : "")" style="height:@bar.HeightCss" title="@bar.Label"></span>
+                                }
+                            }
+                        </div>
+                        <div class="wpm-graph__axis faint"><span>first word</span><span>last word</span></div>
+                        @if (Model.Diff.PeakWpm is double graphPeak)
+                        {
+                            <div class="stat-row"><span class="stat-row__label">Peak WPM</span><span class="stat-row__value">@graphPeak.ToString("0", CultureInfo.InvariantCulture)</span></div>
+                        }
+                        @if (Model.Diff.PeakCpm is double peakCpm)
+                        {
+                            <div class="stat-row"><span class="stat-row__label">Peak CPM</span><span class="stat-row__value">@peakCpm.ToString("0", CultureInfo.InvariantCulture)</span></div>
+                        }
+                        @if (Model.Diff.Wpm is double avgWpm)
+                        {
+                            <div class="stat-row"><span class="stat-row__label">Average WPM</span><span class="stat-row__value">@avgWpm.ToString("0", CultureInfo.InvariantCulture)</span></div>
+                        }
+                        <p class="wpm-graph__caption faint">
+                            Rolling 30-keystroke pace, from the first typed character to the last.
+                        </p>
+                    }
+                    else
+                    {
+                        @* No curve: either this map predates the measurement and the startup
+                           backfill has not reached it, or it is too short to measure at all. A note
+                           in place of an empty plot, the same way the lyrics section hides itself. *@
+                        <p class="muted">No pace graph for this difficulty yet.</p>
+                    }
                 </div>
             }
             else

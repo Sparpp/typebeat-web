@@ -79,6 +79,9 @@ public static class PaceBackfill
                         lyrics = @lyrics,
                         sr_dt = @srDt,
                         sr_ht = @srHt,
+                        peak_wpm = @peakWpm,
+                        peak_cpm = @peakCpm,
+                        wpm_curve = @wpmCurve,
                         pace_version = @paceVersion
                     WHERE id = @id;
 
@@ -102,6 +105,12 @@ public static class PaceBackfill
                         // yet and are retried rather than frozen at zero (PpBackfill).
                         srDt = diff.SrDoubleTime,
                         srHt = diff.SrHalfTime,
+                        // v11: the rolling-window pace the set page graphs (028_wpm_curve.sql).
+                        // Rows the backfill cannot reach keep NULL, i.e. no graph, which is also
+                        // what a map too short to measure stores.
+                        peakWpm = diff.PeakWpm,
+                        peakCpm = diff.PeakCpm,
+                        wpmCurve = diff.WpmCurvePoints,
                         paceVersion = LyricPace.VERSION,
                     });
 

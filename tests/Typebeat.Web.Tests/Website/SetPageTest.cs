@@ -36,8 +36,18 @@ public class SetPageTest
             Assert.That(html, Does.Contain("1:35"));
             Assert.That(html, Does.Contain(">120<"));
             Assert.That(html, Does.Contain(">600<"));
-            Assert.That(html, Does.Contain("80 WPM"));
             Assert.That(html, Does.Contain("3.2"));
+
+            // The pace pair, peak above average, with "Average" spelled out: a bare "WPM" next to
+            // one number does not say which of the two figures it is.
+            Assert.That(html, Does.Contain("Peak WPM"));
+            Assert.That(html, Does.Contain(">143<"));
+            Assert.That(html, Does.Contain("Average WPM"));
+            Assert.That(html, Does.Contain(">80<"));
+
+            // BPM is gone from the box; the seeded set's 128 must not surface anywhere.
+            Assert.That(html, Does.Not.Contain(">BPM<"));
+            Assert.That(html, Does.Not.Contain(">128<"));
 
             // Description is plain text: markup arrives encoded, never live.
             Assert.That(html, Does.Contain("Line one"));
@@ -121,6 +131,62 @@ public class SetPageTest
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(html, Does.Not.Contain("set-lyrics"));
+        });
+    }
+
+    [Test]
+    public async Task WpmTab_RendersBothPanelsServerSide_StatsIsTheDefault()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync($"/beatmapsets/{PublicSiteSeed.LeaderboardSetId}");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            // Both tabs and both panels are in the markup: the swap is a CSS :checked rule, so a
+            // visitor with no JavaScript still gets everything and lands on the stats panel.
+            Assert.That(html, Does.Contain("id=\"set-stats-tab-stats\""));
+            Assert.That(html, Does.Contain("id=\"set-stats-tab-pace\""));
+            Assert.That(html, Does.Contain("stat-panel--stats"));
+            Assert.That(html, Does.Contain("stat-panel--pace"));
+
+            // Stats carries the checked attribute, and it is the only one that does.
+            Assert.That(html, Does.Contain("id=\"set-stats-tab-stats\" checked"));
+            Assert.That(html, Does.Not.Contain("id=\"set-stats-tab-pace\" checked"));
+
+            // The graph: one bar per stored curve point, the seeded peak flagged, the seeded
+            // zero bucket rendered as the baseline stub rather than dropped.
+            Assert.That(html, Does.Contain("wpm-graph"));
+            Assert.That(html, Does.Contain("title=\"143 WPM\""));
+            Assert.That(html, Does.Contain("wpm-graph__bar is-empty"));
+            Assert.That(html, Does.Contain("Peak CPM"));
+            Assert.That(html, Does.Contain(">702<"));
+
+            // Tallest bar is full height, the 60 next to a 143 peak is 41.96% of it.
+            Assert.That(html, Does.Contain("height:100%"));
+            Assert.That(html, Does.Contain("height:41.96%"));
+        });
+    }
+
+    [Test]
+    public async Task WpmTab_DegradesToANote_WhenTheDifficultyHasNoCurve()
+    {
+        // The packageless fixture's diff carries NULL peak/curve: the state of every row the v11
+        // pace backfill has not reached, and of every map too short to measure.
+        using var response = await WebsiteFixture.Client.GetAsync($"/beatmapsets/{PublicSiteSeed.PackagelessId}");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+            // The tab still exists, and clicking it says so instead of showing an empty plot.
+            Assert.That(html, Does.Contain("stat-panel--pace"));
+            Assert.That(html, Does.Contain("No pace graph for this difficulty yet."));
+            Assert.That(html, Does.Not.Contain("wpm-graph__bar"));
+
+            // A missing peak drops its row rather than printing a blank or a fabricated 0.
+            Assert.That(html, Does.Not.Contain("Peak WPM"));
+            Assert.That(html, Does.Contain("Average WPM"));
         });
     }
 
@@ -253,7 +319,8 @@ public class SetPageTest
 
             // Its diff is live (the migration-004 state), so stats still render.
             Assert.That(html, Does.Not.Contain("No difficulty data yet"));
-            Assert.That(html, Does.Contain("60 WPM"));
+            Assert.That(html, Does.Contain("Average WPM"));
+            Assert.That(html, Does.Contain(">60<"));
         });
     }
 

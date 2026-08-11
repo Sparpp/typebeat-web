@@ -147,9 +147,13 @@ public static class PublicSiteSeed
             // render one stored line per line, casing intact, always encoded (a real ingested
             // haystack can't contain '<', Typeability.Normalize strips it, but the page must
             // not care).
+            // Also the one seeded difficulty carrying a pace curve (028_wpm_curve.sql): a peak in
+            // the middle and one empty bucket, so the set page's WPM tab has a real bar, a peak bar
+            // and a baseline stub to render.
             LeaderboardBeatmapId = await InsertBeatmapAsync(conn, LeaderboardSetId,
                 totalLengthS: 95.5, stars: 3.2, wpm: 80, wordCount: 120, charCount: 600,
-                lyrics: "Neon LIGHTS are calling\nWe TYPE through the storm\n<i>stage whisper</i>");
+                lyrics: "Neon LIGHTS are calling\nWe TYPE through the storm\n<i>stage whisper</i>",
+                peakWpm: 143, peakCpm: 702, wpmCurve: [60, 95, 143, 0, 88]);
 
             CoveredSetId = await InsertSetAsync(conn,
                 title: "Covered In Neon", artist: "The Artwork",
@@ -283,23 +287,32 @@ public static class PublicSiteSeed
             """,
             new { ownerId = MapperId, title, artist, tags, status, submittedAt });
 
+    /// <summary>
+    /// <paramref name="peakWpm"/> / <paramref name="wpmCurve"/> are the 028_wpm_curve.sql columns.
+    /// Left NULL by default, which is the state of every row the v11 pace backfill has not reached
+    /// (and of every map too short to measure): the set page's WPM tab must degrade to a note for
+    /// those. Only the leaderboard fixture carries a curve, so both paths are covered.
+    /// </summary>
     private static async Task<long> InsertBeatmapAsync(NpgsqlConnection conn, long setId,
         double totalLengthS, double stars, double wpm, int wordCount, int charCount,
-        string lyrics = "")
+        string lyrics = "", double? peakWpm = null, double? peakCpm = null, float[]? wpmCurve = null)
         => await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmaps
                 (set_id, version_name, checksum_md5, total_length_s, drain_length_s,
-                 difficulty_rating, filename, word_count, char_count, wpm, lyrics)
+                 difficulty_rating, filename, word_count, char_count, wpm, lyrics,
+                 peak_wpm, peak_cpm, wpm_curve)
             VALUES
                 (@setId, 'type!beat', @checksum, @totalLengthS, @drainLengthS,
-                 @stars, 'map.osu', @wordCount, @charCount, @wpm, @lyrics)
+                 @stars, 'map.osu', @wordCount, @charCount, @wpm, @lyrics,
+                 @peakWpm, @peakCpm, @wpmCurve)
             RETURNING id
             """,
             new
             {
                 setId, checksum = Guid.NewGuid().ToString("N"), totalLengthS,
                 drainLengthS = totalLengthS * 0.9, stars, wordCount, charCount, wpm, lyrics,
+                peakWpm, peakCpm, wpmCurve,
             });
 
     private static async Task InsertScoreAsync(NpgsqlConnection conn, long userId, long beatmapId,

@@ -328,11 +328,11 @@ public sealed class PackageIngest(
                 INSERT INTO beatmaps
                     (id, set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s,
                      difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics,
-                     sr_dt, sr_ht)
+                     sr_dt, sr_ht, peak_wpm, peak_cpm, wpm_curve)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
                      @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
-                     @srDt, @srHt)
+                     @srDt, @srHt, @peakWpm, @peakCpm, @wpmCurve)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -348,7 +348,10 @@ public sealed class PackageIngest(
                     skippable_s = EXCLUDED.skippable_s,
                     lyrics = EXCLUDED.lyrics,
                     sr_dt = EXCLUDED.sr_dt,
-                    sr_ht = EXCLUDED.sr_ht;
+                    sr_ht = EXCLUDED.sr_ht,
+                    peak_wpm = EXCLUDED.peak_wpm,
+                    peak_cpm = EXCLUDED.peak_cpm,
+                    wpm_curve = EXCLUDED.wpm_curve;
 
                 -- A re-upload can move this difficulty's star ratings, and the stored per-score pp
                 -- is a function of them, so hand every score set on this map back to PpBackfill
@@ -381,6 +384,11 @@ public sealed class PackageIngest(
                     // here so no rate maths ever happens at query time.
                     srDt = diff.SrDoubleTime,
                     srHt = diff.SrHalfTime,
+                    // The rolling-window pace the set page's WPM tab graphs (028_wpm_curve.sql).
+                    // All three are NULL for a map too short to measure, which renders as no graph.
+                    peakWpm = diff.PeakWpm,
+                    peakCpm = diff.PeakCpm,
+                    wpmCurve = diff.WpmCurvePoints,
                 });
         }
 
