@@ -25,7 +25,7 @@ pp = C · SR_eff^2.00
        · modMult                                         # NOT for DT/HT; rate lives in SR_eff only
        · rateMult                                        # 1.0 except base-rate HT (see the Half Time amendment)
 
-C = 12.5    # global scale constant, does not affect ranking order
+C = 9.6    # global scale constant, does not affect ranking order
 ```
 
 Factor by factor, in descending priority:
@@ -717,6 +717,9 @@ fractional exponent on a negative base is non-real.
 
 ## Amendment (2026-08-12): count_power returns to 1.2, the value backlog 101 argued for (backlog 137)
 
+> Superseded by v14, which rescales pp globally. The count_power this amendment set is unchanged
+> and still 1.2.
+
 v13 = count_power 1.6 back to 1.2, restoring the value backlog 101 chose with a written argument
 and that v8 silently replaced. The SHAPE is untouched and so is every other constant. At 1.6 the
 cleanliness base hit zero at 49 misses on a 500-note map, 9.7% of it, within a factor of two of
@@ -744,4 +747,32 @@ unbounded, and a fractional exponent on a negative base is non-real.
 | `notes=500, miss=10, mistype=20` | `0.151677` | `0.542001` | +257% |
 
 **`VERSION` bumps to 13.** Every stored row the change values differently is repriced by
+`PpBackfill` at the next boot, reading only columns; no migration is needed.
+
+## Amendment (2026-08-12): The global scale drops 12.5 to 9.6 (backlog 139)
+
+v14 = the global scale drops 12.5 to 9.6, exported from the pp sandbox as the only change. scale
+is the one constant that provably cannot move ranking order, within a map or across maps, since
+it multiplies every play equally; it rescales absolute pp by 0.768 and nothing else. Every
+stored row is repriced, which is what forces the bump, but no leaderboard reorders. Applied on
+top of v13 rather than the v12 the sandbox export names as its baseline, because backlog 137
+landed count_power 1.6 to 1.2 first.
+
+```
+BEFORE:  max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − mistypes^1.2/(notes + mistypes))^4
+
+AFTER:   max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − mistypes^1.2/(notes + mistypes))^4
+```
+
+SR, length, accuracy, combo, the mod multipliers, the Half Time mirror multiplier, eligibility
+and the aggregation are all untouched. The mistype count still sits on both sides of its own
+fraction, for the reason the backlog-89 amendment gives: keypresses are unbounded, and a
+fractional exponent on a negative base is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, mistype=80` | `0.008341` | `0.008341` | +0% |
+| `notes=500, miss=10, mistype=20` | `0.542001` | `0.542001` | +0% |
+
+**`VERSION` bumps to 14.** Every stored row the change values differently is repriced by
 `PpBackfill` at the next boot, reading only columns; no migration is needed.

@@ -8,7 +8,7 @@ namespace Typebeat.Web.Scoring;
 /// constant below is pinned there and must not drift from it.
 ///
 /// <code>
-/// pp = 12.5 · SR_eff^2.00
+/// pp = 9.6 · SR_eff^2.00
 ///      · max(0, 1 − miss^1.2/notes)^10                   cleanliness
 ///      · max(0, 1 − mistypes^1.2/(notes+mistypes))^4     mistyping
 ///      · max(0.1, 1 + 0.50·log10(notes/100))             length, floored
@@ -228,6 +228,12 @@ public static class PerformancePoints
     /// exactly 1.0 at a count of zero, so a spotless play is priced bit-identically, while every
     /// stored row carrying a miss or a mistype is repriced upwards, many of them away from exactly
     /// zero, which is what forces the bump.</item>
+    /// <item>v14 = v14 = the global scale drops 12.5 to 9.6, exported from the pp sandbox as the only
+    /// change. scale is the one constant that provably cannot move ranking order, within a map or
+    /// across maps, since it multiplies every play equally; it rescales absolute pp by 0.768 and
+    /// nothing else. Every stored row is repriced, which is what forces the bump, but no
+    /// leaderboard reorders. Applied on top of v13 rather than the v12 the sandbox export names as
+    /// its baseline, because backlog 137 landed count_power 1.6 to 1.2 first.</item>
     /// </list>
     ///
     /// <para>Rows are ALSO invalidated back to 0 whenever the beatmap they were set on has its star
@@ -244,7 +250,7 @@ public static class PerformancePoints
     /// there is no set of rows the change provably leaves alone. Bump this the moment a change
     /// values ANY stored row differently.</para>
     /// </summary>
-    public const int VERSION = 13;
+    public const int VERSION = 14;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -260,7 +266,7 @@ public static class PerformancePoints
 
     // ---- formula constants (docs/pp.md) ----
 
-    private const double scale = 12.5;              // C: global scale, does not affect ranking order
+    private const double scale = 9.6;              // C: global scale, does not affect ranking order
     private const double sr_exponent = 2.00;
     private const double miss_exponent = 10.0;
     private const double mistype_exponent = 4.0;
