@@ -39,7 +39,48 @@ public sealed record StoredScore(
     // nothing rather than wrongly.
     double? SrLiterate,
     double? SrLiterateDt,
-    double? SrLiterateHt);
+    double? SrLiterateHt,
+    // beatmaps.checksum_md5 as it stands NOW, which is what tells a beatmap the tool merely failed
+    // to download from one the row can no longer be re-derived against at all: if the replay names
+    // a hash and the row's map today hashes to something else, the .osu the run was judged on is
+    // not served any more (the set was re-uploaded) and no amount of retrying will fetch it. Empty
+    // when unknown (offline runs, which have no beatmap row).
+    string CurrentChecksumMd5 = "",
+    // Who owns the row, so the report can model a leaderboard (best score per user).
+    long UserId = 0);
+
+/// <summary>
+/// Which sweep is being run. The two are NOT a threshold apart: they judge under different rules,
+/// value total_score differently, and check themselves with different predicates. Keeping them as
+/// one mode with a looser gate is exactly the failure backlog 142 warns about.
+/// </summary>
+public enum RecalcMode
+{
+    /// <summary>
+    /// The verification sweep (backlog 114). Re-derives under the rules the row was PRICED under
+    /// (<see cref="TypoRule.ImmediateMiss"/> plus <see cref="ComboRestoreRule.Never"/>) and refuses
+    /// any row it cannot reproduce exactly, then reports what today's TYPO rule alone would make of
+    /// it, holding every other axis still. Its output answers "does the harness understand this
+    /// row", which is the question a supersede sweep cannot ask of itself.
+    /// </summary>
+    Reproduce,
+
+    /// <summary>
+    /// The superseding sweep (backlog 136 and 142). Re-judges the run under ALL of today's rules
+    /// (<see cref="TypoRule.Deferred"/> plus <see cref="ComboRestoreRule.OnFix"/>) and REPLACES the
+    /// stored numbers with the result, because the user's decision is that a stored score must
+    /// describe a game that is actually playable today.
+    ///
+    /// <para>Reproduction cannot be the gate here, by construction: a pre-133 row was graded on a
+    /// ladder today's code no longer has, so it provably will not reproduce, and refusing it would
+    /// refuse the entire sweep. What replaces the gate is not a looser version of it but a different
+    /// predicate, <see cref="Recalculation.StructuralMismatch"/>: the judgement of the run is allowed
+    /// to move, the RUN is not. Same map, same cell count, same number of cells judged, every frame
+    /// consumed. A row that fails THAT is still refused and still written nothing for, which is the
+    /// corruption the original gate existed to catch.</para>
+    /// </summary>
+    Supersede,
+}
 
 /// <summary>Why a score could not be recalculated. Every one of these is reported, never hidden.</summary>
 public enum SkipReason
@@ -52,8 +93,24 @@ public enum SkipReason
     /// <summary>The stored bytes did not decode as a type!beat replay.</summary>
     UndecodableReplay,
 
-    /// <summary>The .osu the run was judged against is not in any package the tool could fetch.</summary>
+    /// <summary>
+    /// The .osu the run was judged against is not in any package the tool could fetch, but the
+    /// row's beatmap still hashes to it. So the map has NOT changed and this is a fetch failure:
+    /// a cold cache, an unreachable site, a package route that 404s. It is fixable by re-running
+    /// somewhere the package is reachable, which is why a supersede APPLY refuses to proceed while
+    /// any of these are outstanding: leaving them behind produces a half-superseded leaderboard
+    /// that looks complete.
+    /// </summary>
     BeatmapUnavailable,
+
+    /// <summary>
+    /// The row's beatmap exists and is fetchable, but it no longer hashes to what the replay names,
+    /// i.e. the set was re-uploaded after the play. The exact .osu the run was judged against is
+    /// gone, and judging the run against the map's CURRENT cells would score a different map, so
+    /// the row is left alone. Unlike <see cref="BeatmapUnavailable"/> this is a fact about the data
+    /// and retrying cannot change it.
+    /// </summary>
+    BeatmapReuploaded,
 
     /// <summary>
     /// The .osr holds no typing frames at all, so the run it describes was never recorded. Scores
@@ -72,8 +129,24 @@ public enum SkipReason
     /// <summary>
     /// The old-rule re-derivation did not reproduce the stored statistics, so the harness and this
     /// row disagree about the run. Nothing is written for it.
+    ///
+    /// <para><see cref="RecalcMode.Reproduce"/> only. In a supersede sweep this is EXPECTED of every
+    /// pre-133 row and is reported as a diagnostic instead of refusing, which is precisely why the
+    /// two modes are separate commands: were it one gate with a threshold, the threshold would have
+    /// to be loose enough to pass a sweep that never reproduces anything, and would then pass
+    /// genuine corruption too.</para>
     /// </summary>
     NotReproducible,
+
+    /// <summary>
+    /// <see cref="RecalcMode.Supersede"/>'s refusal, and the reason superseding still has teeth. The
+    /// re-judged account does not describe the same RUN over the same MAP as the stored row: a
+    /// different cell count, a different number of cells judged, or replay frames the engine never
+    /// consumed. The judgement of a run is allowed to move under a supersede sweep. What the run
+    /// WAS is not, and a row that disagrees about that would have its new numbers guessed rather
+    /// than derived. Nothing is written for it.
+    /// </summary>
+    NotTheSameRun,
 }
 
 /// <summary>The full before/after for one score.</summary>
@@ -97,9 +170,35 @@ public sealed record RecalcResult(
     bool NewTotalWithinBounds,
     bool NewRanked,
     double? NewPp,
-    bool PpSettled)
+    bool PpSettled,
+    // Which sweep produced this, since the two value total_score and check themselves differently
+    // and a report of one must never be read as a report of the other.
+    RecalcMode Mode = RecalcMode.Reproduce,
+    // Whether the OLD-rule re-derivation matched the stored row exactly. A gate in Reproduce mode
+    // and a pure diagnostic in Supersede mode, where a false here is the expected reading for every
+    // row judged before backlog 133.
+    bool Reproduced = false,
+    // Why it did not, when it did not. Populated in both modes; only acted on in Reproduce.
+    string? ReproductionDetail = null,
+    // The mod score multiplier baked into NewTotalScore. In Reproduce mode this is the row's own,
+    // recovered rather than reapplied; in Supersede mode it is today's, because a superseded score
+    // has to be one today's client could produce.
+    double AppliedMultiplier = 1)
 {
     public bool Recalculated => Skip == SkipReason.None;
+
+    /// <summary>
+    /// The row could not be re-derived and the operator therefore has to say what should happen to
+    /// it. <see cref="SkipReason.NotReproducible"/> and <see cref="SkipReason.NotTheSameRun"/> are
+    /// deliberately NOT in here: those are refusals, not absences, and the answer to them is to
+    /// investigate, never to rewrite the row.
+    /// </summary>
+    public bool Unreplayable => Skip is SkipReason.NoReplay
+                                     or SkipReason.UndecodableReplay
+                                     or SkipReason.EmptyReplay
+                                     or SkipReason.BeatmapUnavailable
+                                     or SkipReason.BeatmapReuploaded
+                                     or SkipReason.FailedRun;
 
     public bool Moves =>
         Recalculated
@@ -117,6 +216,11 @@ public sealed record RecalcResult(
     /// statistics and the new ones. Distinct from <c>stored.Pp -> NewPp</c>, which also carries any
     /// drift the stored value already had (a pp version bump the backfill has not reached, a star
     /// rating that moved). Null when the play could not be priced at all.
+    ///
+    /// <para>The attribution only means anything when the old-rule arm REPRODUCED, so it is the
+    /// figure a reproduce sweep reports and a supersede sweep does not: there, the old-rule
+    /// statistics are today's code's reading of a retired ladder, not the row's own numbers, and
+    /// the honest before/after is <c>stored.Pp -> NewPp</c>.</para>
     /// </summary>
     public double? PpDeltaFromTheRuleChange => OldRulePp is double before && NewPp is double after ? after - before : null;
 
@@ -144,14 +248,23 @@ public sealed record RecalcResult(
 }
 
 /// <summary>
-/// The recalculation itself: replay the run twice, prove the old numbers, then value the new ones
-/// with the server's own contract.
+/// The recalculation itself: replay the run twice, once under the rules it was priced under and
+/// once under the rules the mode is asking about, then value the result with the server's own
+/// contract.
 ///
 /// <para>Nothing here reimplements a judgement rule or a scoring formula. The statistics come from
 /// <see cref="TypeBeatReplayScorer"/> (the game's engine driven into the game's score processor),
 /// and everything derived from them comes from <see cref="ScoringContract"/> and
 /// <see cref="PerformancePoints"/>, i.e. from exactly the code that priced the row in the first
 /// place.</para>
+///
+/// <para>The FIRST replay is the difference between the two modes. In
+/// <see cref="RecalcMode.Reproduce"/> it is a proof and a mismatch refuses the row; in
+/// <see cref="RecalcMode.Supersede"/> it is a diagnostic, a mismatch is the expected reading for
+/// anything judged before backlog 133, and <see cref="StructuralMismatch"/> refuses instead. That
+/// is the inversion backlog 142 called for, kept as two predicates rather than one with a
+/// threshold: a threshold loose enough to pass a sweep where nothing reproduces would pass genuine
+/// corruption too.</para>
 /// </summary>
 public static class Recalculation
 {
@@ -164,18 +277,35 @@ public static class Recalculation
     private const string mistype_key = "combo_break";
 
     /// <summary>
-    /// The combo-restore era EVERY stored row belongs to (backlog 140). Correcting a typo now
-    /// resumes the streak its wrong keypress broke, but no score in the database was played that
-    /// way: re-deriving one under <see cref="ComboRestoreRule.OnFix"/> would hand it combo its
-    /// fingers never earned, and price every cell after the fix at a streak it never held.
+    /// The combo-restore era EVERY stored row was PLAYED in (backlog 140): no score in the database
+    /// was played under a rule that gives combo back for a corrected typo.
     ///
-    /// <para>So BOTH re-derivations below pin it to <see cref="ComboRestoreRule.Never"/>, including
-    /// the one labelled "the rule the client uses now", which varies the TYPO rule alone. This
-    /// sweep exists to move one axis and prove it; letting a second one move underneath it would
-    /// make every number it reports impossible to attribute. If a sweep is ever wanted FOR backlog
-    /// 140, it is a different sweep, with its own reproduction proof, and it starts here.</para>
+    /// <para>Both arms of a <see cref="RecalcMode.Reproduce"/> sweep pin this, including the one
+    /// labelled "the rule the client uses now", which varies the TYPO rule alone. That sweep exists
+    /// to move one axis and prove it; letting a second one move underneath it would make every
+    /// number it reports impossible to attribute. It is also what makes the old-rule arm a proof
+    /// rather than an approximation, in both modes.</para>
     /// </summary>
-    private const ComboRestoreRule combo_restore_rule = ComboRestoreRule.Never;
+    private const ComboRestoreRule stored_era_combo_rule = ComboRestoreRule.Never;
+
+    /// <summary>
+    /// The combo-restore rule live play uses, and therefore the one a
+    /// <see cref="RecalcMode.Supersede"/> sweep re-judges under (backlog 136, decided 2026-08-13).
+    ///
+    /// <para>This is the axis backlog 140 said would never move retroactively, and the user has
+    /// since decided it must, for one reason: the alternative combination, today's judgement tiers
+    /// with the old combo rule, is one no version of the client has ever run, so a score judged that
+    /// way could not be reproduced by replaying it anywhere. The cost is deliberate and is the thing
+    /// the report has to make visible before anyone applies it: every stored score containing a
+    /// FIXED typo gains max_combo, total_score and pp, and a fixed typo ends up scoring identically
+    /// to a clean play.</para>
+    ///
+    /// <para>Kept as a separate constant from <see cref="stored_era_combo_rule"/> rather than
+    /// flipping that one, because both sweeps must stay expressible: reproduction is still how the
+    /// tool verifies it understands a row, and it can only do that under the rules the row was
+    /// played under.</para>
+    /// </summary>
+    private const ComboRestoreRule live_combo_rule = ComboRestoreRule.OnFix;
 
     /// <param name="backfillMistypes">
     /// Whether to introduce a mistype count into rows that predate the stat. Off by default, and
@@ -185,22 +315,28 @@ public static class Recalculation
     /// the result impossible to audit. The reproduction check ignores the key for those rows either
     /// way, since its absence is an era marker, not a disagreement.
     /// </param>
-    public static RecalcResult Run(StoredScore stored, ReplayArchive.DecodedReplay? decoded, bool backfillMistypes = false)
+    /// <param name="mode">
+    /// Which sweep this is. <see cref="RecalcMode.Reproduce"/> is the default and the safe one:
+    /// it refuses anything it cannot reproduce. <see cref="RecalcMode.Supersede"/> re-judges under
+    /// today's rules and REPLACES the stored numbers, so it is never reached without a caller
+    /// naming it, and the CLI makes naming it a separate command with its own confirmation.
+    /// </param>
+    public static RecalcResult Run(StoredScore stored, ReplayArchive.DecodedReplay? decoded, bool backfillMistypes = false, RecalcMode mode = RecalcMode.Reproduce)
     {
         if (!stored.HasReplay)
-            return Skipped(stored, SkipReason.NoReplay, null);
+            return Skipped(stored, SkipReason.NoReplay, null, mode);
 
         if (decoded is null)
-            return Skipped(stored, SkipReason.UndecodableReplay, null);
+            return Skipped(stored, SkipReason.UndecodableReplay, null, mode);
 
         if (decoded.Score is not Score score || decoded.Playable is not IBeatmap playable)
-            return Skipped(stored, SkipReason.BeatmapUnavailable, decoded.MissingBeatmapHash);
+            return Skipped(stored, MissingBeatmapReason(stored, decoded.MissingBeatmapHash), decoded.MissingBeatmapHash, mode);
 
         if (!stored.Passed)
-            return Skipped(stored, SkipReason.FailedRun, null);
+            return Skipped(stored, SkipReason.FailedRun, null, mode);
 
         if (score.Replay.Frames.Count == 0)
-            return Skipped(stored, SkipReason.EmptyReplay, null);
+            return Skipped(stored, SkipReason.EmptyReplay, null, mode);
 
         var mods = score.ScoreInfo.Mods;
 
@@ -208,21 +344,26 @@ public static class Recalculation
         // reproduction failure, and (unless asked) not something this sweep introduces either.
         bool preMistypeEra = !WireCounts.Parse(stored.StatisticsJson).ContainsKey(mistype_key);
 
-        // 1. The proof. Re-derive under the rule the row was PRICED under and require the stored
-        //    statistics back, exactly. A harness that cannot reproduce the old numbers has no
-        //    business writing new ones.
-        var oldRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.ImmediateMiss, combo_restore_rule);
+        // 1. Re-derive under the rules the row was PRICED under and ask for the stored statistics
+        //    back, exactly. In Reproduce mode that is a PROOF and a failure refuses the row: a
+        //    harness that cannot reproduce the old numbers has no business writing new ones. In
+        //    Supersede mode it is a DIAGNOSTIC and a failure is the expected reading for anything
+        //    judged before backlog 133, because today's code no longer owns the ladder that graded
+        //    it. Same computation, opposite meaning, which is why the two are separate commands.
+        var oldRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.ImmediateMiss, stored_era_combo_rule);
         var oldStatistics = WireCounts.From(oldRule.Statistics);
 
         string mismatch = ReproductionMismatch(stored, oldRule, oldStatistics, preMistypeEra);
+        bool reproduced = mismatch.Length == 0;
 
-        if (mismatch.Length > 0)
+        if (mode == RecalcMode.Reproduce && !reproduced)
         {
-            return Skipped(stored, SkipReason.NotReproducible, mismatch) with
+            return Skipped(stored, SkipReason.NotReproducible, mismatch, mode) with
             {
                 OldRuleStatistics = oldStatistics,
                 OldRuleMaxCombo = oldRule.MaxCombo,
                 OldRuleTotalScore = oldRule.TotalScore,
+                ReproductionDetail = mismatch,
             };
         }
 
@@ -231,19 +372,59 @@ public static class Recalculation
         // the rate curve moved), and applying today's would move total_score by up to 2x for a
         // reason that has nothing to do with the typo rule. The base (pre-multiplier) score is what
         // backlog 109 actually moves, so the row's own multiplier is carried across it.
+        //
+        // Recoverable ONLY when the old rule reproduced, which is why Supersede does not use it: the
+        // ratio is stored_total / re-derived_base, and once the re-derived base is a different
+        // ladder's number the ratio is not a multiplier at all, it is the ladder change wearing a
+        // multiplier's clothes. Reported for both modes; applied only by Reproduce.
         double storedMultiplier = oldRule.TotalScoreWithoutMods > 0
             ? (double)stored.TotalScore / oldRule.TotalScoreWithoutMods
             : 1;
 
-        // 2. The same run under the TYPO rule the client uses now. The COMBO-RESTORE rule stays at
-        //    Never on both sides of the comparison (see combo_restore_rule): this sweep moves one
-        //    axis at a time, and that one is not it.
-        var newRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.Deferred, combo_restore_rule);
+        // 2. The same run under the rules this mode is asking about.
+        //
+        //    Reproduce varies the TYPO rule alone and holds combo restore at the stored era, so
+        //    every number it reports is attributable to that one axis.
+        //
+        //    Supersede applies ALL of today's rules, judgement AND combo restore together (backlog
+        //    136, decided 2026-08-13). Not because moving two axes is nicer to audit, it is worse,
+        //    but because the halfway combination is one no client has ever run: a score judged with
+        //    today's tiers and yesterday's combo rule could not be reproduced by replaying it
+        //    anywhere, which is the property the whole tool is built on.
+        var newRule = TypeBeatReplayScorer.Score(
+            playable,
+            mods,
+            score.Replay,
+            TypoRule.Deferred,
+            mode == RecalcMode.Supersede ? live_combo_rule : stored_era_combo_rule);
+
         var statistics = WireCounts.From(newRule.Statistics);
         var maximumStatistics = WireCounts.From(newRule.MaximumStatistics);
 
         if (preMistypeEra && !backfillMistypes)
             statistics.Remove(mistype_key);
+
+        // 2b. Supersede's own refusal, replacing the reproduction gate rather than relaxing it. The
+        //     JUDGEMENT of the run is expected to move here; the RUN is not. If the map has a
+        //     different number of cells than the row was judged over, or a different number of them
+        //     were judged, or the engine went inert for part of the recording, then the tool and the
+        //     row are not talking about the same play and any number written would be a guess.
+        if (mode == RecalcMode.Supersede)
+        {
+            string structural = StructuralMismatch(stored, newRule, statistics, maximumStatistics);
+
+            if (structural.Length > 0)
+            {
+                return Skipped(stored, SkipReason.NotTheSameRun, structural, mode) with
+                {
+                    OldRuleStatistics = oldStatistics,
+                    OldRuleMaxCombo = oldRule.MaxCombo,
+                    OldRuleTotalScore = oldRule.TotalScore,
+                    Reproduced = reproduced,
+                    ReproductionDetail = reproduced ? null : mismatch,
+                };
+            }
+        }
 
         // 3. Everything the server derives from the statistics, through the server's own contract,
         //    following ScoreEndpoints.SubmitScore step for step.
@@ -258,10 +439,25 @@ public static class Recalculation
 
         bool fullyJudged = recomputed.AccuracyProgress >= 1;
         double accuracy = fullyJudged ? recomputed.Accuracy : recomputed.JudgedAccuracy;
-        // Base score times the multiplier this row was actually priced with (see above), which is
-        // exactly newRule.TotalScore whenever the multiplier has not been retuned since.
-        long multiplied = (long)Math.Round(newRule.TotalScoreWithoutMods * storedMultiplier, MidpointRounding.AwayFromZero);
+
+        // Reproduce: base score times the multiplier this row was actually priced with (see above),
+        // which is exactly newRule.TotalScore whenever the multiplier has not been retuned since.
+        //
+        // Supersede: newRule.TotalScore as the score processor produced it, i.e. TODAY's multiplier.
+        // A superseded row has to be a score today's client could put on the wire, and carrying a
+        // retired 1.2x Flashlight across a re-judgement would produce one it could not. It also
+        // cannot use the recovered ratio: that ratio is only a multiplier when the two totals came
+        // off the same ladder, which under a supersede sweep is exactly what is not true.
+        long multiplied = mode == RecalcMode.Supersede
+            ? newRule.TotalScore
+            : (long)Math.Round(newRule.TotalScoreWithoutMods * storedMultiplier, MidpointRounding.AwayFromZero);
+
         long totalScore = withinBounds ? multiplied : recomputed.TotalScoreCeiling;
+
+        double appliedMultiplier = mode == RecalcMode.Supersede
+            ? (newRule.TotalScoreWithoutMods > 0 ? (double)newRule.TotalScore / newRule.TotalScoreWithoutMods : 1)
+            : storedMultiplier;
+
         int maxCombo = Math.Clamp(newRule.MaxCombo, 0, recomputed.TheoreticalMaxCombo);
         string rank = recomputed.Rank; // passed runs only reach here; a fail keeps its stored F.
 
@@ -318,7 +514,11 @@ public static class Recalculation
             withinBounds,
             ranked,
             pp,
-            ppSettled);
+            ppSettled,
+            mode,
+            reproduced,
+            reproduced ? null : mismatch,
+            appliedMultiplier);
     }
 
     /// <summary>
@@ -361,6 +561,68 @@ public static class Recalculation
         return string.Join(", ", problems);
     }
 
+    /// <summary>
+    /// Empty when the re-judged account describes the same RUN over the same MAP as the stored row;
+    /// otherwise a description of how they differ. This is <see cref="RecalcMode.Supersede"/>'s
+    /// gate, and it is not <see cref="ReproductionMismatch"/> with the tolerances turned up: it
+    /// compares different quantities, chosen because they are the ones a re-judgement CANNOT move.
+    ///
+    /// <list type="bullet">
+    /// <item>Every frame consumed. A recording the engine went inert for means the harness and the
+    /// run disagree about the map, whatever the numbers say.</item>
+    /// <item>The same number of cells in <c>maximum_statistics</c>. That dictionary is one MaxResult
+    /// per cell; backlog 133 moved its KEY (<c>great</c> to <c>perfect</c>), which is exactly why
+    /// counting rather than comparing is what survives, but it cannot move the COUNT. A different
+    /// count means a different map.</item>
+    /// <item>The same number of accuracy-affecting judgements in <c>statistics</c>. Re-judging moves
+    /// cells between tiers and between miss/typo/hit, and all of those are accuracy-affecting, so
+    /// the total is invariant under every rule change this sweep applies. A different total means a
+    /// different run, or a run the tool fed a different cell list.</item>
+    /// </list>
+    ///
+    /// <para>Counting is done by <see cref="ScoringContract.CountAccuracyAffecting"/>, the server's
+    /// own classifier, so this cannot start disagreeing with the code that ranks the row.</para>
+    /// </summary>
+    private static string StructuralMismatch(
+        StoredScore stored,
+        TypeBeatReplayAccount account,
+        IReadOnlyDictionary<string, int> statistics,
+        IReadOnlyDictionary<string, int> maximumStatistics)
+    {
+        var problems = new List<string>();
+
+        if (account.UnconsumedFrames > 0)
+            problems.Add($"{account.UnconsumedFrames} replay frame(s) the engine never consumed");
+
+        int storedCells = ScoringContract.CountAccuracyAffecting(WireCounts.Parse(stored.MaximumStatisticsJson));
+        int freshCells = ScoringContract.CountAccuracyAffecting(maximumStatistics);
+
+        if (storedCells != freshCells)
+            problems.Add($"the map has {freshCells} cell(s), the row was judged over {storedCells}");
+
+        int storedJudged = ScoringContract.CountAccuracyAffecting(WireCounts.Parse(stored.StatisticsJson));
+        int freshJudged = ScoringContract.CountAccuracyAffecting(statistics);
+
+        if (storedJudged != freshJudged)
+            problems.Add($"the row judged {storedJudged} cell(s), the replay judges {freshJudged}");
+
+        return string.Join(", ", problems);
+    }
+
+    /// <summary>
+    /// Which flavour of "the beatmap did not resolve" this is, which decides whether re-running the
+    /// tool could ever fix it. If the row's map still hashes to what the replay names, the package
+    /// simply was not fetched (cold cache, unreachable site) and the sweep is INCOMPLETE rather than
+    /// blocked. If it hashes to something else, the set was re-uploaded and the exact .osu the run
+    /// was judged on is gone for good.
+    /// </summary>
+    private static SkipReason MissingBeatmapReason(StoredScore stored, string? wantedHash)
+        => !string.IsNullOrEmpty(stored.CurrentChecksumMd5)
+           && !string.IsNullOrEmpty(wantedHash)
+           && !string.Equals(stored.CurrentChecksumMd5, wantedHash, StringComparison.OrdinalIgnoreCase)
+            ? SkipReason.BeatmapReuploaded
+            : SkipReason.BeatmapUnavailable;
+
     private static Dictionary<string, int> WithoutMistypes(IReadOnlyDictionary<string, int> counts)
     {
         var copy = new Dictionary<string, int>(counts);
@@ -368,8 +630,8 @@ public static class Recalculation
         return copy;
     }
 
-    private static RecalcResult Skipped(StoredScore stored, SkipReason reason, string? detail) =>
-        new(stored, reason, detail, null, 0, 0, null, 1, null, null, 0, 0, 0, 0, null, false, false, stored.Ranked, null, false);
+    private static RecalcResult Skipped(StoredScore stored, SkipReason reason, string? detail, RecalcMode mode) =>
+        new(stored, reason, detail, null, 0, 0, null, 1, null, null, 0, 0, 0, 0, null, false, false, stored.Ranked, null, false, mode);
 }
 
 /// <summary>

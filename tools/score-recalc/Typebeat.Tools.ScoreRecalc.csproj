@@ -40,6 +40,14 @@
     <ProjectReference Include="..\..\src\Typebeat.Web\Typebeat.Web.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The CLI's refusals are the safety property of the superseding sweep (backlog 136): the
+         command name carries the mode, and supersede-apply wants three confirmations. Every one of
+         those returns before the tool opens a connection or fetches a byte, so they are testable,
+         and tests/Typebeat.WireCompat pins them. Cli stays internal because it is not an API. -->
+    <InternalsVisibleTo Include="Typebeat.WireCompat" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!-- Local dev prefers the LIVE sibling checkout of the game repo; CI has no sibling and falls
          back to the pinned external/typebeat-osu submodule. Same two-step resolution, and the same

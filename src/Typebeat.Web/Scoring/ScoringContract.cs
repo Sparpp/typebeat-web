@@ -272,6 +272,37 @@ public static class ScoringContract
         => submittedTotalScore >= 0 && submittedTotalScore <= recomputed.TotalScoreCeiling;
 
     /// <summary>
+    /// How many ACCURACY-AFFECTING judgements a counts dictionary describes, i.e. how many cells it
+    /// accounts for. Over <c>statistics</c> that is the cells the run judged; over
+    /// <c>maximum_statistics</c> it is the cells the map has.
+    ///
+    /// <para>Exposed for <c>tools/score-recalc</c>'s supersede sweep, which re-judges a stored row
+    /// under rules that deliberately MOVE every number on it and therefore cannot check itself by
+    /// comparing them. What it can still check is that the replay describes the same run over the
+    /// same map, and this count is what that reduces to: the tier keys move (a pre-133 row's cells
+    /// were graded on a different ladder, and its maximum uses <c>great</c> where today's uses
+    /// <c>perfect</c>), but how many cells there are, and how many of them the run judged, cannot.
+    /// It is a wrapper over <see cref="AffectsAccuracy"/> rather than a second copy of that table,
+    /// because a tool holding its own copy would be free to drift from the one the server ranks
+    /// with.</para>
+    /// </summary>
+    public static int CountAccuracyAffecting(IReadOnlyDictionary<string, int>? counts)
+    {
+        if (counts is null)
+            return 0;
+
+        int total = 0;
+
+        foreach (var (key, count) in counts)
+        {
+            if (count > 0 && AffectsAccuracy(key))
+                total += count;
+        }
+
+        return total;
+    }
+
+    /// <summary>
     /// Completion (0..1) → rank string, mirroring TypeBeatScoreProcessor.RankFromCompletion.
     /// Typing every cell is an X (SS) regardless of timing; only missed cells cost the grade.
     /// There are no mods, so the silver ranks (SH/XH) never apply. The strings match the client's
