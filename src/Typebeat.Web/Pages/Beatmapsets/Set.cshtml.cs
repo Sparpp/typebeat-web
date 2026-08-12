@@ -478,30 +478,36 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         public int Great => Statistics.Value<int?>("great") ?? 0;
         public int Ok => Statistics.Value<int?>("ok") ?? 0;
         public int Meh => Statistics.Value<int?>("meh") ?? 0;
-        public int Miss => Statistics.Value<int?>("miss") ?? 0;
 
         /// <summary>
-        /// Cells the player typed WRONG and never went back for (backlog 124/126, the client's
-        /// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>, stored under the <c>good</c> key), or null
-        /// when the play does not CARRY the stat: every score set before the key existed simply has
-        /// no entry, and a play with none has none either. Null renders as nothing rather than a
-        /// fabricated 0, exactly like <see cref="Mistypes"/>.
+        /// Characters the song scrolled past untyped, or null for a play with none. Nullable, unlike
+        /// the four quality tiers above, so that it renders BLANK at zero the way
+        /// <see cref="Typos"/> beside it always has (backlog 140): a clean run showing "0 misses"
+        /// next to an empty typo cell read as two different kinds of nothing.
+        /// </summary>
+        public int? Miss => Statistics.Value<int?>("miss") is int miss and > 0 ? miss : null;
+
+        /// <summary>
+        /// TYPOS: wrong KEYPRESSES, one per press, carried on the wire under the <c>combo_break</c>
+        /// key (backlog 72, renamed to the player's vocabulary by 140), or null when this play does
+        /// not CARRY the stat. Absence is not zero: every score submitted before the key existed
+        /// simply has none, and a clean play has none either (client and browser both omit
+        /// zero-valued entries), so the column appears only once some row on this board has one and
+        /// an old play never renders a fabricated clean run.
         ///
-        /// <para>Shown BESIDE Miss and never folded into it. Both cost completion and grade, since
-        /// neither is a cell the player typed, but a miss is a character the song left behind and a
-        /// typo is one they finished wrongly, and pp prices the two by different terms.</para>
+        /// <para>This is the ONE typo number the site shows (backlog 140). The other one used to sit
+        /// beside it: the count of cells left holding a wrong character at the seal, the <c>good</c>
+        /// key. Every such cell implied a wrong keypress, so this event count already covers it, and
+        /// the seal-state count stopped being a surfaced statistic on both sides at once. The
+        /// mechanics it names are untouched, an uncorrected typo still costs accuracy, completion and
+        /// rank exactly as it did (see <c>ScoringContract</c>); only the accounting shown to players
+        /// collapsed to one number. Nothing on the wire moved, so every stored row stays readable.</para>
+        ///
+        /// <para>Shown BESIDE Miss and never folded into it: a miss is a character the song left
+        /// behind, a typo is a key the player got wrong, and pp prices the two by different terms
+        /// (<see cref="PerformancePoints.CountNotes"/>, whose <c>Typos</c> is this same key).</para>
         /// </summary>
-        public int? Typos => Statistics.Value<int?>("good");
-
-        /// <summary>
-        /// Wrong keypresses (backlog 72), or null when this play does not CARRY the stat: every
-        /// score submitted before it existed simply has no key, and a clean play has none either
-        /// (both the client and the browser engine omit zero-valued entries). Null renders as
-        /// nothing rather than a fabricated 0, and is deliberately shown BESIDE Miss, never folded
-        /// into it: a miss is a character the song left behind and costs completion and grade, a
-        /// mistype is a wrong key the player pressed and costs combo and pp only.
-        /// </summary>
-        public int? Mistypes => Statistics.Value<int?>("combo_break");
+        public int? Typos => Statistics.Value<int?>("combo_break");
 
         /// <summary>
         /// Mod badges from the mods jsonb ([{acronym, settings}] wire shape), each carrying the

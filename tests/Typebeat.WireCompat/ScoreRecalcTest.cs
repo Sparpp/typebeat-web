@@ -114,10 +114,20 @@ public class ScoreRecalcTest
         return replay;
     }
 
+    /// <summary>
+    /// The combo-restore era every stored row belongs to, and therefore the one both this fixture
+    /// and <c>Recalculation</c> pin (backlog 140, see <c>Recalculation.combo_restore_rule</c>). No
+    /// score in the database was played under a rule that gives combo back for a corrected typo, so
+    /// re-deriving one under <see cref="ComboRestoreRule.OnFix"/> would credit it with combo its
+    /// fingers never earned. Both re-derivations in this file therefore hold this axis still and
+    /// vary the TYPO rule alone, which is the axis the sweep is about.
+    /// </summary>
+    private const ComboRestoreRule combo_restore_rule = ComboRestoreRule.Never;
+
     /// <summary>The stored row a client of the OLD era would have produced for this run.</summary>
     private static StoredScore StoredFor(IBeatmap map, Replay replay, bool dropMistypeKey = false, double multiplier = 1)
     {
-        var old = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss);
+        var old = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, combo_restore_rule);
 
         var statistics = ToWire(old.Statistics);
 
@@ -387,7 +397,7 @@ public class ScoreRecalcTest
 
         var result = Recalculation.Run(stored, Decoded(map, replay, new TypeBeatModFlashlight()));
 
-        var newRule = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModFlashlight() }, replay, TypoRule.Deferred);
+        var newRule = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModFlashlight() }, replay, TypoRule.Deferred, combo_restore_rule);
 
         Assert.Multiple(() =>
         {

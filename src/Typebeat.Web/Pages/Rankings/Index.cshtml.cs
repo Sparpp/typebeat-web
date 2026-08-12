@@ -131,24 +131,28 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         private JObject? statistics;
         private JObject Statistics => statistics ??= JObject.Parse(string.IsNullOrEmpty(StatisticsJson) ? "{}" : StatisticsJson);
 
-        public int Miss => Statistics.Value<int?>("miss") ?? 0;
+        /// <summary>
+        /// Characters the song scrolled past untyped, or null for a play with none. Nullable so that
+        /// it renders BLANK at zero the way <see cref="Typos"/> beside it always has (backlog 140),
+        /// rather than a "0" next to an empty typo cell.
+        /// </summary>
+        public int? Miss => Statistics.Value<int?>("miss") is int miss and > 0 ? miss : null;
 
         /// <summary>
-        /// Cells typed WRONG and never corrected (the <c>good</c> key, backlog 124/126), or null
-        /// when this play does not CARRY the stat. Absence is not zero, exactly as for
-        /// <see cref="Mistypes"/>, so the column only appears once some row on the board has one.
-        /// Beside Miss, never folded into it: both cost the grade, only one is a character the song
-        /// left behind.
+        /// TYPOS: wrong KEYPRESSES, on the wire under the <c>combo_break</c> key (docs/pp.md's
+        /// 2026-08-03 amendment, renamed to the player's vocabulary by backlog 140), or null when
+        /// this play does not CARRY the stat: plays that predate it have no key at all, and absence
+        /// is not zero. The column only appears once some row on the board carries one, exactly like
+        /// the set page's leaderboard, so an old play never renders a fabricated clean run.
+        ///
+        /// <para>The site's ONE typo number since backlog 140. The seal-state count that used to sit
+        /// beside it (cells left holding a wrong character, the <c>good</c> key) is no longer
+        /// surfaced anywhere: every such cell implied a wrong keypress, so this event count covers
+        /// it. The wire is unchanged and the cell mechanics are untouched; only what players are
+        /// shown collapsed to one number. Beside Miss, never folded into it: both cost the grade,
+        /// only one is a character the song left behind.</para>
         /// </summary>
-        public int? Typos => Statistics.Value<int?>("good");
-
-        /// <summary>
-        /// Wrong keypresses (docs/pp.md's 2026-08-03 amendment), or null when this play does not
-        /// CARRY the stat: plays that predate it have no key at all, and absence is not zero. The
-        /// column only appears once some row on the board carries one, exactly like the set page's
-        /// leaderboard, so an old play never renders a fabricated clean run.
-        /// </summary>
-        public int? Mistypes => Statistics.Value<int?>("combo_break");
+        public int? Typos => Statistics.Value<int?>("combo_break");
 
         /// <summary>Mod badges from the mods jsonb (see <see cref="ScoreMods.Parse"/>).</summary>
         public IReadOnlyList<ScoreMod> Mods => mods ??= ScoreMods.Parse(ModsJson);

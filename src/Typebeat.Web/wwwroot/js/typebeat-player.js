@@ -927,12 +927,13 @@
                 statCell('max combo', results.maxCombo + 'x') +
                 statCell('wpm', Math.round(results.wpm)) +
                 statCell('misses', results.counts.miss) +
-                // Beside misses, never folded into them: a miss is a character the song left
-                // behind, a typo is one you finished wrongly and never went back for, and a mistype
-                // is a wrong key you pressed. Misses and typos both cost you rank (neither is a
-                // cell you typed); a mistype on its own costs combo and pp.
-                statCell('typos', results.counts.typos) +
-                statCell('mistypes', results.counts.mistypes);
+                // ONE typo number (backlog 140), counting wrong KEYPRESSES. Beside misses, never
+                // folded into them: a miss is a character the song left behind, a typo is a key you
+                // got wrong. There used to be a second number here, the cells still holding a wrong
+                // character at the seal; every one of those implied a wrong keypress, so this count
+                // already covers them. What such a cell COSTS is unchanged (accuracy, completion and
+                // rank all still fall), it is just no longer counted at the player twice.
+                statCell('typos', results.counts.mistypes);
             card.appendChild(grid);
             const status = el('div', 'tb-submit-status', '');
             card.appendChild(status);

@@ -343,12 +343,17 @@ public class AllowWrongInputParityTest
     /// statistics kept a miss for ever, so the play could see an A it had typed an X's worth of.
     ///
     /// <para>The two combo accounts also stop parting company over it: the HUD's live combo and the
-    /// submitted one both read 10, where the submitted one used to lag at 9. What the fix does NOT
-    /// buy back is the mistake itself, which is right: the mistype is still counted (and still priced
-    /// by pp) and the combo it broke is still broken. Since backlog 126 the fix buys back completion
-    /// and rank again, because an uncorrected typo is not a cell TYPED: it buys back the cell's
-    /// judgement (a Perfect instead of the typo tier), the completion that cell was worth, and the
-    /// combo the retype earns.</para>
+    /// submitted one agree, where the submitted one used to lag by one. Since backlog 126 the fix
+    /// buys back completion and rank, because an uncorrected typo is not a cell TYPED, and since
+    /// backlog 140 it buys back the COMBO as well: correcting the cell resumes the streak the wrong
+    /// key broke, so both accounts read the full 15 and the total score is the clean run's exactly.
+    /// Fixing a typo is therefore worth score and not only accuracy, which is what makes going back
+    /// for it the right play under a typo stat that counts keypresses.</para>
+    ///
+    /// <para>What the fix does NOT buy back is the mistake itself: the wrong keypress is still
+    /// counted under <c>combo_break</c> and still priced by pp's typo term, and no correction can
+    /// unpress it. That one key is now the ONLY trace it leaves on the submitted account
+    /// (<see cref="ComboRestoreParityTest"/> holds the rule itself).</para>
     /// </summary>
     [Test]
     public void AFixedTypoRecoversTheCellTheJudgementAndTheRank()
@@ -367,8 +372,9 @@ public class AllowWrongInputParityTest
             Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(1).Within(1e-12));
             Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"));
 
-            Assert.That(fixedRun.GetProperty("engineMaxCombo").GetInt32(), Is.EqualTo(10), "the HUD combo takes the retype");
-            Assert.That(fixedRun.GetProperty("maxCombo").GetInt32(), Is.EqualTo(10), "and so does the SUBMITTED combo");
+            Assert.That(fixedRun.GetProperty("engineMaxCombo").GetInt32(), Is.EqualTo(15),
+                "the HUD combo resumes the streak the typo broke and runs the map out");
+            Assert.That(fixedRun.GetProperty("maxCombo").GetInt32(), Is.EqualTo(15), "and so does the SUBMITTED combo");
 
             // The identical play with the typo left alone loses that cell's completion, and its rank
             // with it, as well as the cell's judgement: the fix is worth a Perfect and leaving it is
@@ -382,10 +388,13 @@ public class AllowWrongInputParityTest
             Assert.That(fixedRun.GetProperty("totalScore").GetInt64(), Is.GreaterThan(leftRun.GetProperty("totalScore").GetInt64()));
             Assert.That(fixedRun.GetProperty("maxCombo").GetInt32(), Is.GreaterThan(leftRun.GetProperty("maxCombo").GetInt32()));
 
-            // What the fix does not buy back.
+            // What the fix does not buy back: the keypress. It is the only difference left between
+            // this run and the clean one, which since backlog 140 is literally true of the submitted
+            // numbers as well, because the resumed streak restores the combo multiset and with it the
+            // total score. The mistype is still there, and pp still prices it.
             Assert.That(Dict(fixedRun, "statistics")[mistype_key], Is.EqualTo(1));
             Assert.That(fixedRun.GetProperty("totalScore").GetInt64(),
-                Is.LessThan(root.GetProperty("clean").GetProperty("totalScore").GetInt64()));
+                Is.EqualTo(root.GetProperty("clean").GetProperty("totalScore").GetInt64()));
         });
     }
 
@@ -492,10 +501,14 @@ public class AllowWrongInputParityTest
     /// and so contributing 300·√9 = 900. Portion 300·(Σ(1..5)√i + Σ(1..9)√i) + 900 = 9206.499862,
     /// comboProgress 0.758313370, accuracy 0.944444, total = 733802. Weighting that same result at
     /// 10, i.e. letting it extend the run, would read 735695 and max_combo 10.</item>
-    /// <item><c>midCellWrongThenFixed</c>: perfects at combo 1..5, the typo, then perfects at combo
-    /// 1..10, the first of which IS the fixed cell (its own first and only result). Portion
-    /// 300·(Σ(1..5)√i + Σ(1..10)√i) = 9255.183160, comboProgress 0.762323276, and now accuracy is a
-    /// flat 1 because nothing missed, so total = round(500000·0.762323276 + 500000) = 881162.</item>
+    /// <item><c>midCellWrongThenFixed</c>: perfects at combo 1..5, the typo, and then the fix, which
+    /// since backlog 140 RESUMES the streak the wrong key broke BEFORE the retype is judged. The
+    /// retype (the cell's own first and only result) therefore lands at combo 6 rather than 1, and
+    /// the rest of the line runs 7..15, so the combo multiset is exactly the clean run's 1..15: the
+    /// portion is the full 12140.758980, comboProgress 1, accuracy a flat 1 because nothing missed,
+    /// and the total is 1000000. Under the pre-140 rule the same keystrokes read 881162 off a
+    /// portion of 300·(Σ(1..5)√i + Σ(1..10)√i) = 9255.183160, i.e. comboProgress 0.762323276, which
+    /// is what a restore applied AFTER the judgement would still produce.</item>
     /// <item><c>wrongKeyOnWordGap</c>: 15 perfects, one rejected key breaking combo before cell 3, so
     /// combo runs 1..3 then 1..12. Portion 10018.580688, comboProgress 0.825202173, accuracy 1,
     /// total = round(500000·0.825202173 + 500000) = 912601.</item>
@@ -516,7 +529,7 @@ public class AllowWrongInputParityTest
             ("lastCellSkipped", 14, 776_129, 0),
             ("lastCellWrongThenErased", 14, 776_129, 1),
             ("midCellTypedWrong", 9, 733_802, 1),
-            ("midCellWrongThenFixed", 10, 881_162, 1),
+            ("midCellWrongThenFixed", 15, 1_000_000, 1),
             ("wrongKeyOnWordGap", 12, 912_601, 1),
             ("spaceKeyOnLetter", 15, 1_000_000, 1),
         ];

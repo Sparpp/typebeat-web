@@ -9,9 +9,8 @@
 
     bool preferOriginal = Model.CurrentUser?.PreferOriginalMetadata ?? false;
 
-    // The typo and mistype columns exist only once some play on the board carries the stat; rows
-    // that predate it leave their cell blank rather than claiming a clean run (docs/pp.md).
-    bool anyMistypes = Model.PlayRows.Any(p => p.Mistypes is not null);
+    // The Typos column exists only once some play on the board carries the stat; rows that predate
+    // it leave their cell blank rather than claiming a clean run (docs/pp.md).
     bool anyTypos = Model.PlayRows.Any(p => p.Typos is not null);
 
     ViewData["Title"] = "Rankings";
@@ -101,11 +100,7 @@
                     <th>Miss</th>
                     @if (anyTypos)
                     {
-                        <th>Typo</th>
-                    }
-                    @if (anyMistypes)
-                    {
-                        <th>Mistype</th>
+                        <th>Typos</th>
                     }
                     <th>Mods</th>
                     <th>Date</th>
@@ -144,14 +139,12 @@
                         <td class="num">@((row.Completion * 100).ToString("0.00", CultureInfo.InvariantCulture))%</td>
                         <td class="num">@((row.Accuracy * 100).ToString("0.00", CultureInfo.InvariantCulture))%</td>
                         <td class="num">@row.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</td>
-                        <td class="num">@row.Miss</td>
+                        @* Both blank at zero and a number otherwise, so a clean run reads as one
+                           kind of nothing rather than a "0" beside an empty cell. *@
+                        <td class="num">@(row.Miss?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>
                         @if (anyTypos)
                         {
                             <td class="num">@(row.Typos?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>
-                        }
-                        @if (anyMistypes)
-                        {
-                            <td class="num">@(row.Mistypes?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>
                         }
                         <td><partial name="_ModIcons" model="row.Mods" /></td>
                         <td>@row.EndedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</td>

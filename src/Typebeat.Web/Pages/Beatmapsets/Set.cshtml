@@ -296,7 +296,6 @@
     else
     {
         var top = Model.Scores[0];
-        var anyMistypes = Model.Scores.Any(s => s.Mistypes is not null);
         var anyTypos = Model.Scores.Any(s => s.Typos is not null);
         <div class="podium">
             <span class="podium__rank">#1</span>
@@ -323,16 +322,17 @@
                 <div class="podium-stat"><span class="podium-stat__label">Great</span><span class="podium-stat__value">@top.Great</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Ok</span><span class="podium-stat__value">@top.Ok</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Meh</span><span class="podium-stat__value">@top.Meh</span></div>
-                <div class="podium-stat"><span class="podium-stat__label">Miss</span><span class="podium-stat__value">@top.Miss</span></div>
+                @* Miss and Typos are both blank at zero (and both absent from a clean play's
+                   statistics), so neither shows a fabricated 0 beside the other's empty cell. *@
+                @if (top.Miss is int topMiss)
+                {
+                    <div class="podium-stat"><span class="podium-stat__label">Miss</span><span class="podium-stat__value">@topMiss</span></div>
+                }
                 @* Only for a play that CARRIES the stat; a score from before it existed shows no
                    cell at all rather than a fabricated 0. *@
                 @if (top.Typos is int topTypos)
                 {
-                    <div class="podium-stat"><span class="podium-stat__label">Typo</span><span class="podium-stat__value">@topTypos</span></div>
-                }
-                @if (top.Mistypes is int topMistypes)
-                {
-                    <div class="podium-stat"><span class="podium-stat__label">Mistype</span><span class="podium-stat__value">@topMistypes</span></div>
+                    <div class="podium-stat"><span class="podium-stat__label">Typos</span><span class="podium-stat__value">@topTypos</span></div>
                 }
                 <div class="podium-stat"><span class="podium-stat__label">Grade</span><span class="podium-stat__value grade @SetModel.GradeClass(top.Rank)">@SetModel.GradeLabel(top.Rank)</span></div>
                 @if (top.Mods.Count > 0)
@@ -358,15 +358,11 @@
                     <th>Ok</th>
                     <th>Meh</th>
                     <th>Miss</th>
-                    @* The columns appear only once some play on this board carries the stat; rows
+                    @* The column appears only once some play on this board carries the stat; rows
                        that predate it leave their cell blank rather than claiming a clean run. *@
                     @if (anyTypos)
                     {
-                        <th>Typo</th>
-                    }
-                    @if (anyMistypes)
-                    {
-                        <th>Mistype</th>
+                        <th>Typos</th>
                     }
                     <th>Date</th>
                     <th>Mods</th>
@@ -389,14 +385,11 @@
                         <td class="num">@score.Great</td>
                         <td class="num">@score.Ok</td>
                         <td class="num">@score.Meh</td>
-                        <td class="num">@score.Miss</td>
+                        @* Both blank at zero and a number otherwise. *@
+                        <td class="num">@(score.Miss?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>
                         @if (anyTypos)
                         {
                             <td class="num">@(score.Typos?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>
-                        }
-                        @if (anyMistypes)
-                        {
-                            <td class="num">@(score.Mistypes?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)</td>
                         }
                         <td>@score.EndedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</td>
                         <td><partial name="_ModIcons" model="score.Mods" /></td>
