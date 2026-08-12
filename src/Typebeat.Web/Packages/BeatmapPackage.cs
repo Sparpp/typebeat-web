@@ -74,6 +74,26 @@ public sealed class ParsedDifficulty
     /// <summary>Star rating at Half Time's base clock rate (0.75x); <c>beatmaps.sr_ht</c>.</summary>
     public double SrHalfTime => srHalfTime ??= LyricDifficulty.Compute(Lines, RateMods.HalfTimeBaseRate);
 
+    private double? srLiterate;
+    private double? srLiterateDoubleTime;
+    private double? srLiterateHalfTime;
+
+    /// <summary>
+    /// The same three ratings for the LITERATE-CONVERTED map, stored as <c>beatmaps.sr_literate</c>
+    /// / <c>sr_literate_dt</c> / <c>sr_literate_ht</c> (029_literate_stars.sql). Literate makes
+    /// every punctuation mark a typed cell, so it moves the rating and is priced through it exactly
+    /// as a rate is (docs/pp.md, backlog 144); it is ORTHOGONAL to the rate, so the two compose into
+    /// a cross product rather than a list and all three combinations are stored. Computed lazily and
+    /// cached like the plain pair above: each is a full pass over the map's words.
+    /// </summary>
+    public double SrLiterate => srLiterate ??= LyricDifficulty.Compute(Lines, 1, literate: true);
+
+    /// <summary>The converted map at 1.50x; <c>beatmaps.sr_literate_dt</c>.</summary>
+    public double SrLiterateDoubleTime => srLiterateDoubleTime ??= LyricDifficulty.Compute(Lines, RateMods.DoubleTimeBaseRate, literate: true);
+
+    /// <summary>The converted map at 0.75x; <c>beatmaps.sr_literate_ht</c>.</summary>
+    public double SrLiterateHalfTime => srLiterateHalfTime ??= LyricDifficulty.Compute(Lines, RateMods.HalfTimeBaseRate, literate: true);
+
     private LyricWpmCurve? wpmCurve;
 
     /// <summary>

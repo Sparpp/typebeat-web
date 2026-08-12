@@ -12,7 +12,10 @@ namespace Typebeat.Web.Packages;
 ///
 /// <para>
 /// IT READS ONLY COLUMNS, no blobs and no network: the score's own statistics/mods jsonb plus the
-/// three star ratings on its beatmap. That is why it can run unconditionally on every boot.
+/// six star ratings on its beatmap (three for the map, three for the map the client's Literate mod
+/// converts it into; 029_literate_stars.sql). That is why it can run unconditionally on every boot,
+/// and it is the constraint that decides the storage shape: a mod combination whose rating is not
+/// in a column cannot be priced here at all.
 /// </para>
 ///
 /// <para>
@@ -23,7 +26,9 @@ namespace Typebeat.Web.Packages;
 /// rating is still NULL cannot be priced, so it is deliberately left stale (pp 0, version 0) and
 /// retried on the next boot rather than being stamped at zero forever. Since backlog 90 a HALF TIME
 /// play needs BOTH columns, <c>sr_ht</c> to price it and <c>sr_dt</c> to mirror against; a map
-/// carrying only one of the two therefore leaves its HT plays pending.</item>
+/// carrying only one of the two therefore leaves its HT plays pending. Since backlog 144 the same
+/// holds one level up: a LITERATE play needs the converted map's ratings, so a map the sweep has
+/// not reached leaves even a plain no-rate Literate play pending.</item>
 /// <item>PaceBackfill is also what INVALIDATES rows: when it rewrites a beatmap's ratings it stamps
 /// every score on that map back to version 0, so a stored pp can never outlive the star rating it
 /// was computed from.</item>
@@ -56,7 +61,10 @@ public static class PpBackfill
                        s.statistics::text   AS StatisticsJson,
                        b.difficulty_rating  AS BaseStars,
                        b.sr_dt              AS SrDt,
-                       b.sr_ht              AS SrHt
+                       b.sr_ht              AS SrHt,
+                       b.sr_literate        AS SrLiterate,
+                       b.sr_literate_dt     AS SrLiterateDt,
+                       b.sr_literate_ht     AS SrLiterateHt
                 FROM scores s
                 JOIN beatmaps b ON b.id = s.beatmap_id
                 WHERE s.pp_version < @version
@@ -81,7 +89,8 @@ public static class PpBackfill
                     row.MaxCombo,
                     row.BaseStars,
                     row.SrDt,
-                    row.SrHt);
+                    row.SrHt,
+                    new PerformancePoints.LiterateStars(row.SrLiterate, row.SrLiterateDt, row.SrLiterateHt));
 
                 if (!settled)
                 {
@@ -122,5 +131,8 @@ public static class PpBackfill
         string? StatisticsJson,
         double BaseStars,
         double? SrDt,
-        double? SrHt);
+        double? SrHt,
+        double? SrLiterate,
+        double? SrLiterateDt,
+        double? SrLiterateHt);
 }

@@ -77,6 +77,19 @@ public static class LyricPace
     /// every stored row and hand its scores to <see cref="PpBackfill"/>; the pp FORMULA does not
     /// move, so <c>PerformancePoints.VERSION</c> deliberately stays where it is.
     ///
+    /// v13 = <c>beatmaps.sr_literate</c>, <c>sr_literate_dt</c> and <c>sr_literate_ht</c> are
+    /// written alongside (029_literate_stars.sql): the same three star ratings for the map the
+    /// client's LITERATE mod converts this one into, which since backlog 144 is what prices a
+    /// Literate play, in place of the flat 1.06 pp multiplier that has been removed. As at v7, v8
+    /// and v11 the pace and star ARITHMETIC IS UNCHANGED (<see cref="LyricDifficulty.Compute"/>
+    /// defaults to the plain stream, so every existing column rewrites byte-identically and no
+    /// existing rating moves); the bump exists purely to make the sweep revisit every row and fill
+    /// the three new columns from the stored blob. It is NOT free for scores, unlike v7/v8/v11: the
+    /// sweep stamps <c>pp_version = 0</c> on every score of every row it rewrites, so the whole
+    /// score table reprices at the next boot. That is wanted here anyway, because
+    /// <c>PerformancePoints.VERSION</c> bumps in the same change and every stored Literate play has
+    /// to lose its 1.06 and gain its honest rating.
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -89,7 +102,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 12;
+    public const int VERSION = 13;
 
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;

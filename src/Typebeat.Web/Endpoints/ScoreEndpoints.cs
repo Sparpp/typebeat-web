@@ -114,7 +114,8 @@ public static class ScoreEndpoints
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
             """
             SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
-                   b.difficulty_rating AS baseStars, b.sr_dt AS srDt, b.sr_ht AS srHt
+                   b.difficulty_rating AS baseStars, b.sr_dt AS srDt, b.sr_ht AS srHt,
+                   b.sr_literate AS srLiterate, b.sr_literate_dt AS srLiterateDt, b.sr_literate_ht AS srLiterateHt
             FROM beatmaps b
             JOIN beatmapsets bs ON bs.id = b.set_id
             WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
@@ -201,7 +202,8 @@ public static class ScoreEndpoints
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
             """
             SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS,
-                   difficulty_rating AS baseStars, sr_dt AS srDt, sr_ht AS srHt
+                   difficulty_rating AS baseStars, sr_dt AS srDt, sr_ht AS srHt,
+                   sr_literate AS srLiterate, sr_literate_dt AS srLiterateDt, sr_literate_ht AS srLiterateHt
             FROM beatmaps WHERE id = @beatmapId
             """,
             new { beatmapId }, tx);
@@ -329,7 +331,12 @@ public static class ScoreEndpoints
             storedMaxCombo,
             beatmap.BaseStars,
             beatmap.SrDt,
-            beatmap.SrHt);
+            beatmap.SrHt,
+            // The Literate-converted map's three (029_literate_stars.sql). A Literate play is
+            // priced through them and carries no flat multiplier any more (backlog 144), so a map
+            // the SR sweep has not reached leaves it unpriced and retried, exactly as an unfilled
+            // sr_dt already does for a Double Time play.
+            new PerformancePoints.LiterateStars(beatmap.SrLiterate, beatmap.SrLiterateDt, beatmap.SrLiterateHt));
 
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
@@ -456,8 +463,8 @@ public static class ScoreEndpoints
             //   - REFUSED (unranked score, which covers an unranked map, an unranked mod, a fail and
             //     every anti-cheat gate; or a custom rate). No number can describe it, and the game
             //     shows a dash rather than a 0 that would read as an earned score of nothing.
-            //   - NOT PRICED YET (a base-rate DT/HT run on a map whose sr_dt/sr_ht is not stored
-            //     yet). The 0 sitting in the column is a placeholder PpBackfill overwrites at the
+            //   - NOT PRICED YET (a base-rate DT/HT run, or a Literate run, on a map whose matching
+            //     sr_* column is not stored yet). The 0 in the column is a placeholder PpBackfill overwrites at the
             //     next boot, so asserting it would freeze the results screen on a number the
             //     database is about to disagree with. The game prices the play itself instead,
             //     which it can: unlike this server it computes star ratings on demand rather than
@@ -731,10 +738,12 @@ public static class ScoreEndpoints
     // ---- Dapper row shapes ----
 
     // Appended, never reordered: Dapper maps positional records by position (BaseStars/SrDt/SrHt
-    // are the 020_performance_points.sql additions).
+    // are the 020_performance_points.sql additions, the three SrLiterate* the 029_literate_stars.sql
+    // ones).
     private sealed record BeatmapRow(
         long Id, string ChecksumMd5, double DrainLengthS, double SkippableS,
-        double BaseStars, double? SrDt, double? SrHt);
+        double BaseStars, double? SrDt, double? SrHt,
+        double? SrLiterate, double? SrLiterateDt, double? SrLiterateHt);
 
     private sealed record BestScoreRow(long Id, long TotalScore);
 

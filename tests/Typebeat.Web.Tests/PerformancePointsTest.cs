@@ -305,7 +305,33 @@ public class PerformancePointsTest
         {
             Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("NF", null)], 300), Is.EqualTo(0.90).Within(1e-12)); // pp[f.no_fail_multiplier]
             Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("FT", null)], 300), Is.EqualTo(0.90).Within(1e-12)); // pp[f.fletcher_multiplier]
-            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("LT", null)], 300), Is.EqualTo(1.06).Within(1e-12)); // pp[f.literate_multiplier]
+        });
+    }
+
+    /// <summary>
+    /// LITERATE CONTRIBUTES NOTHING HERE (backlog 144), and that is the whole point rather than an
+    /// omission: it is a CONVERSION mod, so it is priced through the star rating of the converted
+    /// map (the server's <c>sr_literate*</c> columns, <see cref="PerformancePoints.StarsFor"/>) and
+    /// a flat multiplier on top would be exactly the double count docs/pp.md forbids for DT/HT. It
+    /// used to be a flat 1.06 here.
+    ///
+    /// <para>Asserted against the SAME value as an acronym this table has never heard of, because
+    /// that is precisely what it now is: an unknown mod is neutral, and so is LT. Note the flat
+    /// number was a poor description of the mod anyway: measured over the five reference maps the
+    /// honest rate-1.0 rating moves between -0.8% and +6.3%, so Literate makes two of them EASIER
+    /// where 1.06 paid every map the same 6%.</para>
+    /// </summary>
+    [Test]
+    public void ModMultiplier_LiterateIsNeutralBecauseItIsPricedThroughTheStarRating()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("LT", null)], 300), Is.EqualTo(1.0).Within(1e-12));
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("lt", null)], 300), Is.EqualTo(1.0).Within(1e-12));
+
+            // Stacked with a mod that IS priced here, only that mod's value survives.
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("LT", null), new ScoreMod("NF", null)], 300),
+                Is.EqualTo(PerformancePoints.ModMultiplier([new ScoreMod("NF", null)], 300)).Within(1e-12));
         });
     }
 
@@ -324,8 +350,10 @@ public class PerformancePointsTest
             Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("rh", null)], 300), Is.EqualTo(1.10).Within(1e-12)); // pp[f.rhythmic_multiplier]
 
             // It stacks with the other flat multipliers, and a duplicated acronym is applied once.
+            // LT rides along contributing exactly nothing since backlog 144 (see the Literate test
+            // above), so this pair is worth what RH alone is.
             Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RH", null), new ScoreMod("LT", null)], 300),
-                Is.EqualTo(1.166).Within(1e-12)); // pp[f.mod_multiplier(["RH", "LT"], 300)]
+                Is.EqualTo(1.100).Within(1e-12)); // pp[f.mod_multiplier(["RH", "LT"], 300)]
             Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RH", null), new ScoreMod("RH", null)], 300),
                 Is.EqualTo(1.10).Within(1e-12)); // pp[f.rhythmic_multiplier]
         });
@@ -358,11 +386,11 @@ public class PerformancePointsTest
     public void ModMultiplier_StacksAndCollapsesDuplicates()
     {
         double stacked = PerformancePoints.ModMultiplier(
-            [new ScoreMod("LT", null), new ScoreMod("NF", null), new ScoreMod("FL", null)], 500);
+            [new ScoreMod("NF", null), new ScoreMod("FL", null)], 500);
 
         Assert.Multiple(() =>
         {
-            Assert.That(stacked, Is.EqualTo(1.06 * 0.90 * PerformancePoints.FlashlightMultiplier(500)).Within(1e-12)); // pp:const literate_multiplier=1.06 no_fail_multiplier=0.90
+            Assert.That(stacked, Is.EqualTo(0.90 * PerformancePoints.FlashlightMultiplier(500)).Within(1e-12)); // pp:const no_fail_multiplier=0.90
 
             // A duplicated acronym is tamper-shaped; it must be applied once, not squared.
             Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("NF", null), new ScoreMod("NF", null)], 300),
@@ -387,8 +415,10 @@ public class PerformancePointsTest
                 Is.EqualTo(bare * 0.90).Within(1e-9)); // pp:const no_fail_multiplier=0.90
             Assert.That(PerformancePoints.Compute(3, 300, 5, 0.8, 250, [new ScoreMod("FT", null)]),
                 Is.EqualTo(bare * 0.90).Within(1e-9)); // pp:const fletcher_multiplier=0.90
+            // Literate does not reach this function at all any more: it moves the star rating that
+            // was passed IN, not the multiplier applied here (backlog 144).
             Assert.That(PerformancePoints.Compute(3, 300, 5, 0.8, 250, [new ScoreMod("LT", null)]),
-                Is.EqualTo(bare * 1.06).Within(1e-9)); // pp:const literate_multiplier=1.06
+                Is.EqualTo(bare).Within(1e-9));
             Assert.That(PerformancePoints.Compute(3, 300, 5, 0.8, 250, [new ScoreMod("FL", null)]),
                 Is.EqualTo(bare * PerformancePoints.FlashlightMultiplier(300)).Within(1e-9));
         });
@@ -401,7 +431,7 @@ public class PerformancePointsTest
     [Test]
     public void StarsFor_NoRateModUsesTheBaseRating()
     {
-        var stars = PerformancePoints.StarsFor([new ScoreMod("LT", null)], baseStars: 4.2, 6.0, 3.0);
+        var stars = PerformancePoints.StarsFor([new ScoreMod("NF", null)], baseStars: 4.2, 6.0, 3.0);
 
         Assert.That(stars.Stars, Is.EqualTo(4.2));
     }
@@ -634,12 +664,126 @@ public class PerformancePointsTest
         Assert.Multiple(() =>
         {
             Assert.That(PerformancePoints.StarsFor([], 4.2, 6.1, 3.4).Multiplier, Is.EqualTo(1.0), "no mods");
-            Assert.That(PerformancePoints.StarsFor([new ScoreMod("LT", null)], 4.2, 6.1, 3.4).Multiplier, Is.EqualTo(1.0), "a non-rate mod");
+            Assert.That(PerformancePoints.StarsFor([new ScoreMod("NF", null)], 4.2, 6.1, 3.4).Multiplier, Is.EqualTo(1.0), "a non-rate mod");
             Assert.That(PerformancePoints.StarsFor([new ScoreMod("DT", 1.50)], 4.2, 6.1, 3.4).Multiplier, Is.EqualTo(1.0), "Double Time");
             Assert.That(PerformancePoints.StarsFor([new ScoreMod("NC", 1.50)], 4.2, 6.1, 3.4).Multiplier, Is.EqualTo(1.0), "Nightcore");
 
             Assert.That(PerformancePoints.StarsFor([new ScoreMod("HT", 0.75)], 4.2, 6.1, 3.4).Multiplier,
                 Is.EqualTo(PerformancePoints.HalfTimeMultiplier(4.2, 6.1, 3.4)).Within(1e-12));
+        });
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Literate: a CONVERSION mod, priced through the rating of the map it converts (backlog 144).
+    // ---------------------------------------------------------------------------------------------
+
+    private static readonly PerformancePoints.LiterateStars converted = new(4.5, 6.9, 3.5);
+
+    /// <summary>
+    /// The whole of the backlog-144 storage decision, stated as a table. Literate selects WHICH
+    /// TRIPLE of ratings prices the play; the rate then selects WHICH OF THE THREE, unchanged. The
+    /// converted values are deliberately not the plain ones times any constant, because the real
+    /// ones are not either.
+    /// </summary>
+    [TestCase(false, null, null, 4.2)]
+    [TestCase(false, "DT", 1.50, 6.1)]
+    [TestCase(false, "HT", 0.75, 3.4)]
+    [TestCase(true, null, null, 4.5)]
+    [TestCase(true, "DT", 1.50, 6.9)]
+    [TestCase(true, "NC", 1.50, 6.9)]
+    [TestCase(true, "HT", 0.75, 3.5)]
+    public void StarsFor_LiterateSelectsTheConvertedTripleAndTheRateThenSelectsWithinIt(
+        bool literate, string? rateAcronym, double? rate, double expected)
+    {
+        List<ScoreMod> mods = [];
+
+        if (literate)
+            mods.Add(new ScoreMod("LT", null));
+
+        if (rateAcronym != null)
+            mods.Add(new ScoreMod(rateAcronym, rate));
+
+        var stars = PerformancePoints.StarsFor(mods, baseStars: 4.2, 6.1, 3.4, converted);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(stars.Stars, Is.EqualTo(expected));
+            Assert.That(stars.Pending, Is.False);
+        });
+    }
+
+    /// <summary>
+    /// The converted rate-1.0 rating is NULLABLE where <c>difficulty_rating</c> is not, so a
+    /// Literate play is the one no-rate play that can be pending. It is left stale for PpBackfill
+    /// rather than priced off the unconverted map, which is the rule a Double Time play on a map
+    /// without <c>sr_dt</c> already follows.
+    /// </summary>
+    [Test]
+    public void StarsFor_LiterateWithNoConvertedRatingIsPendingRatherThanPricedOffThePlainMap()
+    {
+        var noneStored = PerformancePoints.StarsFor([new ScoreMod("LT", null)], baseStars: 4.2, 6.1, 3.4);
+        var dtStoredOnly = PerformancePoints.StarsFor([new ScoreMod("LT", null), new ScoreMod("DT", 1.50)],
+            baseStars: 4.2, 6.1, 3.4, new PerformancePoints.LiterateStars(4.5, null, 3.5));
+        var htMissingItsMirror = PerformancePoints.StarsFor([new ScoreMod("LT", null), new ScoreMod("HT", 0.75)],
+            baseStars: 4.2, 6.1, 3.4, new PerformancePoints.LiterateStars(4.5, null, 3.5));
+
+        Assert.Multiple(() =>
+        {
+            foreach (var (stars, name) in new[]
+                     {
+                         (noneStored, "nothing stored"),
+                         (dtStoredOnly, "sr_literate_dt missing"),
+                         (htMissingItsMirror, "LT+HT missing the up-rate it mirrors against"),
+                     })
+            {
+                Assert.That(stars.Stars, Is.Null, name);
+                Assert.That(stars.Pending, Is.True, name);
+            }
+        });
+    }
+
+    /// <summary>
+    /// The Half Time mirror is taken entirely WITHIN one triple. Its claim is that Half Time's
+    /// total factor is the reciprocal of Double Time's ON THE MAP THE PLAY WAS ON, so a mirror
+    /// mixing a converted rating with an unconverted one would be a ratio of two different maps.
+    /// </summary>
+    [Test]
+    public void StarsFor_ALiterateHalfTimePlayMirrorsWithinTheConvertedTriple()
+    {
+        var stars = PerformancePoints.StarsFor([new ScoreMod("LT", null), new ScoreMod("HT", 0.75)],
+            baseStars: 4.2, 6.1, 3.4, converted);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(stars.Multiplier,
+                Is.EqualTo(PerformancePoints.HalfTimeMultiplier(converted.Base!.Value, converted.DoubleTime!.Value, converted.HalfTime!.Value)).Within(1e-12));
+
+            Assert.That(stars.Multiplier, Is.Not.EqualTo(PerformancePoints.HalfTimeMultiplier(4.2, 6.1, 3.4)).Within(1e-12),
+                "and it is genuinely the converted map's mirror, not the plain one's");
+        });
+    }
+
+    /// <summary>
+    /// The end-to-end consequence: an otherwise identical play is worth what its own map's rating
+    /// says, with no flat 6% anywhere. It used to be <c>Compute(4.2, ...) * 1.06</c>.
+    /// </summary>
+    [Test]
+    public void ForScore_ALiteratePlayIsPricedOffTheConvertedRatingWithNoFlatBonus()
+    {
+        var counts = new PerformancePoints.NoteCounts(500, 5, 3);
+
+        var (literate, literateSettled) = PerformancePoints.ForScore(
+            true, [new ScoreMod("LT", null)], counts, 0.9, 480, 4.2, 6.1, 3.4, converted);
+
+        var (plain, _) = PerformancePoints.ForScore(true, [], counts, 0.9, 480, 4.2, 6.1, 3.4, converted);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(literateSettled, Is.True);
+            Assert.That(literate, Is.EqualTo(PerformancePoints.Compute(4.5, 500, 5, 0.9, 480, [], 3)).Within(1e-9));
+
+            // Not the old shape, which would have been the PLAIN rating times a flat 1.06.
+            Assert.That(literate, Is.Not.EqualTo(plain!.Value * 1.06).Within(1e-9));
         });
     }
 
@@ -1176,7 +1320,7 @@ public class PerformancePointsTest
         // That proof does not survive a steeper MISS exponent, which reprices every stored row with
         // even one miss, so PpBackfill has to sweep. If this moves, so do the game's
         // PerformancePoints.VERSION and docs/pp.md.
-        Assert.That(PerformancePoints.VERSION, Is.EqualTo(14)); // pp:version
+        Assert.That(PerformancePoints.VERSION, Is.EqualTo(15)); // pp:version
     }
 
     [Test]

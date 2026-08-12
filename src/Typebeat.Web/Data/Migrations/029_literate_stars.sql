@@ -1,0 +1,58 @@
+-- typebeat-web migration 029: the Literate-converted map's three star ratings (backlog 144).
+--
+-- WHY THESE EXIST. Literate ("LT") is a CONVERSION mod on the client
+-- (IApplicableAfterBeatmapConversion): it makes every supported punctuation mark a typed cell of
+-- its own, so it genuinely changes the map's cell count, its pace and its difficulty. It used to be
+-- priced by a flat pp multiplier of 1.06 sitting on top of the UNCONVERTED map's rating. Since
+-- backlog 144 it is priced the way a rate is, exclusively through the recomputed star rating, and
+-- the flat multiplier is gone from Scoring/PerformancePoints.cs and docs/pp.md. That is the same
+-- no-double-counting rule 020_performance_points.sql applied to DT/HT, extended to the one
+-- conversion mod that moves a rating.
+--
+-- WHY THREE AND NOT ONE. Literate is ORTHOGONAL to the clock rate, so the ratings a play can need
+-- are a CROSS PRODUCT and not a list: a Literate Double Time play is the CONVERTED map rated at
+-- 1.50x, which is neither sr_literate nor sr_dt. The server prices strictly from stored columns
+-- (Packages/PpBackfill.cs reads columns only, which is why it can run on every boot), so a
+-- combination that is not stored cannot be priced at all.
+--
+-- AND WHY IT CANNOT BE DERIVED. The obvious saving would be to store sr_literate alone and recover
+-- the other two as sr_literate * (sr_dt / difficulty_rating), i.e. to assume Literate and the rate
+-- compose multiplicatively. THEY DO NOT, and the reason is structural rather than incidental:
+-- LyricDifficulty ends in star_scale * raw^star_power, and the rate enters `raw` ADDITIVELY (the
+-- aggregate carries a log(1/rate) term), so a ratio taken through that power cannot survive a
+-- change of baseline. Measured over the five reference maps, that prediction is wrong by up to
+-- 5.8% in stars, which is 11.2% in pp (pp goes as SR^2.00), and it errs in BOTH directions. The
+-- rate ratio itself differs by up to 6% between the plain and converted maps, e.g. on "Leap - Waste
+-- your Love" DT is worth 1.645x plain and 1.741x converted. There is no exact relation to exploit,
+-- so each combination is stored.
+--
+-- WHAT THIS COSTS AS A PRECEDENT, stated plainly because it is the real objection. Every future
+-- SR-moving conversion mod doubles the column count again: 3 -> 6 here, 12 with a second such mod,
+-- 24 with a third. Columns were kept anyway because Literate is the ONLY conversion mod that moves
+-- a rating today (Gatekeeper is a conversion mod but swaps a wrong-key model, not the cell list),
+-- and because the alternatives all cost something now for a saving that only pays later: a
+-- beatmap_mod_ratings side table adds a join to the submission path and to the pp sweep plus a
+-- mod-combination key contract to get wrong, and a jsonb bag of ratings would give up the typed
+-- columns that Rankings and tools/score-recalc read directly. THE TRIPWIRE IS A SECOND SR-MOVING
+-- CONVERSION MOD: at 12 columns this shape has stopped paying, and that is the moment to move the
+-- ratings into a side table rather than adding six more of these.
+--
+-- NULL, not 0, exactly as 020 argued for sr_dt / sr_ht: "not computed yet" must be distinguishable
+-- from "genuinely zero stars" (an empty map rates 0.0), because a play whose rating is merely
+-- missing must earn no pp YET and be revisited, whereas a play on a genuinely 0-star map earns no
+-- pp ever. NOTE THE ONE ASYMMETRY against the plain triple: difficulty_rating is NOT NULL and has
+-- been since 001, so a non-Literate no-rate play can never be pending, whereas sr_literate is
+-- nullable and a plain Literate play on an unfilled map IS pending. It is written unpriced (pp 0,
+-- pp_version 0) and retried, which is precisely what a DT play on a map without sr_dt already does.
+--
+-- These cannot be derived in SQL (LyricDifficulty is a C# strain model over the stored .osu lyric
+-- data), so Packages/PaceBackfill.cs fills them from the stored blobs at startup. Unlike 020 this
+-- one DOES bump LyricPace.VERSION (12 -> 13) rather than adding a third arm to the staleness
+-- predicate: the reason 020 avoided a bump was that bumping to 9 would also have re-derived every
+-- .osz-conversion map against its punctuated text, and that deferral was spent when v9 shipped.
+-- The pace and star ARITHMETIC is unchanged at v13, so every column that already existed rewrites
+-- byte-identically and no existing rating moves; the bump exists purely to make the sweep revisit
+-- every row and fill these three, exactly as v7, v8 and v11 did for their new columns.
+ALTER TABLE beatmaps ADD COLUMN sr_literate double precision;
+ALTER TABLE beatmaps ADD COLUMN sr_literate_dt double precision;
+ALTER TABLE beatmaps ADD COLUMN sr_literate_ht double precision;

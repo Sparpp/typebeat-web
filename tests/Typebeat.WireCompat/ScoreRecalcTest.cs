@@ -160,7 +160,10 @@ public class ScoreRecalcTest
             PpKnown: true,
             BaseStars: 4,
             SrDt: null,
-            SrHt: null);
+            SrHt: null,
+            SrLiterate: null,
+            SrLiterateDt: null,
+            SrLiterateHt: null);
     }
 
     private static Dictionary<string, int> ToWire(IReadOnlyDictionary<HitResult, int> counts)

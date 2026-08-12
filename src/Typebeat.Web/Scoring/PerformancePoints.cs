@@ -99,13 +99,26 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
-/// SR_eff is the map's star rating AT THE PLAY'S CLOCK RATE, never the base rating with a flat
-/// DT/HT bonus bolted on: the rate is priced exclusively through the recomputed star rating, so
-/// nothing double-counts. Only the base rates are pp-eligible (DT/NC 1.50x, HT 0.75x), which is why
-/// the server only ever needs three ratings and can store them per beatmap
-/// (<c>beatmaps.difficulty_rating</c> / <c>sr_dt</c> / <c>sr_ht</c>) instead of doing rate maths at
-/// query time. A CUSTOM rate is pp-ineligible ONLY: the play still ranks on the score leaderboards
-/// exactly as before, it just earns nothing here (see <see cref="StarsFor"/>).
+/// SR_eff is the map's star rating AT THE PLAY'S CLOCK RATE AND ON THE MAP ITS CONVERSION MODS
+/// PRODUCED, never a base rating with a flat bonus bolted on: anything that moves the difficulty is
+/// priced exclusively through the recomputed star rating, so nothing double-counts. Only the base
+/// rates are pp-eligible (DT/NC 1.50x, HT 0.75x) and Literate is the one conversion mod that moves
+/// the rating, which is why the server needs exactly six ratings and can store them per beatmap
+/// (<c>beatmaps.difficulty_rating</c> / <c>sr_dt</c> / <c>sr_ht</c>, and
+/// <c>sr_literate</c> / <c>sr_literate_dt</c> / <c>sr_literate_ht</c> for the converted map) instead
+/// of doing difficulty maths at query time. A CUSTOM rate is pp-ineligible ONLY: the play still
+/// ranks on the score leaderboards exactly as before, it just earns nothing here (see
+/// <see cref="StarsFor"/>).
+/// </para>
+///
+/// <para>
+/// THE SIX ARE A CROSS PRODUCT, NOT A LIST, because Literate is orthogonal to rate and the two do
+/// not compose: <see cref="Packages.Lyrics.LyricDifficulty"/> ends in
+/// <c>star_scale · raw^star_power</c> where the rate enters <c>raw</c> ADDITIVELY (as
+/// <c>log(1/rate)</c>), so a ratio taken through a power cannot survive a change of baseline. That
+/// is not a small effect: measured over the five reference maps, predicting <c>sr_literate_dt</c>
+/// as <c>sr_literate · (sr_dt/difficulty_rating)</c> is wrong by up to 5.8% in stars and 11.2% in
+/// pp. There is no exact relation, so each combination is stored.
 /// </para>
 ///
 /// <para>
@@ -234,6 +247,14 @@ public static class PerformancePoints
     /// nothing else. Every stored row is repriced, which is what forces the bump, but no
     /// leaderboard reorders. Applied on top of v13 rather than the v12 the sandbox export names as
     /// its baseline, because backlog 137 landed count_power 1.6 to 1.2 first.</item>
+    /// <item>v15 = the flat Literate multiplier of 1.06 leaves modMult, and Literate is priced
+    /// through the star rating of the map it CONVERTS instead. The mod is
+    /// IApplicableAfterBeatmapConversion: it makes every supported punctuation mark a typed cell of
+    /// its own, so it genuinely changes the map's cell count, its pace and its difficulty.
+    /// docs/pp.md has always said a rate is priced EXCLUSIVELY through SR_eff so that nothing
+    /// double-counts, and once Literate moves the rating too, a flat multiplier on top is precisely
+    /// that double count. The SHAPE of the formula is untouched and no constant moves; every stored
+    /// Literate row is repriced and nothing else is, which is what forces the bump.</item>
     /// </list>
     ///
     /// <para>Rows are ALSO invalidated back to 0 whenever the beatmap they were set on has its star
@@ -250,7 +271,7 @@ public static class PerformancePoints
     /// there is no set of rows the change provably leaves alone. Bump this the moment a change
     /// values ANY stored row differently.</para>
     /// </summary>
-    public const int VERSION = 14;
+    public const int VERSION = 15;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -323,8 +344,6 @@ public static class PerformancePoints
     private const double half_time_buff_clamp = 0.70;
 
     // ---- mod multipliers (docs/pp.md) ----
-
-    private const double literate_multiplier = 1.06;
 
     /// <summary>
     /// Rhythmic (backlog 135): the play is judged on the millisecond ladder, so each character has
@@ -536,8 +555,60 @@ public static class PerformancePoints
     }
 
     /// <summary>
-    /// Which star rating prices this play, given the map's three stored ratings. See
+    /// The acronym of the LITERATE mod, keyed the way <see cref="RateMods"/> keys the rate mods and
+    /// for the same reason: the acronym is what travels on the wire and what this server and the
+    /// game client share, where a mod TYPE exists only in the client.
+    /// </summary>
+    public const string LITERATE_ACRONYM = "LT";
+
+    /// <summary>Whether this play was set with the Literate mod, i.e. on the CONVERTED beatmap.</summary>
+    public static bool IsLiterate(IReadOnlyList<ScoreMod>? mods)
+    {
+        if (mods is null)
+            return false;
+
+        foreach (var mod in mods)
+        {
+            if (string.Equals(mod.Acronym?.Trim(), LITERATE_ACRONYM, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The Literate-CONVERTED map's three ratings, <c>beatmaps.sr_literate</c> /
+    /// <c>sr_literate_dt</c> / <c>sr_literate_ht</c> (029_literate_stars.sql). One type rather than
+    /// three more <c>double?</c> parameters, so the plain triple and the converted one cannot be
+    /// transposed at a call site, and so a future conversion mod adds a field here instead of
+    /// widening every signature in this file again.
+    ///
+    /// <para>ALL THREE ARE NULLABLE, INCLUDING THE RATE-1.0 ONE, which is the one asymmetry against
+    /// the plain triple: <c>difficulty_rating</c> has existed since 001 and is NOT NULL, whereas
+    /// <c>sr_literate</c> is filled by the same startup sweep that fills <c>sr_dt</c> and is
+    /// therefore null on any map that sweep has not reached. A Literate play on such a map is
+    /// <see cref="RateStars.Unavailable"/>, exactly as a Double Time play on a map without
+    /// <c>sr_dt</c> already is, and for the same reason: it is retried on a later boot rather than
+    /// stamped at a value the next sweep would have to disagree with.</para>
+    ///
+    /// <para><c>default</c> is all-null, and that is the SAFE default for a caller that has not
+    /// been taught the columns: it makes Literate plays pending rather than mispricing them off the
+    /// unconverted map's rating.</para>
+    /// </summary>
+    public readonly record struct LiterateStars(double? Base, double? DoubleTime, double? HalfTime);
+
+    /// <summary>
+    /// Which star rating prices this play, given the map's stored ratings. See
     /// <see cref="RateStars"/> for the three outcomes.
+    ///
+    /// <para>TWO QUESTIONS IN ORDER, and the first is WHICH MAP. Literate is a conversion mod: it
+    /// makes every punctuation mark a typed cell, so a Literate play is a play on a DIFFERENT map
+    /// with three ratings of its own, and since backlog 144 it is priced through those and carries
+    /// no flat multiplier (see <see cref="ModMultiplier"/>). The rate question is then asked inside
+    /// whichever triple that selected, completely unchanged: Literate is ORTHOGONAL to rate, so a
+    /// Literate Double Time play prices at the converted map's rating AT 1.50x, which is a stored
+    /// figure of its own and provably not recoverable from the other two (a rate ratio measured on
+    /// the plain map mispredicts the converted map's by up to 5.8% in stars, i.e. 11% in pp).</para>
     ///
     /// <para>A stack carrying MORE THAN ONE rate mod is tamper-shaped by construction (the client
     /// makes DT / NC / HT mutually exclusive), so it is treated as ineligible rather than guessed
@@ -548,18 +619,33 @@ public static class PerformancePoints
     /// stored but <c>sr_dt</c> still null is therefore <see cref="RateStars.Unavailable"/>, not
     /// priced off <c>sr_ht</c> alone: leaving the row stale for <see cref="Packages.PpBackfill"/> to
     /// retry costs one boot, whereas pricing it now would stamp a value the very next sweep has to
-    /// disagree with.</para>
+    /// disagree with. A LITERATE Half Time play needs the converted map's pair, for the same reason
+    /// and with the same outcome; the mirror is computed entirely within one triple, never across
+    /// the two, or Half Time's total factor would stop being the reciprocal of Double Time's ON THE
+    /// MAP THE PLAY WAS ON.</para>
     /// </summary>
     /// <param name="mods">The play's parsed mods (<see cref="ScoreMods.Parse"/>).</param>
     /// <param name="baseStars"><c>beatmaps.difficulty_rating</c>, the rate-1.0 rating.</param>
     /// <param name="starsDoubleTime"><c>beatmaps.sr_dt</c>, the rating at 1.50x; null until filled.</param>
     /// <param name="starsHalfTime"><c>beatmaps.sr_ht</c>, the rating at 0.75x; null until filled.</param>
+    /// <param name="literate">The converted map's three, used only for a Literate play.</param>
     public static RateStars StarsFor(
         IReadOnlyList<ScoreMod>? mods,
         double baseStars,
         double? starsDoubleTime,
-        double? starsHalfTime)
+        double? starsHalfTime,
+        LiterateStars literate = default)
     {
+        // WHICH MAP first (see the docs above). The plain triple's rate-1.0 member is a plain
+        // double and can never be missing, so this branch is the only one that can go Unavailable
+        // before a rate is even looked at.
+        (double? atBaseRate, double? up, double? down) = IsLiterate(mods)
+            ? (literate.Base, literate.DoubleTime, literate.HalfTime)
+            : (baseStars, starsDoubleTime, starsHalfTime);
+
+        if (atBaseRate is not double unrated)
+            return RateStars.Unavailable;
+
         ScoreMod rateMod = default;
         int rateMods = 0;
 
@@ -576,7 +662,7 @@ public static class PerformancePoints
         }
 
         if (rateMods == 0)
-            return RateStars.Of(baseStars);
+            return RateStars.Of(unrated);
 
         if (rateMods > 1 || !RateMods.TryGetRange(rateMod.Acronym, out var range))
             return RateStars.Ineligible;
@@ -591,14 +677,15 @@ public static class PerformancePoints
 
         // The two rate mods' defaults straddle 1.0: DT / NC at 1.50x, HT at 0.75x.
         if (range.Default > 1)
-            return starsDoubleTime is double up ? RateStars.Of(up) : RateStars.Unavailable;
+            return up is double sped ? RateStars.Of(sped) : RateStars.Unavailable;
 
-        // Half Time is priced off sr_ht AND mirrored against sr_dt, so it needs both (see the docs
-        // above): either one missing leaves the row for the next backfill pass.
-        if (starsHalfTime is not double down || starsDoubleTime is not double mirrorAgainst)
+        // Half Time is priced off the down-rate rating AND mirrored against the up-rate one, so it
+        // needs both (see the docs above): either one missing leaves the row for the next backfill
+        // pass. All three arguments to the mirror come from the SAME triple.
+        if (down is not double slowed || up is not double mirrorAgainst)
             return RateStars.Unavailable;
 
-        return RateStars.Of(down, HalfTimeMultiplier(baseStars, mirrorAgainst, down));
+        return RateStars.Of(slowed, HalfTimeMultiplier(unrated, mirrorAgainst, slowed));
     }
 
     /// <summary>
@@ -612,6 +699,17 @@ public static class PerformancePoints
     /// <para>No Fail is priced at 0.90 (osu's value) rather than left free: it converts a would-be
     /// fail, which earns nothing at all, into a completed play. Its 0.5x SCORE multiplier stays
     /// score-side; mirroring that here would double-punish on top of the miss term.</para>
+    ///
+    /// <para>THERE IS NO LITERATE TERM HERE EITHER, and for exactly the reason there is no rate one
+    /// (backlog 144). Literate is a CONVERSION mod: it turns every punctuation mark into a typed
+    /// cell, so it changes the map's cell count, its pace and its rating, and it is priced through
+    /// <see cref="StarsFor"/>'s <c>sr_literate*</c> ratings. It used to carry a flat 1.06 ON TOP of
+    /// the unconverted map's rating, which was the only place in this file where a mod that moves
+    /// the rating was also paid a multiplier; keeping both once the rating moves would be precisely
+    /// the double count docs/pp.md exists to forbid. The flat number was also a poor description of
+    /// the mod: measured over the five reference maps the honest rate-1.0 rating moves between
+    /// -0.8% and +6.3%, i.e. Literate makes two of them EASIER, where a flat 1.06 paid every map
+    /// the same 6%.</para>
     /// </summary>
     public static double ModMultiplier(IReadOnlyList<ScoreMod>? mods, int notes)
     {
@@ -631,7 +729,6 @@ public static class PerformancePoints
 
             multiplier *= mod.Acronym.ToUpperInvariant() switch
             {
-                "LT" => literate_multiplier,
                 "FL" => FlashlightMultiplier(notes),
                 "RH" => rhythmic_multiplier,
                 "FT" => fletcher_multiplier,
@@ -770,7 +867,9 @@ public static class PerformancePoints
     /// <item><c>(null, settled: false)</c>: NOT PRICED YET. A star rating the play needs is not
     /// stored, so the row is left stale (pp 0, version 0) for <see cref="Packages.PpBackfill"/>
     /// rather than being stamped at a value it would have to disagree with later. A Half Time play
-    /// needs TWO of them, <c>sr_ht</c> and <c>sr_dt</c>; see <see cref="StarsFor"/>.</item>
+    /// needs TWO of them, <c>sr_ht</c> and <c>sr_dt</c>; a LITERATE play needs the converted map's
+    /// rating instead of the plain one, and a Literate Half Time play two of those; see
+    /// <see cref="StarsFor"/>.</item>
     /// </list>
     ///
     /// <para>Callers writing the <c>pp</c> column coalesce with <c>?? 0</c>; callers putting the
@@ -786,12 +885,13 @@ public static class PerformancePoints
         int maxCombo,
         double baseStars,
         double? starsDoubleTime,
-        double? starsHalfTime)
+        double? starsHalfTime,
+        LiterateStars literate = default)
     {
         if (!ranked)
             return (null, true);
 
-        var stars = StarsFor(mods, baseStars, starsDoubleTime, starsHalfTime);
+        var stars = StarsFor(mods, baseStars, starsDoubleTime, starsHalfTime, literate);
 
         if (stars.Stars is not double effective)
             return (null, !stars.Pending);
