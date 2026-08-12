@@ -309,6 +309,28 @@ public class PerformancePointsTest
         });
     }
 
+    /// <summary>
+    /// Rhythmic (backlog 135) pays a bonus, and it is the only pp mod multiplier above 1.0 that is
+    /// not length-scaled: judging a press on its millisecond offset from its own target instead of
+    /// on its distance from the playhead is the tighter ladder on any map slower than 10 characters
+    /// per second, which is nearly all of them.
+    /// </summary>
+    [Test]
+    public void ModMultiplier_RhythmicPaysTenPercent()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RH", null)], 300), Is.EqualTo(1.10).Within(1e-12)); // pp[f.rhythmic_multiplier]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("rh", null)], 300), Is.EqualTo(1.10).Within(1e-12)); // pp[f.rhythmic_multiplier]
+
+            // It stacks with the other flat multipliers, and a duplicated acronym is applied once.
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RH", null), new ScoreMod("LT", null)], 300),
+                Is.EqualTo(1.166).Within(1e-12)); // pp[f.mod_multiplier(["RH", "LT"], 300)]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RH", null), new ScoreMod("RH", null)], 300),
+                Is.EqualTo(1.10).Within(1e-12)); // pp[f.rhythmic_multiplier]
+        });
+    }
+
     [Test]
     public void ModMultiplier_SuddenDeathMutedAndUnknownModsAreNeutral()
     {

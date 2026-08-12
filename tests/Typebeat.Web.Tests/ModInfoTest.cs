@@ -34,6 +34,20 @@ public class ModInfoTest
         Assert.That(ModInfo.Name("gk"), Is.EqualTo("Gatekeeper"));
     }
 
+    /// <summary>
+    /// Rhythmic (backlog 135), the millisecond judgement ladder. Ranked and a difficulty increase,
+    /// so it badges like the other increase mods rather than falling through to "other".
+    /// </summary>
+    [Test]
+    public void Rhythmic_RendersAsRankedDifficultyIncreaseBadge()
+    {
+        Assert.That(ModInfo.CategoryClass("RH"), Is.EqualTo("increase"));
+        Assert.That(ModInfo.Name("RH"), Is.EqualTo("Rhythmic"));
+
+        Assert.That(ModInfo.CategoryClass("rh"), Is.EqualTo("increase"));
+        Assert.That(ModInfo.Name("rh"), Is.EqualTo("Rhythmic"));
+    }
+
     [Test]
     public void UnknownAcronym_StillFallsBackGracefully()
     {

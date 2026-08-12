@@ -99,6 +99,13 @@ stored `ranked = false` and therefore earn no pp.
   flashlight bonus, but grows with song length, so it pays off on long maps. The `max` clamp is
   required: unclamped, the raw term dips **below 1.0 under ~46 notes**, which would punish FL on
   short maps rather than "barely move".
+* **RH** (Rhythmic): flat × 1.10. The play is judged on the MILLISECOND window ladder (each
+  character against its own target time) instead of the character-distance one (how far the press
+  is from the character the playhead is on). The two coincide at a pace of 10 characters per
+  second and the millisecond pair is tighter everywhere below that, which is where lyrics sit, so
+  it is a genuine difficulty increase on essentially every map. Above that pace, in a burst faster
+  than 10 chars/sec, it is the looser pair, which is why the bonus is a flat 1.10 rather than the
+  much larger number the slow-map ratio alone would suggest.
 * **Fletcher**: × 0.90 (10% pp decrease).
 * **NF** (No Fail): × 0.90, osu's pricing. DECIDED: NF cannot be free for pp, since it converts
   a would-be fail (which earns nothing) into a completed play, and it protects runs the miss
@@ -109,6 +116,7 @@ stored `ranked = false` and therefore earn no pp.
 ```
 modMult = (LT       ? 1.06                                      : 1)
         · (FL       ? max(1.0, 1 + 0.02 + 0.06·log10(notes/100)) : 1)
+        · (RH       ? 1.10                                      : 1)
         · (Fletcher ? 0.90                                      : 1)
         · (NF       ? 0.90                                      : 1)
 ```
