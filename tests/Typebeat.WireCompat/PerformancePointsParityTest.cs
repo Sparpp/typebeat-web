@@ -460,10 +460,19 @@ public class PerformancePointsParityTest
         const double dt_stars = 6.1;
         const double ht_stars = 3.4;
 
+        // The CONVERTED map's three, deliberately all different from the plain ones so a Literate
+        // stack that picked the wrong triple shows up as a wrong number rather than as a pass
+        // (backlog 144). They are not the plain ones times any constant, because the real ones are
+        // not either: see the storage note on ServerPp.StarsFor.
+        const double lt_stars = 4.5;
+        const double lt_dt_stars = 6.9;
+        const double lt_ht_stars = 3.5;
+
+        var literate = new ServerPp.LiterateStars(lt_stars, lt_dt_stars, lt_ht_stars);
+
         var cases = new List<IReadOnlyList<Mod>>
         {
             no_client_mods,
-            Stack(new TypeBeatModLiterate()),
             Stack(new TypeBeatModNoFail(), new TypeBeatModFlashlight()),
             Stack(new TypeBeatModDoubleTime()),
             Stack(new TypeBeatModNightcore()),
@@ -478,21 +487,30 @@ public class PerformancePointsParityTest
         for (int step = 50; step <= 99; step++)
             cases.Add(Stack(At(new TypeBeatModHalfTime(), step / 100.0)));
 
+        // Literate is ORTHOGONAL to the rate, so every case above is also a Literate case and the
+        // pair has to reach the same verdict about the RATE while reading a different triple.
+        foreach (var stack in cases.ToList())
+            cases.Add(Stack([.. stack, new TypeBeatModLiterate()]));
+
         foreach (var clientStack in cases)
         {
             double? clientRate = ClientPp.EligibleRate(clientStack);
-            var serverStars = ServerPp.StarsFor(ServerMods(clientStack), base_stars, dt_stars, ht_stars);
+            var serverStars = ServerPp.StarsFor(ServerMods(clientStack), base_stars, dt_stars, ht_stars, literate);
 
             string context = string.Join('+', clientStack.Select(m => m.Acronym + (m is ModRateAdjust r ? $"@{r.SpeedChange.Value:0.00}" : "")));
 
             // The client says WHICH RATE to price at; the server says WHICH STORED RATING prices it.
-            // Those must be the same decision, expressed two ways.
+            // Those must be the same decision, expressed two ways. Since backlog 144 there are two
+            // decisions, WHICH MAP and then WHICH RATE, and EligibleRate deliberately still answers
+            // only the second: Literate does not touch rate eligibility at all.
+            bool converted = ClientPp.IsLiterate(clientStack);
+
             double? expectedServerStars = clientRate switch
             {
                 null => null,
-                1.0 => base_stars,
-                1.50 => dt_stars,
-                0.75 => ht_stars,
+                1.0 => converted ? lt_stars : base_stars,
+                1.50 => converted ? lt_dt_stars : dt_stars,
+                0.75 => converted ? lt_ht_stars : ht_stars,
                 _ => throw new InvalidOperationException($"client returned an unexpected pp-eligible rate {clientRate} for {context}"),
             };
 
@@ -525,23 +543,43 @@ public class PerformancePointsParityTest
     /// <summary>
     /// The same lyric map, built once per repo's own <c>LyricLine</c> type. Deliberately a shape
     /// with things that exercise the difficulty model: repeated words, a dense line, a long rest.
+    ///
+    /// <para>IT IS PUNCTUATED AND CAPITALISED ON PURPOSE (backlog 144). The text is the AUTHOR'S
+    /// form, which is what a map stores, and the Literate mod types it verbatim where every other
+    /// stack types the stripped lower-case stream. An unpunctuated fixture would make the two
+    /// streams the same string, so every Literate assertion in this file would pass even if one of
+    /// the two ports had forgotten to apply the mod at all. Marks are drawn from
+    /// <c>Typeability.PUNCTUATION</c>, since anything outside that set is stripped by Normalize
+    /// before a map is ever written.</para>
     /// </summary>
     private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) TwinMaps()
     {
         (string Text, double Start, double End, (string Text, double Start, double End)[] Units)[] source =
         [
-            ("hello there world", 1000, 4000,
-                [("hello", 1000, 2000), ("there", 2000, 3000), ("world", 3000, 4000)]),
-            ("typing is a rhythm not a race", 4000, 8000,
-                [("typing", 4000, 4800), ("is", 4800, 5100), ("a", 5100, 5300), ("rhythm", 5300, 6400), ("not", 6400, 6900), ("a", 6900, 7100), ("race", 7100, 8000)]),
+            ("Hello there, world!", 1000, 4000,
+                [("Hello", 1000, 2000), ("there,", 2000, 3000), ("world!", 3000, 4000)]),
+            ("Typing is a rhythm, not a race.", 4000, 8000,
+                [("Typing", 4000, 4800), ("is", 4800, 5100), ("a", 5100, 5300), ("rhythm,", 5300, 6400), ("not", 6400, 6900), ("a", 6900, 7100), ("race.", 7100, 8000)]),
             ("world world world", 8000, 9000,
                 [("world", 8000, 8300), ("world", 8300, 8600), ("world", 8600, 9000)]),
-            ("after a long instrumental rest", 30000, 35000,
-                [("after", 30000, 31000), ("a", 31000, 31300), ("long", 31300, 32200), ("instrumental", 32200, 34000), ("rest", 34000, 35000)]),
+            ("After a long-drawn instrumental rest...", 30000, 35000,
+                [("After", 30000, 31000), ("a", 31000, 31300), ("long-drawn", 31300, 32200), ("instrumental", 32200, 34000), ("rest...", 34000, 35000)]),
         ];
 
         return Twin(source);
     }
+
+    /// <summary>
+    /// The LITERATE-converted map's three ratings for a twin, i.e. what the server stores in
+    /// <c>sr_literate</c> / <c>sr_literate_dt</c> / <c>sr_literate_ht</c> (029_literate_stars.sql).
+    /// Every call that could see a Literate stack passes these, because a Literate play whose
+    /// converted rating is not supplied is PENDING rather than priced, exactly as a Double Time
+    /// play on a map without <c>sr_dt</c> is.
+    /// </summary>
+    private static ServerPp.LiterateStars ServerLiterate(IReadOnlyList<ServerLine> server)
+        => new(ServerDifficulty.Compute(server, 1, literate: true),
+               ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate, literate: true),
+               ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate, literate: true));
 
     /// <summary>
     /// A DENSE twin, rating past the 10 stars the difficulty model used to clamp at (backlog 118).
@@ -666,12 +704,14 @@ public class PerformancePointsParityTest
                      Stack(new TypeBeatModDoubleTime()),
                      Stack(new TypeBeatModNightcore()),
                      Stack(new TypeBeatModHalfTime()),
+                     Stack(new TypeBeatModLiterate(), new TypeBeatModDoubleTime()),
+                     Stack(new TypeBeatModLiterate(), new TypeBeatModHalfTime()),
                      Stack(At(new TypeBeatModDoubleTime(), 1.75)),
                      Stack(At(new TypeBeatModHalfTime(), 0.60)),
                  })
         {
             double? clientStars = ClientPp.StarsFor(client, clientStack);
-            var serverStars = ServerPp.StarsFor(ServerMods(clientStack), baseStars, dtStars, htStars);
+            var serverStars = ServerPp.StarsFor(ServerMods(clientStack), baseStars, dtStars, htStars, ServerLiterate(server));
 
             string context = string.Join('+', clientStack.Select(m => m.Acronym));
 
@@ -681,6 +721,101 @@ public class PerformancePointsParityTest
             // from the lines; the server from its three stored columns. Same number, both ways.
             Assert.That(ClientPp.RateMultiplier(client, clientStack), Is.EqualTo(serverStars.Multiplier), context);
         }
+    }
+
+    [Test]
+    public void TheClientsLiterateStarRatingIsTheRatingTheServerStores()
+    {
+        // The backlog-144 half of the claim above: since Literate is priced through the rating of
+        // the map it CONVERTS, the client's converted rating has to be the server's sr_literate*
+        // for the same three rates, or a Literate play's in-game pp readout disagrees with the
+        // number on the leaderboard.
+        var (client, server) = TwinMaps();
+
+        double plain = ClientDifficulty.Compute(client);
+        double converted = ClientDifficulty.Compute(client, 1, literate: true);
+
+        Assert.Multiple(() =>
+        {
+            // THE PREMISE. Punctuation and case are what Literate adds, so a fixture where the two
+            // streams coincide would pin nothing at all: every assertion below would pass on a port
+            // that ignored the flag. Asserted rather than assumed, because the fixture text is a
+            // string somebody could "tidy" later without realising what it is for.
+            Assert.That(converted, Is.Not.EqualTo(plain), "the fixture must actually be punctuated");
+
+            Assert.That(converted, Is.EqualTo(ServerDifficulty.Compute(server, 1, literate: true)), "sr_literate (1.00x)");
+            Assert.That(ClientDifficulty.Compute(client, ClientPp.DOUBLE_TIME_BASE_RATE, literate: true),
+                Is.EqualTo(ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate, literate: true)), "sr_literate_dt (1.50x)");
+            Assert.That(ClientDifficulty.Compute(client, ClientPp.HALF_TIME_BASE_RATE, literate: true),
+                Is.EqualTo(ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate, literate: true)), "sr_literate_ht (0.75x)");
+        });
+    }
+
+    [Test]
+    public void TheLiterateRatingIsNotTheRateRatingTimesAConstant()
+    {
+        // WHY THERE ARE SIX STORED COLUMNS AND NOT FOUR. The obvious saving is to store sr_literate
+        // alone and recover the rate pair as sr_literate * (sr_dt / difficulty_rating), i.e. to
+        // assume Literate and the rate compose multiplicatively. They do not, and the reason is
+        // structural: LyricDifficulty ends in star_scale * raw^star_power and the rate enters raw
+        // ADDITIVELY, so a ratio taken through that power cannot survive a change of baseline.
+        //
+        // This test is the standing proof of that, so that a future reader who reaches for the
+        // saving finds the counter-example already written down rather than having to rediscover
+        // it. On the five real reference maps the same prediction is out by up to 5.8% in stars,
+        // which is 11.2% in pp, and it errs in both directions.
+        var (_, server) = TwinMaps();
+
+        double plainBase = ServerDifficulty.Compute(server);
+        double plainDt = ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate);
+        double literateBase = ServerDifficulty.Compute(server, 1, literate: true);
+        double literateDt = ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate, literate: true);
+
+        Assert.That(literateDt, Is.Not.EqualTo(literateBase * (plainDt / plainBase)).Within(1e-9),
+            "if this ever holds, the rate ratio has become baseline-independent and the three "
+            + "sr_literate* columns could collapse to one; until then they cannot");
+    }
+
+    [Test]
+    public void ALiterateMapMissingItsConvertedRatingIsPendingRatherThanPricedOffThePlainOne()
+    {
+        // The same deferral rule as the Half Time test below, one level up. difficulty_rating has
+        // been NOT NULL since 001, so a plain no-rate play can never be pending; sr_literate is
+        // filled by the startup sweep and CAN be missing, and the answer then must be "not yet"
+        // rather than "price it off the unconverted map", which would stamp a value the very next
+        // sweep has to disagree with.
+        var (_, server) = TwinMaps();
+
+        double baseStars = ServerDifficulty.Compute(server);
+        double dtStars = ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate);
+        double htStars = ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate);
+
+        var full = ServerLiterate(server);
+
+        (ServerPp.RateStars Stars, string Name)[] cases =
+        [
+            (ServerPp.StarsFor(ServerMods(Stack(new TypeBeatModLiterate())), baseStars, dtStars, htStars, default), "LT with no converted ratings at all"),
+            (ServerPp.StarsFor(ServerMods(Stack(new TypeBeatModLiterate(), new TypeBeatModDoubleTime())), baseStars, dtStars, htStars,
+                new ServerPp.LiterateStars(full.Base, null, full.HalfTime)), "LT+DT with sr_literate_dt missing"),
+            (ServerPp.StarsFor(ServerMods(Stack(new TypeBeatModLiterate(), new TypeBeatModHalfTime())), baseStars, dtStars, htStars,
+                new ServerPp.LiterateStars(full.Base, null, full.HalfTime)), "LT+HT missing the up-rate it mirrors against"),
+        ];
+
+        Assert.Multiple(() =>
+        {
+            foreach (var (stars, name) in cases)
+            {
+                Assert.That(stars.Stars, Is.Null, name);
+                Assert.That(stars.Pending, Is.True, name + ": left stale for PpBackfill, not settled at a wrong price");
+            }
+
+            // And with the columns filled it prices, off the CONVERTED rating rather than the plain one.
+            var priced = ServerPp.StarsFor(ServerMods(Stack(new TypeBeatModLiterate())), baseStars, dtStars, htStars, full);
+
+            Assert.That(priced.Pending, Is.False);
+            Assert.That(priced.Stars, Is.EqualTo(full.Base));
+            Assert.That(priced.Stars, Is.Not.EqualTo(baseStars));
+        });
     }
 
     [Test]
@@ -697,8 +832,8 @@ public class PerformancePointsParityTest
 
         var halfTime = ServerMods(Stack(new TypeBeatModHalfTime()));
 
-        var withoutDt = ServerPp.StarsFor(halfTime, baseStars, null, htStars);
-        var withDt = ServerPp.StarsFor(halfTime, baseStars, ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate), htStars);
+        var withoutDt = ServerPp.StarsFor(halfTime, baseStars, null, htStars, ServerLiterate(server));
+        var withDt = ServerPp.StarsFor(halfTime, baseStars, ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate), htStars, ServerLiterate(server));
 
         Assert.Multiple(() =>
         {
@@ -765,7 +900,7 @@ public class PerformancePointsParityTest
             var serverCounts = ServerCounts(play);
 
             double? clientStars = ClientPp.StarsFor(client, clientStack);
-            var serverStars = ServerPp.StarsFor(serverStack, baseStars, dtStars, htStars);
+            var serverStars = ServerPp.StarsFor(serverStack, baseStars, dtStars, htStars, ServerLiterate(server));
 
             // What the in-game counter would show (nothing at all when the play's rate makes it
             // ineligible, which is the same "no price exists" the server reports as a null). The
@@ -778,7 +913,7 @@ public class PerformancePointsParityTest
 
             // ...against what the server would write to scores.pp for the very same play.
             var (serverPp, settled) = ServerPp.ForScore(
-                ranked: true, serverStack, serverCounts, accuracy, maxCombo, baseStars, dtStars, htStars);
+                ranked: true, serverStack, serverCounts, accuracy, maxCombo, baseStars, dtStars, htStars, ServerLiterate(server));
 
             string context = $"mods=[{string.Join('+', clientStack.Select(m => m.Acronym))}] " +
                              $"play={string.Join(',', play.Select(kv => $"{kv.Key}:{kv.Value}"))} acc={accuracy} combo={maxCombo}";
@@ -817,7 +952,7 @@ public class PerformancePointsParityTest
 
         double Price(IReadOnlyList<Mod> stack)
         {
-            var (pp, settled) = ServerPp.ForScore(true, ServerMods(stack), ServerCounts(play), 0.93, 380, baseStars, dtStars, htStars);
+            var (pp, settled) = ServerPp.ForScore(true, ServerMods(stack), ServerCounts(play), 0.93, 380, baseStars, dtStars, htStars, ServerLiterate(server));
 
             Assert.That(settled, Is.True);
             return pp!.Value;
@@ -866,7 +1001,7 @@ public class PerformancePointsParityTest
         var customRate = Stack(At(new TypeBeatModDoubleTime(), 1.75));
 
         var (serverPp, _) = ServerPp.ForScore(true, ServerMods(customRate), ServerCounts(counts), 0.9, 400, baseStars,
-            ServerDifficulty.Compute(server, 1.50), ServerDifficulty.Compute(server, 0.75));
+            ServerDifficulty.Compute(server, 1.50), ServerDifficulty.Compute(server, 0.75), ServerLiterate(server));
 
         Assert.Multiple(() =>
         {

@@ -31,7 +31,8 @@ C = 9.6    # global scale constant, does not affect ranking order
 Factor by factor, in descending priority:
 
 * **SR_eff^2.00**: difficulty is the primary driver. SR_eff is the map's star rating
-  **recomputed at the play's clock rate** for DT/HT (see mods below), not the base SR.
+  **recomputed at the play's clock rate** for DT/HT and **on the map the conversion mods produced**
+  for LT (see mods below), not the base SR.
 * **cleanliness^10**: dropped cells. The raw COUNT carries a power, not the ratio, since the
   backlog-97 amendment, and that power has been the declared constant `count_power` since the
   backlog-101 one. It stands at 1.6. That makes this a steep curve and a CLAMPED one: the base
@@ -91,10 +92,17 @@ stored `ranked = false` and therefore earn no pp.
   only the **base rates** (DT 1.5x, HT 0.75x) are pp-eligible. A custom rate makes the play
   **pp-ineligible only**: it still ranks on the score leaderboards exactly as today (the
   variable-rate ranking feature is preserved, no retroactive unranking), it just earns 0 pp.
-  Implementation consequence: the server only ever needs SR at three rates (1.0 / 1.5 / 0.75);
-  store `sr_dt` / `sr_ht` per beatmap at ingest and backfill via the existing pace VERSION-bump
-  mechanism. No on-the-fly rate-SR math.
-* **LT** (like HD): flat × 1.06.
+  Implementation consequence: the server only ever needs SR at three rates (1.0 / 1.5 / 0.75)
+  per cell stream; store `sr_dt` / `sr_ht` (and, since the Literate amendment, `sr_literate` /
+  `sr_literate_dt` / `sr_literate_ht`) per beatmap at ingest and backfill via the existing pace
+  VERSION-bump mechanism. No on-the-fly rate-SR math.
+* **LT** (Literate): priced **exclusively through SR_eff**, exactly as a rate is, and with no flat
+  multiplier in modMult for the same reason there is none for DT/HT. Literate is a **conversion**
+  mod: it makes every supported punctuation mark a typed cell of its own, so it changes the map's
+  cell count, its pace and its rating. It used to carry a flat × 1.06 on top of the UNCONVERTED
+  map's rating; see the 2026-08-12 Literate amendment for why that became a double count, and for
+  the storage consequence (Literate is orthogonal to rate, so the server stores **six** ratings per
+  difficulty, not three).
 * **FL** (flashlight): × `max(1.0, 1 + 0.02 + 0.06·log10(notes/100))`. Much smaller than osu's
   flashlight bonus, but grows with song length, so it pays off on long maps. The `max` clamp is
   required: unclamped, the raw term dips **below 1.0 under ~46 notes**, which would punish FL on
@@ -114,8 +122,7 @@ stored `ranked = false` and therefore earn no pp.
 * **SD / MU**: × 1.0 (no effect, matching their score multipliers).
 
 ```
-modMult = (LT       ? 1.06                                      : 1)
-        · (FL       ? max(1.0, 1 + 0.02 + 0.06·log10(notes/100)) : 1)
+modMult = (FL       ? max(1.0, 1 + 0.02 + 0.06·log10(notes/100)) : 1)
         · (RH       ? 1.10                                      : 1)
         · (Fletcher ? 0.90                                      : 1)
         · (NF       ? 0.90                                      : 1)
@@ -795,3 +802,59 @@ fractional exponent on a negative base is non-real.
 
 **`VERSION` bumps to 14.** Every stored row the change values differently is repriced by
 `PpBackfill` at the next boot, reading only columns; no migration is needed.
+
+## Amendment (2026-08-12): Literate is priced through its star rating, and the flat 1.06 goes (backlog 144)
+
+The flat multiplier of 1.06 leaves modMult, and Literate is priced the way a rate is:
+exclusively through SR_eff, recomputed on the beatmap the mod converts this one into. Literate
+is IApplicableAfterBeatmapConversion, so every supported punctuation mark becomes a typed cell
+with a target time of its own; that lengthens words, changes a line's rhythm and moves the map's
+rating. This file has said since task 61 that DT/HT get no flat multiplier precisely so nothing
+double-counts, and the half-way state (the rating moves AND the multiplier stays) is the one
+option that is definitely wrong. THE FLAT NUMBER WAS ALSO A POOR DESCRIPTION OF THE MOD.
+Measured over the five reference maps, the honest rate-1.0 rating moves by +2.3%, +2.7%, +6.3%, -0.8%
+and -0.7%: Literate makes two of the five EASIER, because the extra characters raise a word's
+per-character window floor as well as its cost. A flat 1.06 paid every map the same 6%
+regardless. In pp the net of dropping 1.06 and taking the honest rating is -7.1% to +6.6% at
+rate 1.00, and -6.4% to +19.4% under Double Time. THE STORAGE CONSEQUENCE IS SIX RATINGS PER
+DIFFICULTY, NOT FOUR. The server prices strictly from stored columns, so a combination whose
+rating is not stored cannot be priced at all, and Literate is ORTHOGONAL to the rate: a Literate
+Double Time play needs the CONVERTED map rated at 1.50x. Migration 029_literate_stars.sql adds
+sr_literate, sr_literate_dt and sr_literate_ht beside the existing three, and LyricPace.VERSION
+bumps to 13 so the startup sweep fills them. That cross product is not avoidable by arithmetic:
+LyricDifficulty ends in star_scale times raw^star_power with the rate entering raw ADDITIVELY,
+so predicting sr_literate_dt as sr_literate times (sr_dt/difficulty_rating) is wrong by up to
+5.8% in stars and 11.2% in pp over the same five maps, in both directions. A Literate play on a
+map the sweep has not reached yet is written UNPRICED and retried on a later boot, exactly as a
+Double Time play on a map without sr_dt already is. ELIGIBILITY DOES NOT MOVE: Literate stays
+RANKED, EligibleRate knows nothing about it, and a Literate play ranks on every leaderboard
+exactly as before.
+
+```
+BEFORE:  max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − typos^1.2/(notes + typos))^4
+
+AFTER:   max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − typos^1.2/(notes + typos))^4
+```
+
+SR, the global scale, length, accuracy, combo, the Half Time mirror multiplier, eligibility and
+the aggregation are all untouched. The typo count still sits on both sides of its own fraction,
+for the reason the backlog-89 amendment gives: keypresses are unbounded, and a fractional
+exponent on a negative base is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, typo=80` | `0.008341` | `0.008341` | +0% |
+| `notes=500, miss=10, typo=20` | `0.542001` | `0.542001` | +0% |
+
+The worked table above is the two PENALTY examples this file has tracked since backlog 89, and both
+are unmoved, because neither carries a mod at all. They are not witnesses to this change; the
+per-map figures in the prose above are the ones to read.
+
+**`VERSION` bumps to 15, AND THIS ONE DOES NEED A MIGRATION**, which makes it the first amendment
+that does. Every previous bump was repriced by `PpBackfill` from columns that already existed;
+this change gives a Literate play a rating that has never been stored, so `029_literate_stars.sql`
+adds the three columns and `LyricPace.VERSION` bumps to 13 so `PaceBackfill` fills them from the
+stored blobs at the next boot. `PpBackfill` runs after it in the same startup, exactly as it
+already does for `sr_dt` / `sr_ht`, and any Literate row it reaches before its map is filled is
+left stale and retried rather than stamped at zero. No non-Literate row is valued differently by
+this change at all.

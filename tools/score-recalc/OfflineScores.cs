@@ -70,7 +70,10 @@ public static class OfflineScores
                 PpKnown: false,
                 BaseStars: stars.GetValueOrDefault(hash),
                 SrDt: null,
-                SrHt: null));
+                SrHt: null,
+                SrLiterate: null,
+                SrLiterateDt: null,
+                SrLiterateHt: null));
         }
 
         return scores;
@@ -78,7 +81,7 @@ public static class OfflineScores
 
     /// <summary>A row the tool could not decode, kept so the report can count it.</summary>
     private static StoredScore Placeholder(long scoreId, string? missingHash) => new(
-        scoreId, 0, 0, 0, 0, 0, 0, "?", true, true, true, "{}", "{}", "[]", 0, false, 0, null, null);
+        scoreId, 0, 0, 0, 0, 0, 0, "?", true, true, true, "{}", "{}", "[]", 0, false, 0, null, null, null, null, null);
 
     /// <summary>The stored mods jsonb shape ([{acronym, settings}]), rebuilt from the replay's APIMods.</summary>
     private static string SerializeMods(typebeat.Game.Scoring.ScoreInfo info)

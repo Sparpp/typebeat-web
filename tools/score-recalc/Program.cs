@@ -173,7 +173,10 @@ internal static class Cli
                     true                         AS PpKnown,
                     b.difficulty_rating          AS BaseStars,
                     b.sr_dt                      AS SrDt,
-                    b.sr_ht                      AS SrHt
+                    b.sr_ht                      AS SrHt,
+                    b.sr_literate                AS SrLiterate,
+                    b.sr_literate_dt             AS SrLiterateDt,
+                    b.sr_literate_ht             AS SrLiterateHt
              FROM scores s
              JOIN beatmaps b ON b.id = s.beatmap_id
              WHERE s.ruleset_id = 0 {filter}

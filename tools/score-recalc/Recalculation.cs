@@ -33,7 +33,13 @@ public sealed record StoredScore(
     bool PpKnown,
     double BaseStars,
     double? SrDt,
-    double? SrHt);
+    double? SrHt,
+    // The Literate-converted map's three ratings (029_literate_stars.sql). Null for an offline
+    // score, whose only rating comes from a local .osu parse, which prices a Literate play at
+    // nothing rather than wrongly.
+    double? SrLiterate,
+    double? SrLiterateDt,
+    double? SrLiterateHt);
 
 /// <summary>Why a score could not be recalculated. Every one of these is reported, never hidden.</summary>
 public enum SkipReason
@@ -278,7 +284,8 @@ public static class Recalculation
             oldRule.MaxCombo,
             stored.BaseStars,
             stored.SrDt,
-            stored.SrHt);
+            stored.SrHt,
+            new PerformancePoints.LiterateStars(stored.SrLiterate, stored.SrLiterateDt, stored.SrLiterateHt));
 
         var (pp, ppSettled) = PerformancePoints.ForScore(
             ranked,
@@ -288,7 +295,8 @@ public static class Recalculation
             maxCombo,
             stored.BaseStars,
             stored.SrDt,
-            stored.SrHt);
+            stored.SrHt,
+            new PerformancePoints.LiterateStars(stored.SrLiterate, stored.SrLiterateDt, stored.SrLiterateHt));
 
         return new RecalcResult(
             stored,

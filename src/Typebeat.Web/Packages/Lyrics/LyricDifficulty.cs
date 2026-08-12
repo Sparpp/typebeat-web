@@ -14,8 +14,17 @@ namespace Typebeat.Web.Packages.Lyrics;
 ///
 /// Kept byte-for-byte in step with the game's port
 /// (typebeat-osu: typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty). Website computes the
-/// no-mod baseline (rate = 1); the game feeds a mod-adjusted rate. Any change here must be mirrored
-/// there and <see cref="LyricPace.VERSION"/> bumped so existing rows recompute.
+/// no-mod baseline (rate = 1) plus the five other stored combinations; the game feeds the play's
+/// own rate and stream. Any change here must be mirrored there and <see cref="LyricPace.VERSION"/>
+/// bumped so existing rows recompute.
+///
+/// The LITERATE mod moves the rating exactly as a rate does, through <c>literate</c>: it is a
+/// CONVERSION mod on the client (IApplicableAfterBeatmapConversion), so the cells it produces ARE
+/// the authored chars and every supported punctuation mark becomes a real typed cell with a target
+/// time of its own. That lengthens words, changes a line's rhythm and therefore changes the map's
+/// difficulty, so the mod is priced through this rating and carries no flat pp multiplier of its
+/// own (docs/pp.md, backlog 144). At <c>literate: false</c> every word is the stripped, lower-case
+/// stream this method has always measured, so no existing rating moves.
 /// </summary>
 public static class LyricDifficulty
 {
@@ -45,7 +54,7 @@ public static class LyricDifficulty
 
     private readonly struct Word
     {
-        public readonly string Text; // typeable, lower-case (word-repetition key)
+        public readonly string Text; // the word's typed cells (word-repetition key)
         public readonly int Chars;
         public readonly int Runs;
         public readonly double StartMs; // real-time onset (beatmap time / rate)
@@ -63,8 +72,12 @@ public static class LyricDifficulty
         }
     }
 
-    /// <summary>Stars for the given lyric lines, under a clock <paramref name="rate"/> (1 = no mod).</summary>
-    public static double Compute(IReadOnlyList<LyricLine> lines, double rate = 1)
+    /// <summary>
+    /// Stars for the given lyric lines, under a clock <paramref name="rate"/> (1 = no mod) and the
+    /// cell stream <paramref name="literate"/> selects (false = the default stripped, lower-case
+    /// stream; true = the authored chars, marks included, i.e. the client's Literate mod).
+    /// </summary>
+    public static double Compute(IReadOnlyList<LyricLine> lines, double rate = 1, bool literate = false)
     {
         if (lines.Count == 0 || rate <= 0)
             return 0;
@@ -83,7 +96,7 @@ public static class LyricDifficulty
 
             for (int j = 0; j < tokens.Length; j++)
             {
-                string text = typeableLower(tokens[j]);
+                string text = cellStream(tokens[j], literate);
 
                 if (text.Length == 0)
                     continue;
@@ -226,19 +239,35 @@ public static class LyricDifficulty
     }
 
     /// <summary>
-    /// The typeable characters of a token, lower-cased. Freestyle slots are deliberately NOT
-    /// included: they carry no fixed key, so they contribute no finger travel or bigram cost to
-    /// the difficulty model (they are, if anything, the easiest cell on the line). Mirrors the
-    /// game's typeableLower, which is <see cref="Typeability.IsTypeable"/>, not IsCell.
+    /// The cells of one token, i.e. what the player actually has to type for it. Mirrors the game's
+    /// cellStream, which keys on <see cref="Typeability.IsTypeable"/>, not IsCell.
+    ///
+    /// <para>WITHOUT LITERATE that is the typeable characters, lower-cased: marks are not cells at
+    /// all (<see cref="Typeability.IsTypeable"/> excludes them on purpose) and case is folded
+    /// because the caret matches case-insensitively.</para>
+    ///
+    /// <para>WITH LITERATE the cells ARE the authored chars, so every supported
+    /// <see cref="Typeability.PUNCTUATION"/> mark joins them and case is KEPT. Both carry real
+    /// difficulty and both are load-bearing here: a mark lengthens its word (raising <c>cost</c>,
+    /// and the per-character window floor with it) and splits the line's rhythm finer (moving
+    /// <c>cv</c>), while keeping case means a capital counts as a distinct char for the run factor
+    /// and for word repetition, which is what it is under this mod (a held Shift, and a target a
+    /// lower-case press is judged WRONG against).</para>
+    ///
+    /// <para>Freestyle slots are deliberately NOT included under either stream: they carry no fixed
+    /// key, so they contribute no finger travel or bigram cost to the difficulty model (they are,
+    /// if anything, the easiest cell on the line), and Literate does not constrain them either.</para>
     /// </summary>
-    private static string typeableLower(string token)
+    private static string cellStream(string token, bool literate)
     {
         var sb = new System.Text.StringBuilder(token.Length);
 
         foreach (char c in token)
         {
             if (Typeability.IsTypeable(c))
-                sb.Append(char.ToLowerInvariant(c));
+                sb.Append(literate ? c : char.ToLowerInvariant(c));
+            else if (literate && Typeability.IsPunctuation(c))
+                sb.Append(c);
         }
 
         return sb.ToString();

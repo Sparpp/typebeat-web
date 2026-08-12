@@ -25,6 +25,15 @@ namespace Typebeat.Web.Packages;
 /// re-rated, VERSION is now 9, and the punctuated re-derive travelled with it knowingly. The rate
 /// ratings recompute for free either way, because they ride the same UPDATE.
 /// </para>
+///
+/// <para>
+/// THE LITERATE RATINGS (029_literate_stars.sql, v13) DELIBERATELY DO NOT GET A THIRD ARM. The
+/// deferral that made 020 avoid a VERSION bump was spent at v9, so the ordinary idiom applies again
+/// and the bump alone makes this sweep revisit every row and fill them, exactly as v7, v8 and v11
+/// did for their new columns. The two existing <c>IS NULL</c> arms stay as the self-heal for a row
+/// this sweep FAILED on rather than never reached, and they cover the new columns implicitly: the
+/// six ratings are written by one UPDATE, so a row missing any of them is missing all of them.
+/// </para>
 /// </summary>
 public static class PaceBackfill
 {
@@ -79,6 +88,9 @@ public static class PaceBackfill
                         lyrics = @lyrics,
                         sr_dt = @srDt,
                         sr_ht = @srHt,
+                        sr_literate = @srLiterate,
+                        sr_literate_dt = @srLiterateDt,
+                        sr_literate_ht = @srLiterateHt,
                         peak_wpm = @peakWpm,
                         peak_cpm = @peakCpm,
                         wpm_curve = @wpmCurve,
@@ -105,6 +117,13 @@ public static class PaceBackfill
                         // yet and are retried rather than frozen at zero (PpBackfill).
                         srDt = diff.SrDoubleTime,
                         srHt = diff.SrHalfTime,
+                        // v13: the same three ratings for the Literate-CONVERTED map
+                        // (029_literate_stars.sql). Rows the backfill cannot reach keep NULL, i.e.
+                        // their Literate plays earn no pp yet and are retried rather than frozen at
+                        // zero, exactly as an unfilled sr_dt leaves a Double Time play pending.
+                        srLiterate = diff.SrLiterate,
+                        srLiterateDt = diff.SrLiterateDoubleTime,
+                        srLiterateHt = diff.SrLiterateHalfTime,
                         // v11: the rolling-window pace the set page graphs (028_wpm_curve.sql).
                         // Rows the backfill cannot reach keep NULL, i.e. no graph, which is also
                         // what a map too short to measure stores.

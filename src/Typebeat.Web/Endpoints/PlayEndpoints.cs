@@ -314,9 +314,13 @@ public static class PlayEndpoints
         var endedAt = DateTimeOffset.UtcNow;
 
         // Performance points (docs/pp.md). The browser player stores a hardcoded empty mod stack
-        // (below), so there is no mod multiplier and no rate to price: the play is always valued at
-        // the map's base star rating, which is never NULL, so this row is always settled at the
-        // current version and the backfill never has to revisit it.
+        // (below), so there is no mod multiplier, no rate and no CONVERSION mod to price: the play
+        // is always valued at the map's base star rating, which is never NULL, so this row is
+        // always settled at the current version and the backfill never has to revisit it.
+        //
+        // The empty stack is what makes omitting the sr_literate* triple correct here. /play never
+        // offers Literate (see play.js), so if it ever does, this call has to read and pass those
+        // columns too or every browser Literate play would sit unpriced forever.
         var (pp, ppSettled) = PerformancePoints.ForScore(
             ranked,
             mods: [],

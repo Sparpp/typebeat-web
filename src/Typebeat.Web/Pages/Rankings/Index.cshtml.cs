@@ -72,6 +72,9 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         double BaseStars,
         double? StarsDoubleTime,
         double? StarsHalfTime,
+        double? StarsLiterate,
+        double? StarsLiterateDoubleTime,
+        double? StarsLiterateHalfTime,
         string Rank,
         double Completion,
         double Accuracy,
@@ -111,8 +114,9 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         /// Never null in practice. <see cref="PerformancePoints.ForScore"/> prices nothing at all,
         /// and its callers store 0, whenever <see cref="PerformancePoints.StarsFor"/> yields no
         /// rating (a custom rate, a multi-rate stack, or a map missing a rating the play needs:
-        /// <c>sr_dt</c> for a DT play, BOTH <c>sr_ht</c> and <c>sr_dt</c> for an HT one), and the board only
-        /// carries plays with <c>pp &gt; 0</c>, so every row here priced from one of the three
+        /// <c>sr_dt</c> for a DT play, BOTH <c>sr_ht</c> and <c>sr_dt</c> for an HT one, and the
+        /// matching <c>sr_literate*</c> for anything carrying Literate), and the board only
+        /// carries plays with <c>pp &gt; 0</c>, so every row here priced from one of the six
         /// stored ratings and the sr columns only ever go from null to filled. It stays nullable
         /// anyway, and renders as an empty cell, because the honest answer to "which rating is this"
         /// is nothing rather than a number that did not price the play.
@@ -126,7 +130,8 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         /// </para>
         /// </summary>
         public double? EffectiveStars
-            => PerformancePoints.StarsFor(Mods, BaseStars, StarsDoubleTime, StarsHalfTime).Stars;
+            => PerformancePoints.StarsFor(Mods, BaseStars, StarsDoubleTime, StarsHalfTime,
+                new PerformancePoints.LiterateStars(StarsLiterate, StarsLiterateDoubleTime, StarsLiterateHalfTime)).Stars;
 
         private JObject? statistics;
         private JObject Statistics => statistics ??= JObject.Parse(string.IsNullOrEmpty(StatisticsJson) ? "{}" : StatisticsJson);
@@ -250,6 +255,9 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                             b.difficulty_rating AS BaseStars,
                             b.sr_dt AS StarsDoubleTime,
                             b.sr_ht AS StarsHalfTime,
+                            b.sr_literate AS StarsLiterate,
+                            b.sr_literate_dt AS StarsLiterateDoubleTime,
+                            b.sr_literate_ht AS StarsLiterateHalfTime,
                             sc.rank AS Rank,
                             sc.completion AS Completion,
                             sc.accuracy AS Accuracy,

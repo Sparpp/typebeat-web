@@ -573,13 +573,31 @@ public class PackageIngestDbTest
     {
         await using var conn = await db.OpenAsync();
 
-        var row = await conn.QuerySingleAsync<(double Base, double? Dt, double? Ht)>(
-            "SELECT difficulty_rating AS Base, sr_dt AS Dt, sr_ht AS Ht FROM beatmaps WHERE id = 1001");
+        var row = await conn.QuerySingleAsync<(double Base, double? Dt, double? Ht, double? Lt, double? LtDt, double? LtHt)>(
+            """
+            SELECT difficulty_rating AS Base, sr_dt AS Dt, sr_ht AS Ht,
+                   sr_literate AS Lt, sr_literate_dt AS LtDt, sr_literate_ht AS LtHt
+            FROM beatmaps WHERE id = 1001
+            """);
 
         Assert.Multiple(() =>
         {
             Assert.That(row.Dt, Is.Not.Null, "sr_dt is written at ingest, never derived at query time");
             Assert.That(row.Ht, Is.Not.Null);
+
+            // 029_literate_stars.sql: the same three for the map the client's Literate mod converts
+            // this one into, written at ingest for the same reason. THIS FIXTURE'S LYRIC IS "ab cd",
+            // which carries no mark and no capital, so its converted stream is the same string and
+            // all three equal their plain counterparts. That is the correct value, not a missing
+            // one, and it is what every map authored before punctuation existed stores; the
+            // WireCompat suite is where a genuinely punctuated map pins the difference.
+            Assert.That(row.Lt, Is.Not.Null, "sr_literate is written at ingest too");
+            Assert.That(row.LtDt, Is.Not.Null);
+            Assert.That(row.LtHt, Is.Not.Null);
+
+            Assert.That(row.Lt!.Value, Is.EqualTo(literateStarsAtRate(1)).Within(1e-9));
+            Assert.That(row.LtDt!.Value, Is.EqualTo(literateStarsAtRate(RateMods.DoubleTimeBaseRate)).Within(1e-9));
+            Assert.That(row.LtHt!.Value, Is.EqualTo(literateStarsAtRate(RateMods.HalfTimeBaseRate)).Within(1e-9));
 
             // Exactly LyricDifficulty at the two BASE rates, the only two ratings pp ever needs.
             Assert.That(row.Dt!.Value, Is.EqualTo(starsAtRate(RateMods.DoubleTimeBaseRate)).Within(1e-9));
@@ -713,6 +731,84 @@ public class PackageIngestDbTest
             "recomputed against the same reparsed blob, so the value comes back identical");
     }
 
+
+    /// <summary>
+    /// 029_literate_stars.sql, the Literate half of the pair above. Two things have to hold and
+    /// they pull in opposite directions:
+    ///
+    /// <list type="number">
+    /// <item>A Literate play whose converted rating is NOT stored must be written UNPRICED and
+    /// retried, never priced off the unconverted map's rating. That is the existing rule for a
+    /// Double Time play on a map without <c>sr_dt</c>, followed rather than reinvented.</item>
+    /// <item>The startup sweep must actually fill the columns for every row that predates them,
+    /// which is what the <c>LyricPace.VERSION</c> bump to 13 is for. Unlike 020, which added a
+    /// second arm to the staleness predicate instead, the version arm is used here: the deferral
+    /// that made 020 avoid a bump was spent at v9.</item>
+    /// </list>
+    /// </summary>
+    [Test]
+    [Order(13)]
+    public async Task ALiteratePlayIsUnpricedUntilThePaceSweepFillsTheConvertedRatings()
+    {
+        await using var conn = await db.OpenAsync();
+
+        long playerId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO users (username, email, password_hash, country_code)
+            VALUES ('literate typist', 'literate.typist@example.com', 'x', 'US')
+            RETURNING id
+            """);
+
+        long literatePlay = await insertPlayAsync(conn, playerId, """[{"acronym":"LT"}]""");
+
+        // The state every existing row is in the moment 029 deploys: the three new columns NULL and
+        // the pace stamp one generation behind.
+        await conn.ExecuteAsync(
+            """
+            UPDATE beatmaps
+            SET sr_literate = NULL, sr_literate_dt = NULL, sr_literate_ht = NULL, pace_version = 12
+            WHERE id = 1001
+            """);
+
+        await conn.ExecuteAsync("UPDATE scores SET pp = 0, pp_version = 0 WHERE id = @id", new { id = literatePlay });
+
+        await PpBackfill.RunAsync(db, NullLogger.Instance);
+
+        int pendingVersion = await ppVersionOf(conn, literatePlay);
+        double pendingPp = await ppOf(conn, literatePlay);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pendingVersion, Is.Zero,
+                "left stale for the next boot, not stamped at a price the sweep would disagree with");
+            Assert.That(pendingPp, Is.Zero);
+        });
+
+        // Now the pace sweep reaches the map, on the VERSION arm alone.
+        await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        var beatmap = await conn.QuerySingleAsync<(double? Lt, int PaceVersion)>(
+            "SELECT sr_literate AS Lt, pace_version AS PaceVersion FROM beatmaps WHERE id = 1001");
+
+        await PpBackfill.RunAsync(db, NullLogger.Instance);
+
+        double priced = await ppOf(conn, literatePlay);
+        int stamped = await ppVersionOf(conn, literatePlay);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(beatmap.PaceVersion, Is.EqualTo(LyricPace.VERSION));
+            Assert.That(beatmap.Lt, Is.EqualTo(literateStarsAtRate(1)).Within(1e-9));
+
+            Assert.That(stamped, Is.EqualTo(PerformancePoints.VERSION), "and now it settles");
+
+            // Priced off sr_literate, with NO mod multiplier of its own: since backlog 144 Literate
+            // contributes nothing to modMult, so on this mark-free fixture (whose converted rating
+            // equals its plain one) the play is worth exactly what the no-mod play is.
+            Assert.That(priced, Is.EqualTo(PerformancePoints.Compute(beatmap.Lt!.Value, 120, 8, 0.9, 100, [])).Within(1e-9));
+        });
+    }
+
     /// <summary>A ranked, passed play: 100 great + 20 miss + 8 ignore_hit, 90% acc, 100 combo.</summary>
     private static async Task<long> insertPlayAsync(NpgsqlConnection conn, long userId, string modsJson, bool ranked = true)
         => await conn.ExecuteScalarAsync<long>(
@@ -732,6 +828,9 @@ public class PackageIngestDbTest
     private static async Task<double> ppOf(NpgsqlConnection conn, long scoreId)
         => await conn.ExecuteScalarAsync<double>("SELECT pp FROM scores WHERE id = @scoreId", new { scoreId });
 
+    private static async Task<int> ppVersionOf(NpgsqlConnection conn, long scoreId)
+        => await conn.ExecuteScalarAsync<int>("SELECT pp_version FROM scores WHERE id = @scoreId", new { scoreId });
+
     /// <summary>
     /// The seeded difficulty's stars at a given clock rate, straight from the model. The synthetic
     /// package's [Lyrics] payload is fixed (SyntheticPackage.PaceRegressionLyrics), so this is the
@@ -742,6 +841,14 @@ public class PackageIngestDbTest
         var parsed = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
 
         return LyricDifficulty.Compute(parsed.Lines, rate);
+    }
+
+    /// <summary>The same, on the stream the client's Literate mod converts the map to.</summary>
+    private static double literateStarsAtRate(double rate)
+    {
+        var parsed = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
+
+        return LyricDifficulty.Compute(parsed.Lines, rate, literate: true);
     }
 
     private static string readEmbeddedMigration(string name)
