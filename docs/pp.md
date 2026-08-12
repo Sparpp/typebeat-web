@@ -33,21 +33,22 @@ Factor by factor, in descending priority:
 * **SR_eff^2.00**: difficulty is the primary driver. SR_eff is the map's star rating
   **recomputed at the play's clock rate** for DT/HT (see mods below), not the base SR.
 * **cleanliness^10**: dropped cells. The raw COUNT carries a power, not the ratio, since the
-  backlog-97 amendment, and that power is `count_power = 1.2` since the backlog-101 one. That makes
-  this a steep curve and a CLAMPED one: the base `1 - miss^1.2/notes` reaches zero at
-  `miss = notes^(1/1.2)`, i.e. 178 misses on a 500-note map, and `max(0, ...)` holds it there rather
-  than letting it go negative. Past that point a play earns exactly nothing from any factor, and
-  well before it the term is already negligible. A give-up run (e.g. 900+ misses) collapses to
-  exactly 0.
+  backlog-97 amendment, and that power has been the declared constant `count_power` since the
+  backlog-101 one. It stands at 1.6. That makes this a steep curve and a CLAMPED one: the base
+  `1 - miss^1.6/notes` reaches zero at `miss = notes^(1/1.6)`, i.e. 49 misses on a 500-note map, and
+  `max(0, ...)` holds it there rather than letting it go negative. Past that point a play earns
+  exactly nothing from any factor, and well before it the term is already negligible. A give-up run
+  (e.g. 900+ misses) collapses to exactly 0.
 * **mistyping^4**: wrong keypresses, priced separately since the backlog-89 amendment, and with its
   own count under the same power since the backlog-97 one. Still the cheaper of the two failures
-  (6 against 10), because a stumble you recover from is not the same failure as never typing the
+  (4 against 10), because a stumble you recover from is not the same failure as never typing the
   cell at all, and because the count sits in its denominator too, which pushes its cliff out to the
-  positive root of `m^1.2 - m - notes = 0` (249 mistypes at 500 notes) rather than to
-  `notes^(1/1.2)`.
+  positive root of `m^1.6 - m - notes = 0` (52 mistypes at 500 notes) rather than to
+  `notes^(1/1.6)`.
 * **`count_power`** is where a rebalance of the two penalties is made, rather than the exponents 10
-  and 6: it alone decides at what count each term reaches its cliff, and how that cliff scales with
-  map size. See the backlog-101 amendment for the two arguments that fix it at 1.2.
+  and 4: it alone decides at what count each term reaches its cliff, and how that cliff scales with
+  map size. The backlog-101 amendment records the two arguments that were used to set it, at 1.2;
+  v8 retuned it to 1.6, so both cliffs now sit lower than the counts stated there.
 * **Length**: the standard osu log bonus, rewarding sustained play over long maps. Clamped to
   a small positive floor so no play ever computes to zero or negative pp from length alone. At a
   weight of 0.50 the raw term crosses zero at exactly 1 note and the 0.1 floor at ~1.585, so the
@@ -274,6 +275,12 @@ no migration is needed, since migration 020 already created the `pp_version` col
 
 ## Amendment (2026-08-07): Half Time carries a mirror penalty (backlog 90)
 
+> **Figures superseded, mechanism in force.** The mirror multiplier is exactly as this section
+> defines it, but `sr_exponent` has since moved from the 2.70 written throughout it to 2.00, so
+> every D, H and percentage below is a figure at 2.70. On the same fixture spread at 2.00:
+> `D = 2.109`, `H = 0.655`, `m = 0.723`, and Half Time's total factor `0.474` against the `0.655`
+> it would carry without the mirror.
+
 Rate has always been priced **exclusively through `SR_eff`**, and it still is for Double Time. That
 is not a neutral choice for the down-rate, though, and the numbers say so. Because pp scales as
 `SR^2.70`, each base rate already carries an emergent factor relative to the same play at 1.00x:
@@ -498,6 +505,12 @@ fractional exponent on a negative base is non-real.
 
 ## Amendment (2026-08-08): the count power drops from 2 to 1.2 (backlog 101)
 
+> **Numbers superseded by v8**, which retuned `count_power` from the 1.2 this amendment settled on
+> to the 1.6 in force. The shape is unchanged and the two arguments below still apply, but every
+> figure in this section is a figure at 1.2: at 1.6 the cleanliness cliff is 49 misses on a
+> 500-note map rather than 178, and the mistyping cliff 52 rather than 249. v8 carries no amendment
+> of its own; see the note in the backlog-112 amendment below.
+
 Backlog 97 gave both penalties the shape they still have, max(0, 1 - count^p/denominator) raised
 to its own exponent, with p written out longhand as a square. That shape was right and the
 exponents 10 and 6 were right; the POWER was too extreme, and this amendment changes only that.
@@ -567,6 +580,16 @@ changes ORDER: a mistype-heavy play is repriced far more than double, because 8 
 to price such plays at essentially nothing. Both penalty bases are still exactly 1.0 at a count
 of zero, so a spotless play moves only by the rescale, while every stored row carrying a mistype
 is repriced upwards, which is what forces the bump.
+
+**Where the 1.6 came from, and the one gap in this file.** `count_power`'s 1.6 and the length
+weight's 0.50 are v8's, and v8 is the only version that shipped without amending this spec. It is
+game commit 51f1dc5 (2026-08-08), and its message is the whole of its record: "New pp coefficients:
+scale 3, SR 2.6, count power 1.6, mistype exponent 8, length weight 0.5, combo 0.75". Against v7
+that is scale 4.0 to 3.0, sr_exponent 2.70 to 2.60, mistype_exponent 6.0 to 8.0, count_power 1.2 to
+1.6, length_weight 0.70 to 0.50 and combo_exponent 0.55 to 0.75, with the SHAPE untouched;
+miss_exponent and accuracy_exponent did not move. Both mirrors' VERSION lists carry a v8 bullet
+stating the same. No dated section is added for it after the fact: a heading here means a decision
+recorded at the time, and there was none.
 
 ```
 BEFORE:  max(0, 1 − miss^1.6/notes)^10  ·  max(0, 1 − mistypes^1.6/(notes + mistypes))^8
