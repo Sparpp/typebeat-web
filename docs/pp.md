@@ -1,4 +1,4 @@
-# type!beat performance points (pp) — canonical spec for backlog task 61
+# type!beat performance points (pp): canonical spec for backlog task 61
 
 > Copied verbatim from the author's spec (backlog task 61) and committed here as the formula's
 > canonical home. The implementation lives in `src/Typebeat.Web/Scoring/PerformancePoints.cs`
