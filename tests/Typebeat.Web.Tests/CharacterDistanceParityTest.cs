@@ -487,7 +487,7 @@ public class CharacterDistanceParityTest
 
             Assert.That(mash.Notes, Is.EqualTo(14), "every judged cell is a note, whichever tier it landed in");
             Assert.That(mash.Misses, Is.EqualTo(3));
-            Assert.That(mash.Mistypes, Is.Zero, "mashing the RIGHT character is not a mistype");
+            Assert.That(mash.Typos, Is.Zero, "mashing the RIGHT character is not a typo");
         });
     }
 }
