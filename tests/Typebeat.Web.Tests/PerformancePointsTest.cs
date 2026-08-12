@@ -360,7 +360,7 @@ public class PerformancePointsTest
             // mistyping term is exactly 1.0 whatever the power, and the whole change is
             // max(0, 1 - 5^1.2/300)^10 = 0.97700^10 replacing 0.91667^10. Five misses is far under
             // the 116-miss cliff on a 300-note map, so this prices comfortably.
-            Assert.That(bare, Is.EqualTo(37.781351).Within(1e-5)); // pp[f.compute(3, 300, 5, 0.8, 250)]
+            Assert.That(bare, Is.EqualTo(49.631726).Within(1e-5)); // pp[f.compute(3, 300, 5, 0.8, 250)]
             Assert.That(PerformancePoints.Compute(3, 300, 5, 0.8, 250, [new ScoreMod("NF", null)]),
                 Is.EqualTo(bare * 0.90).Within(1e-9)); // pp:const no_fail_multiplier=0.90
             Assert.That(PerformancePoints.Compute(3, 300, 5, 0.8, 250, [new ScoreMod("FT", null)]),
@@ -1154,7 +1154,7 @@ public class PerformancePointsTest
         // That proof does not survive a steeper MISS exponent, which reprices every stored row with
         // even one miss, so PpBackfill has to sweep. If this moves, so do the game's
         // PerformancePoints.VERSION and docs/pp.md.
-        Assert.That(PerformancePoints.VERSION, Is.EqualTo(11)); // pp:version
+        Assert.That(PerformancePoints.VERSION, Is.EqualTo(12)); // pp:version
     }
 
     [Test]

@@ -17,13 +17,13 @@ Per play:
 
 ```
 pp = C · SR_eff^2.00
-       · max(0, 1 − miss^1.6/notes)^10                 # cleanliness
-       · max(0, 1 − mistypes^1.6/(notes+mistypes))^4   # mistyping
-       · max(0.1, 1 + 0.50·log10(notes/100))           # length bonus (clamped)
-       · acc^1.80                                      # accuracy (timing quality)
-       · (maxcombo/notes)^2.50                         # combo
-       · modMult                                       # NOT for DT/HT; rate lives in SR_eff only
-       · rateMult                                      # 1.0 except base-rate HT (see the Half Time amendment)
+       · max(0, 1 − miss^1.6/notes)^10                   # cleanliness
+       · max(0, 1 − mistypes^1.6/(notes+mistypes))^4     # mistyping
+       · max(0.1, 1 + 0.50·log10(notes/100))             # length bonus (clamped)
+       · acc^1.80                                        # accuracy (timing quality)
+       · (ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50   # combo
+       · modMult                                         # NOT for DT/HT; rate lives in SR_eff only
+       · rateMult                                        # 1.0 except base-rate HT (see the Half Time amendment)
 
 C = 12.5    # global scale constant, does not affect ranking order
 ```
@@ -56,10 +56,13 @@ Factor by factor, in descending priority:
 * **acc^1.80**: deliberately **gentle**, unlike osu. In type!beat real accuracies live at
   55–93%, not 97–100%, so an osu-style steep curve (acc^6+) would crush everything and make
   accuracy dominate. Keep the exponent around 1–2.
-* **(maxcombo/notes)^2.50**: mild. Combo overlaps with misses (a miss breaks combo), so it's
-  only a light signal on top, not a second heavy penalty. Combo can also break without a miss
-  (a badly-timed hit), so it still matters, and it distinguishes spread-out misses from one
-  choke that dropped several.
+* **(ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50**: near enough **linear** in the combo ratio
+  down to about 0.7. The exponent is steep, but the log base is concave and very nearly cancels
+  it over the range real plays live in (backlog 131), so a broken combo costs roughly its face
+  value rather than several times it. That is the point: combo overlaps with misses (a miss
+  breaks combo), so it must not read as a second heavy penalty. It still earns its place,
+  because combo can break without a miss (a badly-timed hit) and because it distinguishes
+  spread-out misses from one choke that dropped several.
 
 **Definitions (pinned to the score row):**
 
@@ -614,6 +617,10 @@ fractional exponent on a negative base is non-real.
 
 ## Amendment (2026-08-10): The difficulty curve flattens and accuracy/combo sharpen again (backlog 121, second export)
 
+> Superseded by v12, which changes the SHAPE of the combo term. The exponent 2.50 this amendment
+> set is still the exponent, but it is now applied to a log-bent ratio rather than to the ratio
+> itself.
+
 v11 = scale 5.5 to 12.5, sr_exponent 2.70 to 2.00, accuracy_exponent 1.75 to 1.80,
 combo_exponent 1.50 to 2.50. v10 never shipped, so the meaningful comparison is against v9: the
 SR exponent drop flattens the difficulty curve so easy maps gain and hard maps lose, while the
@@ -636,4 +643,48 @@ fractional exponent on a negative base is non-real.
 | `notes=500, miss=10, mistype=20` | `0.151677` | `0.151677` | +0% |
 
 **`VERSION` bumps to 11.** Every stored row the change values differently is repriced by
+`PpBackfill` at the next boot, reading only columns; no migration is needed.
+
+## Amendment (2026-08-12): the combo term's base goes log-shaped (backlog 131)
+
+The combo term stops being a plain powered ratio. Where v11 raised `maxcombo/notes` straight to
+2.50, v12 bends that ratio through a log first: the base is `ln(1 + 9.0·r)/ln(1 + 9.0)` over `r =
+maxcombo/notes`, and only then is raised to the same 2.50. `combo_exponent` does not move, and
+nothing else in the formula does either.
+
+A FULL COMBO IS PRICED BIT-IDENTICALLY, at every value of the shape constant: `ln(1 + k)/ln(1 +
+k)` is exactly 1 and 1 raised to anything is exactly 1. So this repositions only what sits BELOW
+an FC rather than rescaling the pool, exactly as the v10 and v11 combo retunes did.
+
+What it buys is that a broken combo costs roughly its FACE VALUE. The log base is CONCAVE,
+lifting every ratio under 1, where `^2.50` is convex, and at a shape constant of 9 the two very
+nearly cancel over the range real plays live in: the term is 0.9007 at a combo ratio of 0.90,
+0.7983 at 0.80 and 0.7458 at 0.75, i.e. near enough linear down to about 0.7. Under `^2.50`
+alone those same three plays kept 0.7684, 0.5724 and 0.4871, so losing 10% of a combo cost 23%
+of the term and losing a quarter of it cost slightly more than half. Further down the lift is
+larger still: a play that held half the map's combo keeps 0.4716 where it kept 0.1768, up 167%.
+
+The worked table below is the two PENALTY examples this file has tracked since backlog 89, and
+both are unmoved, because neither carries a combo at all. They are not witnesses to this change;
+the combo figures above are the ones to read.
+
+```
+BEFORE:  max(0, 1 − miss^1.6/notes)^10  ·  max(0, 1 − mistypes^1.6/(notes + mistypes))^4
+         ·  (maxcombo/notes)^2.50
+
+AFTER:   max(0, 1 − miss^1.6/notes)^10  ·  max(0, 1 − mistypes^1.6/(notes + mistypes))^4
+         ·  (ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50
+```
+
+SR, the global scale, length, accuracy, the mod multipliers, the Half Time mirror multiplier,
+eligibility and the aggregation are all untouched. The mistype count still sits on both sides of
+its own fraction, for the reason the backlog-89 amendment gives: keypresses are unbounded, and a
+fractional exponent on a negative base is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, mistype=80` | `0.000000` | `0.000000` | 0% |
+| `notes=500, miss=10, mistype=20` | `0.151677` | `0.151677` | +0% |
+
+**`VERSION` bumps to 12.** Every stored row the change values differently is repriced by
 `PpBackfill` at the next boot, reading only columns; no migration is needed.
