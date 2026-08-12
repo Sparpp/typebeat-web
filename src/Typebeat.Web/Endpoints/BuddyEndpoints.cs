@@ -190,7 +190,12 @@ public static class BuddyEndpoints
                    s.rank                                           AS Rank,
                    s.accuracy                                       AS Accuracy,
                    s.max_combo                                      AS MaxCombo,
-                   COALESCE((s.maximum_statistics->>'great')::int, 0) AS Notes,
+                   -- The map's cell count: one MaxResult per cell in maximum_statistics. That key
+                   -- was 'great' until backlog 133 raised the cell judgement's MaxResult to
+                   -- Perfect, so both are read and summed. A row only ever carries one of them, so
+                   -- the sum is the count under either era's key and no row is double counted.
+                   COALESCE((s.maximum_statistics->>'perfect')::int, 0)
+                     + COALESCE((s.maximum_statistics->>'great')::int, 0) AS Notes,
                    COALESCE((s.statistics->>'miss')::int, 0)          AS MissCount,
                    s.mods::text                                     AS ModsJson,
                    s.ranked                                         AS Ranked,

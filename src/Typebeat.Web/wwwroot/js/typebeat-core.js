@@ -451,6 +451,165 @@
         return cells;
     }
 
+    // ---------------------------------------------------------------------------
+    // The CHARACTER-DISTANCE axis (mirrors TypingLine's judgeTargets / cellPositions /
+    // extrapolationSpacingMs, backlog 133). Judgement measures how many CHARACTERS a keypress is
+    // from the character the playhead is on, so every line carries the axis that question is asked
+    // on: its TYPEABLE cells' targets in display order, where index k is "the k'th character of
+    // this line".
+    //
+    // SPACES are on the axis on purpose. A word gap is a cell with a target the playhead crosses,
+    // so leaving it out would put a hole in the axis and make the interpolation jump. It is
+    // deliberately NOT the countable stream (typeable and not a space), which measures a keypress
+    // BUDGET for other questions and has a different right answer.
+    //
+    // The axis is PER LINE, and that is why its ends need extrapolating. A map-wide axis would
+    // bracket a press made during the cue lead between the PREVIOUS line's last character and this
+    // line's first, so a ten-second instrumental gap would compress into one character of distance
+    // and a press two seconds early would read as a fifth of a character out, i.e. a Perfect. Per
+    // line, the gaps between lines are simply not on the axis.
+    // ---------------------------------------------------------------------------
+
+    // The last resort for a line whose data offers no spacing at all (mirrors
+    // TypingLine.FALLBACK_CHAR_SPACING_MS).
+    const FALLBACK_CHAR_SPACING_MS = 200;
+
+    // Milliseconds per character to extrapolate at beyond the ends of the axis (mirrors
+    // TypingLine.computeExtrapolationSpacing). The line's MEAN typeable spacing, which is its own
+    // pace and is immune to a single degenerate gap in a way the first/last interval would not be.
+    // Two fallbacks, for data that offers no spacing: a line with one typeable cell, or one whose
+    // targets all sit on the same millisecond, falls back to its sung span over its cell count, and
+    // a line with no span either falls back to FALLBACK_CHAR_SPACING_MS. The result is always
+    // strictly positive, so no caller can divide by zero.
+    function computeExtrapolationSpacing(judgeTargets, singEndTime) {
+        const m = judgeTargets.length;
+
+        if (m >= 2) {
+            const mean = (judgeTargets[m - 1] - judgeTargets[0]) / (m - 1);
+            if (mean > 0) return mean;
+        }
+
+        if (m >= 1) {
+            const sung = (Math.max(singEndTime, judgeTargets[m - 1]) - judgeTargets[0]) / m;
+            if (sung > 0) return sung;
+        }
+
+        return FALLBACK_CHAR_SPACING_MS;
+    }
+
+    // The last index of targets at or before time, or -1 (mirrors TypingLine.lastAtOrBefore).
+    function lastAtOrBefore(targets, time) {
+        let found = -1, lo = 0, hi = targets.length - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (targets[mid] <= time) { found = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return found;
+    }
+
+    // The first index of targets at or after time, or the length (mirrors TypingLine.firstAtOrAfter).
+    function firstAtOrAfter(targets, time) {
+        let found = targets.length, lo = 0, hi = targets.length - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (targets[mid] >= time) { found = mid; hi = mid - 1; }
+            else lo = mid + 1;
+        }
+        return found;
+    }
+
+    // Where the playhead is on this line's character axis at `time`, as the INCLUSIVE RANGE
+    // [first, last] of fractional cell positions it covers (mirrors TypingLine.playheadSpan). The
+    // two ends are equal for almost every time; they separate only when the time lands exactly on a
+    // run of characters sharing a target, and then the range is that whole run.
+    //
+    // INSIDE the line, between two targets, it is the exact piecewise-linear interpolation between
+    // them, which is the inverse of the per-character target interpolation buildCells already does.
+    // OUTSIDE it, at the line's first and last characters, one bracket is missing and the position
+    // is EXTRAPOLATED at the line's mean spacing rather than clamped: clamping would make every
+    // early press on a line's first character a distance of exactly 0, i.e. a Perfect however early
+    // it was, which is the one answer that must not come out.
+    function playheadSpan(axis, time) {
+        const t = axis.judgeTargets;
+        const m = t.length;
+
+        // A line with nothing typeable has no characters to be distant from, and no keypress can
+        // reach one either (the caret auto-skips straight past it).
+        if (m === 0) return [0, 0];
+
+        const last = lastAtOrBefore(t, time);   // -1 when the time precedes every target
+        const first = firstAtOrAfter(t, time);  // m  when the time follows every target
+
+        // The time lands exactly on one or more targets: the playhead is on all of them.
+        if (first <= last) return [first, last];
+
+        let position;
+
+        if (last < 0) position = (time - t[0]) / axis.extrapolationSpacingMs;
+        else if (first >= m) position = (m - 1) + (time - t[m - 1]) / axis.extrapolationSpacingMs;
+        // Strictly between two targets, so first === last + 1 and the bracket has real width: the
+        // divisor cannot be zero however many characters share a millisecond elsewhere.
+        else position = last + (time - t[last]) / (t[first] - t[last]);
+
+        return [position, position];
+    }
+
+    function buildCharacterAxis(cells, singEndTime) {
+        const judgeTargets = [];
+        for (const cell of cells) if (cell.typeable) judgeTargets.push(cell.target);
+
+        const axis = {
+            judgeTargets: judgeTargets,
+            extrapolationSpacingMs: computeExtrapolationSpacing(judgeTargets, singEndTime),
+            cellPositions: new Array(cells.length)
+        };
+
+        // Where each DISPLAY cell sits on that axis. A typeable cell sits exactly on its own
+        // integer index; a non-typeable one (auto-skipped punctuation) is interpolated onto the
+        // axis from its target, so a caller never has to special-case it. Nothing judges a
+        // non-typeable cell (the caret hops it), so which end of a tie it takes cannot reach a
+        // score.
+        let rank = 0;
+        for (let i = 0; i < cells.length; i++)
+            axis.cellPositions[i] = cells[i].typeable ? rank++ : playheadSpan(axis, cells[i].target)[1];
+
+        return axis;
+    }
+
+    // The cell's own position on the character axis (mirrors TypingLine.CellPosition).
+    function cellPosition(axis, cellIndex) {
+        return axis.cellPositions.length === 0
+            ? 0
+            : axis.cellPositions[clamp(cellIndex, 0, axis.cellPositions.length - 1)];
+    }
+
+    // How many characters a keypress at `time` on the cell at `cellIndex` is from the character the
+    // playhead is on (mirrors TypingLine.CharacterDistanceAt). NEGATIVE means the press is AHEAD of
+    // the playhead (the player is rushing), positive that it is behind (dragging), matching the sign
+    // of the millisecond delta it replaces. Fractional: a press halfway between two characters'
+    // targets is half a character out.
+    //
+    // The playhead is a SPAN of characters, not a point, and a cell inside that span is exactly 0
+    // characters out. For every ordinary press that is the same thing as subtracting one position
+    // from another, because the span is a single point; it differs only where several characters
+    // share one target time, which is the ordinary case at a word boundary (a word gap takes its
+    // unit's end time and the next word's first letter takes the next unit's start time, and for
+    // contiguous words those are the same millisecond). Both of those characters are equally "the
+    // one the playhead is on", so a press dead on that time has to read as 0 for both; picking
+    // either end of the run instead would charge a rhythm-perfect player a whole character for the
+    // other one.
+    function characterDistanceAt(line, time, cellIndex) {
+        const axis = line.axis;
+        const cell = cellPosition(axis, cellIndex);
+        const span = playheadSpan(axis, time);
+
+        if (cell < span[0]) return span[0] - cell; // the playhead has gone past it: the press is behind
+        if (cell > span[1]) return span[1] - cell; // the playhead has not reached it: the press is ahead
+
+        return 0;                                  // the playhead is ON this character
+    }
+
     // literate mirrors the desktop client's Literate mod: the cells become the authored line
     // verbatim (marks and capitals typed) rather than the derived default stream. The browser
     // player NEVER passes it (see play.js / mountPlayer): /play is always vanilla. It exists so
@@ -561,7 +720,11 @@
                 activationTime: activationTime,
                 sealGraceMs: grace,
                 estimated: line.estimated,
-                cells: cells
+                cells: cells,
+                // The axis judgement is measured on (backlog 133). Built here, once, exactly where
+                // TypingLine's constructor builds it, so a keypress costs a binary search and not a
+                // rebuild.
+                axis: buildCharacterAxis(cells, singEndTime)
             });
         }
 
@@ -593,10 +756,30 @@
             // which is (IsTypeable && marker) and so is exactly this here.
             freestyle: isFreestyle(expected),
             state: 'untyped',        // untyped | correct | wrong | missed | autoskip
-            judgeType: null,         // Perfect | Good | Ok | Premature | Lagging | Miss | WrongChar
+            // Perfect | Great | Ok | Meh | Premature | Lagging | Miss | WrongChar. The four QUALITY
+            // tiers are named for the osu results they map to (backlog 133); before that the two
+            // vocabularies disagreed and "Perfect" meant two different things depending on which
+            // side of the mapping you were reading.
+            judgeType: null,
             typedChar: null,
+            // The awarded correct keypress's signed lead/lag in MILLISECONDS. Kept whatever measure
+            // the play is judged in: it is the honest read-out of WHEN the key was pressed.
             judgedDelta: null,
+            // ...and its offset in the measure the play is JUDGED in (TypingCell.JudgedOffset): a
+            // fractional CHARACTER DISTANCE by default, equal to judgedDelta under the millisecond
+            // measure. THIS, not judgedDelta, is what classify() and syncQuality() read.
+            judgedOffset: null,
+            // syncQuality of the awarded keypress, BANKED at the moment it was judged
+            // (TypingCell.JudgedSyncQuality) rather than recomputed by the renderer, because the
+            // windows it comes from depend on the play's measure and the engine is the only thing
+            // that knows the measure.
+            judgedSyncQuality: null,
             firstCorrectDelta: null,
+            // The judgedOffset of the FIRST correct judgement, kept alongside firstCorrectDelta and
+            // for the same reason: a scoring-inert retype replays the judgement the cell already
+            // earned rather than earning a new one, and under the character measure the offset is
+            // what that judgement was derived from.
+            firstCorrectOffset: null,
             // Mirrors DrawableTypeBeatCharObject.Judged, i.e. "this cell has already handed the
             // score processor its one and only result". ApplyEngineResult bails on an already-judged
             // cell (`if (Judged) return;`) and ApplySealResults goes through the same call, so a cell
@@ -609,33 +792,89 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Judgement windows (Judgement.cs SyncWindows).
+    // Judgement windows (Judgement.cs SyncWindows), the single tuning point.
+    //
+    // Backlog 133: an offset is measured in CHARACTERS from the character the playhead is on, not
+    // in milliseconds off the cell's target, and there are FOUR quality tiers instead of three. So
+    // there are TWO ladders, one per measure, because a window is a distance in whatever the offset
+    // is measured in and the two measures do not share a unit.
+    //
+    // CHARACTER DISTANCE is the live ladder. Geometric: every tier is exactly 1.6x late-biased,
+    // which is what the old 250/400 millisecond pair was, and exactly double the tier inside it.
+    // Wherever cell spacing is locally uniform a character distance reduces to the millisecond
+    // delta divided by that spacing, which is the whole point: per-character targets are already
+    // interpolated (buildCells), so "characters behind the playhead" and "milliseconds off target"
+    // were always the same axis, and this rescales it to the map's own pace.
+    //
+    // MILLISECONDS is backlog 135's Rhythmic mod. Its Great/Ok/Meh rows are EXACTLY the windows
+    // this game judged in up to backlog 133 (they were then called Perfect/Good/Ok and mapped onto
+    // those same three osu results), so selecting the measure reproduces the old game rather than
+    // approximating it; the fourth tier subdivides the TOP of the ladder at the same halving, so
+    // nothing that used to be a Great becomes anything worse. NOTHING SELECTS IT YET, and /play has
+    // no mods payload to select it with. It is mirrored here so the mod does not have to come back
+    // and re-derive it, and so the two files stay a line-for-line pair.
     // ---------------------------------------------------------------------------
-    const BASE_WINDOWS = { pe: 250, pl: 400, ge: 600, gl: 1000, oe: 1200, ol: 2000 };
+    const MEASURE_CHARACTER_DISTANCE = 'CharacterDistance';
+    const MEASURE_MILLISECONDS = 'Milliseconds';
+
+    const CHARACTER_WINDOWS = { pe: 1.25, pl: 2.00, ge: 2.50, gl: 4.00, oe: 5.00, ol: 8.00, me: 10.00, ml: 16.00 };
+    const MILLISECOND_WINDOWS = { pe: 125, pl: 200, ge: 250, gl: 400, oe: 600, ol: 1000, me: 1200, ml: 2000 };
+
+    // Granularity scales: unreliable timing gets the widest tolerance, never the tightest.
     const TIER_SCALE = { Line: 1.0, Word: 0.6, Syllable: 0.45 };
 
-    function windowsFor(tier) {
+    function windowsFor(tier, measure) {
         const s = TIER_SCALE[tier] != null ? TIER_SCALE[tier] : 1.0;
-        return { pe: BASE_WINDOWS.pe * s, pl: BASE_WINDOWS.pl * s, ge: BASE_WINDOWS.ge * s, gl: BASE_WINDOWS.gl * s, oe: BASE_WINDOWS.oe * s, ol: BASE_WINDOWS.ol * s };
+        const b = measure === MEASURE_MILLISECONDS ? MILLISECOND_WINDOWS : CHARACTER_WINDOWS;
+        return {
+            pe: b.pe * s, pl: b.pl * s,
+            ge: b.ge * s, gl: b.gl * s,
+            oe: b.oe * s, ol: b.ol * s,
+            me: b.me * s, ml: b.ml * s
+        };
     }
 
-    function classify(delta, w) {
-        if (delta >= -w.pe && delta <= w.pl) return 'Perfect';
-        if (delta >= -w.ge && delta <= w.gl) return 'Good';
-        if (delta >= -w.oe && delta <= w.ol) return 'Ok';
-        return delta < -w.oe ? 'Premature' : 'Lagging';
+    // SyncWindows.Classify: nested asymmetric ranges, tested Perfect -> Great -> Ok -> Meh; outside
+    // Meh the sign decides Premature (too far ahead) vs Lagging (too far behind).
+    function classify(offset, w) {
+        if (offset >= -w.pe && offset <= w.pl) return 'Perfect';
+        if (offset >= -w.ge && offset <= w.gl) return 'Great';
+        if (offset >= -w.oe && offset <= w.ol) return 'Ok';
+        if (offset >= -w.me && offset <= w.ml) return 'Meh';
+        return offset < -w.me ? 'Premature' : 'Lagging';
     }
 
+    // SyncWindows.SyncQuality: asymmetric quality in [0, 1] over the WIDEST scoring window. Exactly
+    // 1 dead on the playhead and exactly 0 at the edges of the Meh window, so every offset a correct
+    // keypress can still score at maps somewhere inside the ramp and everything beyond it
+    // (Premature / Lagging) sits on the floor.
+    function syncQuality(offset, w) {
+        const q = 1 - (offset < 0 ? -offset / w.me : offset / w.ml);
+        return q < 0 ? 0 : (q > 1 ? 1 : q);
+    }
+
+    // SyncWindows.BasePoints: the engine's own per-character points, matching the osu base score
+    // each tier's result carries (HIT_BASE_SCORE below), so the engine's running score and the
+    // submitted one grade a keypress the same way.
     function basePoints(type) {
-        return type === 'Perfect' ? 300 : type === 'Good' ? 150 : type === 'Ok' ? 50 : 0;
+        switch (type) {
+            case 'Perfect': return 300;
+            case 'Great': return 200;
+            case 'Ok': return 100;
+            case 'Meh': return 50;
+            default: return 0; // Premature, Lagging, Miss, WrongChar
+        }
     }
 
-    // Engine judgement -> osu HitResult (DrawableTypeBeatHitObject.toHitResult).
+    // Engine judgement -> osu HitResult (TypeBeatResultMapping.CellResult). The four QUALITY tiers
+    // are the IDENTITY on the results they are named for since backlog 133; Premature, Lagging and
+    // Miss all resolve as a miss. A WrongChar resolves NOTHING and never reaches here.
     function toHitResult(judgeType) {
         switch (judgeType) {
-            case 'Perfect': return 'great';
-            case 'Good': return 'ok';
-            case 'Ok': return 'meh';
+            case 'Perfect': return 'perfect';
+            case 'Great': return 'great';
+            case 'Ok': return 'ok';
+            case 'Meh': return 'meh';
             default: return 'miss'; // Premature, Lagging, Miss, or untyped
         }
     }
@@ -660,7 +899,8 @@
     //
     //   1. TypeBeatPlayfield.onCharJudged -> DrawableTypeBeatHitObject.ApplyCharJudgement ->
     //      DrawableTypeBeatCharObject.ApplyEngineResult -> ApplyResult(toHitResult(type)).
-    //      Perfect/Good/Ok become Great/Ok/Meh, which INCREASE combo; Premature/Lagging become
+    //      Perfect/Great/Ok/Meh are the IDENTITY on the osu results of those names (backlog 133)
+    //      and INCREASE combo; Premature/Lagging become
     //      Miss, which BREAKS it. A WrongChar becomes NOTHING (backlog 109): ApplyCharJudgement
     //      returns before applying anything, so a typo defers its cell's result instead of spending
     //      it on a Miss. The cell drawable applies at most ONE result ever (`if (Judged) return;`),
@@ -698,16 +938,25 @@
     // never rewound, and neither is the desktop client's outside replay seeking.
     // ---------------------------------------------------------------------------
 
-    // ScoreProcessor.GetBaseScoreForResult for the five results a type!beat cell can take. `good`
-    // is the uncorrected-typo tier and is 50, NOT the base game's 200: the client re-weights it
-    // (TypeBeatScoreProcessor.GetBaseScoreForResult) so a typo pays the most accuracy a judged cell
-    // can pay, i.e. exactly what it paid while backlog 124 stored it as a `meh`. The server's
-    // ScoringContract.BaseScore carries the same 50.
-    const HIT_BASE_SCORE = { great: 300, ok: 100, meh: 50, good: 50, miss: 0 };
+    // ScoreProcessor.GetBaseScoreForResult for the six results a type!beat cell can take, i.e. the
+    // 300 / 200 / 100 / 50 quality ladder plus the typo and the miss. Two of them are NOT the base
+    // ruleset's numbers, and both departures live in TypeBeatScoreProcessor.GetBaseScoreForResult:
+    //
+    //  - `great` is 200, not 300. Backlog 133's fourth tier put `perfect` on top of the ladder, and
+    //    the base game already scores a Perfect at 300 ("Perfect doesn't actually give more score /
+    //    accuracy directly"), so the tier was made by moving GREAT DOWN rather than Perfect up. That
+    //    is what keeps the per-cell maximum, and therefore the accuracy denominator, exactly where
+    //    it was.
+    //  - `good` is the uncorrected-typo tier and is 50, not 200, so a typo pays the most accuracy a
+    //    judged cell can pay, i.e. exactly what it paid while backlog 124 stored it as a `meh`.
+    //
+    // The server's ScoringContract.BaseScore carries both numbers.
+    const HIT_BASE_SCORE = { perfect: 300, great: 200, ok: 100, meh: 50, good: 50, miss: 0 };
 
-    // Every cell judgement declares MaxResult = Great (TypeBeatCharJudgement), which is what both
-    // the accuracy denominator (currentMaximumBaseScore) and the combo-portion weight
-    // (GetComboScoreChange) are taken from, whatever the result actually was.
+    // Every cell judgement declares MaxResult = Perfect (TypeBeatCharJudgement, raised from Great by
+    // backlog 133), which is what both the accuracy denominator (currentMaximumBaseScore) and the
+    // combo-portion weight (GetComboScoreChange) are taken from, whatever the result actually was.
+    // Still 300: that is Perfect's stock base score, which is why the ceiling did not move.
     const MAX_RESULT_BASE_SCORE = 300;
 
     // ScoreProcessor.COMBO_EXPONENT.
@@ -721,7 +970,7 @@
             this.baseScore = 0;          // currentBaseScore
             this.maximumBaseScore = 0;   // currentMaximumBaseScore
             this.judgementCount = 0;     // currentAccuracyJudgementCount
-            this.counts = { great: 0, ok: 0, meh: 0, good: 0, miss: 0 }; // ScoreResultCounts
+            this.counts = { perfect: 0, great: 0, ok: 0, meh: 0, good: 0, miss: 0 }; // ScoreResultCounts
             // TypeBeatScoreProcessor.comboNeutralCells: the cells whose combo consequence has
             // ALREADY been taken by hand, at the keypress that spoiled them, so the result they
             // finally resolve with must leave combo exactly as it finds it. The C# keys this by
@@ -732,8 +981,8 @@
         }
 
         // ScoreProcessor.ApplyResultInternal, for the accuracy-affecting basic results a cell can
-        // take (great/ok/meh/good/miss). All five are scorable, none is a bonus, and all five
-        // affect combo: the four hits increase it, a miss breaks it. `good` only ever arrives
+        // take (perfect/great/ok/meh/good/miss). All six are scorable, none is a bonus, and all six
+        // affect combo: the five hits increase it, a miss breaks it. `good` only ever arrives
         // combo-neutral, so its increment is suppressed below.
         applyResult(result, cell) {
             this.counts[result]++;
@@ -801,7 +1050,10 @@
                     c.judgeType = null;
                     c.typedChar = null;
                     c.judgedDelta = null;
+                    c.judgedOffset = null;
+                    c.judgedSyncQuality = null;
                     c.firstCorrectDelta = null;
+                    c.firstCorrectOffset = null;
                     c.judged = false;
                 }
             }
@@ -836,6 +1088,11 @@
             // the UI would also mean wiring the submitted mods payload (both are unranked).
             this.caseSensitive = false;       // Literate: the typed char must match the exact case
             this.mashingEnabled = false;      // Mashing (Relax): any key is the right key
+            // What a keypress's offset from its cell is MEASURED IN, and therefore what unit the
+            // windows are expressed in (TypingEngine.Measure). CharacterDistance is the live rule
+            // and the only thing /play can be in: MEASURE_MILLISECONDS is the pre-backlog-133 rule,
+            // kept live for the Rhythmic mod, and the browser has no mods payload to select it with.
+            this.measure = MEASURE_CHARACTER_DISTANCE;
             // The wrong-key MODEL, and unlike the two above this one is ON, because it is the
             // DEFAULT gameplay on both sides since backlog 107: a wrong (non-space) char is typed
             // through and marked wrong instead of being rejected, and backspace can take it back.
@@ -1096,7 +1353,11 @@
                 cell = line.cells[this.caretIndex]; // the word gap, judged as an ordinary space below
             }
 
+            // The press's lead/lag in MILLISECONDS, which is what the renderer and the timing
+            // read-out want, and its offset in the measure the play is JUDGED in, which is what the
+            // windows classify. Identical under the millisecond measure.
             const delta = time - cell.target;
+            const offset = this.judgementOffset(line, this.caretIndex, time);
             // FREESTYLE cell: every char EXCEPT SPACE matches, in any case, under every mod (so the
             // Literate mod's exact-case rule is bypassed for it). The press is then judged exactly
             // like a correct char: same windows, points, combo, accuracy and completion, with the
@@ -1135,8 +1396,9 @@
                     // DrawableTypeBeatHitObject.ApplyCharJudgement returns before applying anything
                     // for a WrongChar. A miss is a character the line ran out of time on; a typo is a
                     // typo, and backspace can still fix this one, so the cell's one result is
-                    // DEFERRED: the fix earns its real Great/Ok/Meh, and a typo left alone resolves
-                    // at the seal as an unfixed typo, a 'meh' and not a miss (backlog 124).
+                    // DEFERRED: the fix earns its real Perfect/Great/Ok/Meh, and one left alone
+                    // resolves at the seal as an unfixed typo, its own key and not a miss
+                    // (backlog 124, re-keyed to `good` by 126).
                     //
                     // Which leaves the submitted COMBO with nothing to break it, because osu's combo
                     // is maintained incrementally off results. So the break is mirrored by hand here,
@@ -1189,7 +1451,7 @@
 
             this.consecutiveWrongKeys = 0;
 
-            const w = windowsFor(cell.tier);
+            const w = windowsFor(cell.tier, this.measure);
             const inertRetype = cell.firstCorrectDelta !== null;
             let type, points = 0;
 
@@ -1200,15 +1462,18 @@
                 // below relies on the SAME guard rather than on this condition, because with
                 // allowWrongInput a cell can carry a result without ever having been correct.
                 const d = cell.firstCorrectDelta;
-                type = classify(d, w);
+                const o = cell.firstCorrectOffset;
+                type = classify(o, w);
                 cell.state = 'correct';
                 cell.typedChar = c;
                 cell.judgedDelta = d;
+                cell.judgedOffset = o;
+                cell.judgedSyncQuality = syncQuality(o, w);
                 cell.judgeType = type;
             } else {
                 this.totalKeypresses++;
                 this.correctKeypresses++;
-                type = classify(delta, w);
+                type = classify(offset, w);
                 const bp = basePoints(type);
                 if (bp > 0) {
                     points = Math.round(bp * (1 + Math.min(this.combo, COMBO_CAP) / COMBO_CAP));
@@ -1223,20 +1488,23 @@
                 cell.state = 'correct';
                 cell.typedChar = c;
                 cell.judgedDelta = delta;
+                cell.judgedOffset = offset;
+                cell.judgedSyncQuality = syncQuality(offset, w);
                 cell.firstCorrectDelta = delta;
+                cell.firstCorrectOffset = offset;
                 cell.judgeType = type;
                 this.counts[type] = (this.counts[type] || 0) + 1;
                 // The cell's one-and-only osu result, applied the moment it is judged: this is
-                // TypeBeatPlayfield.onCharJudged -> ApplyCharJudgement -> ApplyResult. Perfect/
-                // Good/Ok increase the submitted combo, Premature/Lagging break it (they map to
-                // Miss), and the combo portion is weighted by the combo as it stands right here.
+                // TypeBeatPlayfield.onCharJudged -> ApplyCharJudgement -> ApplyResult. The four
+                // quality tiers increase the submitted combo, Premature/Lagging break it (they map
+                // to Miss), and the combo portion is weighted by the combo as it stands right here.
                 // Guarded rather than unconditional, because the guard is the mirror of
                 // ApplyEngineResult's `if (Judged) return;` and not of the inert-retype rule. A cell
                 // typed WRONG and then backspaced comes back through here with firstCorrectDelta
                 // still null AND with no result yet (backlog 109 defers it), so this call is where
-                // the fix is finally paid for: the cell earns its real Great/Ok/Meh, which is the
-                // whole point. The guard still matters for the cells the seal or a word skip missed
-                // first, which must not be re-judged.
+                // the fix is finally paid for: the cell earns its real Perfect/Great/Ok/Meh, which
+                // is the whole point. The guard still matters for the cells the seal or a word skip
+                // resolved first, which must not be re-judged.
                 this.applyCellResult(cell, toHitResult(type));
             }
 
@@ -1245,6 +1513,16 @@
             this.autoSkipForward();
             if (this.onCharJudged) this.onCharJudged(judgedIndex, type, points);
             return true;
+        }
+
+        // TypingEngine.judgementOffset: the offset a keypress at `time` on cell `cellIndex` of
+        // `line` is JUDGED by, in the current measure. How many characters it is from the character
+        // the playhead is on (negative = ahead of it), or the plain millisecond delta under the
+        // millisecond measure.
+        judgementOffset(line, cellIndex, time) {
+            return this.measure === MEASURE_MILLISECONDS
+                ? time - line.cells[cellIndex].target
+                : characterDistanceAt(line, time, cellIndex);
         }
 
         processBackspace() {
@@ -1257,8 +1535,10 @@
             cell.state = 'untyped';
             cell.typedChar = null;
             cell.judgedDelta = null;
+            cell.judgedOffset = null;
+            cell.judgedSyncQuality = null;
             cell.judgeType = null;
-            // firstCorrectDelta intentionally retained (inert-retype guard).
+            // firstCorrectDelta / firstCorrectOffset intentionally retained (inert-retype guard).
             this.caretIndex = i;
         }
 
@@ -1289,17 +1569,18 @@
         // (see ScoreProcessorMirror). Nothing is reconstructed here: reconstruction is precisely
         // what cannot see a rejected key.
         const processor = engine.processor;
+        const perfect = processor.counts.perfect;
         const great = processor.counts.great;
         const ok = processor.counts.ok;
         const meh = processor.counts.meh;
         const typos = processor.counts.good; // uncorrected typos (TypeBeatResultMapping.UNFIXED_TYPO)
         const miss = processor.counts.miss;
-        const judged = processor.judgementCount; // == great + ok + meh + good + miss
+        const judged = processor.judgementCount; // == perfect + great + ok + meh + good + miss
 
         // Whole-map accuracy (for display/completion); server overrides the submitted value.
         const acc = total > 0 ? processor.baseScore / (MAX_RESULT_BASE_SCORE * total) : 1;
 
-        // The maximum combo portion, i.e. what an all-Great run of the whole map accumulates
+        // The maximum combo portion, i.e. what an all-Perfect run of the whole map accumulates
         // (ScoreProcessor.maximumComboPortion, stored from the autoplay simulation). One nested
         // char object exists per TYPEABLE cell (TypeBeatHitObject.CreateNestedHitObjects skips the
         // rest), so the simulated combo runs 1..N over exactly those cells.
@@ -1327,19 +1608,21 @@
         // completion, and therefore rank, exactly as a miss does (backlog 126). Between backlog 124
         // and 126 `typos` was folded into `meh` and counted here, so a run typed entirely wrong read
         // completion 1 and took an X.
-        const completion = total > 0 ? (great + ok + meh) / total : 1;
+        const completion = total > 0 ? (perfect + great + ok + meh) / total : 1;
         const passed = engine.finished && !engine.failed;
 
         // Wrong keypresses ride along as their own key. HitResult.ComboBreak is combo-only and
         // NOT accuracy-affecting on either side, so adding it changes no other number here and the
         // server's ScoringContract recomputes the identical accuracy / completion / rank; it is
-        // priced only by pp's own mistyping term. maximumStatistics stays one great per cell, so
-        // mashing can never inflate the denominator of anything.
+        // priced only by pp's own mistyping term. maximumStatistics stays one PERFECT per cell (the
+        // judgement's MaxResult, raised from Great by backlog 133), so mashing can never inflate the
+        // denominator of anything.
         // Zero is omitted exactly as the other keys are, matching the desktop client, which strips
         // zero-valued entries before submitting (SoloScoreInfo.ForSubmission).
         const mistypes = engine.mistypes;
 
         const statistics = {};
+        if (perfect) statistics.perfect = perfect;
         if (great) statistics.great = great;
         if (ok) statistics.ok = ok;
         if (meh) statistics.meh = meh;
@@ -1358,9 +1641,9 @@
             completion: completion,
             rank: passed ? rankFromCompletion(completion) : 'F',
             statistics: statistics,
-            maximumStatistics: { great: total },
+            maximumStatistics: { perfect: total },
             // convenience for the results screen
-            counts: { great, ok, meh, typos, miss, mistypes },
+            counts: { perfect, great, ok, meh, typos, miss, mistypes },
             wpm: engine.liveWpm
         };
     }
@@ -1398,10 +1681,15 @@
         isTypeable, isFreestyle, isCell, isPunctuation, normalize,
         defaultChar, projectDefault, toDefaultStream,
         parseLyricOsu, buildBeatmap, syllableCharTarget,
+        characterDistanceAt, playheadSpan, cellPosition,
         TypingEngine, computeScore, rankFromCompletion,
-        windowsFor, classify, toHitResult,
+        windowsFor, classify, syncQuality, basePoints, toHitResult,
         freestyleTick, freestyleGlyph,
-        constants: { CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER, SHIMMER_INTERVAL_MS, PUNCTUATION, WORD_BREAK },
+        constants: {
+            CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER,
+            SHIMMER_INTERVAL_MS, PUNCTUATION, WORD_BREAK, FALLBACK_CHAR_SPACING_MS,
+            MEASURE_CHARACTER_DISTANCE, MEASURE_MILLISECONDS
+        },
         // the renderer/high-level mount is attached in typebeat-player.js
     };
 })(window);

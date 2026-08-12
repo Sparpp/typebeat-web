@@ -67,10 +67,13 @@ Factor by factor, in descending priority:
 
 **Definitions (pinned to the score row):**
 
-* `acc` is standard osu hit accuracy: `(300·n300 + 100·n100 + 50·n50) / (300·notes)`. This is
-  the stored `accuracy` column for a completed play.
-* `notes = great + ok + meh + miss` from `statistics`. **`ignore_hit` is excluded**; the line
-  containers would otherwise inflate `notes` and dilute every factor.
+* `acc` is standard osu hit accuracy, over the four quality tiers a cell can land in:
+  `(300·perfect + 200·great + 100·ok + 50·meh + 50·good) / (300·notes)`. This is the stored
+  `accuracy` column for a completed play. (`perfect` and the 200 for `great` arrived with backlog
+  133's fourth tier; before it the top tier was `great` at 300. `good` is the uncorrected typo,
+  re-weighted to the `meh` value.)
+* `notes = perfect + great + ok + meh + good + miss` from `statistics`. **`ignore_hit` is
+  excluded**; the line containers would otherwise inflate `notes` and dilute every factor.
 * `maxcombo` is the stored `max_combo`; the theoretical max equals `notes` for a typing map.
 
 ## Eligibility

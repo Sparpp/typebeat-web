@@ -4,9 +4,10 @@ namespace Typebeat.Web.Scoring;
 /// Server-side recompute + tamper-bounds for a submitted solo score.
 ///
 /// The client computes score/accuracy/combo with the standardised <c>ScoreProcessor</c> maths.
-/// typebeat's <c>TypeBeatScoreProcessor</c> subclass changes only the rank derivation and ONE
-/// numeric weight, the uncorrected-typo tier's base score (see below); everything else is the base
-/// implementation. What it actually submits over the wire is <c>ScoreInfo.TotalScore</c> (the
+/// typebeat's <c>TypeBeatScoreProcessor</c> subclass changes only the rank derivation and TWO
+/// numeric weights, the uncorrected-typo tier's base score and the <c>great</c> tier's (see below);
+/// everything else is the base implementation. What it actually submits over the wire is
+/// <c>ScoreInfo.TotalScore</c> (the
 /// processor's <c>TotalScore</c> value) plus the per-result <c>statistics</c> /
 /// <c>maximum_statistics</c> dictionaries and <c>max_combo</c>.
 ///
@@ -43,11 +44,32 @@ namespace Typebeat.Web.Scoring;
 /// Everything here is a pure function of the three transmitted quantities; no DB, no throwing on
 /// hostile input (score-submit must never 500 for tamper-shaped data).
 ///
+/// <para><b>THE FOUR QUALITY TIERS</b> (backlog 133). A correct keypress is graded on how many
+/// CHARACTERS it was from the character the playhead was on, in four tiers, and they are the
+/// identity on the osu results they are named for: <c>perfect</c> / <c>great</c> / <c>ok</c> /
+/// <c>meh</c>, worth 300 / 200 / 100 / 50. Two things here follow from that and are load-bearing:</para>
+/// <list type="bullet">
+/// <item><c>maximum_statistics</c> is now one <b>perfect</b> per cell, not one great: the cell
+/// judgement's MaxResult was raised from Great to Perfect to free the enum slot the fourth tier
+/// needed. Every classifier below must therefore know <c>perfect</c>, or <c>accuracyMax</c> reads 0,
+/// the denominator is not positive, and EVERY submitted play unranks.</item>
+/// <item><c>great</c> is worth <b>200</b>, not 300. The tier was made by moving Great down rather
+/// than Perfect up, because the base game already scores a Perfect at 300 (ScoreProcessor.cs:372,
+/// "Perfect doesn't actually give more score / accuracy directly"). The per-cell MAXIMUM is
+/// therefore still 300 and the accuracy denominator is exactly what it always was.</item>
+/// <item>...but only for a score judged under that ladder. A score stored BEFORE it has a
+/// <c>great</c> that WAS the top tier and was worth 300, and the two are told apart by the key its
+/// own <c>maximum_statistics</c> uses, which moved in the same change (see
+/// <see cref="JudgedBeforeTheFourthTier"/>). Every stored row therefore still recomputes to exactly
+/// the numbers it was submitted with.</item>
+/// </list>
+///
 /// <para><b>UNCORRECTED TYPOS</b> (backlog 124 and 126). A cell the player typed WRONG and never
 /// went back for arrives as the <c>good</c> key, which type!beat uses for nothing else. The client
-/// picked it because a cell may only ever resolve as one of great/ok/meh/good/miss (osu refuses any
-/// other result for a Great-max, Miss-min judgement) and the other four were taken; see the game's
-/// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>. Two consequences here, both deliberate:</para>
+/// picked it because a cell may only ever resolve as one of perfect/great/ok/meh/good/miss (osu
+/// refuses any other result for a Perfect-max, Miss-min judgement) and the other five are the four
+/// quality tiers plus the seal's miss; see the game's <c>TypeBeatResultMapping.UNFIXED_TYPO</c>.
+/// Two consequences here, both deliberate:</para>
 /// <list type="bullet">
 /// <item>Its base score is <b>50</b>, not the base ruleset's 200. The client re-weights the tier
 /// (<c>TypeBeatScoreProcessor.GetBaseScoreForResult</c>) so a typo costs the most accuracy a judged
@@ -69,7 +91,7 @@ namespace Typebeat.Web.Scoring;
 /// they were before the stat existed (so old and new scores stay comparable), and it keeps the key
 /// out of the <c>accuracyJudged &gt; accuracyMax</c> invariant below, which would otherwise UNRANK
 /// every mistyped play: mistypes have no counterpart in <c>maximum_statistics</c> (that stays one
-/// great per cell), so counting them as judgements would make any mistyped play look like it
+/// perfect per cell), so counting them as judgements would make any mistyped play look like it
 /// contained more cells than the map has. Do not add <c>combo_break</c> to any table here.</para>
 /// </summary>
 public static class ScoringContract
@@ -134,6 +156,7 @@ public static class ScoringContract
         maximumStatistics ??= empty;
 
         bool valid = true;
+        bool preFourthTier = JudgedBeforeTheFourthTier(maximumStatistics);
 
         long numerator = 0;         // currentBaseScore (ScoreProcessor.cs:266)
         long judgedDenominator = 0; // currentMaximumBaseScore at end of play (ScoreProcessor.cs:261), judged cells only
@@ -153,7 +176,7 @@ public static class ScoringContract
 
             if (AffectsAccuracy(key))
             {
-                numerator += (long)BaseScore(key) * count;
+                numerator += (long)BaseScore(key, preFourthTier) * count;
                 judgedDenominator += (long)MaxBaseScore(key) * count;
                 accuracyJudged += count;
 
@@ -162,7 +185,7 @@ public static class ScoringContract
             }
 
             if (IsBonus(key))
-                bonusPortion += (long)BaseScore(key) * count;
+                bonusPortion += (long)BaseScore(key, preFourthTier) * count;
         }
 
         int theoreticalMaxCombo = 0;
@@ -177,7 +200,7 @@ public static class ScoringContract
 
             if (AffectsAccuracy(key))
             {
-                denominator += (long)BaseScore(key) * count;
+                denominator += (long)BaseScore(key, preFourthTier) * count;
                 accuracyMax += count;
             }
 
@@ -251,13 +274,46 @@ public static class ScoringContract
 
     // ---- HitResult numeric weights + classification ----
     // Keys are the EnumMember snake_case values (HitResult.cs). Values mirror
-    // ScoreProcessor.GetBaseScoreForResult (ScoreProcessor.cs:346-381). For a typing map only
-    // great/ok/meh/miss occur, but the full table keeps the contract faithful to the base ruleset.
-    // Unknown keys fall through to base 0 / no classification, so they can never inflate a score.
+    // ScoreProcessor.GetBaseScoreForResult (ScoreProcessor.cs:346-381) as TypeBeatScoreProcessor
+    // overrides it. For a typing map only perfect/great/ok/meh/good/miss occur, but the full table
+    // keeps the contract faithful to the base ruleset. Unknown keys fall through to base 0 / no
+    // classification, so they can never inflate a score.
 
-    private static int BaseScore(string key) => key switch
+    /// <summary>
+    /// What the client's <c>TypeBeatScoreProcessor</c> weighted a <c>great</c> at: 200 since backlog
+    /// 133 made it the SECOND of four quality tiers, 300 before that, when it was the top one.
+    /// </summary>
+    private const int great_base_score = 200;
+
+    private const int pre_fourth_tier_great_base_score = 300;
+
+    /// <summary>
+    /// Whether this submission was judged BEFORE backlog 133's fourth quality tier, read off its own
+    /// <c>maximum_statistics</c>. That dictionary is one MaxResult per cell, and the MaxResult moved
+    /// from Great to Perfect in the same change that re-weighted <c>great</c> from 300 to 200, so
+    /// its key IS the era stamp: nothing else about a score says which ladder judged it, and every
+    /// row stored before 133 carries <c>great</c> there while every row stored after carries
+    /// <c>perfect</c>.
+    ///
+    /// <para>Without this a pre-133 SS would recompute at 2/3 of the accuracy it was submitted with
+    /// (its top-tier cells priced as second-tier ones against an unmoved per-cell maximum), and its
+    /// stored total would fall outside the ceiling its own statistics justify, so every stored row
+    /// this contract is ever re-run over would read as tampered. It is not a tamper hole either: a
+    /// client choosing the old keys gains nothing it could not gain by simply claiming perfects,
+    /// since <c>statistics</c> is self-reported and this function only ever bounds a submission by
+    /// its OWN dictionary.</para>
+    /// </summary>
+    private static bool JudgedBeforeTheFourthTier(IReadOnlyDictionary<string, int> maximumStatistics)
+        => !maximumStatistics.ContainsKey("perfect") && maximumStatistics.ContainsKey("great");
+
+    private static int BaseScore(string key, bool preFourthTier) => key switch
     {
-        "great" or "perfect" => 300,
+        "perfect" => 300,
+        // NOT the base ruleset's 300 for a post-133 score: `great` is the SECOND quality tier there
+        // and the client re-weights it (TypeBeatScoreProcessor.GREAT_BASE_SCORE) so the four tiers
+        // step 300 / 200 / 100 / 50. The tier was made by moving Great DOWN rather than Perfect up
+        // precisely so the per-cell maximum, and therefore the accuracy denominator, did not move.
+        "great" => preFourthTier ? pre_fourth_tier_great_base_score : great_base_score,
         // NOT the base ruleset's 200: in type!beat `good` is the uncorrected-typo tier and the
         // client re-weights it to the meh value (see the class docs). Keep the two in step.
         "good" => 50,
@@ -273,8 +329,10 @@ public static class ScoringContract
 
     // Base score of the judgement's MaxResult for a judged cell of this key: what the client's
     // running currentMaximumBaseScore accrues per judgement (ScoreProcessor.cs:261). The
-    // great-family results (great/perfect/good/ok/meh/miss) all belong to Great-max judgements
-    // (every type!beat judgement is Great-max); tick/tail families max at their own hit result.
+    // great-family results (perfect/great/good/ok/meh/miss) all belong to PERFECT-max judgements
+    // (every type!beat judgement is Perfect-max since backlog 133); tick/tail families max at their
+    // own hit result. The number is still 300, because the base game gives a Perfect the same base
+    // score as a Great.
     private static int MaxBaseScore(string key) => key switch
     {
         "great" or "perfect" or "good" or "ok" or "meh" or "miss" => 300,

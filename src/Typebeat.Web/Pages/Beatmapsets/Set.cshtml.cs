@@ -450,11 +450,19 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
     }
 
     /// <summary>
-    /// One leaderboard row. Judgement counts come from the statistics jsonb (wire keys
-    /// great/ok/meh/miss) but are DISPLAYED with the game engine's own judgement names:
-    /// Perfect/Good/Ok/Miss per the mapping in the fork's TypeBeatJudgements.cs
-    /// ("Perfect->Great, Good->Ok, Ok->Meh, ...->Miss"). Completion (% of the map typed) is
-    /// the metric the grade is awarded on; accuracy remains the timing-quality metric.
+    /// One leaderboard row. Judgement counts come from the statistics jsonb, and since backlog 133
+    /// the wire keys and the engine's own judgement names are the SAME four words
+    /// (perfect/great/ok/meh, plus miss), so each column is simply its key. Before that the two
+    /// vocabularies were offset by one rung (engine Perfect was the wire's great, and so on) and
+    /// this record did the translating.
+    ///
+    /// <para>A score stored before the fourth tier existed carries no <c>perfect</c> key and reads
+    /// 0 in that column, which is the truth about it rather than a gap: its top tier was judged at
+    /// what is now the GREAT window (the millisecond ladder's Great row is exactly the old top
+    /// window), so its counts land under the names they earned.</para>
+    ///
+    /// <para>Completion (% of the map typed) is the metric the grade is awarded on; accuracy
+    /// remains the timing-quality metric.</para>
     /// </summary>
     public sealed record ScoreRow(
         long ScoreId, long UserId, string Username, string? AvatarKey, long TotalScore, double Accuracy, double Completion,
@@ -466,9 +474,10 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         private JObject? statistics;
         private JObject Statistics => statistics ??= JObject.Parse(string.IsNullOrEmpty(StatisticsJson) ? "{}" : StatisticsJson);
 
-        public int Perfect => Statistics.Value<int?>("great") ?? 0;
-        public int Good => Statistics.Value<int?>("ok") ?? 0;
-        public int Ok => Statistics.Value<int?>("meh") ?? 0;
+        public int Perfect => Statistics.Value<int?>("perfect") ?? 0;
+        public int Great => Statistics.Value<int?>("great") ?? 0;
+        public int Ok => Statistics.Value<int?>("ok") ?? 0;
+        public int Meh => Statistics.Value<int?>("meh") ?? 0;
         public int Miss => Statistics.Value<int?>("miss") ?? 0;
 
         /// <summary>

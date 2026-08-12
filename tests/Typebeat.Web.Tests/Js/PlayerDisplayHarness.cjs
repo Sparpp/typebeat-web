@@ -47,6 +47,21 @@ const abcdOsu = OSU_HEADER +
     '{"text":"ab","start_ms":1000,"end_ms":2000,"score":1},' +
     '{"text":"cd","start_ms":2000,"end_ms":3000,"score":1}]}\n';
 
+// The TIMING fixture, and it is its own line on purpose. Judgement measures CHARACTER DISTANCE
+// since backlog 133, so a press's quality depends on the line's own pace rather than on a
+// millisecond count, and the windows are wide in character terms (the Word-granularity Meh window
+// is 9.6 characters). "abcd" as one word over [1000, 1100] gives targets 1000, 1025, 1050, 1075 and
+// a mean spacing of 25 ms per character, which is tight enough that a press a few hundred ms late
+// runs right off the end of the ladder. The press times below were solved from that axis:
+//   a at 1000: the playhead is on it, 0 characters out, quality 1
+//   b at 1085: playhead 3 + (1085-1075)/25 = 3.4, so 2.4 characters out, quality 1 - 2.4/9.6 = 0.75
+//   c at 1170: playhead 6.8, so 4.8 characters out, quality 0.5 (and exactly the Ok-late edge)
+//   d at 1320: playhead 12.8, so 9.8 characters out, past the 9.6 Meh edge: LAGGING
+const timingOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":20000}\n' +
+    '{"text":"abcd","start_ms":1000,"end_ms":1100,"words":[' +
+    '{"text":"abcd","start_ms":1000,"end_ms":1100,"score":1}]}\n';
+
 // Two lines with a long instrumental stretch between them, for the cue-target and gap logic:
 // line 0 sings [1000, 2000], line 1 does not start until 12000.
 const gapOsu = OSU_HEADER +
@@ -81,15 +96,16 @@ function playOneKeyThenSeal() {
     return engine;
 }
 
-// A late press, to prove sync is a real timing measure and not just a hit count. 'b' targets
-// 1500 with tier Word (Ok-late window 2000 * 0.6 = 1200), so +600ms is exactly half quality.
+// A late press, to prove sync is a real timing measure and not just a hit count. On the timing
+// fixture 'b' at 1145 is 4.8 characters behind the playhead, exactly half of the Word-granularity
+// Meh-late window (9.6), so its quality is exactly 0.5.
 function playOneLatePress() {
-    const map = build(abcdOsu);
+    const map = build(timingOsu);
     const engine = new TB.TypingEngine(map);
     engine.update(1000);
-    engine.processKey('a', 1000);   // on target, q = 1
-    engine.update(2100);
-    engine.processKey('b', 2100);   // delta +600, q = 0.5
+    engine.processKey('a', 1000);   // on the playhead, q = 1
+    engine.update(1145);
+    engine.processKey('b', 1145);   // 4.8 characters out, q = 0.5
     return engine;
 }
 
@@ -98,16 +114,16 @@ function playOneLatePress() {
 // colour), half quality (mid ramp), and a press so late it is Lagging, which is still a CORRECT
 // cell but must keep .tb-c-off's flat warn tint instead of joining the ramp.
 function playMixedTiming() {
-    const map = build(abcdOsu);
+    const map = build(timingOsu);
     const engine = new TB.TypingEngine(map);
     engine.update(1000);
-    engine.processKey('a', 1000);   // target 1000, delta 0     -> q 1
-    engine.update(2100);
-    engine.processKey('b', 2100);   // target 1500, delta +600  -> q 0.5 (Ok-late window 1200)
-    engine.processKey(' ', 2100);   // target 2000, delta +100
-    engine.processKey('c', 2100);   // target 2000, delta +100
-    engine.update(3800);
-    engine.processKey('d', 3800);   // target 2500, delta +1300 -> past the Ok edge, Lagging
+    engine.processKey('a', 1000);   // 0.0 characters out -> q 1
+    engine.update(1085);
+    engine.processKey('b', 1085);   // 2.4 characters out -> q 0.75
+    engine.update(1170);
+    engine.processKey('c', 1170);   // 4.8 characters out -> q 0.5
+    engine.update(1320);
+    engine.processKey('d', 1320);   // 9.8 characters out -> past the Meh edge, Lagging
     return engine;
 }
 
@@ -208,12 +224,12 @@ const out = {
     rollingWrapped: ring(40),
     rollingZeroSpan: (() => { const r = D.makeRollingWpm(30); r.push(500); r.push(500); return r.value(-1); })(),
 
-    // Sync quality at the window edges.
+    // Sync quality at the edges of the WIDEST scoring window (Meh), which is the ramp it runs over.
     syncOnTarget: D.syncQuality(0, wordWindows),
-    syncHalfLate: D.syncQuality(wordWindows.ol / 2, wordWindows),
-    syncAtLateEdge: D.syncQuality(wordWindows.ol, wordWindows),
-    syncPastLateEdge: D.syncQuality(wordWindows.ol * 2, wordWindows),
-    syncAtEarlyEdge: D.syncQuality(-wordWindows.oe, wordWindows),
+    syncHalfLate: D.syncQuality(wordWindows.ml / 2, wordWindows),
+    syncAtLateEdge: D.syncQuality(wordWindows.ml, wordWindows),
+    syncPastLateEdge: D.syncQuality(wordWindows.ml * 2, wordWindows),
+    syncAtEarlyEdge: D.syncQuality(-wordWindows.me, wordWindows),
 
     // Sync tint: the ramp itself, then the classes/fills paintRow would write on real runs.
     syncTintFloor: D.constants.SYNC_TINT_FLOOR,

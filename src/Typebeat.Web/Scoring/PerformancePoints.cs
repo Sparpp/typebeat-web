@@ -355,8 +355,13 @@ public static class PerformancePoints
     /// finish the character at all, a typo says they finished it wrongly, and the mistype term
     /// already prices the second. That split is the whole reason the typo has its own key, even
     /// though <c>ScoringContract</c> makes it cost completion exactly as a miss does.</para>
+    ///
+    /// <para><c>perfect</c> is backlog 133's fourth quality tier and joins the list for the same
+    /// reason. No score stored before that key existed carries it, so adding it reprices nothing
+    /// and needs no <see cref="VERSION"/> bump; leaving it out would instead have made every play
+    /// submitted AFTER it read as a map with almost no notes at all.</para>
     /// </summary>
-    private static readonly string[] note_keys = ["great", "ok", "meh", "good", "miss"];
+    private static readonly string[] note_keys = ["perfect", "great", "ok", "meh", "good", "miss"];
 
     private const string miss_key = "miss";
 

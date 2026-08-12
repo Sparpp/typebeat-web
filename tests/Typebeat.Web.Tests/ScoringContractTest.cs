@@ -4,9 +4,16 @@ namespace Typebeat.Web.Tests;
 
 /// <summary>
 /// DB-free tests for the server-side score recompute (ScoringContract). Every expected value is
-/// hand-derived from the client's numeric weights (ScoreProcessor.GetBaseScoreForResult) and the
-/// standardised total-score formula (ScoreProcessor.ComputeTotalScore) with comboProgress at its
-/// maximum and the no-mod multiplier = 1.
+/// hand-derived from the client's numeric weights (ScoreProcessor.GetBaseScoreForResult as
+/// TypeBeatScoreProcessor overrides it) and the standardised total-score formula
+/// (ScoreProcessor.ComputeTotalScore) with comboProgress at its maximum and the no-mod
+/// multiplier = 1.
+///
+/// <para>The TOP tier is the <c>perfect</c> key, and <c>maximum_statistics</c> is one perfect per
+/// cell, since backlog 133 raised the cell judgement's MaxResult from Great to Perfect to free the
+/// enum slot a fourth quality tier needed. A judged cell's maximum is still worth 300, so every
+/// number below is exactly what it was when the same play submitted <c>great</c> instead. What a
+/// score from BEFORE that reads as is pinned in <c>CharacterDistanceParityTest</c>.</para>
 /// </summary>
 public class ScoringContractTest
 {
@@ -18,14 +25,14 @@ public class ScoringContractTest
     [Test]
     public void Accuracy_RecomputedFromWeights_ButRankGradesOnCompletion()
     {
-        // 8×great + 1×ok + 1×meh out of 10 max-great objects.
+        // 8×perfect + 1×ok + 1×meh out of 10 max-perfect objects.
         // numerator   = 300·8 + 100·1 + 50·1 = 2550
         // denominator = 300·10              = 3000  → accuracy = 0.85
         // completion  = 10 typed / 10 cells = 1.0   → rank X, sloppy timing costs accuracy,
         // score and combo, but never the grade.
         var r = ScoringContract.Recompute(
-            Dict(("great", 8), ("ok", 1), ("meh", 1)),
-            Dict(("great", 10)),
+            Dict(("perfect", 8), ("ok", 1), ("meh", 1)),
+            Dict(("perfect", 10)),
             maxCombo: 10);
 
         Assert.Multiple(() =>
@@ -45,7 +52,7 @@ public class ScoringContractTest
     {
         // The headline rule: an all-meh play (every window scraped) has accuracy 50/300 ≈ 0.167
         // but typed 100% of the map: SS.
-        var r = ScoringContract.Recompute(Dict(("meh", 10)), Dict(("great", 10)), maxCombo: 10);
+        var r = ScoringContract.Recompute(Dict(("meh", 10)), Dict(("perfect", 10)), maxCombo: 10);
 
         Assert.Multiple(() =>
         {
@@ -65,9 +72,9 @@ public class ScoringContractTest
     [Test]
     public void UncorrectedTypos_CostCompletionLikeAMiss_AndAccuracyLikeAMeh()
     {
-        var typo = ScoringContract.Recompute(Dict(("great", 9), ("good", 1)), Dict(("great", 10)), maxCombo: 9);
-        var meh = ScoringContract.Recompute(Dict(("great", 9), ("meh", 1)), Dict(("great", 10)), maxCombo: 10);
-        var miss = ScoringContract.Recompute(Dict(("great", 9), ("miss", 1)), Dict(("great", 10)), maxCombo: 9);
+        var typo = ScoringContract.Recompute(Dict(("perfect", 9), ("good", 1)), Dict(("perfect", 10)), maxCombo: 9);
+        var meh = ScoringContract.Recompute(Dict(("perfect", 9), ("meh", 1)), Dict(("perfect", 10)), maxCombo: 10);
+        var miss = ScoringContract.Recompute(Dict(("perfect", 9), ("miss", 1)), Dict(("perfect", 10)), maxCombo: 9);
 
         Assert.Multiple(() =>
         {
@@ -87,14 +94,14 @@ public class ScoringContractTest
 
             // The typo is a JUDGEMENT, so it is in the denominator: a play made entirely of them is
             // completion 0 and a D, not 1-over-nothing.
-            var allTypos = ScoringContract.Recompute(Dict(("good", 10)), Dict(("great", 10)), maxCombo: 0);
+            var allTypos = ScoringContract.Recompute(Dict(("good", 10)), Dict(("perfect", 10)), maxCombo: 0);
             Assert.That(allTypos.StatisticsValid, Is.True, "one judgement per cell, so still in bounds");
             Assert.That(allTypos.Completion, Is.Zero);
             Assert.That(allTypos.Rank, Is.EqualTo("D"));
 
             // ...and pp still counts it as a note that is not a miss, which is the whole reason it
             // is not simply stored as a miss.
-            var counts = PerformancePoints.CountNotes(Dict(("great", 9), ("good", 1), ("combo_break", 1)));
+            var counts = PerformancePoints.CountNotes(Dict(("perfect", 9), ("good", 1), ("combo_break", 1)));
             Assert.That(counts.Notes, Is.EqualTo(10));
             Assert.That(counts.Misses, Is.Zero);
             Assert.That(counts.Mistypes, Is.EqualTo(1));
@@ -104,10 +111,10 @@ public class ScoringContractTest
     [Test]
     public void Accuracy_MissesCountTowardDenominator_AndCompletion()
     {
-        // 5×great + 5×miss out of 10. accuracy 0.5; completion 5/10 = 0.5 → rank D.
+        // 5×perfect + 5×miss out of 10. accuracy 0.5; completion 5/10 = 0.5 → rank D.
         var r = ScoringContract.Recompute(
-            Dict(("great", 5), ("miss", 5)),
-            Dict(("great", 10)),
+            Dict(("perfect", 5), ("miss", 5)),
+            Dict(("perfect", 10)),
             maxCombo: 5);
 
         Assert.Multiple(() =>
@@ -128,8 +135,8 @@ public class ScoringContractTest
     {
         // 99/100 typed → completion 0.99 → S, however clean the timing was.
         var r = ScoringContract.Recompute(
-            Dict(("great", 99), ("miss", 1)),
-            Dict(("great", 100)),
+            Dict(("perfect", 99), ("miss", 1)),
+            Dict(("perfect", 100)),
             maxCombo: 99);
 
         Assert.Multiple(() =>
@@ -142,7 +149,7 @@ public class ScoringContractTest
     [Test]
     public void FullCombo_Perfect_IsRankX_AndCeilingIsMaxScore()
     {
-        var r = ScoringContract.Recompute(Dict(("great", 10)), Dict(("great", 10)), maxCombo: 10);
+        var r = ScoringContract.Recompute(Dict(("perfect", 10)), Dict(("perfect", 10)), maxCombo: 10);
 
         Assert.Multiple(() =>
         {
@@ -159,7 +166,7 @@ public class ScoringContractTest
     [Test]
     public void TotalScoreWithinBounds_AcceptsAtOrBelowCeiling_RejectsAbove()
     {
-        var r = ScoringContract.Recompute(Dict(("great", 10)), Dict(("great", 10)), maxCombo: 10);
+        var r = ScoringContract.Recompute(Dict(("perfect", 10)), Dict(("perfect", 10)), maxCombo: 10);
 
         Assert.Multiple(() =>
         {
@@ -177,16 +184,16 @@ public class ScoringContractTest
     [Test]
     public void Statistics_ExceedingMaximums_AreRejected()
     {
-        // 11 greats claimed but only 10 objects exist → numerator > denominator → invalid.
-        var r = ScoringContract.Recompute(Dict(("great", 11)), Dict(("great", 10)), maxCombo: 10);
+        // 11 perfects claimed but only 10 objects exist → numerator > denominator → invalid.
+        var r = ScoringContract.Recompute(Dict(("perfect", 11)), Dict(("perfect", 10)), maxCombo: 10);
         Assert.That(r.StatisticsValid, Is.False);
     }
 
     [Test]
     public void MaxCombo_AboveTheoretical_IsRejected()
     {
-        // Theoretical max combo is 10 (10 combo-increasing greats); claiming 11 is impossible.
-        var r = ScoringContract.Recompute(Dict(("great", 10)), Dict(("great", 10)), maxCombo: 11);
+        // Theoretical max combo is 10 (10 combo-increasing perfects); claiming 11 is impossible.
+        var r = ScoringContract.Recompute(Dict(("perfect", 10)), Dict(("perfect", 10)), maxCombo: 11);
         Assert.Multiple(() =>
         {
             Assert.That(r.TheoreticalMaxCombo, Is.EqualTo(10));
@@ -197,21 +204,21 @@ public class ScoringContractTest
     [Test]
     public void MaxCombo_AtTheoretical_IsValid()
     {
-        var r = ScoringContract.Recompute(Dict(("great", 10)), Dict(("great", 10)), maxCombo: 10);
+        var r = ScoringContract.Recompute(Dict(("perfect", 10)), Dict(("perfect", 10)), maxCombo: 10);
         Assert.That(r.StatisticsValid, Is.True);
     }
 
     [Test]
     public void NegativeCounts_AreRejected()
     {
-        var r = ScoringContract.Recompute(Dict(("great", -1)), Dict(("great", 10)), maxCombo: 0);
+        var r = ScoringContract.Recompute(Dict(("perfect", -1)), Dict(("perfect", 10)), maxCombo: 0);
         Assert.That(r.StatisticsValid, Is.False);
     }
 
     [Test]
     public void EmptyMaximumStatistics_IsRejected_AndDoesNotThrow()
     {
-        var r = ScoringContract.Recompute(Dict(("great", 5)), new Dictionary<string, int>(), maxCombo: 0);
+        var r = ScoringContract.Recompute(Dict(("perfect", 5)), new Dictionary<string, int>(), maxCombo: 0);
         Assert.Multiple(() =>
         {
             Assert.That(r.StatisticsValid, Is.False);
@@ -232,8 +239,8 @@ public class ScoringContractTest
     {
         // A hostile client injecting an unrecognised high-value key cannot inflate accuracy or score.
         var r = ScoringContract.Recompute(
-            Dict(("great", 10), ("super_ultra_bonus", 9999)),
-            Dict(("great", 10)),
+            Dict(("perfect", 10), ("super_ultra_bonus", 9999)),
+            Dict(("perfect", 10)),
             maxCombo: 10);
 
         Assert.Multiple(() =>
@@ -263,17 +270,17 @@ public class ScoringContractTest
     // ---- failed (partial) plays: judged-only accuracy drives the ceiling ----
     // Regression for the review finding: the client's running accuracy denominator only counts
     // JUDGED cells (ScoreProcessor.cs:261,393), so a play failed 100 cells into a 1000-cell map
-    // with all-greats has client accuracy 1.0; a whole-map ceiling would falsely flag its
+    // with all-perfects has client accuracy 1.0; a whole-map ceiling would falsely flag its
     // honest total as tampered.
 
     [Test]
     public void FailedPlay_JudgedAccuracyMatchesClientRunningAccuracy()
     {
-        // 100 greats judged, map has 1000 cells.
+        // 100 perfects judged, map has 1000 cells.
         // whole-map accuracy = 30000/300000 = 0.1; judged accuracy = 30000/30000 = 1.0.
         var r = ScoringContract.Recompute(
-            Dict(("great", 100)),
-            Dict(("great", 1000)),
+            Dict(("perfect", 100)),
+            Dict(("perfect", 1000)),
             maxCombo: 100);
 
         Assert.Multiple(() =>
@@ -294,7 +301,7 @@ public class ScoringContractTest
     public void FailedPlay_HonestTotalIsWithinBounds()
     {
         // The finding's concrete scenario: honest client total ≈ 65,800 for the play above.
-        var r = ScoringContract.Recompute(Dict(("great", 100)), Dict(("great", 1000)), maxCombo: 100);
+        var r = ScoringContract.Recompute(Dict(("perfect", 100)), Dict(("perfect", 1000)), maxCombo: 100);
         Assert.That(ScoringContract.TotalScoreWithinBounds(65_800, r), Is.True);
     }
 
@@ -304,8 +311,8 @@ public class ScoringContractTest
         // Completed play: every cell judged → the two accuracies (and hence the old and new
         // ceiling formulas) are identical, so ranked-score behavior is unchanged.
         var r = ScoringContract.Recompute(
-            Dict(("great", 8), ("ok", 1), ("meh", 1)),
-            Dict(("great", 10)),
+            Dict(("perfect", 8), ("ok", 1), ("meh", 1)),
+            Dict(("perfect", 10)),
             maxCombo: 10);
 
         Assert.Multiple(() =>
@@ -322,12 +329,12 @@ public class ScoringContractTest
     {
         // LANDMINE 1. StatisticsValid fails when accuracy-affecting judged counts exceed
         // maximum_statistics. A mistype has no counterpart there (maximum_statistics stays one
-        // great per cell), so counting combo_break as a judgement would make any mistyped play look
+        // perfect per cell), so counting combo_break as a judgement would make any mistyped play look
         // like it contained more cells than the map has, and unrank every one of them. 400 mistypes
         // on a 10-cell map is deliberately absurd: it must still be a perfectly valid submission.
         var r = ScoringContract.Recompute(
-            Dict(("great", 10), ("combo_break", 400)),
-            Dict(("great", 10)),
+            Dict(("perfect", 10), ("combo_break", 400)),
+            Dict(("perfect", 10)),
             maxCombo: 10);
 
         Assert.Multiple(() =>
@@ -346,16 +353,16 @@ public class ScoringContractTest
         // Two statements in one: the new key changes nothing the contract computes, AND an OLD
         // client that omits it entirely is handled identically. Whole-record equality, so a future
         // field cannot quietly start reacting to it.
-        var maximums = Dict(("great", 200));
+        var maximums = Dict(("perfect", 200));
 
         var withoutKey = ScoringContract.Recompute(
-            Dict(("great", 150), ("ok", 20), ("meh", 10), ("miss", 20)), maximums, maxCombo: 60);
+            Dict(("perfect", 150), ("ok", 20), ("meh", 10), ("miss", 20)), maximums, maxCombo: 60);
 
         var withKey = ScoringContract.Recompute(
-            Dict(("great", 150), ("ok", 20), ("meh", 10), ("miss", 20), ("combo_break", 73)), maximums, maxCombo: 60);
+            Dict(("perfect", 150), ("ok", 20), ("meh", 10), ("miss", 20), ("combo_break", 73)), maximums, maxCombo: 60);
 
         var withZeroKey = ScoringContract.Recompute(
-            Dict(("great", 150), ("ok", 20), ("meh", 10), ("miss", 20), ("combo_break", 0)), maximums, maxCombo: 60);
+            Dict(("perfect", 150), ("ok", 20), ("meh", 10), ("miss", 20), ("combo_break", 0)), maximums, maxCombo: 60);
 
         Assert.Multiple(() =>
         {
@@ -370,8 +377,8 @@ public class ScoringContractTest
         // The key is ignored for every numeric purpose, but not for the sanity check: a negative
         // count describes no play and must not pass as a valid submission.
         var r = ScoringContract.Recompute(
-            Dict(("great", 10), ("combo_break", -5)),
-            Dict(("great", 10)),
+            Dict(("perfect", 10), ("combo_break", -5)),
+            Dict(("perfect", 10)),
             maxCombo: 10);
 
         Assert.That(r.StatisticsValid, Is.False);
@@ -380,11 +387,11 @@ public class ScoringContractTest
     [Test]
     public void MixedFailedPlay_JudgedAccuracyUsesJudgedDenominator()
     {
-        // 50 greats + 10 oks + 5 misses judged (65 of 200 cells).
+        // 50 perfects + 10 oks + 5 misses judged (65 of 200 cells).
         // numerator = 300·50 + 100·10 = 16000; judged denominator = 300·65 = 19500.
         var r = ScoringContract.Recompute(
-            Dict(("great", 50), ("ok", 10), ("miss", 5)),
-            Dict(("great", 200)),
+            Dict(("perfect", 50), ("ok", 10), ("miss", 5)),
+            Dict(("perfect", 200)),
             maxCombo: 55);
 
         Assert.Multiple(() =>

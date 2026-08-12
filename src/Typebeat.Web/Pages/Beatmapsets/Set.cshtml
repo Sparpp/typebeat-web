@@ -320,8 +320,9 @@
                 <div class="podium-stat"><span class="podium-stat__label">Accuracy</span><span class="podium-stat__value">@SetModel.FormatPercent(top.Accuracy)</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Max combo</span><span class="podium-stat__value">@top.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Perfect</span><span class="podium-stat__value">@top.Perfect</span></div>
-                <div class="podium-stat"><span class="podium-stat__label">Good</span><span class="podium-stat__value">@top.Good</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Great</span><span class="podium-stat__value">@top.Great</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Ok</span><span class="podium-stat__value">@top.Ok</span></div>
+                <div class="podium-stat"><span class="podium-stat__label">Meh</span><span class="podium-stat__value">@top.Meh</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Miss</span><span class="podium-stat__value">@top.Miss</span></div>
                 @* Only for a play that CARRIES the stat; a score from before it existed shows no
                    cell at all rather than a fabricated 0. *@
@@ -353,8 +354,9 @@
                     <th>Player</th>
                     <th>Combo</th>
                     <th>Perfect</th>
-                    <th>Good</th>
+                    <th>Great</th>
                     <th>Ok</th>
+                    <th>Meh</th>
                     <th>Miss</th>
                     @* The columns appear only once some play on this board carries the stat; rows
                        that predate it leave their cell blank rather than claiming a clean run. *@
@@ -384,8 +386,9 @@
                         <td><a href="/users/@score.UserId">@score.Username</a></td>
                         <td class="num">@score.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</td>
                         <td class="num">@score.Perfect</td>
-                        <td class="num">@score.Good</td>
+                        <td class="num">@score.Great</td>
                         <td class="num">@score.Ok</td>
+                        <td class="num">@score.Meh</td>
                         <td class="num">@score.Miss</td>
                         @if (anyTypos)
                         {

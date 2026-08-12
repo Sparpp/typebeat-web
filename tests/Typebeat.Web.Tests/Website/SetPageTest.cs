@@ -83,10 +83,13 @@ public class SetPageTest
             Assert.That(html, Does.Not.Contain("cheat suspect"));
             Assert.That(html, Does.Not.Contain("999,999,999"));
 
-            // Wire keys great/ok/meh/miss surface under the engine's judgement names.
+            // The judgement columns. Since backlog 133 the wire keys and the engine's judgement
+            // names are the same four words, so each column is simply its key; before that the two
+            // vocabularies were offset by one rung and the page did the translating.
             Assert.That(html, Does.Contain(">Perfect<"));
-            Assert.That(html, Does.Contain(">Good<"));
+            Assert.That(html, Does.Contain(">Great<"));
             Assert.That(html, Does.Contain(">Ok<"));
+            Assert.That(html, Does.Contain(">Meh<"));
             Assert.That(html, Does.Contain(">Miss<"));
 
             // Accuracy formatting.
