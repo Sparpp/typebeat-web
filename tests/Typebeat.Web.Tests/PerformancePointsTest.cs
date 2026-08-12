@@ -356,8 +356,8 @@ public class PerformancePointsTest
         Assert.Multiple(() =>
         {
             // Backlog 101 moves this from 29.377848 (which is where 97 put it, from 96's 69.935719
-            // and 95's 59.280683), ONLY through the miss term: the play carries no mistypes, so its
-            // mistyping term is exactly 1.0 whatever the power, and the whole change is
+            // and 95's 59.280683), ONLY through the miss term: the play carries no typos, so its
+            // typo term is exactly 1.0 whatever the power, and the whole change is
             // max(0, 1 - 5^1.2/300)^10 = 0.97700^10 replacing 0.91667^10. Five misses is far under
             // the 116-miss cliff on a 300-note map, so this prices comfortably.
             Assert.That(bare, Is.EqualTo(47.259316).Within(1e-5)); // pp[f.compute(3, 300, 5, 0.8, 250)]
@@ -654,8 +654,8 @@ public class PerformancePointsTest
     [Test]
     public void ForScore_HalfTimePaysTheMirrorPenaltyAndIsExactlyDoubleTimesReciprocal()
     {
-        // Twelve misses and FIFTEEN mistypes, not the thirty this used to carry: thirty was past the
-        // backlog-97 mistype cliff at 500 notes (22.87), so every one of the three plays priced to
+        // Twelve misses and FIFTEEN typos, not the thirty this used to carry: thirty was past the
+        // backlog-97 typo cliff at 500 notes (22.87), so every one of the three plays priced to
         // zero and the two ratios below became 0/0, i.e. NaN. This is a test about the RATE factors,
         // so the play has to stay priced for the ratios to exist at all. Backlog 101 moves that
         // cliff out to 248.37, so these counts are now comfortably clear of it rather than barely.
@@ -783,13 +783,13 @@ public class PerformancePointsTest
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Mistypes (backlog 72, rebalanced by backlog 89, 95, 96, 97 and 101): wrong keypresses are
+    // Typos (backlog 72, rebalanced by backlog 89, 95, 96, 97 and 101): wrong keypresses are
     // read off the combo_break key and priced by their OWN term, at exponent 6, independently of
     // the misses.
     // ---------------------------------------------------------------------------------------------
 
     [Test]
-    public void CountNotes_ReadsMistypesFromTheComboBreakKeyWithoutCountingThemAsNotes()
+    public void CountNotes_ReadsTyposFromTheComboBreakKeyWithoutCountingThemAsNotes()
     {
         var counts = PerformancePoints.CountNotes(new Dictionary<string, int>
         {
@@ -806,12 +806,12 @@ public class PerformancePointsTest
             // bonus and shrink the COMBO denominator, paying a masher twice for mashing.
             Assert.That(counts.Notes, Is.EqualTo(400));
             Assert.That(counts.Misses, Is.EqualTo(50));
-            Assert.That(counts.Mistypes, Is.EqualTo(137));
+            Assert.That(counts.Typos, Is.EqualTo(137));
         });
     }
 
     [Test]
-    public void CountNotes_AMissingMistypeKeyIsNotZeroGuessedButSimplyAbsent()
+    public void CountNotes_AMissingTypoKeyIsNotZeroGuessedButSimplyAbsent()
     {
         // Every score submitted before the stat existed omits the key entirely, and must price
         // exactly as it always did.
@@ -819,27 +819,27 @@ public class PerformancePointsTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(old.Mistypes, Is.Zero);
-            Assert.That(PerformancePoints.CountNotes("""{"great":100,"miss":10}""").Mistypes, Is.Zero);
-            Assert.That(PerformancePoints.CountNotes("""{"great":100,"miss":10,"combo_break":9}""").Mistypes, Is.EqualTo(9));
+            Assert.That(old.Typos, Is.Zero);
+            Assert.That(PerformancePoints.CountNotes("""{"great":100,"miss":10}""").Typos, Is.Zero);
+            Assert.That(PerformancePoints.CountNotes("""{"great":100,"miss":10,"combo_break":9}""").Typos, Is.EqualTo(9));
         });
     }
 
     [Test]
-    public void CountNotes_NegativeMistypeCountsContributeNothing()
-        => Assert.That(PerformancePoints.CountNotes(new Dictionary<string, int> { ["great"] = 100, ["combo_break"] = -50 }).Mistypes, Is.Zero);
+    public void CountNotes_NegativeTypoCountsContributeNothing()
+        => Assert.That(PerformancePoints.CountNotes(new Dictionary<string, int> { ["great"] = 100, ["combo_break"] = -50 }).Typos, Is.Zero);
 
     /// <summary>
-    /// The two penalty terms in isolation. Nothing else in the formula reads misses or mistypes, so
+    /// The two penalty terms in isolation. Nothing else in the formula reads misses or typos, so
     /// dividing a play's pp by the pp of the same play with neither is EXACTLY
-    /// <c>max(0, 1 - miss^1.2/notes)^10 * max(0, 1 - mistypes^1.2/(notes+mistypes))^6</c>, with
+    /// <c>max(0, 1 - miss^1.2/notes)^10 * max(0, 1 - typos^1.2/(notes+typos))^6</c>, with
     /// every other factor cancelling. Every expected number below is that product.
     /// </summary>
-    private static double penaltyFactor(int notes, int misses, int mistypes)
+    private static double penaltyFactor(int notes, int misses, int typos)
     {
-        double spotless = PerformancePoints.Compute(4, notes, 0, 0.9, notes, no_mods, mistypes: 0);
+        double spotless = PerformancePoints.Compute(4, notes, 0, 0.9, notes, no_mods, typos: 0);
 
-        return PerformancePoints.Compute(4, notes, misses, 0.9, notes, no_mods, mistypes) / spotless;
+        return PerformancePoints.Compute(4, notes, misses, 0.9, notes, no_mods, typos) / spotless;
     }
 
     [Test]
@@ -859,28 +859,28 @@ public class PerformancePointsTest
             // 580, giving 0.041726 and 0.089375. Against 0.000000 at a power of 2, 0.770823 under
             // the squared ratio, 0.114309 at the linear shape, 0.200678 after the backlog-89 split
             // and 0.125946 before it: a sloppy play is priced harshly again rather than zeroed.
-            Assert.That(penaltyFactor(notes: 500, misses: 60, mistypes: 80), Is.EqualTo(0.008341).Within(1e-6)); // pp[f.penalty(500, 60, 80)]
+            Assert.That(penaltyFactor(notes: 500, misses: 60, typos: 80), Is.EqualTo(0.008341).Within(1e-6)); // pp[f.penalty(500, 60, 80)]
 
             // The near-clean case, which is the headline figure: the bases are 1 - 15.849/500 =
             // 0.96830 and 1 - 36.411/520 = 0.92998, giving 0.724618 and 0.646893. A play with ten
-            // misses and twenty mistypes keeps 0.469 of a spotless one, against 0.000016 at a power
+            // misses and twenty typos keeps 0.469 of a spotless one, against 0.000016 at a power
             // of 2, 0.987200 under the squared ratio and 0.645745 at the linear shape. THAT IS THE
             // POINT OF THE CHANGE: it lands almost exactly where backlog 95 had it.
-            Assert.That(penaltyFactor(notes: 500, misses: 10, mistypes: 20), Is.EqualTo(0.542001).Within(1e-6)); // pp[f.penalty(500, 10, 20)]
+            Assert.That(penaltyFactor(notes: 500, misses: 10, typos: 20), Is.EqualTo(0.542001).Within(1e-6)); // pp[f.penalty(500, 10, 20)]
         });
     }
 
     [Test]
-    public void Compute_ZeroMistypesLeavesThePlayPricedByItsMissesAlone()
+    public void Compute_ZeroTyposLeavesThePlayPricedByItsMissesAlone()
     {
-        // The property that makes the split legible: at zero mistypes the mistyping term is EXACTLY
+        // The property that makes the split legible: at zero typos the typo term is EXACTLY
         // 1.0, so the whole penalty is max(0, 1 - miss^1.2/notes)^10 and nothing else. The sweep
         // deliberately straddles the cliff, so the restatement is checked both where it is a live
         // number and where the clamp has taken over. It USED to straddle 23, which backlog 101 moves
         // out to 178, so 17 and 250 no longer sit either side of anything.
         foreach (int misses in new[] { 0, 1, 100, 177, 178, 500 })
         {
-            double withArgument = PerformancePoints.Compute(4.2, 500, misses, 0.87, 400, no_mods, mistypes: 0);
+            double withArgument = PerformancePoints.Compute(4.2, 500, misses, 0.87, 400, no_mods, typos: 0);
             double withoutArgument = PerformancePoints.Compute(4.2, 500, misses, 0.87, 400, no_mods);
 
             Assert.That(withArgument, Is.EqualTo(withoutArgument), $"misses={misses}");
@@ -890,7 +890,7 @@ public class PerformancePointsTest
     }
 
     [Test]
-    public void Compute_APlayWithNeitherAMissNorAMistypeIsUntouchedByEitherExponent()
+    public void Compute_APlayWithNeitherAMissNorATypoIsUntouchedByEitherExponent()
     {
         // The cheapest proof that a rebalance of the two exponents is CONFINED to their terms: both
         // bases are exactly 1.0 at a count of zero, and 1.0 raised to any finite power is exactly
@@ -899,7 +899,7 @@ public class PerformancePointsTest
         // recorded number. If this ever moves, something leaked out of the two penalty terms.
         foreach (int notes in new[] { 1, 100, 500, 2137 })
         {
-            double spotless = PerformancePoints.Compute(4, notes, 0, 0.9, notes, no_mods, mistypes: 0);
+            double spotless = PerformancePoints.Compute(4, notes, 0, 0.9, notes, no_mods, typos: 0);
             double withoutEitherPenaltyTerm = 9.6 * Math.Pow(4, 2.00) * PerformancePoints.LengthBonus(notes) * Math.Pow(0.9, 1.80); // pp:const scale=9.6 sr_exponent=2.00 accuracy_exponent=1.80
 
             Assert.That(spotless, Is.EqualTo(withoutEitherPenaltyTerm), $"notes={notes}");
@@ -907,41 +907,41 @@ public class PerformancePointsTest
     }
 
     [Test]
-    public void Compute_PricesMissesAndMistypesIndependently()
+    public void Compute_PricesMissesAndTyposIndependently()
     {
         // The whole point of the split. What a miss costs must not depend on the keypress count and
         // vice versa, so the penalty factorises: the RATIO between two miss counts is the same
-        // whatever mistype count both carry. Under the old combined term it was not.
+        // whatever typo count both carry. Under the old combined term it was not.
         //
         // Every count here is BELOW its cliff on purpose. Past the cliff both plays price to zero
         // and the ratio is 0/0, which says nothing about factorisation either way. Backlog 97 pulled
-        // this sweep back to 20 mistypes to clear a cliff at 23; at 1.2 the cliff is 249, so 20 was
+        // this sweep back to 20 typos to clear a cliff at 23; at 1.2 the cliff is 249, so 20 was
         // testing almost nothing and the sweep runs out to 248, the last count that prices at all.
-        foreach (int mistypes in new[] { 0, 10, 30, 51 })
+        foreach (int typos in new[] { 0, 10, 30, 51 })
         {
-            double clean = penaltyFactor(500, 0, mistypes);
-            double missy = penaltyFactor(500, 10, mistypes);
+            double clean = penaltyFactor(500, 0, typos);
+            double missy = penaltyFactor(500, 10, typos);
 
             Assert.That(missy / clean, Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.2) / 500.0), 10)).Within(1e-12), // pp:const count_power=1.2 miss_exponent=10
-                $"the miss term must not be diluted by {mistypes} mistypes");
+                $"the miss term must not be diluted by {typos} typos");
         }
 
-        // And the mistyping term likewise, read across two miss counts.
+        // And the typo term likewise, read across two miss counts.
         Assert.That(penaltyFactor(500, 10, 20) / penaltyFactor(500, 10, 0),
             Is.EqualTo(penaltyFactor(500, 0, 20)).Within(1e-12));
     }
 
     [Test]
-    public void Compute_MistypesCostPpAndMonotonicallySo()
+    public void Compute_TyposCostPpAndMonotonicallySo()
     {
-        // Both counts sit under the mistype cliff, because "many" has to stay STRICTLY above zero
+        // Both counts sit under the typo cliff, because "many" has to stay STRICTLY above zero
         // for the last assertion to mean anything: past the cliff "still positive" would be a claim
         // about the clamp rather than about monotonicity. Backlog 97 pulled these down to 5 and 15
         // to clear a cliff at 23; backlog 101 moves that cliff to 249, so they are back at 50 and
         // 200 where the difference between them is worth asserting.
-        double clean = PerformancePoints.Compute(4, 500, 0, 0.9, 500, no_mods, mistypes: 0);
-        double few = PerformancePoints.Compute(4, 500, 0, 0.9, 500, no_mods, mistypes: 15);
-        double many = PerformancePoints.Compute(4, 500, 0, 0.9, 500, no_mods, mistypes: 45);
+        double clean = PerformancePoints.Compute(4, 500, 0, 0.9, 500, no_mods, typos: 0);
+        double few = PerformancePoints.Compute(4, 500, 0, 0.9, 500, no_mods, typos: 15);
+        double many = PerformancePoints.Compute(4, 500, 0, 0.9, 500, no_mods, typos: 45);
 
         Assert.Multiple(() =>
         {
@@ -958,7 +958,7 @@ public class PerformancePointsTest
         // because the terms are separate and either could be wired up backwards on its own.
         //
         // STRICTLY is only true UNDER THE CLIFF, and that is a property of the clamp rather than a
-        // weakness of the test: past notes^(1/1.2) misses (or the mistype root) every count prices
+        // weakness of the test: past notes^(1/1.2) misses (or the typo root) every count prices
         // to exactly the same zero, so a sweep running to 499 misses would be asserting 0 < 0. Both
         // sweeps and both held-fixed values therefore stay below their cliffs; the behaviour AT and
         // past the cliff has tests of its own below.
@@ -966,15 +966,15 @@ public class PerformancePointsTest
         // The upper ends were 22 under backlog 97, which is where a cliff at 23 left them. Backlog
         // 101 moves the cliffs to 178 and 249, so the sweeps run to 177 and 248: the last counts
         // that price, and the ones where a term wired up backwards would show.
-        foreach (int mistypes in new[] { 0, 30 })
+        foreach (int typos in new[] { 0, 30 })
         {
             double previous = double.MaxValue;
 
             foreach (int misses in new[] { 0, 1, 10, 25, 40, 48 })
             {
-                double pp = PerformancePoints.Compute(4, 500, misses, 0.9, 500, no_mods, mistypes);
+                double pp = PerformancePoints.Compute(4, 500, misses, 0.9, 500, no_mods, typos);
 
-                Assert.That(pp, Is.LessThan(previous), $"misses={misses} at mistypes={mistypes}");
+                Assert.That(pp, Is.LessThan(previous), $"misses={misses} at typos={typos}");
                 previous = pp;
             }
         }
@@ -983,38 +983,38 @@ public class PerformancePointsTest
         {
             double previous = double.MaxValue;
 
-            foreach (int mistypes in new[] { 0, 1, 10, 25, 40, 51 })
+            foreach (int typos in new[] { 0, 1, 10, 25, 40, 51 })
             {
-                double pp = PerformancePoints.Compute(4, 500, misses, 0.9, 500, no_mods, mistypes);
+                double pp = PerformancePoints.Compute(4, 500, misses, 0.9, 500, no_mods, typos);
 
-                Assert.That(pp, Is.LessThan(previous), $"mistypes={mistypes} at misses={misses}");
+                Assert.That(pp, Is.LessThan(previous), $"typos={typos} at misses={misses}");
                 previous = pp;
             }
         }
     }
 
     [Test]
-    public void Compute_TheMistypingTermStaysInRangeForAnyMistypeCount()
+    public void Compute_TheTypoTermStaysInRangeForAnyTypoCount()
     {
-        // LANDMINE 6, closed by keeping mistypes on BOTH sides of the MISTYPING fraction and by
+        // LANDMINE 6, closed by keeping typos on BOTH sides of the TYPO TERM fraction and by
         // CLAMPING the base at 0: however absurd the keypress count the result is a real number in
         // [0, 1]. An absurd count must price to zero, never to a negative base, a NaN, or (with a
         // fractional exponent on a negative base) an imaginary result. int.MaxValue is in the sweep
-        // for TWO reasons: notes + mistypes would overflow an int there, and so would an int square,
+        // for TWO reasons: notes + typos would overflow an int there, and so would an int square,
         // whose true value is about 4.6e18. Math.Pow converts to double and the sum is taken in
         // double, so the ratio comes out at about 74 and the clamp turns it into a well-defined
         // zero. The NEGATIVE entry matters more than it used to: the count is clamped before it
         // reaches Math.Pow, and Math.Pow(-1, 1.2) is NaN rather than merely a wrong sign.
         foreach (int notes in new[] { 1, 10, 500 })
         foreach (int misses in new[] { 0, notes / 2, notes })
-        foreach (int mistypes in new[] { -1, 0, 1, notes * 10, notes * 1000, int.MaxValue })
+        foreach (int typos in new[] { -1, 0, 1, notes * 10, notes * 1000, int.MaxValue })
         {
-            double pp = PerformancePoints.Compute(6, notes, misses, 0.9, notes, no_mods, mistypes);
+            double pp = PerformancePoints.Compute(6, notes, misses, 0.9, notes, no_mods, typos);
 
-            Assert.That(pp, Is.Not.NaN, $"notes={notes} miss={misses} mistypes={mistypes}");
-            Assert.That(double.IsFinite(pp), Is.True, $"notes={notes} miss={misses} mistypes={mistypes}");
-            Assert.That(pp, Is.GreaterThanOrEqualTo(0), $"notes={notes} miss={misses} mistypes={mistypes}");
-            Assert.That(pp, Is.LessThan(reference_pp * 10), $"notes={notes} miss={misses} mistypes={mistypes}");
+            Assert.That(pp, Is.Not.NaN, $"notes={notes} miss={misses} typos={typos}");
+            Assert.That(double.IsFinite(pp), Is.True, $"notes={notes} miss={misses} typos={typos}");
+            Assert.That(pp, Is.GreaterThanOrEqualTo(0), $"notes={notes} miss={misses} typos={typos}");
+            Assert.That(pp, Is.LessThan(reference_pp * 10), $"notes={notes} miss={misses} typos={typos}");
         }
 
         // Ten times the note count, spelled out. Even at the softened power of 1.2 this is far past
@@ -1027,7 +1027,7 @@ public class PerformancePointsTest
         Assert.Multiple(() =>
         {
             Assert.That(absurd, Is.Zero);
-            Assert.That(absurd, Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(5000.0, 1.2) / 5500.0), 4)).Within(1e-12)); // pp:const count_power=1.2 mistype_exponent=4
+            Assert.That(absurd, Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(5000.0, 1.2) / 5500.0), 4)).Within(1e-12)); // pp:const count_power=1.2 typo_exponent=4
         });
     }
 
@@ -1067,17 +1067,17 @@ public class PerformancePointsTest
     }
 
     [Test]
-    public void Compute_TheMistypePenaltyFallsOffACliffAtThePositiveRootOfItsOwnEquation()
+    public void Compute_TheTypoPenaltyFallsOffACliffAtThePositiveRootOfItsOwnEquation()
     {
-        // The mistype base is 1 - mistypes^1.2/(notes + mistypes), so the count is in the
+        // The typo base is 1 - typos^1.2/(notes + typos), so the count is in the
         // denominator too and the zero moves out to the positive root of m^1.2 - m - notes = 0. At
         // the old power of 2 that had the closed form (1 + sqrt(1 + 4·notes))/2; at 1.2 it has none
         // and is solved numerically. It is 248.37 at 500 notes, 730.32 at 2000 and 73.45 at 100:
-        // LATER than the miss cliff on every map, which is the mistype term staying the cheaper of
+        // LATER than the miss cliff on every map, which is the typo term staying the cheaper of
         // the two failures.
-        const int cliff500 = 249; // pp[math.ceil(f.mistype_cliff(500))]
-        const int cliff2000 = 731; // pp[math.ceil(f.mistype_cliff(2000))]
-        const int cliff100 = 74; // pp[math.ceil(f.mistype_cliff(100))]
+        const int cliff500 = 249; // pp[math.ceil(f.typo_cliff(500))]
+        const int cliff2000 = 731; // pp[math.ceil(f.typo_cliff(2000))]
+        const int cliff100 = 74; // pp[math.ceil(f.typo_cliff(100))]
         const int missCliff500 = 178; // pp[math.ceil(f.miss_cliff(500))]
 
         Assert.Multiple(() =>
@@ -1092,7 +1092,7 @@ public class PerformancePointsTest
             Assert.That(penaltyFactor(100, 0, cliff100), Is.Zero);
 
             // The ordering, asserted rather than left to the six numbers above agreeing by luck:
-            // whatever the power, the mistype cliff is the LATER of the two, so a mistype count that
+            // whatever the power, the typo cliff is the LATER of the two, so a typo count that
             // would already have zeroed the same number of MISSES still prices.
             Assert.That(penaltyFactor(500, 0, missCliff500), Is.GreaterThan(0));
             Assert.That(penaltyFactor(500, missCliff500, 0), Is.Zero);
@@ -1106,24 +1106,24 @@ public class PerformancePointsTest
         // accuracy or combo. That is a deliberate consequence of the shape and not a rounding
         // artefact, so it is asserted on Compute itself rather than on the penalty factor.
         const int missCliff = 178; // pp[math.ceil(f.miss_cliff(500))]
-        const int mistypeCliff = 249; // pp[math.ceil(f.mistype_cliff(500))]
+        const int typoCliff = 249; // pp[math.ceil(f.typo_cliff(500))]
 
         Assert.Multiple(() =>
         {
             Assert.That(PerformancePoints.Compute(6, 500, missCliff, 0.95, 500 - missCliff, no_mods), Is.Zero,
                 "the miss cliff");
-            Assert.That(PerformancePoints.Compute(6, 500, 0, 0.95, 500, no_mods, mistypeCliff), Is.Zero,
-                "the mistype cliff");
+            Assert.That(PerformancePoints.Compute(6, 500, 0, 0.95, 500, no_mods, typoCliff), Is.Zero,
+                "the typo cliff");
 
             // One below each, the same play is positive, so the zeros above are the clamp and not
             // some unrelated guard swallowing the play.
             Assert.That(PerformancePoints.Compute(6, 500, missCliff - 1, 0.95, 501 - missCliff, no_mods), Is.GreaterThan(0));
-            Assert.That(PerformancePoints.Compute(6, 500, 0, 0.95, 500, no_mods, mistypeCliff - 1), Is.GreaterThan(0));
+            Assert.That(PerformancePoints.Compute(6, 500, 0, 0.95, 500, no_mods, typoCliff - 1), Is.GreaterThan(0));
         });
     }
 
     [Test]
-    public void ForScore_PricesTheMistypesCarriedOnTheCounts()
+    public void ForScore_PricesTheTyposCarriedOnTheCounts()
     {
         var clean = PerformancePoints.ForScore(true, no_mods, new PerformancePoints.NoteCounts(500, 0), 0.9, 500, 4, null, null);
         var messy = PerformancePoints.ForScore(true, no_mods, new PerformancePoints.NoteCounts(500, 0, 60), 0.9, 500, 4, null, null);
@@ -1141,15 +1141,15 @@ public class PerformancePointsTest
     public void Version_IsBumpedBecauseTheRebalanceRepricesStoredRows()
     {
         // v7 = backlog 101, count_power dropping from 2 to 1.2, which reprices every stored row
-        // carrying even one miss or one mistype (upwards, and away from zero for most of them).
+        // carrying even one miss or one typo (upwards, and away from zero for most of them).
         // v6 = backlog 97, the squaring of both penalty COUNTS, which reprices every stored row
-        // carrying even one miss or one mistype (downwards, and to zero for most of them).
+        // carrying even one miss or one typo (downwards, and to zero for most of them).
         // v5 = backlog 96, the squaring of both penalty RATIOS, which reprices every stored row
-        // carrying even one miss or one mistype (upwards, that time).
-        // v4 = backlog 95, the penalty rebalance (miss 8.5 to 10, mistype 3.5 to 6), which reprices
-        // every stored row carrying even one miss or one mistype.
+        // carrying even one miss or one typo (upwards, that time).
+        // v4 = backlog 95, the penalty rebalance (miss 8.5 to 10, typo 3.5 to 6), which reprices
+        // every stored row carrying even one miss or one typo.
         // v3 = backlog 90, the Half Time mirror penalty, which reprices every stored HT row.
-        // v2 = backlog 89. The mistype term (backlog 72) deliberately did NOT bump, on the proof
+        // v2 = backlog 89. The typo term (backlog 72) deliberately did NOT bump, on the proof
         // that no stored row could carry a combo_break count and so no stored value could move.
         // That proof does not survive a steeper MISS exponent, which reprices every stored row with
         // even one miss, so PpBackfill has to sweep. If this moves, so do the game's

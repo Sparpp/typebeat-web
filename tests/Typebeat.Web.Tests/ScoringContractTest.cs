@@ -104,7 +104,7 @@ public class ScoringContractTest
             var counts = PerformancePoints.CountNotes(Dict(("perfect", 9), ("good", 1), ("combo_break", 1)));
             Assert.That(counts.Notes, Is.EqualTo(10));
             Assert.That(counts.Misses, Is.Zero);
-            Assert.That(counts.Mistypes, Is.EqualTo(1));
+            Assert.That(counts.Typos, Is.EqualTo(1));
         });
     }
 

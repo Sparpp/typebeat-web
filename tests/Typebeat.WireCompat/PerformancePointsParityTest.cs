@@ -117,13 +117,13 @@ public class PerformancePointsParityTest
         foreach (double accuracy in accuracies)
         foreach (int misses in new[] { 0, 1, notes / 3, notes })
         foreach (int maxCombo in new[] { 0, notes / 2, notes })
-        foreach (int mistypes in new[] { 0, 1, 137, notes * 3 })
+        foreach (int typos in new[] { 0, 1, 137, notes * 3 })
         {
-            double client = ClientPp.Compute(sr, notes, misses, accuracy, maxCombo, no_client_mods, mistypes);
-            double server = ServerPp.Compute(sr, notes, misses, accuracy, maxCombo, no_server_mods, mistypes);
+            double client = ClientPp.Compute(sr, notes, misses, accuracy, maxCombo, no_client_mods, typos);
+            double server = ServerPp.Compute(sr, notes, misses, accuracy, maxCombo, no_server_mods, typos);
 
             Assert.That(client, Is.EqualTo(server),
-                $"sr={sr} notes={notes} miss={misses} acc={accuracy} combo={maxCombo} mistypes={mistypes}");
+                $"sr={sr} notes={notes} miss={misses} acc={accuracy} combo={maxCombo} typos={typos}");
             compared++;
         }
 
@@ -134,19 +134,19 @@ public class PerformancePointsParityTest
     public void TheTwoSplitPenaltyTermsAgreeExactlyIncludingTheDecidedWorkedExamples()
     {
         // Backlog 89 split one penalty term into two, which is a fresh seam: the miss term and the
-        // mistyping term could now drift apart INDEPENDENTLY, and a spread that only ever moves both
+        // typo term could now drift apart INDEPENDENTLY, and a spread that only ever moves both
         // at once could miss it. Each case below holds one of the two counts fixed while the other
         // moves, and the two headline cases the rebalance was decided on are stated as exact values
         // so this file also pins WHAT the split is worth, not merely that both halves agree.
         //
         // Nothing else in the formula reads either count, so pp divided by the same play with
         // neither is exactly
-        // max(0, 1 - miss^1.2/notes)^10 * max(0, 1 - mistypes^1.2/(notes+mistypes))^6.
+        // max(0, 1 - miss^1.2/notes)^10 * max(0, 1 - typos^1.2/(notes+typos))^6.
         //
         // Backlog 97 put a CLAMP in both terms, which is a fresh seam of its own: a mirror that
         // clamped and one that did not would agree on every play under the cliff and disagree on
         // every play past it. Backlog 101 then moved both cliffs a long way out, from 23 misses to
-        // 178 and from 23 mistypes to 249, which makes the seam WIDER rather than narrower: a mirror
+        // 178 and from 23 typos to 249, which makes the seam WIDER rather than narrower: a mirror
         // stuck at the old power would clamp on nearly every case a straddle-the-old-cliff spread
         // used, and agree everywhere else. The spread below therefore straddles the NEW cliffs
         // deliberately, and keeps the old thresholds too, where the two powers now disagree the most.
@@ -162,11 +162,11 @@ public class PerformancePointsParityTest
 
         Assert.That(clientSpotless, Is.EqualTo(serverSpotless), "the spotless baseline itself must agree");
 
-        foreach ((int misses, int mistypes) in new[]
+        foreach ((int misses, int typos) in new[]
                  {
                      (60, 80),   // the first decided example, a live number again since backlog 101
                      (10, 20),   // the second: 0.96830^10 * 0.92998^6, the headline figure
-                     (0, 0), (0, 1), (0, 22), (0, 23), (0, 80),              // mistypes alone,
+                     (0, 0), (0, 1), (0, 22), (0, 23), (0, 80),              // typos alone,
                      (0, 248), (0, 249), (0, 5000),                          // over the new cliff
                      (1, 0), (22, 0), (23, 0), (60, 0),                      // misses alone,
                      (177, 0), (178, 0), (250, 0), (500, 0),                 // over the new cliff
@@ -174,10 +174,10 @@ public class PerformancePointsParityTest
                      (500, 5000),                          // both at once, at the extreme
                  })
         {
-            double client = ClientPp.Compute(4, notes, misses, 0.9, notes, no_client_mods, mistypes);
-            double server = ServerPp.Compute(4, notes, misses, 0.9, notes, no_server_mods, mistypes);
+            double client = ClientPp.Compute(4, notes, misses, 0.9, notes, no_client_mods, typos);
+            double server = ServerPp.Compute(4, notes, misses, 0.9, notes, no_server_mods, typos);
 
-            Assert.That(client, Is.EqualTo(server), $"miss={misses} mistypes={mistypes}");
+            Assert.That(client, Is.EqualTo(server), $"miss={misses} typos={typos}");
         }
 
         Assert.Multiple(() =>
@@ -187,7 +187,7 @@ public class PerformancePointsParityTest
             Assert.That(ClientPp.Compute(4, notes, 10, 0.9, notes, no_client_mods, 20) / clientSpotless,
                 Is.EqualTo(0.542001).Within(1e-6)); // pp[f.penalty(500, 10, 20)]
 
-            // Zero mistypes leaves the mistyping term at exactly 1.0 on both sides, so the play is
+            // Zero typos leaves the typo term at exactly 1.0 on both sides, so the play is
             // priced by its misses alone. Ten misses, not the sixty this used to use: sixty was past
             // the backlog-97 cliff, so both sides would have been asserted to equal zero and the
             // restatement would have stopped saying anything about the arithmetic that produced it.
@@ -202,17 +202,17 @@ public class PerformancePointsParityTest
             // are the CURRENT cliffs, so a mirror at the old power would fail the two below the
             // cliff rather than the two at it.
             const int missCliff = 178; // pp[math.ceil(f.miss_cliff(500))]
-            const int mistypeCliff = 249; // pp[math.ceil(f.mistype_cliff(500))]
+            const int typoCliff = 249; // pp[math.ceil(f.typo_cliff(500))]
 
             Assert.That(ClientPp.Compute(4, notes, missCliff, 0.9, notes, no_client_mods, 0), Is.Zero);
             Assert.That(ServerPp.Compute(4, notes, missCliff, 0.9, notes, no_server_mods, 0), Is.Zero);
-            Assert.That(ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, mistypeCliff), Is.Zero);
-            Assert.That(ServerPp.Compute(4, notes, 0, 0.9, notes, no_server_mods, mistypeCliff), Is.Zero);
+            Assert.That(ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, typoCliff), Is.Zero);
+            Assert.That(ServerPp.Compute(4, notes, 0, 0.9, notes, no_server_mods, typoCliff), Is.Zero);
 
             Assert.That(ClientPp.Compute(4, notes, missCliff - 1, 0.9, notes, no_client_mods, 0), Is.GreaterThan(0));
             Assert.That(ServerPp.Compute(4, notes, missCliff - 1, 0.9, notes, no_server_mods, 0), Is.GreaterThan(0));
-            Assert.That(ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, mistypeCliff - 1), Is.GreaterThan(0));
-            Assert.That(ServerPp.Compute(4, notes, 0, 0.9, notes, no_server_mods, mistypeCliff - 1), Is.GreaterThan(0));
+            Assert.That(ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, typoCliff - 1), Is.GreaterThan(0));
+            Assert.That(ServerPp.Compute(4, notes, 0, 0.9, notes, no_server_mods, typoCliff - 1), Is.GreaterThan(0));
         });
     }
 
@@ -231,12 +231,12 @@ public class PerformancePointsParityTest
         foreach (double accuracy in accuracies)
         foreach (int misses in new[] { -5, 0, notes + 7 })
         foreach (int maxCombo in new[] { -3, notes, notes + 9 })
-        foreach (int mistypes in new[] { -1, 0, int.MaxValue })
+        foreach (int typos in new[] { -1, 0, int.MaxValue })
         {
-            double client = ClientPp.Compute(sr, notes, misses, accuracy, maxCombo, no_client_mods, mistypes);
-            double server = ServerPp.Compute(sr, notes, misses, accuracy, maxCombo, no_server_mods, mistypes);
+            double client = ClientPp.Compute(sr, notes, misses, accuracy, maxCombo, no_client_mods, typos);
+            double server = ServerPp.Compute(sr, notes, misses, accuracy, maxCombo, no_server_mods, typos);
 
-            string context = $"sr={sr} notes={notes} miss={misses} acc={accuracy} combo={maxCombo} mistypes={mistypes}";
+            string context = $"sr={sr} notes={notes} miss={misses} acc={accuracy} combo={maxCombo} typos={typos}";
 
             Assert.That(client, Is.EqualTo(server), context);
             Assert.That(double.IsFinite(client), Is.True, context);
@@ -330,7 +330,7 @@ public class PerformancePointsParityTest
             [HitResult.IgnoreHit] = 12,
             [HitResult.IgnoreMiss] = 3,
             [HitResult.LargeBonus] = 7,
-            // The MISTYPE stat: priced by its own term, never a note.
+            // The TYPO stat: priced by its own term, never a note.
             [HitResult.ComboBreak] = 137,
         };
 
@@ -341,11 +341,11 @@ public class PerformancePointsParityTest
         {
             Assert.That(client.Notes, Is.EqualTo(server.Notes));
             Assert.That(client.Misses, Is.EqualTo(server.Misses));
-            Assert.That(client.Mistypes, Is.EqualTo(server.Mistypes));
+            Assert.That(client.Typos, Is.EqualTo(server.Typos));
 
             Assert.That(client.Notes, Is.EqualTo(400));
             Assert.That(client.Misses, Is.EqualTo(50));
-            Assert.That(client.Mistypes, Is.EqualTo(137));
+            Assert.That(client.Typos, Is.EqualTo(137));
         });
     }
 
@@ -362,15 +362,15 @@ public class PerformancePointsParityTest
             Assert.That(ClientPp.CountNotes(statistics).Notes, Is.EqualTo(9), $"{result} must count as a note client-side");
         }
 
-        // And the mistype key, which is a note on NEITHER side.
+        // And the typo key, which is a note on NEITHER side.
         var mistyped = new Dictionary<HitResult, int> { [ClientPp.MISTYPE_RESULT] = 9 };
 
         Assert.Multiple(() =>
         {
             Assert.That(ServerCounts(mistyped).Notes, Is.Zero);
-            Assert.That(ServerCounts(mistyped).Mistypes, Is.EqualTo(9));
+            Assert.That(ServerCounts(mistyped).Typos, Is.EqualTo(9));
             Assert.That(ClientPp.CountNotes(mistyped).Notes, Is.Zero);
-            Assert.That(ClientPp.CountNotes(mistyped).Mistypes, Is.EqualTo(9));
+            Assert.That(ClientPp.CountNotes(mistyped).Typos, Is.EqualTo(9));
 
             // The literal the server greps for, spelled by the client's own enum.
             Assert.That(JsonConvert.SerializeObject(mistyped), Does.Contain("combo_break"));
@@ -378,7 +378,7 @@ public class PerformancePointsParityTest
     }
 
     [Test]
-    public void AScoreCarryingNoMistypeKeyReadsAsZeroOnBothSides()
+    public void AScoreCarryingNoTypoKeyReadsAsZeroOnBothSides()
     {
         // Every score submitted before the stat existed omits the key entirely, and must price
         // exactly as it always did.
@@ -386,9 +386,9 @@ public class PerformancePointsParityTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(ClientPp.CountNotes(old).Mistypes, Is.Zero);
-            Assert.That(ServerCounts(old).Mistypes, Is.Zero);
-            Assert.That(ClientPp.Compute(4, 100, 10, 0.9, 90, no_client_mods, ClientPp.CountNotes(old).Mistypes),
+            Assert.That(ClientPp.CountNotes(old).Typos, Is.Zero);
+            Assert.That(ServerCounts(old).Typos, Is.Zero);
+            Assert.That(ClientPp.Compute(4, 100, 10, 0.9, 90, no_client_mods, ClientPp.CountNotes(old).Typos),
                 Is.EqualTo(ServerPp.Compute(4, 100, 10, 0.9, 90, no_server_mods)));
         });
     }
@@ -746,7 +746,7 @@ public class PerformancePointsParityTest
             new() { [HitResult.Great] = 400, [HitResult.ComboBreak] = 400 },
             // A give-up run.
             new() { [HitResult.Great] = 40, [HitResult.Miss] = 360, [HitResult.ComboBreak] = 12 },
-            // A play from before the mistype stat existed: no combo_break key at all.
+            // A play from before the typo stat existed: no combo_break key at all.
             new() { [HitResult.Great] = 380, [HitResult.Miss] = 20 },
             // A one-note map.
             new() { [HitResult.Great] = 1 },
@@ -783,7 +783,7 @@ public class PerformancePointsParityTest
 
             Assert.That(clientCounts.Notes, Is.EqualTo(serverCounts.Notes), context);
             Assert.That(clientCounts.Misses, Is.EqualTo(serverCounts.Misses), context);
-            Assert.That(clientCounts.Mistypes, Is.EqualTo(serverCounts.Mistypes), context);
+            Assert.That(clientCounts.Typos, Is.EqualTo(serverCounts.Typos), context);
             Assert.That(clientStars, Is.EqualTo(serverStars.Stars), context);
             Assert.That(settled, Is.True, context);
             Assert.That(clientPp, Is.EqualTo(serverPp), context);
@@ -802,9 +802,9 @@ public class PerformancePointsParityTest
         double dtStars = ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate);
         double htStars = ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate);
 
-        // 400 notes, twelve of them missed, fifteen mistypes. The counts moved down from 20 and 74
+        // 400 notes, twelve of them missed, fifteen typos. The counts moved down from 20 and 74
         // for backlog 97: on a 400-note map the miss cliff was sqrt(400) = 20 exactly and the
-        // mistype cliff 20.5, so that fixture priced to zero on every rate at once and the mirror it
+        // typo cliff 20.5, so that fixture priced to zero on every rate at once and the mirror it
         // exists to check could not be read off the ratios at all. Backlog 101 moves the two cliffs
         // out to 147.4 and 209.2, so these counts are now far clear of both; they are left where 97
         // put them because this test is about the RATE factors and any priced play will do.

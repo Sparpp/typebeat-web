@@ -132,17 +132,17 @@ public class MistypeParityTest
         Assert.Multiple(() =>
         {
             Assert.That(clean.Notes, Is.EqualTo(15));
-            Assert.That(clean.Mistypes, Is.Zero, "no key means no mistypes, never a guess");
+            Assert.That(clean.Typos, Is.Zero, "no key means no mistypes, never a guess");
 
             // notes is the map's CELL count and must not move: letting keypresses into it would
             // hand a masher a bigger length bonus and a smaller combo denominator.
             Assert.That(mistyped.Notes, Is.EqualTo(15));
             Assert.That(mistyped.Misses, Is.Zero);
-            Assert.That(mistyped.Mistypes, Is.EqualTo(7));
+            Assert.That(mistyped.Typos, Is.EqualTo(7));
         });
 
-        double cleanPp = PerformancePoints.Compute(5, clean.Notes, clean.Misses, 1.0, 15, [], clean.Mistypes);
-        double mistypedPp = PerformancePoints.Compute(5, mistyped.Notes, mistyped.Misses, 1.0, 15, [], mistyped.Mistypes);
+        double cleanPp = PerformancePoints.Compute(5, clean.Notes, clean.Misses, 1.0, 15, [], clean.Typos);
+        double mistypedPp = PerformancePoints.Compute(5, mistyped.Notes, mistyped.Misses, 1.0, 15, [], mistyped.Typos);
 
         Assert.That(mistypedPp, Is.LessThan(cleanPp), "mistyping must cost pp; that is the point of the stat");
     }

@@ -18,7 +18,7 @@ Per play:
 ```
 pp = C · SR_eff^2.00
        · max(0, 1 − miss^1.2/notes)^10                   # cleanliness
-       · max(0, 1 − mistypes^1.2/(notes+mistypes))^4     # mistyping
+       · max(0, 1 − typos^1.2/(notes+typos))^4           # typos
        · max(0.1, 1 + 0.50·log10(notes/100))             # length bonus (clamped)
        · acc^1.80                                        # accuracy (timing quality)
        · (ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50   # combo
@@ -39,11 +39,11 @@ Factor by factor, in descending priority:
   `max(0, ...)` holds it there rather than letting it go negative. Past that point a play earns
   exactly nothing from any factor, and well before it the term is already negligible. A give-up run
   (e.g. 900+ misses) collapses to exactly 0.
-* **mistyping^4**: wrong keypresses, priced separately since the backlog-89 amendment, and with its
+* **typos^4**: wrong keypresses, priced separately since the backlog-89 amendment, and with its
   own count under the same power since the backlog-97 one. Still the cheaper of the two failures
   (4 against 10), because a stumble you recover from is not the same failure as never typing the
   cell at all, and because the count sits in its denominator too, which pushes its cliff out to the
-  positive root of `m^1.6 - m - notes = 0` (52 mistypes at 500 notes) rather than to
+  positive root of `m^1.6 - m - notes = 0` (52 typos at 500 notes) rather than to
   `notes^(1/1.6)`.
 * **`count_power`** is where a rebalance of the two penalties is made, rather than the exponents 10
   and 4: it alone decides at what count each term reaches its cliff, and how that cliff scales with
@@ -159,6 +159,14 @@ the opposite of what cumulative score rewards today.
 * `notes` excludes `ignore_hit`; length and FL factors carry floor clamps.
 * pp only from ranked scores on ranked maps; fails and unranked mods excluded by inheritance.
 * Website rankings swap + score tab first; in-game pp display is a separate follow-up task.
+
+> **A note on the name, before the amendments.** The second penalty term is spelled `typo_*` above
+> and in the code (`typo_exponent`, `typo_shape`, `typos` in the formula), but it was called
+> `mistype_*` from backlog 72 until backlog 141 renamed it. Every amendment below is dated and is a
+> record of what a past version did **under the name it had at the time**, so they all still say
+> "mistype" / "mistyping" / `mistype_exponent`. Those are the same term as today's `typos^4`, and
+> nothing about the term's value, shape or the `combo_break` statistics key that feeds it changed
+> with the rename. The amendments are deliberately not rewritten: doing so would falsify the record.
 
 ## Amendment (2026-08-03): the cleanliness term prices MISTYPES (backlog 72)
 
