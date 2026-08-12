@@ -204,11 +204,11 @@ public class ScoreRecalcTest
 
             // Old rule: the typo spent the cell on a Miss and the fix could not take it back.
             Assert.That(result.OldRuleStatistics!["miss"], Is.EqualTo(1));
-            Assert.That(result.OldRuleStatistics!["great"], Is.EqualTo(12));
+            Assert.That(result.OldRuleStatistics!["perfect"], Is.EqualTo(12));
 
             // New rule: the cell recovers, so completion and rank recover with it.
             Assert.That(result.NewStatistics!.GetValueOrDefault("miss"), Is.Zero);
-            Assert.That(result.NewStatistics!["great"], Is.EqualTo(13));
+            Assert.That(result.NewStatistics!["perfect"], Is.EqualTo(13));
             Assert.That(result.NewCompletion, Is.EqualTo(1));
             Assert.That(result.NewRank, Is.EqualTo("X"));
             Assert.That(result.NewStatisticsValid, Is.True);
@@ -250,14 +250,14 @@ public class ScoreRecalcTest
 
             // Pre-109: the wrong char spent the cell on a Miss the instant it landed.
             Assert.That(result.OldRuleStatistics!["miss"], Is.EqualTo(1));
-            Assert.That(result.OldRuleStatistics!["great"], Is.EqualTo(12));
+            Assert.That(result.OldRuleStatistics!["perfect"], Is.EqualTo(12));
             Assert.That(result.OldRuleStatistics!.ContainsKey("good"), Is.False, "the pre-109 arm cannot emit the typo key");
 
             // Now: the typo key, no miss, and the SAME completion and rank the old rule gave it,
             // because backlog 126 makes a typo cost completion exactly as a miss does.
             Assert.That(result.NewStatistics!["good"], Is.EqualTo(1));
             Assert.That(result.NewStatistics!.GetValueOrDefault("miss"), Is.Zero);
-            Assert.That(result.NewStatistics!["great"], Is.EqualTo(12));
+            Assert.That(result.NewStatistics!["perfect"], Is.EqualTo(12));
             Assert.That(result.NewCompletion, Is.EqualTo(12 / 13.0).Within(1e-12));
             Assert.That(result.NewCompletion, Is.EqualTo(stored.Completion).Within(1e-12));
             Assert.That(result.NewRank, Is.EqualTo(stored.Rank));
@@ -310,7 +310,7 @@ public class ScoreRecalcTest
         var stored = StoredFor(map, replay);
 
         var tampered = WireCounts.Parse(stored.StatisticsJson);
-        tampered["great"] += 3;
+        tampered["perfect"] += 3;
 
         var result = Recalculation.Run(stored with { StatisticsJson = JsonConvert.SerializeObject(tampered) }, Decoded(map, replay));
 
@@ -320,7 +320,7 @@ public class ScoreRecalcTest
             Assert.That(result.Recalculated, Is.False);
             Assert.That(result.Moves, Is.False, "a refused row must never be written");
             Assert.That(result.NewStatistics, Is.Null);
-            Assert.That(result.Detail, Does.Contain("great"));
+            Assert.That(result.Detail, Does.Contain("perfect"));
         });
     }
 
@@ -438,6 +438,7 @@ public class ScoreRecalcTest
     {
         Assert.Multiple(() =>
         {
+            Assert.That(WireCounts.Key(HitResult.Perfect), Is.EqualTo("perfect"));
             Assert.That(WireCounts.Key(HitResult.Great), Is.EqualTo("great"));
             Assert.That(WireCounts.Key(HitResult.Ok), Is.EqualTo("ok"));
             Assert.That(WireCounts.Key(HitResult.Meh), Is.EqualTo("meh"));
@@ -512,7 +513,7 @@ public class ScoreRecalcTest
             Assert.Multiple(() =>
             {
                 Assert.That(result.Skip, Is.EqualTo(SkipReason.None), "an .osr off the wire must reproduce its own stored row");
-                Assert.That(result.NewStatistics!["great"], Is.EqualTo(13));
+                Assert.That(result.NewStatistics!["perfect"], Is.EqualTo(13));
                 Assert.That(result.NewRank, Is.EqualTo("X"));
             });
         }

@@ -7,7 +7,7 @@ namespace Typebeat.Web.Tests;
 /// Fidelity guard for the MISTYPE stat (backlog 72) across the browser/server seam.
 ///
 /// <para>A wrong keypress used to leave no trace in a submitted score: the desktop client rejected
-/// it without raising a judgement, so <c>statistics</c> carried great/ok/meh/miss only and a play
+/// it without raising a judgement, so <c>statistics</c> carried the quality tiers and miss only and a play
 /// full of stumbles recomputed to a spotless accuracy. It is now persisted as its own
 /// <c>combo_break</c> key. Because /play scores land on the SAME leaderboards as desktop ones, the
 /// hand-written <c>wwwroot/js/typebeat-core.js</c> has to account it identically, or a browser play
@@ -58,12 +58,12 @@ public class MistypeParityTest
             Assert.That(both[mistype_key], Is.EqualTo(7));
             Assert.That(both["miss"], Is.EqualTo(3));
 
-            // maximum_statistics stays one great per cell in every run: mistypes must never inflate
+            // maximum_statistics stays one perfect per cell in every run: mistypes must never inflate
             // the denominator of accuracy, completion or pp.
             foreach (string name in new[] { "clean", "mistyped", "doubleMistyped", "mistypedAndMissed", "firstCellMistyped", "lastCellMistyped", "clusteredMistyped" })
             {
                 Assert.That(Dict(root.GetProperty(name), "maximumStatistics"),
-                    Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 15 }), name);
+                    Is.EquivalentTo(new Dictionary<string, int> { ["perfect"] = 15 }), name);
             }
         });
     }
@@ -160,9 +160,9 @@ public class MistypeParityTest
     /// <c>ScoreProcessor.ApplyResultInternal</c> / <c>updateScore</c> unless noted:</para>
     ///
     /// <list type="bullet">
-    /// <item>A cell judged Perfect becomes <c>HitResult.Great</c>: <c>Combo++</c>, then
+    /// <item>A cell judged Perfect becomes <c>HitResult.Perfect</c>: <c>Combo++</c>, then
     /// <c>currentComboPortion += 300 * ComboAfterJudgement^0.5</c> (<c>GetComboScoreChange</c>
-    /// weights by the judgement's MAX result, always Great = 300, and by the combo as it stands
+    /// weights by the judgement's MAX result, always Perfect = 300, and by the combo as it stands
     /// AFTER the increment).</item>
     /// <item>A rejected wrong key raises no judgement at all:
     /// <c>TypeBeatPlayfield.onWrongKeyRejected</c> sets <c>Combo.Value = 0</c> by hand and moves
@@ -172,7 +172,7 @@ public class MistypeParityTest
     /// <c>300 * 0^0.5 = 0</c>.</item>
     /// <item><c>max_combo</c> is <c>HighestCombo</c>, the running maximum of that combo.</item>
     /// <item>The denominator, <c>maximumComboPortion</c>, comes from the autoplay simulation: a
-    /// Great on every one of the map's 15 cells, so combo 1..15, so
+    /// Perfect on every one of the map's 15 cells, so combo 1..15, so
     /// <c>300 * Σ(i=1..15) √i = 300 * 40.469197 = 12140.758980</c>.</item>
     /// <item><c>total_score = round(500000 * acc * comboProgress + 500000 * acc^5 *
     /// accuracyProgress)</c> with <c>acc</c> the judged-only accuracy and <c>accuracyProgress</c>

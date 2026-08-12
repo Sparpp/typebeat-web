@@ -174,14 +174,14 @@ public class FreestyleParityTest
                 Assert.That(Num(free, field), Is.EqualTo(Num(plain, field)), field);
 
             Assert.That(Str(free, "rank"), Is.EqualTo(Str(plain, "rank")));
-            Assert.That(Num(free.GetProperty("counts"), "great"), Is.EqualTo(Num(plain.GetProperty("counts"), "great")));
+            Assert.That(Num(free.GetProperty("counts"), "perfect"), Is.EqualTo(Num(plain.GetProperty("counts"), "perfect")));
 
             // And the absolute values, so a change to BOTH sides still trips this.
             Assert.That(Num(free, "engineScore"), Is.EqualTo(918)); // 300 + 306 + 312, combo multiplier
             Assert.That(Num(free, "totalScore"), Is.EqualTo(1000000));
             Assert.That(Num(free, "completion"), Is.EqualTo(1.0));
             Assert.That(Str(free, "rank"), Is.EqualTo("X"));
-            Assert.That(Num(free.GetProperty("counts"), "great"), Is.EqualTo(3));
+            Assert.That(Num(free.GetProperty("counts"), "perfect"), Is.EqualTo(3));
         });
     }
 

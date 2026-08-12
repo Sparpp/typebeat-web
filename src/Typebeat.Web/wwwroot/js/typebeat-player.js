@@ -57,7 +57,7 @@
     const GAP_CHIP_MIN_MS = 1800;
 
     // SYNC TINT floor: how far along the untyped -> hit ramp the very WORST correct keypress is
-    // still painted. It cannot be 0. syncQuality() returns exactly 0 at the Ok-window edges and
+    // still painted. It cannot be 0. syncQuality() returns exactly 0 at the widest window's edges and
     // stays there beyond them, while the cell is still CellState.Correct, so an unfloored ramp
     // would paint a character the player did type in precisely the untyped colour, making it
     // indistinguishable from one they have not reached yet. That is a legibility regression, not
@@ -191,16 +191,26 @@
         };
     }
 
-    /// Judgement.SyncQuality: 1 on target, decaying to 0 at the Ok window edges.
-    function syncQuality(delta, w) {
-        const q = 1 - (delta < 0 ? -delta / w.oe : delta / w.ol);
-        return q < 0 ? 0 : (q > 1 ? 1 : q);
+    // SyncWindows.SyncQuality, which lives in the engine core because the windows it reads depend
+    // on the play's sync measure. Re-exported below so the display surface stays one object.
+    const syncQuality = Core.syncQuality;
+
+    // Whether a correct cell's judgement is one of the four QUALITY tiers, i.e. it scored, as
+    // opposed to Premature/Lagging (right character, wrong time, no points). Backlog 133 made these
+    // four the identity on the osu results of the same names.
+    function scoredInTime(judgeType) {
+        return judgeType === 'Perfect' || judgeType === 'Great' || judgeType === 'Ok' || judgeType === 'Meh';
     }
 
     // One pass over the map for both live readouts:
     //   completion: hits / cells seen so far (how "typed %" reads mid-play, and what rank keys off)
     //   sync:       mean sync quality x100 over resolved cells (mirrors TypingEngine.LiveSyncPercent);
     //               a cell in a SEALED line that never landed correct resolves at q = 0.
+    //
+    // The quality is the one the ENGINE banked at the judgement (cell.judgedSyncQuality), never
+    // recomputed here, exactly as the desktop stage reads TypingCell.JudgedSyncQuality: since
+    // backlog 133 the quality is a function of the CHARACTER DISTANCE the press was judged at, and
+    // the cell alone cannot re-derive that (the offset depends on the play's sync measure).
     function liveStats(engine) {
         let hit = 0, seen = 0, syncSum = 0, resolved = 0;
         const lines = engine.lines;
@@ -209,13 +219,12 @@
             const cells = lines[li].cells;
             for (let ci = 0; ci < cells.length; ci++) {
                 const c = cells[ci];
-                const scored = c.state === 'correct' &&
-                    (c.judgeType === 'Perfect' || c.judgeType === 'Good' || c.judgeType === 'Ok');
+                const scored = c.state === 'correct' && scoredInTime(c.judgeType);
                 if (scored) { hit++; seen++; }
                 else if (c.state === 'correct' || c.state === 'missed') seen++;
 
-                if (c.state === 'correct' && c.judgedDelta !== null) {
-                    syncSum += syncQuality(c.judgedDelta, Core.windowsFor(c.tier));
+                if (c.state === 'correct' && c.judgedSyncQuality !== null) {
+                    syncSum += c.judgedSyncQuality;
                     resolved++;
                 } else if (sealed) {
                     resolved++;
@@ -261,13 +270,12 @@
     /// browser's split is a deliberate browser-only affordance (see cellClass) and folding it into
     /// the ramp would throw it away.
     ///
-    /// A correct cell with NO judged delta cannot arise from the engine, but if one ever did it
-    /// falls back to the flat hit colour rather than to the dull floor, as the desktop does.
+    /// A correct cell with NO banked sync quality cannot arise from the engine, but if one ever did
+    /// it falls back to the flat hit colour rather than to the dull floor, as the desktop does.
     function cellFill(cell) {
-        if (cell.freestyle || cell.state !== 'correct' || cell.judgedDelta === null) return null;
-        const jt = cell.judgeType;
-        if (jt !== 'Perfect' && jt !== 'Good' && jt !== 'Ok') return null;
-        return syncTintFill(syncQuality(cell.judgedDelta, Core.windowsFor(cell.tier)));
+        if (cell.freestyle || cell.state !== 'correct' || cell.judgedSyncQuality === null) return null;
+        if (!scoredInTime(cell.judgeType)) return null;
+        return syncTintFill(cell.judgedSyncQuality);
     }
 
     /// The class list for a cell's span. Pure (state in, string out), and paired with cellFill():
@@ -279,7 +287,7 @@
             const jt = cell.judgeType;
             // Typed but off-time (Premature/Lagging) scores as a miss; desktop draws it like
             // any other correct char, the browser keeps a distinct warn tint as a free hint.
-            cls += (jt === 'Perfect' || jt === 'Good' || jt === 'Ok') ? ' tb-c-hit' : ' tb-c-off';
+            cls += scoredInTime(jt) ? ' tb-c-hit' : ' tb-c-off';
         } else if (cell.state === 'wrong') {
             // Typed through wrong (the default model). The desktop shows the EXPECTED glyph in
             // error red, not the char that was pressed, so only the colour changes here.
