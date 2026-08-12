@@ -63,6 +63,20 @@ public static class LyricPace
     /// the bump exists purely to make the sweep revisit every row and fill the new columns from the
     /// stored blob.
     ///
+    /// v12 = the star rating loses its CEILING (backlog 118). <see cref="LyricDifficulty"/> used to
+    /// end in a flat clamp to 10, which was chosen to keep a star badge sane but also truncated the
+    /// two ratings that exist only to price rate mods. So <c>difficulty_rating</c> is expected to
+    /// rewrite byte-identically for the whole live catalogue (its hardest difficulty reads 7.81 and
+    /// nothing has ever reached the ceiling at rate 1.0), while <c>sr_dt</c> moves on every map that
+    /// was sitting at exactly 10, which was 3 of the 5 real reference maps. That reprices every
+    /// stored Double Time score on those maps, upward and substantially (pp goes as SR^2.00, so a
+    /// rating of 16.33 rather than 10.00 is 2.67x), and every stored Half Time score on them too,
+    /// in both directions, because the mirror in <c>PerformancePoints.HalfTimeMultiplier</c> is a
+    /// function of <c>sr_dt</c> and several maps were only taking its flat fallback because
+    /// <c>sr_dt</c> had been truncated. As at v9 and v10 the bump exists to make the sweep re-rate
+    /// every stored row and hand its scores to <see cref="PpBackfill"/>; the pp FORMULA does not
+    /// move, so <c>PerformancePoints.VERSION</c> deliberately stays where it is.
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -75,7 +89,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 11;
+    public const int VERSION = 12;
 
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;

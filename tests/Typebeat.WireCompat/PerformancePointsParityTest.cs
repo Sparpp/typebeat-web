@@ -539,6 +539,49 @@ public class PerformancePointsParityTest
                 [("after", 30000, 31000), ("a", 31000, 31300), ("long", 31300, 32200), ("instrumental", 32200, 34000), ("rest", 34000, 35000)]),
         ];
 
+        return Twin(source);
+    }
+
+    /// <summary>
+    /// A DENSE twin, rating past the 10 stars the difficulty model used to clamp at (backlog 118).
+    /// <see cref="TwinMaps"/> rates a few stars at every rate, so it cannot tell the two ports apart
+    /// anywhere a ceiling would act; this one rates about 6.2 at 1.00x and about 10.6 at 1.50x, so
+    /// it straddles where the old one sat, which is where the ports have to be held together for
+    /// <c>sr_dt</c> to mean anything. The word pool is varied on purpose: repeating one word
+    /// saturates the model's repetition factor and flattens the rating back under the region.
+    /// </summary>
+    private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) DenseTwinMaps()
+    {
+        string[] pool = ["flame", "river", "cider", "amber", "otter", "nudge", "vivid", "query", "zebra", "month", "proxy", "blitz"];
+        const int line_count = 40;
+        const int words_per_line = 8;
+        const double line_ms = 1200;
+        const double word_ms = line_ms / words_per_line;
+
+        var source = new List<(string Text, double Start, double End, (string Text, double Start, double End)[] Units)>();
+        int wordIndex = 0;
+
+        for (int l = 0; l < line_count; l++)
+        {
+            double lineStart = l * line_ms;
+            var units = new (string Text, double Start, double End)[words_per_line];
+
+            for (int w = 0; w < words_per_line; w++)
+            {
+                double wordStart = lineStart + w * word_ms;
+                units[w] = (pool[wordIndex++ % pool.Length], wordStart, wordStart + word_ms);
+            }
+
+            source.Add((string.Join(" ", units.Select(u => u.Text)), lineStart, lineStart + line_ms, units));
+        }
+
+        return Twin([.. source]);
+    }
+
+    /// <summary>The one lyric shape, projected into each repo's own <c>LyricLine</c> type.</summary>
+    private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) Twin(
+        (string Text, double Start, double End, (string Text, double Start, double End)[] Units)[] source)
+    {
         var client = source.Select(l => new ClientLine
         {
             RawText = l.Text,
@@ -577,6 +620,32 @@ public class PerformancePointsParityTest
                 Is.EqualTo(ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate)), "sr_ht (0.75x)");
 
             Assert.That(ClientDifficulty.Compute(client), Is.GreaterThan(0), "the fixture must actually rate as something");
+        });
+    }
+
+    [Test]
+    public void TheTwoPortsAgreeAboveTheOldStarCeiling()
+    {
+        // The test above cannot see this region. Its fixture rates a few stars at every rate, so
+        // the two ports would still agree there if one of them kept a ceiling and the other did
+        // not, and a ceiling is exactly the thing this pair last disagreed about (backlog 118:
+        // both copies of LyricDifficulty used to end in a flat clamp to 10, which never touched a
+        // base rating but truncated sr_dt on any map dense enough at 1.50x). A divergence there is
+        // invisible on the site and in song select and shows up only as a Double Time play priced
+        // differently by the client and the server, which is the whole failure this suite exists
+        // to catch. So the region is pinned with a fixture that actually reaches it.
+        var (client, server) = DenseTwinMaps();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ClientDifficulty.Compute(client, ClientPp.DOUBLE_TIME_BASE_RATE), Is.GreaterThan(10),
+                "the premise: this fixture must rate past where the old ceiling sat, or it pins nothing");
+
+            Assert.That(ClientDifficulty.Compute(client), Is.EqualTo(ServerDifficulty.Compute(server)), "difficulty_rating (1.00x)");
+            Assert.That(ClientDifficulty.Compute(client, ClientPp.DOUBLE_TIME_BASE_RATE),
+                Is.EqualTo(ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate)), "sr_dt (1.50x)");
+            Assert.That(ClientDifficulty.Compute(client, ClientPp.HALF_TIME_BASE_RATE),
+                Is.EqualTo(ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate)), "sr_ht (0.75x)");
         });
     }
 
