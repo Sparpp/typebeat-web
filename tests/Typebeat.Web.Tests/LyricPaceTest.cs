@@ -101,6 +101,63 @@ public class LyricPaceTest
     }
 
     [Test]
+    public void DifficultyRating_RateAdjustedRatingIsNotTruncatedAtTheTop()
+    {
+        // backlog 118, and the anchor for it is shared with the game's LyricDifficultyTest exactly
+        // as the "cat cat" one above is. LyricDifficulty used to end in a flat clamp to 10 stars,
+        // chosen to keep a star BADGE sane, and it truncated the rate-adjusted ratings with it.
+        // That reached stored data: sr_dt is what PerformancePoints prices a Double Time play from,
+        // and it is never a badge. The shape below stays clear of 10 at 1.00x and passes it at
+        // 1.50x, which is the same asymmetry the live catalogue has (no base rating has ever
+        // reached 10, while sr_dt reached it on 3 of the 5 real reference maps).
+        var map = denseMap(lineCount: 40, wordsPerLine: 8, lineMs: 1200);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(6.1622).Within(0.001));
+            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(10.5567).Within(0.001), "under the old ceiling this read exactly 10.00");
+        });
+    }
+
+    /// <summary>
+    /// A uniform map of varied words, mirroring the game's LyricDifficultyTest.buildMap so the two
+    /// ports can be pinned against the same shape. The word pool is varied on purpose: repeating one
+    /// word saturates LyricDifficulty's repetition factor and flattens the rating.
+    /// </summary>
+    private static LyricLine[] denseMap(int lineCount, int wordsPerLine, double lineMs)
+    {
+        string[] pool = ["flame", "river", "cider", "amber", "otter", "nudge", "vivid", "query", "zebra", "month", "proxy", "blitz"];
+        var lines = new List<LyricLine>();
+        double t = 0;
+        int wordIndex = 0;
+
+        for (int l = 0; l < lineCount; l++)
+        {
+            double wordMs = lineMs / wordsPerLine;
+            var units = new TimedUnit[wordsPerLine];
+
+            for (int w = 0; w < wordsPerLine; w++)
+            {
+                double ws = t + w * wordMs;
+                units[w] = new TimedUnit { Text = pool[wordIndex++ % pool.Length], StartTime = ws, EndTime = ws + wordMs };
+            }
+
+            lines.Add(new LyricLine
+            {
+                RawText = string.Join(" ", units.Select(u => u.Text)),
+                StartTime = t,
+                EndTime = t + lineMs,
+                SingEndTime = t + lineMs,
+                Units = units,
+            });
+
+            t += lineMs;
+        }
+
+        return [.. lines];
+    }
+
+    [Test]
     public void MinimumLineWindow_GuardsDegenerateBoundaries()
     {
         // A 100 ms boundary window clamps to the 500 ms floor:
