@@ -426,7 +426,7 @@ public class AllowWrongInputParityTest
             var counts = PerformancePoints.CountNotes(Dict(run, "statistics"));
             Assert.That(counts.Notes, Is.EqualTo(15));
             Assert.That(counts.Misses, Is.Zero);
-            Assert.That(counts.Mistypes, Is.EqualTo(12));
+            Assert.That(counts.Typos, Is.EqualTo(12));
         });
     }
 
