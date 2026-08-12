@@ -489,9 +489,13 @@ public class RankingsPageTest
             Assert.That(html, Does.Contain("<th>Grade</th>"));
             Assert.That(html, Does.Not.Contain("<th>Cumulative score</th>"));
 
-            // The mistype column appears because one seeded play carries the stat (docs/pp.md:
-            // absence is not zero, so it is a conditional column exactly like the set page's).
-            Assert.That(html, Does.Contain("<th>Mistype</th>"));
+            // The Typos column appears because one seeded play carries the stat (docs/pp.md:
+            // absence is not zero, so it is a conditional column exactly like the set page's). ONE
+            // typo column since backlog 140: the seal-state count that used to sit beside it is no
+            // longer surfaced, so no board shows two typo numbers.
+            Assert.That(html, Does.Contain("<th>Typos</th>"));
+            Assert.That(html, Does.Not.Contain("<th>Typo</th>"));
+            Assert.That(html, Does.Not.Contain("<th>Mistype</th>"));
         });
     }
 

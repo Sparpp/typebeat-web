@@ -913,10 +913,15 @@
     //      results, so the break has to be mirrored by hand or max_combo would count on through it.
     //      Nothing else moves: no result count, no accuracy, no combo portion, and RecordMistype is
     //      a pure counter (routing it through ApplyResult would move the judged count too).
-    //   3. TypeBeatPlayfield.onWrongKeyRejected -> the mash-guard HP drain only, which is why this
+    //   3. TypeBeatPlayfield.onComboRestored -> TypeBeatScoreProcessor.RestoreCombo (backlog 140).
+    //      Correcting the cell a wrong keypress spoiled RESUMES the streak that keypress broke, and
+    //      like the break in 2 it travels on no judgement result, so it is mirrored by hand at the
+    //      same seam. Applied as a DELTA and pushing HighestCombo itself, for the reasons written on
+    //      restoreCombo below.
+    //   4. TypeBeatPlayfield.onWrongKeyRejected -> the mash-guard HP drain only, which is why this
     //      mirror has no counterpart for it beyond engine.consecutiveWrongKeys: the browser models
     //      health as a derived read (see `health`), not as an account.
-    //   4. DrawableTypeBeatHitObject.ApplySealResults, when the engine seals a line: every
+    //   5. DrawableTypeBeatHitObject.ApplySealResults, when the engine seals a line: every
     //      still-unjudged cell resolves, in cell order, and then the LINE object itself resolves
     //      as IgnoreHit. IgnoreHit is not scorable, does not affect combo and does not affect
     //      accuracy, so the line objects are inert and are not modelled at all. TWO results, not
@@ -1030,6 +1035,30 @@
         breakCombo() {
             this.combo = 0;
         }
+
+        // TypeBeatScoreProcessor.RestoreCombo (backlog 140): put back the streak a corrected typo's
+        // wrong keypress broke. The engine decides WHETHER and BY HOW MUCH
+        // (resumeStreakIfThisFixesTheTypo); this is the hand-mirror into the submitted account, the
+        // exact counterpart of the hand-mirrored break above.
+        //
+        // A DELTA, not an overwrite with the engine's own combo, and the JS needs that care for the
+        // same reason the C# does rather than by imitation: these are two separate accounts kept
+        // equal by mirroring every move (the engine's combo only counts SCORING keypresses, the
+        // processor's only counts applied results, and an inert retype moves neither), so writing
+        // one into the other would replace a mirrored history with a guess. Adding back exactly what
+        // the break took is what that break's undo is.
+        //
+        // highestCombo is pushed HERE rather than left to the next result, and this is the half that
+        // is easy to leave out: a fix on a cell that was ALREADY judged (typo, fix, typo, fix on one
+        // cell) applies no result at all, so nothing later would raise the maximum and the restored
+        // run would never reach max_combo. Unlike a suppressed break, a restore can raise a running
+        // maximum, so it has to be taken at the moment it happens.
+        restoreCombo(streak) {
+            if (streak <= 0) return;
+
+            this.combo += streak;
+            if (this.combo > this.highestCombo) this.highestCombo = this.combo;
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -1110,10 +1139,32 @@
             // equivalent of the replay CONFIG frame is (the desktop carries it as bit 1), because it
             // changes how a recorded space is judged.
             this.spaceSkipsWord = false;
+            // The one outstanding combo snapshot (TypingEngine.restorable, backlog 140):
+            // { lineIndex, cellIndex, streak }, the cell a wrong keypress spoiled and the streak that
+            // keypress broke, or null when there is nothing to go back for. Set by the wrong
+            // keypress, redeemed by the correction of that same cell, and discarded by any other
+            // combo break (discardRestorableStreak). The seams that discard it here are the four the
+            // browser can reach: a seal with misses, an abandoned word, a Premature/Lagging press
+            // and a rejected key. The C# has a fifth, Fletcher's rush cap, which has no counterpart
+            // in this file because it has no Fletcher (no mods payload) and therefore no rush cap
+            // branch to hang it on.
+            //
+            // There is no ComboRestoreRule here, and that is a statement about /play rather than a
+            // simplification: the enum exists in the C# so that RE-DERIVING a score stored before
+            // backlog 140 does not hand it combo its fingers never earned. The browser only ever
+            // plays LIVE (it has no mods payload, no replay input, and nothing anywhere re-scores a
+            // stored row through this file: computeScore is called once, at the end of the play it
+            // just ran), so ComboRestoreRule.OnFix is the only rule it can be in and the snapshot is
+            // taken unconditionally.
+            this.restorable = null;
             // event hooks (optional; set by the renderer)
             this.onCharJudged = null;
             this.onWrongKey = null;
             this.onComboBroken = null;
+            // TypingEngine.ComboRestored: a corrected typo just resumed the streak its wrong
+            // keypress broke, carrying how much combo was put back. Raised with combo and maxCombo
+            // already restored and BEFORE the corrected retype is judged.
+            this.onComboRestored = null;
             this.onFinished = null;
             this.onFailed = null;
         }
@@ -1205,8 +1256,59 @@
             }
             if (missed > 0) {
                 this.combo = 0;
+
+                // A real break, so it owns the streak (backlog 140). Distinct from the line-scoped
+                // drop below: the two coincide in the browser, but not in the C#, where Fletcher can
+                // leave the caret on a LATER line holding a snapshot this break has just cost it.
+                this.discardRestorableStreak();
                 if (this.onComboBroken) this.onComboBroken();
             }
+
+            // A sealed line's cells can never be typed again, so a snapshot left on this one is
+            // unredeemable whether or not the seal broke anything. The browser cannot reach a
+            // snapshot on a line that is not the active one (it has no Fletcher, so the caret never
+            // runs ahead of the seal), which makes this defensive here and load-bearing there;
+            // dropping it keeps the state truthful rather than relying on the caret never going
+            // back, and keeps this file the line-for-line mirror it has to be.
+            if (this.restorable !== null && this.restorable.lineIndex === idx) this.restorable = null;
+        }
+
+        // TypingEngine.discardRestorableStreak. A combo break that is nobody's fixable typo just
+        // happened, so the outstanding snapshot (if any) is discarded: the streak it was holding has
+        // been lost to THIS break, and correcting the older cell later cannot bring back a run that
+        // ended after it. Called at every combo-break seam except the wrong keypress's own, which
+        // takes the snapshot instead, so a second wrong key simply overwriting the snapshot falls out
+        // of the same rule and needs no case of its own.
+        discardRestorableStreak() {
+            this.restorable = null;
+        }
+
+        // TypingEngine.resumeStreakIfThisFixesTheTypo. Redeem the outstanding snapshot if the cell
+        // about to be typed correctly is the cell it was taken against: the run resumes at that
+        // streak plus everything earned since, which is exactly combo + streak because no break has
+        // landed in between (any that had would have discarded the snapshot). The claim is spent
+        // either way, so a second correct retype of the same cell restores nothing.
+        resumeStreakIfThisFixesTheTypo(cellIndex) {
+            const claim = this.restorable;
+
+            if (claim === null) return;
+            if (claim.lineIndex !== this.activeLineIndex || claim.cellIndex !== cellIndex) return;
+
+            this.restorable = null;
+
+            // A break that cost nothing restores nothing, and announcing it would have every
+            // consumer write back a combo it already holds.
+            if (claim.streak <= 0) return;
+
+            this.combo += claim.streak;
+            if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+
+            // TypeBeatPlayfield.onComboRestored: the submitted account is moved by hand here, at the
+            // same seam and for the same reason the break is (osu's combo is maintained
+            // incrementally off results and no result carries this).
+            this.processor.restoreCombo(claim.streak);
+
+            if (this.onComboRestored) this.onComboRestored(claim.streak);
         }
 
         autoSkipForward() {
@@ -1272,6 +1374,10 @@
             // AT MOST ONE combo break for the whole word, the rule sealLine's misses follow. The
             // processor's own combo was already broken by the first applyCellResult('miss').
             this.combo = 0;
+
+            // An abandoned word is a break like any other, so it takes ownership of the streak and
+            // ends any older cell's claim on it (backlog 140).
+            this.discardRestorableStreak();
             if (this.onComboBroken) this.onComboBroken();
 
             // NO onCharJudged for the abandoned cells, deliberately, and the omission mirrors the
@@ -1380,12 +1486,23 @@
                 if (this.allowWrongInput && c !== ' ' && cell.expected !== ' ') {
                     this.totalKeypresses++;
                     this.errorCount++;
+
+                    // The streak this keypress is about to break, snapshotted against the cell it
+                    // spoils: correcting that cell resumes it (backlog 140, see restorable and
+                    // resumeStreakIfThisFixesTheTypo). Written unconditionally, so a wrong key on a
+                    // SECOND cell discards the first cell's claim exactly as any other intervening
+                    // break would.
+                    const brokenStreak = this.combo;
+
                     this.combo = 0;
                     this.counts.WrongChar = (this.counts.WrongChar || 0) + 1;
 
                     cell.state = 'wrong';
                     cell.typedChar = c;
                     cell.judgeType = 'WrongChar';
+
+                    const wrongCellIndex = this.caretIndex;
+                    this.restorable = { lineIndex: this.activeLineIndex, cellIndex: wrongCellIndex, streak: brokenStreak };
 
                     this.caretIndex++;
                     this.autoSkipForward();
@@ -1430,6 +1547,9 @@
                 this.errorCount++;
                 this.consecutiveWrongKeys++;
                 this.combo = 0;
+                // Nothing was written into a cell, so there is nothing to go back and correct: this
+                // break is final, and it ends any older cell's claim on the streak (backlog 140).
+                this.discardRestorableStreak();
                 // ...and the SUBMITTED combo breaks with it (TypeBeatPlayfield.onMistyped sets
                 // scoreProcessor.Combo.Value = 0), the same hand-written break the typed-through
                 // path above now makes. No judgement is raised, so this is the only trace the
@@ -1450,6 +1570,15 @@
             }
 
             this.consecutiveWrongKeys = 0;
+
+            // COMBO RESTORE (backlog 140), before anything about this press is judged: if this is
+            // the correction of the cell a wrong keypress spoiled, the run resumes at the streak
+            // that keypress broke plus everything earned since. Placed here so the press below is
+            // scored at the RESUMED streak, which is what makes fixing a typo worth score rather
+            // than only accuracy: the combo portion weights every judgement by the combo AFTER it.
+            // Not scoring-inert even for an inert retype, because the streak belongs to the FIX and
+            // not to the cell's judgement.
+            this.resumeStreakIfThisFixesTheTypo(this.caretIndex);
 
             const w = windowsFor(cell.tier, this.measure);
             const inertRetype = cell.firstCorrectDelta !== null;
@@ -1481,8 +1610,12 @@
                     this.combo++;
                     if (this.combo > this.maxCombo) this.maxCombo = this.combo;
                 } else {
-                    // right char, wrong time: Premature/Lagging, no points, combo breaks.
+                    // right char, wrong time: Premature/Lagging, no points, combo breaks. A break
+                    // like any other, so it owns the streak and discards the snapshot (backlog 140);
+                    // a fix judged Premature therefore resumes the run and loses it again in the
+                    // same keypress, which is the C#'s behaviour too and falls out of the ordering.
                     this.combo = 0;
+                    this.discardRestorableStreak();
                     if (this.onComboBroken) this.onComboBroken();
                 }
                 cell.state = 'correct';

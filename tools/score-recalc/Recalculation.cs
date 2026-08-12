@@ -157,6 +157,20 @@ public static class Recalculation
     /// </summary>
     private const string mistype_key = "combo_break";
 
+    /// <summary>
+    /// The combo-restore era EVERY stored row belongs to (backlog 140). Correcting a typo now
+    /// resumes the streak its wrong keypress broke, but no score in the database was played that
+    /// way: re-deriving one under <see cref="ComboRestoreRule.OnFix"/> would hand it combo its
+    /// fingers never earned, and price every cell after the fix at a streak it never held.
+    ///
+    /// <para>So BOTH re-derivations below pin it to <see cref="ComboRestoreRule.Never"/>, including
+    /// the one labelled "the rule the client uses now", which varies the TYPO rule alone. This
+    /// sweep exists to move one axis and prove it; letting a second one move underneath it would
+    /// make every number it reports impossible to attribute. If a sweep is ever wanted FOR backlog
+    /// 140, it is a different sweep, with its own reproduction proof, and it starts here.</para>
+    /// </summary>
+    private const ComboRestoreRule combo_restore_rule = ComboRestoreRule.Never;
+
     /// <param name="backfillMistypes">
     /// Whether to introduce a mistype count into rows that predate the stat. Off by default, and
     /// deliberately: those rows were played by a client that never counted wrong keypresses, so
@@ -191,7 +205,7 @@ public static class Recalculation
         // 1. The proof. Re-derive under the rule the row was PRICED under and require the stored
         //    statistics back, exactly. A harness that cannot reproduce the old numbers has no
         //    business writing new ones.
-        var oldRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.ImmediateMiss);
+        var oldRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.ImmediateMiss, combo_restore_rule);
         var oldStatistics = WireCounts.From(oldRule.Statistics);
 
         string mismatch = ReproductionMismatch(stored, oldRule, oldStatistics, preMistypeEra);
@@ -215,8 +229,10 @@ public static class Recalculation
             ? (double)stored.TotalScore / oldRule.TotalScoreWithoutMods
             : 1;
 
-        // 2. The same run under the rule the client uses now.
-        var newRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.Deferred);
+        // 2. The same run under the TYPO rule the client uses now. The COMBO-RESTORE rule stays at
+        //    Never on both sides of the comparison (see combo_restore_rule): this sweep moves one
+        //    axis at a time, and that one is not it.
+        var newRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.Deferred, combo_restore_rule);
         var statistics = WireCounts.From(newRule.Statistics);
         var maximumStatistics = WireCounts.From(newRule.MaximumStatistics);
 

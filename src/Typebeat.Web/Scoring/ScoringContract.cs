@@ -64,8 +64,13 @@ namespace Typebeat.Web.Scoring;
 /// the numbers it was submitted with.</item>
 /// </list>
 ///
-/// <para><b>UNCORRECTED TYPOS</b> (backlog 124 and 126). A cell the player typed WRONG and never
-/// went back for arrives as the <c>good</c> key, which type!beat uses for nothing else. The client
+/// <para><b>THE UNCORRECTED-TYPO CELL</b> (backlog 124 and 126). A cell the player typed WRONG and
+/// never went back for arrives as the <c>good</c> key, which type!beat uses for nothing else. It is
+/// a CELL STATE, not the typo count: since backlog 140 the number players are shown is
+/// <c>combo_break</c> below, counting wrong keypresses, and this key is no longer surfaced anywhere
+/// (every cell left holding a wrong character implied one of those keypresses, so the event count
+/// covers it). Nothing here moved with that: the key still arrives, still weighs 50, still costs
+/// completion and rank, and every stored row stays comparable. The client
 /// picked it because a cell may only ever resolve as one of perfect/great/ok/meh/good/miss (osu
 /// refuses any other result for a Perfect-max, Miss-min judgement) and the other five are the four
 /// quality tiers plus the seal's miss; see the game's <c>TypeBeatResultMapping.UNFIXED_TYPO</c>.
@@ -79,20 +84,30 @@ namespace Typebeat.Web.Scoring;
 /// <item>It is accuracy-affecting and a judgement, so it is in completion's DENOMINATOR, but it is
 /// NOT typed (<see cref="CountsAsTyped"/>), so it is out of the numerator: an uncorrected typo costs
 /// completion and rank exactly as a miss does. It is still not a MISS, which is what lets
-/// <c>PerformancePoints</c> keep pricing it by the mistype term rather than the cleanliness one.
+/// <c>PerformancePoints</c> keep pricing it by the typo term rather than the cleanliness one.
 /// Migration <c>008_completion_rank.sql</c> counts <c>good</c> as typed, which was right when it ran
 /// (it is a one-off backfill of rows that all predate this key) and must not be edited.</item>
 /// </list>
 ///
-/// <para><b>MISTYPES</b> (backlog 72). A wrong keypress arrives as the <c>combo_break</c> key in
-/// <c>statistics</c>, and every classifier below already answers false for it: it is not
-/// accuracy-affecting, not a hit, not combo-increasing, not a bonus, and carries base score 0. That
-/// is load-bearing, not incidental. It keeps accuracy, completion and rank byte-identical to what
-/// they were before the stat existed (so old and new scores stay comparable), and it keeps the key
-/// out of the <c>accuracyJudged &gt; accuracyMax</c> invariant below, which would otherwise UNRANK
-/// every mistyped play: mistypes have no counterpart in <c>maximum_statistics</c> (that stays one
-/// perfect per cell), so counting them as judgements would make any mistyped play look like it
-/// contained more cells than the map has. Do not add <c>combo_break</c> to any table here.</para>
+/// <para><b>TYPOS</b> (backlog 72, so named by 140). A wrong KEYPRESS arrives as the
+/// <c>combo_break</c> key in <c>statistics</c>, one per press, and every classifier below already
+/// answers false for it: it is not accuracy-affecting, not a hit, not combo-increasing, not a bonus,
+/// and carries base score 0. That is load-bearing, not incidental. It keeps accuracy, completion and
+/// rank byte-identical to what they were before the stat existed (so old and new scores stay
+/// comparable), and it keeps the key out of the <c>accuracyJudged &gt; accuracyMax</c> invariant
+/// below, which would otherwise UNRANK every play with a typo in it: typos have no counterpart in
+/// <c>maximum_statistics</c> (that stays one perfect per cell), so counting them as judgements would
+/// make any such play look like it contained more cells than the map has. Do not add
+/// <c>combo_break</c> to any table here.</para>
+///
+/// <para>This is the ONE typo number the client, the browser and the site all show (backlog 140).
+/// The key itself did not move and neither did anything below: 140 renamed a display, not a
+/// statistic. Its one BEHAVIOURAL half is invisible here, because it is a rule about combo during
+/// play rather than about the account: correcting the cell a wrong keypress spoiled resumes the
+/// streak that keypress broke, so a fixed typo submits a higher <c>max_combo</c> than it used to.
+/// <c>max_combo</c> is bounded here and not recomputed, and the bound (one per combo-increasing
+/// judgement in <c>maximum_statistics</c>) is exactly what a fully restored run reaches, so a
+/// restored score is in bounds by the same test as a clean one.</para>
 /// </summary>
 public static class ScoringContract
 {
