@@ -117,7 +117,10 @@ public class ScoreRecalcTest
     /// <summary>The stored row a client of the OLD era would have produced for this run.</summary>
     private static StoredScore StoredFor(IBeatmap map, Replay replay, bool dropMistypeKey = false, double multiplier = 1)
     {
-        var old = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss);
+        // ComboRestoreRule.Never: these are STORED rows, and every stored row predates backlog 140,
+        // so the account must be the one the fingers earned rather than the one the live restore
+        // rule would grant. Same value Recalculation.cs passes, for the same reason.
+        var old = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, ComboRestoreRule.Never);
 
         var statistics = ToWire(old.Statistics);
 
@@ -387,7 +390,7 @@ public class ScoreRecalcTest
 
         var result = Recalculation.Run(stored, Decoded(map, replay, new TypeBeatModFlashlight()));
 
-        var newRule = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModFlashlight() }, replay, TypoRule.Deferred);
+        var newRule = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModFlashlight() }, replay, TypoRule.Deferred, ComboRestoreRule.Never);
 
         Assert.Multiple(() =>
         {

@@ -191,7 +191,11 @@ public static class Recalculation
         // 1. The proof. Re-derive under the rule the row was PRICED under and require the stored
         //    statistics back, exactly. A harness that cannot reproduce the old numbers has no
         //    business writing new ones.
-        var oldRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.ImmediateMiss);
+        // ComboRestoreRule.Never on BOTH arms below, and it is not the typo rule's business which:
+        // every row this sweep reads was played before backlog 140 existed, so re-deriving one
+        // under the live restore rule would hand it a max_combo its fingers never earned. The
+        // scorer makes the rule a required parameter precisely so this choice cannot be skipped.
+        var oldRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.ImmediateMiss, ComboRestoreRule.Never);
         var oldStatistics = WireCounts.From(oldRule.Statistics);
 
         string mismatch = ReproductionMismatch(stored, oldRule, oldStatistics, preMistypeEra);
@@ -216,7 +220,7 @@ public static class Recalculation
             : 1;
 
         // 2. The same run under the rule the client uses now.
-        var newRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.Deferred);
+        var newRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.Deferred, ComboRestoreRule.Never);
         var statistics = WireCounts.From(newRule.Statistics);
         var maximumStatistics = WireCounts.From(newRule.MaximumStatistics);
 

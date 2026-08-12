@@ -15,10 +15,10 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <para>
 /// Per-mod values, mirroring the calculator: No Fail 0.5, Sudden Death 1.0 (absent), Gatekeeper 1.0
-/// (absent), Flashlight 1.05, Literate 1.05, Fletcher 0.98, Muted 1.0 (absent), Mashing 0.1
-/// (unranked, still priced for display parity), and the rate mods on the continuous
+/// (absent), Flashlight 1.05, Literate 1.05, Rhythmic 1.10, Fletcher 0.98, Muted 1.0 (absent),
+/// Mashing 0.1 (unranked, still priced for display parity), and the rate mods on the continuous
 /// <see cref="RateMultiplier"/> curve. The fattest RANKED stack is unchanged by a 1.0x mod:
-/// DT@2.00 (1.46) x FL (1.05) x LT (1.05) = 1.60965.
+/// DT@2.00 (1.46) x FL (1.05) x LT (1.05) x RH (1.10) = 1.770615.
 /// </para>
 ///
 /// <para>
@@ -106,6 +106,14 @@ public static class ModMultiplier
             // must match the game calculator's value.
             "FL" => 1.05,
             "LT" => 1.05,
+            // Rhythmic (backlog 135): the millisecond judgement ladder, which is the tighter one on
+            // any map slower than 10 characters per second. Unlike the Flashlight trim and the Half
+            // Time nerf above, learning this acronym opens NO unranked window in either deploy
+            // order: an older server prices RH at UNKNOWN_MOD_MULTIPLIER (2.0), which is above the
+            // 1.10 an honest client sends, so an RH play submitted before this line ships is still
+            // in bounds and still ranks. It is only priced for PP correctly once the server knows
+            // it, so deploy the site no later than the client that offers the mod.
+            "RH" => 1.10,
             "FT" => 0.98,
             "MU" => 1.0,
             "RX" => 0.1,

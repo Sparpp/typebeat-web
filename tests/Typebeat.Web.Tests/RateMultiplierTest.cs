@@ -99,6 +99,10 @@ public class RateMultiplierTest
             Assert.That(ModMultiplier.For("gk", null), Is.EqualTo(1.0));
             Assert.That(ModMultiplier.For("FL", null), Is.EqualTo(1.05));
             Assert.That(ModMultiplier.For("LT", null), Is.EqualTo(1.05));
+            // Rhythmic (backlog 135): the millisecond judgement ladder, priced above 1.0 like the
+            // other difficulty increases rather than left to the unknown-mod allowance.
+            Assert.That(ModMultiplier.For("RH", null), Is.EqualTo(1.10));
+            Assert.That(ModMultiplier.For("rh", null), Is.EqualTo(1.10));
             Assert.That(ModMultiplier.For("FT", null), Is.EqualTo(0.98));
             Assert.That(ModMultiplier.For("MU", null), Is.EqualTo(1.0));
             Assert.That(ModMultiplier.For("RX", null), Is.EqualTo(0.1));
@@ -123,20 +127,22 @@ public class RateMultiplierTest
     [Test]
     public void MaxForStack_PinsTheFattestRankedStack()
     {
-        // DT@2.00 (1.46) × FL (1.05) × LT (1.05) = 1.60965, the dearest stack the client can
-        // assemble out of ranked mods. Everything else ranked is a trim (NF 0.5, FT 0.98) or neutral.
-        double fattest = ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null)]);
+        // DT@2.00 (1.46) × FL (1.05) × LT (1.05) × RH (1.10) = 1.770615, the dearest stack the
+        // client can assemble out of ranked mods. Everything else ranked is a trim (NF 0.5, FT 0.98)
+        // or neutral. Rhythmic (backlog 135) is the only entry ever to have RAISED this ceiling, and
+        // it is still comfortably under the backstop.
+        double fattest = ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("RH", null)]);
 
-        Assert.That(fattest, Is.EqualTo(1.60965).Within(1e-9));
+        Assert.That(fattest, Is.EqualTo(1.770615).Within(1e-9));
         Assert.That(fattest, Is.LessThan(ModMultiplier.STACK_CAP), "the backstop must never bite a reachable stack");
 
         // Adding the neutral / trimming ranked mods cannot beat it.
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("SD", null), ("MU", null), ("GK", null)]),
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("RH", null), ("SD", null), ("MU", null), ("GK", null)]),
             Is.EqualTo(fattest).Within(1e-9),
             "a 1.0x mod cannot move the ceiling, which is why adding Gatekeeper reprices nothing");
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("FT", null)]),
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("RH", null), ("FT", null)]),
             Is.LessThan(fattest));
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("NF", null)]),
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("RH", null), ("NF", null)]),
             Is.LessThan(fattest));
     }
 
