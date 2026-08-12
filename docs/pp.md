@@ -17,8 +17,8 @@ Per play:
 
 ```
 pp = C · SR_eff^2.00
-       · max(0, 1 − miss^1.6/notes)^10                   # cleanliness
-       · max(0, 1 − mistypes^1.6/(notes+mistypes))^4     # mistyping
+       · max(0, 1 − miss^1.2/notes)^10                   # cleanliness
+       · max(0, 1 − mistypes^1.2/(notes+mistypes))^4     # mistyping
        · max(0.1, 1 + 0.50·log10(notes/100))             # length bonus (clamped)
        · acc^1.80                                        # accuracy (timing quality)
        · (ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50   # combo
@@ -670,6 +670,9 @@ fractional exponent on a negative base is non-real.
 
 ## Amendment (2026-08-12): the combo term's base goes log-shaped (backlog 131)
 
+> Superseded by v13, which returns count_power to the 1.2 this amendment set. v8 moved it to 1.6
+> without an amendment; backlog 137 is the decision to undo that.
+
 The combo term stops being a plain powered ratio. Where v11 raised `maxcombo/notes` straight to
 2.50, v12 bends that ratio through a log first: the base is `ln(1 + 9.0·r)/ln(1 + 9.0)` over `r =
 maxcombo/notes`, and only then is raised to the same 2.50. `combo_exponent` does not move, and
@@ -710,4 +713,35 @@ fractional exponent on a negative base is non-real.
 | `notes=500, miss=10, mistype=20` | `0.151677` | `0.151677` | +0% |
 
 **`VERSION` bumps to 12.** Every stored row the change values differently is repriced by
+`PpBackfill` at the next boot, reading only columns; no migration is needed.
+
+## Amendment (2026-08-12): count_power returns to 1.2, the value backlog 101 argued for (backlog 137)
+
+v13 = count_power 1.6 back to 1.2, restoring the value backlog 101 chose with a written argument
+and that v8 silently replaced. The SHAPE is untouched and so is every other constant. At 1.6 the
+cleanliness base hit zero at 49 misses on a 500-note map, 9.7% of it, within a factor of two of
+the 4.6% that backlog 101 rejected as pricing essentially every real play to nothing; at 1.2 it
+is 178, i.e. 35%. It also restores the mistyping term's separate cliff, which exists because its
+count sits in its own denominator: the two cliffs were 52 and 49 at 1.6, three counts apart, and
+are 249 and 178 at 1.2. Both bases are still exactly 1.0 at a count of zero, so a spotless play
+is priced bit-identically, while every stored row carrying a miss or a mistype is repriced
+upwards, many of them away from exactly zero, which is what forces the bump.
+
+```
+BEFORE:  max(0, 1 − miss^1.6/notes)^10  ·  max(0, 1 − mistypes^1.6/(notes + mistypes))^4
+
+AFTER:   max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − mistypes^1.2/(notes + mistypes))^4
+```
+
+SR, the global scale, length, accuracy, combo, the mod multipliers, the Half Time mirror
+multiplier, eligibility and the aggregation are all untouched. The mistype count still sits on
+both sides of its own fraction, for the reason the backlog-89 amendment gives: keypresses are
+unbounded, and a fractional exponent on a negative base is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, mistype=80` | `0.000000` | `0.008341` | up from exactly 0 |
+| `notes=500, miss=10, mistype=20` | `0.151677` | `0.542001` | +257% |
+
+**`VERSION` bumps to 13.** Every stored row the change values differently is repriced by
 `PpBackfill` at the next boot, reading only columns; no migration is needed.

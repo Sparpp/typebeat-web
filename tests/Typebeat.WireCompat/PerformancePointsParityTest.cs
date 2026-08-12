@@ -183,26 +183,26 @@ public class PerformancePointsParityTest
         Assert.Multiple(() =>
         {
             Assert.That(ClientPp.Compute(4, notes, 60, 0.9, notes, no_client_mods, 80) / clientSpotless,
-                Is.EqualTo(0.000000).Within(1e-6)); // pp[f.penalty(500, 60, 80)]
+                Is.EqualTo(0.008341).Within(1e-6)); // pp[f.penalty(500, 60, 80)]
             Assert.That(ClientPp.Compute(4, notes, 10, 0.9, notes, no_client_mods, 20) / clientSpotless,
-                Is.EqualTo(0.151677).Within(1e-6)); // pp[f.penalty(500, 10, 20)]
+                Is.EqualTo(0.542001).Within(1e-6)); // pp[f.penalty(500, 10, 20)]
 
             // Zero mistypes leaves the mistyping term at exactly 1.0 on both sides, so the play is
             // priced by its misses alone. Ten misses, not the sixty this used to use: sixty was past
             // the backlog-97 cliff, so both sides would have been asserted to equal zero and the
             // restatement would have stopped saying anything about the arithmetic that produced it.
             Assert.That(ClientPp.Compute(4, notes, 10, 0.9, notes, no_client_mods, 0) / clientSpotless,
-                Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.6) / 500.0), 10)).Within(1e-12)); // pp:const count_power=1.6 miss_exponent=10
+                Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.2) / 500.0), 10)).Within(1e-12)); // pp:const count_power=1.2 miss_exponent=10
             Assert.That(ServerPp.Compute(4, notes, 10, 0.9, notes, no_server_mods, 0) / serverSpotless,
-                Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.6) / 500.0), 10)).Within(1e-12)); // pp:const count_power=1.6 miss_exponent=10
+                Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.2) / 500.0), 10)).Within(1e-12)); // pp:const count_power=1.2 miss_exponent=10
 
             // And BOTH sides reach the clamped zero from the same input, which is the seam the
             // clamp itself opens: a mirror missing the Math.Max would produce a non-real result
             // here rather than a zero, and nothing else in this file would catch it. The thresholds
             // are the CURRENT cliffs, so a mirror at the old power would fail the two below the
             // cliff rather than the two at it.
-            const int missCliff = 49; // pp[math.ceil(f.miss_cliff(500))]
-            const int mistypeCliff = 52; // pp[math.ceil(f.mistype_cliff(500))]
+            const int missCliff = 178; // pp[math.ceil(f.miss_cliff(500))]
+            const int mistypeCliff = 249; // pp[math.ceil(f.mistype_cliff(500))]
 
             Assert.That(ClientPp.Compute(4, notes, missCliff, 0.9, notes, no_client_mods, 0), Is.Zero);
             Assert.That(ServerPp.Compute(4, notes, missCliff, 0.9, notes, no_server_mods, 0), Is.Zero);
