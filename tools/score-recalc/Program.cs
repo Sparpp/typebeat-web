@@ -27,11 +27,19 @@ using Typebeat.Tools.ScoreRecalc;
 //
 //   supersede-report / supersede-apply SUPERSEDE. Re-judge under ALL of today's rules and REPLACE
 //                                      the stored numbers (backlog 136, decided by the user
-//                                      2026-08-13). Reproduction is impossible here by
-//                                      construction, since backlog 133 retired the ladder every
-//                                      stored row was graded on, so it becomes a diagnostic and a
-//                                      DIFFERENT predicate takes over as the gate: the judgement of
-//                                      the run may move, the run may not.
+//                                      2026-08-13). Reproduction is not the gate here: the sweep
+//                                      deliberately re-judges on rules the row was not played
+//                                      under, and for a row stored in the backlog 133-to-147 window
+//                                      reproduction is impossible outright, since backlog 147
+//                                      deleted the ladder that graded it. So it becomes a
+//                                      diagnostic and a DIFFERENT predicate takes over as the gate:
+//                                      the judgement of the run may move, the run may not.
+//
+// THE ERAS THE HARNESS CAN EXPRESS (backlog 151). A stored row is re-derived on the ladder it was
+// actually played on, through four switches on TypeBeatReplayScorer: the typo rule (backlog 109),
+// combo restore (140), the untimed spacebar (148) and the rate-scaled judgement windows (150). The
+// last two reach the widest: every map has spaces, and every DT/NC/HT row was graded on unscaled
+// windows. The one era NO switch can express is the backlog 133-to-147 window.
 //
 // Why not one command with a threshold: a threshold loose enough to pass a sweep in which nothing
 // reproduces is loose enough to pass genuine corruption, and that gate is the only thing standing
@@ -411,20 +419,24 @@ internal static class Cli
             commands because they check themselves with opposite predicates.
 
               report             REPRODUCE (backlog 114). Re-derive under the rules the row was
-                                 priced under (TypoRule.ImmediateMiss + ComboRestoreRule.Never),
-                                 REFUSE anything that does not come back exactly, then report what
-                                 today's typo rule alone makes of it. total_score keeps the row's
-                                 own mod multiplier. Writes NOTHING.
+                                 priced under (TypoRule.ImmediateMiss + ComboRestoreRule.Never +
+                                 SpaceTimingRule.Timed + RateWindowRule.Unscaled), REFUSE anything
+                                 that does not come back exactly, then report what today's typo rule
+                                 alone makes of it. total_score keeps the row's own mod multiplier.
+                                 Writes NOTHING.
               apply              Same, then write the moved values back.
 
               supersede-report   SUPERSEDE (backlog 136, decided 2026-08-13). Re-judge under ALL of
-                                 today's rules (TypoRule.Deferred + ComboRestoreRule.OnFix) and
-                                 report the stored numbers being REPLACED. total_score is priced
-                                 with today's multipliers, because a superseded row has to be a
-                                 score today's client could produce. Reproduction is a diagnostic
-                                 here, not a gate: no pre-133 row can reproduce, by construction.
-                                 What gates instead is that the replay must describe the SAME RUN
-                                 over the SAME MAP (cell counts, frames consumed). Writes NOTHING.
+                                 today's rules (TypoRule.Deferred + ComboRestoreRule.OnFix +
+                                 SpaceTimingRule.Untimed + RateWindowRule.ScaledByRate) and report
+                                 the stored numbers being REPLACED. total_score is priced with
+                                 today's multipliers, because a superseded row has to be a score
+                                 today's client could produce. Reproduction is a diagnostic here,
+                                 not a gate: the sweep re-judges on rules the row was not played
+                                 under, and a row from the backlog 133-to-147 window cannot
+                                 reproduce at all. What gates instead is that the replay must
+                                 describe the SAME RUN over the SAME MAP (cell counts, frames
+                                 consumed). Writes NOTHING.
               supersede-apply    Same, then write. Needs three confirmations, see below.
 
             Options:

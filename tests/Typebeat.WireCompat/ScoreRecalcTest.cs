@@ -34,12 +34,20 @@ namespace Typebeat.WireCompat;
 /// stored statistics exactly, along with the two era allowances it makes (the pre-backlog-72 mistype
 /// key, a retuned mod multiplier) and every reason it declines a row.</para>
 ///
-/// <para>The second half pins the SUPERSEDE sweep (backlog 136 and 142), where that gate provably
-/// cannot hold: backlog 133 retired the ladder every stored row was graded on, so reproduction
-/// becomes a diagnostic and a different predicate refuses instead, one that lets the JUDGEMENT of a
-/// run move while still requiring it to be the same run over the same map. The tests there cover
-/// that inversion, what it costs (a fixed typo ends up scoring exactly like a clean play), and the
-/// command surface that stops it being reached by accident.</para>
+/// <para>The second half pins the SUPERSEDE sweep (backlog 136 and 142), where that gate cannot
+/// hold: the sweep re-judges on rules the row was not played under, and for a row stored in the
+/// backlog 133-to-147 window reproduction is impossible outright, because backlog 147 deleted the
+/// four-tier character-distance ladder that graded it. So reproduction becomes a diagnostic and a
+/// different predicate refuses instead, one that lets the JUDGEMENT of a run move while still
+/// requiring it to be the same run over the same map. The tests there cover that inversion, what it
+/// costs (a fixed typo ends up scoring exactly like a clean play), and the command surface that stops
+/// it being reached by accident.</para>
+///
+/// <para>The last region pins backlog 151: the two judgement changes that shipped with no era switch
+/// (the untimed spacebar, and rate mods scaling the windows) are now switches the reproduce pass sets
+/// to the stored era and the supersede pass sets to today's. Without them the reproduce pass could
+/// not re-derive a single row in the table, because every map has spaces, and it would have reported
+/// the whole table as corrupt.</para>
 /// </summary>
 [TestFixture]
 public class ScoreRecalcTest
@@ -145,10 +153,28 @@ public class ScoreRecalcTest
     /// </summary>
     private const ComboRestoreRule combo_restore_rule = ComboRestoreRule.Never;
 
+    /// <summary>
+    /// The other two stored-era axes (backlog 151). Every row in the table was played by a client
+    /// that graded the spacebar on the clock (pre-148) and left the judgement windows unscaled by the
+    /// rate (pre-150), so a synthetic stored row has to be built under both or it is a row no client
+    /// ever produced. The fixture above happens to be indifferent to them (no spaces, no rate mod);
+    /// the fixture in the era region at the bottom is not, which is the point of it.
+    /// </summary>
+    private const SpaceTimingRule space_timing_rule = SpaceTimingRule.Timed;
+
+    private const RateWindowRule rate_window_rule = RateWindowRule.Unscaled;
+
     /// <summary>The stored row a client of the OLD era would have produced for this run.</summary>
-    private static StoredScore StoredFor(IBeatmap map, Replay replay, bool dropMistypeKey = false, double multiplier = 1)
+    private static StoredScore StoredFor(
+        IBeatmap map,
+        Replay replay,
+        bool dropMistypeKey = false,
+        double multiplier = 1,
+        SpaceTimingRule spaceRule = space_timing_rule,
+        RateWindowRule rateRule = rate_window_rule,
+        params Mod[] mods)
     {
-        var old = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, combo_restore_rule);
+        var old = TypeBeatReplayScorer.Score(map, mods, replay, TypoRule.ImmediateMiss, combo_restore_rule, spaceRule, rateRule);
 
         var statistics = ToWire(old.Statistics);
 
@@ -413,7 +439,7 @@ public class ScoreRecalcTest
 
         var result = Recalculation.Run(stored, Decoded(map, replay, new TypeBeatModFlashlight()));
 
-        var newRule = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModFlashlight() }, replay, TypoRule.Deferred, combo_restore_rule);
+        var newRule = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModFlashlight() }, replay, TypoRule.Deferred, combo_restore_rule, space_timing_rule, rate_window_rule);
 
         Assert.Multiple(() =>
         {
@@ -953,7 +979,7 @@ public class ScoreRecalcTest
             // exactly as the client writes it. That blob IS the offline run's copy of the stored
             // row (ScoreEndpoints.SubmitScore stores the submitted dictionaries verbatim), so a
             // fixture without it would be testing the loader against an empty row.
-            var submitted = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, combo_restore_rule);
+            var submitted = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, combo_restore_rule, space_timing_rule, rate_window_rule);
 
             var score = new Score
             {
@@ -1049,6 +1075,195 @@ public class ScoreRecalcTest
 
         counts["perfect"] = counts.GetValueOrDefault("perfect") + top;
         return counts;
+    }
+
+    #endregion
+
+    #region The two eras backlog 151 made expressible
+
+    /// <summary>
+    /// "ab cd" as two words far apart: a = 0, b = 3000, ' ' = 6000 (the first unit's end),
+    /// c = 20000, d = 23000. The gap is what lets the SPACE be pressed grossly late while every later
+    /// press still lands dead on target, so the only thing the space era can move is the space.
+    /// </summary>
+    private static TypeBeatBeatmap SpacedBeatmap() => OneLine(new LyricLine
+    {
+        RawText = "ab cd",
+        StartTime = 0,
+        EndTime = 40000,
+        SingEndTime = 26000,
+        Units = new[]
+        {
+            new TimedUnit { Text = "ab", StartTime = 0, EndTime = 6000 },
+            new TimedUnit { Text = "cd", StartTime = 20000, EndTime = 26000 },
+        },
+    });
+
+    /// <summary>"abc" over [0, 12000], so the cells target 0, 4000 and 8000.</summary>
+    private static TypeBeatBeatmap PlainBeatmap() => OneLine(new LyricLine
+    {
+        RawText = "abc",
+        StartTime = 0,
+        EndTime = 20000,
+        SingEndTime = 12000,
+        Units = new[] { new TimedUnit { Text = "abc", StartTime = 0, EndTime = 12000 } },
+    });
+
+    private static TypeBeatBeatmap OneLine(LyricLine line)
+    {
+        var map = new TypeBeatBeatmap();
+        map.HitObjects.Add(new TypeBeatHitObject { StartTime = 0, LineIndex = 0, Line = line, Granularity = TimingGranularity.Line });
+
+        map.BeatmapInfo.Ruleset = new TypeBeatRuleset().RulesetInfo;
+        map.BeatmapInfo.Metadata.Artist = "Test";
+        map.BeatmapInfo.Metadata.Title = "Era";
+
+        foreach (var hitObject in map.HitObjects)
+            hitObject.ApplyDefaults(new ControlPointInfo(), new BeatmapDifficulty(), CancellationToken.None);
+
+        return map;
+    }
+
+    private static Replay Pressed(params (double time, char c)[] presses)
+    {
+        var replay = new Replay();
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, true));
+
+        foreach ((double time, char c) in presses)
+            replay.Frames.Add(new TypeBeatReplayFrame(time, c));
+
+        return replay;
+    }
+
+    /// <summary>Every cell on target except the SPACE, 2500 ms late: outside even the Meh window.</summary>
+    private static Replay LateSpaceReplay()
+        => Pressed((0, 'a'), (3000, 'b'), (8500, ' '), (20000, 'c'), (23000, 'd'));
+
+    /// <summary>
+    /// WHY BACKLOG 151 EXISTS. Backlog 148 took the spacebar out of the timing challenge, and every
+    /// map has spaces, so before the era switch the reproduce pass re-graded every stored row's
+    /// spaces on a rule no stored row was played under: a loosely hit space came back as a top-tier
+    /// hit that never breaks combo, moving both <c>statistics</c> and <c>max_combo</c>, which are
+    /// exactly the two quantities the gate compares. The whole table read as corrupt.
+    ///
+    /// <para>Both halves are asserted, because the first alone would pass if the tool were judging
+    /// under the live rule AND the stored row had been built under it too. The second is a row built
+    /// as today's client would produce it, which the tool must NOT reproduce.</para>
+    /// </summary>
+    [Test]
+    public void ARowPlayedBeforeTheSpaceExemptionReproducesAgain()
+    {
+        var map = SpacedBeatmap();
+        var replay = LateSpaceReplay();
+
+        var storedEra = Recalculation.Run(StoredFor(map, replay), Decoded(map, replay));
+
+        var liveEra = Recalculation.Run(
+            StoredFor(map, replay, spaceRule: SpaceTimingRule.Untimed),
+            Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(storedEra.Skip, Is.EqualTo(SkipReason.None), "a pre-148 row must be re-derivable");
+            Assert.That(storedEra.Reproduced, Is.True);
+
+            // The era it reproduced: the late space was a Lagging press that spent its cell on a
+            // Miss and ended the run two characters in.
+            Assert.That(storedEra.OldRuleStatistics!["miss"], Is.EqualTo(1));
+            Assert.That(storedEra.OldRuleStatistics!["great"], Is.EqualTo(4));
+            Assert.That(storedEra.OldRuleMaxCombo, Is.EqualTo(2));
+
+            // ...and the harness is really using it. A row judged on TODAY's space rule is one no
+            // stored client produced, and the reproduce pass refuses it rather than quietly agreeing.
+            Assert.That(liveEra.Skip, Is.EqualTo(SkipReason.NotReproducible));
+            Assert.That(liveEra.Detail, Does.Contain("miss").Or.Contain("max_combo"));
+        });
+    }
+
+    /// <summary>
+    /// The same for backlog 150. Three presses 500 ms late are an Ok apiece on the base ladder, which
+    /// is what a pre-150 Double Time client stored; today's rule stretches the Great window by the
+    /// clock rate and pays all three. Narrower than the space era (it only reaches DT / NC / HT rows)
+    /// but it moves the same two quantities on the rows it does reach.
+    /// </summary>
+    [Test]
+    public void ARowPlayedBeforeTheRateWindowScalingReproducesAgain()
+    {
+        var map = PlainBeatmap();
+        var replay = Pressed((500, 'a'), (4500, 'b'), (8500, 'c'));
+        Mod[] doubleTime = { new TypeBeatModDoubleTime { SpeedChange = { Value = 1.5 } } };
+        const string mods_json = @"[{""acronym"":""DT"",""settings"":{""speed_change"":1.5}}]";
+
+        var storedEra = Recalculation.Run(
+            StoredFor(map, replay, mods: doubleTime) with { ModsJson = mods_json },
+            Decoded(map, replay, doubleTime));
+
+        var liveEra = Recalculation.Run(
+            StoredFor(map, replay, rateRule: RateWindowRule.ScaledByRate, mods: doubleTime) with { ModsJson = mods_json },
+            Decoded(map, replay, doubleTime));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(storedEra.Skip, Is.EqualTo(SkipReason.None), "a pre-150 rate row must be re-derivable");
+            Assert.That(storedEra.Reproduced, Is.True);
+            Assert.That(storedEra.OldRuleStatistics!["ok"], Is.EqualTo(3), "the base ladder graded 500 ms late as an Ok");
+
+            Assert.That(liveEra.Skip, Is.EqualTo(SkipReason.NotReproducible));
+            Assert.That(liveEra.Detail, Does.Contain("great"));
+        });
+    }
+
+    /// <summary>
+    /// The supersede sweep moves the two new axes as well, which is the other half of the switch:
+    /// re-judged under all of today's rules the same run's late space becomes a top-tier hit and the
+    /// run is unbroken. Worth pinning separately from the reproduce case, because a switch wired into
+    /// only one of the two passes would leave the sweep writing numbers off the stored ladder.
+    /// </summary>
+    [Test]
+    public void SupersedeAppliesTodaysSpaceRuleToAPreExemptionRow()
+    {
+        var map = SpacedBeatmap();
+        var replay = LateSpaceReplay();
+        var stored = StoredFor(map, replay);
+
+        var superseded = Recalculation.Run(stored, Decoded(map, replay), mode: RecalcMode.Supersede);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(superseded.Skip, Is.EqualTo(SkipReason.None));
+            Assert.That(superseded.Reproduced, Is.True, "the diagnostic arm still uses the stored era");
+
+            Assert.That(superseded.NewStatistics!["great"], Is.EqualTo(5));
+            Assert.That(superseded.NewStatistics!.GetValueOrDefault("miss"), Is.Zero);
+            Assert.That(superseded.NewMaxCombo, Is.EqualTo(5));
+            Assert.That(superseded.NewCompletion, Is.EqualTo(1));
+            Assert.That(superseded.Moves, Is.True);
+        });
+    }
+
+    /// <summary>
+    /// The REPRODUCE sweep still varies the typo rule alone. Its second pass holds the spacebar at
+    /// the stored era exactly as it holds combo restore there, so a row with a loosely hit space is
+    /// not quietly handed backlog 148's gain by a sweep that only claims to be about typos.
+    /// </summary>
+    [Test]
+    public void ReproduceHoldsTheSpaceEraStillOnBothArms()
+    {
+        var map = SpacedBeatmap();
+        var replay = LateSpaceReplay();
+        var stored = StoredFor(map, replay);
+
+        var result = Recalculation.Run(stored, Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
+
+            // Nothing in this run is a typo, so varying the typo rule alone must move nothing at all.
+            Assert.That(result.NewStatistics, Is.EquivalentTo(result.OldRuleStatistics!));
+            Assert.That(result.NewMaxCombo, Is.EqualTo(result.OldRuleMaxCombo));
+            Assert.That(result.Moves, Is.False, "a reproduce sweep must not apply backlog 148's gain");
+        });
     }
 
     #endregion
