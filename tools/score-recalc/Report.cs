@@ -81,6 +81,8 @@ public static class Report
             output.WriteLine();
             output.WriteLine("judged under                 TypoRule.Deferred, every other era axis held at the stored era");
             output.WriteLine("                             (combo restore, the spacebar, the rate windows)");
+            output.WriteLine("verified against             the typo rule that judged the ROW: Deferred where the row's own");
+            output.WriteLine("                             statistics prove it (a `good` key), ImmediateMiss otherwise");
             output.WriteLine("total_score priced with      the row's OWN mod multiplier, recovered not reapplied");
         }
 
@@ -97,6 +99,11 @@ public static class Report
         // which before deciding anything.
         output.WriteLine($"FROM THE 133-TO-147 WINDOW   {plan.DeletedLadderWindow.Count}"
                          + (plan.Mode == RecalcMode.Supersede ? "   <- pass this to --expect-unreproducible" : string.Empty));
+
+        // The other population that is a fact about the DATA rather than about the sweep, printed in
+        // both modes for the same reason: it is what the pass is judging those rows on, and a reader
+        // should not have to infer it from a reproduction rate.
+        output.WriteLine($"PINNED TO TypoRule.Deferred  {plan.PinnedToTheDeferredTypoRule.Count}");
 
         output.WriteLine($"ROWS THIS RUN WOULD WRITE    {plan.RowsWritten}"
                          + (plan.Mode == RecalcMode.Supersede ? "   <- pass this to --expect-superseded" : string.Empty));
@@ -137,6 +144,18 @@ public static class Report
         output.WriteLine($"replayable and passed        {eligible.Count}");
         output.WriteLine($"reproduced exactly           {reproduced}"
                          + (eligible.Count > 0 ? $"  ({Percent(reproduced, eligible.Count)})" : string.Empty));
+
+        // Which rule the pass reproduced those rows UNDER, since backlog 155 it is no longer one
+        // answer for the whole table. Printed in both modes, and as a count of rows rather than as a
+        // share of them: it is the population whose re-derivation used to come back with every
+        // uncorrected typo turned into a miss.
+        int deferredEra = eligible.Count(r => r.Stored.ProvablyJudgedUnderTheDeferredTypoRule);
+
+        output.WriteLine($"  of these, judged since 126 {deferredEra,-6}  their statistics hold an uncorrected typo (a `good` key),");
+        output.WriteLine("                                     which PROVES the deferred typo rule judged them, so they are");
+        output.WriteLine("                                     reproduced under it. Absence of the key proves nothing (a run");
+        output.WriteLine("                                     with no typo left standing has none), so every other row is");
+        output.WriteLine("                                     re-derived under TypoRule.ImmediateMiss as before.");
 
         PrintUnreproducible(eligible, plan, output);
 

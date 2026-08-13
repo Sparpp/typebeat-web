@@ -72,6 +72,33 @@ public sealed record StoredScore(
     /// </summary>
     public bool JudgedOnTheDeletedLadder
         => ScoringContract.JudgedUnderTheFourthTier(WireCounts.Parse(MaximumStatisticsJson));
+
+    /// <summary>
+    /// Whether this row PROVES it was judged under <see cref="TypoRule.Deferred"/>, i.e. by a client
+    /// from backlog 126 onwards. Read off the row's own <c>statistics</c> by
+    /// <see cref="ScoringContract.CarriesAnUncorrectedTypo"/>: an uncorrected typo takes a key of its
+    /// own (<c>good</c>, the game's <c>TypeBeatResultMapping.UNFIXED_TYPO</c>), and only the deferred
+    /// rule can leave a cell holding a wrong character, because the other rule spends that cell's one
+    /// result on a Miss the instant the wrong key lands.
+    ///
+    /// <para>THIS IS ONE-DIRECTIONAL, AND MUST STAY THAT WAY. True is a PROOF and pins the row's typo
+    /// axis to the deferred rule. False is an ABSENCE OF EVIDENCE, not evidence of the old rule: a
+    /// run with no uncorrected typo left standing has no such key to carry, whichever rule judged it.
+    /// So false keeps the row on <see cref="Recalculation"/>'s stored-era default, where the two
+    /// rules agree for as long as the run has no typo in it. Turning this into a bidirectional test
+    /// would re-derive every clean modern row on a ladder it was never played on.</para>
+    ///
+    /// <para>Deliberately NOT a score id or a date. The population happens to start at one id in
+    /// production because it started at one deploy, but the id is an observation about that deploy
+    /// and the key is a fact about the row, and only one of the two survives a backfill, an import or
+    /// a re-numbering.</para>
+    ///
+    /// <para>Serialized into <c>--out</c> alongside the rest of the row, like
+    /// <see cref="JudgedOnTheDeletedLadder"/>, so an operator can pick the population out of the JSON
+    /// without knowing which key stamps which era.</para>
+    /// </summary>
+    public bool ProvablyJudgedUnderTheDeferredTypoRule
+        => ScoringContract.CarriesAnUncorrectedTypo(WireCounts.Parse(StatisticsJson));
 }
 
 /// <summary>
@@ -83,8 +110,9 @@ public enum RecalcMode
 {
     /// <summary>
     /// The verification sweep (backlog 114). Re-derives under the rules the row was PRICED under
-    /// (all FOUR stored-era axes: <see cref="TypoRule.ImmediateMiss"/>,
-    /// <see cref="ComboRestoreRule.Never"/>, <see cref="SpaceTimingRule.Timed"/> and
+    /// (all FOUR era axes at the era that judged the row: the typo rule PER ROW, see
+    /// <see cref="Recalculation.StoredEraTypoRuleFor"/>, plus <see cref="ComboRestoreRule.Never"/>,
+    /// <see cref="SpaceTimingRule.Timed"/> and
     /// <see cref="RateWindowRule.Unscaled"/>) and refuses any row it cannot reproduce exactly, then
     /// reports what today's TYPO rule alone would make of it, holding every other axis still. Its
     /// output answers "does the harness understand this row", which is the question a supersede sweep
@@ -169,9 +197,10 @@ public enum SkipReason
     ///
     /// <para>In a REPRODUCE sweep this reason should now be rare and interesting rather than
     /// universal. Backlog 151 gave the harness the two missing era switches (the spacebar and the
-    /// rate windows), so a row from before the backlog 133 arc reproduces again; what is left here
-    /// is a row from the 133-to-147 window, whose ladder no longer exists in any form, or a genuine
-    /// disagreement worth looking at.</para>
+    /// rate windows), so a row from before the backlog 133 arc reproduces again, and backlog 155
+    /// stopped it re-grading a row judged since backlog 126 on the retired typo rule; what is left
+    /// here is a row from the 133-to-147 window, whose ladder no longer exists in any form, or a
+    /// genuine disagreement worth looking at.</para>
     /// </summary>
     NotReproducible,
 
@@ -304,8 +333,11 @@ public sealed record RecalcResult(
 ///
 /// <para>What the first replay can reproduce is a question about ERAS, and every rule that has moved
 /// since a row was stored has to be expressible or the pass reports rule drift as corruption. There
-/// are four such axes, all of them pinned to the stored era on that pass: the typo rule (backlog
-/// 109), combo restore (140), the untimed spacebar (148) and the rate-scaled windows (150). The one
+/// are four such axes, all of them set on that pass to the era that judged the row: the typo rule
+/// (backlog 109), combo restore (140), the untimed spacebar (148) and the rate-scaled windows (150).
+/// Three of them are the same for every row in the table and are constants below. The TYPO axis is
+/// not: it moved while the table was already filling, so the table holds rows from both sides of it
+/// and the pass reads each row's era off the row itself (<see cref="StoredEraTypoRuleFor"/>). The one
 /// era that is NOT expressible is the backlog 133-to-147 window, whose four-tier character-distance
 /// ladder backlog 147 deleted: those rows cannot be reproduced by any setting of any switch, because
 /// the code that judged them no longer exists.</para>
@@ -319,6 +351,49 @@ public static class Recalculation
     /// read as "unknown" rather than as a flawless run.
     /// </summary>
     private const string mistype_key = "combo_break";
+
+    /// <summary>
+    /// The typo era a stored row is judged in when the row carries no proof of the other one (backlog
+    /// 109): a wrong character spent its cell's one result on a Miss the instant it landed.
+    ///
+    /// <para>UNLIKE THE OTHER THREE AXES THIS IS NOT TRUE OF EVERY ROW IN THE TABLE, which is the
+    /// whole of backlog 155. The other three rules moved after the rows were already stored, so
+    /// "the stored era" is a constant for them. This one moved WHILE the table was filling: the
+    /// deferred rule has been the only rule live play uses since backlog 109, and since backlog 126
+    /// the cell it leaves standing has a key of its own, so the table holds rows from both sides of
+    /// it. Applying this constant to all of them re-graded every recent row on a rule it was never
+    /// played under and reported the difference as a corrupt row: each uncorrected typo came back a
+    /// miss, so the re-derived misses came out at exactly stored miss + stored good.</para>
+    ///
+    /// <para>It stays the DEFAULT rather than becoming the exception because the evidence only points
+    /// one way (see <see cref="StoredEraTypoRuleFor"/>), and because a row with no typo in it is
+    /// judged identically by both rules, so the default costs nothing on the rows it cannot prove
+    /// anything about.</para>
+    /// </summary>
+    private const TypoRule stored_era_typo_rule = TypoRule.ImmediateMiss;
+
+    /// <summary>
+    /// The typo rule live play uses (backlog 109, and the only rule any client has offered since),
+    /// and therefore the one a <see cref="RecalcMode.Supersede"/> sweep re-judges under, the one a
+    /// <see cref="RecalcMode.Reproduce"/> sweep reports the effect of, AND the one a row judged since
+    /// backlog 126 has to be REPRODUCED under, because it is the rule that judged it.
+    /// </summary>
+    private const TypoRule live_typo_rule = TypoRule.Deferred;
+
+    /// <summary>
+    /// The typo rule to re-derive THIS row under when reproducing it: the one that actually judged
+    /// it, as far as the row itself can prove.
+    ///
+    /// <para>The proof is <see cref="StoredScore.ProvablyJudgedUnderTheDeferredTypoRule"/> and it runs
+    /// in ONE DIRECTION. A row holding an uncorrected typo can only have come from a client running
+    /// <see cref="live_typo_rule"/>, so that row is pinned to it. A row without one is not evidence of
+    /// <see cref="stored_era_typo_rule"/>, it is evidence of nothing, so it keeps the default: for a
+    /// run with no typo in it the two rules are the same judgement anyway, and the rows where they are
+    /// not (a typo corrected before backlog 126 gave the cell its own key) are a residue to measure
+    /// rather than to guess at.</para>
+    /// </summary>
+    public static TypoRule StoredEraTypoRuleFor(StoredScore stored)
+        => stored.ProvablyJudgedUnderTheDeferredTypoRule ? live_typo_rule : stored_era_typo_rule;
 
     /// <summary>
     /// The combo-restore era EVERY stored row was PLAYED in (backlog 140): no score in the database
@@ -434,16 +509,21 @@ public static class Recalculation
         //    that graded it. Same computation, opposite meaning, which is why the two are separate
         //    commands.
         //
-        //    All FOUR era axes are pinned to the stored era here, not just the typo rule: the typo
-        //    rule (109), combo restore (140), the spacebar (148) and the rate windows (150). Every
-        //    one of them is a rule that moved after rows were already in the table, and leaving any
-        //    of them on the live arm would re-grade the run on a ladder it was never played on and
-        //    report the difference as a corrupt row.
+        //    All FOUR era axes are set to the era that judged the row here, not just the typo rule:
+        //    the typo rule (109), combo restore (140), the spacebar (148) and the rate windows (150).
+        //    Every one of them is a rule that moved after rows were already in the table, and leaving
+        //    any of them on the live arm would re-grade the run on a ladder it was never played on
+        //    and report the difference as a corrupt row.
+        //
+        //    Three of the four are a constant, because they moved after the last row that could care
+        //    was stored. The TYPO axis is read off the row (backlog 155): it moved while the table
+        //    was filling, so a row holding an uncorrected typo is reproduced under the rule that left
+        //    it standing, and everything else keeps the older default.
         var oldRule = TypeBeatReplayScorer.Score(
             playable,
             mods,
             score.Replay,
-            TypoRule.ImmediateMiss,
+            StoredEraTypoRuleFor(stored),
             stored_era_combo_rule,
             stored_era_space_rule,
             stored_era_rate_rule);
@@ -480,7 +560,9 @@ public static class Recalculation
         // 2. The same run under the rules this mode is asking about.
         //
         //    Reproduce varies the TYPO rule alone and holds the other three axes at the stored era,
-        //    so every number it reports is attributable to that one axis.
+        //    so every number it reports is attributable to that one axis. For a row already judged
+        //    under today's typo rule this arm is the same judgement as the one above, and the row
+        //    correctly reports as unmoved: there is no rule change left for it to be repriced by.
         //
         //    Supersede applies ALL of today's rules, judgement AND combo restore AND the spacebar
         //    AND the rate windows, together (backlog 136, decided 2026-08-13; backlog 151 adds the
@@ -492,7 +574,7 @@ public static class Recalculation
             playable,
             mods,
             score.Replay,
-            TypoRule.Deferred,
+            live_typo_rule,
             mode == RecalcMode.Supersede ? live_combo_rule : stored_era_combo_rule,
             mode == RecalcMode.Supersede ? live_space_rule : stored_era_space_rule,
             mode == RecalcMode.Supersede ? live_rate_rule : stored_era_rate_rule);
