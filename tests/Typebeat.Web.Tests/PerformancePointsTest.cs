@@ -359,6 +359,27 @@ public class PerformancePointsTest
         });
     }
 
+    /// <summary>
+    /// Easy (backlog 149) is a flat pp trim, not a rating change: doubling the judgement windows
+    /// leaves the cells, their target times and the map's pace identical, so there is no converted
+    /// map to price it through the way Literate is priced.
+    /// </summary>
+    [Test]
+    public void ModMultiplier_EasyPaysThreeQuarters()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("EZ", null)], 300), Is.EqualTo(0.75).Within(1e-12)); // pp[f.easy_multiplier]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("ez", null)], 300), Is.EqualTo(0.75).Within(1e-12)); // pp[f.easy_multiplier]
+
+            // Stacks with the other flat multipliers, and a duplicated acronym is applied once.
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("EZ", null), new ScoreMod("NF", null)], 300),
+                Is.EqualTo(0.675).Within(1e-12)); // pp[f.mod_multiplier(["EZ", "NF"], 300)]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("EZ", null), new ScoreMod("EZ", null)], 300),
+                Is.EqualTo(0.75).Within(1e-12)); // pp[f.easy_multiplier]
+        });
+    }
+
     [Test]
     public void ModMultiplier_SuddenDeathMutedAndUnknownModsAreNeutral()
     {

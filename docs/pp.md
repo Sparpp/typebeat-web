@@ -110,6 +110,11 @@ stored `ranked = false` and therefore earn no pp.
   flashlight bonus, but grows with song length, so it pays off on long maps. The `max` clamp is
   required: unclamped, the raw term dips **below 1.0 under ~46 notes**, which would punish FL on
   short maps rather than "barely move".
+* **EZ** (Easy): flat × 0.75. The mod DOUBLES every judgement window, so each character is twice as
+  forgiving to land. Flat rather than priced through SR_eff, and that is not the Literate case: Easy
+  converts nothing, so the cells, their target times and the map's pace are all identical and no
+  rating input can see it. Its score multiplier is osu's 0.5x for a difficulty reduction, the same
+  value No Fail carries; the pp value is separate and was decided at 0.75 on 2026-08-13.
 * **RH** (Rhythmic): flat × 1.10, **for stored rows only**. The mod judged a play on the
   MILLISECOND window ladder (each character against its own target time) instead of the
   character-distance one backlog 133 had made the default, which was the tighter pair on any map
@@ -128,6 +133,7 @@ stored `ranked = false` and therefore earn no pp.
 
 ```
 modMult = (FL       ? max(1.0, 1 + 0.02 + 0.06·log10(notes/100)) : 1)
+        · (EZ       ? 0.75                                      : 1)
         · (RH       ? 1.10                                      : 1)
         · (Fletcher ? 0.90                                      : 1)
         · (NF       ? 0.90                                      : 1)
