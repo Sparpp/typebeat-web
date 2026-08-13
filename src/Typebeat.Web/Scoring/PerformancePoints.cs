@@ -11,7 +11,6 @@ namespace Typebeat.Web.Scoring;
 /// pp = 9.6 · SR_eff^2.00
 ///      · max(0, 1 − miss^1.2/notes)^10                   cleanliness
 ///      · max(0, 1 − typos^1.2/(notes+typos))^4           typos
-///      · max(0.1, 1 + 0.50·log10(notes/100))             length, floored
 ///      · acc^1.80                                        timing quality
 ///      · (ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50   combo
 ///      · modMult
@@ -81,16 +80,28 @@ namespace Typebeat.Web.Scoring;
 /// <para>
 /// Typos deliberately do NOT enter <c>notes</c>, which stays one entry per CELL
 /// (<c>great + ok + meh + good + miss</c>, where <c>good</c> is an uncorrected typo), the
-/// map's cell count. Letting keypresses inflate it would hand a masher a bigger LENGTH bonus and a
-/// smaller COMBO denominator, paying for the mashing twice over. A play carrying no typo count at
-/// all (every score submitted before the stat existed) collapses the typo term to exactly 1.0,
+/// map's cell count. Letting keypresses inflate it would hand a masher a smaller COMBO denominator
+/// and a bigger Flashlight bonus, paying for the mashing twice over. A play carrying no typo count
+/// at all (every score submitted before the stat existed) collapses the typo term to exactly 1.0,
 /// so such a play is priced by <c>max(0, 1 − miss^1.6/notes)^10</c> alone.
 /// </para>
 ///
 /// <para>
+/// THERE IS NO LENGTH FACTOR HERE, AND ADDING ONE BACK WOULD DOUBLE COUNT (backlog 152). Through
+/// v15 this file carried <c>max(0.1, 1 + 0.50·log10(notes/100))</c>, worth up to 1.70x, while the
+/// star rating priced length barely at all. Length now lives entirely in
+/// <see cref="Packages.Lyrics.LyricDifficulty"/>, as an ADDITIVE
+/// <c>0.12·max(0, log10(cells/100))</c> star bonus, so pp still sees a long map, but only as
+/// <c>((SR + bonus)/SR)^2.00</c>, a few percent rather than up to 70. That deflates long-map plays
+/// hardest (roughly 18% at 340 cells, 28% at 800, 38% at 2300), which is the intended reordering:
+/// length stops buying pp it no longer earns. <c>notes</c> itself stays, and is still load-bearing
+/// for both penalty terms, the combo ratio and <see cref="FlashlightMultiplier"/>.
+/// </para>
+///
+/// <para>
 /// The ordering of the factors is the ordering of what the system values: difficulty sets the
-/// ceiling of a play, misses decide how much of that ceiling you keep, length rewards sustained
-/// hard play. Accuracy stays gentler than osu's (1.80, not an <c>acc^6</c>-shaped curve): type!beat
+/// ceiling of a play and misses decide how much of that ceiling you keep. Accuracy stays gentler
+/// than osu's (1.80, not an <c>acc^6</c>-shaped curve): type!beat
 /// accuracies live at 55-93%, not 97-100%, so an osu-shaped accuracy term would crush everything and
 /// make accuracy the whole ranking. Combo is steep by exponent (2.50) but not by TERM, because
 /// backlog 131 bends its ratio through a log first (see <see cref="combo_log_shape"/>) and the
@@ -114,8 +125,9 @@ namespace Typebeat.Web.Scoring;
 /// <para>
 /// THE SIX ARE A CROSS PRODUCT, NOT A LIST, because Literate is orthogonal to rate and the two do
 /// not compose: <see cref="Packages.Lyrics.LyricDifficulty"/> ends in
-/// <c>star_scale · raw^star_power</c> where the rate enters <c>raw</c> ADDITIVELY (as
-/// <c>log(1/rate)</c>), so a ratio taken through a power cannot survive a change of baseline. That
+/// <c>star_scale · raw^star_power</c> (plus a rate-invariant length term) where the rate enters
+/// <c>raw</c> ADDITIVELY (as <c>log(1/rate)</c>), so a ratio taken through a power cannot survive a
+/// change of baseline. That
 /// is not a small effect: measured over the five reference maps, predicting <c>sr_literate_dt</c>
 /// as <c>sr_literate · (sr_dt/difficulty_rating)</c> is wrong by up to 5.8% in stars and 11.2% in
 /// pp. There is no exact relation, so each combination is stored.
@@ -255,6 +267,14 @@ public static class PerformancePoints
     /// double-counts, and once Literate moves the rating too, a flat multiplier on top is precisely
     /// that double count. The SHAPE of the formula is untouched and no constant moves; every stored
     /// Literate row is repriced and nothing else is, which is what forces the bump.</item>
+    /// <item>v16 = the backlog-152 length migration: the length factor max(0.1, 1 +
+    /// 0.50*log10(notes/100)) is DELETED from this file and length is priced by LyricDifficulty
+    /// instead, as an additive 0.12*max(0, log10(cells/100)) star bonus. Two length terms would
+    /// double count, so pp keeps none: it now sees a long map only as ((SR +
+    /// bonus)/SR)^sr_exponent, a few percent where the old term paid up to 1.70x. Long-map plays
+    /// therefore deflate hardest (roughly 18% at 340 cells, 28% at 800, 38% at 2300), which is the
+    /// intended reordering; the uniform part of that deflation is to be taken out by re-anchoring
+    /// scale separately. notes stays, for both penalty terms, the combo ratio and Flashlight.</item>
     /// </list>
     ///
     /// <para>Rows are ALSO invalidated back to 0 whenever the beatmap they were set on has its star
@@ -271,7 +291,7 @@ public static class PerformancePoints
     /// there is no set of rows the change provably leaves alone. Bump this the moment a change
     /// values ANY stored row differently.</para>
     /// </summary>
-    public const int VERSION = 15;
+    public const int VERSION = 16;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -309,8 +329,6 @@ public static class PerformancePoints
     /// </summary>
     private const double count_power = 1.2;
 
-    private const double length_weight = 0.50;
-    private const double length_floor = 0.1;
     private const double accuracy_exponent = 1.80;
     private const double combo_exponent = 2.50;
 
@@ -334,7 +352,13 @@ public static class PerformancePoints
     /// </summary>
     private const double combo_log_shape = 9.0;
 
-    private const double reference_notes = 100.0;  // the log bonus' pivot: 100 notes is the 1.0 point
+    /// <summary>
+    /// The pivot of <see cref="FlashlightMultiplier"/>'s log bonus: 100 notes is where it is worth
+    /// exactly <c>1 + flashlight_offset</c>. It was shared with the length bonus until backlog 152
+    /// deleted that; Flashlight owns it alone now, and it stays here rather than moving into the mod
+    /// block because it is a property of the note count, not of the mod.
+    /// </summary>
+    private const double reference_notes = 100.0;
 
     /// <summary>
     /// The flat cut a Half Time play takes when the mirror multiplier would be a BUFF, i.e. a 30%
@@ -391,15 +415,16 @@ public static class PerformancePoints
     /// <summary>
     /// The judgement keys that count as a NOTE, one per CELL of the map. <c>ignore_hit</c> is
     /// deliberately absent: the line containers are ignore_hit judgements and counting them would
-    /// inflate <c>notes</c> and dilute every single factor (cleanliness, length, combo). Anything
+    /// inflate <c>notes</c> and dilute every factor it appears in (cleanliness, typos, combo,
+    /// Flashlight). Anything
     /// else the base ruleset can emit (ticks, bonuses) does not occur in a typing map and is not a
     /// note either.
     ///
     /// <para><c>good</c> is the UNCORRECTED TYPO key (backlog 124/126, the client's
     /// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>), and it belongs here for the same reason the
     /// others do: it is one cell of the map the player reached and finished, so leaving it out
-    /// would shorten the map pp thinks was played and inflate both the length term and the combo
-    /// ratio. It is deliberately NOT <see cref="miss_key"/>: a miss says the player was too slow to
+    /// would shorten the map pp thinks was played, hardening both penalty terms and inflating the
+    /// combo ratio. It is deliberately NOT <see cref="miss_key"/>: a miss says the player was too slow to
     /// finish the character at all, a typo says they finished it wrongly, and the typo term
     /// already prices the second. That split is the whole reason the typo has its own key, even
     /// though <c>ScoringContract</c> makes it cost completion exactly as a miss does.</para>
@@ -408,7 +433,7 @@ public static class PerformancePoints
     /// backlog 147 took that tier back out. It is not dead weight: 133 SHIPPED, so rows stored
     /// while it was live carry the key, and pp is recomputed from a stored row on every
     /// <c>PpBackfill</c> sweep. Drop it and each of those rows reads as a map with almost no notes
-    /// at all, shrinking the length bonus and inflating the combo ratio. No play made under
+    /// at all, hardening both penalty terms and inflating the combo ratio. No play made under
     /// today's three tiers can produce one, so the entry costs every other row nothing.</para>
     /// </summary>
     private static readonly string[] note_keys = ["perfect", "great", "ok", "meh", "good", "miss"];
@@ -779,19 +804,6 @@ public static class PerformancePoints
             ? flashlight_floor
             : Math.Max(flashlight_floor, 1 + flashlight_offset + flashlight_weight * Math.Log10(notes / reference_notes));
 
-    /// <summary>The length bonus, floored (see <see cref="length_floor"/>).</summary>
-    /// <remarks>
-    /// No play may ever compute to zero or negative pp from its LENGTH alone, which is what the floor
-    /// is for. At the current weight of 0.50 the raw term crosses zero at exactly 1 note and the
-    /// floor at about 1.585, so the clamp is close to vestigial and bites only on data that describes
-    /// no real map; at the old weight of 0.70 those two crossings sat at about 3.73 and 5.18 notes.
-    /// It stays because it is the guard, not because it currently fires.
-    /// </remarks>
-    public static double LengthBonus(int notes)
-        => notes <= 0
-            ? length_floor
-            : Math.Max(length_floor, 1 + length_weight * Math.Log10(notes / reference_notes));
-
     /// <summary>
     /// pp for one play. <paramref name="starRating"/> is the play's EFFECTIVE rating
     /// (<see cref="StarsFor"/>), <paramref name="accuracy"/> the stored <c>scores.accuracy</c>,
@@ -864,7 +876,6 @@ public static class PerformancePoints
         double typoBase = Math.Max(0.0, 1.0 - Math.Pow(typos, count_power) / ((double)notes + typos));
         double typoPenalty = Math.Pow(typoBase, typo_exponent);
 
-        double length = LengthBonus(notes);
         double timing = Math.Pow(accuracy, accuracy_exponent);
         // The longest run as a fraction of the map, bent through a log before the exponent reaches
         // it (see combo_log_shape). NO CLAMP IS NEEDED HERE and none would bite: maxCombo is
@@ -876,7 +887,7 @@ public static class PerformancePoints
         double comboBase = Math.Log(1.0 + combo_log_shape * comboRatio) / Math.Log(1.0 + combo_log_shape);
         double combo = Math.Pow(comboBase, combo_exponent);
 
-        double pp = scale * difficulty * cleanliness * typoPenalty * length * timing * combo * ModMultiplier(mods, notes) * rateMultiplier;
+        double pp = scale * difficulty * cleanliness * typoPenalty * timing * combo * ModMultiplier(mods, notes) * rateMultiplier;
 
         return double.IsFinite(pp) && pp > 0 ? pp : 0;
     }
