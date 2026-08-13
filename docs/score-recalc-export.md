@@ -23,6 +23,28 @@ dotnet run --project tools/score-recalc -- supersede-report \
     --out supersede.json
 ```
 
+## What the sweep being reviewed actually does
+
+Worth knowing before reading a report, because it decides what "before" and "after" mean.
+
+A `supersede-report` re-judges every run under all of today's rules (`TypoRule.Deferred` plus
+`ComboRestoreRule.OnFix`) **plus the Rhythmic mod**, which puts the run back on the MILLISECOND
+ladder it was typed against, and the superseded row **gains `RH`** in `scores.mods`. That is what
+makes the result reproducible: anyone can replay the score with Rhythmic selected and land on the
+same numbers, where a no-mod row judged on the timing ladder would describe a game no client runs.
+
+Two consequences a reviewer should expect to see, both accepted rather than accidental:
+
+- **Every superseded score gains 10% pp**, because `RH` carries a 1.10 multiplier the player never
+  chose. It is the price of the row being reproducible.
+- **It does not reproduce the stored numbers, and cannot be tuned until it does.** The millisecond
+  ladder's Great/Ok/Meh rows are byte-identical to the pre-133 windows, but backlog 133 added a
+  fourth tier and moved the weights, so a press in the 125-250 ms early or 200-400 ms late band that
+  used to score as the top tier now scores as the second. Accuracy falls for such presses.
+
+A row that already carries `RH` is still superseded, for the typo and combo rules, but it does not
+gain the mod or its price twice.
+
 ### `replays/` (required)
 
 The `.osr` bytes as stored, one file per score, named `<score id>.osr`. The file name is the only
@@ -32,6 +54,9 @@ An `.osr` is self-describing: its trailing `LegacyReplaySoloScoreInfo` blob carr
 `statistics`, `maximum_statistics`, mods, rank and total score exactly as the client computed them,
 and `ScoreEndpoints.SubmitScore` stores the submitted dictionaries verbatim. So the replay alone is
 a faithful copy of most of the row, which is what makes an offline before/after possible at all.
+
+The mods come from that blob too, which is why an offline report can show the `RH` gain and price it
+the same way a database run does: there is no `mods` field in `scores.json` and none is needed.
 
 ### `sets/` (required)
 
