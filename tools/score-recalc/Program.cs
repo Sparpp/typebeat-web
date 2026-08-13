@@ -25,13 +25,16 @@ using Typebeat.Tools.ScoreRecalc;
 //                                      verification sweep, and it is how the tool proves it
 //                                      understands a row at all.
 //
-//   supersede-report / supersede-apply SUPERSEDE. Re-judge under ALL of today's rules and REPLACE
-//                                      the stored numbers (backlog 136, decided by the user
-//                                      2026-08-13). Reproduction is impossible here by
-//                                      construction, since backlog 133 retired the ladder every
-//                                      stored row was graded on, so it becomes a diagnostic and a
-//                                      DIFFERENT predicate takes over as the gate: the judgement of
-//                                      the run may move, the run may not.
+//   supersede-report / supersede-apply SUPERSEDE. Re-judge under ALL of today's rules PLUS the
+//                                      Rhythmic mod, and REPLACE the stored numbers (backlog 136,
+//                                      decided by the user 2026-08-13). Rhythmic selects the
+//                                      MILLISECOND ladder, which is the one every stored play was
+//                                      typed against, and the row GAINS RH so the result can be
+//                                      reproduced by replaying it with the mod on. Reproduction of
+//                                      the stored numbers is impossible here by construction (133
+//                                      added a fourth tier and moved the weights), so it becomes a
+//                                      diagnostic and a DIFFERENT predicate takes over as the gate:
+//                                      the judgement of the run may move, the run may not.
 //
 // Why not one command with a threshold: a threshold loose enough to pass a sweep in which nothing
 // reproduces is loose enough to pass genuine corruption, and that gate is the only thing standing
@@ -347,6 +350,10 @@ internal static class Cli
         // ScoringContract.JudgedBeforeTheFourthTier alive precisely so their untouched keys keep
         // reading correctly. pp_version is stamped because an unranked row's price is settled at
         // null/0 whatever its map's ratings do.
+        //
+        // They do NOT gain RH either, and must not: nothing re-judged them, so a row claiming the mod
+        // would be asserting a ladder no run of the tool ever put it on, about the one class of row
+        // nobody can check.
         foreach (var r in plan.Unranked)
         {
             await conn.ExecuteAsync(
@@ -368,6 +375,7 @@ internal static class Cli
                 UPDATE scores
                 SET statistics         = CAST(@statistics AS jsonb),
                     maximum_statistics = CAST(@maximumStatistics AS jsonb),
+                    mods               = CAST(@mods AS jsonb),
                     max_combo          = @maxCombo,
                     total_score        = @totalScore,
                     accuracy           = @accuracy,
@@ -383,6 +391,11 @@ internal static class Cli
                     id = r.Stored.ScoreId,
                     statistics = WireCounts.Serialize(r.NewStatistics!),
                     maximumStatistics = WireCounts.Serialize(r.NewMaximumStatistics!),
+                    // A supersede sweep re-judges on the millisecond ladder by selecting Rhythmic,
+                    // so the row has to say it carries RH: that is what lets anyone reproduce these
+                    // numbers by replaying the score with the mod on. Reproduce mode leaves the blob
+                    // byte-identical (NewModsJson is the stored one), so the column is untouched.
+                    mods = r.NewModsJson ?? r.Stored.ModsJson,
                     maxCombo = r.NewMaxCombo,
                     totalScore = r.NewTotalScore,
                     accuracy = r.NewAccuracy,
@@ -417,14 +430,21 @@ internal static class Cli
                                  own mod multiplier. Writes NOTHING.
               apply              Same, then write the moved values back.
 
-              supersede-report   SUPERSEDE (backlog 136, decided 2026-08-13). Re-judge under ALL of
-                                 today's rules (TypoRule.Deferred + ComboRestoreRule.OnFix) and
-                                 report the stored numbers being REPLACED. total_score is priced
-                                 with today's multipliers, because a superseded row has to be a
-                                 score today's client could produce. Reproduction is a diagnostic
-                                 here, not a gate: no pre-133 row can reproduce, by construction.
-                                 What gates instead is that the replay must describe the SAME RUN
-                                 over the SAME MAP (cell counts, frames consumed). Writes NOTHING.
+              supersede-report   SUPERSEDE (backlog 136, revised 2026-08-13). Re-judge under ALL of
+                                 today's rules (TypoRule.Deferred + ComboRestoreRule.OnFix) PLUS the
+                                 Rhythmic mod, which puts the run back on the MILLISECOND ladder it
+                                 was typed against, and report the stored numbers being REPLACED.
+                                 The row GAINS RH, so the result is reproducible by replaying it
+                                 with the mod selected, and it is priced with RH too: every
+                                 superseded score gains 10% pp it did not choose. total_score is
+                                 priced with today's multipliers, because a superseded row has to be
+                                 a score today's client could produce. Reproduction is a diagnostic
+                                 here, not a gate: no pre-133 row can reproduce, by construction, and
+                                 accuracy FALLS where a press sits in the 125-250ms early or
+                                 200-400ms late band, which used to be the top tier and is now the
+                                 second. What gates instead is that the replay must describe the SAME
+                                 RUN over the SAME MAP (cell counts, frames consumed). Writes
+                                 NOTHING.
               supersede-apply    Same, then write. Needs three confirmations, see below.
 
             Options:

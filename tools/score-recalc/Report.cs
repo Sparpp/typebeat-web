@@ -54,17 +54,35 @@ public static class Report
             output.WriteLine("== SUPERSEDE: every stored number below is being REPLACED ==");
             output.WriteLine();
             output.WriteLine("judged under                 TypoRule.Deferred + ComboRestoreRule.OnFix (all of today's rules)");
-            output.WriteLine("total_score priced with      today's mod multipliers");
+            output.WriteLine("                             PLUS the Rhythmic mod, i.e. the MILLISECOND ladder");
+            output.WriteLine("the row's stored mods        GAIN RH, so these numbers can be reproduced by replaying");
+            output.WriteLine("                             the score with Rhythmic selected");
+            output.WriteLine("total_score priced with      today's mod multipliers, RH included");
+            output.WriteLine();
+            output.WriteLine("Every stored play was typed against the millisecond ladder, which backlog 133 retired as");
+            output.WriteLine("the default and backlog 135 gave back as Rhythmic. Re-judging each run on the axis it was");
+            output.WriteLine("actually played on is why the mod is here, and putting RH on the ROW rather than hiding it");
+            output.WriteLine("behind a flag is why the result is reproducible: a no-mod row judged on the timing ladder");
+            output.WriteLine("would describe a game no client runs.");
+            output.WriteLine();
+            output.WriteLine("THIS DOES NOT REPRODUCE THE STORED NUMBERS, and cannot be tuned until it does:");
+            output.WriteLine("  - the millisecond ladder's Great/Ok/Meh rows are byte-identical to the pre-133 windows,");
+            output.WriteLine("    but backlog 133 added a FOURTH tier and moved the WEIGHTS. A press in the 125-250ms");
+            output.WriteLine("    early or 200-400ms late band used to score 300 as the old top tier and now scores 200");
+            output.WriteLine("    as the second, so ACCURACY FALLS for such presses. Collapsing that back would mean");
+            output.WriteLine("    inventing a fifth judgement mode no client runs.");
             output.WriteLine();
             output.WriteLine("What that costs, deliberately, and what to look for in the numbers below:");
+            output.WriteLine("  - every superseded score GAINS 10% pp, because RH carries a 1.10 multiplier the player");
+            output.WriteLine("    never chose. Known and accepted: it is the price of the row being reproducible.");
             output.WriteLine("  - every stored score containing a FIXED typo GAINS max_combo, total_score and pp,");
             output.WriteLine("    because correcting a typo now resumes the streak its keypress broke. A fixed typo");
             output.WriteLine("    ends up scoring identically to a clean play.");
-            output.WriteLine("  - every pre-133 row is re-graded on CHARACTER DISTANCE rather than the millisecond");
-            output.WriteLine("    ladder it was played on, so its tier counts move in both directions.");
             output.WriteLine("  - a row whose mods were retuned since it was played is re-priced at today's multiplier,");
             output.WriteLine("    unlike a reproduce sweep, which carries the row's own. That is the point: a superseded");
             output.WriteLine("    score has to be one today's client could actually produce.");
+            output.WriteLine("  - a row that ALREADY carries RH is still superseded, for the typo and combo rules, but it");
+            output.WriteLine("    does not gain the mod or its price twice.");
         }
         else
         {
@@ -99,9 +117,12 @@ public static class Report
             output.WriteLine("== reproduction of the stored numbers: a DIAGNOSTIC here, not a gate ==");
             output.WriteLine();
             output.WriteLine("A row that does not reproduce is EXPECTED in this mode: backlog 133 retired the ladder every");
-            output.WriteLine("stored row was graded on, so today's code cannot re-derive the old numbers and refusing on");
-            output.WriteLine("that basis would refuse the whole sweep. Read this as coverage, not as a pass or a fail:");
-            output.WriteLine("a row that DOES reproduce is one the tool understands completely.");
+            output.WriteLine("stored row was graded on AND moved the tier weights, so today's code cannot re-derive the");
+            output.WriteLine("old numbers and refusing on that basis would refuse the whole sweep. Read this as coverage,");
+            output.WriteLine("not as a pass or a fail: a row that DOES reproduce is one the tool understands completely.");
+            output.WriteLine();
+            output.WriteLine("Note this check re-derives with the row's OWN mods, deliberately, since it is asking whether");
+            output.WriteLine("the row as STORED can be understood. The Rhythmic mod is added to the re-judgement only.");
         }
         else
         {
@@ -390,6 +411,12 @@ public static class Report
         if (r.Stored.Ranked != r.NewRanked)
             yield return $"ranked                {r.Stored.Ranked,8} -> {r.NewRanked,-8}";
 
+        // The mod that carries the ladder the row was re-judged on. It is the one field here that
+        // changes for reasons other than the judgement, and it is the field that makes the rest of
+        // the row reproducible, so it is never folded into a count.
+        if (r.ModsChange)
+            yield return $"mods                  {r.Stored.ModsJson} -> {r.NewModsJson}";
+
         if (r.Stored.PpKnown && r.NewPp is double pp && Math.Abs(r.Stored.Pp - pp) > 1e-9)
             yield return $"pp                    {r.Stored.Pp,8:0.00} -> {pp,-8:0.00} ({Signed(pp - r.Stored.Pp)})";
 
@@ -432,6 +459,12 @@ public static class Report
         Count(output, "rank changed", recalculated, r => r.Stored.Rank != r.NewRank);
         Count(output, "pp changed", recalculated, r => PpDelta(r) is double d && Math.Abs(d) > 1e-9);
         Count(output, "ranked flag changed", recalculated, r => r.Stored.Ranked != r.NewRanked);
+
+        if (plan.Mode == RecalcMode.Supersede)
+        {
+            Count(output, "mods gained RH", recalculated, r => r.ModsChange);
+            output.WriteLine("  (the remainder already carried Rhythmic, so they keep the mod and its price exactly once.)");
+        }
 
         var rankChanges = recalculated.Where(r => r.Stored.Rank != r.NewRank)
                                       .GroupBy(r => $"{r.Stored.Rank} -> {r.NewRank}")

@@ -1,10 +1,13 @@
 using System.Runtime.Serialization;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Typebeat.Web;
 using Typebeat.Web.Scoring;
 using PerformancePoints = Typebeat.Web.Scoring.PerformancePoints;
 using typebeat.Game.Beatmaps;
+using typebeat.Game.Rulesets.Mods;
 using typebeat.Game.Rulesets.Scoring;
+using typebeat.Game.Rulesets.TypeBeat.Mods;
 using typebeat.Game.Rulesets.TypeBeat.Scoring;
 using typebeat.Game.Scoring;
 
@@ -67,17 +70,36 @@ public enum RecalcMode
 
     /// <summary>
     /// The superseding sweep (backlog 136 and 142). Re-judges the run under ALL of today's rules
-    /// (<see cref="TypoRule.Deferred"/> plus <see cref="ComboRestoreRule.OnFix"/>) and REPLACES the
-    /// stored numbers with the result, because the user's decision is that a stored score must
-    /// describe a game that is actually playable today.
+    /// (<see cref="TypoRule.Deferred"/> plus <see cref="ComboRestoreRule.OnFix"/>) PLUS the Rhythmic
+    /// mod, and REPLACES the stored numbers with the result, because the user's decision is that a
+    /// stored score must describe a game that is actually playable today.
+    ///
+    /// <para>THE MOD IS THE 2026-08-13 REVISION, and it is what makes the result reproducible. Every
+    /// stored row was judged on the MILLISECOND ladder, which backlog 133 retired as the default and
+    /// backlog 135 restored as <see cref="TypeBeatModRhythmic"/>. Re-judging on the ladder the play
+    /// was actually typed on is the honest reading of it, and pinning that ladder to the MOD rather
+    /// than to a hidden flag is what makes the superseded row reproducible: anyone can replay it with
+    /// Rhythmic selected and land on the same numbers. A no-mod row judged on the timing ladder would
+    /// describe a game no client runs, which is the same objection that retired the earlier
+    /// character-distance plan. So the row GAINS <c>RH</c> as well: it is judged with it, priced with
+    /// it (the 1.10 score and pp multipliers apply, a deliberate and accepted cost), and stored
+    /// carrying it.</para>
+    ///
+    /// <para>IT STILL DOES NOT REPRODUCE THE STORED NUMBERS, and that is inherent rather than
+    /// tunable. The millisecond ladder's Great/Ok/Meh rows are byte-identical to the pre-133 windows,
+    /// but backlog 133 added a FOURTH tier that subdivides the top one, so a press in the 125-250ms
+    /// early or 200-400ms late band that used to score as the old top tier now scores as the second.
+    /// Accuracy falls for such presses. Collapsing that back would mean inventing a fifth judgement
+    /// mode no client runs.</para>
     ///
     /// <para>Reproduction cannot be the gate here, by construction: a pre-133 row was graded on a
-    /// ladder today's code no longer has, so it provably will not reproduce, and refusing it would
-    /// refuse the entire sweep. What replaces the gate is not a looser version of it but a different
-    /// predicate, <see cref="Recalculation.StructuralMismatch"/>: the judgement of the run is allowed
-    /// to move, the RUN is not. Same map, same cell count, same number of cells judged, every frame
-    /// consumed. A row that fails THAT is still refused and still written nothing for, which is the
-    /// corruption the original gate existed to catch.</para>
+    /// ladder today's DEFAULT no longer has and weighted on a tier list today's code no longer has,
+    /// so it provably will not reproduce, and refusing it would refuse the entire sweep. What
+    /// replaces the gate is not a looser version of it but a different predicate,
+    /// <see cref="Recalculation.StructuralMismatch"/>: the judgement of the run is allowed to move,
+    /// the RUN is not. Same map, same cell count, same number of cells judged, every frame consumed.
+    /// A row that fails THAT is still refused and still written nothing for, which is the corruption
+    /// the original gate existed to catch.</para>
     /// </summary>
     Supersede,
 }
@@ -183,7 +205,12 @@ public sealed record RecalcResult(
     // The mod score multiplier baked into NewTotalScore. In Reproduce mode this is the row's own,
     // recovered rather than reapplied; in Supersede mode it is today's, because a superseded score
     // has to be one today's client could produce.
-    double AppliedMultiplier = 1)
+    double AppliedMultiplier = 1,
+    // The mods the row would be STORED with. Identical to the stored blob in Reproduce mode, which
+    // never touches the column; in Supersede mode it is the stored blob plus RH, because the run was
+    // re-judged on the millisecond ladder and the row has to say so for anyone to reproduce it.
+    // Null for a row nothing was derived for.
+    string? NewModsJson = null)
 {
     public bool Recalculated => Skip == SkipReason.None;
 
@@ -200,9 +227,17 @@ public sealed record RecalcResult(
                                      or SkipReason.BeatmapReuploaded
                                      or SkipReason.FailedRun;
 
+    /// <summary>
+    /// The row's stored mods would change, which under a supersede sweep means it gains <c>RH</c>.
+    /// It is a change in its own right: a row whose judgement happens to land on exactly the same
+    /// numbers still has to record the ladder it was re-judged on, or nobody can reproduce it.
+    /// </summary>
+    public bool ModsChange => NewModsJson is string mods && !string.Equals(mods, Stored.ModsJson, StringComparison.Ordinal);
+
     public bool Moves =>
         Recalculated
-        && (!SameCounts(Stored.StatisticsJson, NewStatistics)
+        && (ModsChange
+            || !SameCounts(Stored.StatisticsJson, NewStatistics)
             || Stored.MaxCombo != NewMaxCombo
             || Stored.TotalScore != NewTotalScore
             || Stored.Rank != NewRank
@@ -307,6 +342,71 @@ public static class Recalculation
     /// </summary>
     private const ComboRestoreRule live_combo_rule = ComboRestoreRule.OnFix;
 
+    /// <summary>
+    /// The mod a <see cref="RecalcMode.Supersede"/> sweep re-judges under and the row gains
+    /// (backlog 136, revised 2026-08-13). It is <see cref="TypeBeatModRhythmic.Acronym"/>, taken from
+    /// the mod itself so the two cannot drift.
+    /// </summary>
+    public static readonly string RHYTHMIC_ACRONYM = new TypeBeatModRhythmic().Acronym;
+
+    /// <summary>
+    /// The run's mods with Rhythmic added, which is HOW the millisecond ladder is selected here.
+    ///
+    /// <para>Deliberately not <c>engine.Measure = SyncMeasure.Milliseconds</c>, though that is the
+    /// one line it comes down to. <see cref="TypeBeatReplayScorer"/> builds its engine from the mods
+    /// exactly as <c>DrawableTypeBeatRuleset.createEngine</c> does, so going through the mod is what
+    /// makes the sweep reproduce a real client with Rhythmic selected rather than merely resemble
+    /// one, and it is the same list the score multiplier and the rank adjustment read, so the ladder
+    /// and the price cannot end up describing different plays.</para>
+    ///
+    /// <para>A run that ALREADY carries Rhythmic is returned untouched. Such a row was played on the
+    /// millisecond ladder by choice (it can only be post-135, so post-133 too) and still needs
+    /// superseding for the typo and combo rules, but it must not be handed the mod, or the price, a
+    /// second time.</para>
+    /// </summary>
+    private static IReadOnlyList<Mod> WithRhythmic(IReadOnlyList<Mod> mods)
+    {
+        if (mods.Any(m => m is TypeBeatModRhythmic))
+            return mods;
+
+        var withMod = new List<Mod>(mods) { new TypeBeatModRhythmic() };
+        return withMod;
+    }
+
+    /// <summary>
+    /// The stored <c>scores.mods</c> blob with <c>RH</c> added, or returned unchanged when it is
+    /// already there. Existing entries are preserved VERBATIM, settings and all: this sweep is not
+    /// the place to normalise a historic rate mod's absent <c>speed_change</c> into an explicit one.
+    ///
+    /// <para>A blob that does not parse as a JSON array is read as no mods, which is what
+    /// <see cref="ScoreMods.Parse"/> and therefore every other reader of the column already does with
+    /// it, so this cannot make such a row read differently than it does today.</para>
+    /// </summary>
+    public static string ModsJsonWithRhythmic(string? modsJson)
+    {
+        JArray array;
+
+        try
+        {
+            array = string.IsNullOrWhiteSpace(modsJson) ? new JArray() : JArray.Parse(modsJson);
+        }
+        catch (JsonException)
+        {
+            array = new JArray();
+        }
+
+        foreach (var entry in array)
+        {
+            string? acronym = entry?["acronym"] is { Type: JTokenType.String } token ? token.Value<string>() : null;
+
+            if (string.Equals(acronym?.Trim(), RHYTHMIC_ACRONYM, StringComparison.OrdinalIgnoreCase))
+                return modsJson!;
+        }
+
+        array.Add(new JObject { ["acronym"] = RHYTHMIC_ACRONYM });
+        return array.ToString(Formatting.None);
+    }
+
     /// <param name="backfillMistypes">
     /// Whether to introduce a mistype count into rows that predate the stat. Off by default, and
     /// deliberately: those rows were played by a client that never counted wrong keypresses, so
@@ -339,6 +439,18 @@ public static class Recalculation
             return Skipped(stored, SkipReason.EmptyReplay, null, mode);
 
         var mods = score.ScoreInfo.Mods;
+
+        // The mods the RE-JUDGEMENT runs under, and the mods the ROW ends up carrying. Under a
+        // supersede sweep both gain Rhythmic, so the ladder the run is graded on and the ladder the
+        // stored row claims are the same one, which is the whole basis for calling the result
+        // reproducible. Reproduce mode touches neither: it is verifying the row as it stands.
+        //
+        // The two are derived from different sources on purpose, matching what the rest of this
+        // method already does: the engine takes the REPLAY's mods (that is what the run was played
+        // with) and the price takes the ROW's (that is what the server stored and what pp reads).
+        var judgedMods = mode == RecalcMode.Supersede ? WithRhythmic(mods) : mods;
+        string newModsJson = mode == RecalcMode.Supersede ? ModsJsonWithRhythmic(stored.ModsJson) : stored.ModsJson;
+        var pricedMods = ScoreMods.Parse(newModsJson);
 
         // A row from before the mistype stat existed. Its absence is an era marker, so it is not a
         // reproduction failure, and (unless asked) not something this sweep introduces either.
@@ -386,14 +498,16 @@ public static class Recalculation
         //    Reproduce varies the TYPO rule alone and holds combo restore at the stored era, so
         //    every number it reports is attributable to that one axis.
         //
-        //    Supersede applies ALL of today's rules, judgement AND combo restore together (backlog
-        //    136, decided 2026-08-13). Not because moving two axes is nicer to audit, it is worse,
-        //    but because the halfway combination is one no client has ever run: a score judged with
-        //    today's tiers and yesterday's combo rule could not be reproduced by replaying it
-        //    anywhere, which is the property the whole tool is built on.
+        //    Supersede applies ALL of today's rules, judgement AND combo restore together, PLUS the
+        //    Rhythmic mod (backlog 136, revised 2026-08-13). Not because moving several axes is nicer
+        //    to audit, it is worse, but because every other combination is one no client has ever
+        //    run: today's tiers with yesterday's combo rule, or the character ladder over a run typed
+        //    against the millisecond one, could not be reproduced by replaying anywhere, which is the
+        //    property the whole tool is built on. RH selects the ladder the run was actually typed
+        //    on, through the mods list, exactly as the live client does.
         var newRule = TypeBeatReplayScorer.Score(
             playable,
-            mods,
+            judgedMods,
             score.Replay,
             TypoRule.Deferred,
             mode == RecalcMode.Supersede ? live_combo_rule : stored_era_combo_rule);
@@ -430,7 +544,13 @@ public static class Recalculation
         //    following ScoreEndpoints.SubmitScore step for step.
         var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, newRule.MaxCombo);
 
-        double modMultiplier = ModMultiplier.MaxForStack(ScoreMods.Parse(stored.ModsJson).Select(m => ((string?)m.Acronym, m.Rate)));
+        // Bounded against the mods the row will be STORED with, not the ones it arrived with. Under a
+        // supersede sweep newRule.TotalScore already carries Rhythmic's 1.10 (the score processor was
+        // handed the mod), so pricing the ceiling from the old blob would put every superseded row
+        // 10% over its own bound: withinBounds would go false, the total would be clamped to the
+        // no-mod ceiling and `ranked` would be cleared. That is the accidental mass-unranking this
+        // pairing exists to prevent, and it is pinned by a test.
+        double modMultiplier = ModMultiplier.MaxForStack(pricedMods.Select(m => ((string?)m.Acronym, m.Rate)));
         long modCeiling = ModMultiplier.TotalScoreCeiling(newRule.TotalScoreWithoutMods, modMultiplier);
 
         bool withinBounds = ScoringContract.TotalScoreWithinBounds(newRule.TotalScoreWithoutMods, recomputed)
@@ -483,9 +603,13 @@ public static class Recalculation
             stored.SrHt,
             new PerformancePoints.LiterateStars(stored.SrLiterate, stored.SrLiterateDt, stored.SrLiterateHt));
 
+        // Priced with the mods the row will carry, so a superseded score is paid Rhythmic's 1.10
+        // exactly as a fresh play with the mod selected is. That 10% is a known and accepted cost of
+        // the 2026-08-13 decision (backlog 136): it is the price of the row being reproducible, and
+        // stripping it would leave a row nobody could reprice from its own columns.
         var (pp, ppSettled) = PerformancePoints.ForScore(
             ranked,
-            ScoreMods.Parse(stored.ModsJson),
+            pricedMods,
             PerformancePoints.CountNotes(statistics),
             accuracy,
             maxCombo,
@@ -518,7 +642,8 @@ public static class Recalculation
             mode,
             reproduced,
             reproduced ? null : mismatch,
-            appliedMultiplier);
+            appliedMultiplier,
+            newModsJson);
     }
 
     /// <summary>
