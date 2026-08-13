@@ -450,10 +450,12 @@ internal static class Cli
             commands because they check themselves with opposite predicates.
 
               report             REPRODUCE (backlog 114). Re-derive under the rules the row was
-                                 priced under (TypoRule.ImmediateMiss + ComboRestoreRule.Never +
-                                 SpaceTimingRule.Timed + RateWindowRule.Unscaled), REFUSE anything
-                                 that does not come back exactly, then report what today's typo rule
-                                 alone makes of it. total_score keeps the row's own mod multiplier.
+                                 priced under (ComboRestoreRule.Never + SpaceTimingRule.Timed +
+                                 RateWindowRule.Unscaled, plus the typo rule that judged that ROW:
+                                 TypoRule.Deferred where its statistics carry an uncorrected typo,
+                                 TypoRule.ImmediateMiss otherwise), REFUSE anything that does not
+                                 come back exactly, then report what today's typo rule alone makes
+                                 of it. total_score keeps the row's own mod multiplier.
                                  Writes NOTHING.
               apply              Same, then write the moved values back.
 

@@ -40,6 +40,12 @@ any other by its `maximum_statistics` carrying `perfect` and no `great`
 synthesises one when the blob's is empty. A replay with no score-info blob at all therefore reads as
 the current era, which is the same reading the row itself would get.
 
+The same goes for the TYPO era: a row is reproduced under `TypoRule.Deferred` when its own
+`statistics` carry an uncorrected typo (the `good` key, `ScoringContract.CarriesAnUncorrectedTypo`)
+and under `TypoRule.ImmediateMiss` otherwise, and `statistics` rides in the same blob. The test only
+runs one way: the key proves the newer rule judged the row, while its absence proves nothing, because
+a run that left no wrong character standing has no such key whichever rule judged it.
+
 ### `sets/` (required)
 
 One `.osz` (or `.typb`) per set the replays reference. The tool matches a replay to its beatmap by

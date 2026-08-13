@@ -119,6 +119,24 @@ public sealed class WritePlan
     public required IReadOnlyList<RecalcResult> DeletedLadderWindow { get; init; }
 
     /// <summary>
+    /// Rows whose own <c>statistics</c> PROVE they were judged under today's typo rule
+    /// (<see cref="StoredScore.ProvablyJudgedUnderTheDeferredTypoRule"/>), i.e. the rows the
+    /// reproduce pass re-derives under <c>TypoRule.Deferred</c> instead of the older default.
+    ///
+    /// <para>Named and counted for the same reason the window above is: it is a population, not a
+    /// percentage. Before backlog 155 every one of these was re-derived on the retired rule, came
+    /// back with its uncorrected typos turned into misses, and was reported as a row nobody could
+    /// explain. An operator reading the report has to be able to see how many rows the pass is
+    /// pinning that way, in either sweep, rather than infer it from a reproduction rate that got
+    /// better.</para>
+    ///
+    /// <para>Every row the run considered is counted, not only the ones it re-derived, exactly as for
+    /// the window: carrying the key is a fact about the row, which holds whether or not its replay
+    /// decoded.</para>
+    /// </summary>
+    public required IReadOnlyList<RecalcResult> PinnedToTheDeferredTypoRule { get; init; }
+
+    /// <summary>
     /// Whether the run selected a SUBSET of the scores (<c>--score</c> or <c>--limit</c>). The
     /// report's leaderboard section has to know: over a slice of a board it cannot tell a real place
     /// change from a row it simply did not load, so it declines to guess.
@@ -159,6 +177,7 @@ public sealed class WritePlan
             Undecided = undecided,
             Refused = results.Where(r => r.Skip is SkipReason.NotReproducible or SkipReason.NotTheSameRun).OrderBy(r => r.Stored.ScoreId).ToList(),
             DeletedLadderWindow = results.Where(r => r.Stored.JudgedOnTheDeletedLadder).OrderBy(r => r.Stored.ScoreId).ToList(),
+            PinnedToTheDeferredTypoRule = results.Where(r => r.Stored.ProvablyJudgedUnderTheDeferredTypoRule).OrderBy(r => r.Stored.ScoreId).ToList(),
             Filtered = filtered,
         };
     }

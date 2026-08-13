@@ -379,6 +379,31 @@ public static class ScoringContract
     public static bool JudgedUnderTheFourthTier(IReadOnlyDictionary<string, int> maximumStatistics)
         => maximumStatistics.ContainsKey("perfect") && !maximumStatistics.ContainsKey("great");
 
+    /// <summary>
+    /// Whether this submission holds an UNCORRECTED TYPO, read off its own <c>statistics</c>: the
+    /// <see cref="unfixed_typo_key"/> key, which type!beat uses for nothing else (the client's
+    /// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>, backlog 126).
+    ///
+    /// <para>PUBLIC for <c>tools/score-recalc</c>, which asks it as an ERA question, and the answer
+    /// is ONE-DIRECTIONAL. Only a client running the deferred typo rule can leave a cell holding a
+    /// wrong character, so a row carrying this key PROVES it was judged under that rule. A row
+    /// WITHOUT it proves nothing at all: a run that corrected every typo, or made none, has no such
+    /// cell to key whichever rule judged it. Reading a false here as "judged under the old rule" is
+    /// reading evidence of absence into an absence of evidence, and would re-derive a modern clean
+    /// row on a retired ladder. The tool therefore uses a true here to PIN a row to the deferred
+    /// rule, and treats false as "no proof either way".</para>
+    ///
+    /// <para>A key present with a count of ZERO is not proof either, which is why this counts rather
+    /// than tests for the key: a zero says the run finished with no wrong character left standing,
+    /// which both rules can produce, so it carries exactly as much era evidence as no key at all.</para>
+    ///
+    /// <para>Asked through the contract rather than by testing the literal string, so the tool and
+    /// the pricing tables here (<c>BaseScore</c>, <c>CountsAsTyped</c>) can never end up naming two
+    /// different keys.</para>
+    /// </summary>
+    public static bool CarriesAnUncorrectedTypo(IReadOnlyDictionary<string, int> statistics)
+        => statistics.GetValueOrDefault(unfixed_typo_key) > 0;
+
     private static int BaseScore(string key, bool fourthTier) => key switch
     {
         // Only a four-tier row can carry one. It is the top tier there, and the base game scores a

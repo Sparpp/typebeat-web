@@ -164,7 +164,15 @@ public class ScoreRecalcTest
 
     private const RateWindowRule rate_window_rule = RateWindowRule.Unscaled;
 
-    /// <summary>The stored row a client of the OLD era would have produced for this run.</summary>
+    /// <summary>
+    /// The stored row a client of the OLD era would have produced for this run.
+    ///
+    /// <para><paramref name="typoRule"/> is the one axis a caller has a real reason to move (backlog
+    /// 155): the typo rule changed while the score table was already filling, so rows judged under
+    /// EITHER rule are stored, and a synthetic row for the newer population has to be built under the
+    /// rule that judged it. The other axes stay pinned, because no stored row was ever played under
+    /// the live setting of them.</para>
+    /// </summary>
     private static StoredScore StoredFor(
         IBeatmap map,
         Replay replay,
@@ -172,9 +180,10 @@ public class ScoreRecalcTest
         double multiplier = 1,
         SpaceTimingRule spaceRule = space_timing_rule,
         RateWindowRule rateRule = rate_window_rule,
+        TypoRule typoRule = TypoRule.ImmediateMiss,
         params Mod[] mods)
     {
-        var old = TypeBeatReplayScorer.Score(map, mods, replay, TypoRule.ImmediateMiss, combo_restore_rule, spaceRule, rateRule);
+        var old = TypeBeatReplayScorer.Score(map, mods, replay, typoRule, combo_restore_rule, spaceRule, rateRule);
 
         var statistics = ToWire(old.Statistics);
 
@@ -1453,6 +1462,176 @@ public class ScoreRecalcTest
             Assert.That(result.NewMaxCombo, Is.EqualTo(result.OldRuleMaxCombo));
             Assert.That(result.Moves, Is.False, "a reproduce sweep must not apply backlog 148's gain");
         });
+    }
+
+    #endregion
+
+    #region The typo era, which is the one axis decided PER ROW (backlog 155)
+
+    /// <summary>
+    /// WHY BACKLOG 155 EXISTS. The typo rule is the one era axis that moved while the score table was
+    /// already filling: the deferred rule has been the only rule live play uses since backlog 109, and
+    /// since backlog 126 the cell it leaves standing carries a key of its own (<c>good</c>, the game's
+    /// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>). The reproduce pass pinned every row to the older
+    /// rule regardless, so each of those rows came back with every uncorrected typo turned into a MISS
+    /// and was reported as a row nobody could explain.
+    ///
+    /// <para>The signature is asserted rather than described, because it is what identified the
+    /// population in production: re-derived <c>miss</c> equals stored <c>miss</c> plus stored
+    /// <c>good</c>, on every affected row. That is also the non-vacuity of this test, in the same
+    /// object: the row demonstrably does NOT reproduce under the rule the pass used to apply.</para>
+    /// </summary>
+    [Test]
+    public void ARowJudgedSinceBacklog126IsReproducedUnderTheRuleThatJudgedIt()
+    {
+        var map = Beatmap();
+        var replay = UnfixedTypoReplay(map);
+        var stored = StoredFor(map, replay, typoRule: TypoRule.Deferred);
+
+        var storedStatistics = WireCounts.Parse(stored.StatisticsJson);
+
+        // The same run under the rule the pass used to pin every row to.
+        var underTheRetiredRule = TypeBeatReplayScorer.Score(
+            map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, combo_restore_rule, space_timing_rule, rate_window_rule);
+
+        var result = Recalculation.Run(stored, Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            // The data shape the discriminator reads, stated rather than assumed.
+            Assert.That(storedStatistics.GetValueOrDefault("good"), Is.EqualTo(1), "an uncorrected typo takes a key of its own");
+            Assert.That(Typebeat.Web.Scoring.ScoringContract.CarriesAnUncorrectedTypo(storedStatistics), Is.True);
+            Assert.That(stored.ProvablyJudgedUnderTheDeferredTypoRule, Is.True);
+            Assert.That(Recalculation.StoredEraTypoRuleFor(stored), Is.EqualTo(TypoRule.Deferred));
+
+            // The production signature, and this test's non-vacuity: under the retired rule the row
+            // does not come back, and it comes back wrong in exactly one way.
+            Assert.That(underTheRetiredRule.Statistics.GetValueOrDefault(HitResult.Miss),
+                Is.EqualTo(storedStatistics.GetValueOrDefault("miss") + storedStatistics.GetValueOrDefault("good")),
+                "re-derived miss == stored miss + stored good is what identified the population in prod");
+            Assert.That(underTheRetiredRule.Statistics.GetValueOrDefault(HitResult.Good), Is.Zero,
+                "the retired rule cannot produce the key at all, which is what makes the key a proof");
+
+            // ...and the pass now reproduces it instead of refusing it.
+            Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
+            Assert.That(result.Reproduced, Is.True);
+            Assert.That(result.OldRuleStatistics!.GetValueOrDefault("good"), Is.EqualTo(1));
+            Assert.That(result.Moves, Is.False, "today's typo rule already judged it, so it has nothing left to be repriced by");
+        });
+    }
+
+    /// <summary>
+    /// The other direction of the pin, and the reason the discriminator cannot simply be "assume the
+    /// newer rule". A row from before backlog 126 stores its uncorrected typo as a MISS, carries no
+    /// <c>good</c> key, and must still be re-derived under the rule that judged it: pinning it to the
+    /// deferred rule would hand it the cell back and report an honest row as unreproducible, which is
+    /// the same failure backlog 155 fixes, aimed at the other population.
+    /// </summary>
+    [Test]
+    public void ARowWithNoUncorrectedTypoKeyKeepsTheOlderTypoRule()
+    {
+        var map = Beatmap();
+        var replay = UnfixedTypoReplay(map);
+        var stored = StoredFor(map, replay);
+
+        var storedStatistics = WireCounts.Parse(stored.StatisticsJson);
+        var result = Recalculation.Run(stored, Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(storedStatistics.ContainsKey("good"), Is.False, "the retired rule spent the cell on a miss");
+            Assert.That(storedStatistics.GetValueOrDefault("miss"), Is.EqualTo(1));
+            Assert.That(stored.ProvablyJudgedUnderTheDeferredTypoRule, Is.False);
+            Assert.That(Recalculation.StoredEraTypoRuleFor(stored), Is.EqualTo(TypoRule.ImmediateMiss));
+
+            Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
+            Assert.That(result.Reproduced, Is.True);
+
+            // And the sweep still reports what today's rule alone makes of the row, which for this
+            // one is the whole point of a reproduce sweep: the typo stops being a miss.
+            Assert.That(result.NewStatistics!.GetValueOrDefault("good"), Is.EqualTo(1));
+            Assert.That(result.NewStatistics!.GetValueOrDefault("miss"), Is.Zero);
+            Assert.That(result.Moves, Is.True);
+        });
+    }
+
+    /// <summary>
+    /// THE DISCRIMINATOR RUNS IN ONE DIRECTION ONLY, and this is the case that says so: a row judged
+    /// under the DEFERRED rule that left no wrong character standing has no <c>good</c> key to carry,
+    /// so the row proves nothing about its own era and is pinned to the older rule like any other
+    /// unprovable row.
+    ///
+    /// <para>That is not a mistake being tolerated, it is why the one-directional test is sound: with
+    /// no typo in the run the two rules are the same judgement, so the row reproduces under either.
+    /// Only a bidirectional reading would be a bug, and it would be an expensive one, since it would
+    /// send every clean modern row back to a rule it was never played under.</para>
+    /// </summary>
+    [Test]
+    public void AbsenceOfTheKeyProvesNothingSoACleanDeferredEraRowStaysOnTheOlderRule()
+    {
+        var map = Beatmap();
+        var replay = CleanReplay(map);
+
+        var deferredEra = StoredFor(map, replay, typoRule: TypoRule.Deferred);
+        var olderEra = StoredFor(map, replay);
+
+        var result = Recalculation.Run(deferredEra, Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(deferredEra.StatisticsJson, Is.EqualTo(olderEra.StatisticsJson),
+                "with no typo in the run the two rules produce the same account, which is why the absence is not evidence");
+            Assert.That(WireCounts.Parse(deferredEra.StatisticsJson).ContainsKey("good"), Is.False,
+                "a run with nothing left uncorrected has no key to prove its era with");
+
+            Assert.That(deferredEra.ProvablyJudgedUnderTheDeferredTypoRule, Is.False);
+            Assert.That(Recalculation.StoredEraTypoRuleFor(deferredEra), Is.EqualTo(TypoRule.ImmediateMiss),
+                "absence of evidence pins the row to the default; it is not evidence of the older rule");
+
+            // And the default costs this row nothing, which is what makes it safe.
+            Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
+            Assert.That(result.Reproduced, Is.True);
+        });
+    }
+
+    /// <summary>
+    /// The population is NAMED in both sweeps, on the precedent of the 133-to-147 window: a reader has
+    /// to be able to see how many rows the pass pinned to today's typo rule, because that is what the
+    /// re-derivation of those rows is being done under. Folding it into a reproduction rate would
+    /// leave the fix visible only as a percentage that got better.
+    /// </summary>
+    [Test]
+    public void ThePinnedPopulationIsNamedInBothSweeps()
+    {
+        var map = Beatmap();
+        var unfixed = UnfixedTypoReplay(map);
+        var corrected = FixedTypoReplay(map);
+
+        var deferredEra = StoredFor(map, unfixed, typoRule: TypoRule.Deferred) with { ScoreId = 7 };
+        var olderEra = StoredFor(map, corrected) with { ScoreId = 8 };
+
+        foreach (var mode in new[] { RecalcMode.Reproduce, RecalcMode.Supersede })
+        {
+            var results = new[]
+            {
+                Recalculation.Run(deferredEra, Decoded(map, unfixed), mode: mode),
+                Recalculation.Run(olderEra, Decoded(map, corrected), mode: mode),
+            };
+
+            var plan = WritePlan.Build(results, mode, new Dictionary<UnreplayableCase, UnreplayablePolicy>(), filtered: false);
+
+            var written = new StringWriter();
+            Report.Print(results, plan, wholeTable: true, written);
+            string text = written.ToString();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(plan.PinnedToTheDeferredTypoRule.Select(r => r.Stored.ScoreId), Is.EquivalentTo(new long[] { 7 }), $"{mode}: one row carries the key");
+                Assert.That(text, Does.Contain("PINNED TO TypoRule.Deferred  1"), $"{mode}: the headline names the population");
+                Assert.That(text, Does.Contain("of these, judged since 126 1"), $"{mode}: so does the reproduction section");
+                Assert.That(results.Select(r => r.Reproduced), Is.All.True, $"{mode}: both rows are re-derived under the rule that judged them");
+            });
+        }
     }
 
     #endregion
