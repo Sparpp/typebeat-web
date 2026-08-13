@@ -30,6 +30,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Typebeat.Web\Typebeat.Web.csproj" />
+
+    <!-- The backlog-152 reprice report (tools/reprice-report). Tested HERE rather than in
+         tests/Typebeat.WireCompat, unlike tools/score-recalc: this tool never touches a replay, so
+         it compiles only the server and drags no copy of the game in with it. Its analysis is a set
+         of pure functions over rows, which is what lets the tests drive every predicate on synthetic
+         maps and scores with no database and no site. -->
+    <ProjectReference Include="..\..\tools\reprice-report\Typebeat.Tools.RepriceReport.csproj" />
   </ItemGroup>
 
 </Project>

@@ -10,6 +10,9 @@
   <Folder Name="/tools/admin/">
     <Project Path="tools/admin/Typebeat.Tools.Admin.csproj" />
   </Folder>
+  <Folder Name="/tools/reprice-report/">
+    <Project Path="tools/reprice-report/Typebeat.Tools.RepriceReport.csproj" />
+  </Folder>
   <Folder Name="/tools/score-recalc/">
     <Project Path="tools/score-recalc/Typebeat.Tools.ScoreRecalc.csproj" />
   </Folder>
