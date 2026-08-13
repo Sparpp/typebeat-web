@@ -41,6 +41,16 @@ using Typebeat.Tools.ScoreRecalc;
 // last two reach the widest: every map has spaces, and every DT/NC/HT row was graded on unscaled
 // windows. The one era NO switch can express is the backlog 133-to-147 window.
 //
+// WHICH ERA A GIVEN ROW IS IN is decided three ways, none of them a date (backlog 155 and 156).
+// Combo restore is a constant, because it moved after the last row that could care was stored. The
+// typo rule is READ OFF THE ROW, because an uncorrected typo takes a key only one of the two rules
+// can produce. The spacebar and the rate windows leave no key at all, so they are PROVED BY
+// RECONSTRUCTION: a row that does not come back under the pre-release pair is re-derived under each
+// remaining combination and pinned to the one that reproduces it exactly, and a row that no
+// combination reproduces is reported as unexplained rather than given an era. A submission time
+// would be the easy alternative and the wrong one, since the server deployed at a known instant but
+// the client updates whenever its player updates it.
+//
 // Those rows are superseded like any other, because their stored numbers describe a game no client
 // can play, which is what superseding is for. What they get instead of a gate is VISIBILITY: they
 // are counted as their own population in the report rather than folded into a reproduction
