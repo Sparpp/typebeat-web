@@ -49,14 +49,15 @@ const abcdOsu = OSU_HEADER +
 
 // The TIMING fixture, and it is its own line on purpose. Judgement measures CHARACTER DISTANCE
 // since backlog 133, so a press's quality depends on the line's own pace rather than on a
-// millisecond count, and the windows are wide in character terms (the Word-granularity Meh window
-// is 9.6 characters). "abcd" as one word over [1000, 1100] gives targets 1000, 1025, 1050, 1075 and
-// a mean spacing of 25 ms per character, which is tight enough that a press a few hundred ms late
-// runs right off the end of the ladder. The press times below were solved from that axis:
+// millisecond count, and the windows are wide in character terms (the Word-granularity Meh-late
+// window is 19.2 characters since backlog 146 doubled the ladder). "abcd" as one word over
+// [1000, 1100] gives targets 1000, 1025, 1050, 1075 and a mean spacing of 25 ms per character,
+// which is tight enough that a press a few hundred ms late runs right off the end of the ladder.
+// The press times below were re-solved from that axis against the widened window:
 //   a at 1000: the playhead is on it, 0 characters out, quality 1
-//   b at 1085: playhead 3 + (1085-1075)/25 = 3.4, so 2.4 characters out, quality 1 - 2.4/9.6 = 0.75
-//   c at 1170: playhead 6.8, so 4.8 characters out, quality 0.5 (and exactly the Ok-late edge)
-//   d at 1320: playhead 12.8, so 9.8 characters out, past the 9.6 Meh edge: LAGGING
+//   b at 1145: playhead 3 + (1145-1075)/25 = 5.8, so 4.8 characters out, quality 1 - 4.8/19.2 = 0.75
+//   c at 1290: playhead 11.6, so 9.6 characters out, quality 0.5 (and exactly the Ok-late edge)
+//   d at 1565: playhead 22.6, so 19.6 characters out, past the 19.2 Meh edge: LAGGING
 const timingOsu = OSU_HEADER +
     '{"granularity":"word","version":2,"song_end_ms":20000}\n' +
     '{"text":"abcd","start_ms":1000,"end_ms":1100,"words":[' +
@@ -97,15 +98,15 @@ function playOneKeyThenSeal() {
 }
 
 // A late press, to prove sync is a real timing measure and not just a hit count. On the timing
-// fixture 'b' at 1145 is 4.8 characters behind the playhead, exactly half of the Word-granularity
-// Meh-late window (9.6), so its quality is exactly 0.5.
+// fixture 'b' at 1265 is 9.6 characters behind the playhead, exactly half of the Word-granularity
+// Meh-late window (19.2), so its quality is exactly 0.5.
 function playOneLatePress() {
     const map = build(timingOsu);
     const engine = new TB.TypingEngine(map);
     engine.update(1000);
     engine.processKey('a', 1000);   // on the playhead, q = 1
-    engine.update(1145);
-    engine.processKey('b', 1145);   // 4.8 characters out, q = 0.5
+    engine.update(1265);
+    engine.processKey('b', 1265);   // 9.6 characters out, q = 0.5
     return engine;
 }
 
@@ -118,12 +119,12 @@ function playMixedTiming() {
     const engine = new TB.TypingEngine(map);
     engine.update(1000);
     engine.processKey('a', 1000);   // 0.0 characters out -> q 1
-    engine.update(1085);
-    engine.processKey('b', 1085);   // 2.4 characters out -> q 0.75
-    engine.update(1170);
-    engine.processKey('c', 1170);   // 4.8 characters out -> q 0.5
-    engine.update(1320);
-    engine.processKey('d', 1320);   // 9.8 characters out -> past the Meh edge, Lagging
+    engine.update(1145);
+    engine.processKey('b', 1145);   // 4.8 characters out -> q 0.75
+    engine.update(1290);
+    engine.processKey('c', 1290);   // 9.6 characters out -> q 0.5
+    engine.update(1565);
+    engine.processKey('d', 1565);   // 19.6 characters out -> past the Meh edge, Lagging
     return engine;
 }
 

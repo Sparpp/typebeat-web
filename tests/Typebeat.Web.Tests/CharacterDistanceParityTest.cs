@@ -134,6 +134,11 @@ public class CharacterDistanceParityTest
     /// late-biased and exactly double the tier inside it. The MILLISECOND one is backlog 135's
     /// Rhythmic mod and nothing selects it yet, but its Great/Ok/Meh rows are EXACTLY the windows
     /// this game judged in before backlog 133, so it has to be here and has to be right.
+    ///
+    /// <para>Backlog 146 moved every CHARACTER band up one, which in a doubling ladder is exactly a
+    /// factor of two on all eight constants, and left the MILLISECOND ladder untouched: Rhythmic
+    /// exists to reproduce the pre-133 timing judgement byte for byte, so widening it would make the
+    /// mod a different game rather than the old one. Both halves of that are asserted below.</para>
     /// </summary>
     [Test]
     public void BothWindowLaddersMatchTheGamesTuningPoint()
@@ -141,7 +146,7 @@ public class CharacterDistanceParityTest
         var root = Harness();
 
         // pe, pl, ge, gl, oe, ol, me, ml.
-        double[] line = [1.25, 2.00, 2.50, 4.00, 5.00, 8.00, 10.00, 16.00];
+        double[] line = [2.50, 4.00, 5.00, 8.00, 10.00, 16.00, 20.00, 32.00];
 
         Assert.Multiple(() =>
         {
@@ -155,22 +160,22 @@ public class CharacterDistanceParityTest
             Assert.That(JsHarness.Strings(root, "characterClassify"), Is.EqualTo(new[]
             {
                 "Perfect",  //  0
-                "Perfect",  // -1.25, the early edge
-                "Great",    // -1.26
-                "Perfect",  //  2.00, the late edge
-                "Great",    //  2.01
-                "Great",    // -2.50
-                "Ok",       // -2.51
-                "Great",    //  4.00
-                "Ok",       //  4.01
-                "Ok",       // -5.00
-                "Meh",      // -5.01
-                "Ok",       //  8.00
-                "Meh",      //  8.01
-                "Meh",      // -10.00
-                "Premature",// -10.01
-                "Meh",      //  16.00
-                "Lagging",  //  16.01
+                "Perfect",  // -2.50, the early edge
+                "Great",    // -2.51
+                "Perfect",  //  4.00, the late edge
+                "Great",    //  4.01
+                "Great",    // -5.00
+                "Ok",       // -5.01
+                "Great",    //  8.00
+                "Ok",       //  8.01
+                "Ok",       // -10.00
+                "Meh",      // -10.01
+                "Ok",       //  16.00
+                "Meh",      //  16.01
+                "Meh",      // -20.00
+                "Premature",// -20.01
+                "Meh",      //  32.00
+                "Lagging",  //  32.01
             }));
 
             Assert.That(JsHarness.Strings(root, "millisecondClassify"), Is.EqualTo(new[]
@@ -218,16 +223,18 @@ public class CharacterDistanceParityTest
     }
 
     /// <summary>
-    /// The premise change, stated as a play. 14 presses at t = 1000 on a line paced 2000 ms per
+    /// The premise change, stated as a play. 24 presses at t = 1000 on a line paced 2000 ms per
     /// character: under the old millisecond measure every press but the first was thousands of ms
     /// early, i.e. Premature. Measured in CHARACTERS the k'th press is exactly k characters ahead
     /// whatever the tempo, so the ladder is walked down one rung at a time. That is the point of the
-    /// change: how far ahead a player may be is capped in characters (10) rather than in
-    /// milliseconds, so a slow line is not a harder line. Mashing still cannot pay.
+    /// change: how far ahead a player may be is capped in characters (20 since backlog 146) rather
+    /// than in milliseconds, so a slow line is not a harder line. Mashing still cannot pay.
     ///
-    /// <para>Score, combo and break count are the game suite's literals:
+    /// <para>The fixture is 24 characters rather than the pre-146 14 for the same reason it was 14,
+    /// namely one more than the ladder can reach, so the run off the end of it is still covered.
+    /// Score, combo and break count are the game suite's literals:
     /// <c>points_i = round(base_i * (1 + comboBefore/50))</c> gives
-    /// <c>300, 306 | 208 | 106, 108, 110 | 56, 57, 58, 59, 60 = 1428</c>.</para>
+    /// <c>300, 306, 312 | 212, 216, 220 | 112, 114, 116, 118, 120 | 61..70 = 2801</c>.</para>
     /// </summary>
     [Test]
     public void MashingAWholeLineAheadWalksDownEveryTierExactlyAsTheGameDoes()
@@ -238,15 +245,16 @@ public class CharacterDistanceParityTest
         {
             Assert.That(JsHarness.Strings(root, "mashTypes"), Is.EqualTo(new[]
             {
-                "Perfect", "Perfect",                       // distance 0 and -1, inside the 1.25 early edge
-                "Great",                                    // -2, inside 2.50
-                "Ok", "Ok", "Ok",                           // -3, -4, -5, edge inclusive
-                "Meh", "Meh", "Meh", "Meh", "Meh",          // -6 .. -10, edge inclusive
-                "Premature", "Premature", "Premature",      // -11, -12, -13: past every window
+                "Perfect", "Perfect", "Perfect",            // distance 0, -1, -2, inside the 2.50 early edge
+                "Great", "Great", "Great",                  // -3, -4, -5, edge inclusive at 5.00
+                "Ok", "Ok", "Ok", "Ok", "Ok",               // -6 .. -10, edge inclusive at 10.00
+                "Meh", "Meh", "Meh", "Meh", "Meh",          // -11 .. -20, edge inclusive at 20.00
+                "Meh", "Meh", "Meh", "Meh", "Meh",
+                "Premature", "Premature", "Premature",      // -21, -22, -23: past every window
             }));
 
-            Assert.That(Num(root, "mashScore"), Is.EqualTo(1428));
-            Assert.That(Num(root, "mashMaxCombo"), Is.EqualTo(11));
+            Assert.That(Num(root, "mashScore"), Is.EqualTo(2801));
+            Assert.That(Num(root, "mashMaxCombo"), Is.EqualTo(21));
             Assert.That(Num(root, "mashComboBreaks"), Is.EqualTo(3));
         });
     }
@@ -255,9 +263,8 @@ public class CharacterDistanceParityTest
     /// A press one notch outside the SCALED Perfect window, and the split the measure introduced:
     /// the judgement is derived from the character distance, while the delta the timing read-out
     /// shows stays in milliseconds. Word granularity, "ab" over [1000, 2000], so targets 1000 and
-    /// 1500 and a mean spacing of 500 ms. A press at 1601 is (1601 - 1500) / 500 = 0.202 past the
-    /// last target, i.e. 1.202 characters behind the playhead, against a scaled PerfectLate of
-    /// 2.00 * 0.6 = 1.20.
+    /// 1500 and a mean spacing of 500 ms. A press at 2201 is 1 + (2201 - 1500) / 500 = 2.402
+    /// characters behind the playhead, against a scaled PerfectLate of 4.00 * 0.6 = 2.40.
     /// </summary>
     [Test]
     public void TheJudgementComesFromTheDistanceWhileTheDeltaStaysMilliseconds()
@@ -267,8 +274,8 @@ public class CharacterDistanceParityTest
         Assert.Multiple(() =>
         {
             Assert.That(run.GetProperty("judgeType").GetString(), Is.EqualTo("Great"));
-            Assert.That(Num(run, "judgedOffset"), Is.EqualTo(1.202).Within(1e-12));
-            Assert.That(Num(run, "judgedDelta"), Is.EqualTo(601));
+            Assert.That(Num(run, "judgedOffset"), Is.EqualTo(2.402).Within(1e-12));
+            Assert.That(Num(run, "judgedDelta"), Is.EqualTo(1201));
         });
     }
 
@@ -335,12 +342,15 @@ public class CharacterDistanceParityTest
 
     /// <summary>
     /// A dictionary carrying all four quality keys at once, recomputed by the server exactly as the
-    /// browser computed it. The mash play judges 2 perfect, 1 great, 3 ok, 5 meh and seals 3 misses
-    /// over a 14 cell map, so accuracy is
-    /// <c>(2*300 + 1*200 + 3*100 + 5*50) / (14*300) = 1350/4200</c> and completion is
-    /// <c>11/14</c>. If <c>great</c> were still priced at 300 the accuracy would come out at
-    /// 1450/4200 and every browser play with a great in it would submit a number the server
+    /// browser computed it. The mash play judges 3 perfect, 3 great, 5 ok, 10 meh and seals 3 misses
+    /// over a 24 cell map, so accuracy is
+    /// <c>(3*300 + 3*200 + 5*100 + 10*50) / (24*300) = 2500/7200</c> and completion is
+    /// <c>21/24</c>. If <c>great</c> were still priced at 300 the accuracy would come out at
+    /// 2800/7200 and every browser play with a great in it would submit a number the server
     /// disagreed with.
+    ///
+    /// <para>The rank moved from C to B with backlog 146, because a wider Meh window turns three of
+    /// this play's Prematures into scoring cells: nothing about the completion cutoffs changed.</para>
     /// </summary>
     [Test]
     public void TheServerRecomputesAFourTierDictionaryToTheBrowsersOwnNumbers()
@@ -354,17 +364,17 @@ public class CharacterDistanceParityTest
         {
             Assert.That(Dict(run, "statistics"), Is.EquivalentTo(new Dictionary<string, int>
             {
-                ["perfect"] = 2, ["great"] = 1, ["ok"] = 3, ["meh"] = 5, ["miss"] = 3,
+                ["perfect"] = 3, ["great"] = 3, ["ok"] = 5, ["meh"] = 10, ["miss"] = 3,
             }));
-            Assert.That(Dict(run, "maximumStatistics"), Is.EquivalentTo(new Dictionary<string, int> { ["perfect"] = 14 }));
+            Assert.That(Dict(run, "maximumStatistics"), Is.EquivalentTo(new Dictionary<string, int> { ["perfect"] = 24 }));
 
             Assert.That(recomputed.StatisticsValid, Is.True);
-            Assert.That(recomputed.Accuracy, Is.EqualTo(1350d / 4200).Within(1e-12));
+            Assert.That(recomputed.Accuracy, Is.EqualTo(2500d / 7200).Within(1e-12));
             Assert.That(recomputed.Accuracy, Is.EqualTo(Num(run, "accuracy")).Within(1e-12),
                 "the browser showed the player the number the server then stores");
-            Assert.That(recomputed.Completion, Is.EqualTo(11d / 14).Within(1e-12));
+            Assert.That(recomputed.Completion, Is.EqualTo(21d / 24).Within(1e-12));
             Assert.That(recomputed.Completion, Is.EqualTo(Num(run, "completion")).Within(1e-12));
-            Assert.That(recomputed.Rank, Is.EqualTo("C"));
+            Assert.That(recomputed.Rank, Is.EqualTo("B"));
             Assert.That(ScoringContract.TotalScoreWithinBounds(run.GetProperty("totalScore").GetInt64(), recomputed), Is.True);
         });
     }
@@ -485,7 +495,7 @@ public class CharacterDistanceParityTest
             Assert.That(clean.Notes, Is.EqualTo(5));
             Assert.That(clean.Misses, Is.Zero);
 
-            Assert.That(mash.Notes, Is.EqualTo(14), "every judged cell is a note, whichever tier it landed in");
+            Assert.That(mash.Notes, Is.EqualTo(24), "every judged cell is a note, whichever tier it landed in");
             Assert.That(mash.Misses, Is.EqualTo(3));
             Assert.That(mash.Typos, Is.Zero, "mashing the RIGHT character is not a typo");
         });

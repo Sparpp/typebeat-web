@@ -59,12 +59,15 @@ const wordOsu = HEADER +
     '{"granularity":"word","version":2,"song_end_ms":3000}\n' +
     '{"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n';
 
-// 14 x one letter over one unit [1000, 29000], so k = 14 and the targets step 2000 ms apart.
-const mashText = 'a'.repeat(14);
+// 24 x one letter over one unit [1000, 49000], so k = 24 and the targets step 2000 ms apart. The
+// game's fixture was 14 characters until backlog 146 doubled the ladder's early reach from 10 to 20;
+// it is 24 for the same reason it was 14, namely one more than the ladder can reach, so the run off
+// the end of it is still covered.
+const mashText = 'a'.repeat(24);
 const mashOsu = HEADER +
-    '{"granularity":"line","version":2,"song_end_ms":40000}\n' +
-    '{"text":"' + mashText + '","start_ms":1000,"end_ms":29000,"words":[' +
-    '{"text":"' + mashText + '","start_ms":1000,"end_ms":29000,"score":1}]}\n';
+    '{"granularity":"line","version":2,"song_end_ms":60000}\n' +
+    '{"text":"' + mashText + '","start_ms":1000,"end_ms":49000,"words":[' +
+    '{"text":"' + mashText + '","start_ms":1000,"end_ms":49000,"score":1}]}\n';
 
 const abcd = build(abcdOsu);
 const abcdLine = abcd.lines[0];
@@ -98,7 +101,7 @@ function playOnTarget() {
     return engine;
 }
 
-// The whole-line mash: 14 presses at t = 1000 on a line paced 2000 ms per character. Under the OLD
+// The whole-line mash: 24 presses at t = 1000 on a line paced 2000 ms per character. Under the OLD
 // millisecond measure every press but the first was thousands of ms early, i.e. Premature. Under a
 // character measure the k'th press is exactly k characters ahead of the playhead whatever the
 // tempo, so the ladder is walked down one rung at a time, which is the point: how far ahead a
@@ -109,19 +112,19 @@ function playWholeLineMash() {
     let breaks = 0;
     engine.onComboBroken = () => breaks++;
     engine.update(1000);
-    for (let i = 0; i < 14; i++) engine.processKey('a', 1000);
+    for (let i = 0; i < 24; i++) engine.processKey('a', 1000);
     return { engine: engine, breaks: breaks, types: map.lines[0].cells.map(c => c.judgeType) };
 }
 
-// A Word-granularity press one notch outside the scaled Perfect window: 'a' at 1601 is
-// (1601 - 1500) / 500 = 0.202 past the last target, i.e. 1.202 characters behind the playhead,
-// against a scaled PerfectLate of 2.00 * 0.6 = 1.20. The judgement event still carries the press
-// in MILLISECONDS (601), which is the split the measure introduced.
+// A Word-granularity press one notch outside the scaled Perfect window: 'a' at 2201 is
+// 1 + (2201 - 1500) / 500 = 2.402 characters behind the playhead, against a scaled PerfectLate of
+// 4.00 * 0.6 = 2.40. The judgement event still carries the press in MILLISECONDS (1201), which is
+// the split the measure introduced.
 function playWordJustOutsidePerfect() {
     const map = build(wordOsu);
     const engine = new TB.TypingEngine(map);
     engine.update(1000);
-    engine.processKey('a', 1601);
+    engine.processKey('a', 2201);
     const cell = map.lines[0].cells[0];
     return { judgeType: cell.judgeType, judgedDelta: cell.judgedDelta, judgedOffset: cell.judgedOffset };
 }
@@ -212,11 +215,12 @@ const out = {
     millisecondLine: ladder(millisecondLine),
 
     // Classification at and just past every edge of the live (character) ladder.
-    characterClassify: [0, -1.25, -1.26, 2, 2.01, -2.5, -2.51, 4, 4.01, -5, -5.01, 8, 8.01, -10, -10.01, 16, 16.01]
+    characterClassify: [0, -2.5, -2.51, 4, 4.01, -5, -5.01, 8, 8.01, -10, -10.01, 16, 16.01, -20, -20.01, 32, 32.01]
         .map(o => TB.classify(o, characterLine)),
 
     // ...and of the millisecond ladder, whose Great/Ok/Meh rows are EXACTLY the windows this game
-    // judged in before backlog 133 (then called Perfect/Good/Ok).
+    // judged in before backlog 133 (then called Perfect/Good/Ok). Backlog 146 widened the CHARACTER
+    // probes above and deliberately left these alone: the millisecond ladder is frozen.
     millisecondClassify: [200, 201, -250, 400, 401, 1000, 1001, 2000, 2001, -1201]
         .map(o => TB.classify(o, millisecondLine)),
 

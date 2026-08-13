@@ -806,6 +806,12 @@
     // interpolated (buildCells), so "characters behind the playhead" and "milliseconds off target"
     // were always the same axis, and this rescales it to the map's own pace.
     //
+    // Backlog 146 moved every band UP ONE: 133's ladder demanded the exact character for a Perfect
+    // and was too strict, so each tier took the window of the tier outside it, which in a doubling
+    // ladder is exactly a factor of two on all eight constants. The 1.6x late bias and the doubling
+    // survive unchanged. Only the CHARACTER ladder moved; the millisecond one is frozen because the
+    // Rhythmic mod exists to reproduce the pre-133 game byte for byte.
+    //
     // MILLISECONDS is backlog 135's Rhythmic mod. Its Great/Ok/Meh rows are EXACTLY the windows
     // this game judged in up to backlog 133 (they were then called Perfect/Good/Ok and mapped onto
     // those same three osu results), so selecting the measure reproduces the old game rather than
@@ -817,7 +823,7 @@
     const MEASURE_CHARACTER_DISTANCE = 'CharacterDistance';
     const MEASURE_MILLISECONDS = 'Milliseconds';
 
-    const CHARACTER_WINDOWS = { pe: 1.25, pl: 2.00, ge: 2.50, gl: 4.00, oe: 5.00, ol: 8.00, me: 10.00, ml: 16.00 };
+    const CHARACTER_WINDOWS = { pe: 2.50, pl: 4.00, ge: 5.00, gl: 8.00, oe: 10.00, ol: 16.00, me: 20.00, ml: 32.00 };
     const MILLISECOND_WINDOWS = { pe: 125, pl: 200, ge: 250, gl: 400, oe: 600, ol: 1000, me: 1200, ml: 2000 };
 
     // Granularity scales: unreliable timing gets the widest tolerance, never the tightest.
