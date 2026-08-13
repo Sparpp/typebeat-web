@@ -245,11 +245,14 @@ public class PerformancePointsParityTest
     }
 
     [Test]
-    public void TheTwoLengthAndFlashlightCurvesAgree()
+    public void TheTwoFlashlightCurvesAgree()
     {
+        // The length curve used to be checked here beside this one. Backlog 152 deleted it from
+        // both mirrors, so the only note-count-driven curve left in pp is Flashlight's. The spread
+        // still runs the whole old range, including the counts that only ever mattered to the
+        // length floor, since they cost nothing and cover Flashlight's own clamp.
         foreach (int notes in new[] { -1, 0, 1, 3, 4, 5, 6, 45, 46, 47, 100, 500, 1000, 12345 })
         {
-            Assert.That(ClientPp.LengthBonus(notes), Is.EqualTo(ServerPp.LengthBonus(notes)), $"length at {notes}");
             Assert.That(ClientPp.FlashlightMultiplier(notes), Is.EqualTo(ServerPp.FlashlightMultiplier(notes)), $"flashlight at {notes}");
         }
     }
@@ -631,7 +634,7 @@ public class PerformancePointsParityTest
     /// <summary>
     /// A DENSE twin, rating past the 10 stars the difficulty model used to clamp at (backlog 118).
     /// <see cref="TwinMaps"/> rates a few stars at every rate, so it cannot tell the two ports apart
-    /// anywhere a ceiling would act; this one rates about 6.2 at 1.00x and about 10.6 at 1.50x, so
+    /// anywhere a ceiling would act; this one rates about 6.3 at 1.00x and about 10.7 at 1.50x, so
     /// it straddles where the old one sat, which is where the ports have to be held together for
     /// <c>sr_dt</c> to mean anything. The word pool is varied on purpose: repeating one word
     /// saturates the model's repetition factor and flattens the rating back under the region.

@@ -90,6 +90,17 @@ public static class LyricPace
     /// <c>PerformancePoints.VERSION</c> bumps in the same change and every stored Literate play has
     /// to lose its 1.06 and gain its honest rating.
     ///
+    /// v14 = the star rating gains a LENGTH term (backlog 152).
+    /// <see cref="LyricDifficulty.Compute"/> now adds <c>0.12 * max(0, log10(cells/100))</c> to the
+    /// strain curve, so every rating of every map over 100 typeable cells rises, by up to +0.17 on
+    /// the live catalogue and monotonically in the cell count. All six stored star columns move
+    /// together (the bonus depends on the CELL COUNT, so it is the same on every rate and larger on
+    /// the Literate ones), which also finally reprices the <c>sr_dt</c> rows still carrying the old
+    /// flat ceiling of 10. The pace columns themselves are untouched: no word or cell count and no
+    /// WPM figure changes, only the ratings. This one is NOT free for scores and is not meant to
+    /// be: <c>PerformancePoints.VERSION</c> bumps to 16 in the same change, having DELETED its own
+    /// length factor, so every stored row reprices against both halves of the migration at once.
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -102,7 +113,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 13;
+    public const int VERSION = 14;
 
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;

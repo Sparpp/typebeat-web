@@ -19,7 +19,6 @@ Per play:
 pp = C · SR_eff^2.00
        · max(0, 1 − miss^1.2/notes)^10                   # cleanliness
        · max(0, 1 − typos^1.2/(notes+typos))^4           # typos
-       · max(0.1, 1 + 0.50·log10(notes/100))             # length bonus (clamped)
        · acc^1.80                                        # accuracy (timing quality)
        · (ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50   # combo
        · modMult                                         # NOT for DT/HT; rate lives in SR_eff only
@@ -50,11 +49,12 @@ Factor by factor, in descending priority:
   and 4: it alone decides at what count each term reaches its cliff, and how that cliff scales with
   map size. The backlog-101 amendment records the two arguments that were used to set it, at 1.2;
   v8 retuned it to 1.6, so both cliffs now sit lower than the counts stated there.
-* **Length**: the standard osu log bonus, rewarding sustained play over long maps. Clamped to
-  a small positive floor so no play ever computes to zero or negative pp from length alone. At a
-  weight of 0.50 the raw term crosses zero at exactly 1 note and the 0.1 floor at ~1.585, so the
-  clamp is close to vestigial; at the old 0.70 those crossings sat at ~3.73 and ~5.18 notes. The
-  floor stays because it is the guard, not because it currently fires often.
+* **Length**: NOT A FACTOR HERE, since the backlog-152 amendment. pp carried the standard osu log
+  bonus `max(0.1, 1 + 0.50·log10(notes/100))` through v15; length is now priced by the STAR RATING
+  instead, as an additive `0.12·max(0, log10(cells/100))` bonus inside `LyricDifficulty`, so pp sees
+  a long map only through `SR_eff` (i.e. as `((SR + bonus)/SR)^2.00`, a few percent where the old
+  term paid up to 1.70x). Two length terms would double count, so pp keeps none. `notes` itself is
+  still load-bearing: both penalty terms, the combo ratio and FL all read it.
 * **acc^1.80**: deliberately **gentle**, unlike osu. In type!beat real accuracies live at
   55–93%, not 97–100%, so an osu-style steep curve (acc^6+) would crush everything and make
   accuracy dominate. Keep the exponent around 1–2.
@@ -182,8 +182,10 @@ migration or recompute job.
 ## What the system values
 
 In order: clearing **harder** maps, and clearing them **cleanly**. Difficulty sets the ceiling
-of a play, misses decide how much of that ceiling you actually keep, and length gives sustained
-hard play its proper reward. Accuracy and combo are gentle secondary signals, because in a
+of a play and misses decide how much of that ceiling you actually keep. Length gives sustained hard
+play its reward too, but through the star rating rather than here (backlog 152), where it is a soft
+signal worth a flat 0.12 stars per decade of cells rather than a multiplier on the whole play.
+Accuracy and combo are gentle secondary signals, because in a
 typing game raw accuracy is already hard to push and largely tracks the misses. The per-map
 dedup plus weighted top-N then makes your rank the sum of your best performances, not a reward
 for volume, so grinding easy maps (or one hard map) stops mattering once there are enough maps.
@@ -199,7 +201,8 @@ the opposite of what cumulative score rewards today.
 * Aggregation: **best play per map, weighted sum over all** with decay 0.85; no hard top-10
   truncation.
 * **NF priced at × 0.90** for pp (osu's value); omission would have made it a free mod.
-* `notes` excludes `ignore_hit`; length and FL factors carry floor clamps.
+* `notes` excludes `ignore_hit`; the FL factor carries a floor clamp (so did the length factor,
+  until the backlog-152 amendment deleted it).
 * pp only from ranked scores on ranked maps; fails and unranked mods excluded by inheritance.
 * Website rankings swap + score tab first; in-game pp display is a separate follow-up task.
 
@@ -886,3 +889,72 @@ stored blobs at the next boot. `PpBackfill` runs after it in the same startup, e
 already does for `sr_dt` / `sr_ht`, and any Literate row it reaches before its map is filled is
 left stale and retried rather than stamped at zero. No non-Literate row is valued differently by
 this change at all.
+
+## Amendment (2026-08-13): Length leaves pp for the star rating
+
+The backlog-152 length migration. The length factor `max(0.1, 1 + 0.50·log10(notes/100))` is
+DELETED from this formula, and `length_weight` and `length_floor` with it. Length is priced by the
+STAR RATING instead: `LyricDifficulty` gains an ADDITIVE `0.12·max(0, log10(cells/100))` star bonus,
+where `cells` is the map's typeable cell count, counted inside `Compute` off the very lines it
+already walks so the client and the server cannot end up with two definitions of it.
+
+**Why it moved rather than being retuned.** SR ignored length almost entirely (only the `ln(sum)`
+inside the soft max, 2-3% per doubling) while pp paid up to 1.70x for it, which put the whole of a
+soft signal in the hard place. Adding a length term to SR while pp kept one would double count, so
+pp keeps NONE.
+
+**Why ADDITIVE, in SR.** A multiplier moves the hardest maps the most, which is exactly the wrong
+shape here: "there is simply more of it" is worth the same on a 2 star map and on an 8 star one. A
+flat log bonus prices it that way and leaves rhythm density and pace, through the strain model, as
+the hard signals. The `max(0, ·)` clamp gives a sub-100-cell map nothing, which also keeps every
+short synthetic fixture rating byte-identically.
+
+**What it does to the catalogue.** Measured live at 0.12: Nanana x Cola [Extreme] 7.81 to 7.97,
+HYPER4ID [Hyper] 7.47 to 7.60, Riptide [Seaside] 6.20 to 6.35, Spectator [Wolf] 4.54 to 4.65, mean
+3.27 to 3.33. Maximum movement +0.17, nothing crosses a whole star, and cuts drift down relative to
+their full versions (the Hyper vs Hyper Cut gap widens by 0.04).
+
+**The pp fallout is deliberate and is NOT neutral.** pp now sees length only as
+`((SR + bonus)/SR)^2.00`, a few percent, so long-map plays deflate hardest: roughly -18% on a
+340-cell map, -28% at 800, -38% at 2300. That reordering is the feature, length stops buying pp it
+no longer earns. The GLOBAL deflation that rides along with it is not, and is to be taken out
+separately by re-anchoring `scale` against the live pool, as a uniform, order-safe rescale.
+
+**Rate plays.** The bonus depends on the cell count, not the clock, so both sides of a rate ratio
+gain the same constant and `sr_dt/difficulty_rating` and `sr_ht/difficulty_rating` compress
+slightly. D, H and the Half Time mirror therefore shift by a fraction of a percent. Accepted, with
+no compensation.
+
+`notes` STAYS. It is untouched here and still load-bearing for both penalty terms, the combo ratio
+and Flashlight's bonus; only the length pair is deleted. `reference_notes` stays too, now owned by
+Flashlight alone.
+
+```
+BEFORE:  max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − typos^1.2/(notes + typos))^4
+
+AFTER:   max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − typos^1.2/(notes + typos))^4
+```
+
+SR, the global scale, accuracy, combo, the mod multipliers, the Half Time mirror multiplier,
+eligibility and the aggregation are all untouched. The typo count still sits on both sides of
+its own fraction, for the reason the backlog-89 amendment gives: keypresses are unbounded, and a
+fractional exponent on a negative base is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, typo=80` | `0.008341` | `0.008341` | +0% |
+| `notes=500, miss=10, typo=20` | `0.542001` | `0.542001` | +0% |
+
+The worked table above tracks the two PENALTY examples only, and neither moves, because neither
+penalty term reads length. They are not witnesses to this change; the per-map figures in the prose
+above are the ones to read. The whole-play reference play IS a witness, and it moves the full width
+of the deleted factor: 4 stars, 500 notes, 90%, full combo went from 171.473019 to 127.065524,
+which is exactly the old `max(0.1, 1 + 0.50·log10(500/100))` of 1.349485 divided out.
+
+**`VERSION` bumps to 16, and `LyricPace.VERSION` to 14 alongside it.** No migration is needed: every
+column this touches already exists. The pace bump is what makes `PaceBackfill` re-rate every stored
+map under the new star formula (`difficulty_rating`, `sr_dt`, `sr_ht` and the three Literate
+columns, which also finally reprices the `sr_dt` rows still pinned at the old flat ceiling of 10),
+and it stamps `pp_version = 0` on the scores of every row it rewrites. `PpBackfill` then runs after
+it in the same startup and reprices those rows against the new pp formula, so the two halves of the
+migration land on a stored row together rather than one at a time.

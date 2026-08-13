@@ -12,6 +12,10 @@ namespace Typebeat.Web.Packages.Lyrics;
 /// leaky enough now that a single burst is forgotten within a second or two, so it is endurance
 /// that carries "this section has been hard for a while" into the aggregate.
 ///
+/// A flat per-decade LENGTH bonus is added to that (see <c>length_stars</c>), which is the only
+/// place the system prices a map for being long: pp carried a length factor until backlog 152 and
+/// no longer does.
+///
 /// Kept byte-for-byte in step with the game's port
 /// (typebeat-osu: typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty). Website computes the
 /// no-mod baseline (rate = 1) plus the five other stored combinations; the game feeds the play's
@@ -48,6 +52,34 @@ public static class LyricDifficulty
     // cannot reorder anything (per_char_floor_ms can, and did).
     private const double star_scale = 0.23;
     private const double star_power = 1.3; // stretches the hard end so top ratings spread
+
+    /// <summary>
+    /// The map's LENGTH, priced here and nowhere else (backlog 152). Stars gain
+    /// <c>length_stars · max(0, log10(cells/reference_cells))</c> on top of the strain curve, so a
+    /// decade more typing is worth 0.12 of a star and the live catalogue moves by at most +0.17.
+    ///
+    /// <para>ADDITIVE, NOT A MULTIPLIER, and that is the whole design. Length is a SOFT signal:
+    /// "there is simply more of it" is worth the same on a 2 star map and on an 8 star one, where a
+    /// multiplier would move the hardest maps the most, which is exactly the wrong shape. Rhythm
+    /// density and pace stay the HARD signals, through the strain model above.</para>
+    ///
+    /// <para>pp used to carry this instead, as <c>max(0.1, 1 + 0.50·log10(notes/100))</c>, worth up
+    /// to 1.70x. It was deleted in the same change: two length terms would double count, and a
+    /// length term inside pp paid a long map far more than the difficulty it actually adds. pp now
+    /// sees length only through this rating, i.e. as <c>((SR + bonus)/SR)^sr_exponent</c>.</para>
+    ///
+    /// <para>THE max(0, ·) CLAMP is not decorative: it gives a sub-100-cell map exactly nothing,
+    /// which is what keeps every short synthetic fixture rating byte-identically to what it did
+    /// before this term existed. Without it a 10-cell fixture would lose 0.12 of a star.</para>
+    ///
+    /// <para>Note the bonus is INDEPENDENT OF RATE (a clock change does not add or remove cells) and
+    /// DEPENDENT ON LITERATE (its punctuation marks are real cells). So a rate ratio such as
+    /// <c>sr_dt/difficulty_rating</c> compresses slightly, both sides having gained the same
+    /// constant, which is accepted and uncompensated.</para>
+    /// </summary>
+    private const double length_stars = 0.12;
+
+    private const double reference_cells = 100; // the length bonus' pivot: 100 cells is the zero point
     private const double per_char_floor_ms = 50; // min plausible real-time per typed character; floors a word's window at chars × this (see the strain loop)
     private const double min_span_ms = 50; // floor a word's sung span (cv guard)
     private const double repeat_window_ms = 20_000; // "last 20 seconds" for word repetition
@@ -85,6 +117,11 @@ public static class LyricDifficulty
         var words = new List<Word>();
         double[] lineMultipliers = new double[lines.Count];
         double? prevLineEndMs = null;
+        // The map's typeable cell count, for the length bonus at the end. Counted HERE, off the very
+        // cells the strain model measures, rather than taken as a parameter: a caller supplied count
+        // is a second definition of "how long is this map", and the client and the server would
+        // eventually disagree about it on the same map.
+        long cells = 0;
 
         for (int li = 0; li < lines.Count; li++)
         {
@@ -100,6 +137,8 @@ public static class LyricDifficulty
 
                 if (text.Length == 0)
                     continue;
+
+                cells += text.Length;
 
                 double unitStart, unitEnd;
 
@@ -215,9 +254,10 @@ public static class LyricDifficulty
         for (int i = 0; i < words.Count; i++)
             sum += durations[i] / reference_duration_s * Math.Exp((strains[i] - maxStrain) / spike_focus);
 
-        // Duration-weighted soft maximum over the strains, remapped to stars by a power curve.
+        // Duration-weighted soft maximum over the strains, remapped to stars by a power curve, plus
+        // the flat per-decade length bonus (see length_stars).
         double raw = maxStrain / spike_focus + Math.Log(sum);
-        double stars = star_scale * Math.Pow(raw, star_power);
+        double stars = star_scale * Math.Pow(raw, star_power) + length_stars * Math.Max(0, Math.Log10(cells / reference_cells));
 
         // THERE IS NO CEILING HERE, deliberately (backlog 118). One used to live on this line, a
         // flat 10 chosen to keep a star BADGE sane, and it truncated far more than a badge: this
