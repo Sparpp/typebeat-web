@@ -12,7 +12,7 @@ public static class ModInfo
     public static string CategoryClass(string? acronym) => (acronym ?? string.Empty).ToUpperInvariant() switch
     {
         "DT" or "NC" or "FL" or "SD" or "LT" or "GK" or "RH" => "increase",
-        "HT" or "NF" => "reduction",
+        "HT" or "NF" or "EZ" => "reduction",
         "RX" => "automation",
         _ => "other",
     };
@@ -23,6 +23,7 @@ public static class ModInfo
         "DT" => "Double Time",
         "NC" => "Nightcore",
         "HT" => "Half Time",
+        "EZ" => "Easy",
         "NF" => "No Fail",
         "SD" => "Sudden Death",
         "FL" => "Flashlight",

@@ -614,6 +614,11 @@
     const BASE_WINDOWS = { ge: 250, gl: 400, oe: 600, ol: 1000, me: 1200, ml: 2000 };
     const TIER_SCALE = { Line: 1.0, Word: 0.6, Syllable: 0.45 };
 
+    // The C# carries one more factor here since backlog 149: TypingEngine.WindowScale, a
+    // multiplicative scale a mod may put on every window (Easy doubles them). It is deliberately NOT
+    // mirrored, because /play has no mods payload at all (see the scoreMultiplier note where the
+    // total is computed), so the browser's scale is permanently 1 and the C# at 1 is bit-identical
+    // to this. The day browser play gains a mods payload, this is where the scale has to arrive.
     function windowsFor(tier) {
         const s = TIER_SCALE[tier] != null ? TIER_SCALE[tier] : 1.0;
         return { ge: BASE_WINDOWS.ge * s, gl: BASE_WINDOWS.gl * s, oe: BASE_WINDOWS.oe * s, ol: BASE_WINDOWS.ol * s, me: BASE_WINDOWS.me * s, ml: BASE_WINDOWS.ml * s };

@@ -14,9 +14,9 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
-/// Per-mod values, mirroring the calculator: No Fail 0.5, Sudden Death 1.0 (absent), Gatekeeper 1.0
-/// (absent), Flashlight 1.05, Literate 1.05, Rhythmic 1.10, Fletcher 0.98, Muted 1.0 (absent),
-/// Mashing 0.1 (unranked, still priced for display parity), and the rate mods on the continuous
+/// Per-mod values, mirroring the calculator: Easy 0.5, No Fail 0.5, Sudden Death 1.0 (absent),
+/// Gatekeeper 1.0 (absent), Flashlight 1.05, Literate 1.05, Rhythmic 1.10, Fletcher 0.98, Muted 1.0
+/// (absent), Mashing 0.1 (unranked, still priced for display parity), and the rate mods on the continuous
 /// <see cref="RateMultiplier"/> curve. The fattest RANKED stack is unchanged by a 1.0x mod:
 /// DT@2.00 (1.46) x FL (1.05) x LT (1.05) x RH (1.10) = 1.770615.
 /// </para>
@@ -96,6 +96,15 @@ public static class ModMultiplier
         return key switch
         {
             "NF" => 0.5,
+            // Easy (backlog 149): doubled judgement windows, priced at osu's 0.5x for a difficulty
+            // reduction, the same value No Fail carries. Listing it MATTERS even though an unlisted
+            // acronym is priced generously rather than tightly: left out, every EZ play would be
+            // allowed UNKNOWN_MOD_MULTIPLIER, i.e. a ceiling of 2.0x on a play whose honest total is
+            // 0.5x its base, so a tampered submission could inflate an EZ play FOURFOLD and still
+            // land in bounds. The direction of the danger is the opposite of the Flashlight and Half
+            // Time trims above (those clamped honest plays out of bounds); here it is the ceiling
+            // that would be too loose, not too tight, so no honest play is at risk either way.
+            "EZ" => 0.5,
             "SD" => 1.0,
             // Gatekeeper (backlog 107): the strict wrong-key model, which used to be the client's
             // default and is now a ranked mod. Listed at 1.0 rather than left to fall through to

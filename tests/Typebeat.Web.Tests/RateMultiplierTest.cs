@@ -92,6 +92,9 @@ public class RateMultiplierTest
         Assert.Multiple(() =>
         {
             Assert.That(ModMultiplier.For("NF", null), Is.EqualTo(0.5));
+            // Easy (backlog 149): osu's 0.5x for a difficulty reduction, the same value NF carries.
+            Assert.That(ModMultiplier.For("EZ", null), Is.EqualTo(0.5));
+            Assert.That(ModMultiplier.For("ez", null), Is.EqualTo(0.5));
             Assert.That(ModMultiplier.For("SD", null), Is.EqualTo(1.0));
             // Gatekeeper (backlog 107): ranked, and priced at exactly 1.0 rather than left to the
             // unknown-mod allowance, so a GK play is bounded like the no-mod play it scores as.
@@ -153,6 +156,35 @@ public class RateMultiplierTest
             // ...and a no-mod ceiling would be 10% short of what an RH row actually submitted, which
             // is the exact gap that clamps the total and clears the ranked flag.
             Assert.That(ModMultiplier.MaxForStack([("RH", null)]), Is.GreaterThan(ModMultiplier.MaxForStack([])));
+        });
+    }
+
+    /// <summary>
+    /// EASY MUST BE PRICED HERE, and the danger runs the OPPOSITE way to the Flashlight and Half
+    /// Time trims: an acronym this table does not know is allowed
+    /// <see cref="ModMultiplier.UNKNOWN_MOD_MULTIPLIER"/>, i.e. a 2.0x ceiling, so an unlisted EZ
+    /// would never unrank an honest play (its honest total is HALF its base). It would instead leave
+    /// the ceiling four times the honest total, which is exactly the laundering slot the table
+    /// exists to close: attach EZ, submit four times what the play earned, stay in bounds.
+    /// </summary>
+    [Test]
+    public void ModMultiplier_ClosesTheEasyLaunderingSlot()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ModMultiplier.For("EZ", null), Is.Not.EqualTo(ModMultiplier.UNKNOWN_MOD_MULTIPLIER));
+            Assert.That(ModMultiplier.MaxForStack([("EZ", null)]), Is.EqualTo(0.5).Within(1e-12));
+
+            // A 1,000,000-base play with Easy on it may submit 500,000 and no more; the unknown-mod
+            // allowance would have let 2,000,000 through.
+            Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("EZ", null)])),
+                Is.EqualTo(500_001));
+            Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.UNKNOWN_MOD_MULTIPLIER),
+                Is.EqualTo(2_000_001));
+
+            // It trims a stack rather than fattening one, so it can never lift the ceiling.
+            Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("EZ", null)]),
+                Is.LessThan(ModMultiplier.MaxForStack([("DT", 2.00)])));
         });
     }
 

@@ -354,6 +354,15 @@ public static class PerformancePoints
     /// </summary>
     private const double rhythmic_multiplier = 1.10;
 
+    /// <summary>
+    /// Easy (backlog 149): the play was judged on DOUBLED windows, so every character was twice as
+    /// forgiving to land. Priced as the difficulty reduction it is, at a value the user chose on
+    /// 2026-08-13. Flat rather than routed through the star rating, unlike Literate: the mod
+    /// converts nothing (the cells, their target times and the map's pace are identical), it only
+    /// widens the tolerance around each target, which no rating input can see.
+    /// </summary>
+    private const double easy_multiplier = 0.75;
+
     private const double fletcher_multiplier = 0.90;
     private const double no_fail_multiplier = 0.90;
     private const double flashlight_offset = 0.02;
@@ -702,6 +711,10 @@ public static class PerformancePoints
     /// fail, which earns nothing at all, into a completed play. Its 0.5x SCORE multiplier stays
     /// score-side; mirroring that here would double-punish on top of the miss term.</para>
     ///
+    /// <para>Easy IS a flat term here (<see cref="easy_multiplier"/>), and that is not in tension
+    /// with the Literate rule below: doubling the judgement windows changes nothing the star rating
+    /// is computed from, so there is no converted map to price it through.</para>
+    ///
     /// <para>THERE IS NO LITERATE TERM HERE EITHER, and for exactly the reason there is no rate one
     /// (backlog 144). Literate is a CONVERSION mod: it turns every punctuation mark into a typed
     /// cell, so it changes the map's cell count, its pace and its rating, and it is priced through
@@ -732,6 +745,7 @@ public static class PerformancePoints
             multiplier *= mod.Acronym.ToUpperInvariant() switch
             {
                 "FL" => FlashlightMultiplier(notes),
+                "EZ" => easy_multiplier,
                 "RH" => rhythmic_multiplier,
                 "FT" => fletcher_multiplier,
                 "NF" => no_fail_multiplier,

@@ -48,6 +48,20 @@ public class ModInfoTest
         Assert.That(ModInfo.Name("rh"), Is.EqualTo("Rhythmic"));
     }
 
+    /// <summary>
+    /// Easy (backlog 149), the doubled judgement windows. A difficulty REDUCTION, so it badges green
+    /// beside Half Time and No Fail rather than falling through to "other".
+    /// </summary>
+    [Test]
+    public void Easy_RendersAsRankedDifficultyReductionBadge()
+    {
+        Assert.That(ModInfo.CategoryClass("EZ"), Is.EqualTo("reduction"));
+        Assert.That(ModInfo.Name("EZ"), Is.EqualTo("Easy"));
+
+        Assert.That(ModInfo.CategoryClass("ez"), Is.EqualTo("reduction"));
+        Assert.That(ModInfo.Name("ez"), Is.EqualTo("Easy"));
+    }
+
     [Test]
     public void UnknownAcronym_StillFallsBackGracefully()
     {
