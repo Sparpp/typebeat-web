@@ -291,7 +291,9 @@ public class WebplayDisplayTest
     ///
     /// <para>The run is on the timing fixture, a four-character word paced 25 ms per character, and
     /// each press is placed by CHARACTER DISTANCE (the measure since backlog 133) against the
-    /// Word-granularity Meh-late window of 9.6 characters.</para>
+    /// Word-granularity Meh-late window of 19.2 characters. The distances doubled with backlog 146's
+    /// widening so the QUALITIES the ramp is being asserted on are unchanged: the ramp itself did
+    /// not move, only the axis it is measured over.</para>
     /// </summary>
     [Test]
     public void CorrectCharsAreFilledByHowInSyncTheKeypressWas()
@@ -304,12 +306,12 @@ public class WebplayDisplayTest
             Assert.That(Cls(paint, 0), Is.EqualTo("tb-c tb-c-hit"));
             Assert.That(Fill(paint, 0), Is.EqualTo("100%"));
 
-            // 'b' 2.4 characters out of 9.6: quality 0.75, so three quarters of the ramp above the
+            // 'b' 4.8 characters out of 19.2: quality 0.75, so three quarters of the ramp above the
             // 50% floor, i.e. 87.5%.
             Assert.That(Cls(paint, 1), Is.EqualTo("tb-c tb-c-hit"));
             Assert.That(Fill(paint, 1), Is.EqualTo("87.50%"));
 
-            // 'c' 4.8 characters out, exactly half the window: quality 0.5, i.e. 75%. This is the
+            // 'c' 9.6 characters out, exactly half the window: quality 0.5, i.e. 75%. This is the
             // assertion that makes the tint continuous rather than the two-bucket approximation
             // /play shipped before.
             Assert.That(Cls(paint, 2), Is.EqualTo("tb-c tb-c-hit"));
@@ -336,7 +338,7 @@ public class WebplayDisplayTest
 
         Assert.Multiple(() =>
         {
-            // 'd' 9.8 characters out, past the 9.6 Meh edge: correct, but off-time.
+            // 'd' 19.6 characters out, past the 19.2 Meh edge: correct, but off-time.
             Assert.That(Cls(mixed, 3), Is.EqualTo("tb-c tb-c-off"));
             Assert.That(Fill(mixed, 3), Is.Null);
 
