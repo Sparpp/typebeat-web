@@ -318,7 +318,6 @@
                 <div class="podium-stat"><span class="podium-stat__label">Completion</span><span class="podium-stat__value">@SetModel.FormatPercent(top.Completion)</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Accuracy</span><span class="podium-stat__value">@SetModel.FormatPercent(top.Accuracy)</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Max combo</span><span class="podium-stat__value">@top.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</span></div>
-                <div class="podium-stat"><span class="podium-stat__label">Perfect</span><span class="podium-stat__value">@top.Perfect</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Great</span><span class="podium-stat__value">@top.Great</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Ok</span><span class="podium-stat__value">@top.Ok</span></div>
                 <div class="podium-stat"><span class="podium-stat__label">Meh</span><span class="podium-stat__value">@top.Meh</span></div>
@@ -353,7 +352,6 @@
                     <th>Accuracy</th>
                     <th>Player</th>
                     <th>Combo</th>
-                    <th>Perfect</th>
                     <th>Great</th>
                     <th>Ok</th>
                     <th>Meh</th>
@@ -381,7 +379,6 @@
                         <td class="num">@SetModel.FormatPercent(score.Accuracy)</td>
                         <td><a href="/users/@score.UserId">@score.Username</a></td>
                         <td class="num">@score.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</td>
-                        <td class="num">@score.Perfect</td>
                         <td class="num">@score.Great</td>
                         <td class="num">@score.Ok</td>
                         <td class="num">@score.Meh</td>

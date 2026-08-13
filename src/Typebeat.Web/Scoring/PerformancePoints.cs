@@ -385,10 +385,12 @@ public static class PerformancePoints
     /// already prices the second. That split is the whole reason the typo has its own key, even
     /// though <c>ScoringContract</c> makes it cost completion exactly as a miss does.</para>
     ///
-    /// <para><c>perfect</c> is backlog 133's fourth quality tier and joins the list for the same
-    /// reason. No score stored before that key existed carries it, so adding it reprices nothing
-    /// and needs no <see cref="VERSION"/> bump; leaving it out would instead have made every play
-    /// submitted AFTER it read as a map with almost no notes at all.</para>
+    /// <para><c>perfect</c> was backlog 133's fourth quality tier, and it stays on this list after
+    /// backlog 147 took that tier back out. It is not dead weight: 133 SHIPPED, so rows stored
+    /// while it was live carry the key, and pp is recomputed from a stored row on every
+    /// <c>PpBackfill</c> sweep. Drop it and each of those rows reads as a map with almost no notes
+    /// at all, shrinking the length bonus and inflating the combo ratio. No play made under
+    /// today's three tiers can produce one, so the entry costs every other row nothing.</para>
     /// </summary>
     private static readonly string[] note_keys = ["perfect", "great", "ok", "meh", "good", "miss"];
 

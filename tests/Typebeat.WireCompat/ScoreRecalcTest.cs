@@ -40,12 +40,6 @@ namespace Typebeat.WireCompat;
 /// run move while still requiring it to be the same run over the same map. The tests there cover
 /// that inversion, what it costs (a fixed typo ends up scoring exactly like a clean play), and the
 /// command surface that stops it being reached by accident.</para>
-///
-/// <para>Since the 2026-08-13 revision that sweep also re-judges under the RHYTHMIC MOD, putting each
-/// run back on the millisecond ladder it was typed against and making the row carry the mod so the
-/// result is reproducible. The tests for that pin the three things the change can break: that the
-/// ladder is selected THROUGH the mods list rather than by hand, that the row gains RH exactly once,
-/// and that gaining it does not push the row's total over its own score bound and unrank it.</para>
 /// </summary>
 [TestFixture]
 public class ScoreRecalcTest
@@ -137,33 +131,6 @@ public class ScoreRecalcTest
 
         for (int i = 0; i < word.Length; i++)
             replay.Frames.Add(new TypeBeatReplayFrame(targets[i], word[i]));
-
-        replay.Frames.Add(new TypeBeatReplayFrame(line_zero_end, 'z'));
-        return replay;
-    }
-
-    /// <summary>
-    /// A clean run with exactly one press landing LATE, which is the fixture that tells the two
-    /// judgement ladders apart. The map runs at 20000 ms per character (twelve of them across the
-    /// unit), so a press <paramref name="lateMs"/> behind its target is
-    /// <c>lateMs / 20000</c> CHARACTERS behind the playhead.
-    ///
-    /// <para>At 300 ms that is 0.015 characters, deep inside the character ladder's 2.00 top row, and
-    /// 300 milliseconds, which is outside the millisecond ladder's 200 ms top row and inside its
-    /// 400 ms second one. So the same keystroke is a <c>perfect</c> under the live default and a
-    /// <c>great</c> under Rhythmic, and nothing else about the run moves. That is also the exact band
-    /// backlog 136 names as the sweep's inherent cost: 200-400 ms late used to be the top tier before
-    /// backlog 133 subdivided it, so this press is one of the ones whose accuracy FALLS.</para>
-    /// </summary>
-    private static Replay LatePressReplay(IBeatmap map, int cellIndex, double lateMs)
-    {
-        var targets = Targets(map);
-        var replay = new Replay();
-
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, true));
-
-        for (int i = 0; i < word.Length; i++)
-            replay.Frames.Add(new TypeBeatReplayFrame(targets[i] + (i == cellIndex ? lateMs : 0), word[i]));
 
         replay.Frames.Add(new TypeBeatReplayFrame(line_zero_end, 'z'));
         return replay;
@@ -271,11 +238,11 @@ public class ScoreRecalcTest
 
             // Old rule: the typo spent the cell on a Miss and the fix could not take it back.
             Assert.That(result.OldRuleStatistics!["miss"], Is.EqualTo(1));
-            Assert.That(result.OldRuleStatistics!["perfect"], Is.EqualTo(12));
+            Assert.That(result.OldRuleStatistics!["great"], Is.EqualTo(12));
 
             // New rule: the cell recovers, so completion and rank recover with it.
             Assert.That(result.NewStatistics!.GetValueOrDefault("miss"), Is.Zero);
-            Assert.That(result.NewStatistics!["perfect"], Is.EqualTo(13));
+            Assert.That(result.NewStatistics!["great"], Is.EqualTo(13));
             Assert.That(result.NewCompletion, Is.EqualTo(1));
             Assert.That(result.NewRank, Is.EqualTo("X"));
             Assert.That(result.NewStatisticsValid, Is.True);
@@ -317,14 +284,14 @@ public class ScoreRecalcTest
 
             // Pre-109: the wrong char spent the cell on a Miss the instant it landed.
             Assert.That(result.OldRuleStatistics!["miss"], Is.EqualTo(1));
-            Assert.That(result.OldRuleStatistics!["perfect"], Is.EqualTo(12));
+            Assert.That(result.OldRuleStatistics!["great"], Is.EqualTo(12));
             Assert.That(result.OldRuleStatistics!.ContainsKey("good"), Is.False, "the pre-109 arm cannot emit the typo key");
 
             // Now: the typo key, no miss, and the SAME completion and rank the old rule gave it,
             // because backlog 126 makes a typo cost completion exactly as a miss does.
             Assert.That(result.NewStatistics!["good"], Is.EqualTo(1));
             Assert.That(result.NewStatistics!.GetValueOrDefault("miss"), Is.Zero);
-            Assert.That(result.NewStatistics!["perfect"], Is.EqualTo(12));
+            Assert.That(result.NewStatistics!["great"], Is.EqualTo(12));
             Assert.That(result.NewCompletion, Is.EqualTo(12 / 13.0).Within(1e-12));
             Assert.That(result.NewCompletion, Is.EqualTo(stored.Completion).Within(1e-12));
             Assert.That(result.NewRank, Is.EqualTo(stored.Rank));
@@ -369,7 +336,7 @@ public class ScoreRecalcTest
         var stored = StoredFor(map, replay);
 
         var tampered = WireCounts.Parse(stored.StatisticsJson);
-        tampered["perfect"] += 3;
+        tampered["great"] += 3;
 
         var result = Recalculation.Run(stored with { StatisticsJson = JsonConvert.SerializeObject(tampered) }, Decoded(map, replay));
 
@@ -379,7 +346,7 @@ public class ScoreRecalcTest
             Assert.That(result.Recalculated, Is.False);
             Assert.That(result.Moves, Is.False, "a refused row must never be written");
             Assert.That(result.NewStatistics, Is.Null);
-            Assert.That(result.Detail, Does.Contain("perfect"));
+            Assert.That(result.Detail, Does.Contain("great"));
         });
     }
 
@@ -497,7 +464,6 @@ public class ScoreRecalcTest
     {
         Assert.Multiple(() =>
         {
-            Assert.That(WireCounts.Key(HitResult.Perfect), Is.EqualTo("perfect"));
             Assert.That(WireCounts.Key(HitResult.Great), Is.EqualTo("great"));
             Assert.That(WireCounts.Key(HitResult.Ok), Is.EqualTo("ok"));
             Assert.That(WireCounts.Key(HitResult.Meh), Is.EqualTo("meh"));
@@ -572,7 +538,7 @@ public class ScoreRecalcTest
             Assert.Multiple(() =>
             {
                 Assert.That(result.Skip, Is.EqualTo(SkipReason.None), "an .osr off the wire must reproduce its own stored row");
-                Assert.That(result.NewStatistics!["perfect"], Is.EqualTo(13));
+                Assert.That(result.NewStatistics!["great"], Is.EqualTo(13));
                 Assert.That(result.NewRank, Is.EqualTo("X"));
             });
         }
@@ -585,22 +551,24 @@ public class ScoreRecalcTest
     #region Supersede (backlog 136 and 142)
 
     /// <summary>
-    /// A pre-133 row, which is EVERY row in the database, and the thing backlog 142 found: the
-    /// reproduce gate re-judges the keystrokes with today's windows, so a row graded on the retired
-    /// ladder can never come back, and refusing it means the tool can verify no history at all.
+    /// THE ROW THE REVERT LEAVES BEHIND. Backlog 133 and 134 shipped, so production judged on the
+    /// four-tier character ladder for a day, and backlog 147 put the millisecond ladder back. Every
+    /// row from that window carries <c>perfect</c> keys and a <c>great</c> that was worth 200, and
+    /// the reproduce gate re-judges the keystrokes with TODAY's windows, so it can never re-derive
+    /// one. Refusing it is correct, and is exactly why the supersede mode exists.
     ///
-    /// <para>The row here is built exactly as a pre-133 client submitted one: the top tier was
-    /// <c>great</c>, and <c>maximum_statistics</c> carried <c>great</c> per cell because the cell
-    /// judgement's MaxResult had not yet been raised to Perfect. Reproduce refuses it, which is
-    /// correct and is why a supersede mode had to exist; supersede takes it, re-judges it, and moves
-    /// its numbers, while still reporting that it did not reproduce.</para>
+    /// <para>This test is the inversion of the one backlog 136 wrote, not a new one: it used to
+    /// stand for the PRE-133 rows, which were then the ones the live ladder could not reproduce.
+    /// Reverting the judgement swapped which side of the discriminator is history. What is unchanged
+    /// is that both kinds of row exist, and that the tool must handle the ones it cannot reproduce
+    /// by superseding them rather than by refusing the whole sweep.</para>
     /// </summary>
     [Test]
-    public void APre133RowIsRefusedByReproduceAndSupersededInstead()
+    public void AFourTierRowIsRefusedByReproduceAndSupersededInstead()
     {
         var map = Beatmap();
         var replay = FixedTypoReplay(map);
-        var stored = PreFourthTier(StoredFor(map, replay));
+        var stored = FourTierEra(StoredFor(map, replay));
 
         var refused = Recalculation.Run(stored, Decoded(map, replay));
         var superseded = Recalculation.Run(stored, Decoded(map, replay), mode: RecalcMode.Supersede);
@@ -610,16 +578,18 @@ public class ScoreRecalcTest
             Assert.That(refused.Skip, Is.EqualTo(SkipReason.NotReproducible), "the retired ladder cannot be re-derived");
             Assert.That(refused.Moves, Is.False);
 
-            Assert.That(superseded.Skip, Is.EqualTo(SkipReason.None), "refusing every stored row is not an answer");
+            Assert.That(superseded.Skip, Is.EqualTo(SkipReason.None), "refusing a stored row is not an answer");
             Assert.That(superseded.Moves, Is.True);
-            Assert.That(superseded.NewStatistics!["perfect"], Is.EqualTo(13));
+            Assert.That(superseded.NewStatistics!["great"], Is.EqualTo(13));
+            Assert.That(superseded.NewStatistics!.ContainsKey("perfect"), Is.False,
+                "no ladder the client still runs can award one");
             Assert.That(superseded.NewRank, Is.EqualTo("X"));
 
             // The diagnostic survives the mode change. It stops being a gate; it does not stop being
             // reported, which is the whole difference between this and loosening a threshold.
             Assert.That(superseded.Reproduced, Is.False);
             Assert.That(superseded.ReproductionDetail, Is.Not.Null);
-            Assert.That(superseded.ReproductionDetail, Does.Contain("great"));
+            Assert.That(superseded.ReproductionDetail, Does.Contain("perfect"));
         });
     }
 
@@ -629,11 +599,6 @@ public class ScoreRecalcTest
     /// run lands on. Same max_combo, same total_score, same accuracy, same rank. The reproduce sweep,
     /// which holds combo restore at the stored era, does not, and that gap is the decision the user
     /// made on 2026-08-13.
-    ///
-    /// <para>PREMISE CHANGED by the same day's revision: the clean run compared against is a clean
-    /// run WITH RHYTHMIC, since that is what the superseded row now describes. The claim is unchanged
-    /// (a fixed typo is indistinguishable from a clean play) but the reference account it is measured
-    /// against moved onto the millisecond ladder and picked up the mod's 1.10 score multiplier.</para>
     /// </summary>
     [Test]
     public void SupersedeMakesAFixedTypoScoreExactlyLikeACleanRun()
@@ -641,7 +606,7 @@ public class ScoreRecalcTest
         var map = Beatmap();
         var fixedTypo = FixedTypoReplay(map);
 
-        var clean = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModRhythmic() }, CleanReplay(map), TypoRule.Deferred, ComboRestoreRule.OnFix);
+        var clean = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), CleanReplay(map), TypoRule.Deferred, ComboRestoreRule.OnFix);
 
         var stored = StoredFor(map, fixedTypo);
         var reproduce = Recalculation.Run(stored, Decoded(map, fixedTypo));
@@ -689,7 +654,7 @@ public class ScoreRecalcTest
         var stored = StoredFor(map, replay);
 
         var inflatedStatistics = WireCounts.Parse(stored.StatisticsJson);
-        inflatedStatistics["perfect"] += 3;
+        inflatedStatistics["great"] += 3;
 
         var extraCells = Recalculation.Run(
             stored with { StatisticsJson = JsonConvert.SerializeObject(inflatedStatistics) },
@@ -697,7 +662,7 @@ public class ScoreRecalcTest
             mode: RecalcMode.Supersede);
 
         var wrongMap = Recalculation.Run(
-            stored with { MaximumStatisticsJson = JsonConvert.SerializeObject(new Dictionary<string, int> { ["perfect"] = 18 }) },
+            stored with { MaximumStatisticsJson = JsonConvert.SerializeObject(new Dictionary<string, int> { ["great"] = 18 }) },
             Decoded(map, replay),
             mode: RecalcMode.Supersede);
 
@@ -720,10 +685,6 @@ public class ScoreRecalcTest
     /// multiplier is not it; a supersede sweep applies today's, because a superseded score has to be
     /// one today's client could put on the wire. It also could not use the recovered ratio if it
     /// wanted to: that number is only a multiplier while both totals come off the same ladder.
-    ///
-    /// <para>PREMISE CHANGED by the 2026-08-13 revision: "today's multipliers" now includes
-    /// Rhythmic's 1.10, because the row gains the mod. So the superseding total is priced at
-    /// 1.05 x 1.10 = 1.155, not at the row's retired 1.2 and not at Flashlight's 1.05 alone.</para>
     /// </summary>
     [Test]
     public void SupersedePricesTotalScoreWithTodaysMultiplierRatherThanTheRowsOwn()
@@ -737,12 +698,7 @@ public class ScoreRecalcTest
         var reproduce = Recalculation.Run(stored, Decoded(map, replay, new TypeBeatModFlashlight()));
         var supersede = Recalculation.Run(stored, Decoded(map, replay, new TypeBeatModFlashlight()), mode: RecalcMode.Supersede);
 
-        var today = TypeBeatReplayScorer.Score(
-            map,
-            new Mod[] { new TypeBeatModFlashlight(), new TypeBeatModRhythmic() },
-            replay,
-            TypoRule.Deferred,
-            ComboRestoreRule.OnFix);
+        var today = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModFlashlight() }, replay, TypoRule.Deferred, ComboRestoreRule.OnFix);
 
         Assert.Multiple(() =>
         {
@@ -750,209 +706,7 @@ public class ScoreRecalcTest
             Assert.That(supersede.NewTotalScore, Is.EqualTo(today.TotalScore));
             Assert.That(supersede.AppliedMultiplier, Is.Not.EqualTo(1.2).Within(1e-3));
 
-            // 1.05 (Flashlight, trimmed) x 1.10 (Rhythmic, gained) = 1.155.
-            Assert.That(supersede.AppliedMultiplier, Is.EqualTo(1.155).Within(1e-6));
-            Assert.That(supersede.NewTotalWithinBounds, Is.True, "the ceiling has to be priced with the mods the row will carry");
-
             Assert.That(reproduce.AppliedMultiplier, Is.EqualTo(1.2).Within(1e-5), "reproduce still keeps the row's own");
-            Assert.That(reproduce.NewModsJson, Is.EqualTo(stored.ModsJson), "reproduce never touches the mods column");
-        });
-    }
-
-    /// <summary>
-    /// THE PROPERTY THE WHOLE 2026-08-13 REVISION RESTS ON: the millisecond ladder is selected by
-    /// putting Rhythmic in the MODS LIST, and <c>TypeBeatReplayScorer</c>'s <c>createEngine</c> reads
-    /// it from there (backlog 135 wired that seam). Setting <c>engine.Measure</c> by hand would judge
-    /// the same run the same way and still be wrong, because then the sweep would be reproducing a
-    /// configuration no client can select rather than a real Rhythmic play.
-    ///
-    /// <para>Proved by the one press that the two ladders disagree about (see
-    /// <see cref="LatePressReplay"/>): 300 ms late is a <c>perfect</c> on character distance and a
-    /// <c>great</c> on milliseconds. The supersede sweep lands on the millisecond reading, matches an
-    /// explicit Rhythmic re-derivation key for key, and differs from the no-mod one. If the mod ever
-    /// stops reaching the engine, the first and third of those collapse together.</para>
-    ///
-    /// <para>It is also the sweep's headline cost made concrete: the run loses accuracy, because a
-    /// press the pre-133 client scored in its top tier now scores in the second.</para>
-    /// </summary>
-    [Test]
-    public void SupersedeJudgesOnTheMillisecondLadderBecauseTheModIsInTheModsList()
-    {
-        var map = Beatmap();
-        var replay = LatePressReplay(map, cellIndex: 5, lateMs: 300);
-        var stored = StoredFor(map, replay);
-
-        var supersede = Recalculation.Run(stored, Decoded(map, replay), mode: RecalcMode.Supersede);
-
-        var withRhythmic = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModRhythmic() }, replay, TypoRule.Deferred, ComboRestoreRule.OnFix);
-        var withoutIt = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), replay, TypoRule.Deferred, ComboRestoreRule.OnFix);
-
-        Assert.Multiple(() =>
-        {
-            // The two ladders really do disagree about this keystroke, or the rest proves nothing.
-            Assert.That(withoutIt.Statistics[HitResult.Perfect], Is.EqualTo(13), "0.015 characters late is the character ladder's top tier");
-            Assert.That(withRhythmic.Statistics[HitResult.Perfect], Is.EqualTo(12));
-            Assert.That(withRhythmic.Statistics[HitResult.Great], Is.EqualTo(1), "300 ms late is the millisecond ladder's SECOND tier");
-
-            // ... and the sweep lands on the millisecond reading, through the mod.
-            Assert.That(supersede.Skip, Is.EqualTo(SkipReason.None));
-            Assert.That(supersede.NewStatistics!["perfect"], Is.EqualTo(12));
-            Assert.That(supersede.NewStatistics!["great"], Is.EqualTo(1));
-            Assert.That(supersede.NewStatistics, Is.EquivalentTo(WireCounts.From(withRhythmic.Statistics)));
-
-            // The cost, in the report's own terms: the same run is worth less accuracy than the
-            // character ladder would give it, and less than the row was stored with.
-            Assert.That(supersede.NewAccuracy, Is.LessThan(withoutIt.Accuracy));
-            Assert.That(supersede.NewAccuracy, Is.LessThan(stored.Accuracy));
-
-            // The run is still the same run, so the gate that DOES apply is satisfied.
-            Assert.That(supersede.NewMaximumStatistics!["perfect"], Is.EqualTo(13));
-        });
-    }
-
-    /// <summary>
-    /// The row is honest about how it was judged: it gains <c>RH</c> in <c>scores.mods</c>, and it is
-    /// PRICED with it at both score and pp. That pairing is the point. A row judged on the millisecond
-    /// ladder without the mod on it could not be reproduced by replaying it anywhere, and a row that
-    /// carried the mod without being priced for it would be a score no client could submit.
-    ///
-    /// <para>The 10% pp is the accepted cost of the decision, so it is pinned rather than tolerated:
-    /// if it ever silently disappears, the row has stopped being priced as the play it now claims to
-    /// be.</para>
-    /// </summary>
-    [Test]
-    public void SupersedeAddsRhythmicToTheStoredModsAndPricesTheRowWithIt()
-    {
-        var map = Beatmap();
-        var replay = CleanReplay(map);
-        var stored = StoredFor(map, replay);
-
-        var supersede = Recalculation.Run(stored, Decoded(map, replay), mode: RecalcMode.Supersede);
-
-        var mods = Typebeat.Web.ScoreMods.Parse(supersede.NewModsJson);
-
-        // The same account priced as a no-mod play, which is what the row would have been worth
-        // without the mod. Everything else about it is identical, so the ratio is the mod's price.
-        var (noMod, _) = Typebeat.Web.Scoring.PerformancePoints.ForScore(
-            true, Typebeat.Web.ScoreMods.Parse("[]"),
-            Typebeat.Web.Scoring.PerformancePoints.CountNotes(supersede.NewStatistics!),
-            supersede.NewAccuracy, supersede.NewMaxCombo, 4, null, null);
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(supersede.Skip, Is.EqualTo(SkipReason.None));
-            Assert.That(supersede.ModsChange, Is.True);
-            Assert.That(mods.Select(m => m.Acronym), Is.EquivalentTo(new[] { "RH" }));
-
-            // Priced with it at score...
-            Assert.That(supersede.AppliedMultiplier, Is.EqualTo(1.10).Within(1e-9));
-            Assert.That(supersede.NewTotalScore, Is.EqualTo(supersede.Stored.TotalScore * 1.10).Within(1));
-
-            // ... and at pp, which is the 10% backlog 136 accepts by name.
-            Assert.That(supersede.NewPp, Is.Not.Null);
-            Assert.That(supersede.NewPp!.Value, Is.EqualTo(noMod!.Value * 1.10).Within(1e-9));
-
-            // A clean run's judgement does not otherwise move, so the mod is the only thing that did.
-            Assert.That(supersede.NewStatistics!["perfect"], Is.EqualTo(13));
-            Assert.That(supersede.NewRank, Is.EqualTo("X"));
-        });
-    }
-
-    /// <summary>
-    /// GAINING THE MOD MUST NOT UNRANK THE ROW, which is the failure mode this pairing is most likely
-    /// to produce and the one worth a test of its own. <c>total_score</c> comes back from the score
-    /// processor already carrying Rhythmic's 1.10, so the bound it is checked against has to be priced
-    /// from the mods the row will CARRY, not the ones it arrived with. Priced from the old blob, every
-    /// superseded row would land 10% over its own ceiling, be clamped to the no-mod total and have
-    /// <c>ranked</c> cleared, i.e. the sweep would quietly empty the leaderboards it was run to fix.
-    ///
-    /// <para>RH is a RANKED mod on the server too (<c>ScoreEndpoints</c>'s always-unranked set is
-    /// RX/WU/WD), so nothing downstream unranks it either; that half is asserted directly.</para>
-    /// </summary>
-    [Test]
-    public void GainingRhythmicDoesNotUnrankTheRowOrClampItsTotal()
-    {
-        var map = Beatmap();
-        var replay = CleanReplay(map);
-        var stored = StoredFor(map, replay);
-
-        var supersede = Recalculation.Run(stored, Decoded(map, replay), mode: RecalcMode.Supersede);
-
-        double ceilingMultiplier = Typebeat.Web.Scoring.ModMultiplier.MaxForStack(
-            Typebeat.Web.ScoreMods.Parse(supersede.NewModsJson).Select(m => ((string?)m.Acronym, m.Rate)));
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(supersede.NewTotalWithinBounds, Is.True, "a row 10% over its own ceiling would be clamped");
-            Assert.That(supersede.NewRanked, Is.True, "and then unranked, which is the sweep emptying the boards it exists to fix");
-            Assert.That(supersede.NewStatisticsValid, Is.True);
-
-            // The bound the tool used is the one RH justifies, not the no-mod 1.0.
-            Assert.That(ceilingMultiplier, Is.EqualTo(1.10).Within(1e-9));
-            Assert.That(supersede.NewTotalScore, Is.GreaterThan(stored.TotalScore));
-        });
-    }
-
-    /// <summary>
-    /// A row that ALREADY carries Rhythmic. It is still superseded, because the typo and combo rules
-    /// have moved under it since it was played whatever ladder it chose, but it must not gain the mod
-    /// or its price a second time: the mods blob keeps one <c>RH</c>, and the row is worth exactly
-    /// what a row that gained the mod in this sweep is worth for the same run.
-    /// </summary>
-    [Test]
-    public void ARowThatAlreadyCarriesRhythmicIsSupersededWithoutGainingItTwice()
-    {
-        var map = Beatmap();
-        var replay = FixedTypoReplay(map);
-
-        var already = StoredFor(map, replay, multiplier: 1.10) with { ModsJson = @"[{""acronym"":""RH""}]" };
-        var gaining = StoredFor(map, replay);
-
-        var kept = Recalculation.Run(already, Decoded(map, replay, new TypeBeatModRhythmic()), mode: RecalcMode.Supersede);
-        var gained = Recalculation.Run(gaining, Decoded(map, replay), mode: RecalcMode.Supersede);
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(kept.Skip, Is.EqualTo(SkipReason.None), "the typo and combo rules still moved under it");
-
-            Assert.That(Typebeat.Web.ScoreMods.Parse(kept.NewModsJson).Select(m => m.Acronym), Is.EquivalentTo(new[] { "RH" }));
-            Assert.That(kept.NewModsJson, Is.EqualTo(already.ModsJson), "an untouched blob, byte for byte");
-            Assert.That(kept.ModsChange, Is.False, "nothing about its mods changes, so nothing is claimed to");
-
-            // Priced once, exactly as the row that gained the mod here is.
-            Assert.That(kept.AppliedMultiplier, Is.EqualTo(1.10).Within(1e-9));
-            Assert.That(kept.NewTotalScore, Is.EqualTo(gained.NewTotalScore));
-            Assert.That(kept.NewPp, Is.EqualTo(gained.NewPp));
-        });
-    }
-
-    /// <summary>
-    /// The blob-level rule on its own, including the shapes the record path cannot easily reach: an
-    /// existing mod is preserved verbatim (settings and all) rather than normalised, a lowercase
-    /// acronym still counts as present, and a blob that is not an array is read as no mods, which is
-    /// exactly what <c>ScoreMods.Parse</c> and therefore every other reader of the column does with it.
-    /// </summary>
-    [Test]
-    public void TheStoredModsBlobGainsRhythmicWithoutDisturbingWhatIsAlreadyThere()
-    {
-        Assert.Multiple(() =>
-        {
-            Assert.That(Recalculation.ModsJsonWithRhythmic("[]"), Is.EqualTo(@"[{""acronym"":""RH""}]"));
-            Assert.That(Recalculation.ModsJsonWithRhythmic(null), Is.EqualTo(@"[{""acronym"":""RH""}]"));
-
-            // A historic bare DT keeps its absent speed_change: reading it as 1.50x is the display
-            // layer's job, and materialising the assumption is a different change from this one.
-            Assert.That(Recalculation.ModsJsonWithRhythmic(@"[{""acronym"":""DT""}]"),
-                Is.EqualTo(@"[{""acronym"":""DT""},{""acronym"":""RH""}]"));
-
-            Assert.That(Recalculation.ModsJsonWithRhythmic(@"[{""acronym"":""DT"",""settings"":{""speed_change"":1.75}}]"),
-                Is.EqualTo(@"[{""acronym"":""DT"",""settings"":{""speed_change"":1.75}},{""acronym"":""RH""}]"));
-
-            // Already present, in either spelling: returned untouched.
-            Assert.That(Recalculation.ModsJsonWithRhythmic(@"[{""acronym"":""RH""}]"), Is.EqualTo(@"[{""acronym"":""RH""}]"));
-            Assert.That(Recalculation.ModsJsonWithRhythmic(@"[{""acronym"":""rh""}]"), Is.EqualTo(@"[{""acronym"":""rh""}]"));
-
-            Assert.That(Recalculation.ModsJsonWithRhythmic("not json"), Is.EqualTo(@"[{""acronym"":""RH""}]"));
         });
     }
 
@@ -1112,7 +866,7 @@ public class ScoreRecalcTest
     {
         var map = Beatmap();
         var replay = FixedTypoReplay(map);
-        var stored = PreFourthTier(StoredFor(map, replay));
+        var stored = FourTierEra(StoredFor(map, replay));
 
         var results = new[]
         {
@@ -1141,20 +895,6 @@ public class ScoreRecalcTest
             Assert.That(text, Does.Contain("ComboRestoreRule.OnFix"), "the rules being applied have to be on the page");
             Assert.That(text, Does.Contain($"ROWS THIS RUN WOULD WRITE    {plan.RowsWritten}"));
             Assert.That(text, Does.Contain("--expect-superseded"));
-
-            // The 2026-08-13 revision, in the text the user reads to decide. The old wording said the
-            // sweep re-judged on CHARACTER DISTANCE, which is now the opposite of what it does, so
-            // the headline is asserted on rather than trusted.
-            Assert.That(text, Does.Contain("Rhythmic"), "the mod the sweep judges under has to be on the page");
-            Assert.That(text, Does.Contain("MILLISECOND ladder"));
-            Assert.That(text, Does.Contain("GAIN RH"), "the row is honest about how it was judged, and the report says so");
-            Assert.That(text, Does.Contain("THIS DOES NOT REPRODUCE THE STORED NUMBERS"));
-            Assert.That(text, Does.Contain("200-400ms late"), "the band whose accuracy falls is named, not implied");
-            Assert.That(text, Does.Contain("GAINS 10% pp"), "the accepted cost is stated before anyone applies it");
-            Assert.That(text, Does.Not.Contain("CHARACTER DISTANCE"), "the superseded wording must not survive the revision");
-
-            // And the mods gain is a per-score line, not just a headline claim.
-            Assert.That(text, Does.Contain(@"mods                  [] -> [{""acronym"":""RH""}]"));
 
             // The six values a player sees, before and after, in the table header.
             foreach (string column in new[] { "accuracy", "completion", "rank", "max_combo", "total_score", "pp" })
@@ -1285,13 +1025,18 @@ public class ScoreRecalcTest
     }
 
     /// <summary>
-    /// A pre-133 stored row: the top quality tier was <c>great</c>, and <c>maximum_statistics</c>
-    /// carried one <c>great</c> per cell because the cell judgement's MaxResult had not yet been
-    /// raised to Perfect. That key IS the era stamp the server reads
-    /// (<c>ScoringContract.JudgedBeforeTheFourthTier</c>), so rewriting it is the whole of what makes
-    /// this row look like history.
+    /// A row stored while backlog 133's FOUR-tier character-distance ladder was live: the top
+    /// quality tier was <c>perfect</c>, and <c>maximum_statistics</c> carried one <c>perfect</c> per
+    /// cell because the cell judgement's MaxResult had been raised from Great to Perfect. That key
+    /// IS the era stamp the server reads (<c>ScoringContract.JudgedUnderTheFourthTier</c>), so
+    /// rewriting it is the whole of what makes this row look like that era.
+    ///
+    /// <para>Backlog 147 reverted the ladder, so this helper inverted with it: it used to make a row
+    /// look like PRE-133 history, and now it makes one look like the one-day window in between.
+    /// Those rows are the ones that exist and cannot be re-derived, which is the same fact seen from
+    /// the other side.</para>
     /// </summary>
-    private static StoredScore PreFourthTier(StoredScore stored) => stored with
+    private static StoredScore FourTierEra(StoredScore stored) => stored with
     {
         StatisticsJson = JsonConvert.SerializeObject(Retier(WireCounts.Parse(stored.StatisticsJson))),
         MaximumStatisticsJson = JsonConvert.SerializeObject(Retier(WireCounts.Parse(stored.MaximumStatisticsJson))),
@@ -1299,10 +1044,10 @@ public class ScoreRecalcTest
 
     private static Dictionary<string, int> Retier(Dictionary<string, int> counts)
     {
-        if (!counts.Remove("perfect", out int top))
+        if (!counts.Remove("great", out int top))
             return counts;
 
-        counts["great"] = counts.GetValueOrDefault("great") + top;
+        counts["perfect"] = counts.GetValueOrDefault("perfect") + top;
         return counts;
     }
 

@@ -185,14 +185,9 @@ public class WebplayDisplayTest
         });
     }
 
-    /// <summary>
-    /// Judgement.SyncQuality: 1 on the playhead, linear to 0 at the edges of the WIDEST scoring
-    /// window, clamped. That window is Meh since backlog 133 added the fourth quality tier; it was
-    /// the third tier's before, and the ramp has always run over whichever one is widest so that
-    /// every offset a correct keypress can still score at lands somewhere on it.
-    /// </summary>
+    /// <summary>Judgement.SyncQuality: 1 on target, linear to 0 at the Ok window edges, clamped.</summary>
     [Test]
-    public void SyncQualityDecaysToTheWidestWindowEdges()
+    public void SyncQualityDecaysToTheOkWindowEdges()
     {
         var root = Harness();
 
@@ -228,7 +223,7 @@ public class WebplayDisplayTest
             Assert.That(Num(partial, "completion"), Is.EqualTo(0.2).Within(1e-12));
             Assert.That(Num(partial, "sync"), Is.EqualTo(20).Within(1e-12));
 
-            // Two presses, one on the playhead and one at half quality: both typed, sync 75%.
+            // Two presses, one on target and one at half quality: both count as typed, sync 75%.
             Assert.That(Num(late, "completion"), Is.EqualTo(1));
             Assert.That(Num(late, "sync"), Is.EqualTo(75).Within(1e-12));
         });
@@ -247,8 +242,8 @@ public class WebplayDisplayTest
     /// tokens): a correct char is filled by how in sync the keypress was, so the trail behind the
     /// caret reads as brightness.
     ///
-    /// <para>The FLOOR is the load-bearing part. SyncQuality returns exactly 0 at the widest
-    /// window's edges and stays there beyond them while the cell is still Correct, so an unfloored ramp
+    /// <para>The FLOOR is the load-bearing part. SyncQuality returns exactly 0 at the Ok-window
+    /// edges and stays there beyond them while the cell is still Correct, so an unfloored ramp
     /// would paint a character the player DID type in precisely the untyped colour (0%), which is
     /// a legibility regression rather than feedback. The top of the ramp is a contract in the
     /// other direction: quality 1 must give 100%, which mixes to var(--violet) itself, so nothing
@@ -286,14 +281,8 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
-    /// The ramp on a real run: on the playhead is the full hit colour, a press at half quality is
+    /// The ramp on a real run: dead on target is the full hit colour, a press at half quality is
     /// half way up from the floor, and every cell in between is somewhere on the ramp.
-    ///
-    /// <para>The run is on the timing fixture, a four-character word paced 25 ms per character, and
-    /// each press is placed by CHARACTER DISTANCE (the measure since backlog 133) against the
-    /// Word-granularity Meh-late window of 19.2 characters. The distances doubled with backlog 146's
-    /// widening so the QUALITIES the ramp is being asserted on are unchanged: the ramp itself did
-    /// not move, only the axis it is measured over.</para>
     /// </summary>
     [Test]
     public void CorrectCharsAreFilledByHowInSyncTheKeypressWas()
@@ -302,20 +291,19 @@ public class WebplayDisplayTest
 
         Assert.Multiple(() =>
         {
-            // 'a' on the playhead: quality 1, so the colour .tb-c-hit shipped before the ramp existed.
+            // 'a' on target: quality 1, so the colour .tb-c-hit shipped before the ramp existed.
             Assert.That(Cls(paint, 0), Is.EqualTo("tb-c tb-c-hit"));
             Assert.That(Fill(paint, 0), Is.EqualTo("100%"));
 
-            // 'b' 4.8 characters out of 19.2: quality 0.75, so three quarters of the ramp above the
-            // 50% floor, i.e. 87.5%.
+            // 'b' at +600ms against a 1200ms Ok-late window: quality 0.5, so half of the ramp
+            // above the 50% floor, i.e. 75%. This is the assertion that makes the tint continuous
+            // rather than the two-bucket approximation /play shipped before.
             Assert.That(Cls(paint, 1), Is.EqualTo("tb-c tb-c-hit"));
-            Assert.That(Fill(paint, 1), Is.EqualTo("87.50%"));
+            Assert.That(Fill(paint, 1), Is.EqualTo("75.00%"));
 
-            // 'c' 9.6 characters out, exactly half the window: quality 0.5, i.e. 75%. This is the
-            // assertion that makes the tint continuous rather than the two-bucket approximation
-            // /play shipped before.
-            Assert.That(Cls(paint, 2), Is.EqualTo("tb-c tb-c-hit"));
-            Assert.That(Fill(paint, 2), Is.EqualTo("75.00%"));
+            // +100ms: high quality, but distinctly not the full colour.
+            Assert.That(Fill(paint, 2), Is.EqualTo("95.83%"));
+            Assert.That(Fill(paint, 3), Is.EqualTo("95.83%"));
         });
     }
 
@@ -325,8 +313,8 @@ public class WebplayDisplayTest
     /// <para>An OFF-TIME press (Premature/Lagging) still lands the cell Correct, but the browser
     /// gives it .tb-c-off's flat warn tint: a browser-only affordance the desktop does not have,
     /// and folding it into the ramp would throw it away. MISSED and UNTYPED cells have no
-    /// keypress to be in sync with, and a BACKSPACE clears the banked sync quality, so the tint has
-    /// to come off with it rather than leaving the glyph holding brightness it no longer owns.</para>
+    /// keypress to be in sync with, and a BACKSPACE clears the judged delta, so the tint has to
+    /// come off with it rather than leaving the glyph holding brightness it no longer owns.</para>
     /// </summary>
     [Test]
     public void OffTimeMissedAndBackspacedCellsTakeNoSyncTint()
@@ -338,9 +326,9 @@ public class WebplayDisplayTest
 
         Assert.Multiple(() =>
         {
-            // 'd' 19.6 characters out, past the 19.2 Meh edge: correct, but off-time.
-            Assert.That(Cls(mixed, 3), Is.EqualTo("tb-c tb-c-off"));
-            Assert.That(Fill(mixed, 3), Is.Null);
+            // 'd' at +1300ms, past the 1200ms Ok edge: correct, but off-time.
+            Assert.That(Cls(mixed, 4), Is.EqualTo("tb-c tb-c-off"));
+            Assert.That(Fill(mixed, 4), Is.Null);
 
             Assert.That(Cls(sealedPaint, 0), Is.EqualTo("tb-c tb-c-hit"));
             Assert.That(Fill(sealedPaint, 0), Is.EqualTo("100%"));

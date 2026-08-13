@@ -450,19 +450,10 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
     }
 
     /// <summary>
-    /// One leaderboard row. Judgement counts come from the statistics jsonb, and since backlog 133
-    /// the wire keys and the engine's own judgement names are the SAME four words
-    /// (perfect/great/ok/meh, plus miss), so each column is simply its key. Before that the two
-    /// vocabularies were offset by one rung (engine Perfect was the wire's great, and so on) and
-    /// this record did the translating.
-    ///
-    /// <para>A score stored before the fourth tier existed carries no <c>perfect</c> key and reads
-    /// 0 in that column, which is the truth about it rather than a gap: its top tier was judged at
-    /// what is now the GREAT window (the millisecond ladder's Great row is exactly the old top
-    /// window), so its counts land under the names they earned.</para>
-    ///
-    /// <para>Completion (% of the map typed) is the metric the grade is awarded on; accuracy
-    /// remains the timing-quality metric.</para>
+    /// One leaderboard row. Judgement counts come from the statistics jsonb (wire keys
+    /// great/ok/meh/miss), and the engine's own tier names are the same words, so the labels are
+    /// the keys (see the fork's TypeBeatJudgements.cs). Completion (% of the map typed) is the
+    /// metric the grade is awarded on; accuracy remains the timing-quality metric.
     /// </summary>
     public sealed record ScoreRow(
         long ScoreId, long UserId, string Username, string? AvatarKey, long TotalScore, double Accuracy, double Completion,
@@ -474,14 +465,22 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         private JObject? statistics;
         private JObject Statistics => statistics ??= JObject.Parse(string.IsNullOrEmpty(StatisticsJson) ? "{}" : StatisticsJson);
 
-        public int Perfect => Statistics.Value<int?>("perfect") ?? 0;
-        public int Great => Statistics.Value<int?>("great") ?? 0;
+        /// <summary>
+        /// The top quality tier. It counts <c>perfect</c> as well as <c>great</c>, and that is the
+        /// one place on this page that has to know backlog 133's four-tier ladder SHIPPED: a row
+        /// stored in that window carries a <c>perfect</c> key nothing else here reads, so leaving it
+        /// out would print a row whose tier counts do not add up to the map. Only such a row can
+        /// have one, so for every play judged under today's three tiers this is exactly
+        /// <c>great</c>.
+        /// </summary>
+        public int Great => (Statistics.Value<int?>("perfect") ?? 0) + (Statistics.Value<int?>("great") ?? 0);
+
         public int Ok => Statistics.Value<int?>("ok") ?? 0;
         public int Meh => Statistics.Value<int?>("meh") ?? 0;
 
         /// <summary>
         /// Characters the song scrolled past untyped, or null for a play with none. Nullable, unlike
-        /// the four quality tiers above, so that it renders BLANK at zero the way
+        /// the quality tiers above, so that it renders BLANK at zero the way
         /// <see cref="Typos"/> beside it always has (backlog 140): a clean run showing "0 misses"
         /// next to an empty typo cell read as two different kinds of nothing.
         /// </summary>

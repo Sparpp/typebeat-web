@@ -106,13 +106,17 @@ public static class ModMultiplier
             // must match the game calculator's value.
             "FL" => 1.05,
             "LT" => 1.05,
-            // Rhythmic (backlog 135): the millisecond judgement ladder, which is the tighter one on
-            // any map slower than 10 characters per second. Unlike the Flashlight trim and the Half
-            // Time nerf above, learning this acronym opens NO unranked window in either deploy
-            // order: an older server prices RH at UNKNOWN_MOD_MULTIPLIER (2.0), which is above the
-            // 1.10 an honest client sends, so an RH play submitted before this line ships is still
-            // in bounds and still ranks. It is only priced for PP correctly once the server knows
-            // it, so deploy the site no later than the client that offers the mod.
+            // Rhythmic (backlog 135): the millisecond judgement ladder, which was the tighter one
+            // on any map slower than 10 characters per second.
+            //
+            // THE MOD IS GONE AND THIS LINE MUST NOT GO WITH IT (backlog 147). RH shipped, so rows
+            // carrying it exist, and this table is what bounds a STORED row's total on every path
+            // that re-derives one (the recalc tool prices the ceiling from the row's mods). Delete
+            // the arm and RH falls to UNKNOWN_MOD_MULTIPLIER on the acronym path but to 1.0 in any
+            // exact-stack pricing, which puts the row's own submitted total 10% over its ceiling:
+            // the total is then clamped and the row stored UNRANKED. That failure mode has already
+            // bitten twice, on Literate and on the supersede sweep. Nothing new can reach the arm,
+            // because no mod the ruleset offers carries the acronym any more.
             "RH" => 1.10,
             "FT" => 0.98,
             "MU" => 1.0,
