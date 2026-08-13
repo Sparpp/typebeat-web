@@ -1203,7 +1203,7 @@
                 cell = line.cells[this.caretIndex]; // the word gap, judged as an ordinary space below
             }
 
-            const delta = time - cell.target;
+            let delta = time - cell.target;
             // FREESTYLE cell: every char EXCEPT SPACE matches, in any case, under every mod (so the
             // Literate mod's exact-case rule is bypassed for it). The press is then judged exactly
             // like a correct char: same windows, points, combo, accuracy and completion, with the
@@ -1309,6 +1309,37 @@
             }
 
             this.consecutiveWrongKeys = 0;
+
+            // SPACES ARE UNTIMED (backlog 148), mirroring TypingEngine.ProcessKey exactly. Reaching
+            // here on a space CELL means a SPACE was typed on it: fold is only toLowerCase so
+            // nothing but ' ' folds onto ' ', a freestyle cell refuses space outright, and under
+            // mashing the press was already rewritten to the cell's expected char. The spacebar is
+            // deliberately outside the timing challenge (the word gap is where a typist's hands
+            // reset, not a note to hit), so the press is judged as though it landed dead on target:
+            // top tier whatever the clock said, and never one of the two zero-point tiers that
+            // break combo.
+            //
+            // A ZEROED DELTA rather than a forced judgement type, again as in the C#, so every
+            // reader agrees with the judgement: classify(0) is 'Great', the inert retype
+            // re-classifies the stored firstCorrectDelta, and typebeat-player.js reads judgedDelta
+            // back for the sync tint and its live sync percent (the browser's mirror of
+            // LiveSyncPercent), which would otherwise still dock a space for its timing.
+            //
+            // Scoped to the CELL and not to the KEY: a space that lands on a lyric character never
+            // reaches here, it was either rejected above (combo break, mistype, wrong-key streak) or
+            // consumed by the word skip, which has already missed the abandoned cells and taken its
+            // one break. And an untimed space is not a free one: a space cell nobody pressed still
+            // seals a miss like any other untyped character (sealLine).
+            //
+            // The C# half of backlog 148 has one more clause with nothing to mirror here: it keeps
+            // the exempt space OUT of its SyncTimeline, the offset-analysis series a play's results
+            // screen is drawn from. This core has no such series (nothing here records per-press
+            // samples), so there is no omission to fix, only an asymmetry to expect. The other
+            // consumer of the zeroed delta IS mirrored: typebeat-player.js reads judgedDelta back
+            // for the cell tint and for its live sync percent, and that readout excludes space cells
+            // from both halves of its mean the way LiveSyncPercent does.
+            const untimedSpace = cell.expected === ' ';
+            if (untimedSpace) delta = 0;
 
             // COMBO RESTORE (backlog 140), before anything about this press is judged: if this is
             // the correction of the cell a wrong keypress spoiled, the run resumes at the streak

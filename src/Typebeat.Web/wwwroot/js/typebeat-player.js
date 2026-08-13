@@ -199,8 +199,20 @@
 
     // One pass over the map for both live readouts:
     //   completion: hits / cells seen so far (how "typed %" reads mid-play, and what rank keys off)
-    //   sync:       mean sync quality x100 over resolved cells (mirrors TypingEngine.LiveSyncPercent);
-    //               a cell in a SEALED line that never landed correct resolves at q = 0.
+    //   sync:       mean sync quality x100 over resolved TIMED cells (mirrors
+    //               TypingEngine.LiveSyncPercent); a cell in a SEALED line that never landed correct
+    //               resolves at q = 0.
+    //
+    // The two denominators are deliberately different, and only the SYNC one changed in backlog 148.
+    // Completion is every character of the map the player owes, word gaps included, so a space still
+    // counts there and an unpressed one still misses. Sync is a timing mean, and a space is no
+    // longer timed: it is judged on a zeroed delta (see typebeat-core.js), so counting it would add
+    // a full quality of 1 that no press earned, lifting this readout and the grade computed from it.
+    // Out of BOTH halves of the mean, so a space neither helps nor hurts.
+    //
+    // `typeable` is part of the same filter, mirroring the C#'s `if (!cell.IsTypeable) continue;`.
+    // It was missing here before, so auto-skipped punctuation in a sealed line was resolving at
+    // q = 0 in the browser and not on the desktop.
     function liveStats(engine) {
         let hit = 0, seen = 0, syncSum = 0, resolved = 0;
         const lines = engine.lines;
@@ -214,10 +226,11 @@
                 if (scored) { hit++; seen++; }
                 else if (c.state === 'correct' || c.state === 'missed') seen++;
 
-                if (c.state === 'correct' && c.judgedDelta !== null) {
+                const timed = c.typeable && c.expected !== ' ';
+                if (timed && c.state === 'correct' && c.judgedDelta !== null) {
                     syncSum += syncQuality(c.judgedDelta, Core.windowsFor(c.tier));
                     resolved++;
-                } else if (sealed) {
+                } else if (timed && sealed) {
                     resolved++;
                 }
             }
