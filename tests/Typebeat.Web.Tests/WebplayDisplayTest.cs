@@ -202,9 +202,15 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
-    /// The live HUD readouts over real engine runs. Sync counts every cell a SEALED line resolved,
-    /// including the ones that were never typed (q = 0), which is what makes it a timing measure
-    /// rather than a hit count.
+    /// The live HUD readouts over real engine runs. Sync counts every TIMED cell a SEALED line
+    /// resolved, including the ones that were never typed (q = 0), which is what makes it a timing
+    /// measure rather than a hit count.
+    ///
+    /// <para>The two denominators are different on purpose, and backlog 148 moved only one of them.
+    /// COMPLETION is every character of the map the player owes, word gaps included. SYNC is a
+    /// timing mean, and a space is no longer timed (the engine judges it on a zeroed delta), so it
+    /// is out of both halves of that mean: see
+    /// <see cref="TheUntimedSpaceIsNeutralInTheLiveSyncReadout"/>.</para>
     /// </summary>
     [Test]
     public void LiveHudReadoutsTrackTheRun()
@@ -219,13 +225,41 @@ public class WebplayDisplayTest
             Assert.That(Num(perfect, "completion"), Is.EqualTo(1));
             Assert.That(Num(perfect, "sync"), Is.EqualTo(100));
 
-            // One of five cells typed, the rest sealed as misses: 1/5 typed, and 4 cells at q = 0.
+            // One of FIVE cells typed (completion counts the word gap), and the sync mean is over
+            // the FOUR timed ones: 'a' at q = 1 and three sealed misses at q = 0.
             Assert.That(Num(partial, "completion"), Is.EqualTo(0.2).Within(1e-12));
-            Assert.That(Num(partial, "sync"), Is.EqualTo(20).Within(1e-12));
+            Assert.That(Num(partial, "sync"), Is.EqualTo(25).Within(1e-12));
 
             // Two presses, one on target and one at half quality: both count as typed, sync 75%.
             Assert.That(Num(late, "completion"), Is.EqualTo(1));
             Assert.That(Num(late, "sync"), Is.EqualTo(75).Within(1e-12));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 148 in the browser's HUD, mirroring TypingEngine.LiveSyncPercent: a space is out of
+    /// the sync mean entirely, so how well it was timed cannot move the readout. Asserted as an
+    /// equality between two runs that differ only in when the space was pressed, because that
+    /// equality IS the claim, plus the absolute value so a change to both sides still trips it.
+    /// </summary>
+    [Test]
+    public void TheUntimedSpaceIsNeutralInTheLiveSyncReadout()
+    {
+        var root = Harness();
+        var loose = root.GetProperty("looseSpaceStats");
+        var tight = root.GetProperty("tightSpaceStats");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(loose, "sync"), Is.EqualTo(Num(tight, "sync")).Within(1e-12));
+
+            // Four lyric chars 200 ms late at tier Word (Meh-late 1200), so q = 5/6 each, over the
+            // four TIMED cells. Counted in at its zeroed delta the space would lift this to 86.67.
+            Assert.That(Num(loose, "sync"), Is.EqualTo(500.0 / 6).Within(1e-12));
+
+            // ...and the space is still a character the player owes, so completion is untouched.
+            Assert.That(Num(loose, "completion"), Is.EqualTo(1));
+            Assert.That(Num(tight, "completion"), Is.EqualTo(1));
         });
     }
 
@@ -301,8 +335,14 @@ public class WebplayDisplayTest
             Assert.That(Cls(paint, 1), Is.EqualTo("tb-c tb-c-hit"));
             Assert.That(Fill(paint, 1), Is.EqualTo("75.00%"));
 
-            // +100ms: high quality, but distinctly not the full colour.
-            Assert.That(Fill(paint, 2), Is.EqualTo("95.83%"));
+            // Cell 2 is the word GAP, pressed at the same +100ms as 'c' beside it. Since backlog 148
+            // a space is judged on a zeroed delta, so it stores quality 1 and paints at the full hit
+            // colour rather than at 'c''s 95.83%. Invisible in practice (a space renders as a gap),
+            // but the desktop's LyricLineDisplay reads back the same zeroed delta, so the mirror has
+            // to agree with it here too.
+            Assert.That(Fill(paint, 2), Is.EqualTo("100%"));
+
+            // +100ms on a LYRIC character: high quality, but distinctly not the full colour.
             Assert.That(Fill(paint, 3), Is.EqualTo("95.83%"));
         });
     }

@@ -93,6 +93,23 @@ function playOneLatePress() {
     return engine;
 }
 
+// Backlog 148: the word gap is UNTIMED, so it is out of BOTH halves of the sync mean and its own
+// timing cannot move the readout. Every LYRIC character is pressed 200 ms late here (tier Word, so
+// the Meh-late window is 2000 * 0.6 = 1200 and q = 1 - 200/1200 = 5/6 apiece); only the space moves
+// between the two runs, and the two syncs must come out identical. Counted IN at its zeroed delta
+// the loose run would read 100 * (4*5/6 + 1) / 5, i.e. a free lift toward the grade thresholds.
+function playWithSpaceAt(spaceTime) {
+    const map = build(abcdOsu);
+    const engine = new TB.TypingEngine(map);
+    engine.update(1000);
+    engine.processKey('a', 1200);
+    engine.processKey('b', 1700);
+    engine.processKey(' ', spaceTime);
+    engine.processKey('c', 2200);
+    engine.processKey('d', 2700);
+    return engine;
+}
+
 // --- the sync tint (LyricLineDisplay.CorrectCharColour, re-expressed in the site's tokens) ---
 // A run that lands one cell of each kind the ramp has to tell apart: dead on target (full hit
 // colour), half quality (mid ramp), and a press so late it is Lagging, which is still a CORRECT
@@ -231,6 +248,8 @@ const out = {
     perfectStats: D.liveStats(perfect),
     partialStats: D.liveStats(partial),
     lateStats: D.liveStats(late),
+    looseSpaceStats: D.liveStats(playWithSpaceAt(7000)),
+    tightSpaceStats: D.liveStats(playWithSpaceAt(2000)),
 
     // The display layer must not have moved the score: the same run through the untouched
     // scorer still reads a clean X.
