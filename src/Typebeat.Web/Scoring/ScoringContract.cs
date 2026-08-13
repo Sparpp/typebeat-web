@@ -367,8 +367,16 @@ public static class ScoringContract
     /// more top-tier cells, and this function only ever bounds a submission by its OWN dictionary.
     /// A dictionary with neither key, or with both, falls to the CURRENT rules, which is the right
     /// default for anything malformed.</para>
+    ///
+    /// <para>PUBLIC for <c>tools/score-recalc</c>, which needs the same answer for a different
+    /// question (backlog 151). Pricing a row is what this predicate does here; there it names the one
+    /// population a supersede sweep can never CHECK itself against, because reproducing a row means
+    /// re-deriving it on the ladder that judged it and backlog 147 deleted that ladder. The tool
+    /// calls this rather than testing the two keys itself, so the rows it calls unreproducible are by
+    /// construction the same rows the server prices as fourth-tier: a private copy in the tool would
+    /// be free to drift from the contract that ranks them.</para>
     /// </summary>
-    private static bool JudgedUnderTheFourthTier(IReadOnlyDictionary<string, int> maximumStatistics)
+    public static bool JudgedUnderTheFourthTier(IReadOnlyDictionary<string, int> maximumStatistics)
         => maximumStatistics.ContainsKey("perfect") && !maximumStatistics.ContainsKey("great");
 
     private static int BaseScore(string key, bool fourthTier) => key switch

@@ -33,6 +33,13 @@ An `.osr` is self-describing: its trailing `LegacyReplaySoloScoreInfo` blob carr
 and `ScoreEndpoints.SubmitScore` stores the submitted dictionaries verbatim. So the replay alone is
 a faithful copy of most of the row, which is what makes an offline before/after possible at all.
 
+That includes the ERA STAMP, so an offline run classifies rows exactly as a database run does and
+nothing extra has to be exported for it. A row judged in the backlog 133-to-147 window is told from
+any other by its `maximum_statistics` carrying `perfect` and no `great`
+(`ScoringContract.JudgedUnderTheFourthTier`), that dictionary rides in the blob, and the decoder only
+synthesises one when the blob's is empty. A replay with no score-info blob at all therefore reads as
+the current era, which is the same reading the row itself would get.
+
 ### `sets/` (required)
 
 One `.osz` (or `.typb`) per set the replays reference. The tool matches a replay to its beatmap by
@@ -95,14 +102,43 @@ WHERE s.ruleset_id = 0;
 
 None of those columns is a secret, and none of them is a replay.
 
+## What the report now names, and what the apply now asks for
+
+A supersede report prints one more population, in the headline block and again under the
+reproduction section:
+
+```
+FROM THE 133-TO-147 WINDOW   7   <- pass this to --expect-unreproducible
+...
+reproduced exactly           184  (94.4%)
+did not reproduce            11   (5.6%)
+  from the 133-to-147 window 7
+  unexplained                4
+```
+
+Those rows were judged on a four-tier character-distance ladder that backlog 147 deleted, so nothing
+can re-derive them and nothing can check what they are being replaced with. They are superseded like
+any other row, which is what superseding is for, but they are counted separately from the rows that
+fail to reproduce for a reason nobody has explained: the second number is the one to read before
+applying anything, and folding the two together would make a sweep with four anomalies in it look
+like a sweep with none.
+
+They are NOT an `--unreplayable` case. Every case there means nothing can be derived from the row;
+one of these derives perfectly well, and only the CHECK is missing.
+
+`supersede-apply` therefore wants a fourth confirmation, `--expect-unreproducible <n>`, alongside
+`--expect-superseded`. It changes no behaviour: it exists so the sweep cannot be started by anyone
+who has not read how many of its rows are being written on numbers nothing can verify.
+
 ## What an offline run still cannot do
 
 - **It cannot apply.** Both `apply` and `supersede-apply` refuse `--offline`. Writing needs the
   database, and the database is the thing the export exists to avoid handing over.
-- **Its row count is not the one `--expect-superseded` wants.** That guard compares against what the
-  run in front of it would write, and an offline run's row list is whatever `.osr` files were
-  exported, not what the `scores` table holds. Take the number from a **database**
-  `supersede-report`, run with the same options as the apply.
+- **Neither of its counts is the one the apply's guards want.** `--expect-superseded` and
+  `--expect-unreproducible` are both compared against the run in front of them, and an offline run's
+  row list is whatever `.osr` files were exported, not what the `scores` table holds. An offline
+  export of ten replays says nothing about how many rows in the table carry the window's era stamp.
+  Take both numbers from a **database** `supersede-report`, run with the same options as the apply.
 - **It cannot tell `beatmap-missing` from `beatmap-changed`**, because the discrimination is a
   comparison against `beatmaps.checksum_md5`. Everything unresolved reads as `beatmap-missing`.
 

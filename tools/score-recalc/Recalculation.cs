@@ -47,7 +47,32 @@ public sealed record StoredScore(
     // when unknown (offline runs, which have no beatmap row).
     string CurrentChecksumMd5 = "",
     // Who owns the row, so the report can model a leaderboard (best score per user).
-    long UserId = 0);
+    long UserId = 0)
+{
+    /// <summary>
+    /// Whether this row was judged in the BACKLOG 133-TO-147 WINDOW: the day production graded on a
+    /// four-tier character-distance ladder, which backlog 147 deleted. Read off the row's own
+    /// <c>maximum_statistics</c> by <see cref="ScoringContract.JudgedUnderTheFourthTier"/>, the same
+    /// predicate the server prices such a row with, so the tool cannot end up disagreeing with the
+    /// contract about which era a row belongs to.
+    ///
+    /// <para>It is the one population a sweep can never CHECK. Reproducing a row means re-deriving it
+    /// under the rules that judged it, and no setting of any era switch brings back code that is
+    /// gone, so these rows are unreproducible by construction rather than by disagreement. That is
+    /// why they are counted and named separately from the rows that fail to reproduce for a reason
+    /// nobody has explained yet: superseding both is right, but only one of them is a surprise.</para>
+    ///
+    /// <para>Deliberately NOT a <c>SkipReason</c> and NOT an <see cref="UnreplayableCase"/>. Every arm
+    /// of those means "nothing can be derived from this row", and one of these rows derives perfectly
+    /// well: it has a replay, a map and a run, and only the CHECK is unavailable. Folding it in would
+    /// let one <c>--unreplayable</c> answer decide two different questions.</para>
+    ///
+    /// <para>Serialized into <c>--out</c> alongside the rest of the row, so an operator can pick the
+    /// population out of the JSON without knowing which keys stamp which era.</para>
+    /// </summary>
+    public bool JudgedOnTheDeletedLadder
+        => ScoringContract.JudgedUnderTheFourthTier(WireCounts.Parse(MaximumStatisticsJson));
+}
 
 /// <summary>
 /// Which sweep is being run. The two are NOT a threshold apart: they judge under different rules,

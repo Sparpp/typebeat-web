@@ -92,6 +92,12 @@ public static class Report
         if (plan.Unranked.Count > 0)
             output.WriteLine($"unranked by policy           {plan.Unranked.Count}");
 
+        // Named, never folded into a reproduction percentage: a row from that window is a different
+        // thing from a row that disagrees with the harness, and the operator has to see which is
+        // which before deciding anything.
+        output.WriteLine($"FROM THE 133-TO-147 WINDOW   {plan.DeletedLadderWindow.Count}"
+                         + (plan.Mode == RecalcMode.Supersede ? "   <- pass this to --expect-unreproducible" : string.Empty));
+
         output.WriteLine($"ROWS THIS RUN WOULD WRITE    {plan.RowsWritten}"
                          + (plan.Mode == RecalcMode.Supersede ? "   <- pass this to --expect-superseded" : string.Empty));
     }
@@ -132,12 +138,7 @@ public static class Report
         output.WriteLine($"reproduced exactly           {reproduced}"
                          + (eligible.Count > 0 ? $"  ({Percent(reproduced, eligible.Count)})" : string.Empty));
 
-        if (supersede)
-        {
-            int notReproduced = eligible.Count - reproduced;
-            output.WriteLine($"did not, as expected         {notReproduced}"
-                             + (eligible.Count > 0 ? $"  ({Percent(notReproduced, eligible.Count)})" : string.Empty));
-        }
+        PrintUnreproducible(eligible, plan, output);
 
         foreach (var group in skipped.GroupBy(r => r.Skip).OrderBy(g => g.Key.ToString(), StringComparer.Ordinal))
         {
@@ -189,6 +190,58 @@ public static class Report
 
             foreach (string? hash in unavailable.Take(10))
                 output.WriteLine($"    {hash}");
+        }
+    }
+
+    /// <summary>
+    /// The rows that did NOT reproduce, split into the two different things that number has always
+    /// been made of. <c>Reproduced == false</c> isolates rows from the backlog 133-to-147 window
+    /// TOGETHER WITH rows that disagree with the harness for an unknown reason, and those call for
+    /// opposite responses: the first population is unreproducible by construction (the four-tier
+    /// ladder that judged it was deleted, so no era switch can bring it back) and superseding it is
+    /// the answer, while the second is a fact nobody has explained and is worth reading before
+    /// anything is written.
+    ///
+    /// <para>Named rather than folded into a reproduction percentage for exactly that reason: a
+    /// single "did not reproduce, as expected" line makes a sweep with one anomaly in it look like a
+    /// sweep with none. The classification comes from
+    /// <see cref="StoredScore.JudgedOnTheDeletedLadder"/>, i.e. from the server's own era
+    /// discriminator, so it cannot start disagreeing with the code that prices those rows.</para>
+    /// </summary>
+    private static void PrintUnreproducible(IReadOnlyList<RecalcResult> eligible, WritePlan plan, TextWriter output)
+    {
+        var didNot = eligible.Where(r => !r.Reproduced).ToList();
+        var window = didNot.Where(r => r.Stored.JudgedOnTheDeletedLadder).ToList();
+        var unexplained = didNot.Where(r => !r.Stored.JudgedOnTheDeletedLadder).ToList();
+
+        output.WriteLine($"did not reproduce            {didNot.Count}"
+                         + (eligible.Count > 0 ? $"  ({Percent(didNot.Count, eligible.Count)})" : string.Empty));
+        output.WriteLine($"  from the 133-to-147 window {window.Count,-6}  judged on the four-tier character ladder backlog 147");
+        output.WriteLine("                                     deleted, so no era switch can re-derive them. Expected.");
+        output.WriteLine($"  unexplained                {unexplained.Count,-6}  the harness and the row disagree for a reason nobody");
+        output.WriteLine("                                     has named. Worth reading before anything is written.");
+
+        int elsewhere = plan.DeletedLadderWindow.Count - window.Count;
+
+        if (elsewhere > 0)
+        {
+            output.WriteLine($"  ({plan.DeletedLadderWindow.Count} row(s) in this run carry that window's era stamp in all; the other {elsewhere}");
+            output.WriteLine("   had no usable replay, so the sweep never tried to reproduce them.)");
+        }
+
+        // In a reproduce sweep every one of these is a refusal and is listed further down with its
+        // mismatch. In a supersede sweep nothing else prints them, and an unexplained row is the one
+        // thing in this section an operator is being asked to act on.
+        if (plan.Mode == RecalcMode.Supersede && unexplained.Count > 0)
+        {
+            output.WriteLine();
+            output.WriteLine("  unexplained rows (not from the window, and not refused by the same-run gate):");
+
+            foreach (var r in unexplained.Take(20))
+                output.WriteLine($"    score {r.Stored.ScoreId,-8} {r.ReproductionDetail}");
+
+            if (unexplained.Count > 20)
+                output.WriteLine($"    ... and {unexplained.Count - 20} more");
         }
     }
 
@@ -275,7 +328,7 @@ public static class Report
     {
         UnreplayableCase.NoReplay =>
             "no replay was ever stored. Unverifiable, not wrong; keeping it leaves a real placement alone and "
-            + "ScoringContract.JudgedBeforeTheFourthTier still reads its old keys correctly.",
+            + "ScoringContract.JudgedUnderTheFourthTier still reads its own era's keys correctly.",
         UnreplayableCase.Unreadable =>
             "stored bytes did not decode. This is evidence of a storage or encoding bug, not a fact about the "
             + "play, so investigate rather than rewrite. Ids listed below.",
@@ -485,9 +538,9 @@ public static class Report
 
         if (plan.Mode == RecalcMode.Supersede)
         {
-            output.WriteLine("  - rows left as stored keep their pre-133 statistics keys. That is safe to read:");
-            output.WriteLine("    ScoringContract.JudgedBeforeTheFourthTier tells the two eras apart by the row's own");
-            output.WriteLine("    maximum_statistics, and backlog 142 keeps it alive for exactly these rows.");
+            output.WriteLine("  - rows left as stored keep the statistics keys of whichever era judged them. That is safe");
+            output.WriteLine("    to read: ScoringContract.JudgedUnderTheFourthTier tells the two eras apart by the row's");
+            output.WriteLine("    own maximum_statistics, and backlog 142 keeps it alive for exactly these rows.");
         }
 
         PrintExtremes(output, "largest max_combo moves", recalculated, r => r.NewMaxCombo - r.Stored.MaxCombo);
