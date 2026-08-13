@@ -519,6 +519,14 @@ public static class Recalculation
         //    was stored. The TYPO axis is read off the row (backlog 155): it moved while the table
         //    was filling, so a row holding an uncorrected typo is reproduced under the rule that left
         //    it standing, and everything else keeps the older default.
+        //
+        //    THAT "three of the four" IS ALREADY OUT OF DATE, see backlog 156: the 2026-08-13 prod
+        //    report found rows played after 148 and 150 shipped, so the spacebar and rate-window
+        //    constants below now assert something untrue of the newest rows and re-derive them on
+        //    windows they were not judged on. One of those rows carries Hard Rock, which also kills
+        //    the premise that let TypeBeatReplayScorer apply the EZ/HR window scales unconditionally.
+        //    Neither is fixed here, and neither has a self-describing key the way the typo axis does,
+        //    so both need a release time to key off (scores.ended_at is already there for it).
         var oldRule = TypeBeatReplayScorer.Score(
             playable,
             mods,
