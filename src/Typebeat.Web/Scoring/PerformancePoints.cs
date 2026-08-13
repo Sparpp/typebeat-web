@@ -363,6 +363,16 @@ public static class PerformancePoints
     /// </summary>
     private const double easy_multiplier = 0.75;
 
+    /// <summary>
+    /// Hard Rock (backlog 150): the play was judged on HALVED windows, the exact mirror of Easy, so
+    /// every character was half as forgiving to land. Priced flat for the same reason Easy is (the
+    /// mod converts nothing, so no rating input can see it), at a value the user chose on
+    /// 2026-08-13. Deliberately NOT the reciprocal of <see cref="easy_multiplier"/> (1.333...): the
+    /// window scales mirror each other, the prices need not. Separate from the mod's 1.10x SCORE
+    /// multiplier in <see cref="ModMultiplier"/>, exactly as Easy's 0.75 is separate from its 0.5x.
+    /// </summary>
+    private const double hard_rock_multiplier = 1.25;
+
     private const double fletcher_multiplier = 0.90;
     private const double no_fail_multiplier = 0.90;
     private const double flashlight_offset = 0.02;
@@ -711,9 +721,12 @@ public static class PerformancePoints
     /// fail, which earns nothing at all, into a completed play. Its 0.5x SCORE multiplier stays
     /// score-side; mirroring that here would double-punish on top of the miss term.</para>
     ///
-    /// <para>Easy IS a flat term here (<see cref="easy_multiplier"/>), and that is not in tension
-    /// with the Literate rule below: doubling the judgement windows changes nothing the star rating
-    /// is computed from, so there is no converted map to price it through.</para>
+    /// <para>Easy IS a flat term here (<see cref="easy_multiplier"/>), and so is Hard Rock
+    /// (<see cref="hard_rock_multiplier"/>), and that is not in tension with the Literate rule
+    /// below: scaling the judgement windows changes nothing the star rating is computed from, so
+    /// there is no converted map to price either of them through. The RATE mods scale the same
+    /// windows since backlog 150 and still carry no term here, because a rate does move the rating
+    /// and is priced exclusively through it.</para>
     ///
     /// <para>THERE IS NO LITERATE TERM HERE EITHER, and for exactly the reason there is no rate one
     /// (backlog 144). Literate is a CONVERSION mod: it turns every punctuation mark into a typed
@@ -746,6 +759,7 @@ public static class PerformancePoints
             {
                 "FL" => FlashlightMultiplier(notes),
                 "EZ" => easy_multiplier,
+                "HR" => hard_rock_multiplier,
                 "RH" => rhythmic_multiplier,
                 "FT" => fletcher_multiplier,
                 "NF" => no_fail_multiplier,

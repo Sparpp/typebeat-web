@@ -62,6 +62,20 @@ public class ModInfoTest
         Assert.That(ModInfo.Name("ez"), Is.EqualTo("Easy"));
     }
 
+    /// <summary>
+    /// Hard Rock (backlog 150), the halved judgement windows. A difficulty INCREASE, so it badges
+    /// red beside Double Time and Flashlight rather than falling through to "other".
+    /// </summary>
+    [Test]
+    public void HardRock_RendersAsRankedDifficultyIncreaseBadge()
+    {
+        Assert.That(ModInfo.CategoryClass("HR"), Is.EqualTo("increase"));
+        Assert.That(ModInfo.Name("HR"), Is.EqualTo("Hard Rock"));
+
+        Assert.That(ModInfo.CategoryClass("hr"), Is.EqualTo("increase"));
+        Assert.That(ModInfo.Name("hr"), Is.EqualTo("Hard Rock"));
+    }
+
     [Test]
     public void UnknownAcronym_StillFallsBackGracefully()
     {

@@ -95,6 +95,15 @@ stored `ranked = false` and therefore earn no pp.
   only the **base rates** (DT 1.5x, HT 0.75x) are pp-eligible. A custom rate makes the play
   **pp-ineligible only**: it still ranks on the score leaderboards exactly as today (the
   variable-rate ranking feature is preserved, no retroactive unranking), it just earns 0 pp.
+  KNOWN AND UNPRICED since 2026-08-13 (backlog 150): the rate mods now scale the JUDGEMENT WINDOWS
+  by the clock rate, so a rate play's real-time tolerance per character is the same as an unmodded
+  one's, where a Double Time play used to be judged on windows 1/1.5 as wide in real terms. Nothing
+  in pp moved with it: `sr_dt` is computed at rate from the map's own timing and never saw the
+  windows, and modMult carries no rate term by design. So a DT play is now materially easier for the
+  same pp. Measured against this file's own yardstick for what a window scale is worth, Easy's ×0.75
+  for a ×2 widening (i.e. a multiplier of `scale^-0.415`), the honest DT term would be about 0.85,
+  so DT is overpaid by roughly 18% and HT (windows tightened to 0.75x) underpaid by about 11%. Left
+  alone deliberately: it is a rebalance, not a bug fix, and it would reprice every stored rate row.
   Implementation consequence: the server only ever needs SR at three rates (1.0 / 1.5 / 0.75)
   per cell stream; store `sr_dt` / `sr_ht` (and, since the Literate amendment, `sr_literate` /
   `sr_literate_dt` / `sr_literate_ht`) per beatmap at ingest and backfill via the existing pace
@@ -115,6 +124,13 @@ stored `ranked = false` and therefore earn no pp.
   converts nothing, so the cells, their target times and the map's pace are all identical and no
   rating input can see it. Its score multiplier is osu's 0.5x for a difficulty reduction, the same
   value No Fail carries; the pp value is separate and was decided at 0.75 on 2026-08-13.
+* **HR** (Hard Rock): flat × 1.25, the exact mirror of Easy on the same lever. The mod HALVES every
+  judgement window, so each character is half as forgiving to land. Flat for the same reason Easy is:
+  it converts nothing, so no rating input can see it. Deliberately not the reciprocal of Easy's 0.75
+  (1.333...): the window scales mirror each other, the prices need not. Its score multiplier is a
+  separate 1.10x, chosen so the fattest reachable ranked stack (DT@2.00 × FL × LT × HR = 1.770615)
+  stays under the server's 2.0 stack cap; at 1.25 that product would be 2.0121 and an honest maximal
+  play would be clamped and stored unranked. Decided on 2026-08-13.
 * **RH** (Rhythmic): flat × 1.10, **for stored rows only**. The mod judged a play on the
   MILLISECOND window ladder (each character against its own target time) instead of the
   character-distance one backlog 133 had made the default, which was the tighter pair on any map
@@ -134,6 +150,7 @@ stored `ranked = false` and therefore earn no pp.
 ```
 modMult = (FL       ? max(1.0, 1 + 0.02 + 0.06·log10(notes/100)) : 1)
         · (EZ       ? 0.75                                      : 1)
+        · (HR       ? 1.25                                      : 1)
         · (RH       ? 1.10                                      : 1)
         · (Fletcher ? 0.90                                      : 1)
         · (NF       ? 0.90                                      : 1)

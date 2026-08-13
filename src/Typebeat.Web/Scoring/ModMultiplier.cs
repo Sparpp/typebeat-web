@@ -14,11 +14,13 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
-/// Per-mod values, mirroring the calculator: Easy 0.5, No Fail 0.5, Sudden Death 1.0 (absent),
-/// Gatekeeper 1.0 (absent), Flashlight 1.05, Literate 1.05, Rhythmic 1.10, Fletcher 0.98, Muted 1.0
-/// (absent), Mashing 0.1 (unranked, still priced for display parity), and the rate mods on the continuous
-/// <see cref="RateMultiplier"/> curve. The fattest RANKED stack is unchanged by a 1.0x mod:
-/// DT@2.00 (1.46) x FL (1.05) x LT (1.05) x RH (1.10) = 1.770615.
+/// Per-mod values, mirroring the calculator: Easy 0.5, No Fail 0.5, Hard Rock 1.10, Sudden Death 1.0
+/// (absent), Gatekeeper 1.0 (absent), Flashlight 1.05, Literate 1.05, Rhythmic 1.10, Fletcher 0.98,
+/// Muted 1.0 (absent), Mashing 0.1 (unranked, still priced for display parity), and the rate mods on
+/// the continuous <see cref="RateMultiplier"/> curve. The fattest RANKED stack a current client can
+/// assemble is unchanged by a 1.0x mod: DT@2.00 (1.46) x FL (1.05) x LT (1.05) x HR (1.10) =
+/// 1.770615. Rhythmic pays the same 1.10 and is mutually reachable with none of this any more (no
+/// client ships it), but a stored row carrying both would still be 1.9476765, under the cap.
 /// </para>
 ///
 /// <para>
@@ -105,6 +107,16 @@ public static class ModMultiplier
             // Time trims above (those clamped honest plays out of bounds); here it is the ceiling
             // that would be too loose, not too tight, so no honest play is at risk either way.
             "EZ" => 0.5,
+            // Hard Rock (backlog 150): HALVED judgement windows, the exact mirror of Easy. The
+            // client's calculator prices it at 1.10, and the risk runs the OPPOSITE way to Easy's:
+            // an unlisted acronym is allowed UNKNOWN_MOD_MULTIPLIER (2.0), which is ABOVE 1.10, so
+            // leaving HR out would not clamp an honest play, it would leave a laundering slot nearly
+            // twice as wide as the mod can justify. Listing it TIGHTENS the ceiling and can only
+            // ever reject a submission an honest client could not have sent. It also has to fit
+            // under STACK_CAP: DT@2.00 x FL x LT x HR = 1.770615, which is why the client prices the
+            // mod at 1.10 rather than at the 1.25 it is worth for pp (that product would be 2.0121,
+            // over the cap, and would unrank an honest maximal play).
+            "HR" => 1.10,
             "SD" => 1.0,
             // Gatekeeper (backlog 107): the strict wrong-key model, which used to be the client's
             // default and is now a ranked mod. Listed at 1.0 rather than left to fall through to
