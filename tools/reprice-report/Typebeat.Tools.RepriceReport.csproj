@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Backlog 152: what a reprice would do to the live catalogue, without doing it.
+
+    152 moved LENGTH pricing out of pp (the max(0.1, 1 + 0.50*log10(notes/100)) factor was DELETED)
+    and into the star rating (an additive 0.12*max(0, log10(cells/100)) bonus). Its acceptance clause
+    is a before/after diff over prod data, and nothing could produce one: PaceBackfill.RunAsync and
+    PpBackfill.RunAsync are the only code that reprices a catalogue and both of them WRITE, at boot,
+    with no way to ask what they would do. This is that dry run, and it never writes anything at all.
+
+    UNLIKE tools/score-recalc, THIS TOOL DOES NOT COMPILE THE GAME. Nothing here touches a replay:
+    the "after" star ratings come from BeatmapPackageParser.ParseDifficulty (server side, a text
+    parse) and the "after" pp from PerformancePoints.ForScore (server side), which is exactly the
+    pair of code paths the two backfills use. So there is no TypebeatGameProject / TypebeatRulesetProject
+    property here and none needs passing on the command line for THIS project; a solution-wide build
+    from a worktree still needs them for WireCompat and score-recalc.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Typebeat.Tools.RepriceReport</RootNamespace>
+    <AssemblyName>Typebeat.Tools.RepriceReport</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Typebeat.Web\Typebeat.Web.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The analysis is the tool: every predicate 152's acceptance clause names is a pure function
+         over rows here, so the tests drive them directly on synthetic maps and scores rather than
+         needing a database or a site. Nothing in here is an API, so it stays internal. -->
+    <InternalsVisibleTo Include="Typebeat.Web.Tests" />
+  </ItemGroup>
+
+</Project>
