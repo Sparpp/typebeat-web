@@ -102,6 +102,23 @@ public sealed record StoredScore(
 }
 
 /// <summary>
+/// One point in the space the reproduce pass SEARCHES: which spacebar rule (backlog 148) and which
+/// rate-window rule (backlog 150) graded a row. The two are paired because they are the two era axes
+/// with no key of their own, so a row cannot be asked which one judged it and has to be told.
+///
+/// <para>THE PAIR IS A SEARCH SPACE, NOT A SETTING. Backlog 148 and 150 shipped in one release, so
+/// the combination a real client ran is either both old or both new, but the pair is searched as a
+/// 2 x 2 rather than as one switch: they are two independent facts about how a press was graded (the
+/// game's own <c>RateWindowRule</c> doc says as much), and the next change to either has no reason to
+/// move the other.</para>
+/// </summary>
+public readonly record struct WindowEra(SpaceTimingRule Space, RateWindowRule Rate)
+{
+    /// <summary>The spelling the report prints, matching the rules' own type names.</summary>
+    public override string ToString() => $"SpaceTimingRule.{Space} + RateWindowRule.{Rate}";
+}
+
+/// <summary>
 /// Which sweep is being run. The two are NOT a threshold apart: they judge under different rules,
 /// value total_score differently, and check themselves with different predicates. Keeping them as
 /// one mode with a looser gate is exactly the failure backlog 142 warns about.
@@ -110,13 +127,13 @@ public enum RecalcMode
 {
     /// <summary>
     /// The verification sweep (backlog 114). Re-derives under the rules the row was PRICED under
-    /// (all FOUR era axes at the era that judged the row: the typo rule PER ROW, see
-    /// <see cref="Recalculation.StoredEraTypoRuleFor"/>, plus <see cref="ComboRestoreRule.Never"/>,
-    /// <see cref="SpaceTimingRule.Timed"/> and
-    /// <see cref="RateWindowRule.Unscaled"/>) and refuses any row it cannot reproduce exactly, then
-    /// reports what today's TYPO rule alone would make of it, holding every other axis still. Its
-    /// output answers "does the harness understand this row", which is the question a supersede sweep
-    /// cannot ask of itself.
+    /// (all FOUR era axes at the era that judged the row: <see cref="ComboRestoreRule.Never"/> for
+    /// every row, the typo rule PER ROW from the row's own keys, see
+    /// <see cref="Recalculation.StoredEraTypoRuleFor"/>, and the spacebar and rate windows PER ROW by
+    /// reconstruction, see <see cref="Recalculation.WindowEraSearch"/>) and refuses any row it cannot
+    /// reproduce exactly, then reports what today's TYPO rule alone would make of it, holding every
+    /// other axis still. Its output answers "does the harness understand this row", which is the
+    /// question a supersede sweep cannot ask of itself.
     /// </summary>
     Reproduce,
 
@@ -197,10 +214,12 @@ public enum SkipReason
     ///
     /// <para>In a REPRODUCE sweep this reason should now be rare and interesting rather than
     /// universal. Backlog 151 gave the harness the two missing era switches (the spacebar and the
-    /// rate windows), so a row from before the backlog 133 arc reproduces again, and backlog 155
-    /// stopped it re-grading a row judged since backlog 126 on the retired typo rule; what is left
-    /// here is a row from the 133-to-147 window, whose ladder no longer exists in any form, or a
-    /// genuine disagreement worth looking at.</para>
+    /// rate windows), so a row from before the backlog 133 arc reproduces again; backlog 155 stopped
+    /// it re-grading a row judged since backlog 126 on the retired typo rule; and backlog 156 stopped
+    /// it re-grading a row played since the 2026-08-13 release on the pre-release windows, by proving
+    /// each such row's window era by reconstruction. What is left here is a row from the 133-to-147
+    /// window, whose ladder no longer exists in any form, or a genuine disagreement worth looking at,
+    /// and a row reaching this reason now means NO combination of the expressible eras re-derived it.</para>
     /// </summary>
     NotReproducible,
 
@@ -249,9 +268,28 @@ public sealed record RecalcResult(
     // The mod score multiplier baked into NewTotalScore. In Reproduce mode this is the row's own,
     // recovered rather than reapplied; in Supersede mode it is today's, because a superseded score
     // has to be one today's client could produce.
-    double AppliedMultiplier = 1)
+    double AppliedMultiplier = 1,
+    // The spacebar and rate-window era the old-rule arm reproduced this row under (backlog 156).
+    // NULL means no era did, which is either a row the sweep never re-derived at all (no replay, no
+    // beatmap, a failed run) or a row that reproduced under NONE of the combinations. Both of those
+    // are absences and neither is an era, which is why this is nullable rather than defaulted: a
+    // default here would put an era on a row nothing proved one for, and that is the exact thing
+    // backlog 156 refuses to do.
+    WindowEra? ReproducedUnderWindowEra = null)
 {
     public bool Recalculated => Skip == SkipReason.None;
+
+    /// <summary>
+    /// Whether this row's window era had to be PROVED BY RECONSTRUCTION (backlog 156), i.e. the row
+    /// did not come back under <see cref="Recalculation.DefaultWindowEra"/> and the pass re-derived
+    /// it under the remaining combinations until one reproduced it exactly.
+    ///
+    /// <para>Derived rather than stored, because it is the same fact: the default arm is tried first
+    /// and the search only ever runs when it fails, so an era other than the default can only have
+    /// come from the search. Keeping it as a second flag would let the two disagree.</para>
+    /// </summary>
+    public bool WindowEraProvedByReconstruction
+        => ReproducedUnderWindowEra is WindowEra era && era != Recalculation.DefaultWindowEra;
 
     /// <summary>
     /// The row could not be re-derived and the operator therefore has to say what should happen to
@@ -335,12 +373,25 @@ public sealed record RecalcResult(
 /// since a row was stored has to be expressible or the pass reports rule drift as corruption. There
 /// are four such axes, all of them set on that pass to the era that judged the row: the typo rule
 /// (backlog 109), combo restore (140), the untimed spacebar (148) and the rate-scaled windows (150).
-/// Three of them are the same for every row in the table and are constants below. The TYPO axis is
-/// not: it moved while the table was already filling, so the table holds rows from both sides of it
-/// and the pass reads each row's era off the row itself (<see cref="StoredEraTypoRuleFor"/>). The one
-/// era that is NOT expressible is the backlog 133-to-147 window, whose four-tier character-distance
-/// ladder backlog 147 deleted: those rows cannot be reproduced by any setting of any switch, because
-/// the code that judged them no longer exists.</para>
+/// HOW THAT ERA IS DECIDED DIFFERS BY AXIS, in three ways, and the difference is the whole of what
+/// makes the pass a proof rather than a guess:</para>
+///
+/// <list type="bullet">
+/// <item>COMBO RESTORE is a constant (<see cref="stored_era_combo_rule"/>). Backlog 140 shipped after
+/// the last row that could care, so it is the same answer for every row in the table.</item>
+/// <item>The TYPO rule is READ OFF THE ROW (<see cref="StoredEraTypoRuleFor"/>, backlog 155). It moved
+/// while the table was already filling, so the table holds rows from both sides of it, and an
+/// uncorrected typo takes a key of its own that only one of the two rules can produce.</item>
+/// <item>The SPACEBAR and the RATE WINDOWS are PROVED BY RECONSTRUCTION (<see cref="WindowEraSearch"/>,
+/// backlog 156). They moved while the table was filling too, but neither leaves a key, so there is
+/// nothing to read: the pass re-derives a row that does not come back under
+/// <see cref="DefaultWindowEra"/> under each remaining combination and pins it to the one that
+/// reproduces it exactly.</item>
+/// </list>
+///
+/// <para>The one era that is NOT expressible is the backlog 133-to-147 window, whose four-tier
+/// character-distance ladder backlog 147 deleted: those rows cannot be reproduced by any setting of
+/// any switch, because the code that judged them no longer exists.</para>
 /// </summary>
 public static class Recalculation
 {
@@ -427,42 +478,97 @@ public static class Recalculation
     private const ComboRestoreRule live_combo_rule = ComboRestoreRule.OnFix;
 
     /// <summary>
-    /// The space-timing era EVERY stored row was PLAYED in (backlog 148, backlog 151): no score in
-    /// the database was played by a client that took the spacebar out of the timing challenge.
+    /// The space-timing era the reproduce pass TRIES FIRST (backlog 148, backlog 151): the spacebar
+    /// was inside the timing challenge, which is how every row stored before the 2026-08-13 release
+    /// was graded.
     ///
     /// <para>This is the WIDEST of the four era axes, because every map has spaces. Judged on the
-    /// live rule a stored row's spaces all come back as top-tier hits that never break combo, so
+    /// wrong rule a row's spaces all move tier and stop or start breaking combo, so
     /// <c>statistics</c> and <c>max_combo</c> both move and the reproduce pass fails on rows that are
     /// not corrupt at all. Before this constant existed the pass could not reproduce ANY row in the
     /// table, and the failure presented as "these replays are corrupt" when in fact the rules had
     /// moved underneath them.</para>
+    ///
+    /// <para>IT IS NO LONGER TRUE OF EVERY ROW, which is the whole of backlog 156, and is why this is
+    /// a starting point rather than an assertion. Backlog 148 shipped while the table was filling, so
+    /// a client updated since then submits rows graded the other way, and the population GROWS with
+    /// every play. A row this default does not reproduce goes to <see cref="WindowEraSearch"/>.</para>
     /// </summary>
     private const SpaceTimingRule stored_era_space_rule = SpaceTimingRule.Timed;
 
     /// <summary>
     /// The space-timing rule live play uses, and therefore the one a
-    /// <see cref="RecalcMode.Supersede"/> sweep re-judges under.
+    /// <see cref="RecalcMode.Supersede"/> sweep re-judges under, and the one a row played since the
+    /// release has to be REPRODUCED under, because it is the rule that judged it.
     /// </summary>
     private const SpaceTimingRule live_space_rule = SpaceTimingRule.Untimed;
 
     /// <summary>
-    /// The rate-window era EVERY stored row was PLAYED in (backlog 150, backlog 151): the rate mods
-    /// have been ranked for the whole life of the score table, and until this release none of them
-    /// scaled the judgement windows, so a stored DT / NC / HT row was graded on windows fixed in
-    /// BEATMAP milliseconds.
+    /// The rate-window era the reproduce pass TRIES FIRST (backlog 150, backlog 151): the rate mods
+    /// have been ranked for the whole life of the score table, and until the 2026-08-13 release none
+    /// of them scaled the judgement windows, so a DT / NC / HT row stored before it was graded on
+    /// windows fixed in BEATMAP milliseconds.
     ///
     /// <para>Set unconditionally rather than only for rows that carry a rate mod: the arm it gates is
     /// a loop over the run's rate mods, which is empty for everything else, so the axis is inert for
     /// a row it does not apply to (pinned by the game's <c>JudgementEraTest</c>). Deciding per row
-    /// would mean parsing the mods twice and getting the same answer.</para>
+    /// would mean parsing the mods twice and getting the same answer. That inertness is also why the
+    /// search below can leave this axis ambiguous on a row with no rate mod without it mattering.</para>
+    ///
+    /// <para>Like the spacebar, a STARTING POINT rather than an assertion since backlog 156: a rate
+    /// row played since the release was graded on windows scaled by its clock rate.</para>
     /// </summary>
     private const RateWindowRule stored_era_rate_rule = RateWindowRule.Unscaled;
 
     /// <summary>
     /// The rate-window rule live play uses, and therefore the one a
-    /// <see cref="RecalcMode.Supersede"/> sweep re-judges under.
+    /// <see cref="RecalcMode.Supersede"/> sweep re-judges under, and the one a rate row played since
+    /// the release has to be REPRODUCED under.
     /// </summary>
     private const RateWindowRule live_rate_rule = RateWindowRule.ScaledByRate;
+
+    /// <summary>
+    /// The window era the reproduce pass tries first, and the only one it tries for a row that comes
+    /// back under it. Every row stored before the 2026-08-13 release is in this era, which is still
+    /// the overwhelming majority of the table, so the search below costs the table nothing.
+    /// </summary>
+    public static readonly WindowEra DefaultWindowEra = new(stored_era_space_rule, stored_era_rate_rule);
+
+    /// <summary>
+    /// The window eras a row is re-derived under, IN ORDER, until one reproduces it exactly. This is
+    /// backlog 156's answer to the two era axes that have no key to read: PROVE the era by
+    /// reconstruction instead of inferring it.
+    ///
+    /// <para>WHY NOT A TIMESTAMP, which is the obvious alternative and the wrong one. The release
+    /// instant is known exactly (the web push IS the deploy), but the SERVER deploying is not the
+    /// CLIENT updating: the game ships by packing Windows locally and dispatching CI, and players
+    /// update whenever they update, so an old build goes on submitting old-era statistics for hours
+    /// or days afterwards. A timestamp boundary would misclassify exactly those rows, and silently,
+    /// since nothing in the output would show which side of the boundary a row fell. Reconstruction
+    /// needs no release time, no schema change and no trust in a clock.</para>
+    ///
+    /// <para>WHY THE ORDER, and why the ambiguity it resolves is harmless. Reproducing means
+    /// re-deriving <c>statistics</c> and <c>max_combo</c> EXACTLY, which are the two quantities the
+    /// server stores verbatim from the client and everything else is derived from, so two
+    /// combinations that both reproduce a row have both re-derived it to the same numbers: nothing
+    /// downstream can tell which one was picked. Ambiguity is not rare either, it is the normal case,
+    /// because the rate axis is inert on a row with no rate mod and the space axis is inert on a map
+    /// with no spaces. The order therefore exists to make the choice DETERMINISTIC and the report's
+    /// label stable, not to make it correct, and it prefers the two eras a client has actually run
+    /// (both rules old, then both rules new, since 148 and 150 shipped in one release) over the two
+    /// half-and-half combinations that no build ever offered.</para>
+    ///
+    /// <para>WHAT IT DOES NOT DO: assign an era to a row no combination reproduces. That row keeps the
+    /// default arm's mismatch and reports as unexplained exactly as it does today. A search that
+    /// always finds an answer would turn the reproduce pass from a proof into a shrug.</para>
+    /// </summary>
+    public static readonly IReadOnlyList<WindowEra> WindowEraSearch = new[]
+    {
+        DefaultWindowEra,
+        new WindowEra(live_space_rule, live_rate_rule),
+        new WindowEra(live_space_rule, stored_era_rate_rule),
+        new WindowEra(stored_era_space_rule, live_rate_rule),
+    };
 
     /// <param name="backfillMistypes">
     /// Whether to introduce a mistype count into rows that predate the stat. Off by default, and
@@ -515,33 +621,73 @@ public static class Recalculation
         //    any of them on the live arm would re-grade the run on a ladder it was never played on
         //    and report the difference as a corrupt row.
         //
-        //    Three of the four are a constant, because they moved after the last row that could care
-        //    was stored. The TYPO axis is read off the row (backlog 155): it moved while the table
-        //    was filling, so a row holding an uncorrected typo is reproduced under the rule that left
-        //    it standing, and everything else keeps the older default.
+        //    Only ONE of the four is a constant: combo restore, which moved after the last row that
+        //    could care was stored. The TYPO axis is read off the row (backlog 155), since an
+        //    uncorrected typo takes a key only one of the two rules can produce. The SPACEBAR and the
+        //    RATE WINDOWS have no such key, so they are PROVED BY RECONSTRUCTION (backlog 156): the
+        //    row is re-derived under DefaultWindowEra first, and only if that does not come back is
+        //    it re-derived under the remaining combinations until one reproduces it exactly.
         //
-        //    THAT "three of the four" IS ALREADY OUT OF DATE, see backlog 156: the 2026-08-13 prod
-        //    report found rows played after 148 and 150 shipped, so the spacebar and rate-window
-        //    constants below now assert something untrue of the newest rows and re-derive them on
-        //    windows they were not judged on. One of those rows carries Hard Rock, which also kills
-        //    the premise that let TypeBeatReplayScorer apply the EZ/HR window scales unconditionally.
-        //    Neither is fixed here, and neither has a self-describing key the way the typo axis does,
-        //    so both need a release time to key off (scores.ended_at is already there for it).
-        var oldRule = TypeBeatReplayScorer.Score(
+        //    The search runs on the residual alone, which is the point of trying the default first:
+        //    a row from before the 2026-08-13 release (the overwhelming majority of the table) costs
+        //    exactly what it cost before, one re-derivation, and its result means exactly what it
+        //    meant before. A row no combination reproduces keeps THIS arm's mismatch and reports as
+        //    unexplained, which is what stops the search from being a way of always finding an answer.
+        //
+        //    THE EASY AND HARD ROCK WINDOW SCALES ARE NOT AN ERA AXIS and deliberately have no switch,
+        //    even though stored rows carrying Hard Rock now exist, which retires the premise
+        //    TypeBeatReplayScorer.createEngine states for them. The conclusion survives on a different
+        //    footing: those two mods have only ever had ONE behaviour, so a row carrying either was
+        //    necessarily played with that scaling and applying it unconditionally reproduces the row.
+        //    Such a row fails the default on the SPACE axis like any other, and the search fixes it
+        //    there. This would need revisiting only if an EZ or HR window scale were ever retuned.
+        var typoRule = StoredEraTypoRuleFor(stored);
+
+        TypeBeatReplayAccount ScoreUnder(WindowEra windows) => TypeBeatReplayScorer.Score(
             playable,
             mods,
             score.Replay,
-            StoredEraTypoRuleFor(stored),
+            typoRule,
             stored_era_combo_rule,
-            stored_era_space_rule,
-            stored_era_rate_rule);
+            windows.Space,
+            windows.Rate);
+
+        var era = DefaultWindowEra;
+        var oldRule = ScoreUnder(era);
         var oldStatistics = WireCounts.From(oldRule.Statistics);
 
         string mismatch = ReproductionMismatch(stored, oldRule, oldStatistics, preMistypeEra);
         bool reproduced = mismatch.Length == 0;
+        WindowEra? provedEra = reproduced ? era : null;
+
+        if (!reproduced)
+        {
+            foreach (var candidate in WindowEraSearch)
+            {
+                if (candidate == DefaultWindowEra)
+                    continue;
+
+                var attempt = ScoreUnder(candidate);
+                var attemptStatistics = WireCounts.From(attempt.Statistics);
+
+                if (ReproductionMismatch(stored, attempt, attemptStatistics, preMistypeEra).Length > 0)
+                    continue;
+
+
+                era = candidate;
+                oldRule = attempt;
+                oldStatistics = attemptStatistics;
+                provedEra = candidate;
+                reproduced = true;
+                break;
+            }
+        }
 
         if (mode == RecalcMode.Reproduce && !reproduced)
         {
+            // The mismatch reported is the DEFAULT arm's, not the last combination the search tried.
+            // A reader looking at an unexplained row wants the disagreement against the era the row
+            // is most likely to be from, and a list of four near misses would bury it.
             return Skipped(stored, SkipReason.NotReproducible, mismatch, mode) with
             {
                 OldRuleStatistics = oldStatistics,
@@ -572,6 +718,11 @@ public static class Recalculation
         //    under today's typo rule this arm is the same judgement as the one above, and the row
         //    correctly reports as unmoved: there is no rule change left for it to be repriced by.
         //
+        //    "The stored era" for the two window axes means the era the arm above PROVED for this
+        //    row, not the default (backlog 156). Holding them at the default for a row proved to be
+        //    from the newer era would vary three axes while claiming to vary one, and would report a
+        //    row played since the release as moving backwards onto a ladder it was never on.
+        //
         //    Supersede applies ALL of today's rules, judgement AND combo restore AND the spacebar
         //    AND the rate windows, together (backlog 136, decided 2026-08-13; backlog 151 adds the
         //    last two). Not because moving four axes is nicer to audit, it is worse, but because
@@ -584,8 +735,8 @@ public static class Recalculation
             score.Replay,
             live_typo_rule,
             mode == RecalcMode.Supersede ? live_combo_rule : stored_era_combo_rule,
-            mode == RecalcMode.Supersede ? live_space_rule : stored_era_space_rule,
-            mode == RecalcMode.Supersede ? live_rate_rule : stored_era_rate_rule);
+            mode == RecalcMode.Supersede ? live_space_rule : era.Space,
+            mode == RecalcMode.Supersede ? live_rate_rule : era.Rate);
 
         var statistics = WireCounts.From(newRule.Statistics);
         var maximumStatistics = WireCounts.From(newRule.MaximumStatistics);
@@ -611,6 +762,7 @@ public static class Recalculation
                     OldRuleTotalScore = oldRule.TotalScore,
                     Reproduced = reproduced,
                     ReproductionDetail = reproduced ? null : mismatch,
+                    ReproducedUnderWindowEra = provedEra,
                 };
             }
         }
@@ -723,7 +875,8 @@ public static class Recalculation
             mode,
             reproduced,
             reproduced ? null : mismatch,
-            appliedMultiplier);
+            appliedMultiplier,
+            provedEra);
     }
 
     /// <summary>

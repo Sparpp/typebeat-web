@@ -83,6 +83,8 @@ public static class Report
             output.WriteLine("                             (combo restore, the spacebar, the rate windows)");
             output.WriteLine("verified against             the typo rule that judged the ROW: Deferred where the row's own");
             output.WriteLine("                             statistics prove it (a `good` key), ImmediateMiss otherwise");
+            output.WriteLine("                             and the spacebar / rate windows that judged the ROW, proved by");
+            output.WriteLine("                             reconstruction where the pre-release pair does not re-derive it");
             output.WriteLine("total_score priced with      the row's OWN mod multiplier, recovered not reapplied");
         }
 
@@ -104,6 +106,12 @@ public static class Report
         // both modes for the same reason: it is what the pass is judging those rows on, and a reader
         // should not have to infer it from a reproduction rate.
         output.WriteLine($"PINNED TO TypoRule.Deferred  {plan.PinnedToTheDeferredTypoRule.Count}");
+
+        // The third population, and the one that grows with every play (backlog 156): rows the
+        // pre-release spacebar and rate windows did not re-derive, whose era the pass therefore had
+        // to prove by re-deriving them under the other combinations. Which era each one landed in is
+        // broken down in the reproduction section below.
+        output.WriteLine($"PINNED BY ERA RECONSTRUCTION {plan.PinnedByWindowEraSearch.Count}");
 
         output.WriteLine($"ROWS THIS RUN WOULD WRITE    {plan.RowsWritten}"
                          + (plan.Mode == RecalcMode.Supersede ? "   <- pass this to --expect-superseded" : string.Empty));
@@ -131,6 +139,10 @@ public static class Report
             output.WriteLine("its maximum_statistics) never can: it was graded on a four-tier CHARACTER-DISTANCE ladder");
             output.WriteLine("that backlog 147 deleted, and no switch can bring back code that is gone. A row that fails");
             output.WriteLine("to reproduce and is NOT from that window is worth looking at before applying.");
+            output.WriteLine();
+            output.WriteLine("A row played SINCE the 2026-08-13 release should reproduce too (backlog 156): the spacebar");
+            output.WriteLine("and rate-window eras are proved per row by re-deriving the row under each combination of the");
+            output.WriteLine("two, so a client updating whenever its player updates it cannot put a row on the wrong ladder.");
         }
         else
         {
@@ -157,6 +169,7 @@ public static class Report
         output.WriteLine("                                     with no typo left standing has none), so every other row is");
         output.WriteLine("                                     re-derived under TypoRule.ImmediateMiss as before.");
 
+        PrintWindowEras(eligible, output);
         PrintUnreproducible(eligible, plan, output);
 
         foreach (var group in skipped.GroupBy(r => r.Skip).OrderBy(g => g.Key.ToString(), StringComparer.Ordinal))
@@ -209,6 +222,43 @@ public static class Report
 
             foreach (string? hash in unavailable.Take(10))
                 output.WriteLine($"    {hash}");
+        }
+    }
+
+    /// <summary>
+    /// WHICH SPACEBAR AND RATE-WINDOW ERA the pass reproduced these rows under, counted per
+    /// combination (backlog 156). Neither axis leaves a key in the row, so unlike the typo rule above
+    /// this is not read anywhere: a row the pre-release pair does not re-derive is re-derived under
+    /// each remaining combination and pinned to the one that reproduces it EXACTLY, which proves the
+    /// era rather than inferring it from a submission time the client's update schedule makes a lie.
+    ///
+    /// <para>Printed as a breakdown rather than a single count because which era the searched rows
+    /// landed in is the finding. Every row submitted since the 2026-08-13 release is in the searched
+    /// population, so the line for the live pair growing run over run is the expected reading, and
+    /// that line staying at zero while new rows appear would mean the search is not reaching them.</para>
+    ///
+    /// <para>Rows no combination reproduced are NOT here. They have no era, they are counted as
+    /// unexplained below, and that is the property worth checking: a search that always found an
+    /// answer would turn the reproduce pass from a proof into a shrug.</para>
+    /// </summary>
+    private static void PrintWindowEras(IReadOnlyList<RecalcResult> eligible, TextWriter output)
+    {
+        var searched = eligible.Where(r => r.WindowEraProvedByReconstruction).ToList();
+
+        output.WriteLine($"  of these, era proved by    {searched.Count,-6}  the pre-release spacebar and rate windows did not");
+        output.WriteLine("  reconstruction                     re-derive them, so each remaining combination of those two");
+        output.WriteLine("                                     axes was tried and the row pinned to the one that reproduced");
+        output.WriteLine("                                     it exactly. No release time is used: a client updates when its");
+        output.WriteLine("                                     player updates it, so a submission time cannot date the rules.");
+
+        if (searched.Count == 0)
+            return;
+
+        foreach (var group in searched.GroupBy(r => r.ReproducedUnderWindowEra!.Value)
+                                      .OrderByDescending(g => g.Count())
+                                      .ThenBy(g => g.Key.ToString(), StringComparer.Ordinal))
+        {
+            output.WriteLine($"      {group.Key,-56} {group.Count(),5}");
         }
     }
 

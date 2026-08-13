@@ -1346,7 +1346,15 @@ public class ScoreRecalcTest
     ///
     /// <para>Both halves are asserted, because the first alone would pass if the tool were judging
     /// under the live rule AND the stored row had been built under it too. The second is a row built
-    /// as today's client would produce it, which the tool must NOT reproduce.</para>
+    /// as today's client produces it, and the two eras have to come back as DIFFERENT accounts of the
+    /// same run or the switch is doing nothing.</para>
+    ///
+    /// <para>THE SECOND HALF INVERTED AT BACKLOG 156, and the inversion is the point rather than a
+    /// weakening. It used to assert that a row judged on today's space rule was REFUSED, on the
+    /// premise that no stored client had produced one. That premise expired when 148 shipped: such
+    /// rows exist now, they grow with every play, and refusing them was the bug. So the assertion is
+    /// now that the pass reproduces it and pins it to the era that judged it, while the accounts
+    /// staying different is what still proves the switch is live.</para>
     /// </summary>
     [Test]
     public void ARowPlayedBeforeTheSpaceExemptionReproducesAgain()
@@ -1364,6 +1372,8 @@ public class ScoreRecalcTest
         {
             Assert.That(storedEra.Skip, Is.EqualTo(SkipReason.None), "a pre-148 row must be re-derivable");
             Assert.That(storedEra.Reproduced, Is.True);
+            Assert.That(storedEra.ReproducedUnderWindowEra, Is.EqualTo(Recalculation.DefaultWindowEra));
+            Assert.That(storedEra.WindowEraProvedByReconstruction, Is.False, "it came back under the default, so nothing was searched");
 
             // The era it reproduced: the late space was a Lagging press that spent its cell on a
             // Miss and ended the run two characters in.
@@ -1371,10 +1381,16 @@ public class ScoreRecalcTest
             Assert.That(storedEra.OldRuleStatistics!["great"], Is.EqualTo(4));
             Assert.That(storedEra.OldRuleMaxCombo, Is.EqualTo(2));
 
-            // ...and the harness is really using it. A row judged on TODAY's space rule is one no
-            // stored client produced, and the reproduce pass refuses it rather than quietly agreeing.
-            Assert.That(liveEra.Skip, Is.EqualTo(SkipReason.NotReproducible));
-            Assert.That(liveEra.Detail, Does.Contain("miss").Or.Contain("max_combo"));
+            // ...and the harness is really using it: the same run under today's space rule is a
+            // materially different account, which is the whole reason the axis needs a switch.
+            Assert.That(liveEra.Skip, Is.EqualTo(SkipReason.None), "a post-148 row is re-derivable too, under its own era");
+            Assert.That(liveEra.Reproduced, Is.True);
+            Assert.That(liveEra.WindowEraProvedByReconstruction, Is.True, "the default did not re-derive it, so the era was searched for");
+            Assert.That(liveEra.ReproducedUnderWindowEra!.Value.Space, Is.EqualTo(SpaceTimingRule.Untimed));
+
+            Assert.That(liveEra.OldRuleStatistics!.GetValueOrDefault("miss"), Is.Zero);
+            Assert.That(liveEra.OldRuleStatistics!["great"], Is.EqualTo(5));
+            Assert.That(liveEra.OldRuleMaxCombo, Is.EqualTo(5));
         });
     }
 
@@ -1383,6 +1399,11 @@ public class ScoreRecalcTest
     /// is what a pre-150 Double Time client stored; today's rule stretches the Great window by the
     /// clock rate and pays all three. Narrower than the space era (it only reaches DT / NC / HT rows)
     /// but it moves the same two quantities on the rows it does reach.
+    ///
+    /// <para>Inverted at backlog 156 for the same reason as the space case above: a DT row played
+    /// since 150 shipped exists now, so the pass proves its era instead of refusing it. The map has
+    /// no spaces, so the space axis is inert here and the row is pinned to the live PAIR: that is the
+    /// harmless ambiguity the search order resolves, and it is asserted on its own further down.</para>
     /// </summary>
     [Test]
     public void ARowPlayedBeforeTheRateWindowScalingReproducesAgain()
@@ -1404,10 +1425,14 @@ public class ScoreRecalcTest
         {
             Assert.That(storedEra.Skip, Is.EqualTo(SkipReason.None), "a pre-150 rate row must be re-derivable");
             Assert.That(storedEra.Reproduced, Is.True);
+            Assert.That(storedEra.ReproducedUnderWindowEra, Is.EqualTo(Recalculation.DefaultWindowEra));
             Assert.That(storedEra.OldRuleStatistics!["ok"], Is.EqualTo(3), "the base ladder graded 500 ms late as an Ok");
 
-            Assert.That(liveEra.Skip, Is.EqualTo(SkipReason.NotReproducible));
-            Assert.That(liveEra.Detail, Does.Contain("great"));
+            Assert.That(liveEra.Skip, Is.EqualTo(SkipReason.None), "a post-150 rate row is re-derivable under its own era");
+            Assert.That(liveEra.Reproduced, Is.True);
+            Assert.That(liveEra.WindowEraProvedByReconstruction, Is.True);
+            Assert.That(liveEra.ReproducedUnderWindowEra!.Value.Rate, Is.EqualTo(RateWindowRule.ScaledByRate));
+            Assert.That(liveEra.OldRuleStatistics!["great"], Is.EqualTo(3), "scaled by 1.5x the same 500 ms is inside the Great window");
         });
     }
 
@@ -1630,6 +1655,267 @@ public class ScoreRecalcTest
                 Assert.That(text, Does.Contain("PINNED TO TypoRule.Deferred  1"), $"{mode}: the headline names the population");
                 Assert.That(text, Does.Contain("of these, judged since 126 1"), $"{mode}: so does the reproduction section");
                 Assert.That(results.Select(r => r.Reproduced), Is.All.True, $"{mode}: both rows are re-derived under the rule that judged them");
+            });
+        }
+    }
+
+    #endregion
+
+    #region The window eras, which are the two axes PROVED BY RECONSTRUCTION (backlog 156)
+
+    /// <summary>
+    /// The space 500 ms late: an Ok on the timed ladder (the late Ok window is 1000 ms) and a top-tier
+    /// hit on the untimed one, with no combo break either way. That is the PRODUCTION SIGNATURE of
+    /// backlog 156 in its smallest form, <c>great</c> falling while <c>ok</c> rises, and it is a
+    /// better fixture for the search than <see cref="LateSpaceReplay"/> because the two eras differ in
+    /// exactly one cell's tier and in nothing else.
+    /// </summary>
+    private static Replay MarginalSpaceReplay()
+        => Pressed((0, 'a'), (3000, 'b'), (6500, ' '), (20000, 'c'), (23000, 'd'));
+
+    /// <summary>
+    /// WHY BACKLOG 156 EXISTS. Backlog 148 and 150 shipped while the score table was already filling,
+    /// exactly as backlog 126 did for the typo rule, so the table now holds rows from both sides of
+    /// the spacebar and the rate windows. Neither axis leaves a KEY the way an uncorrected typo does,
+    /// so there is nothing to read off a row and 155's discriminator has no analogue here: the era has
+    /// to be PROVED, by re-deriving the row under each combination and keeping the one that
+    /// reproduces it exactly.
+    ///
+    /// <para>THE ERA IS NOT DATED, deliberately. The release instant is known to the second (the web
+    /// push is the deploy), but the server deploying is not the client updating: a player still on the
+    /// old build submits old-era statistics for as long as they do not update, and a timestamp
+    /// boundary would put those rows on the wrong ladder without anything in the output showing
+    /// it.</para>
+    ///
+    /// <para>The signature is asserted rather than described, and it doubles as this test's
+    /// non-vacuity: under the pre-release default the row demonstrably does NOT come back, and it
+    /// comes back wrong in exactly the way production reported (a top-tier hit demoted to an
+    /// <c>ok</c>).</para>
+    /// </summary>
+    [Test]
+    public void ARowPlayedSinceTheReleaseHasItsWindowEraProvedByReconstruction()
+    {
+        var map = SpacedBeatmap();
+        var replay = MarginalSpaceReplay();
+
+        // The row today's client produces for this run.
+        var stored = StoredFor(map, replay, spaceRule: SpaceTimingRule.Untimed, rateRule: RateWindowRule.ScaledByRate);
+        var storedStatistics = WireCounts.Parse(stored.StatisticsJson);
+
+        // The same run under the era the pass tries first, i.e. what it used to pin every row to.
+        var underTheDefault = TypeBeatReplayScorer.Score(
+            map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, combo_restore_rule,
+            Recalculation.DefaultWindowEra.Space, Recalculation.DefaultWindowEra.Rate);
+
+        var result = Recalculation.Run(stored, Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(storedStatistics["great"], Is.EqualTo(5), "the untimed spacebar takes the top tier however loosely it was hit");
+            Assert.That(storedStatistics.ContainsKey("ok"), Is.False);
+
+            // The production signature, and the non-vacuity: the default arm demotes the space.
+            Assert.That(underTheDefault.Statistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(4), "great falls...");
+            Assert.That(underTheDefault.Statistics.GetValueOrDefault(HitResult.Ok), Is.EqualTo(1), "...while ok rises, which is how prod identified the population");
+
+            // ...and the pass now proves the era instead of reporting the row as unexplained.
+            Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
+            Assert.That(result.Reproduced, Is.True);
+            Assert.That(result.WindowEraProvedByReconstruction, Is.True);
+            Assert.That(result.ReproducedUnderWindowEra!.Value.Space, Is.EqualTo(SpaceTimingRule.Untimed));
+            Assert.That(result.OldRuleStatistics!["great"], Is.EqualTo(5));
+        });
+    }
+
+    /// <summary>
+    /// THE PROPERTY MOST WORTH A TEST OF ITS OWN: a row NO combination reproduces is left
+    /// unexplained, exactly as it is today, and never quietly assigned an era. A search that always
+    /// found an answer would turn the reproduce pass from a proof into a shrug, and the pass is the
+    /// only thing standing between a supersede sweep and a row it does not understand.
+    ///
+    /// <para>The row is built with the third signature production actually shows (scores 4534, 4912
+    /// and 5035, which differ from their replays by ONE in <c>max_combo</c> or <c>combo_break</c>
+    /// alone). Backlog 156 does not fix that signature and must not appear to: those rows have to
+    /// still report as unexplained afterwards.</para>
+    /// </summary>
+    [Test]
+    public void ARowNoCombinationReproducesIsLeftUnexplainedRatherThanGivenAnEra()
+    {
+        var map = SpacedBeatmap();
+        var replay = MarginalSpaceReplay();
+
+        var stored = StoredFor(map, replay, spaceRule: SpaceTimingRule.Untimed) with { MaxCombo = 6 };
+
+        var reproduce = Recalculation.Run(stored, Decoded(map, replay));
+        var supersede = Recalculation.Run(stored, Decoded(map, replay), mode: RecalcMode.Supersede);
+
+        var plan = WritePlan.Build(new[] { supersede }, RecalcMode.Supersede, new Dictionary<UnreplayableCase, UnreplayablePolicy>(), filtered: false);
+
+        Assert.Multiple(() =>
+        {
+            // Stated rather than assumed: the whole search space really is exhausted on this row, so
+            // "no era was assigned" is a fact about the data and not about the search stopping early.
+            foreach (var era in Recalculation.WindowEraSearch)
+            {
+                var account = TypeBeatReplayScorer.Score(
+                    map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, combo_restore_rule, era.Space, era.Rate);
+
+                Assert.That(account.MaxCombo, Is.Not.EqualTo(stored.MaxCombo), $"{era} must not reproduce this row");
+            }
+
+            Assert.That(reproduce.Skip, Is.EqualTo(SkipReason.NotReproducible), "nothing is written for a row nobody can explain");
+            Assert.That(reproduce.Reproduced, Is.False);
+            Assert.That(reproduce.ReproducedUnderWindowEra, Is.Null, "no era reproduced it, so it has none");
+            Assert.That(reproduce.WindowEraProvedByReconstruction, Is.False);
+
+            // The mismatch reported is the DEFAULT arm's, unchanged from before the search existed,
+            // so an operator reading an unexplained row reads the same line they read yesterday.
+            Assert.That(reproduce.Detail, Does.Contain("max_combo 6 -> 5"));
+
+            Assert.That(supersede.Reproduced, Is.False, "and a supersede sweep still reports it as not understood");
+            Assert.That(plan.PinnedByWindowEraSearch, Is.Empty);
+        });
+    }
+
+    /// <summary>
+    /// AMBIGUITY IS THE NORMAL CASE, NOT AN EDGE CASE, and it is harmless. The rate axis is inert on a
+    /// row with no rate mod and the space axis is inert on a map with no spaces, so a searched row
+    /// usually reproduces under more than one combination. Reproducing means re-deriving
+    /// <c>statistics</c> and <c>max_combo</c> EXACTLY, which are the two quantities the server stores
+    /// verbatim, so every combination that reproduces has produced the same account: nothing
+    /// downstream can tell which was picked.
+    ///
+    /// <para>What the search order buys is therefore determinism and a stable label in the report, not
+    /// correctness. It is asserted as such: the arms are shown to AGREE first, and the pin is then
+    /// checked against the order rather than against a hand-written expectation.</para>
+    /// </summary>
+    [Test]
+    public void AnAmbiguousWindowEraIsPinnedDeterministicallyBecauseEveryReproducingArmAgrees()
+    {
+        var map = SpacedBeatmap();
+        var replay = MarginalSpaceReplay();
+        var stored = StoredFor(map, replay, spaceRule: SpaceTimingRule.Untimed);
+
+        var reproducing = Recalculation.WindowEraSearch
+                                       .Select(era => (era, account: TypeBeatReplayScorer.Score(
+                                           map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, combo_restore_rule, era.Space, era.Rate)))
+                                       .Where(x => WireCounts.Parse(stored.StatisticsJson)
+                                                             .OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
+                                                             .SequenceEqual(ToWire(x.account.Statistics).OrderBy(kvp => kvp.Key, StringComparer.Ordinal))
+                                                   && x.account.MaxCombo == stored.MaxCombo)
+                                       .ToList();
+
+        var result = Recalculation.Run(stored, Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reproducing, Has.Count.EqualTo(2), "the rate axis is inert on a row with no rate mod, so both of its arms reproduce");
+            Assert.That(reproducing.Select(x => x.era.Space), Is.All.EqualTo(SpaceTimingRule.Untimed), "the SPACE axis is the one this row can prove");
+            Assert.That(reproducing.Select(x => x.account.MaxCombo).Distinct().Count(), Is.EqualTo(1), "and the reproducing arms agree, which is why the choice cannot matter");
+
+            Assert.That(result.ReproducedUnderWindowEra, Is.EqualTo(reproducing[0].era), "the pin is the FIRST reproducing arm in the search order");
+            Assert.That(result.ReproducedUnderWindowEra, Is.EqualTo(new WindowEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate)),
+                "which is the pair a real client actually shipped, preferred over the half-and-half combinations");
+        });
+    }
+
+    /// <summary>
+    /// THE SEARCH RUNS ON THE RESIDUAL ALONE. A row that comes back under the default is pinned to the
+    /// default and reports exactly what it reported before backlog 156, even though (as asserted here)
+    /// every other combination would have reproduced it too. That is what keeps the cost on the rows
+    /// that need it and keeps the meaning of the overwhelming majority of the table unchanged.
+    /// </summary>
+    [Test]
+    public void ARowThatComesBackUnderTheDefaultIsNeverSearched()
+    {
+        var map = PlainBeatmap();
+        var replay = Pressed((0, 'a'), (4000, 'b'), (8000, 'c'));
+        var stored = StoredFor(map, replay);
+
+        var result = Recalculation.Run(stored, Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            // No spaces and no rate mod, so the search would have had a free choice of all four.
+            foreach (var era in Recalculation.WindowEraSearch)
+            {
+                var account = TypeBeatReplayScorer.Score(
+                    map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, combo_restore_rule, era.Space, era.Rate);
+
+                Assert.That(ToWire(account.Statistics), Is.EquivalentTo(WireCounts.Parse(stored.StatisticsJson)), $"{era} reproduces this row too");
+            }
+
+            Assert.That(result.Reproduced, Is.True);
+            Assert.That(result.ReproducedUnderWindowEra, Is.EqualTo(Recalculation.DefaultWindowEra), "the default is tried first and wins outright");
+            Assert.That(result.WindowEraProvedByReconstruction, Is.False, "so this row is not in the searched population");
+        });
+    }
+
+    /// <summary>
+    /// The reproduce sweep varies the TYPO rule alone, and "alone" has to mean alone for a searched
+    /// row too: its second arm holds the spacebar and the rate windows at the era the first arm
+    /// PROVED, not at the default. Held at the default they would move underneath a sweep that claims
+    /// to move one axis, and a row played since the release would be reported as moving backwards onto
+    /// a ladder it was never on.
+    /// </summary>
+    [Test]
+    public void ReproduceHoldsTheProvedWindowEraStillOnBothArms()
+    {
+        var map = SpacedBeatmap();
+        var replay = MarginalSpaceReplay();
+        var stored = StoredFor(map, replay, spaceRule: SpaceTimingRule.Untimed);
+
+        var result = Recalculation.Run(stored, Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
+            Assert.That(result.WindowEraProvedByReconstruction, Is.True, "the fixture is only interesting if the era WAS searched for");
+
+            // Nothing in this run is a typo, so varying the typo rule alone must move nothing at all.
+            Assert.That(result.NewStatistics, Is.EquivalentTo(result.OldRuleStatistics!));
+            Assert.That(result.NewMaxCombo, Is.EqualTo(result.OldRuleMaxCombo));
+            Assert.That(result.Moves, Is.False, "a reproduce sweep must not walk a proved row back onto the pre-release windows");
+        });
+    }
+
+    /// <summary>
+    /// The population is NAMED in both sweeps, on the precedent of the 133-to-147 window and of
+    /// backlog 155's typo pin, and BROKEN DOWN by which era each row landed in, because that
+    /// breakdown is the finding. It is also the one population that grows with every play: every row
+    /// submitted since the release is in it, so a reader has to be able to watch it move.
+    /// </summary>
+    [Test]
+    public void TheReconstructedPopulationIsNamedInBothSweeps()
+    {
+        var map = SpacedBeatmap();
+        var replay = MarginalSpaceReplay();
+
+        var sinceTheRelease = StoredFor(map, replay, spaceRule: SpaceTimingRule.Untimed) with { ScoreId = 7 };
+        var beforeIt = StoredFor(map, replay) with { ScoreId = 8 };
+
+        foreach (var mode in new[] { RecalcMode.Reproduce, RecalcMode.Supersede })
+        {
+            var results = new[]
+            {
+                Recalculation.Run(sinceTheRelease, Decoded(map, replay), mode: mode),
+                Recalculation.Run(beforeIt, Decoded(map, replay), mode: mode),
+            };
+
+            var plan = WritePlan.Build(results, mode, new Dictionary<UnreplayableCase, UnreplayablePolicy>(), filtered: false);
+
+            var written = new StringWriter();
+            Report.Print(results, plan, wholeTable: true, written);
+            string text = written.ToString();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(results.Select(r => r.Reproduced), Is.All.True, $"{mode}: both rows are re-derived under the era that judged them");
+                Assert.That(plan.PinnedByWindowEraSearch.Select(r => r.Stored.ScoreId), Is.EquivalentTo(new long[] { 7 }), $"{mode}: only the newer row needed a search");
+
+                Assert.That(text, Does.Contain("PINNED BY ERA RECONSTRUCTION 1"), $"{mode}: the headline names the population");
+                Assert.That(text, Does.Contain("of these, era proved by    1"), $"{mode}: so does the reproduction section");
+                Assert.That(text, Does.Contain("SpaceTimingRule.Untimed + RateWindowRule.ScaledByRate"), $"{mode}: broken down by which era they landed in");
             });
         }
     }
