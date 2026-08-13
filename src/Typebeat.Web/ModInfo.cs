@@ -11,7 +11,7 @@ public static class ModInfo
     /// <summary>CSS modifier suffix (mod-icon--{class}) grouping the acronym by mod type.</summary>
     public static string CategoryClass(string? acronym) => (acronym ?? string.Empty).ToUpperInvariant() switch
     {
-        "DT" or "NC" or "FL" or "SD" or "LT" or "GK" or "RH" => "increase",
+        "DT" or "NC" or "FL" or "SD" or "LT" or "GK" or "RH" or "HR" => "increase",
         "HT" or "NF" or "EZ" => "reduction",
         "RX" => "automation",
         _ => "other",
@@ -24,6 +24,7 @@ public static class ModInfo
         "NC" => "Nightcore",
         "HT" => "Half Time",
         "EZ" => "Easy",
+        "HR" => "Hard Rock",
         "NF" => "No Fail",
         "SD" => "Sudden Death",
         "FL" => "Flashlight",

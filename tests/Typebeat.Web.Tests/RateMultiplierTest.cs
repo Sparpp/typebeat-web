@@ -95,6 +95,10 @@ public class RateMultiplierTest
             // Easy (backlog 149): osu's 0.5x for a difficulty reduction, the same value NF carries.
             Assert.That(ModMultiplier.For("EZ", null), Is.EqualTo(0.5));
             Assert.That(ModMultiplier.For("ez", null), Is.EqualTo(0.5));
+            // Hard Rock (backlog 150): halved windows, the mirror of Easy, at the 1.10 the client's
+            // calculator prices it at. Not its 1.25 pp value: see MaxForStack_PinsTheFattestRankedStack.
+            Assert.That(ModMultiplier.For("HR", null), Is.EqualTo(1.10));
+            Assert.That(ModMultiplier.For("hr", null), Is.EqualTo(1.10));
             Assert.That(ModMultiplier.For("SD", null), Is.EqualTo(1.0));
             // Gatekeeper (backlog 107): ranked, and priced at exactly 1.0 rather than left to the
             // unknown-mod allowance, so a GK play is bounded like the no-mod play it scores as.
@@ -191,23 +195,64 @@ public class RateMultiplierTest
     [Test]
     public void MaxForStack_PinsTheFattestRankedStack()
     {
-        // DT@2.00 (1.46) × FL (1.05) × LT (1.05) × RH (1.10) = 1.770615, the dearest stack the
+        // DT@2.00 (1.46) × FL (1.05) × LT (1.05) × HR (1.10) = 1.770615, the dearest stack a current
         // client can assemble out of ranked mods. Everything else ranked is a trim (NF 0.5, FT 0.98)
-        // or neutral. Rhythmic (backlog 135) is the only entry ever to have RAISED this ceiling, and
-        // it is still comfortably under the backstop.
-        double fattest = ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("RH", null)]);
+        // or neutral, and Easy is excluded by Hard Rock. Hard Rock (backlog 150) inherited this slot
+        // from Rhythmic, which paid the same 1.10 and can no longer be selected at all.
+        //
+        // THIS PRODUCT IS WHY HARD ROCK'S SCORE MULTIPLIER IS 1.10 AND NOT THE 1.25 IT IS WORTH FOR
+        // pp: at 1.25 the same stack is 2.0121, over STACK_CAP, so the ceiling would clamp an honest
+        // maximal play and store it unranked.
+        double fattest = ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null)]);
 
         Assert.That(fattest, Is.EqualTo(1.770615).Within(1e-9));
         Assert.That(fattest, Is.LessThan(ModMultiplier.STACK_CAP), "the backstop must never bite a reachable stack");
+        double atThePpValue = ModMultiplier.For("DT", 2.00) * ModMultiplier.For("FL", null) * ModMultiplier.For("LT", null) * 1.25;
+
+        Assert.That(atThePpValue, Is.GreaterThan(ModMultiplier.STACK_CAP),
+            "pricing HR at its pp value would put the fattest honest stack over the backstop");
+
+        // A stored row could still carry Rhythmic alongside all of it (no client can send that pair
+        // today, but the ceiling is re-derived for stored rows too), and even that stays under.
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("RH", null)]),
+            Is.EqualTo(1.9476765).Within(1e-9));
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("RH", null)]),
+            Is.LessThan(ModMultiplier.STACK_CAP));
 
         // Adding the neutral / trimming ranked mods cannot beat it.
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("RH", null), ("SD", null), ("MU", null), ("GK", null)]),
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("SD", null), ("MU", null), ("GK", null)]),
             Is.EqualTo(fattest).Within(1e-9),
             "a 1.0x mod cannot move the ceiling, which is why adding Gatekeeper reprices nothing");
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("RH", null), ("FT", null)]),
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FT", null)]),
             Is.LessThan(fattest));
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("RH", null), ("NF", null)]),
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("NF", null)]),
             Is.LessThan(fattest));
+    }
+
+    /// <summary>
+    /// HARD ROCK MUST BE PRICED HERE TOO, and the direction is the same as Easy's rather than the
+    /// Flashlight / Half Time one, even though the multiplier is above 1.0: an unlisted acronym is
+    /// allowed <see cref="ModMultiplier.UNKNOWN_MOD_MULTIPLIER"/>, which is a CEILING of 2.0, and
+    /// 2.0 is far ABOVE the 1.10 an HR play can justify. So leaving it out could never unrank an
+    /// honest play; it would leave a laundering slot 1.8 times wider than the mod earns. Listing it
+    /// only ever tightens.
+    /// </summary>
+    [Test]
+    public void ModMultiplier_ClosesTheHardRockLaunderingSlot()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ModMultiplier.For("HR", null), Is.Not.EqualTo(ModMultiplier.UNKNOWN_MOD_MULTIPLIER));
+            Assert.That(ModMultiplier.For("HR", null), Is.LessThan(ModMultiplier.UNKNOWN_MOD_MULTIPLIER),
+                "listing Hard Rock must tighten the ceiling, never loosen it");
+
+            // A 1,000,000-base play with Hard Rock on it may submit 1,100,000 and no more; the
+            // unknown-mod allowance would have let 2,000,000 through.
+            Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("HR", null)])),
+                Is.EqualTo(1_100_001));
+            Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.UNKNOWN_MOD_MULTIPLIER),
+                Is.EqualTo(2_000_001));
+        });
     }
 
     [Test]

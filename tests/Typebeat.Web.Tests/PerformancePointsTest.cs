@@ -380,6 +380,34 @@ public class PerformancePointsTest
         });
     }
 
+    /// <summary>
+    /// Hard Rock (backlog 150) is the mirror of Easy on the same lever, and a flat pp bonus for the
+    /// same reason: halving the judgement windows leaves the cells, their target times and the map's
+    /// pace identical, so there is no converted map to price it through. It is NOT the reciprocal of
+    /// the Easy term, and it is not the mod's 1.10x score multiplier either.
+    /// </summary>
+    [Test]
+    public void ModMultiplier_HardRockPaysFiveQuarters()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("HR", null)], 300), Is.EqualTo(1.25).Within(1e-12)); // pp[f.hard_rock_multiplier]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("hr", null)], 300), Is.EqualTo(1.25).Within(1e-12)); // pp[f.hard_rock_multiplier]
+
+            // Stacks with the other flat multipliers, and a duplicated acronym is applied once.
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("HR", null), new ScoreMod("NF", null)], 300),
+                Is.EqualTo(1.125).Within(1e-12)); // pp[f.mod_multiplier(["HR", "NF"], 300)]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("HR", null), new ScoreMod("HR", null)], 300),
+                Is.EqualTo(1.25).Within(1e-12)); // pp[f.hard_rock_multiplier]
+
+            // The client makes Easy and Hard Rock mutually exclusive, so a row carrying both is
+            // tamper-shaped; it is priced as the product rather than guessed at, exactly as any
+            // other impossible stack is.
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("HR", null), new ScoreMod("EZ", null)], 300),
+                Is.EqualTo(0.9375).Within(1e-12)); // pp[f.mod_multiplier(["HR", "EZ"], 300)]
+        });
+    }
+
     [Test]
     public void ModMultiplier_SuddenDeathMutedAndUnknownModsAreNeutral()
     {
