@@ -870,8 +870,20 @@ public class ScoreRecalcTest
             "--i-understand-this-discards-the-stored-numbers",
         }), Is.EqualTo(1), "--expect-superseded is the guard a blind sweep cannot satisfy");
 
+        // ... and neither expectation stands in for the other. Knowing how many rows will be written
+        // is not knowing how many of them are being written on a re-derivation nothing can check.
+        Assert.That(await Cli.RunAsync(new[]
+        {
+            "supersede-apply",
+            "--i-understand-this-writes-to-the-database",
+            "--i-understand-this-discards-the-stored-numbers",
+            "--expect-superseded", "0",
+        }), Is.EqualTo(1), "--expect-unreproducible is the other count a blind sweep cannot produce");
+
         // A malformed expectation is an error too, rather than a null that reads as absent later.
         Assert.That(await Cli.RunAsync(new[] { "supersede-report", "--expect-superseded", "lots" }), Is.EqualTo(1));
+        Assert.That(await Cli.RunAsync(new[] { "supersede-report", "--expect-unreproducible", "some" }), Is.EqualTo(1));
+        Assert.That(await Cli.RunAsync(new[] { "supersede-report", "--expect-unreproducible", "-1" }), Is.EqualTo(1));
 
         // And the policy spelling is checked at parse time, so a typo cannot become a policy nobody
         // typed, nor an ignored flag that leaves the case undecided for a confusing reason.
@@ -1040,6 +1052,7 @@ public class ScoreRecalcTest
                 "--cache", Path.Combine(dir, "cache"),
                 "--unreplayable", "keep",
                 "--expect-superseded", "1",
+                "--expect-unreproducible", "0",
                 "--i-understand-this-writes-to-the-database",
                 "--i-understand-this-discards-the-stored-numbers",
             }), Is.EqualTo(1), "offline is an analysis mode; it must never be able to write");
@@ -1048,6 +1061,182 @@ public class ScoreRecalcTest
         {
             Directory.Delete(dir, true);
         }
+    }
+
+    /// <summary>
+    /// The population the revert leaves behind, told apart from a genuine anomaly (backlog 151).
+    /// <c>Reproduced == false</c> answers two questions at once: a row from the backlog 133-to-147
+    /// window CANNOT reproduce (the ladder that judged it was deleted), and a row that disagrees with
+    /// the harness for any other reason is a fact nobody has explained. Superseding is right for
+    /// both; reading them as one number is not, because a sweep carrying one anomaly would look
+    /// exactly like a sweep carrying none.
+    ///
+    /// <para>Both directions are pinned, and on the shape the classifier actually meets: an era-2
+    /// row's <c>maximum_statistics</c> carries <c>perfect</c> and no <c>great</c>, an era-1 row's
+    /// carries <c>great</c> and no <c>perfect</c>, and the classification is
+    /// <c>ScoringContract.JudgedUnderTheFourthTier</c> itself rather than the tool's own reading of
+    /// those keys. The anomaly half is the non-vacuity: it does not reproduce EITHER, so a classifier
+    /// stuck at true would put it in the window and a classifier stuck at false would empty the
+    /// window, and each failure fails a different assertion below.</para>
+    /// </summary>
+    [Test]
+    public void TheDeletedWindowIsCountedApartFromAnUnexplainedFailure()
+    {
+        var map = Beatmap();
+        var replay = FixedTypoReplay(map);
+
+        var eraOne = StoredFor(map, replay);
+        var eraTwo = FourTierEra(eraOne) with { ScoreId = 2 };
+
+        // Not from the window, and still does not reproduce: the stored row claims a combo the run
+        // never reached. That is the anomaly an operator has to see.
+        var anomaly = eraOne with { ScoreId = 3, MaxCombo = eraOne.MaxCombo - 4 };
+
+        var results = new[]
+        {
+            Recalculation.Run(eraOne, Decoded(map, replay), mode: RecalcMode.Supersede),
+            Recalculation.Run(eraTwo, Decoded(map, replay), mode: RecalcMode.Supersede),
+            Recalculation.Run(anomaly, Decoded(map, replay), mode: RecalcMode.Supersede),
+        };
+
+        var plan = WritePlan.Build(results, RecalcMode.Supersede, new Dictionary<UnreplayableCase, UnreplayablePolicy>(), filtered: false);
+
+        var written = new StringWriter();
+        Report.Print(results, plan, wholeTable: true, written);
+        string text = written.ToString();
+
+        var eraTwoMaximum = WireCounts.Parse(eraTwo.MaximumStatisticsJson);
+        var eraOneMaximum = WireCounts.Parse(eraOne.MaximumStatisticsJson);
+
+        Assert.Multiple(() =>
+        {
+            // The data shape the discriminator is reading, stated rather than assumed.
+            Assert.That(eraTwoMaximum.ContainsKey("perfect"), Is.True, "an era-2 row's per-cell maximum is a perfect");
+            Assert.That(eraTwoMaximum.ContainsKey("great"), Is.False);
+            Assert.That(eraOneMaximum.ContainsKey("great"), Is.True, "an era-1 row's per-cell maximum is a great");
+            Assert.That(eraOneMaximum.ContainsKey("perfect"), Is.False);
+
+            // The server's own predicate, both ways, and the tool reading it through that predicate.
+            Assert.That(Typebeat.Web.Scoring.ScoringContract.JudgedUnderTheFourthTier(eraTwoMaximum), Is.True);
+            Assert.That(Typebeat.Web.Scoring.ScoringContract.JudgedUnderTheFourthTier(eraOneMaximum), Is.False);
+            Assert.That(eraTwo.JudgedOnTheDeletedLadder, Is.True);
+            Assert.That(eraOne.JudgedOnTheDeletedLadder, Is.False);
+            Assert.That(anomaly.JudgedOnTheDeletedLadder, Is.False, "a row can fail to reproduce without being from the window");
+
+            // All three rows are superseded; only their VISIBILITY differs. No new refusal, no new
+            // skip reason, and the era-2 row is not treated as unreplayable.
+            Assert.That(results.Select(r => r.Skip), Is.All.EqualTo(SkipReason.None));
+            Assert.That(results.Select(r => r.Reproduced), Is.EquivalentTo(new[] { true, false, false }));
+            Assert.That(plan.Unreplayable, Is.Empty);
+
+            // One row per population, and the count the new guard reads is the window's.
+            Assert.That(plan.DeletedLadderWindow.Select(r => r.Stored.ScoreId), Is.EquivalentTo(new long[] { 2 }));
+
+            Assert.That(text, Does.Contain("FROM THE 133-TO-147 WINDOW   1"));
+            Assert.That(text, Does.Contain("--expect-unreproducible"));
+            Assert.That(text, Does.Contain("reproduced exactly           1"));
+            Assert.That(text, Does.Contain("did not reproduce            2"));
+            Assert.That(text, Does.Contain("from the 133-to-147 window 1"));
+            Assert.That(text, Does.Contain("unexplained                1"));
+
+            // The anomaly is named by id so it can be looked at; the window row is not, because
+            // there is nothing to look at.
+            Assert.That(text, Does.Contain("score 3"));
+        });
+    }
+
+    /// <summary>
+    /// The offline path (<c>--offline</c>, docs/score-recalc-export.md) carries the era stamp, which
+    /// is the path this sweep is most likely to be reviewed on. It has no <c>scores</c> table to read
+    /// <c>maximum_statistics</c> out of, so the classification lives or dies on the <c>.osr</c>: its
+    /// trailing <c>LegacyReplaySoloScoreInfo</c> blob carries <c>maximum_statistics</c> verbatim, and
+    /// the decoder only synthesises that dictionary when the blob's is empty. So an exported era-2
+    /// replay classifies exactly as its database row would, and the export needs no extra field.
+    ///
+    /// <para>Round-tripped through the real encoder and the real decoder rather than asserted about,
+    /// because "the blob carries it" is a claim about a file format.</para>
+    /// </summary>
+    [Test]
+    public void AnOfflineExportCarriesTheEraStampThroughTheOsr()
+    {
+        var ruleset = new TypeBeatRuleset();
+        var map = Beatmap();
+        var replay = FixedTypoReplay(map);
+
+        var osuText = new StringWriter();
+        ruleset.EncodeToNativeFormat(map, null, osuText);
+        byte[] osu = Encoding.UTF8.GetBytes(osuText.ToString());
+        string md5 = Convert.ToHexStringLower(MD5.HashData(osu));
+
+        string dir = Path.Combine(Path.GetTempPath(), "typebeat-recalc-era-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(dir, "replays"));
+        Directory.CreateDirectory(Path.Combine(dir, "sets"));
+
+        try
+        {
+            using (var zip = ZipFile.Open(Path.Combine(dir, "sets", "set.osz"), ZipArchiveMode.Create))
+            using (var entry = zip.CreateEntry("map.osu").Open())
+                entry.Write(osu);
+
+            var submitted = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), replay, TypoRule.ImmediateMiss, combo_restore_rule, space_timing_rule, rate_window_rule);
+
+            Write(77, submitted.Statistics, submitted.MaximumStatistics);
+            Write(78, Perfected(submitted.Statistics), Perfected(submitted.MaximumStatistics));
+
+            using var source = new ReplayArchive("http://localhost", Path.Combine(dir, "cache"));
+            source.IndexPackageDirectory(Path.Combine(dir, "sets"));
+
+            var loaded = OfflineScores.Load(dir, source, null).ToDictionary(s => s.ScoreId);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(loaded.Keys, Is.EquivalentTo(new long[] { 77, 78 }));
+
+                Assert.That(WireCounts.Parse(loaded[78].MaximumStatisticsJson).ContainsKey("perfect"), Is.True,
+                    "the .osr blob is the offline run's only copy of maximum_statistics");
+                Assert.That(loaded[78].JudgedOnTheDeletedLadder, Is.True, "an offline era-2 row classifies as one");
+                Assert.That(loaded[77].JudgedOnTheDeletedLadder, Is.False, "and an era-1 row does not");
+            });
+
+            void Write(long scoreId, IReadOnlyDictionary<HitResult, int> statistics, IReadOnlyDictionary<HitResult, int> maximumStatistics)
+            {
+                var score = new Score
+                {
+                    Replay = replay,
+                    ScoreInfo = new ScoreInfo
+                    {
+                        Ruleset = ruleset.RulesetInfo,
+                        BeatmapInfo = new BeatmapInfo { MD5Hash = md5 },
+                        User = new typebeat.Game.Online.API.Requests.Responses.APIUser { Username = "recalc" },
+                        Date = new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero),
+                        Statistics = new Dictionary<HitResult, int>(statistics),
+                        MaximumStatistics = new Dictionary<HitResult, int>(maximumStatistics),
+                        MaxCombo = submitted.MaxCombo,
+                        TotalScore = submitted.TotalScore,
+                        Accuracy = submitted.Accuracy,
+                        Rank = submitted.Rank,
+                    },
+                };
+
+                using var stream = File.Create(Path.Combine(dir, "replays", $"{scoreId}.osr"));
+                new LegacyScoreEncoder(score, map).Encode(stream);
+            }
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    /// <summary>The same re-tiering <see cref="FourTierEra"/> does, on the enum rather than the wire.</summary>
+    private static Dictionary<HitResult, int> Perfected(IReadOnlyDictionary<HitResult, int> counts)
+    {
+        var copy = new Dictionary<HitResult, int>(counts);
+
+        if (copy.Remove(HitResult.Great, out int top))
+            copy[HitResult.Perfect] = copy.GetValueOrDefault(HitResult.Perfect) + top;
+
+        return copy;
     }
 
     /// <summary>

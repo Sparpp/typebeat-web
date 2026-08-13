@@ -41,6 +41,14 @@ using Typebeat.Tools.ScoreRecalc;
 // last two reach the widest: every map has spaces, and every DT/NC/HT row was graded on unscaled
 // windows. The one era NO switch can express is the backlog 133-to-147 window.
 //
+// Those rows are superseded like any other, because their stored numbers describe a game no client
+// can play, which is what superseding is for. What they get instead of a gate is VISIBILITY: they
+// are counted as their own population in the report rather than folded into a reproduction
+// percentage (they are not the same thing as a row that disagrees with the harness for an unknown
+// reason), and supersede-apply will not start until --expect-unreproducible names the count. They
+// are not an --unreplayable case: every arm of that means nothing can be derived from the row, and
+// one of these derives perfectly well, it is only the CHECK that is unavailable.
+//
 // Why not one command with a threshold: a threshold loose enough to pass a sweep in which nothing
 // reproduces is loose enough to pass genuine corruption, and that gate is the only thing standing
 // between a bad sweep and the live score table (backlog 142).
@@ -127,6 +135,20 @@ internal static class Cli
                 Console.Error.WriteLine("       supersede-report you are applying. It is checked against what this run would");
                 Console.Error.WriteLine("       actually write, so a stale or unread report stops the sweep instead of");
                 Console.Error.WriteLine("       silently applying a different one.");
+                return 1;
+            }
+
+            // The fourth guard, and the second that cannot be satisfied without having read a
+            // report: name how many rows come from the backlog 133-to-147 window. Those are
+            // superseded on numbers NOTHING can check, since the ladder that judged them is deleted,
+            // and a sweep should not be able to write them without the operator having seen how many
+            // there are. It changes no behaviour beyond that, deliberately.
+            if (options.ExpectUnreproducible is null)
+            {
+                Console.Error.WriteLine("error: 'supersede-apply' needs --expect-unreproducible <n>, the count of rows from the");
+                Console.Error.WriteLine("       backlog 133-to-147 window printed by the supersede-report you are applying. Those");
+                Console.Error.WriteLine("       rows were judged on a ladder that no longer exists, so nothing can verify what");
+                Console.Error.WriteLine("       they are being replaced with. Read the number, then pass it.");
                 return 1;
             }
         }
@@ -323,6 +345,15 @@ internal static class Cli
             return false;
         }
 
+        if (options.ExpectUnreproducible != plan.DeletedLadderWindow.Count)
+        {
+            Console.Error.WriteLine($"error: --expect-unreproducible says {options.ExpectUnreproducible}, this run holds {plan.DeletedLadderWindow.Count} row(s) from the");
+            Console.Error.WriteLine("       backlog 133-to-147 window. The report you are applying is not this sweep. Those are");
+            Console.Error.WriteLine("       the rows no reproduction check can vouch for, so the count is read before the sweep");
+            Console.Error.WriteLine("       runs rather than discovered after it. Re-run supersede-report with the SAME options.");
+            return false;
+        }
+
         if (options.ExpectSuperseded != plan.RowsWritten)
         {
             Console.Error.WriteLine($"error: --expect-superseded says {options.ExpectSuperseded}, this run would write {plan.RowsWritten}.");
@@ -352,7 +383,7 @@ internal static class Cli
 
         // Rows the policy unranks. ONLY ranked and pp move: their statistics were never re-derived,
         // so rewriting them would be inventing numbers, and backlog 142 keeps
-        // ScoringContract.JudgedBeforeTheFourthTier alive precisely so their untouched keys keep
+        // ScoringContract.JudgedUnderTheFourthTier alive precisely so their untouched keys keep
         // reading correctly. pp_version is stamped because an unranked row's price is settled at
         // null/0 whatever its map's ratings do.
         foreach (var r in plan.Unranked)
@@ -478,6 +509,13 @@ internal static class Cli
                                  the row count printed by the supersede-report you are applying.
                                  Checked against what this run would write, so a stale or unread
                                  report stops the sweep.
+              --expect-unreproducible <n>
+                                 how many of them come from the backlog 133-to-147 window, the count
+                                 the report prints as FROM THE 133-TO-147 WINDOW. Those rows were
+                                 judged on a four-tier character ladder backlog 147 deleted, so they
+                                 cannot be reproduced and nothing can verify the numbers replacing
+                                 them. This changes no behaviour: it exists so the sweep cannot be
+                                 started by anyone who has not read how many there are.
               --allow-unavailable-beatmaps
                                  proceed even though some packages could not be fetched, accepting a
                                  partly superseded leaderboard
@@ -493,7 +531,7 @@ internal static class Cli
               dotnet run --project tools/score-recalc -- report --out recalc.json
               dotnet run --project tools/score-recalc -- supersede-report --out supersede.json
               dotnet run --project tools/score-recalc -- supersede-apply \
-                  --unreplayable keep --expect-superseded 412 \
+                  --unreplayable keep --expect-superseded 412 --expect-unreproducible 7 \
                   --i-understand-this-writes-to-the-database \
                   --i-understand-this-discards-the-stored-numbers
             """);
@@ -510,6 +548,15 @@ internal static class Cli
         public string? OutFile { get; private init; }
         public int? Limit { get; private init; }
         public int? ExpectSuperseded { get; private init; }
+
+        /// <summary>
+        /// How many rows the operator read as coming from the backlog 133-to-147 window. Required by
+        /// <c>supersede-apply</c> for the same reason <see cref="ExpectSuperseded"/> is, and it is a
+        /// separate number because it answers a separate question: that one says how many rows are
+        /// being written, this one says how many of them are being written on a re-derivation nothing
+        /// can check against.
+        /// </summary>
+        public int? ExpectUnreproducible { get; private init; }
         public List<long> ScoreIds { get; } = new();
         public bool Confirmed { get; private init; }
         public bool SupersedeConfirmed { get; private init; }
@@ -528,7 +575,7 @@ internal static class Cli
         public static bool TryParse(string[] args, out Options options, out string error)
         {
             string? db = null, site = null, cache = null, offline = null, stars = null, scoresFile = null, outFile = null;
-            int? limit = null, expect = null;
+            int? limit = null, expect = null, expectUnreproducible = null;
             bool confirmed = false, supersedeConfirmed = false, backfillMistypes = false;
             bool allowUnavailable = false, allowRefused = false, wholeTable = false;
             var ids = new List<long>();
@@ -571,6 +618,16 @@ internal static class Cli
                         }
 
                         expect = e;
+                        break;
+
+                    case "--expect-unreproducible":
+                        if (!int.TryParse(Next(), out int u) || u < 0)
+                        {
+                            error = "--expect-unreproducible needs a non-negative number, the 133-to-147 window count from the report.";
+                            return false;
+                        }
+
+                        expectUnreproducible = u;
                         break;
 
                     case "--score":
@@ -620,6 +677,7 @@ internal static class Cli
                 OutFile = outFile,
                 Limit = limit,
                 ExpectSuperseded = expect,
+                ExpectUnreproducible = expectUnreproducible,
                 Confirmed = confirmed,
                 SupersedeConfirmed = supersedeConfirmed,
                 BackfillMistypes = backfillMistypes,

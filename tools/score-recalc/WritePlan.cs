@@ -11,7 +11,7 @@ public enum UnreplayableCase
     /// <summary>
     /// <c>replay_key IS NULL</c>: the row was submitted without a replay, or predates replay upload.
     /// Nothing to re-derive from, ever. RECOMMENDED POLICY: keep. The row is honest, it is simply
-    /// unverifiable, and <c>ScoringContract.JudgedBeforeTheFourthTier</c> still reads it correctly
+    /// unverifiable, and <c>ScoringContract.JudgedUnderTheFourthTier</c> still reads it correctly
     /// (backlog 142 keeps that discriminator alive for exactly these rows). Unranking it would take
     /// a real placement away from a real player for an infrastructure reason.
     /// </summary>
@@ -106,6 +106,19 @@ public sealed class WritePlan
     public required IReadOnlyList<RecalcResult> Refused { get; init; }
 
     /// <summary>
+    /// Rows judged in the backlog 133-to-147 window (<see cref="StoredScore.JudgedOnTheDeletedLadder"/>),
+    /// whatever else the sweep does with them, and the count <c>--expect-unreproducible</c> names.
+    ///
+    /// <para>Every row the run considered is counted, not just the ones it re-derived, because the
+    /// membership is a FACT ABOUT THE DATA rather than about how the sweep went: a row carries the
+    /// era stamp whether or not its replay decoded, and no client can produce a new one, so the same
+    /// selection gives the same count on the report and on the apply. It is computed here rather than
+    /// in the report so the number an operator reads and the number the guard checks cannot be two
+    /// different definitions.</para>
+    /// </summary>
+    public required IReadOnlyList<RecalcResult> DeletedLadderWindow { get; init; }
+
+    /// <summary>
     /// Whether the run selected a SUBSET of the scores (<c>--score</c> or <c>--limit</c>). The
     /// report's leaderboard section has to know: over a slice of a board it cannot tell a real place
     /// change from a row it simply did not load, so it declines to guess.
@@ -145,6 +158,7 @@ public sealed class WritePlan
             Policy = policy,
             Undecided = undecided,
             Refused = results.Where(r => r.Skip is SkipReason.NotReproducible or SkipReason.NotTheSameRun).OrderBy(r => r.Stored.ScoreId).ToList(),
+            DeletedLadderWindow = results.Where(r => r.Stored.JudgedOnTheDeletedLadder).OrderBy(r => r.Stored.ScoreId).ToList(),
             Filtered = filtered,
         };
     }
