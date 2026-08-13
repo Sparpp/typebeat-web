@@ -99,8 +99,9 @@ public class RateMultiplierTest
             Assert.That(ModMultiplier.For("gk", null), Is.EqualTo(1.0));
             Assert.That(ModMultiplier.For("FL", null), Is.EqualTo(1.05));
             Assert.That(ModMultiplier.For("LT", null), Is.EqualTo(1.05));
-            // Rhythmic (backlog 135): the millisecond judgement ladder, priced above 1.0 like the
-            // other difficulty increases rather than left to the unknown-mod allowance.
+            // Rhythmic (backlog 135), kept after backlog 147 removed the mod from the client.
+            // See ModMultiplier_StillBoundsAStoredRhythmicPlay below for why deleting it unranks
+            // every row that carries the acronym.
             Assert.That(ModMultiplier.For("RH", null), Is.EqualTo(1.10));
             Assert.That(ModMultiplier.For("rh", null), Is.EqualTo(1.10));
             Assert.That(ModMultiplier.For("FT", null), Is.EqualTo(0.98));
@@ -121,6 +122,37 @@ public class RateMultiplierTest
 
             // A mod the server has never heard of keeps the old flat allowance.
             Assert.That(ModMultiplier.For("ZZ", null), Is.EqualTo(ModMultiplier.UNKNOWN_MOD_MULTIPLIER));
+        });
+    }
+
+    /// <summary>
+    /// A STORED RHYTHMIC PLAY IS STILL BOUNDED AT THE PRICE IT WAS SUBMITTED AT. Backlog 147 removed
+    /// the mod from the client, so no new play can carry RH, but the acronym shipped and the rows
+    /// that carry it are re-priced by every path that re-derives a stored score. This table is what
+    /// says how much of a play's base score its mods may buy, so if RH stopped being priced here the
+    /// row's own submitted total would sit 10% ABOVE its ceiling, be clamped, and be stored
+    /// UNRANKED, which is a live board losing a legitimate score rather than a cosmetic slip.
+    ///
+    /// <para>Stated on a whole STACK as well as on the acronym, because the ceiling is a product and
+    /// the two paths are separate code: a stack that quietly lost one factor still returns a
+    /// plausible number.</para>
+    /// </summary>
+    [Test]
+    public void ModMultiplier_StillBoundsAStoredRhythmicPlay()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ModMultiplier.For("RH", null), Is.EqualTo(1.10),
+                "an unpriced RH would fall to a different allowance and unrank the row");
+            Assert.That(ModMultiplier.For("RH", null), Is.Not.EqualTo(ModMultiplier.UNKNOWN_MOD_MULTIPLIER));
+
+            // A whole stored stack: RH alongside the mods it could be selected with.
+            Assert.That(ModMultiplier.MaxForStack([("RH", null)]), Is.EqualTo(1.10).Within(1e-12));
+            Assert.That(ModMultiplier.MaxForStack([("RH", null), ("FL", null)]), Is.EqualTo(1.10 * 1.05).Within(1e-12));
+
+            // ...and a no-mod ceiling would be 10% short of what an RH row actually submitted, which
+            // is the exact gap that clamps the total and clears the ranked flag.
+            Assert.That(ModMultiplier.MaxForStack([("RH", null)]), Is.GreaterThan(ModMultiplier.MaxForStack([])));
         });
     }
 

@@ -87,7 +87,7 @@ public class FreestyleParityTest
             Assert.That(Flag(r, "accepted"), Is.True);
             Assert.That(Str(r, "state"), Is.EqualTo("correct"));
             Assert.That(Str(r, "typedChar"), Is.EqualTo(pressed));
-            Assert.That(Str(r, "judgeType"), Is.EqualTo("Perfect")); // on target
+            Assert.That(Str(r, "judgeType"), Is.EqualTo("Great")); // on target
             Assert.That(Num(r, "judgedDelta"), Is.EqualTo(0));
             Assert.That(Num(r, "caretIndex"), Is.EqualTo(2));
             Assert.That(Num(r, "combo"), Is.EqualTo(2));
@@ -174,14 +174,14 @@ public class FreestyleParityTest
                 Assert.That(Num(free, field), Is.EqualTo(Num(plain, field)), field);
 
             Assert.That(Str(free, "rank"), Is.EqualTo(Str(plain, "rank")));
-            Assert.That(Num(free.GetProperty("counts"), "perfect"), Is.EqualTo(Num(plain.GetProperty("counts"), "perfect")));
+            Assert.That(Num(free.GetProperty("counts"), "great"), Is.EqualTo(Num(plain.GetProperty("counts"), "great")));
 
             // And the absolute values, so a change to BOTH sides still trips this.
             Assert.That(Num(free, "engineScore"), Is.EqualTo(918)); // 300 + 306 + 312, combo multiplier
             Assert.That(Num(free, "totalScore"), Is.EqualTo(1000000));
             Assert.That(Num(free, "completion"), Is.EqualTo(1.0));
             Assert.That(Str(free, "rank"), Is.EqualTo("X"));
-            Assert.That(Num(free.GetProperty("counts"), "perfect"), Is.EqualTo(3));
+            Assert.That(Num(free.GetProperty("counts"), "great"), Is.EqualTo(3));
         });
     }
 

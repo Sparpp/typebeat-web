@@ -68,13 +68,16 @@ Factor by factor, in descending priority:
 
 **Definitions (pinned to the score row):**
 
-* `acc` is standard osu hit accuracy, over the four quality tiers a cell can land in:
-  `(300·perfect + 200·great + 100·ok + 50·meh + 50·good) / (300·notes)`. This is the stored
-  `accuracy` column for a completed play. (`perfect` and the 200 for `great` arrived with backlog
-  133's fourth tier; before it the top tier was `great` at 300. `good` is the uncorrected typo,
-  re-weighted to the `meh` value.)
+* `acc` is standard osu hit accuracy, over the three quality tiers a cell can land in:
+  `(300·great + 100·ok + 50·meh + 50·good) / (300·notes)`. This is the stored `accuracy` column
+  for a completed play. (`good` is the uncorrected typo, re-weighted to the `meh` value. Backlog
+  133 made the ladder four tiers deep, `perfect` 300 and `great` 200, and backlog 147 reverted it;
+  a row stored while that shipped is read on the old weights, keyed off its own
+  `maximum_statistics`. See `ScoringContract.JudgedUnderTheFourthTier`.)
 * `notes = perfect + great + ok + meh + good + miss` from `statistics`. **`ignore_hit` is
   excluded**; the line containers would otherwise inflate `notes` and dilute every factor.
+  `perfect` is on the list only for those four-tier rows, and no play judged today can produce
+  one.
 * `maxcombo` is the stored `max_combo`; the theoretical max equals `notes` for a typing map.
 
 ## Eligibility
@@ -107,13 +110,15 @@ stored `ranked = false` and therefore earn no pp.
   flashlight bonus, but grows with song length, so it pays off on long maps. The `max` clamp is
   required: unclamped, the raw term dips **below 1.0 under ~46 notes**, which would punish FL on
   short maps rather than "barely move".
-* **RH** (Rhythmic): flat × 1.10. The play is judged on the MILLISECOND window ladder (each
-  character against its own target time) instead of the character-distance one (how far the press
-  is from the character the playhead is on). The two coincide at a pace of 10 characters per
-  second and the millisecond pair is tighter everywhere below that, which is where lyrics sit, so
-  it is a genuine difficulty increase on essentially every map. Above that pace, in a burst faster
-  than 10 chars/sec, it is the looser pair, which is why the bonus is a flat 1.10 rather than the
-  much larger number the slow-map ratio alone would suggest.
+* **RH** (Rhythmic): flat × 1.10, **for stored rows only**. The mod judged a play on the
+  MILLISECOND window ladder (each character against its own target time) instead of the
+  character-distance one backlog 133 had made the default, which was the tighter pair on any map
+  slower than 10 characters per second, i.e. nearly all of them. Backlog 147 made the millisecond
+  ladder the default again and removed the mod from the client, so no NEW play can carry the
+  acronym. The multiplier stays because RH shipped: pp is recomputed from a stored row's mods on
+  every `PpBackfill` sweep, and dropping the arm would reprice those rows 10% down while
+  `ModMultiplier.TotalScoreCeiling` (its twin) put each row's own stored total above its ceiling
+  and stored it unranked.
 * **Fletcher**: × 0.90 (10% pp decrease).
 * **NF** (No Fail): × 0.90, osu's pricing. DECIDED: NF cannot be free for pp, since it converts
   a would-be fail (which earns nothing) into a completed play, and it protects runs the miss

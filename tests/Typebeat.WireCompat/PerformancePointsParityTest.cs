@@ -94,7 +94,6 @@ public class PerformancePointsParityTest
         new TypeBeatModFlashlight(),
         new TypeBeatModLiterate(),
         new TypeBeatModGatekeeper(),
-        new TypeBeatModRhythmic(),
         new TypeBeatModFletcher(),
         new TypeBeatModMashing(),
         new TypeBeatModMuted(),
@@ -415,6 +414,54 @@ public class PerformancePointsParityTest
                     $"{mod.Acronym} at {notes} notes");
             }
         }
+    }
+
+    /// <summary>
+    /// A mod carrying the RETIRED Rhythmic acronym. Backlog 147 deleted <c>TypeBeatModRhythmic</c>
+    /// from the ruleset, so it cannot appear in <see cref="AllRulesetMods"/> and the pair sweeps
+    /// above can never reach RH; this stands in for the only thing that still can, a score row
+    /// submitted while the mod was live.
+    /// </summary>
+    private sealed class RetiredRhythmicMod : Mod
+    {
+        public override string Name => "Rhythmic";
+        public override string Acronym => "RH";
+        public override osu.Framework.Localisation.LocalisableString Description => "A stored acronym no client can select any more.";
+    }
+
+    /// <summary>
+    /// BOTH MIRRORS STILL PRICE A STORED RH, AT THE SAME NUMBER. The mod shipped (backlog 135) and
+    /// was removed from the client by backlog 147, but pp is recomputed from a stored row's mods on
+    /// every <c>PpBackfill</c> sweep and every recalc, so an arm that survives on one side only is a
+    /// silent 10% divergence between the counter and the stored value, and an arm that survives on
+    /// neither reprices every such row downward while its <c>ModMultiplier.TotalScoreCeiling</c>
+    /// twin puts the row above its own ceiling and stores it unranked.
+    ///
+    /// <para>This is the one mod multiplier that is deliberately unreachable from the mod panel, so
+    /// it needs its own pin: the sweeps above iterate what the ruleset OFFERS and would pass just as
+    /// happily with both arms deleted.</para>
+    /// </summary>
+    [Test]
+    public void AStoredRhythmicIsStillPricedIdenticallyOnBothSides()
+    {
+        var clientStack = Stack(new RetiredRhythmicMod());
+        var serverStack = ServerMods(clientStack);
+
+        Assert.That(serverStack, Has.Count.EqualTo(1), "RH must survive the wire");
+        Assert.That(serverStack[0].Acronym, Is.EqualTo("RH"));
+
+        foreach (int notes in new[] { 1, 46, 100, 500, 3000 })
+        {
+            Assert.That(ClientPp.ModMultiplier(clientStack, notes), Is.EqualTo(ServerPp.ModMultiplier(serverStack, notes)),
+                $"RH at {notes} notes");
+            Assert.That(ServerPp.ModMultiplier(serverStack, notes), Is.EqualTo(1.10).Within(1e-12),
+                $"and it is still the 1.10 it was submitted at, at {notes} notes");
+        }
+
+        // Stacked, because the multiplier is a product and a lost arm hides inside a single-mod
+        // test whenever the neutral answer happens to be right.
+        var pair = Stack(new RetiredRhythmicMod(), new TypeBeatModFletcher());
+        Assert.That(ClientPp.ModMultiplier(pair, 500), Is.EqualTo(ServerPp.ModMultiplier(ServerMods(pair), 500)));
     }
 
     [Test]
@@ -863,7 +910,6 @@ public class PerformancePointsParityTest
             no_client_mods,
             Stack(new TypeBeatModNoFail()),
             Stack(new TypeBeatModLiterate(), new TypeBeatModFlashlight()),
-            Stack(new TypeBeatModRhythmic(), new TypeBeatModLiterate()),
             Stack(new TypeBeatModFletcher()),
             Stack(new TypeBeatModSuddenDeath(), new TypeBeatModMuted()),
             Stack(new TypeBeatModDoubleTime()),

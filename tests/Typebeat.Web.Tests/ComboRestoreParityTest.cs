@@ -98,7 +98,7 @@ public class ComboRestoreParityTest
 
             // The typo deferred the cell's result, so the retype IS that result, earned at the
             // resumed streak.
-            Assert.That(run.GetProperty("fixedCellJudgeType").GetString(), Is.EqualTo("Perfect"));
+            Assert.That(run.GetProperty("fixedCellJudgeType").GetString(), Is.EqualTo("Great"));
 
             // Exactly one break, at the keypress, and it is not un-counted: the typo stat counts the
             // KEYPRESS, and no correction can unpress it.
