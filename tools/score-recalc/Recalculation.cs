@@ -58,26 +58,32 @@ public enum RecalcMode
 {
     /// <summary>
     /// The verification sweep (backlog 114). Re-derives under the rules the row was PRICED under
-    /// (<see cref="TypoRule.ImmediateMiss"/> plus <see cref="ComboRestoreRule.Never"/>) and refuses
-    /// any row it cannot reproduce exactly, then reports what today's TYPO rule alone would make of
-    /// it, holding every other axis still. Its output answers "does the harness understand this
-    /// row", which is the question a supersede sweep cannot ask of itself.
+    /// (all FOUR stored-era axes: <see cref="TypoRule.ImmediateMiss"/>,
+    /// <see cref="ComboRestoreRule.Never"/>, <see cref="SpaceTimingRule.Timed"/> and
+    /// <see cref="RateWindowRule.Unscaled"/>) and refuses any row it cannot reproduce exactly, then
+    /// reports what today's TYPO rule alone would make of it, holding every other axis still. Its
+    /// output answers "does the harness understand this row", which is the question a supersede sweep
+    /// cannot ask of itself.
     /// </summary>
     Reproduce,
 
     /// <summary>
     /// The superseding sweep (backlog 136 and 142). Re-judges the run under ALL of today's rules
-    /// (<see cref="TypoRule.Deferred"/> plus <see cref="ComboRestoreRule.OnFix"/>) and REPLACES the
-    /// stored numbers with the result, because the user's decision is that a stored score must
-    /// describe a game that is actually playable today.
+    /// (<see cref="TypoRule.Deferred"/>, <see cref="ComboRestoreRule.OnFix"/>,
+    /// <see cref="SpaceTimingRule.Untimed"/> and <see cref="RateWindowRule.ScaledByRate"/>) and
+    /// REPLACES the stored numbers with the result, because the user's decision is that a stored
+    /// score must describe a game that is actually playable today.
     ///
-    /// <para>Reproduction cannot be the gate here, by construction: a pre-133 row was graded on a
-    /// ladder today's code no longer has, so it provably will not reproduce, and refusing it would
-    /// refuse the entire sweep. What replaces the gate is not a looser version of it but a different
-    /// predicate, <see cref="Recalculation.StructuralMismatch"/>: the judgement of the run is allowed
-    /// to move, the RUN is not. Same map, same cell count, same number of cells judged, every frame
-    /// consumed. A row that fails THAT is still refused and still written nothing for, which is the
-    /// corruption the original gate existed to catch.</para>
+    /// <para>Reproduction cannot be the gate here. For most rows that is a statement about the
+    /// SWEEP, not about the row: a supersede run deliberately re-judges on rules the row was not
+    /// played under, so its own numbers are expected to move. For one population it is structural:
+    /// a row stored in the backlog 133-to-147 window was graded on a four-tier CHARACTER-DISTANCE
+    /// ladder that backlog 147 deleted outright, so no era switch can bring it back and it provably
+    /// will not reproduce however the axes are set. What replaces the gate is not a looser version
+    /// of it but a different predicate, <see cref="Recalculation.StructuralMismatch"/>: the judgement
+    /// of the run is allowed to move, the RUN is not. Same map, same cell count, same number of cells
+    /// judged, every frame consumed. A row that fails THAT is still refused and still written nothing
+    /// for, which is the corruption the original gate existed to catch.</para>
     /// </summary>
     Supersede,
 }
@@ -130,11 +136,17 @@ public enum SkipReason
     /// The old-rule re-derivation did not reproduce the stored statistics, so the harness and this
     /// row disagree about the run. Nothing is written for it.
     ///
-    /// <para><see cref="RecalcMode.Reproduce"/> only. In a supersede sweep this is EXPECTED of every
-    /// pre-133 row and is reported as a diagnostic instead of refusing, which is precisely why the
-    /// two modes are separate commands: were it one gate with a threshold, the threshold would have
-    /// to be loose enough to pass a sweep that never reproduces anything, and would then pass
-    /// genuine corruption too.</para>
+    /// <para><see cref="RecalcMode.Reproduce"/> only. In a supersede sweep this is EXPECTED and is
+    /// reported as a diagnostic instead of refusing, which is precisely why the two modes are
+    /// separate commands: were it one gate with a threshold, the threshold would have to be loose
+    /// enough to pass a sweep that reproduces very little, and would then pass genuine corruption
+    /// too.</para>
+    ///
+    /// <para>In a REPRODUCE sweep this reason should now be rare and interesting rather than
+    /// universal. Backlog 151 gave the harness the two missing era switches (the spacebar and the
+    /// rate windows), so a row from before the backlog 133 arc reproduces again; what is left here
+    /// is a row from the 133-to-147 window, whose ladder no longer exists in any form, or a genuine
+    /// disagreement worth looking at.</para>
     /// </summary>
     NotReproducible,
 
@@ -260,11 +272,18 @@ public sealed record RecalcResult(
 ///
 /// <para>The FIRST replay is the difference between the two modes. In
 /// <see cref="RecalcMode.Reproduce"/> it is a proof and a mismatch refuses the row; in
-/// <see cref="RecalcMode.Supersede"/> it is a diagnostic, a mismatch is the expected reading for
-/// anything judged before backlog 133, and <see cref="StructuralMismatch"/> refuses instead. That
-/// is the inversion backlog 142 called for, kept as two predicates rather than one with a
-/// threshold: a threshold loose enough to pass a sweep where nothing reproduces would pass genuine
-/// corruption too.</para>
+/// <see cref="RecalcMode.Supersede"/> it is a diagnostic, a mismatch is the expected reading, and
+/// <see cref="StructuralMismatch"/> refuses instead. That is the inversion backlog 142 called for,
+/// kept as two predicates rather than one with a threshold: a threshold loose enough to pass a
+/// sweep where little reproduces would pass genuine corruption too.</para>
+///
+/// <para>What the first replay can reproduce is a question about ERAS, and every rule that has moved
+/// since a row was stored has to be expressible or the pass reports rule drift as corruption. There
+/// are four such axes, all of them pinned to the stored era on that pass: the typo rule (backlog
+/// 109), combo restore (140), the untimed spacebar (148) and the rate-scaled windows (150). The one
+/// era that is NOT expressible is the backlog 133-to-147 window, whose four-tier character-distance
+/// ladder backlog 147 deleted: those rows cannot be reproduced by any setting of any switch, because
+/// the code that judged them no longer exists.</para>
 /// </summary>
 public static class Recalculation
 {
@@ -307,6 +326,44 @@ public static class Recalculation
     /// </summary>
     private const ComboRestoreRule live_combo_rule = ComboRestoreRule.OnFix;
 
+    /// <summary>
+    /// The space-timing era EVERY stored row was PLAYED in (backlog 148, backlog 151): no score in
+    /// the database was played by a client that took the spacebar out of the timing challenge.
+    ///
+    /// <para>This is the WIDEST of the four era axes, because every map has spaces. Judged on the
+    /// live rule a stored row's spaces all come back as top-tier hits that never break combo, so
+    /// <c>statistics</c> and <c>max_combo</c> both move and the reproduce pass fails on rows that are
+    /// not corrupt at all. Before this constant existed the pass could not reproduce ANY row in the
+    /// table, and the failure presented as "these replays are corrupt" when in fact the rules had
+    /// moved underneath them.</para>
+    /// </summary>
+    private const SpaceTimingRule stored_era_space_rule = SpaceTimingRule.Timed;
+
+    /// <summary>
+    /// The space-timing rule live play uses, and therefore the one a
+    /// <see cref="RecalcMode.Supersede"/> sweep re-judges under.
+    /// </summary>
+    private const SpaceTimingRule live_space_rule = SpaceTimingRule.Untimed;
+
+    /// <summary>
+    /// The rate-window era EVERY stored row was PLAYED in (backlog 150, backlog 151): the rate mods
+    /// have been ranked for the whole life of the score table, and until this release none of them
+    /// scaled the judgement windows, so a stored DT / NC / HT row was graded on windows fixed in
+    /// BEATMAP milliseconds.
+    ///
+    /// <para>Set unconditionally rather than only for rows that carry a rate mod: the arm it gates is
+    /// a loop over the run's rate mods, which is empty for everything else, so the axis is inert for
+    /// a row it does not apply to (pinned by the game's <c>JudgementEraTest</c>). Deciding per row
+    /// would mean parsing the mods twice and getting the same answer.</para>
+    /// </summary>
+    private const RateWindowRule stored_era_rate_rule = RateWindowRule.Unscaled;
+
+    /// <summary>
+    /// The rate-window rule live play uses, and therefore the one a
+    /// <see cref="RecalcMode.Supersede"/> sweep re-judges under.
+    /// </summary>
+    private const RateWindowRule live_rate_rule = RateWindowRule.ScaledByRate;
+
     /// <param name="backfillMistypes">
     /// Whether to introduce a mistype count into rows that predate the stat. Off by default, and
     /// deliberately: those rows were played by a client that never counted wrong keypresses, so
@@ -348,9 +405,23 @@ public static class Recalculation
         //    back, exactly. In Reproduce mode that is a PROOF and a failure refuses the row: a
         //    harness that cannot reproduce the old numbers has no business writing new ones. In
         //    Supersede mode it is a DIAGNOSTIC and a failure is the expected reading for anything
-        //    judged before backlog 133, because today's code no longer owns the ladder that graded
-        //    it. Same computation, opposite meaning, which is why the two are separate commands.
-        var oldRule = TypeBeatReplayScorer.Score(playable, mods, score.Replay, TypoRule.ImmediateMiss, stored_era_combo_rule);
+        //    judged in the backlog 133-to-147 window, because today's code no longer owns the ladder
+        //    that graded it. Same computation, opposite meaning, which is why the two are separate
+        //    commands.
+        //
+        //    All FOUR era axes are pinned to the stored era here, not just the typo rule: the typo
+        //    rule (109), combo restore (140), the spacebar (148) and the rate windows (150). Every
+        //    one of them is a rule that moved after rows were already in the table, and leaving any
+        //    of them on the live arm would re-grade the run on a ladder it was never played on and
+        //    report the difference as a corrupt row.
+        var oldRule = TypeBeatReplayScorer.Score(
+            playable,
+            mods,
+            score.Replay,
+            TypoRule.ImmediateMiss,
+            stored_era_combo_rule,
+            stored_era_space_rule,
+            stored_era_rate_rule);
         var oldStatistics = WireCounts.From(oldRule.Statistics);
 
         string mismatch = ReproductionMismatch(stored, oldRule, oldStatistics, preMistypeEra);
@@ -383,20 +454,23 @@ public static class Recalculation
 
         // 2. The same run under the rules this mode is asking about.
         //
-        //    Reproduce varies the TYPO rule alone and holds combo restore at the stored era, so
-        //    every number it reports is attributable to that one axis.
+        //    Reproduce varies the TYPO rule alone and holds the other three axes at the stored era,
+        //    so every number it reports is attributable to that one axis.
         //
-        //    Supersede applies ALL of today's rules, judgement AND combo restore together (backlog
-        //    136, decided 2026-08-13). Not because moving two axes is nicer to audit, it is worse,
-        //    but because the halfway combination is one no client has ever run: a score judged with
-        //    today's tiers and yesterday's combo rule could not be reproduced by replaying it
-        //    anywhere, which is the property the whole tool is built on.
+        //    Supersede applies ALL of today's rules, judgement AND combo restore AND the spacebar
+        //    AND the rate windows, together (backlog 136, decided 2026-08-13; backlog 151 adds the
+        //    last two). Not because moving four axes is nicer to audit, it is worse, but because
+        //    every halfway combination is one no client has ever run: a score judged with today's
+        //    tiers and yesterday's combo rule could not be reproduced by replaying it anywhere,
+        //    which is the property the whole tool is built on.
         var newRule = TypeBeatReplayScorer.Score(
             playable,
             mods,
             score.Replay,
             TypoRule.Deferred,
-            mode == RecalcMode.Supersede ? live_combo_rule : stored_era_combo_rule);
+            mode == RecalcMode.Supersede ? live_combo_rule : stored_era_combo_rule,
+            mode == RecalcMode.Supersede ? live_space_rule : stored_era_space_rule,
+            mode == RecalcMode.Supersede ? live_rate_rule : stored_era_rate_rule);
 
         var statistics = WireCounts.From(newRule.Statistics);
         var maximumStatistics = WireCounts.From(newRule.MaximumStatistics);
@@ -430,6 +504,22 @@ public static class Recalculation
         //    following ScoreEndpoints.SubmitScore step for step.
         var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, newRule.MaxCombo);
 
+        // THE CEILING IS PRICED FROM THE ROW'S STORED MODS, and it bounds a total the re-derivation
+        // computed from the REPLAY's mod list, so the two sources have to be kept in mind together
+        // (backlog 136's failure mode was a ceiling that did not cover the total it was bounding, and
+        // it nearly emptied the boards).
+        //
+        // They come from one submission (ScoreEndpoints stores the submitted mods verbatim, and the
+        // .osr's score-info blob carries the same list), so they agree except in one case: a mod the
+        // RULESET no longer has survives in the jsonb but cannot be instantiated when the .osr is
+        // decoded, so it prices the ceiling and does not price the total. That direction is safe only
+        // while every deleted mod prices at or above 1.0. Rhythmic, the one mod deleted so far
+        // (backlog 147), is 1.10, so an RH row gets a ceiling 10% LOOSER than the total it bounds.
+        // Deleting a mod worth LESS than 1.0 (Easy and No Fail are 0.5) would invert that and clamp
+        // every honest row carrying it, so do not delete one without pricing this line first.
+        //
+        // An acronym the table does not know at all falls to UNKNOWN_MOD_MULTIPLIER = 2.0, which is
+        // an UPPER bound, so an unrecognised mod also errs loose rather than tight.
         double modMultiplier = ModMultiplier.MaxForStack(ScoreMods.Parse(stored.ModsJson).Select(m => ((string?)m.Acronym, m.Rate)));
         long modCeiling = ModMultiplier.TotalScoreCeiling(newRule.TotalScoreWithoutMods, modMultiplier);
 

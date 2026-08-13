@@ -53,7 +53,8 @@ public static class Report
         {
             output.WriteLine("== SUPERSEDE: every stored number below is being REPLACED ==");
             output.WriteLine();
-            output.WriteLine("judged under                 TypoRule.Deferred + ComboRestoreRule.OnFix (all of today's rules)");
+            output.WriteLine("judged under                 TypoRule.Deferred + ComboRestoreRule.OnFix + SpaceTimingRule.Untimed");
+            output.WriteLine("                             + RateWindowRule.ScaledByRate (all of today's rules)");
             output.WriteLine("total_score priced with      today's mod multipliers");
             output.WriteLine();
             output.WriteLine("What that costs, deliberately, and what to look for in the numbers below:");
@@ -64,6 +65,12 @@ public static class Report
             output.WriteLine("    was graded on CHARACTER DISTANCE in four tiers and is re-graded on the millisecond");
             output.WriteLine("    ladder in three, so its tier counts move in both directions. Every other row was");
             output.WriteLine("    played on the ladder it is being re-judged with.");
+            output.WriteLine("  - EVERY row gains on its SPACES. Backlog 148 took the spacebar out of the timing");
+            output.WriteLine("    challenge, so a loosely hit space that used to be an Ok, a Meh or a combo-breaking");
+            output.WriteLine("    Lagging press is re-judged as a top-tier hit. Every map has spaces, so no row is");
+            output.WriteLine("    indifferent to this one.");
+            output.WriteLine("  - a DT / NC / HT row is re-judged on windows SCALED by its clock rate (backlog 150), so");
+            output.WriteLine("    an up-rate row gains tolerance and a down-rate row loses it. No other row is affected.");
             output.WriteLine("  - a row whose mods were retuned since it was played is re-priced at today's multiplier,");
             output.WriteLine("    unlike a reproduce sweep, which carries the row's own. That is the point: a superseded");
             output.WriteLine("    score has to be one today's client could actually produce.");
@@ -72,7 +79,8 @@ public static class Report
         {
             output.WriteLine("== REPRODUCE: verify, then reprice what today's TYPO rule alone changes ==");
             output.WriteLine();
-            output.WriteLine("judged under                 TypoRule.Deferred, combo restore held at the stored era");
+            output.WriteLine("judged under                 TypoRule.Deferred, every other era axis held at the stored era");
+            output.WriteLine("                             (combo restore, the spacebar, the rate windows)");
             output.WriteLine("total_score priced with      the row's OWN mod multiplier, recovered not reapplied");
         }
 
@@ -100,10 +108,16 @@ public static class Report
         {
             output.WriteLine("== reproduction of the stored numbers: a DIAGNOSTIC here, not a gate ==");
             output.WriteLine();
-            output.WriteLine("A row that does not reproduce is EXPECTED in this mode: backlog 133 retired the ladder every");
-            output.WriteLine("stored row was graded on, so today's code cannot re-derive the old numbers and refusing on");
-            output.WriteLine("that basis would refuse the whole sweep. Read this as coverage, not as a pass or a fail:");
-            output.WriteLine("a row that DOES reproduce is one the tool understands completely.");
+            output.WriteLine("A row that does not reproduce is EXPECTED in this mode, and refusing on that basis would");
+            output.WriteLine("refuse the whole sweep. Read this as coverage, not as a pass or a fail: a row that DOES");
+            output.WriteLine("reproduce is one the tool understands completely.");
+            output.WriteLine();
+            output.WriteLine("Since backlog 151 the harness can express four judgement eras (the typo rule, combo");
+            output.WriteLine("restore, the untimed spacebar, the rate-scaled windows), so a row from before the backlog");
+            output.WriteLine("133 arc SHOULD reproduce. A row stored in the backlog 133-to-147 window (a `perfect` key in");
+            output.WriteLine("its maximum_statistics) never can: it was graded on a four-tier CHARACTER-DISTANCE ladder");
+            output.WriteLine("that backlog 147 deleted, and no switch can bring back code that is gone. A row that fails");
+            output.WriteLine("to reproduce and is NOT from that window is worth looking at before applying.");
         }
         else
         {
