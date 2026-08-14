@@ -84,9 +84,20 @@ public sealed record StoredScore(
     /// <para>THIS IS ONE-DIRECTIONAL, AND MUST STAY THAT WAY. True is a PROOF and pins the row's typo
     /// axis to the deferred rule. False is an ABSENCE OF EVIDENCE, not evidence of the old rule: a
     /// run with no uncorrected typo left standing has no such key to carry, whichever rule judged it.
-    /// So false keeps the row on <see cref="Recalculation"/>'s stored-era default, where the two
-    /// rules agree for as long as the run has no typo in it. Turning this into a bidirectional test
-    /// would re-derive every clean modern row on a ladder it was never played on.</para>
+    /// Turning this into a bidirectional test would re-derive every clean modern row on a ladder it
+    /// was never played on.</para>
+    ///
+    /// <para>WHAT THE TWO ANSWERS MEAN TO THE PASS, AND WHY BACKLOG 158 DID NOT REVERSE 155. True
+    /// still PINS, and pinning is still the fast path: <see cref="Recalculation.EraSearchFor"/> hands
+    /// such a row only candidates on the deferred arm, so the axis is never searched for it and the
+    /// proof is never second-guessed by a reconstruction. False no longer resolves silently to the
+    /// older rule, which is the one thing that changed. It used to, and the cost was a population
+    /// nothing could explain: a typo that was CORRECTED leaves no key either, so a modern row whose
+    /// player fixed their mistakes was re-derived with that cell as a MISS it does not carry. So an
+    /// absence now sends the typo axis into <see cref="Recalculation.EraSearch"/> alongside the three
+    /// axes that never had a key at all, and the row is pinned to the arm that REPRODUCES it. The
+    /// older rule is still what is TRIED FIRST for such a row, so nothing that reproduced before
+    /// changes cost or meaning.</para>
     ///
     /// <para>Deliberately NOT a score id or a date. The population happens to start at one id in
     /// production because it started at one deploy, but the id is an observation about that deploy
@@ -103,43 +114,42 @@ public sealed record StoredScore(
 
 /// <summary>
 /// One point in the space the reproduce pass SEARCHES: which spacebar rule (backlog 148), which
-/// rate-window rule (backlog 150) and which combo-restore rule (backlog 140) graded a row. The three
-/// travel together because they are exactly the era axes with NO KEY OF THEIR OWN: a row cannot be
-/// asked which arm of any of them judged it, so it has to be told, and the only honest way to decide
-/// what to tell it is to re-derive it under each and keep what comes back.
+/// rate-window rule (backlog 150), which combo-restore rule (backlog 140) and which typo rule
+/// (backlog 109) graded a row. All four travel together because a row that cannot PROVE which arm
+/// judged it has to be told, and the only honest way to decide what to tell it is to re-derive it
+/// under each and keep what comes back.
 ///
-/// <para>THE FOURTH AXIS IS DELIBERATELY NOT HERE. The typo rule leaves a key (an uncorrected typo
-/// takes <c>good</c>, which only the deferred rule can produce), so it is READ off the row by
-/// <see cref="Recalculation.StoredEraTypoRuleFor"/> and pinned before the search starts. Searching an
-/// axis a row can simply be asked about would double the cost of every candidate for nothing.</para>
+/// <para>THE TYPO AXIS IS NOT LIKE THE OTHER THREE, AND BACKLOG 155 IS NOT REVERSED BY ITS BEING
+/// HERE. The other three leave no trace of themselves in a row at all. The typo rule leaves one in
+/// exactly one case: a typo LEFT STANDING takes <c>good</c>, a key only the deferred rule can
+/// produce, so <see cref="StoredScore.ProvablyJudgedUnderTheDeferredTypoRule"/> PROVES that row's
+/// typo era outright. That proof still wins and is still the fast path:
+/// <see cref="Recalculation.EraSearchFor"/> pins such a row to <see cref="TypoRule.Deferred"/> and
+/// never offers it a candidate on the other arm, so the axis is not searched for it at all. What
+/// backlog 158 changed is only the case 155 documented as "no proof either way", the ABSENCE of the
+/// key, which used to resolve silently to the older rule and now resolves by reconstruction like the
+/// three keyless axes. That is a composition of 155's decision, not a contradiction of it.</para>
 ///
-/// <para>THE TRIPLE IS A SEARCH SPACE, NOT A SETTING, and it is searched as a 2 x 2 x 2 rather than
-/// as one switch even though real clients only ever shipped a few of the eight corners. They are
-/// three independent facts about how a press was graded (the game's own <c>RateWindowRule</c> doc
-/// says as much), they did not all move at the same time (combo restore moved at backlog 140, the
-/// other two together at the 2026-08-13 release), and the next change to any one of them has no
-/// reason to move the others.</para>
+/// <para>WHY THE ABSENCE NEEDED IT (backlog 158). A typo that was CORRECTED leaves no key, because
+/// <c>good</c> only ever marks a cell left holding a wrong character. So a modern row whose player
+/// fixed their mistakes proved nothing, kept the older rule, and had that cell re-derived as a MISS
+/// it does not carry. Production ended on exactly two such rows (5410 and 5414), identified by a
+/// check named before the run that produced it: <c>miss</c> moving by +2 with <c>max_combo</c> moving
+/// by -2 in lockstep, which is the seam between 155 and 157 (combo restore only ever moves max_combo
+/// when a typo was corrected, and a corrected typo is precisely the case that leaves no key).</para>
 ///
-/// <para>WHY COMBO RESTORE JOINED IT (backlog 157). It used to be a constant, on the premise that
-/// backlog 140 shipped after the last row that could care was stored. That premise expired the same
-/// way 155's and 156's did: production holds rows that re-derive perfectly under the live rule set
-/// and could not be expressed by the reproduce pass at all, because it held this axis at
-/// <see cref="ComboRestoreRule.Never"/> for every row.</para>
-///
-/// <para>WHAT IS STILL NOT IN HERE, AND WHY IT IS NOT A FOURTH MEMBER. The typo rule leaves a key
-/// only when the typo was LEFT STANDING. A typo that was CORRECTED leaves none, so a row from a
-/// modern client whose player fixed their mistakes proves nothing about its own typo era, keeps the
-/// default rule, and re-derives that cell as a Miss it does not have. That row is refused, correctly
-/// (nothing reconstructed it), and it is refused for a reason no setting of these three axes can
-/// reach. Adding the typo rule here would search 16 corners instead of 8 and would be a change to
-/// backlog 155's decision, not to this one, so it is left as a named residual rather than folded in
-/// quietly.</para>
+/// <para>THE QUADRUPLE IS A SEARCH SPACE, NOT A SETTING, and it is searched as a 2 x 2 x 2 x 2 rather
+/// than as one switch even though real clients only ever shipped four of the sixteen corners. They
+/// are four independent facts about how a press was graded (the game's own <c>RateWindowRule</c> doc
+/// says as much), they did not all move at the same time (the typo rule moved at backlog 109, combo
+/// restore at 140, the other two together at the 2026-08-13 release), and the next change to any one
+/// of them has no reason to move the others.</para>
 /// </summary>
-public readonly record struct SearchedEra(SpaceTimingRule Space, RateWindowRule Rate, ComboRestoreRule Combo)
+public readonly record struct SearchedEra(SpaceTimingRule Space, RateWindowRule Rate, ComboRestoreRule Combo, TypoRule Typo)
 {
     /// <summary>The spelling the report prints, matching the rules' own type names.</summary>
     public override string ToString()
-        => $"SpaceTimingRule.{Space} + RateWindowRule.{Rate} + ComboRestoreRule.{Combo}";
+        => $"SpaceTimingRule.{Space} + RateWindowRule.{Rate} + ComboRestoreRule.{Combo} + TypoRule.{Typo}";
 }
 
 /// <summary>
@@ -151,10 +161,10 @@ public enum RecalcMode
 {
     /// <summary>
     /// The verification sweep (backlog 114). Re-derives under the rules the row was PRICED under
-    /// (all FOUR era axes at the era that judged the row: the typo rule PER ROW from the row's own
-    /// keys, see <see cref="Recalculation.StoredEraTypoRuleFor"/>, and the spacebar, the rate windows
-    /// and combo restore PER ROW by reconstruction, see <see cref="Recalculation.EraSearch"/>) and
-    /// refuses any row it cannot reproduce exactly, then reports what today's TYPO rule alone would
+    /// (all FOUR era axes at the era that judged the row: the spacebar, the rate windows and combo
+    /// restore PER ROW by reconstruction, and the typo rule from the row's own keys where they PROVE
+    /// one and by reconstruction where they prove nothing, see <see cref="Recalculation.EraSearchFor"/>)
+    /// and refuses any row it cannot reproduce exactly, then reports what today's TYPO rule alone would
     /// make of it, holding every other axis still. Its output answers "does the harness understand
     /// this row", which is the question a supersede sweep cannot ask of itself.
     /// </summary>
@@ -244,7 +254,8 @@ public enum SkipReason
     /// window, whose ladder no longer exists in any form, or a genuine disagreement worth looking at,
     /// and a row reaching this reason now means NO combination of the expressible eras re-derived it.
     /// Backlog 157 folded combo restore into that search as well, which retired the last axis the
-    /// pass held at one value for the whole table.</para>
+    /// pass held at one value for the whole table, and backlog 158 folded in the typo rule for rows
+    /// whose keys prove nothing about it, which retired the last axis that resolved by assumption.</para>
     /// </summary>
     NotReproducible,
 
@@ -294,27 +305,33 @@ public sealed record RecalcResult(
     // recovered rather than reapplied; in Supersede mode it is today's, because a superseded score
     // has to be one today's client could produce.
     double AppliedMultiplier = 1,
-    // The spacebar, rate-window and combo-restore era the old-rule arm reproduced this row under
-    // (backlog 156, joined by combo restore in 157). NULL means no era did, which is either a row the
-    // sweep never re-derived at all (no replay, no beatmap, a failed run) or a row that reproduced
-    // under NONE of the combinations. Both of those are absences and neither is an era, which is why
-    // this is nullable rather than defaulted: a default here would put an era on a row nothing proved
-    // one for, and that is the exact thing backlog 156 refuses to do.
+    // The spacebar, rate-window, combo-restore and typo era the old-rule arm reproduced this row
+    // under (backlog 156, joined by combo restore in 157 and by the typo rule in 158). NULL means no
+    // era did, which is either a row the sweep never re-derived at all (no replay, no beatmap, a
+    // failed run) or a row that reproduced under NONE of the combinations. Both of those are absences
+    // and neither is an era, which is why this is nullable rather than defaulted: a default here would
+    // put an era on a row nothing proved one for, and that is the exact thing backlog 156 refuses to do.
     SearchedEra? ReproducedUnderEra = null)
 {
     public bool Recalculated => Skip == SkipReason.None;
 
     /// <summary>
-    /// Whether this row's era had to be PROVED BY RECONSTRUCTION (backlog 156, backlog 157), i.e. the
-    /// row did not come back under <see cref="Recalculation.DefaultEra"/> and the pass re-derived it
-    /// under the remaining combinations until one reproduced it exactly.
+    /// Whether this row's era had to be PROVED BY RECONSTRUCTION (backlog 156, backlog 157, backlog
+    /// 158), i.e. the row did not come back under the era its own evidence starts it at and the pass
+    /// re-derived it under the remaining combinations until one reproduced it exactly.
     ///
-    /// <para>Derived rather than stored, because it is the same fact: the default arm is tried first
-    /// and the search only ever runs when it fails, so an era other than the default can only have
+    /// <para>Derived rather than stored, because it is the same fact: the starting point is tried
+    /// first and the search only ever runs when it fails, so an era other than that one can only have
     /// come from the search. Keeping it as a second flag would let the two disagree.</para>
+    ///
+    /// <para>THE STARTING POINT IS PER ROW, NOT <see cref="Recalculation.DefaultEra"/>, which matters
+    /// since backlog 158 put the typo axis in the search. A row whose <c>good</c> key PROVES the
+    /// deferred rule starts on that arm (see <see cref="Recalculation.DefaultEraFor"/>) and never has
+    /// the axis searched, so comparing against the table-wide default would report every one of those
+    /// rows as reconstructed when nothing was searched for them at all.</para>
     /// </summary>
     public bool EraProvedByReconstruction
-        => ReproducedUnderEra is SearchedEra era && era != Recalculation.DefaultEra;
+        => ReproducedUnderEra is SearchedEra era && era != Recalculation.DefaultEraFor(Stored);
 
     /// <summary>
     /// The row could not be re-derived and the operator therefore has to say what should happen to
@@ -402,21 +419,26 @@ public sealed record RecalcResult(
 /// makes the pass a proof rather than a guess:</para>
 ///
 /// <list type="bullet">
-/// <item>The TYPO rule is READ OFF THE ROW (<see cref="StoredEraTypoRuleFor"/>, backlog 155). It moved
-/// while the table was already filling, so the table holds rows from both sides of it, and an
-/// uncorrected typo takes a key of its own that only one of the two rules can produce.</item>
-/// <item>The SPACEBAR, the RATE WINDOWS and COMBO RESTORE are PROVED BY RECONSTRUCTION
-/// (<see cref="EraSearch"/>, backlog 156 for the first two and 157 for the third). They moved while
-/// the table was filling too, but none of them leaves a key, so there is nothing to read: the pass
-/// re-derives a row that does not come back under <see cref="DefaultEra"/> under each remaining
-/// combination and pins it to the one that reproduces it exactly.</item>
+/// <item>The TYPO rule is READ OFF THE ROW WHERE THE ROW CAN PROVE IT (<see cref="StoredEraTypoRuleFor"/>,
+/// backlog 155). It moved while the table was already filling, so the table holds rows from both sides
+/// of it, and a typo LEFT STANDING takes a key of its own that only the deferred rule can produce. That
+/// key is a proof, it pins the row, and <see cref="EraSearchFor"/> then withholds every candidate on the
+/// other arm, so a proved row never has this axis searched.</item>
+/// <item>The SPACEBAR, the RATE WINDOWS, COMBO RESTORE, and the TYPO RULE WHERE THE ROW PROVES NOTHING,
+/// are PROVED BY RECONSTRUCTION (<see cref="EraSearch"/>, backlog 156 for the first two, 157 for the
+/// third and 158 for the fourth). The first three never leave a key; the typo rule leaves none either
+/// when the typo was CORRECTED, since the key marks only a cell left holding a wrong character. So
+/// there is nothing to read: the pass re-derives a row that does not come back under
+/// <see cref="DefaultEraFor"/> under each remaining combination and pins it to the one that reproduces
+/// it exactly.</item>
 /// </list>
 ///
-/// <para>NO AXIS IS A CONSTANT ANY MORE, which is what backlog 157 finished. Combo restore was the
-/// last one held at a single value for the whole table, on the premise that backlog 140 shipped after
-/// the last row that could care. Production disproved that the same way it disproved 155's and 156's
-/// premises: rows exist whose re-derivation under the FULL live rule set matches stored in every
-/// field, and which the reproduce pass still could not express.</para>
+/// <para>NO AXIS IS A CONSTANT ANY MORE, which is what backlog 157 finished, and no axis silently
+/// falls back on a default either, which is what backlog 158 finished. Combo restore was the last axis
+/// held at a single value for the whole table; the typo rule was the last whose UNPROVED rows resolved
+/// to one arm by assumption. Production disproved both premises the same way: rows exist whose
+/// re-derivation under the FULL live rule set matches stored in every field, and which the reproduce
+/// pass still could not express.</para>
 ///
 /// <para>The one era that is NOT expressible is the backlog 133-to-147 window, whose four-tier
 /// character-distance ladder backlog 147 deleted: those rows cannot be reproduced by any setting of
@@ -449,6 +471,13 @@ public static class Recalculation
     /// one way (see <see cref="StoredEraTypoRuleFor"/>), and because a row with no typo in it is
     /// judged identically by both rules, so the default costs nothing on the rows it cannot prove
     /// anything about.</para>
+    ///
+    /// <para>SINCE BACKLOG 158 IT IS ONLY A STARTING POINT for a row that cannot prove its typo era,
+    /// exactly as the other three axes' constants are. The rows it cannot prove anything about are not
+    /// all rows with no typo in them: a typo that was CORRECTED leaves no key either, and those two
+    /// rules do NOT agree about such a cell (the older one already spent it on a Miss). A row this
+    /// default does not reproduce therefore goes to <see cref="EraSearch"/> on this axis too. A row
+    /// whose key PROVES the other arm never sees this value at all.</para>
     /// </summary>
     private const TypoRule stored_era_typo_rule = TypoRule.ImmediateMiss;
 
@@ -461,16 +490,23 @@ public static class Recalculation
     private const TypoRule live_typo_rule = TypoRule.Deferred;
 
     /// <summary>
-    /// The typo rule to re-derive THIS row under when reproducing it: the one that actually judged
-    /// it, as far as the row itself can prove.
+    /// The typo rule to TRY FIRST when reproducing this row: the one that actually judged it, as far
+    /// as the row itself can prove.
     ///
     /// <para>The proof is <see cref="StoredScore.ProvablyJudgedUnderTheDeferredTypoRule"/> and it runs
     /// in ONE DIRECTION. A row holding an uncorrected typo can only have come from a client running
-    /// <see cref="live_typo_rule"/>, so that row is pinned to it. A row without one is not evidence of
-    /// <see cref="stored_era_typo_rule"/>, it is evidence of nothing, so it keeps the default: for a
-    /// run with no typo in it the two rules are the same judgement anyway, and the rows where they are
-    /// not (a typo corrected before backlog 126 gave the cell its own key) are a residue to measure
-    /// rather than to guess at.</para>
+    /// <see cref="live_typo_rule"/>, so that row is PINNED to it and <see cref="EraSearchFor"/> offers
+    /// it nothing else. A row without one is not evidence of <see cref="stored_era_typo_rule"/>, it is
+    /// evidence of nothing, so it STARTS there.</para>
+    ///
+    /// <para>THE WORD "STARTS" IS THE WHOLE OF BACKLOG 158. This used to be the last word for an
+    /// unprovable row, on the reading that for a run with no typo in it the two rules are the same
+    /// judgement anyway. That is true of a run with no typo and false of a run whose typo was
+    /// CORRECTED: the key marks only a cell left holding a wrong character, so a corrected typo is
+    /// unprovable AND graded differently by the two rules (the older one already spent the cell on a
+    /// Miss). Those rows were the last thing production could not explain. An unprovable row now
+    /// starts here and, if it does not come back, has the axis searched by
+    /// <see cref="EraSearchFor"/>.</para>
     /// </summary>
     public static TypoRule StoredEraTypoRuleFor(StoredScore stored)
         => stored.ProvablyJudgedUnderTheDeferredTypoRule ? live_typo_rule : stored_era_typo_rule;
@@ -570,13 +606,33 @@ public static class Recalculation
     private const RateWindowRule live_rate_rule = RateWindowRule.ScaledByRate;
 
     /// <summary>
-    /// The era the reproduce pass tries first, and the only one it tries for a row that comes back
-    /// under it: the oldest of them all, with the spacebar inside the timing challenge, the windows
-    /// unscaled by the rate and no combo given back for a corrected typo. Every row stored before
-    /// backlog 140 is in this era, and it remains the overwhelming majority of the table, so the
-    /// search below costs the table nothing.
+    /// The era the reproduce pass tries first for a row that proves nothing, and the only one it tries
+    /// for a row that comes back under it: the oldest of them all, with the spacebar inside the timing
+    /// challenge, the windows unscaled by the rate, no combo given back for a corrected typo and a
+    /// wrong character spending its cell on a Miss the instant it lands. Every row stored before
+    /// backlog 109 is in this era, and it remains the overwhelming majority of the table, so the search
+    /// below costs the table nothing.
+    ///
+    /// <para>NOT the starting point for EVERY row, since backlog 158 put the typo axis in the search:
+    /// a row whose <c>good</c> key proves the deferred rule starts on that arm instead. Use
+    /// <see cref="DefaultEraFor"/> whenever the question is "what did THIS row start at".</para>
     /// </summary>
-    public static readonly SearchedEra DefaultEra = new(stored_era_space_rule, stored_era_rate_rule, stored_era_combo_rule);
+    public static readonly SearchedEra DefaultEra = new(stored_era_space_rule, stored_era_rate_rule, stored_era_combo_rule, stored_era_typo_rule);
+
+    /// <summary>
+    /// The era THIS row is tried first under, which is <see cref="DefaultEra"/> with the typo axis set
+    /// to whatever the row can prove about it (<see cref="StoredEraTypoRuleFor"/>). Always the first
+    /// element of <see cref="EraSearchFor"/>, which is asserted in the test suite rather than left as a
+    /// coincidence of two lists agreeing.
+    ///
+    /// <para>It exists because backlog 158 made the starting point a per-row question. Before it the
+    /// typo axis was applied outside the search entirely, so "the era tried first" was one value for
+    /// the whole table and <see cref="DefaultEra"/> was it. Now a row whose key PROVES the deferred
+    /// rule starts on the deferred arm, and calling that a reconstruction would be wrong twice over:
+    /// nothing was searched for it, and the thing that decided it was a proof, not a re-derivation.</para>
+    /// </summary>
+    public static SearchedEra DefaultEraFor(StoredScore stored)
+        => DefaultEra with { Typo = StoredEraTypoRuleFor(stored) };
 
     /// <summary>
     /// The eras a row is re-derived under, IN ORDER, until one reproduces it exactly. This is backlog
@@ -602,15 +658,24 @@ public static class Recalculation
     /// DETERMINISTIC and the report's label stable, not to make it correct.</para>
     ///
     /// <para>WHAT THE ORDER PREFERS is the eras a client has ACTUALLY RUN, ahead of the corners no
-    /// build ever offered. There are three of those, and they are a timeline rather than a pair,
-    /// because the axes did not all move at once: everything old (before backlog 140), then everything
-    /// live (since the 2026-08-13 release), then the middle era where combo restore had shipped and the
-    /// windows had not. The five mixtures follow, keeping backlog 156's window-pair order and trying
-    /// the older combo arm before the newer one within each.</para>
+    /// build ever offered. There are four of those, and they are a timeline rather than a pair,
+    /// because the axes did not all move at once: everything old (before backlog 109), then the
+    /// deferred typo rule on its own (109 to 140), then everything live (since the 2026-08-13
+    /// release), then the middle era where the typo rule and combo restore had shipped and the windows
+    /// had not. The twelve mixtures follow, keeping backlog 156's window-pair order, then backlog
+    /// 157's older-combo-arm-first rule, then the older typo arm before the newer one within each.</para>
+    ///
+    /// <para>THE ORDER IS BUILT SO THAT FILTERING IT DOES NOT DISTURB IT, which is what
+    /// <see cref="EraSearchFor"/> does to pin a proved row. Read only the deferred-arm entries and you
+    /// get backlog 157's eight combinations in backlog 157's order; read only the older-arm entries and
+    /// you get the same eight in the same order. So neither population's label can move because the
+    /// other population's arms were interleaved between them.</para>
     ///
     /// <para>THE DEFAULT STAYS FIRST, which is what keeps the cost on the residual: a row that comes
     /// back under it is never re-derived a second time, so the majority of the table pays exactly what
-    /// it paid before this search existed and its result means exactly what it meant before.</para>
+    /// it paid before this search existed and its result means exactly what it meant before. "The
+    /// default" is per row on the typo axis (see <see cref="DefaultEraFor"/>), so this holds for a
+    /// proved row too.</para>
     ///
     /// <para>WHAT IT DOES NOT DO: assign an era to a row no combination reproduces. That row keeps the
     /// default arm's mismatch and reports as unexplained exactly as it does today. A search that
@@ -618,20 +683,68 @@ public static class Recalculation
     /// </summary>
     public static readonly IReadOnlyList<SearchedEra> EraSearch = new[]
     {
-        // The three eras a real client shipped, oldest first.
+        // The four eras a real client shipped. Ordered so that the deferred-arm entries alone read as
+        // backlog 157's list did: everything old, then everything live, then the middle era.
         DefaultEra,
-        new SearchedEra(live_space_rule, live_rate_rule, live_combo_rule),
-        new SearchedEra(stored_era_space_rule, stored_era_rate_rule, live_combo_rule),
+        new SearchedEra(stored_era_space_rule, stored_era_rate_rule, stored_era_combo_rule, live_typo_rule),
+        new SearchedEra(live_space_rule, live_rate_rule, live_combo_rule, live_typo_rule),
+        new SearchedEra(stored_era_space_rule, stored_era_rate_rule, live_combo_rule, live_typo_rule),
 
-        // The five corners no build ever offered, which are searched anyway: each axis is an
+        // The twelve corners no build ever offered, which are searched anyway: each axis is an
         // independent fact about how a press was graded, and the next change to one of them has no
-        // reason to move the others.
-        new SearchedEra(live_space_rule, live_rate_rule, stored_era_combo_rule),
-        new SearchedEra(live_space_rule, stored_era_rate_rule, stored_era_combo_rule),
-        new SearchedEra(live_space_rule, stored_era_rate_rule, live_combo_rule),
-        new SearchedEra(stored_era_space_rule, live_rate_rule, stored_era_combo_rule),
-        new SearchedEra(stored_era_space_rule, live_rate_rule, live_combo_rule),
+        // reason to move the others. The typo rule is in here for the same reason the other three are,
+        // and only ever reaches a row whose keys prove nothing about it (see EraSearchFor).
+        new SearchedEra(live_space_rule, live_rate_rule, live_combo_rule, stored_era_typo_rule),
+        new SearchedEra(stored_era_space_rule, stored_era_rate_rule, live_combo_rule, stored_era_typo_rule),
+        new SearchedEra(live_space_rule, live_rate_rule, stored_era_combo_rule, stored_era_typo_rule),
+        new SearchedEra(live_space_rule, live_rate_rule, stored_era_combo_rule, live_typo_rule),
+        new SearchedEra(live_space_rule, stored_era_rate_rule, stored_era_combo_rule, stored_era_typo_rule),
+        new SearchedEra(live_space_rule, stored_era_rate_rule, stored_era_combo_rule, live_typo_rule),
+        new SearchedEra(live_space_rule, stored_era_rate_rule, live_combo_rule, stored_era_typo_rule),
+        new SearchedEra(live_space_rule, stored_era_rate_rule, live_combo_rule, live_typo_rule),
+        new SearchedEra(stored_era_space_rule, live_rate_rule, stored_era_combo_rule, stored_era_typo_rule),
+        new SearchedEra(stored_era_space_rule, live_rate_rule, stored_era_combo_rule, live_typo_rule),
+        new SearchedEra(stored_era_space_rule, live_rate_rule, live_combo_rule, stored_era_typo_rule),
+        new SearchedEra(stored_era_space_rule, live_rate_rule, live_combo_rule, live_typo_rule),
     };
+
+    /// <summary>
+    /// The eras THIS row is re-derived under, in order, which is <see cref="EraSearch"/> with the typo
+    /// axis PINNED away when the row can prove it (backlog 158, composing backlog 155).
+    ///
+    /// <para>THE PROOF WINS AND IS NOT RE-LITIGATED. A row carrying a <c>good</c> key was judged by a
+    /// client running <see cref="live_typo_rule"/>, because no other rule can leave a cell holding a
+    /// wrong character, so that row is handed only the eight candidates on that arm. The other eight
+    /// are not tried, not preferred over and not compared against: an axis a row can be ASKED about is
+    /// not an axis to search, and searching it would let a coincidence outvote a proof.</para>
+    ///
+    /// <para>THE ABSENCE OF THE KEY IS WHAT GOT SEARCHED, and it is the only thing backlog 158 changed.
+    /// Backlog 155 documented that absence as "no proof either way", never as evidence of the older
+    /// rule, but the pass then resolved it to the older rule anyway because it had nothing else to do
+    /// with it. The rows where that was wrong are exactly the rows whose typo was CORRECTED: the key
+    /// marks only a cell left standing, so a corrected typo proves nothing AND is graded differently by
+    /// the two rules. Such a row now gets all sixteen candidates, still starting at
+    /// <see cref="DefaultEra"/>, and is pinned to the arm that reproduces it.</para>
+    ///
+    /// <para>AMBIGUITY ON THIS AXIS IS THE NORMAL CASE AND IS HARMLESS, more so than on any of the
+    /// other three. A run with no typo in it at all is judged identically by both rules, so it
+    /// reproduces under both arms of every combination that reproduces it under either, which doubles
+    /// the number of matching corners for most of the table. That costs nothing for the same reason
+    /// backlog 156 recorded: reproducing means re-deriving <c>statistics</c> and <c>max_combo</c>
+    /// EXACTLY, so every arm that reproduces a row has produced the same account of it and nothing
+    /// downstream can tell which was picked. The order is there to make the label deterministic, not to
+    /// make it correct.</para>
+    /// </summary>
+    public static IReadOnlyList<SearchedEra> EraSearchFor(StoredScore stored)
+        => stored.ProvablyJudgedUnderTheDeferredTypoRule ? deferred_typo_search : EraSearch;
+
+    /// <summary>
+    /// <see cref="EraSearch"/> restricted to the arm a <c>good</c> key proves, i.e. the candidate list
+    /// for a row backlog 155 pins. Precomputed rather than filtered per row so the pin costs a field
+    /// read rather than an allocation on every score in the table.
+    /// </summary>
+    private static readonly IReadOnlyList<SearchedEra> deferred_typo_search =
+        EraSearch.Where(era => era.Typo == live_typo_rule).ToArray();
 
     /// <param name="backfillMistypes">
     /// Whether to introduce a mistype count into rows that predate the stat. Off by default, and
@@ -684,15 +797,23 @@ public static class Recalculation
         //    any of them on the live arm would re-grade the run on a ladder it was never played on
         //    and report the difference as a corrupt row.
         //
-        //    NONE of the four is a constant any more. The TYPO axis is read off the row (backlog 155),
-        //    since an uncorrected typo takes a key only one of the two rules can produce. The SPACEBAR,
-        //    the RATE WINDOWS and COMBO RESTORE have no such key, so all three are PROVED BY
-        //    RECONSTRUCTION (backlog 156, joined by combo restore in 157): the row is re-derived under
-        //    DefaultEra first, and only if that does not come back is it re-derived under the remaining
+        //    NONE of the four is a constant any more, and none of them falls back on one either. The
+        //    TYPO axis is READ OFF THE ROW where the row can prove it (backlog 155), since a typo LEFT
+        //    STANDING takes a key only the deferred rule can produce, and such a row is PINNED: the
+        //    candidate list it gets from EraSearchFor holds only that arm, so the axis is never
+        //    searched for it. Everything else is PROVED BY RECONSTRUCTION: the spacebar and the rate
+        //    windows (backlog 156), combo restore (157), and the typo rule for a row whose keys prove
+        //    nothing about it (158, the case of a typo that was CORRECTED, which leaves no key and is
+        //    graded differently by the two rules). The row is re-derived under DefaultEraFor(stored)
+        //    first, and only if that does not come back is it re-derived under the remaining
         //    combinations until one reproduces it exactly.
         //
+        //    THAT IS A COMPOSITION OF BACKLOG 155, NOT A REVERSAL OF IT. 155 documented the absence of
+        //    the key as "no proof either way" and never as evidence of the older rule; what it lacked
+        //    was anything to do with an absence except default it. Searching it is that something.
+        //
         //    The search runs on the residual alone, which is the point of trying the default first:
-        //    a row from before backlog 140 (the overwhelming majority of the table) costs exactly what
+        //    a row from before backlog 109 (the overwhelming majority of the table) costs exactly what
         //    it cost before, one re-derivation, and its result means exactly what it meant before. A
         //    row no combination reproduces keeps THIS arm's mismatch and reports as unexplained, which
         //    is what stops the search from being a way of always finding an answer.
@@ -704,18 +825,21 @@ public static class Recalculation
         //    necessarily played with that scaling and applying it unconditionally reproduces the row.
         //    Such a row fails the default on the SPACE axis like any other, and the search fixes it
         //    there. This would need revisiting only if an EZ or HR window scale were ever retuned.
-        var typoRule = StoredEraTypoRuleFor(stored);
-
         TypeBeatReplayAccount ScoreUnder(SearchedEra candidate) => TypeBeatReplayScorer.Score(
             playable,
             mods,
             score.Replay,
-            typoRule,
+            candidate.Typo,
             candidate.Combo,
             candidate.Space,
             candidate.Rate);
 
-        var era = DefaultEra;
+        // The era this row STARTS at, which is the table-wide default on the three keyless axes and
+        // whatever the row's own keys prove on the typo axis. Always the first candidate the row is
+        // offered, so a row that comes back here is never re-derived a second time.
+        var startingPoint = DefaultEraFor(stored);
+
+        var era = startingPoint;
         var oldRule = ScoreUnder(era);
         var oldStatistics = WireCounts.From(oldRule.Statistics);
 
@@ -725,9 +849,9 @@ public static class Recalculation
 
         if (!reproduced)
         {
-            foreach (var candidate in EraSearch)
+            foreach (var candidate in EraSearchFor(stored))
             {
-                if (candidate == DefaultEra)
+                if (candidate == startingPoint)
                     continue;
 
                 var attempt = ScoreUnder(candidate);
@@ -747,13 +871,14 @@ public static class Recalculation
 
         if (mode == RecalcMode.Reproduce && !reproduced)
         {
-            // The mismatch reported is the DEFAULT arm's, not the last combination the search tried.
-            // A reader looking at an unexplained row wants the disagreement against the era the row
-            // is most likely to be from, and a list of eight near misses would bury it. It is worth
-            // knowing what that costs the reader, since backlog 157 was a whole item's worth of it:
-            // the printed signature is the DEFAULT era's, so a row whose real era is several axes away
-            // shows the default's disagreement on every one of them at once, and chasing that
-            // signature on its own leads somewhere there is nothing to find.
+            // The mismatch reported is the STARTING POINT arm's, not the last combination the search
+            // tried. A reader looking at an unexplained row wants the disagreement against the era the
+            // row is most likely to be from, and a list of sixteen near misses would bury it. It is
+            // worth knowing what that costs the reader, since backlogs 157 and 158 were two whole
+            // items' worth of it: the printed signature is that one arm's, so a row whose real era is
+            // several axes away shows its disagreement on every one of them at once, and chasing that
+            // signature on its own leads somewhere there is nothing to find. Both items' residuals
+            // printed a window-width shape while their real fault was on the combo and typo axes.
             return Skipped(stored, SkipReason.NotReproducible, mismatch, mode) with
             {
                 OldRuleStatistics = oldStatistics,
@@ -784,11 +909,17 @@ public static class Recalculation
         //    under today's typo rule this arm is the same judgement as the one above, and the row
         //    correctly reports as unmoved: there is no rule change left for it to be repriced by.
         //
-        //    "The stored era" for those three means the era the arm above PROVED for this row, on ALL
-        //    THREE AXES, not the default (backlog 156, and backlog 157 for combo restore). Holding any
-        //    of them at the default for a row proved to be from a later era would vary more than one
-        //    axis while claiming to vary one, and would report a row played since that era's release
-        //    as moving backwards onto a ladder it was never on.
+        //    "The stored era" for those three means the era the arm above ESTABLISHED for this row, on
+        //    ALL THREE AXES, not the default (backlog 156, and backlog 157 for combo restore). Holding
+        //    any of them at the default for a row proved to be from a later era would vary more than
+        //    one axis while claiming to vary one, and would report a row played since that era's
+        //    release as moving backwards onto a ladder it was never on.
+        //
+        //    THE TYPO AXIS IS THE ONE THIS ARM DOES NOT TAKE FROM `era`, and that is not an oversight
+        //    (backlog 158 put the axis in the search and left this line alone). This arm is the LIVE
+        //    typo rule by definition: it is the axis a reproduce sweep exists to vary. `era.Typo` is
+        //    what the row was judged under, which the arm above already used. Where the two agree, on
+        //    a row proved or reconstructed onto the deferred arm, the row correctly reports as unmoved.
         //
         //    Supersede applies ALL of today's rules, judgement AND combo restore AND the spacebar
         //    AND the rate windows, together (backlog 136, decided 2026-08-13; backlog 151 adds the
