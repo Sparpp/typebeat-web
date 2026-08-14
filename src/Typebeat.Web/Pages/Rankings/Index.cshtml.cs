@@ -234,9 +234,10 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
             // player (or one clear each of a song's Easy, Normal and Insane) collapse to the single
             // best of them instead of filling the page.
             //
-            // The LIMIT lands BEFORE the display joins: the inner select reads only the five
-            // columns the pp fragments carry (id / user_id / beatmap_id / set_id / pp), and just
-            // the 50 survivors are hydrated by primary key. The per-map stage underneath the set
+            // The LIMIT lands BEFORE the display joins: the inner select reads only four of the
+            // five columns the pp fragments carry (id / user_id / beatmap_id / pp; set_id has done
+            // its job in the fold), and just the 50 survivors are hydrated by primary key. The
+            // per-map stage underneath the set
             // fold is served by ix_scores_pp (020_performance_points.sql); this board's global pp
             // ordering is NOT, since that index leads with user_id, so the folded set is sorted. It
             // is a sort over the eligible plays, the same set the Performance board already folds
