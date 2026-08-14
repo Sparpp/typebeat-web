@@ -24,7 +24,7 @@ pp = C · SR_eff^2.00
        · modMult                                         # NOT for DT/HT; rate lives in SR_eff only
        · rateMult                                        # 1.0 except base-rate HT (see the Half Time amendment)
 
-C = 9.6    # global scale constant, does not affect ranking order
+C = 12.4    # global scale constant, does not affect ranking order
 ```
 
 Factor by factor, in descending priority:
@@ -958,3 +958,36 @@ columns, which also finally reprices the `sr_dt` rows still pinned at the old fl
 and it stamps `pp_version = 0` on the scores of every row it rewrites. `PpBackfill` then runs after
 it in the same startup and reprices those rows against the new pp formula, so the two halves of the
 migration land on a stored row together rather than one at a time.
+
+## Amendment (2026-08-14): Re-anchor the global scale after length left pp
+
+Backlog 152 deleted pp's length factor, which paid up to 1.70x, and left length priced only
+through the star rating. The REORDERING that produced is the feature and is untouched here; the
+across-the-board deflation that came with it is not, and this corrects only that. Being a
+uniform multiplier it provably cannot move a placement, within a map or across maps. The anchor
+is the median ranked player's decayed total, measured on production: profile pp and global rank
+are the numbers players see, and they deflated more (ratio 0.776) than individual plays did
+(0.751), because the decayed sum is dominated by a player's best plays and those sit on the
+longest maps. 12.374 holds it exactly flat; 12.4 is that rounded to the one-decimal shape 9.6
+and 12.5 already use, leaving the median player 0.2 percent up. Per-player ratios span 0.683 to
+0.873 and no uniform anchor can flatten that spread, which is backlog 152's intended reordering
+and must survive.
+
+```
+BEFORE:  max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − typos^1.2/(notes + typos))^4
+
+AFTER:   max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − typos^1.2/(notes + typos))^4
+```
+
+SR, accuracy, combo, the mod multipliers, the Half Time mirror multiplier, eligibility and the
+aggregation are all untouched. The typo count still sits on both sides of its own fraction, for
+the reason the backlog-89 amendment gives: keypresses are unbounded, and a fractional exponent
+on a negative base is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, typo=80` | `0.008341` | `0.008341` | +0% |
+| `notes=500, miss=10, typo=20` | `0.542001` | `0.542001` | +0% |
+
+**`VERSION` bumps to 17.** Every stored row the change values differently is repriced by
+`PpBackfill` at the next boot, reading only columns; no migration is needed.

@@ -8,7 +8,7 @@ namespace Typebeat.Web.Scoring;
 /// constant below is pinned there and must not drift from it.
 ///
 /// <code>
-/// pp = 9.6 · SR_eff^2.00
+/// pp = 12.4 · SR_eff^2.00
 ///      · max(0, 1 − miss^1.2/notes)^10                   cleanliness
 ///      · max(0, 1 − typos^1.2/(notes+typos))^4           typos
 ///      · acc^1.80                                        timing quality
@@ -275,6 +275,8 @@ public static class PerformancePoints
     /// therefore deflate hardest (roughly 18% at 340 cells, 28% at 800, 38% at 2300), which is the
     /// intended reordering; the uniform part of that deflation is to be taken out by re-anchoring
     /// scale separately. notes stays, for both penalty terms, the combo ratio and Flashlight.</item>
+    /// <item>v17 = Global scale 9.6 to 12.4, a uniform rescale that holds the median ranked player's
+    /// total pp flat across backlog 152.</item>
     /// </list>
     ///
     /// <para>Rows are ALSO invalidated back to 0 whenever the beatmap they were set on has its star
@@ -291,7 +293,7 @@ public static class PerformancePoints
     /// there is no set of rows the change provably leaves alone. Bump this the moment a change
     /// values ANY stored row differently.</para>
     /// </summary>
-    public const int VERSION = 16;
+    public const int VERSION = 17;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -307,7 +309,7 @@ public static class PerformancePoints
 
     // ---- formula constants (docs/pp.md) ----
 
-    private const double scale = 9.6;              // C: global scale, does not affect ranking order
+    private const double scale = 12.4;              // C: global scale, does not affect ranking order
     private const double sr_exponent = 2.00;
     private const double miss_exponent = 10.0;
     private const double typo_exponent = 4.0;
