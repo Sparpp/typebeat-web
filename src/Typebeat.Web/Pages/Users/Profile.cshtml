@@ -405,7 +405,7 @@
             <div class="profile-rank">
                 <span class="profile-rank__label">Performance rank</span>
                 <span class="profile-rank__value">@(Model.PpRank is long ppRank ? "#" + ppRank.ToString("N0", CultureInfo.InvariantCulture) : "Unranked")</span>
-                <span class="profile-rank__pp" title="total performance points; your best play on each ranked map, weighted">@Model.TotalPp.ToString("N0", CultureInfo.InvariantCulture)pp</span>
+                <span class="profile-rank__pp" title="total performance points; your best play on each ranked song, weighted">@Model.TotalPp.ToString("N0", CultureInfo.InvariantCulture)pp</span>
             </div>
             <div class="stat-row"><span class="stat-row__label">Score rank</span><span class="stat-row__value">@(Model.GlobalRank is long rank ? "#" + rank.ToString("N0", CultureInfo.InvariantCulture) : "Unranked")</span></div>
             <div class="stat-row"><span class="stat-row__label">Ranked score</span><span class="stat-row__value">@Model.RankedScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>

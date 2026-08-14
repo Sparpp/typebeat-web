@@ -14,8 +14,9 @@ namespace Typebeat.Web.Tests.Website;
 /// the (now labelled) cumulative-score rank. The section's ORDER is
 /// <see cref="ProfileBestScoresOrderTest"/>'s.
 ///
-/// Own throwaway user/set, own beatmaps, low score totals so nothing here can move
-/// <see cref="ProfilePageTest"/>'s or <see cref="RankingsPageTest"/>'s exact-figure assertions.
+/// Own throwaway user, own sets (one per song, see the seed), own beatmaps, low score totals so
+/// nothing here can move <see cref="ProfilePageTest"/>'s or <see cref="RankingsPageTest"/>'s
+/// exact-figure assertions.
 /// </summary>
 public class ProfilePpTest
 {
@@ -38,18 +39,16 @@ public class ProfilePpTest
             RETURNING id
             """);
 
-        long setId = await conn.ExecuteScalarAsync<long>(
-            """
-            INSERT INTO beatmapsets (owner_id, title, artist, status, submitted_at, updated_at)
-            VALUES (@ownerId, 'Pp Row Anthem', 'The Priced', 'ranked', now() - interval '2 days', now() - interval '2 days')
-            RETURNING id
-            """,
-            new { ownerId });
+        // TWO SONGS, one map each, not two difficulties of one song. The Best section folds on the
+        // SET (backlog 162), so a shared set would show only the priced row and the honest-zero
+        // case below would have nothing to assert on.
+        long pricedSetId = await insertSetAsync(conn, ownerId, "Pp Row Anthem");
+        long unpricedSetId = await insertSetAsync(conn, ownerId, "Pp Row Encore");
 
-        nonZeroBeatmapId = await insertBeatmapAsync(conn, setId, "priced");
-        zeroBeatmapId = await insertBeatmapAsync(conn, setId, "unpriced");
+        nonZeroBeatmapId = await insertBeatmapAsync(conn, pricedSetId, "priced");
+        zeroBeatmapId = await insertBeatmapAsync(conn, unpricedSetId, "unpriced");
 
-        // One best play per map, kept in the same low band FirstPlacesTest uses, so this fixture
+        // One best play per song, kept in the same low band FirstPlacesTest uses, so this fixture
         // cannot disturb another test's global-rank assertion. pp is set directly on the row
         // (a raw INSERT bypasses the submission pipeline that would otherwise compute it), one
         // fractional (rounding must show) and one exactly zero (the "still shown" case).
@@ -159,6 +158,15 @@ public class ProfilePpTest
 
         return html[start..end];
     }
+
+    private static Task<long> insertSetAsync(NpgsqlConnection conn, long ownerId, string title)
+        => conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist, status, submitted_at, updated_at)
+            VALUES (@ownerId, @title, 'The Priced', 'ranked', now() - interval '2 days', now() - interval '2 days')
+            RETURNING id
+            """,
+            new { ownerId, title });
 
     private static Task<long> insertBeatmapAsync(NpgsqlConnection conn, long setId, string versionName)
         => conn.ExecuteScalarAsync<long>(

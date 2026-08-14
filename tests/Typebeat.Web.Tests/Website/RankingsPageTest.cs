@@ -11,12 +11,13 @@ namespace Typebeat.Web.Tests.Website;
 /// Global rankings page, all three boards:
 ///
 /// <list type="bullet">
-/// <item>the MAIN board, total pp: best-pp play per ranked map, decay-weighted over all of them
-/// (<see cref="PpRanking"/>, docs/pp.md);</item>
+/// <item>the MAIN board, total pp: best-pp play per ranked SONG (the set, not the difficulty),
+/// decay-weighted over all of them (<see cref="PpRanking"/>, docs/pp.md);</item>
 /// <item>the score board (<c>?board=score</c>), unchanged: cumulative score = sum of best-per-map
-/// scores on RANKED maps only.</item>
+/// scores on RANKED maps only. That metric is still per BEATMAP, which is why the seeds below can
+/// move between sets without moving any figure this board asserts.</item>
 /// <item>the top-plays board (<c>?board=plays</c>): INDIVIDUAL scores by pp descending, one row per
-/// (player, map), so one player can hold several rows.</item>
+/// (player, song), so one player can hold several rows.</item>
 /// </list>
 ///
 /// The pp rows are seeded with EXPLICIT pp values rather than by playing maps, so the aggregation
@@ -25,6 +26,16 @@ namespace Typebeat.Web.Tests.Website;
 /// on those rows, so it never depends on (or disturbs) the shared fixtures' counts. The top-plays
 /// seeds use deliberately HUGE pp values (thousands) so they cannot be pushed off the board's
 /// LIMIT by whatever the rest of the suite happens to have submitted into the shared database.
+///
+/// <para>
+/// ONE SET PER SEEDED SONG, and it matters (backlog 162). pp dedups on the SET, so two beatmaps
+/// sharing a set are two difficulties of one song and bank ONE weighted entry between them. Every
+/// seed below that means "a different song" therefore gets its own <c>insertSetAsync</c>, and the
+/// only place two beatmaps deliberately share a set is
+/// <see cref="TotalPp_KeepsOnlyTheBestPpPlayPerSongAcrossDifficulties"/>, which is the test of that
+/// rule. Do not re-merge them to save a row: every other assertion here would then be measuring the
+/// set fold instead of the thing it names.
+/// </para>
 /// </summary>
 [NonParallelizable]
 public class RankingsPageTest
@@ -38,6 +49,7 @@ public class RankingsPageTest
     private long tieFirstId;
     private long tieSecondId;
     private long rateModId;
+    private long oneSongId;
 
     /// <summary>The rate-mod probe map's three ratings, all distinct and unique to this test so an
     /// assertion on the rendered number cannot match any other row.</summary>
@@ -45,11 +57,19 @@ public class RankingsPageTest
     private const double dt_stars = 7.77;
     private const double ht_stars = 1.11;
 
-    /// <summary>How many distinct ranked maps the decay player set a play on (deliberately > 10).</summary>
+    /// <summary>How many distinct ranked SONGS the decay player set a play on (deliberately > 10).
+    /// One set each, because the fold is per set: twelve difficulties of one song would collapse to
+    /// a single weighted entry and this fixture would stop testing decay at all.</summary>
     private const int decay_plays = 12;
 
     /// <summary>Every one of those plays is worth the same, so the total is purely the decay series.</summary>
     private const double decay_play_pp = 100;
+
+    /// <summary>The one-song player's better difficulty: worth the most pp, scored the least.</summary>
+    private const double one_song_best_pp = 260;
+
+    /// <summary>Their other difficulty of the SAME song: bigger score, less pp, must bank nothing.</summary>
+    private const double one_song_weak_pp = 45;
 
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
@@ -66,14 +86,19 @@ public class RankingsPageTest
         long restrictedId = await insertUserAsync(conn, "rk restricted", restricted: true);
         long deletedId = await insertUserAsync(conn, "rk deleted", deleted: true);
 
-        long rankedSet = await insertSetAsync(conn, "Rankings Ranked Set", "ranked");
-        long mapA = await insertBeatmapAsync(conn, rankedSet);
-        long mapB = await insertBeatmapAsync(conn, rankedSet);
+        // Two SONGS, so alice's two plays are two weighted entries. One set holding both maps would
+        // make them difficulties of one song and fold to a single entry (backlog 162).
+        long rankedSetA = await insertSetAsync(conn, "Rankings Ranked Set A", "ranked");
+        long mapA = await insertBeatmapAsync(conn, rankedSetA);
+
+        long rankedSetB = await insertSetAsync(conn, "Rankings Ranked Set B", "ranked");
+        long mapB = await insertBeatmapAsync(conn, rankedSetB);
 
         long pendingSet = await insertSetAsync(conn, "Rankings Pending Set", "pending");
         long mapC = await insertBeatmapAsync(conn, pendingSet);
 
-        // alice: best-per-map folds 300k (not 300k+100k) on A, plus 200k on B = 500k over 2 maps.
+        // alice: best-per-map folds 300k (not 300k+100k) on A, plus 200k on B = 500k over 2 maps
+        // for the SCORE board, and 40 + 20 x decay over 2 SONGS for the pp board.
         await insertScoreAsync(conn, aliceId, mapA, 300_000, pp: 40);
         await insertScoreAsync(conn, aliceId, mapA, 100_000, pp: 10);
         await insertScoreAsync(conn, aliceId, mapB, 200_000, pp: 20);
@@ -94,36 +119,45 @@ public class RankingsPageTest
         // Per-map dedup: only the BEST-pp play on a map counts, and "best" is by pp, not by score.
         // The 120 pp play is deliberately the LOWER-scoring one, so a fold that ordered by
         // total_score would pick the wrong row and total 50 + 30 x 0.85 instead.
-        long dedupSet = await insertSetAsync(conn, "Rankings Dedup Set", "ranked");
-        long dedupMapX = await insertBeatmapAsync(conn, dedupSet);
-        long dedupMapY = await insertBeatmapAsync(conn, dedupSet);
+        //
+        // X and Y are two SONGS, one set each: this fixture is about the retry fold, so the set
+        // fold must not also be firing here or the two rules become indistinguishable.
+        long dedupSetX = await insertSetAsync(conn, "Rankings Dedup Set X", "ranked");
+        long dedupMapX = await insertBeatmapAsync(conn, dedupSetX);
+
+        long dedupSetY = await insertSetAsync(conn, "Rankings Dedup Set Y", "ranked");
+        long dedupMapY = await insertBeatmapAsync(conn, dedupSetY);
+
         await insertScoreAsync(conn, dedupId, dedupMapX, 900_000, pp: 50);
         await insertScoreAsync(conn, dedupId, dedupMapX, 100_000, pp: 120);
         await insertScoreAsync(conn, dedupId, dedupMapY, 500_000, pp: 30);
 
-        // Decay: 12 equal plays on 12 distinct ranked maps. More than ten, so this also proves
-        // there is no hard top-10 truncation.
-        long decaySet = await insertSetAsync(conn, "Rankings Decay Set", "ranked");
-
+        // Decay: 12 equal plays on 12 distinct ranked SONGS, a set each. More than ten, so this
+        // also proves there is no hard top-10 truncation. Twelve difficulties of ONE set would fold
+        // to one entry and this would silently stop being a decay test.
         for (int i = 0; i < decay_plays; i++)
         {
+            long decaySet = await insertSetAsync(conn, $"Rankings Decay Set {i:00}", "ranked");
             long map = await insertBeatmapAsync(conn, decaySet);
             await insertScoreAsync(conn, decayId, map, 250_000, pp: decay_play_pp);
         }
 
         // ---- top-plays board ----
         //
-        // Two players sharing one map plus a second map for the leader, so the board has to order
+        // Two players sharing one song plus a second song for the leader, so the board has to order
         // SCORES (not players) and let one player hold more than one row. The leader's second play
         // on map P is the dedup probe: same map, same player, lower pp, must never be listed.
+        // P and Q are separate SETS, or the leader's two entries would fold into one.
         topPlayId = await insertUserAsync(conn, "rk topplay");
         runnerUpId = await insertUserAsync(conn, "rk runnerup");
         tieFirstId = await insertUserAsync(conn, "rk tiefirst");
         tieSecondId = await insertUserAsync(conn, "rk tiesecond");
 
-        long topSet = await insertSetAsync(conn, "Rankings Top Plays Set", "ranked");
-        long topMapP = await insertBeatmapAsync(conn, topSet);
-        long topMapQ = await insertBeatmapAsync(conn, topSet);
+        long topSetP = await insertSetAsync(conn, "Rankings Top Plays Set", "ranked");
+        long topMapP = await insertBeatmapAsync(conn, topSetP);
+
+        long topSetQ = await insertSetAsync(conn, "Rankings Top Plays Set Q", "ranked");
+        long topMapQ = await insertBeatmapAsync(conn, topSetQ);
 
         await insertScoreAsync(conn, topPlayId, topMapP, 800_000, pp: 6000,
             statistics: """{"great":100,"miss":3,"combo_break":7}""");
@@ -136,15 +170,37 @@ public class RankingsPageTest
         // (docs/pp.md), so the board must show sr_dt here, never the base rating.
         rateModId = await insertUserAsync(conn, "rk ratemod");
 
-        long rateMap = await insertBeatmapAsync(conn, topSet, stars: base_stars, srDt: dt_stars, srHt: ht_stars);
+        long rateSet = await insertSetAsync(conn, "Rankings Rate Mod Set", "ranked");
+        long rateMap = await insertBeatmapAsync(conn, rateSet, stars: base_stars, srDt: dt_stars, srHt: ht_stars);
         await insertScoreAsync(conn, rateModId, rateMap, 450_000, pp: 4500, mods: """[{"acronym":"DT"}]""");
 
-        // Equal pp on two different maps: the tie must break on the EARLIER submission, so the
+        // Equal pp on two different SONGS: the tie must break on the EARLIER submission, so the
         // board is a total order and never reshuffles between renders.
-        long tieMapA = await insertBeatmapAsync(conn, topSet);
-        long tieMapB = await insertBeatmapAsync(conn, topSet);
+        long tieSetA = await insertSetAsync(conn, "Rankings Tie Set A", "ranked");
+        long tieMapA = await insertBeatmapAsync(conn, tieSetA);
+
+        long tieSetB = await insertSetAsync(conn, "Rankings Tie Set B", "ranked");
+        long tieMapB = await insertBeatmapAsync(conn, tieSetB);
+
         await insertScoreAsync(conn, tieFirstId, tieMapA, 400_000, pp: 4000);
         await insertScoreAsync(conn, tieSecondId, tieMapB, 400_000, pp: 4000);
+
+        // ---- the set fold itself (backlog 162) ----
+        //
+        // The ONLY seed here where two beatmaps share a set on purpose: one song, two difficulties,
+        // one player. Only the better-pp difficulty may bank anything, and the set counts once.
+        //
+        // The higher-pp difficulty is deliberately the LOWER-scoring one, the same trap the retry
+        // fold above sets, so a fold that ordered by total_score picks the wrong row and totals
+        // one_song_weak_pp instead.
+        oneSongId = await insertUserAsync(conn, "rk onesong");
+
+        long oneSongSet = await insertSetAsync(conn, "Rankings One Song Set", "ranked");
+        long oneSongHard = await insertBeatmapAsync(conn, oneSongSet);
+        long oneSongEasy = await insertBeatmapAsync(conn, oneSongSet);
+
+        await insertScoreAsync(conn, oneSongId, oneSongHard, 950_000, pp: one_song_weak_pp);
+        await insertScoreAsync(conn, oneSongId, oneSongEasy, 150_000, pp: one_song_best_pp);
     }
 
     /// <summary>Σ pp·decay^i over the seeded equal-value plays: 100 · (1 − 0.85^12) / 0.15.</summary>
@@ -177,7 +233,43 @@ public class RankingsPageTest
         {
             // 120 (map X's best pp, though not its best score) + 30 x 0.85 (map Y).
             Assert.That(pp.TotalPp, Is.EqualTo(120 + 30 * PerformancePoints.DECAY).Within(1e-9));
-            Assert.That(pp.PpPlayCount, Is.EqualTo(2), "three plays across two maps fold to two");
+            Assert.That(pp.PpPlayCount, Is.EqualTo(2), "three plays across two songs fold to two");
+        });
+    }
+
+    /// <summary>
+    /// THE SET FOLD (backlog 162): pp is earned per SONG, not per difficulty. A player who clears
+    /// two difficulties of one set banks only the better-pp one, and the set counts once toward
+    /// <c>pp_play_count</c>.
+    ///
+    /// <para>
+    /// The better-pp difficulty is the lower-SCORING one, so a fold that resolved the song by total
+    /// score would bank <c>one_song_weak_pp</c> and be caught here rather than silently ranking the
+    /// wrong play. The weaker difficulty contributing nothing is asserted as an exact total, not as
+    /// an inequality: <c>one_song_best_pp + one_song_weak_pp * DECAY</c> is what the per-BEATMAP
+    /// fold produced, and this is the one test that separates the two.
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task TotalPp_KeepsOnlyTheBestPpPlayPerSongAcrossDifficulties()
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        var pp = await PpRanking.ForUserAsync(conn, oneSongId);
+        var mine = (await topPlaysAsync(conn)).Where(r => r.UserId == oneSongId).ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pp.TotalPp, Is.EqualTo(one_song_best_pp).Within(1e-9),
+                "the song's weaker difficulty must contribute nothing at all");
+            Assert.That(pp.TotalPp, Is.Not.EqualTo(one_song_best_pp + one_song_weak_pp * PerformancePoints.DECAY)
+                .Within(1e-9), "that total is the old per-beatmap fold");
+            Assert.That(pp.PpPlayCount, Is.EqualTo(1), "two difficulties of one song count once");
+
+            // The top-plays board is built from the same fragment, so the one banked play is also
+            // the one and only row this player holds there.
+            Assert.That(mine.Select(r => r.Pp), Is.EqualTo(new[] { one_song_best_pp }));
         });
     }
 
@@ -356,7 +448,7 @@ public class RankingsPageTest
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Top plays (?board=plays): individual SCORES by pp, one row per (player, map).
+    // Top plays (?board=plays): individual SCORES by pp, one row per (player, song).
     // ---------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -368,7 +460,7 @@ public class RankingsPageTest
         => (await conn.QueryAsync<(long ScoreId, long UserId, double Pp)>(
             $"""
              SELECT best.id AS ScoreId, best.user_id AS UserId, best.pp AS Pp
-             FROM ({PpRanking.BestPerMapSql}) best
+             FROM ({PpRanking.BestPerSetSql}) best
              ORDER BY {PpRanking.TopPlaysOrder("best")}
              """)).ToList();
 
@@ -402,7 +494,7 @@ public class RankingsPageTest
     }
 
     [Test]
-    public async Task TopPlays_KeepsOneRowPerMapButLetsAPlayerHoldSeveral()
+    public async Task TopPlays_KeepsOneRowPerSongButLetsAPlayerHoldSeveral()
     {
         await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
         await conn.OpenAsync();
@@ -411,8 +503,8 @@ public class RankingsPageTest
 
         Assert.Multiple(() =>
         {
-            // Two maps, three plays: the 5900 retry on the same map as the 6000 folds away, and the
-            // player still holds BOTH of their per-map bests (no per-user dedup).
+            // Two songs, three plays: the 5900 retry on the same map as the 6000 folds away, and
+            // the player still holds BOTH of their per-song bests (no per-user dedup).
             Assert.That(mine.Select(r => r.Pp), Is.EqualTo(new[] { 6000d, 5000d }));
         });
     }

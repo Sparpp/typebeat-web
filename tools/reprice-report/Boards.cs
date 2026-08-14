@@ -115,9 +115,11 @@ internal static class BoardAnalysis
         }
 
         // The global top-plays board and the per-user total both run over the same fold: each
-        // player's best-pp play per map. Computed once, per side.
-        var bestBefore = FoldPerUserPerMap(eligible, Before);
-        var bestAfter = FoldPerUserPerMap(eligible, After);
+        // player's best-pp play per SONG (PpRanking.BestPerSetSql, backlog 162). Computed once, per
+        // side. The per-BEATMAP boards above are a different thing and stay keyed on the beatmap:
+        // a map's own leaderboard is still a map's own leaderboard.
+        var bestBefore = FoldPerUserPerSet(eligible, Before);
+        var bestAfter = FoldPerUserPerSet(eligible, After);
 
         var byId = eligible.ToDictionary(r => r.Stored.ScoreId);
 
@@ -151,9 +153,14 @@ internal static class BoardAnalysis
                 .Select(r => r.Stored.ScoreId)
                 .ToList();
 
-    private static List<PpRow> FoldPerUserPerMap(IEnumerable<PpRow> rows, Func<PpRow, double> price)
+    /// <summary>
+    /// One row per (user, SET): the unit pp is earned in. The site folds twice, per map and then per
+    /// set, because only the first stage can use <c>ix_scores_pp</c>; in memory the single grouping
+    /// gives the identical rows, since both stages break ties the same way.
+    /// </summary>
+    private static List<PpRow> FoldPerUserPerSet(IEnumerable<PpRow> rows, Func<PpRow, double> price)
         => rows.Where(r => price(r) > 0)
-               .GroupBy(r => (r.Stored.UserId, r.Stored.BeatmapId))
+               .GroupBy(r => (r.Stored.UserId, r.Map.Stored.SetId))
                .Select(g => g.OrderByDescending(price).ThenBy(r => r.Stored.ScoreId).First())
                .ToList();
 
