@@ -11,9 +11,10 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <para>
 /// A player's total is osu's shape, per <c>docs/pp.md</c>: keep only the BEST-pp play per ranked
-/// map (without the dedup, replays of one hard map would fill the whole list), sort those
-/// descending and sum them with a decay, <c>Σ pp_i · DECAY^i</c>, over ALL of them. There is no
-/// hard top-N truncation, so there is no cliff where the 11th-best play contributes exactly
+/// SONG, the <c>beatmapsets</c> row rather than the single difficulty (without the dedup, replays
+/// of one hard map, or a clear of every difficulty of one song, would fill the whole list), sort
+/// those descending and sum them with a decay, <c>Σ pp_i · DECAY^i</c>, over ALL of them. There is
+/// no hard top-N truncation, so there is no cliff where the 11th-best play contributes exactly
 /// nothing; <see cref="PerformancePoints.DECAY"/> makes the tail vanish on its own.
 /// </para>
 ///
@@ -58,16 +59,18 @@ public static class PpRanking
     /// </list>
     ///
     /// <para>
-    /// Columns: <c>id</c>, <c>user_id</c>, <c>beatmap_id</c>, <c>pp</c> (double precision), and
-    /// nothing else. Embed as a subquery and join <c>scores</c> back on <c>id</c> for display
-    /// columns AFTER the caller's <c>LIMIT</c>, never before: the partial index
+    /// Columns: <c>id</c>, <c>user_id</c>, <c>beatmap_id</c>, <c>set_id</c> (the song the map is a
+    /// difficulty of, which <see cref="BestPerSetSql"/> folds on), <c>pp</c> (double precision), and
+    /// nothing else. <c>set_id</c> is free: the set is already joined for its status. Embed as a
+    /// subquery and join <c>scores</c> back on <c>id</c> for display columns AFTER the caller's
+    /// <c>LIMIT</c>, never before: the partial index
     /// <c>ix_scores_pp (user_id, beatmap_id, pp DESC) WHERE ranked AND passed AND pp &gt; 0</c>
     /// (020_performance_points.sql) covers exactly this row set.
     /// </para>
     /// </summary>
     public static readonly string EligiblePlaysSql =
         $"""
-         SELECT s.id, s.user_id, s.beatmap_id, s.pp
+         SELECT s.id, s.user_id, s.beatmap_id, b.set_id, s.pp
          FROM scores s
          JOIN beatmaps b ON b.id = s.beatmap_id
          JOIN beatmapsets bs ON bs.id = b.set_id
@@ -81,24 +84,55 @@ public static class PpRanking
     /// <summary>
     /// <see cref="EligiblePlaysSql"/> folded to ONE play per (user, map): the player's BEST-pp play
     /// on each ranked map, ties broken by the earlier submission (lower id), so the fold is total
-    /// and picks exactly one row. This is the unit every pp surface counts in, per docs/pp.md:
-    /// without it, replays of one hard map would fill a player's whole list.
+    /// and picks exactly one row.
     ///
     /// <para>
-    /// Columns are <see cref="EligiblePlaysSql"/>'s. Shared by <see cref="PerUserTotalSql"/> (which
-    /// weights and sums it per user) and by the /rankings top-plays board (which sorts it globally),
-    /// so the two cannot disagree about which play represents a player on a map.
+    /// AN INTERMEDIATE STAGE, not the unit any pp surface counts in: that is
+    /// <see cref="BestPerSetSql"/>, which folds this again onto the song. This stage exists because
+    /// it is the one the partial index <c>ix_scores_pp (user_id, beatmap_id, pp DESC)</c> can serve,
+    /// its leading columns being exactly this fold's key.
     /// </para>
+    ///
+    /// <para>Columns are <see cref="EligiblePlaysSql"/>'s.</para>
     /// </summary>
     public static readonly string BestPerMapSql =
         $"""
-         SELECT DISTINCT ON (e.user_id, e.beatmap_id) e.id, e.user_id, e.beatmap_id, e.pp
+         SELECT DISTINCT ON (e.user_id, e.beatmap_id) e.id, e.user_id, e.beatmap_id, e.set_id, e.pp
          FROM ({EligiblePlaysSql}) e
          ORDER BY e.user_id, e.beatmap_id, e.pp DESC, e.id ASC
          """;
 
     /// <summary>
-    /// The TOP-PLAYS board's ordering over <see cref="BestPerMapSql"/>: biggest pp first, a tie
+    /// <see cref="BestPerMapSql"/> folded again to ONE play per (user, SONG): the player's best-pp
+    /// play anywhere in a ranked set, whichever difficulty of it they set that play on. This is the
+    /// unit every pp surface counts in, per docs/pp.md: without it, replays of one hard map, or a
+    /// clear of the Easy, Normal and Insane of one song, would fill a player's whole list.
+    ///
+    /// <para>
+    /// LAYERED over the per-map fold rather than keyed on <c>set_id</c> directly, which would give
+    /// the identical answer: <c>DISTINCT ON (user_id, set_id)</c> straight over
+    /// <see cref="EligiblePlaysSql"/> could not use <c>ix_scores_pp</c>, whose leading columns are
+    /// <c>(user_id, beatmap_id)</c>. Folding twice keeps the expensive stage indexed and leaves the
+    /// second one a sort over an already tiny row set.
+    /// </para>
+    ///
+    /// <para>
+    /// Ties are broken by pp then the earlier submission (lower id), the same total order the inner
+    /// fold uses, so exactly one row survives per song. Columns are
+    /// <see cref="EligiblePlaysSql"/>'s. Shared by <see cref="PerUserTotalSql"/> (which weights and
+    /// sums it per user) and by the /rankings top-plays board (which sorts it globally), so the two
+    /// cannot disagree about which play represents a player on a song.
+    /// </para>
+    /// </summary>
+    public static readonly string BestPerSetSql =
+        $"""
+         SELECT DISTINCT ON (best.user_id, best.set_id) best.id, best.user_id, best.beatmap_id, best.set_id, best.pp
+         FROM ({BestPerMapSql}) best
+         ORDER BY best.user_id, best.set_id, best.pp DESC, best.id ASC
+         """;
+
+    /// <summary>
+    /// The TOP-PLAYS board's ordering over <see cref="BestPerSetSql"/>: biggest pp first, a tie
     /// broken by the EARLIER submission (lower score id), the same tie-break
     /// <see cref="BeatmapLeaderboard.Order"/> uses. Score ids are unique, so this order is TOTAL:
     /// the board reads the same on every render and a <c>LIMIT</c> always cuts in the same place.
@@ -120,7 +154,7 @@ public static class PpRanking
              SELECT best.user_id,
                     best.pp,
                     row_number() OVER (PARTITION BY best.user_id ORDER BY best.pp DESC, best.id ASC) AS rn
-             FROM ({BestPerMapSql}) best
+             FROM ({BestPerSetSql}) best
          ) weighted
          GROUP BY weighted.user_id
          """;

@@ -346,9 +346,11 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             new { id })).ToList();
 
         // Best scores: the pp board's view of this user, not the score board's (task 77). Both the
-        // per-map fold and the section's order lead with pp, so the number each row headlines is
+        // per-SONG fold and the section's order lead with pp, so the number each row headlines is
         // also the number that put it where it is, and the list reads as the same thing /rankings
-        // sums (PpRanking: best-pp play per ranked map, pp descending).
+        // sums (PpRanking: best-pp play per ranked set, pp descending). The grade counts and mean
+        // accuracy above are a different fold, still per BEATMAP, because they are the score
+        // board's view rather than the pp board's.
         //
         // ORDERED IN SQL, ABOVE THE LIMIT, deliberately. pp is fetched by a separate query below
         // (it cannot ride the shared score-row SELECT, see ScoreRowModel.Pp), and the obvious

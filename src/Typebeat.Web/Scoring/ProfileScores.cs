@@ -69,16 +69,28 @@ public static class ProfileScores
     public const string PinnedOrder = "best.pinned_at DESC, best.id DESC";
 
     /// <summary>
-    /// BEST: the pp board's view of this user (task 77), NOT the score board's. One row per map,
-    /// the best-pp play on it, which is the unit <see cref="PpRanking.BestPerMapSql"/> sums, so the
-    /// section reads as the same thing /rankings totals.
+    /// BEST: the pp board's view of this user (task 77), NOT the score board's. One row per SONG,
+    /// the best-pp play anywhere in the set, which is the unit
+    /// <see cref="PpRanking.BestPerSetSql"/> sums, so the section reads as the same thing /rankings
+    /// totals. The fold is on the SET rather than the difficulty (backlog 162) for exactly that
+    /// reason: a profile that listed a play the player's own total no longer counts would break the
+    /// equivalence this comment exists to promise.
     ///
     /// <para>
     /// Eligibility is <see cref="BeatmapLeaderboard.OnBoard"/> on the ranked board, deliberately
     /// WIDER than <see cref="PpRanking.EligiblePlaysSql"/>: a play worth 0pp (custom rate, or not
-    /// yet priced) is still one of your best plays on that map and still belongs in the list, it
-    /// just sorts to the tail. Restricting to <c>pp &gt; 0</c> here would hide plays the player can
-    /// plainly see on the map's own leaderboard.
+    /// yet priced) is still your best play on that song and still belongs in the list, it just
+    /// sorts to the tail. Restricting to <c>pp &gt; 0</c> here would hide plays the player can
+    /// plainly see on the map's own leaderboard. The 162 change widens the UNIT, and must not
+    /// narrow that population.
+    /// </para>
+    ///
+    /// <para>
+    /// The join to <c>beatmaps</c> is here only to reach <c>set_id</c>, and is aliased <c>bm</c>
+    /// rather than <c>b</c> because every caller joins its own <c>beatmaps b</c> outside this
+    /// subquery for display columns. The tie-break is unchanged (<c>pp DESC</c> then
+    /// <see cref="BeatmapLeaderboard.Order"/>), so a song whose difficulties are all 0pp still
+    /// resolves deterministically to its best-SCORING row rather than an arbitrary one.
     /// </para>
     ///
     /// <para>
@@ -90,10 +102,11 @@ public static class ProfileScores
     /// </summary>
     public static string BestOfUser(string columns) =>
         $"""
-         SELECT DISTINCT ON (sc.beatmap_id) {columns}
+         SELECT DISTINCT ON (bm.set_id) {columns}
          FROM scores sc
+         JOIN beatmaps bm ON bm.id = sc.beatmap_id
          WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
-         ORDER BY sc.beatmap_id, sc.pp DESC, {BeatmapLeaderboard.Order("sc")}
+         ORDER BY bm.set_id, sc.pp DESC, {BeatmapLeaderboard.Order("sc")}
          """;
 
     /// <summary>

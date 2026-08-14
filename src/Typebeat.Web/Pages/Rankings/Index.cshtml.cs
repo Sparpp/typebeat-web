@@ -10,9 +10,9 @@ namespace Typebeat.Web.Pages.Rankings;
 ///
 /// <list type="bullet">
 /// <item><b>performance</b> (the default, <c>?board=performance</c>): total pp. The MAIN global
-/// ranking. Each player's best-pp play per ranked map, sorted, summed with a decay
-/// (<see cref="PpRanking"/>, docs/pp.md). It rewards clearing the hardest maps with the fewest
-/// misses, not volume.</item>
+/// ranking. Each player's best-pp play per ranked SONG (the set, not the single difficulty),
+/// sorted, summed with a decay (<see cref="PpRanking"/>, docs/pp.md). It rewards clearing the
+/// hardest maps with the fewest misses, not volume.</item>
 /// <item><b>score</b> (<c>?board=score</c>): the original cumulative-score board, unchanged. Each
 /// player's best score per ranked map, added up (<see cref="GlobalRanking"/>). It is now explicitly
 /// the score-farming board rather than the global ranking.</item>
@@ -24,7 +24,7 @@ namespace Typebeat.Web.Pages.Rankings;
 /// All three share the same eligibility rules, because each metric is defined by one SQL constant:
 /// pending/hidden/removed sets contribute nothing, unranked and failed scores never count, and
 /// restricted or deleted accounts are delisted like everywhere else. The plays board reuses
-/// <see cref="PpRanking.BestPerMapSql"/> outright, which is literally the row set the performance
+/// <see cref="PpRanking.BestPerSetSql"/> outright, which is literally the row set the performance
 /// board's total is summed over, so a play can never appear on one and be invisible to the other.
 /// </summary>
 public sealed class IndexModel(Db db) : TypebeatPageModel
@@ -225,20 +225,22 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         if (Board == PlaysBoard)
         {
             // The biggest plays ever set, not the biggest players. NO per-user dedup: a player who
-            // owns several of the hardest maps holds several rows, which is the point of a
+            // owns several of the hardest songs holds several rows, which is the point of a
             // "top plays" board (the Performance tab is already the one-row-per-player view).
             //
-            // There IS a per-(user, map) fold, and it is not a hand-rolled one: PpRanking.
-            // BestPerMapSql is the exact row set the pp total is summed over, so this board shows
+            // There IS a per-(user, SONG) fold, and it is not a hand-rolled one: PpRanking.
+            // BestPerSetSql is the exact row set the pp total is summed over, so this board shows
             // the plays that actually count, and twenty near-identical retries of one map by one
-            // player collapse to the single best of them instead of filling the page.
+            // player (or one clear each of a song's Easy, Normal and Insane) collapse to the single
+            // best of them instead of filling the page.
             //
-            // The LIMIT lands BEFORE the display joins: the inner select reads only the four
-            // columns the pp fragments carry (id / user_id / beatmap_id / pp), and just the 50
-            // survivors are hydrated by primary key. The per-map fold underneath is served by
-            // ix_scores_pp (020_performance_points.sql); this board's global pp ordering is NOT,
-            // since that index leads with user_id, so the folded set is sorted. It is a sort over
-            // the eligible plays, the same set the Performance board already folds on every render.
+            // The LIMIT lands BEFORE the display joins: the inner select reads only the five
+            // columns the pp fragments carry (id / user_id / beatmap_id / set_id / pp), and just
+            // the 50 survivors are hydrated by primary key. The per-map stage underneath the set
+            // fold is served by ix_scores_pp (020_performance_points.sql); this board's global pp
+            // ordering is NOT, since that index leads with user_id, so the folded set is sorted. It
+            // is a sort over the eligible plays, the same set the Performance board already folds
+            // on every render.
             PlayRows = (await conn.QueryAsync<PlayRow>(
                     $"""
                      SELECT top.id AS ScoreId,
@@ -268,7 +270,7 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                             sc.replay_key IS NOT NULL AS HasReplay
                      FROM (
                          SELECT best.id, best.user_id, best.beatmap_id, best.pp
-                         FROM ({PpRanking.BestPerMapSql}) best
+                         FROM ({PpRanking.BestPerSetSql}) best
                          ORDER BY {PpRanking.TopPlaysOrder("best")}
                          LIMIT @limit
                      ) top

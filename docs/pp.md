@@ -158,11 +158,12 @@ modMult = (FL       ? max(1.0, 1 + 0.02 + 0.06·log10(notes/100)) : 1)
 
 ## Aggregation
 
-DECIDED: osu semantics, per-map dedup with a weighted sum over **all** deduped plays (not a
+DECIDED: osu semantics, per-SET dedup with a weighted sum over **all** deduped plays (not a
 hard top-10 cutoff):
 
-1. For each ranked map, keep only the player's **best-pp play** (without this, replays of one
-   hard map could fill the entire top list).
+1. For each ranked **set** (the song, not the single difficulty), keep only the player's
+   **best-pp play** anywhere in it (without this, replays of one hard map, or a clear of the
+   Easy, Normal and Insane of one song, could fill the entire top list).
 2. Sort those by pp descending and sum with decay:
 
 ```
@@ -186,9 +187,10 @@ of a play and misses decide how much of that ceiling you actually keep. Length g
 play its reward too, but through the star rating rather than here (backlog 152), where it is a soft
 signal worth a flat 0.12 stars per decade of cells rather than a multiplier on the whole play.
 Accuracy and combo are gentle secondary signals, because in a
-typing game raw accuracy is already hard to push and largely tracks the misses. The per-map
+typing game raw accuracy is already hard to push and largely tracks the misses. The per-set
 dedup plus weighted top-N then makes your rank the sum of your best performances, not a reward
-for volume, so grinding easy maps (or one hard map) stops mattering once there are enough maps.
+for volume, so grinding easy maps (or one hard map, or every difficulty of one song) stops
+mattering once there are enough songs.
 In short: it rewards the player who clears the hardest maps with the fewest misses, which is
 the opposite of what cumulative score rewards today.
 
@@ -198,8 +200,9 @@ the opposite of what cumulative score rewards today.
   described intent, not an extra multiplier. No flat rate multiplier exists in modMult.
 * Custom DT/HT rates are **pp-ineligible only**; score-leaderboard ranking at every rate is
   preserved, nothing retroactively unranked.
-* Aggregation: **best play per map, weighted sum over all** with decay 0.85; no hard top-10
-  truncation.
+* Aggregation: **best play per set, weighted sum over all** with decay 0.85; no hard top-10
+  truncation. (Amended by backlog 162: the dedup unit was the beatmap until then, so clearing
+  three difficulties of one song banked three weighted entries.)
 * **NF priced at × 0.90** for pp (osu's value); omission would have made it a free mod.
 * `notes` excludes `ignore_hit`; the FL factor carries a floor clamp (so did the length factor,
   until the backlog-152 amendment deleted it).

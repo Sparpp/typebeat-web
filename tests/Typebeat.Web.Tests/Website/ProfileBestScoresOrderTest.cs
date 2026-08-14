@@ -14,8 +14,9 @@ namespace Typebeat.Web.Tests.Website;
 /// <item>pp descending, so the number each row headlines is the number that put it there;</item>
 /// <item>ties (every custom-rate or not-yet-priced play sits at exactly 0) fall back to the old
 /// ordering, total score descending, then score id, so the order is total;</item>
-/// <item>the per-map fold picks the map's best-PP play, the same row <see cref="PpRanking"/>
-/// counts, not its biggest-scoring one;</item>
+/// <item>the fold picks the best-PP play, the same row <see cref="PpRanking"/> counts, not the
+/// biggest-scoring one, both within one map and across a song's difficulties (backlog 162: the
+/// section keeps one row per SET);</item>
 /// <item>the LIMIT boundary: a top-pp play must reach the list even when 20 bigger-scoring 0pp
 /// plays exist. Sorting the top-20-by-score in C# afterwards would silently lose it.</item>
 /// </list>
@@ -30,6 +31,7 @@ public class ProfileBestScoresOrderTest
 {
     private static long orderUserId;
     private static long limitUserId;
+    private static long songUserId;
 
     /// <summary>How many 0pp plays the limit fixture stacks above the section's cap of 20.</summary>
     private const int zero_pp_plays = 20;
@@ -43,38 +45,49 @@ public class ProfileBestScoresOrderTest
         await conn.OpenAsync();
 
         // ---- ordering + tie-break + per-map fold ----
+        //
+        // ONE SET PER SEEDED SONG throughout this fixture (backlog 162). The section keeps one row
+        // per SET, so putting these maps in a shared set would collapse each user's whole list to a
+        // single row and every assertion below would be measuring the set fold instead of ordering.
+        // The only place two beatmaps deliberately share a set is BestScores_KeepOneRowPerSong's
+        // seed at the bottom, which is the test of that rule.
 
         orderUserId = await insertUserAsync(conn, "bs order");
-        long orderSet = await insertSetAsync(conn, "Bs Order Anthem");
 
         // A small play that is worth a lot of pp, and a huge (by this fixture's scale) one worth
         // none: total score alone would put them in exactly the opposite order.
-        await insertScoreAsync(conn, orderUserId, await insertBeatmapAsync(conn, orderSet, "bso-priced"), 1_000, pp: 150);
-        await insertScoreAsync(conn, orderUserId, await insertBeatmapAsync(conn, orderSet, "bso-bigzero"), 9_000, pp: 0);
-        await insertScoreAsync(conn, orderUserId, await insertBeatmapAsync(conn, orderSet, "bso-smallzero"), 5_000, pp: 0);
+        await insertScoreAsync(conn, orderUserId, await insertSongAsync(conn, "bso-priced"), 1_000, pp: 150);
+        await insertScoreAsync(conn, orderUserId, await insertSongAsync(conn, "bso-bigzero"), 9_000, pp: 0);
+        await insertScoreAsync(conn, orderUserId, await insertSongAsync(conn, "bso-smallzero"), 5_000, pp: 0);
 
         // One map, two plays: the better-scoring one is worth less pp. The section must show the
         // 90 pp row, because that is the play the pp ranking counts for this map.
-        long foldMap = await insertBeatmapAsync(conn, orderSet, "bso-fold");
+        long foldMap = await insertSongAsync(conn, "bso-fold");
         await insertScoreAsync(conn, orderUserId, foldMap, 9_500, pp: 10);
         await insertScoreAsync(conn, orderUserId, foldMap, 1_500, pp: 90);
 
         // ---- the LIMIT boundary ----
 
         limitUserId = await insertUserAsync(conn, "bs limit");
-        long limitSet = await insertSetAsync(conn, "Bs Limit Anthem");
 
-        // Twenty 0pp plays, already filling the section on their own, every one of them scoring
-        // more than the priced play below.
+        // Twenty 0pp plays on twenty songs, already filling the section on their own, every one of
+        // them scoring more than the priced play below.
         for (int i = 0; i < zero_pp_plays; i++)
-        {
-            long map = await insertBeatmapAsync(conn, limitSet, $"bsl-{i:00}");
-            await insertScoreAsync(conn, limitUserId, map, 2_000 - i * 10, pp: 0);
-        }
+            await insertScoreAsync(conn, limitUserId, await insertSongAsync(conn, $"bsl-{i:00}"), 2_000 - i * 10, pp: 0);
 
         // The player's only priced play, and the worst-scoring thing they have ever submitted.
         // Ordering by score first drops it off the list entirely; ordering by pp makes it row one.
-        await insertScoreAsync(conn, limitUserId, await insertBeatmapAsync(conn, limitSet, "bsl-priced"), 100, pp: 5);
+        await insertScoreAsync(conn, limitUserId, await insertSongAsync(conn, "bsl-priced"), 100, pp: 5);
+
+        // ---- the set fold: one row per SONG, not per difficulty (backlog 162) ----
+        //
+        // The only shared set in this fixture: two difficulties of one song, the better-pp one
+        // deliberately the lower-SCORING one, so a fold resolving the song by score picks wrong.
+        songUserId = await insertUserAsync(conn, "bs song");
+        long songSet = await insertSetAsync(conn, "Bs One Song Anthem");
+
+        await insertScoreAsync(conn, songUserId, await insertBeatmapAsync(conn, songSet, "bss-hard"), 9_000, pp: 20);
+        await insertScoreAsync(conn, songUserId, await insertBeatmapAsync(conn, songSet, "bss-easy"), 1_000, pp: 70);
     }
 
     [Test]
@@ -110,6 +123,28 @@ public class ProfileBestScoresOrderTest
             Assert.That(best, Does.Contain("1,500"));
             Assert.That(best, Does.Not.Contain(">10pp<"), "the map's lower-pp play must not represent it");
             Assert.That(best, Does.Not.Contain("9,500"));
+        });
+    }
+
+    /// <summary>
+    /// ONE ROW PER SONG (backlog 162). The section is the pp board's view of the user, and pp is
+    /// earned per set, so a player who cleared two difficulties of one song sees the play that
+    /// actually banks and not the other. The better-pp difficulty is the lower-scoring one, so a
+    /// fold resolving the song by total score would show the wrong row.
+    /// </summary>
+    [Test]
+    public async Task BestScores_KeepOneRowPerSong_NotPerDifficulty()
+    {
+        string best = await bestSectionAsync(songUserId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(countOf(best, "<div class=\"score-row\">"), Is.EqualTo(1),
+                "two difficulties of one song are one Best row");
+            Assert.That(best, Does.Contain("bss-easy"), "the better-pp difficulty represents the song");
+            Assert.That(best, Does.Contain(">70pp<"));
+            Assert.That(best, Does.Not.Contain("bss-hard"), "the song's weaker-pp difficulty is not a second row");
+            Assert.That(best, Does.Not.Contain(">20pp<"));
         });
     }
 
@@ -179,6 +214,14 @@ public class ProfileBestScoresOrderTest
             RETURNING id
             """,
             new { username, email = username.Replace(' ', '.') + "@example.com" });
+
+    /// <summary>
+    /// A SONG: its own set with a single difficulty in it, named for the version so an assertion can
+    /// find the rendered row. The default shape in this fixture, because the Best section keeps one
+    /// row per set and every seed here except the set-fold pair means a different song.
+    /// </summary>
+    private static async Task<long> insertSongAsync(NpgsqlConnection conn, string versionName)
+        => await insertBeatmapAsync(conn, await insertSetAsync(conn, $"Bs Anthem {versionName}"), versionName);
 
     private static Task<long> insertSetAsync(NpgsqlConnection conn, string title)
         => conn.ExecuteScalarAsync<long>(
