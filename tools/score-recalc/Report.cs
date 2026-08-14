@@ -108,10 +108,11 @@ public static class Report
         // should not have to infer it from a reproduction rate.
         output.WriteLine($"PINNED TO TypoRule.Deferred  {plan.PinnedToTheDeferredTypoRule.Count}");
 
-        // The third population, and the one that grows with every play (backlog 156, backlog 157):
-        // rows the oldest spacebar, rate-window and combo-restore arms did not re-derive, whose era
-        // the pass therefore had to prove by re-deriving them under the other combinations. Which era
-        // each one landed in is broken down in the reproduction section below.
+        // The third population, and the one that grows with every play (backlog 156, backlog 157,
+        // backlog 158): rows the arms their own keys start them at did not re-derive, whose era the
+        // pass therefore had to prove by re-deriving them under the other combinations of the
+        // spacebar, rate-window, combo-restore and (where the row proves nothing about it) typo axes.
+        // Which era each one landed in is broken down in the reproduction section below.
         output.WriteLine($"PINNED BY ERA RECONSTRUCTION {plan.PinnedByEraSearch.Count}");
 
         output.WriteLine($"ROWS THIS RUN WOULD WRITE    {plan.RowsWritten}"
@@ -142,10 +143,11 @@ public static class Report
             output.WriteLine("to reproduce and is NOT from that window is worth looking at before applying.");
             output.WriteLine();
             output.WriteLine("A row played SINCE the 2026-08-13 release should reproduce too (backlog 156), and so should a");
-            output.WriteLine("row played since backlog 140 gave combo back for a corrected typo (backlog 157): the spacebar,");
-            output.WriteLine("rate-window and combo-restore eras are proved per row by re-deriving it under each combination");
-            output.WriteLine("of the three, so a client updating whenever its player updates it cannot put a row on the wrong");
-            output.WriteLine("ladder.");
+            output.WriteLine("row played since backlog 140 gave combo back for a corrected typo (backlog 157), and so should");
+            output.WriteLine("one whose typo was CORRECTED and which therefore carries no key proving its typo era (backlog");
+            output.WriteLine("158). Those four eras are proved per row by re-deriving it under each combination, so a client");
+            output.WriteLine("updating whenever its player updates it cannot put a row on the wrong ladder. Where a row's own");
+            output.WriteLine("`good` key PROVES its typo era, that proof pins it and the axis is not searched.");
         }
         else
         {
@@ -168,9 +170,11 @@ public static class Report
 
         output.WriteLine($"  of these, judged since 126 {deferredEra,-6}  their statistics hold an uncorrected typo (a `good` key),");
         output.WriteLine("                                     which PROVES the deferred typo rule judged them, so they are");
-        output.WriteLine("                                     reproduced under it. Absence of the key proves nothing (a run");
-        output.WriteLine("                                     with no typo left standing has none), so every other row is");
-        output.WriteLine("                                     re-derived under TypoRule.ImmediateMiss as before.");
+        output.WriteLine("                                     PINNED to it and the typo axis is not searched for them at all.");
+        output.WriteLine("                                     Absence of the key proves nothing either way (a run with no typo");
+        output.WriteLine("                                     LEFT STANDING has none, and a CORRECTED one leaves none), so every");
+        output.WriteLine("                                     other row starts at TypoRule.ImmediateMiss as before and has the");
+        output.WriteLine("                                     axis searched below if it does not come back under it.");
 
         PrintSearchedEras(eligible, output);
         PrintUnreproducible(eligible, plan, output);
@@ -229,19 +233,27 @@ public static class Report
     }
 
     /// <summary>
-    /// WHICH SPACEBAR, RATE-WINDOW AND COMBO-RESTORE ERA the pass reproduced these rows under, counted
-    /// per combination (backlog 156, backlog 157). None of the three leaves a key in the row, so
-    /// unlike the typo rule above this is not read anywhere: a row the oldest combination does not
-    /// re-derive is re-derived under each remaining one and pinned to the one that reproduces it
-    /// EXACTLY, which proves the era rather than inferring it from a submission time the client's
-    /// update schedule makes a lie.
+    /// WHICH SPACEBAR, RATE-WINDOW, COMBO-RESTORE AND TYPO ERA the pass reproduced these rows under,
+    /// counted per combination (backlog 156, backlog 157, backlog 158). None of the first three leaves
+    /// a key in the row at all, and the typo rule leaves one only when the typo was LEFT STANDING, so
+    /// for the rows in here there was nothing to read: a row its own starting point does not re-derive
+    /// is re-derived under each remaining combination and pinned to the one that reproduces it EXACTLY,
+    /// which proves the era rather than inferring it from a submission time the client's update
+    /// schedule makes a lie.
+    ///
+    /// <para>THE TYPO AXIS APPEARS HERE ONLY FOR ROWS THAT COULD NOT PROVE IT, which is the line
+    /// between this section and the pinned count above and is worth not misreading. A row carrying a
+    /// <c>good</c> key is counted above, is pinned by that proof, and never has this axis searched. A
+    /// row here had no key to carry, either because nothing was left standing or because the typo was
+    /// CORRECTED, and the second of those is a case the two rules genuinely disagree about.</para>
     ///
     /// <para>Printed as a breakdown rather than a single count because which era the searched rows
     /// landed in is the finding. Every row submitted since the 2026-08-13 release is in the searched
     /// population, so the line for the all-live combination growing run over run is the expected
     /// reading, and that line staying at zero while new rows appear would mean the search is not
-    /// reaching them. A COMBO-RULE PIN IS VISIBLE HERE RATHER THAN SILENT for the same reason: the
-    /// combination is spelled out on all three axes, so a row pinned to today's combo rule says so.</para>
+    /// reaching them. A COMBO-RULE OR TYPO-RULE PIN IS VISIBLE HERE RATHER THAN SILENT for the same
+    /// reason: the combination is spelled out on all four axes, so a row reconstructed onto today's
+    /// combo rule or today's typo rule says so.</para>
     ///
     /// <para>Rows no combination reproduced are NOT here. They have no era, they are counted as
     /// unexplained below, and that is the property worth checking: a search that always found an
@@ -251,12 +263,13 @@ public static class Report
     {
         var searched = eligible.Where(r => r.EraProvedByReconstruction).ToList();
 
-        output.WriteLine($"  of these, era proved by    {searched.Count,-6}  the oldest spacebar, rate-window and combo-restore");
-        output.WriteLine("  reconstruction                     arms did not re-derive them, so each remaining combination of");
-        output.WriteLine("                                     those three axes was tried and the row pinned to the one that");
-        output.WriteLine("                                     reproduced it exactly. No release time is used: a client updates");
-        output.WriteLine("                                     when its player updates it, so a submission time cannot date the");
-        output.WriteLine("                                     rules.");
+        output.WriteLine($"  of these, era proved by    {searched.Count,-6}  the arms their own keys start them at did not re-derive");
+        output.WriteLine("  reconstruction                     them, so each remaining combination of the spacebar, rate-window,");
+        output.WriteLine("                                     combo-restore and typo axes was tried and the row pinned to the one");
+        output.WriteLine("                                     that reproduced it exactly. A row whose `good` key PROVES its typo");
+        output.WriteLine("                                     era is not searched on that axis: the proof wins. No release time is");
+        output.WriteLine("                                     used anywhere here, since a client updates when its player updates");
+        output.WriteLine("                                     it and a submission time therefore cannot date the rules.");
 
         if (searched.Count == 0)
             return;
@@ -265,7 +278,7 @@ public static class Report
                                       .OrderByDescending(g => g.Count())
                                       .ThenBy(g => g.Key.ToString(), StringComparer.Ordinal))
         {
-            output.WriteLine($"      {group.Key,-80} {group.Count(),5}");
+            output.WriteLine($"      {group.Key,-100} {group.Count(),5}");
         }
     }
 

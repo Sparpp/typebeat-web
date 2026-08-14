@@ -137,10 +137,17 @@ public sealed class WritePlan
     public required IReadOnlyList<RecalcResult> PinnedToTheDeferredTypoRule { get; init; }
 
     /// <summary>
-    /// Rows whose SPACEBAR, RATE-WINDOW and COMBO-RESTORE era the pass had to prove by reconstruction
-    /// (<see cref="RecalcResult.EraProvedByReconstruction"/>, backlog 156 and 157): they did not come
-    /// back under <see cref="Recalculation.DefaultEra"/>, so each remaining combination of the three
-    /// axes was re-derived and the row pinned to the one that reproduced it exactly.
+    /// Rows whose SPACEBAR, RATE-WINDOW, COMBO-RESTORE and TYPO era the pass had to prove by
+    /// reconstruction (<see cref="RecalcResult.EraProvedByReconstruction"/>, backlog 156, 157 and 158):
+    /// they did not come back under <see cref="Recalculation.DefaultEraFor"/>, so each remaining
+    /// combination of those axes was re-derived and the row pinned to the one that reproduced it
+    /// exactly.
+    ///
+    /// <para>A row PINNED BY ITS OWN KEY is not in here, even though its typo era is also not the
+    /// table-wide default: <see cref="PinnedToTheDeferredTypoRule"/> counts those, nothing was searched
+    /// for them, and the two populations answer different questions (what a row could PROVE, against
+    /// what had to be RECONSTRUCTED for it). A row can be in both, when its key proved the typo axis
+    /// and its windows still had to be reconstructed.</para>
     ///
     /// <para>Named for the same reason as the two populations above, and with more urgency: this one
     /// GROWS WITH EVERY PLAY. Every row submitted since the 2026-08-13 release is in it, so a reader
