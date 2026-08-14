@@ -41,15 +41,14 @@ using Typebeat.Tools.ScoreRecalc;
 // last two reach the widest: every map has spaces, and every DT/NC/HT row was graded on unscaled
 // windows. The one era NO switch can express is the backlog 133-to-147 window.
 //
-// WHICH ERA A GIVEN ROW IS IN is decided three ways, none of them a date (backlog 155 and 156).
-// Combo restore is a constant, because it moved after the last row that could care was stored. The
-// typo rule is READ OFF THE ROW, because an uncorrected typo takes a key only one of the two rules
-// can produce. The spacebar and the rate windows leave no key at all, so they are PROVED BY
-// RECONSTRUCTION: a row that does not come back under the pre-release pair is re-derived under each
-// remaining combination and pinned to the one that reproduces it exactly, and a row that no
-// combination reproduces is reported as unexplained rather than given an era. A submission time
-// would be the easy alternative and the wrong one, since the server deployed at a known instant but
-// the client updates whenever its player updates it.
+// WHICH ERA A GIVEN ROW IS IN is decided two ways, neither of them a date (backlog 155, 156 and
+// 157). The typo rule is READ OFF THE ROW, because an uncorrected typo takes a key only one of the
+// two rules can produce. The spacebar, the rate windows and combo restore leave no key at all, so
+// all three are PROVED BY RECONSTRUCTION: a row that does not come back under the oldest combination
+// is re-derived under each remaining one and pinned to the one that reproduces it exactly, and a row
+// that no combination reproduces is reported as unexplained rather than given an era. A submission
+// time would be the easy alternative and the wrong one, since the server deployed at a known instant
+// but the client updates whenever its player updates it.
 //
 // Those rows are superseded like any other, because their stored numbers describe a game no client
 // can play, which is what superseding is for. What they get instead of a gate is VISIBILITY: they
@@ -460,13 +459,15 @@ internal static class Cli
             commands because they check themselves with opposite predicates.
 
               report             REPRODUCE (backlog 114). Re-derive under the rules the row was
-                                 priced under (ComboRestoreRule.Never + SpaceTimingRule.Timed +
-                                 RateWindowRule.Unscaled, plus the typo rule that judged that ROW:
-                                 TypoRule.Deferred where its statistics carry an uncorrected typo,
-                                 TypoRule.ImmediateMiss otherwise), REFUSE anything that does not
-                                 come back exactly, then report what today's typo rule alone makes
-                                 of it. total_score keeps the row's own mod multiplier.
-                                 Writes NOTHING.
+                                 priced under: the typo rule that judged that ROW (TypoRule.Deferred
+                                 where its statistics carry an uncorrected typo, TypoRule.ImmediateMiss
+                                 otherwise), plus the spacebar, rate-window and combo-restore era
+                                 proved for that ROW by reconstruction (ComboRestoreRule.Never +
+                                 SpaceTimingRule.Timed + RateWindowRule.Unscaled first, then the
+                                 remaining combinations until one reproduces it exactly). REFUSE
+                                 anything that does not come back exactly, then report what today's
+                                 typo rule alone makes of it. total_score keeps the row's own mod
+                                 multiplier. Writes NOTHING.
               apply              Same, then write the moved values back.
 
               supersede-report   SUPERSEDE (backlog 136, decided 2026-08-13). Re-judge under ALL of

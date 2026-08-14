@@ -137,10 +137,10 @@ public sealed class WritePlan
     public required IReadOnlyList<RecalcResult> PinnedToTheDeferredTypoRule { get; init; }
 
     /// <summary>
-    /// Rows whose SPACEBAR and RATE-WINDOW era the pass had to prove by reconstruction
-    /// (<see cref="RecalcResult.WindowEraProvedByReconstruction"/>, backlog 156): they did not come
-    /// back under <see cref="Recalculation.DefaultWindowEra"/>, so each remaining combination of the
-    /// two axes was re-derived and the row pinned to the one that reproduced it exactly.
+    /// Rows whose SPACEBAR, RATE-WINDOW and COMBO-RESTORE era the pass had to prove by reconstruction
+    /// (<see cref="RecalcResult.EraProvedByReconstruction"/>, backlog 156 and 157): they did not come
+    /// back under <see cref="Recalculation.DefaultEra"/>, so each remaining combination of the three
+    /// axes was re-derived and the row pinned to the one that reproduced it exactly.
     ///
     /// <para>Named for the same reason as the two populations above, and with more urgency: this one
     /// GROWS WITH EVERY PLAY. Every row submitted since the 2026-08-13 release is in it, so a reader
@@ -148,12 +148,12 @@ public sealed class WritePlan
     ///
     /// <para>UNLIKE the two above it is counted over the rows the sweep actually RE-DERIVED, and that
     /// asymmetry is deliberate rather than an oversight. Carrying a <c>perfect</c> key or a
-    /// <c>good</c> key is a fact about the row, readable whether or not its replay decoded. Which
-    /// window era judged a row is not written down anywhere: it is established BY the re-derivation,
-    /// so a row with no usable replay has no era here, and giving it one would be the assignment
-    /// without evidence that backlog 156 exists to refuse.</para>
+    /// <c>good</c> key is a fact about the row, readable whether or not its replay decoded. Which era
+    /// judged a row on these three axes is not written down anywhere: it is established BY the
+    /// re-derivation, so a row with no usable replay has no era here, and giving it one would be the
+    /// assignment without evidence that backlog 156 exists to refuse.</para>
     /// </summary>
-    public required IReadOnlyList<RecalcResult> PinnedByWindowEraSearch { get; init; }
+    public required IReadOnlyList<RecalcResult> PinnedByEraSearch { get; init; }
 
     /// <summary>
     /// Whether the run selected a SUBSET of the scores (<c>--score</c> or <c>--limit</c>). The
@@ -197,7 +197,7 @@ public sealed class WritePlan
             Refused = results.Where(r => r.Skip is SkipReason.NotReproducible or SkipReason.NotTheSameRun).OrderBy(r => r.Stored.ScoreId).ToList(),
             DeletedLadderWindow = results.Where(r => r.Stored.JudgedOnTheDeletedLadder).OrderBy(r => r.Stored.ScoreId).ToList(),
             PinnedToTheDeferredTypoRule = results.Where(r => r.Stored.ProvablyJudgedUnderTheDeferredTypoRule).OrderBy(r => r.Stored.ScoreId).ToList(),
-            PinnedByWindowEraSearch = results.Where(r => r.WindowEraProvedByReconstruction).OrderBy(r => r.Stored.ScoreId).ToList(),
+            PinnedByEraSearch = results.Where(r => r.EraProvedByReconstruction).OrderBy(r => r.Stored.ScoreId).ToList(),
             Filtered = filtered,
         };
     }

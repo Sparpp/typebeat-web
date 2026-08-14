@@ -79,12 +79,13 @@ public static class Report
         {
             output.WriteLine("== REPRODUCE: verify, then reprice what today's TYPO rule alone changes ==");
             output.WriteLine();
-            output.WriteLine("judged under                 TypoRule.Deferred, every other era axis held at the stored era");
-            output.WriteLine("                             (combo restore, the spacebar, the rate windows)");
+            output.WriteLine("judged under                 TypoRule.Deferred, every other era axis held at the era proved");
+            output.WriteLine("                             for the ROW (combo restore, the spacebar, the rate windows)");
             output.WriteLine("verified against             the typo rule that judged the ROW: Deferred where the row's own");
             output.WriteLine("                             statistics prove it (a `good` key), ImmediateMiss otherwise");
-            output.WriteLine("                             and the spacebar / rate windows that judged the ROW, proved by");
-            output.WriteLine("                             reconstruction where the pre-release pair does not re-derive it");
+            output.WriteLine("                             and the spacebar / rate windows / combo restore that judged the");
+            output.WriteLine("                             ROW, proved by reconstruction where the oldest arms do not");
+            output.WriteLine("                             re-derive it");
             output.WriteLine("total_score priced with      the row's OWN mod multiplier, recovered not reapplied");
         }
 
@@ -107,11 +108,11 @@ public static class Report
         // should not have to infer it from a reproduction rate.
         output.WriteLine($"PINNED TO TypoRule.Deferred  {plan.PinnedToTheDeferredTypoRule.Count}");
 
-        // The third population, and the one that grows with every play (backlog 156): rows the
-        // pre-release spacebar and rate windows did not re-derive, whose era the pass therefore had
-        // to prove by re-deriving them under the other combinations. Which era each one landed in is
-        // broken down in the reproduction section below.
-        output.WriteLine($"PINNED BY ERA RECONSTRUCTION {plan.PinnedByWindowEraSearch.Count}");
+        // The third population, and the one that grows with every play (backlog 156, backlog 157):
+        // rows the oldest spacebar, rate-window and combo-restore arms did not re-derive, whose era
+        // the pass therefore had to prove by re-deriving them under the other combinations. Which era
+        // each one landed in is broken down in the reproduction section below.
+        output.WriteLine($"PINNED BY ERA RECONSTRUCTION {plan.PinnedByEraSearch.Count}");
 
         output.WriteLine($"ROWS THIS RUN WOULD WRITE    {plan.RowsWritten}"
                          + (plan.Mode == RecalcMode.Supersede ? "   <- pass this to --expect-superseded" : string.Empty));
@@ -140,9 +141,11 @@ public static class Report
             output.WriteLine("that backlog 147 deleted, and no switch can bring back code that is gone. A row that fails");
             output.WriteLine("to reproduce and is NOT from that window is worth looking at before applying.");
             output.WriteLine();
-            output.WriteLine("A row played SINCE the 2026-08-13 release should reproduce too (backlog 156): the spacebar");
-            output.WriteLine("and rate-window eras are proved per row by re-deriving the row under each combination of the");
-            output.WriteLine("two, so a client updating whenever its player updates it cannot put a row on the wrong ladder.");
+            output.WriteLine("A row played SINCE the 2026-08-13 release should reproduce too (backlog 156), and so should a");
+            output.WriteLine("row played since backlog 140 gave combo back for a corrected typo (backlog 157): the spacebar,");
+            output.WriteLine("rate-window and combo-restore eras are proved per row by re-deriving it under each combination");
+            output.WriteLine("of the three, so a client updating whenever its player updates it cannot put a row on the wrong");
+            output.WriteLine("ladder.");
         }
         else
         {
@@ -169,7 +172,7 @@ public static class Report
         output.WriteLine("                                     with no typo left standing has none), so every other row is");
         output.WriteLine("                                     re-derived under TypoRule.ImmediateMiss as before.");
 
-        PrintWindowEras(eligible, output);
+        PrintSearchedEras(eligible, output);
         PrintUnreproducible(eligible, plan, output);
 
         foreach (var group in skipped.GroupBy(r => r.Skip).OrderBy(g => g.Key.ToString(), StringComparer.Ordinal))
@@ -226,39 +229,43 @@ public static class Report
     }
 
     /// <summary>
-    /// WHICH SPACEBAR AND RATE-WINDOW ERA the pass reproduced these rows under, counted per
-    /// combination (backlog 156). Neither axis leaves a key in the row, so unlike the typo rule above
-    /// this is not read anywhere: a row the pre-release pair does not re-derive is re-derived under
-    /// each remaining combination and pinned to the one that reproduces it EXACTLY, which proves the
-    /// era rather than inferring it from a submission time the client's update schedule makes a lie.
+    /// WHICH SPACEBAR, RATE-WINDOW AND COMBO-RESTORE ERA the pass reproduced these rows under, counted
+    /// per combination (backlog 156, backlog 157). None of the three leaves a key in the row, so
+    /// unlike the typo rule above this is not read anywhere: a row the oldest combination does not
+    /// re-derive is re-derived under each remaining one and pinned to the one that reproduces it
+    /// EXACTLY, which proves the era rather than inferring it from a submission time the client's
+    /// update schedule makes a lie.
     ///
     /// <para>Printed as a breakdown rather than a single count because which era the searched rows
     /// landed in is the finding. Every row submitted since the 2026-08-13 release is in the searched
-    /// population, so the line for the live pair growing run over run is the expected reading, and
-    /// that line staying at zero while new rows appear would mean the search is not reaching them.</para>
+    /// population, so the line for the all-live combination growing run over run is the expected
+    /// reading, and that line staying at zero while new rows appear would mean the search is not
+    /// reaching them. A COMBO-RULE PIN IS VISIBLE HERE RATHER THAN SILENT for the same reason: the
+    /// combination is spelled out on all three axes, so a row pinned to today's combo rule says so.</para>
     ///
     /// <para>Rows no combination reproduced are NOT here. They have no era, they are counted as
     /// unexplained below, and that is the property worth checking: a search that always found an
     /// answer would turn the reproduce pass from a proof into a shrug.</para>
     /// </summary>
-    private static void PrintWindowEras(IReadOnlyList<RecalcResult> eligible, TextWriter output)
+    private static void PrintSearchedEras(IReadOnlyList<RecalcResult> eligible, TextWriter output)
     {
-        var searched = eligible.Where(r => r.WindowEraProvedByReconstruction).ToList();
+        var searched = eligible.Where(r => r.EraProvedByReconstruction).ToList();
 
-        output.WriteLine($"  of these, era proved by    {searched.Count,-6}  the pre-release spacebar and rate windows did not");
-        output.WriteLine("  reconstruction                     re-derive them, so each remaining combination of those two");
-        output.WriteLine("                                     axes was tried and the row pinned to the one that reproduced");
-        output.WriteLine("                                     it exactly. No release time is used: a client updates when its");
-        output.WriteLine("                                     player updates it, so a submission time cannot date the rules.");
+        output.WriteLine($"  of these, era proved by    {searched.Count,-6}  the oldest spacebar, rate-window and combo-restore");
+        output.WriteLine("  reconstruction                     arms did not re-derive them, so each remaining combination of");
+        output.WriteLine("                                     those three axes was tried and the row pinned to the one that");
+        output.WriteLine("                                     reproduced it exactly. No release time is used: a client updates");
+        output.WriteLine("                                     when its player updates it, so a submission time cannot date the");
+        output.WriteLine("                                     rules.");
 
         if (searched.Count == 0)
             return;
 
-        foreach (var group in searched.GroupBy(r => r.ReproducedUnderWindowEra!.Value)
+        foreach (var group in searched.GroupBy(r => r.ReproducedUnderEra!.Value)
                                       .OrderByDescending(g => g.Count())
                                       .ThenBy(g => g.Key.ToString(), StringComparer.Ordinal))
         {
-            output.WriteLine($"      {group.Key,-56} {group.Count(),5}");
+            output.WriteLine($"      {group.Key,-80} {group.Count(),5}");
         }
     }
 
