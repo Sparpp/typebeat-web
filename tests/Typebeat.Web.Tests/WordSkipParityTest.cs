@@ -1,0 +1,534 @@
+using System.Text.Json;
+
+namespace Typebeat.Web.Tests;
+
+/// <summary>
+/// Fidelity guard for the RECLAIMABLE WORD SKIP in the browser engine (backlog 167, web half 168).
+/// A space pressed inside a word abandons the rest of it into a PHANTOM state instead of missing it
+/// on the spot: one backspace re-enters the word, re-typing the cells earns their ordinary
+/// judgements and the streak the skip broke, and a skip nobody goes back for resolves at the seal as
+/// the misses it turned out to be. The desktop client has done this since backlog 167; until this
+/// landed the browser missed the word on the spot, so the identical performance scored LOWER in the
+/// browser on the SAME leaderboards.
+///
+/// <para>The sequences and the numbers are the game's own pins, transcribed cell for cell from
+/// <c>NonVisual/SpaceSkipWordTest.cs</c>, which is that feature's behaviour spec. Everything here is
+/// the browser's ENGINE state: cell states, the caret, the live combo, the points a press earns.
+/// The SUBMITTED account is pinned separately, and against the live C# rather than against a
+/// literal, in <c>Typebeat.WireCompat.WordSkipLiveParityTest</c>: that is the only project that
+/// compiles both repos, and a shared leaderboard is what the two clients disagreeing costs.</para>
+///
+/// <para>Both accounts are read throughout, because the class of bug lives in them disagreeing: the
+/// engine's own <c>combo</c> is what the HUD counts up, and the score processor mirror's
+/// <c>highestCombo</c> is what is submitted as <c>max_combo</c>. Misses are read off the PROCESSOR:
+/// the engine's own <c>counts</c> dict is the scored-keypress dict in this mirror and has never
+/// recorded seal misses, where the C# <c>ResultsSummary.Counts</c> does.</para>
+/// </summary>
+public class WordSkipParityTest
+{
+    private static JsonElement Harness() => JsHarness.Run("CoreWordSkipHarness.cjs");
+
+    private static JsonElement Run(string scenario) => Harness().GetProperty(scenario);
+
+    private static int Int(JsonElement run, string key) => run.GetProperty(key).GetInt32();
+
+    private static bool Bool(JsonElement run, string key) => run.GetProperty(key).GetBoolean();
+
+    private static double Double(JsonElement run, string key) => run.GetProperty(key).GetDouble();
+
+    private static string?[] Strings(JsonElement run, string key) => JsHarness.Strings(run, key);
+
+    private static int[] Ints(JsonElement run, string key)
+    {
+        var list = new List<int>();
+
+        foreach (var element in run.GetProperty(key).EnumerateArray())
+            list.Add(element.GetInt32());
+
+        return list.ToArray();
+    }
+
+    /// <summary>
+    /// <c>SpaceInsideAWordIsStillRejectedWhenTheSettingIsOff</c>. With the setting off a space
+    /// pressed on a lyric character is REJECTED exactly as it always was: nothing enters the cell,
+    /// the caret does not move, and the press is a mistype. Also the pin that nothing added here
+    /// reaches a run with the setting off, which is every browser <c>/play</c> today.
+    /// </summary>
+    [Test]
+    public void SpaceInsideAWordIsStillRejectedWhenTheSettingIsOff()
+    {
+        var run = Run("settingOff");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Strings(run, "rejected"), Is.EqualTo(new[] { " " }));
+            Assert.That(Int(run, "caretIndex"), Is.EqualTo(1), "caret unmoved, still on 'a'");
+            Assert.That(Strings(run, "states"), Is.EqualTo(new[] { "correct", "untyped", "untyped", "untyped", "untyped", "untyped", "untyped" }));
+            Assert.That(Int(run, "processorMisses"), Is.Zero);
+            Assert.That(Int(run, "mistypes"), Is.EqualTo(1), "the rejected space is a mistype");
+        });
+    }
+
+    /// <summary>
+    /// The feature itself (<c>SpaceInsideAWordAbandonsTheRestOfItAndLandsOnTheNextWord</c>): the rest
+    /// of the word enters the phantom state and the caret lands on the next word, with the word gap
+    /// judged exactly like a typed space. NOTHING is resolved yet, because the player can still come
+    /// back for those cells: the miss arrives at the seal, and only for the cells nobody returned to.
+    ///
+    /// <para>The gap's delta is 2600 - 3000 = -400, which the millisecond ladder would grade Ok, but
+    /// the spacebar has been outside the timing challenge since backlog 148, so it takes the top
+    /// tier whatever the clock said. 600 is 300 for 'c' plus 300 for the space, the latter at combo
+    /// 0 after the skip's break, i.e. at a x1.00 multiplier.</para>
+    /// </summary>
+    [Test]
+    public void SpaceInsideAWordAbandonsTheRestOfItAndLandsOnTheNextWord()
+    {
+        var run = Run("skipAbandonsTheWord");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Strings(run, "rejected"), Is.Empty, "the space is consumed by the skip, not rejected");
+            Assert.That(Int(run, "mistypes"), Is.Zero, "abandoning a word is a deliberate action, not a mistype");
+
+            Assert.That(Strings(run, "states"), Is.EqualTo(new[]
+            {
+                "correct",   // 'c' keeps what it earned
+                "abandoned", // 'a' given up, not lost
+                "abandoned", // 't' given up, not lost
+                "correct",   // the word gap took the space
+                "untyped", "untyped", "untyped"
+            }));
+
+            Assert.That(Int(run, "caretIndex"), Is.EqualTo(4), "past the gap, on the first character of the NEXT word");
+
+            Assert.That(Int(run, "processorMisses"), Is.Zero, "the miss is the cell's resolution, and the line has not run out of time");
+            Assert.That(Int(run, "ok"), Is.Zero);
+            Assert.That(Int(run, "great"), Is.EqualTo(2));
+            Assert.That(Int(run, "score"), Is.EqualTo(600));
+            Assert.That(Double(run, "accuracy"), Is.EqualTo(1.0), "the skip itself is not a keypress");
+            Assert.That(Int(run, "maxCombo"), Is.EqualTo(1), "'c' made it 1, the skip broke it, the space rebuilt it to 1");
+            Assert.That(Int(run, "breaks"), Is.EqualTo(1), "two cells given up, one break");
+
+            Assert.That(run.GetProperty("stateOfDAfterTheNextPress").GetString(), Is.EqualTo("correct"),
+                "typing carries straight on from the next word");
+        });
+    }
+
+    /// <summary>
+    /// <c>AWrongCharInTheAbandonedWordIsNotGivenUp</c>. A cell the player FINISHED is not given up,
+    /// and since backlog 124 that group is the correct cells AND the wrong ones: a Great cannot be
+    /// revoked, and a typo is not a miss, so abandoning the word cannot turn it into one. The wrong
+    /// cell keeps its red and its deferred result, which the seal decides.
+    /// </summary>
+    [Test]
+    public void AWrongCharInTheAbandonedWordIsNotGivenUp()
+    {
+        var run = Run("wrongCharIsNotGivenUp");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Strings(run, "states"), Is.EqualTo(new[]
+            {
+                "correct", "wrong", "abandoned", "correct", "untyped", "untyped", "untyped"
+            }));
+
+            Assert.That(run.GetProperty("typedCharOfCellOne").GetString(), Is.EqualTo("x"));
+            Assert.That(Int(run, "processorMisses"), Is.Zero, "'t' is deferred, not missed");
+            Assert.That(Int(run, "mistypes"), Is.EqualTo(1), "'x' still counted once");
+        });
+    }
+
+    /// <summary>
+    /// <c>ACellTypedCorrectlyAndThenBackspacedIsGivenUpLikeAnyUntypedCell</c>. The other side of the
+    /// same rule: backspacing puts the cell back to untyped, so the skip gives it up like any other
+    /// unresolved cell.
+    /// </summary>
+    [Test]
+    public void ACellTypedCorrectlyAndThenBackspacedIsGivenUpLikeAnyUntypedCell()
+    {
+        var run = Run("correctThenBackspacedIsGivenUp");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Bool(run, "backspaced"), Is.True);
+            Assert.That(Int(run, "caretAfterBackspace"), Is.EqualTo(1));
+            Assert.That(Strings(run, "states").Take(3), Is.EqualTo(new[] { "correct", "abandoned", "abandoned" }));
+            Assert.That(Int(run, "processorMisses"), Is.Zero);
+        });
+    }
+
+    /// <summary>
+    /// <c>SpaceOnAWordGapIsUnchanged</c>. A space pressed ON the word gap keeps its ordinary meaning,
+    /// setting or no setting: it is the character the cell expects, so it is simply typed. 918 is
+    /// 300 + 306 + 312, three Greats on an unbroken run.
+    /// </summary>
+    [Test]
+    public void SpaceOnAWordGapIsUnchanged()
+    {
+        var run = Run("spaceOnAWordGap");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Strings(run, "states").Take(3), Is.EqualTo(new[] { "correct", "correct", "correct" }));
+            Assert.That(Int(run, "caretIndex"), Is.EqualTo(3));
+            Assert.That(Int(run, "processorMisses"), Is.Zero);
+            Assert.That(Int(run, "great"), Is.EqualTo(3));
+            Assert.That(Int(run, "score"), Is.EqualTo(918));
+            Assert.That(Int(run, "maxCombo"), Is.EqualTo(3), "never broken");
+            Assert.That(Int(run, "breaks"), Is.Zero);
+        });
+    }
+
+    /// <summary>
+    /// <c>SkippingTheLastWordOfALineCompletesTheLine</c>. The last word of a line has no gap after
+    /// it, so the caret lands at the end of the line and the cells stay reclaimable until the line's
+    /// own deadline. When nobody comes back the seal resolves them, and it does so WITHOUT a second
+    /// combo break: that break was taken at the skip, and charging it again would cost a run the
+    /// player rebuilt through the rest of the line.
+    /// </summary>
+    [Test]
+    public void SkippingTheLastWordOfALineCompletesTheLineAndSealsWithoutASecondBreak()
+    {
+        var run = Run("skippingTheLastWordOfALine");
+        var afterSkip = run.GetProperty("afterSkip");
+        var afterSeal = run.GetProperty("afterSeal");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Strings(afterSkip, "states").Skip(3), Is.EqualTo(new[] { "abandoned", "abandoned" }));
+            Assert.That(Int(afterSkip, "caretIndex"), Is.EqualTo(5), "the line is complete");
+            Assert.That(Int(afterSkip, "breaks"), Is.EqualTo(1));
+
+            Assert.That(Strings(afterSeal, "states").Skip(3), Is.EqualTo(new[] { "missed", "missed" }));
+            Assert.That(Int(afterSeal, "processorMisses"), Is.EqualTo(2), "the cells resolve here, as the misses they turned out to be");
+            Assert.That(Int(afterSeal, "breaks"), Is.EqualTo(1), "and WITHOUT a second combo break");
+            Assert.That(Int(afterSeal, "maxCombo"), Is.EqualTo(3));
+            Assert.That(Bool(afterSeal, "finished"), Is.True);
+        });
+    }
+
+    /// <summary>
+    /// <c>TheSkipWorksUnderGatekeeperToo</c>. Gatekeeper and space-skip are orthogonal: one decides
+    /// what happens to a wrong LETTER, the other lets you abandon a WORD, so a player who cannot type
+    /// past a character they keep missing is the one who needs the escape hatch most. The browser
+    /// cannot select Gatekeeper (it has no mods payload), so this is a pin on the mirror rather than
+    /// on a reachable run.
+    /// </summary>
+    [Test]
+    public void TheSkipWorksUnderGatekeeperToo()
+    {
+        var run = Run("underGatekeeper");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Strings(run, "rejected"), Is.EqualTo(new[] { "q" }), "the wrong letter is rejected, not the space");
+            Assert.That(Int(run, "caretAfterRejection"), Is.EqualTo(1));
+            Assert.That(Int(run, "streakAfterRejection"), Is.EqualTo(1));
+
+            Assert.That(Strings(run, "states").Take(3), Is.EqualTo(new[] { "correct", "abandoned", "abandoned" }));
+            Assert.That(Int(run, "caretIndex"), Is.EqualTo(4));
+            Assert.That(Int(run, "processorMisses"), Is.Zero);
+            Assert.That(Int(run, "consecutiveWrongKeys"), Is.Zero,
+                "the gap really was typed, so it resets the mash-fail streak; the skip itself never touches it");
+        });
+    }
+
+    /// <summary>
+    /// <c>MashingLeavesNothingToSkip</c>. Mashing rewrites every press into the character the caret
+    /// expects BEFORE the skip is reached, so with both on there is no word left to abandon.
+    /// </summary>
+    [Test]
+    public void MashingLeavesNothingToSkip()
+    {
+        var run = Run("mashingLeavesNothingToSkip");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Strings(run, "states").Take(2), Is.EqualTo(new[] { "correct", "correct" }));
+            Assert.That(run.GetProperty("typedCharOfCellOne").GetString(), Is.EqualTo("a"));
+            Assert.That(Int(run, "caretIndex"), Is.EqualTo(2));
+            Assert.That(Int(run, "processorMisses"), Is.Zero);
+        });
+    }
+
+    /// <summary>
+    /// THE PROPERTY (<c>OneBackspaceFromTheGapReOpensTheWholeSkippedWord</c>). From the word gap, ONE
+    /// backspace re-enters the skipped word: every phantom cell it steps over goes back to untyped
+    /// and the caret lands on the last character actually typed, however many characters were given
+    /// up. The step-over is transparent for the same reason the one over auto-skipped punctuation is,
+    /// nothing the player put there is being erased, and it is the whole of what "re-typeable" means.
+    /// </summary>
+    [Test]
+    public void OneBackspaceFromTheGapReOpensTheWholeSkippedWord()
+    {
+        var run = Run("oneBackspaceReOpensTheWord");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Bool(run, "offTheGap"), Is.True);
+            Assert.That(Int(run, "caretOffTheGap"), Is.EqualTo(3), "the gap is a typed cell, an ordinary erase");
+
+            Assert.That(Bool(run, "throughTheRun"), Is.True);
+            Assert.That(Int(run, "caretIndex"), Is.Zero, "the caret lands on the last character actually typed");
+            Assert.That(Strings(run, "states").Take(3), Is.EqualTo(new[] { "untyped", "untyped", "untyped" }),
+                "and the cell it landed on is erased, as any backspace erases it");
+        });
+    }
+
+    /// <summary>
+    /// <c>RetypingAReclaimedWordEarnsRealJudgements</c>. The cells really are earnable again:
+    /// re-typing them produces ordinary judgements with ordinary points, not the scoring-inert retype
+    /// an already-earned cell produces. That is the whole point of withholding the osu result at the
+    /// skip, since a cell takes only its first result.
+    /// </summary>
+    [Test]
+    public void RetypingAReclaimedWordEarnsRealJudgements()
+    {
+        var run = Run("retypingEarnsRealJudgements");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Int(run, "pointsForTheInertRetype"), Is.Zero, "'c' was already earned");
+            Assert.That(Int(run, "pointsForTheFirstReclaimedCell"), Is.GreaterThan(0),
+                "a reclaimed cell scores; an inert retype would not");
+
+            Assert.That(Strings(run, "states").Take(3), Is.EqualTo(new[] { "correct", "correct", "correct" }));
+            Assert.That(Int(run, "great"), Is.EqualTo(4), "c, the gap, a, t, each counted once");
+            Assert.That(Int(run, "processorMisses"), Is.Zero);
+            Assert.That(Double(run, "accuracy"), Is.EqualTo(1.0));
+        });
+    }
+
+    /// <summary>
+    /// <c>AReclaimedSkipGivesTheComboBackToWhereItWouldHaveBeen</c>. The combo the skip broke comes
+    /// back, on the cell the skip abandoned FIRST, through the same snapshot machinery a corrected
+    /// typo redeems (backlog 140). Typing the line out after a skip and a full reclaim therefore ends
+    /// on exactly the combo, and the exact max combo, that typing it straight through would have.
+    ///
+    /// <para>The three intermediate reads are the ordering: nothing is restored by the skip itself,
+    /// nothing by the erase (an erase alone fixes nothing), and everything by the retype of the
+    /// snapshot cell.</para>
+    /// </summary>
+    [Test]
+    public void AReclaimedSkipGivesTheComboBackToWhereItWouldHaveBeen()
+    {
+        var run = Run("reclaimedSkipGivesTheComboBack");
+        var straight = run.GetProperty("straight");
+        var reclaimed = run.GetProperty("reclaimed");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Ints(reclaimed, "restoredAfterTheSkip"), Is.Empty);
+            Assert.That(Ints(reclaimed, "restoredAfterTheErase"), Is.Empty, "the erase alone restores nothing");
+            Assert.That(Ints(reclaimed, "restoredAfterTheSnapshotCell"), Is.EqualTo(new[] { 1 }),
+                "the streak of 1 the skip broke, resumed on the cell it was snapshotted against");
+
+            Assert.That(Int(straight, "combo"), Is.EqualTo(7));
+            Assert.That(Int(reclaimed, "combo"), Is.EqualTo(7), "the run ends where it would have without the skip");
+            Assert.That(Int(reclaimed, "maxCombo"), Is.EqualTo(Int(straight, "maxCombo")));
+            Assert.That(Int(reclaimed, "processorHighestCombo"), Is.EqualTo(Int(straight, "processorHighestCombo")),
+                "and the SUBMITTED max_combo agrees, by its own hand-mirrored route");
+            Assert.That(Int(reclaimed, "great"), Is.EqualTo(Int(straight, "great")));
+            Assert.That(Int(reclaimed, "processorMisses"), Is.Zero);
+        });
+    }
+
+    /// <summary>
+    /// <c>TheFirstWordOfALineIsReclaimableToo</c>. A word abandoned at the very START of a line has
+    /// no keypress behind it, and the ordinary "nothing to erase" answer would make it the one
+    /// unreclaimable word on the map. One backspace re-opens it and parks the caret at the head of
+    /// the line, because the reclaim IS the state change.
+    /// </summary>
+    [Test]
+    public void TheFirstWordOfALineIsReclaimableToo()
+    {
+        var run = Run("firstWordOfALineIsReclaimable");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Int(run, "caretAfterSkip"), Is.EqualTo(4), "nothing typed at all, so the whole of \"cat\" goes");
+
+            Assert.That(Bool(run, "offTheGap"), Is.True);
+            Assert.That(Int(run, "caretOffTheGap"), Is.EqualTo(3));
+
+            Assert.That(Bool(run, "reclaim"), Is.True, "a reclaim IS a state change, so the press is not inert");
+            Assert.That(Int(run, "caretAfterReclaim"), Is.Zero);
+            Assert.That(Strings(run, "statesAfterReclaim").Take(3), Is.EqualTo(new[] { "untyped", "untyped", "untyped" }));
+
+            Assert.That(Strings(run, "states")[0], Is.EqualTo("correct"), "and the head of the word is typeable again");
+            Assert.That(Int(run, "score"), Is.GreaterThan(0));
+        });
+    }
+
+    /// <summary>
+    /// <c>BackspaceAtTheHeadOfALineIsStillInert</c>. With nothing abandoned behind it, a backspace at
+    /// the head of a line does nothing, which is the pin that the reclaim branch did not widen
+    /// "nothing to erase" for everyone else.
+    /// </summary>
+    [Test]
+    public void BackspaceAtTheHeadOfALineIsStillInert()
+    {
+        var run = Run("backspaceAtTheHeadIsInert");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Bool(run, "erased"), Is.False);
+            Assert.That(Int(run, "caretIndex"), Is.Zero);
+        });
+    }
+
+    /// <summary>
+    /// <c>EveryAbandonedCellLeavesThePhantomStateExactlyOnce</c>, read off the CELLS (this mirror
+    /// raises none of the three C# events, because they carry health, which the browser models as a
+    /// derived read rather than as an account). Skip "cat", come back for it, then skip "dog" and
+    /// never return: both exits from the phantom state happen in one play, no cell may still be
+    /// phantom after the seal, and only the word nobody came back for is missed.
+    /// </summary>
+    [Test]
+    public void EveryAbandonedCellLeavesThePhantomStateExactlyOnce()
+    {
+        var run = Run("everyAbandonedCellLeavesExactlyOnce");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Strings(run, "statesBeforeSeal"), Is.EqualTo(new[]
+            {
+                "correct", "correct", "correct", "correct", "correct", "abandoned", "abandoned"
+            }));
+
+            Assert.That(Strings(run, "states"), Has.None.EqualTo("abandoned"), "no cell may still be phantom after the seal");
+            Assert.That(Int(run, "processorMisses"), Is.EqualTo(2), "only the word nobody came back for");
+            Assert.That(Int(run, "maxCombo"), Is.EqualTo(5));
+        });
+    }
+
+    /// <summary>
+    /// <c>AnAbandonedCellHoldsTheLineOpenLikeAnUntypedOne</c>. A line holds its seal open for an
+    /// abandoned cell exactly as it does for an untyped one, so the reclaim window runs to the line's
+    /// own deadline. Without that, a skip near the end of a line would trip the EARLY seal ("nothing
+    /// left to type, do not hold the next line up") and close the window in the very grace period
+    /// that exists for finishing.
+    ///
+    /// <para>The fixture is the game's rebuilt around the LOADER: the C# one hands the engine a line
+    /// whose word units overrun its end with no grace of its own, which neither loader produces (both
+    /// clamp a word to its line), so the same JSON gives a 700 ms overrun grace on both sides instead
+    /// of the C# fixture's 250 ms boundary bump. The property is identical.</para>
+    /// </summary>
+    [Test]
+    public void AnAbandonedCellHoldsTheLineOpenLikeAnUntypedOne()
+    {
+        var run = Run("abandonedCellHoldsTheLineOpen");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Int(run, "sealGraceMs"), Is.EqualTo(700), "the vocals overrun the boundary, so there is a window to come back into");
+            Assert.That(Int(run, "activeInsideTheGrace"), Is.Zero, "the line must still be open to come back into");
+
+            Assert.That(Bool(run, "reclaim"), Is.True);
+            Assert.That(run.GetProperty("stateOfC").GetString(), Is.EqualTo("correct"));
+
+            // ...and the grace is still bounded: past it the line seals whatever is left.
+            Assert.That(Int(run, "activeLineIndex"), Is.EqualTo(-1));
+            Assert.That(Int(run, "processorMisses"), Is.EqualTo(1), "only the 'd' nobody got back to");
+        });
+    }
+
+    /// <summary>
+    /// <c>ASkipNeverReturnedToCostsWhatItAlwaysCost</c>, as the browser's own account. The pin the
+    /// whole design rests on: moving the miss from the keypress to the seal is what makes the cells
+    /// earnable, and it must cost a player who never comes back exactly nothing extra.
+    ///
+    /// <para>Stated as literals here so a reviewer can re-derive them, and held against the LIVE C#
+    /// in <c>Typebeat.WireCompat.WordSkipLiveParityTest.ASkipNeverReturnedToAgrees</c>, which is the
+    /// assertion that actually pins the two clients together. Five of the seven cells typed, two
+    /// missed: completion 5/7, which is a C.</para>
+    /// </summary>
+    [Test]
+    public void ASkipNeverReturnedToCostsWhatItAlwaysCost()
+    {
+        var run = Run("skipNeverReturnedTo");
+        var submitted = run.GetProperty("submitted");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Strings(run, "states"), Is.EqualTo(new[]
+            {
+                "correct", "missed", "missed", "correct", "correct", "correct", "correct"
+            }));
+
+            Assert.That(Int(run, "breaks"), Is.EqualTo(1), "one break for the whole word, and none at the seal");
+            Assert.That(Int(run, "processorMisses"), Is.EqualTo(2));
+            Assert.That(Int(submitted, "maxCombo"), Is.EqualTo(4),
+                "the run rebuilt after the skip: the seal's combo-neutral misses do not break it a second time");
+            Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(282336));
+            Assert.That(Double(submitted, "completion"), Is.EqualTo(5 / 7.0));
+            Assert.That(submitted.GetProperty("rank").GetString(), Is.EqualTo("C"));
+        });
+    }
+
+    /// <summary>
+    /// The seal's COMBO-NEUTRAL marks, isolated. The same never-reclaimed skip, on a line the play
+    /// carries on past: the abandoned cells resolve as Misses while the player is still holding the
+    /// run they rebuilt after the skip, so those Misses must leave the submitted combo exactly where
+    /// they find it. Their break was taken at the skip, and taking it again would wipe a run the
+    /// player rebuilt through the rest of the line while the HUD combo kept it.
+    ///
+    /// <para>This is the ONE shape in which the marks are observable, which is why it exists
+    /// alongside the single-line pins: when the seal is the last thing that happens, max_combo is
+    /// already banked and no judgement follows, so a second break there costs nothing and a browser
+    /// that marked nothing would still look right. Held against the live C# as
+    /// <c>ASkipOnALineThePlayCarriesOnPastAgrees</c>.</para>
+    /// </summary>
+    [Test]
+    public void TheSealsMissesDoNotBreakARunTheSkipAlreadyBroke()
+    {
+        var run = Run("skipThenTheNextLine");
+        var afterSeal = run.GetProperty("afterSeal");
+        var submitted = run.GetProperty("submitted");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Int(afterSeal, "activeLineIndex"), Is.EqualTo(1), "the seal moved the play on to the second line");
+            Assert.That(Int(afterSeal, "processorMisses"), Is.EqualTo(2), "the two cells nobody came back for resolved here");
+            Assert.That(Int(afterSeal, "processorCombo"), Is.EqualTo(4),
+                "and left the run the player rebuilt after the skip exactly where they were holding it");
+            Assert.That(Int(afterSeal, "combo"), Is.EqualTo(4), "the HUD combo agrees, having taken no break here either");
+            Assert.That(Int(afterSeal, "breaks"), Is.EqualTo(1), "one break for the whole play, at the skip");
+
+            Assert.That(Strings(run, "statesLineOne"), Is.EqualTo(new[] { "correct", "correct" }));
+            Assert.That(Int(submitted, "maxCombo"), Is.EqualTo(6), "4 held across the seal, plus the next line's two cells");
+            Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(380647));
+            Assert.That(submitted.GetProperty("rank").GetString(), Is.EqualTo("C"));
+        });
+    }
+
+    /// <summary>
+    /// And the other half of that pair: a skip the player DOES come back for costs nothing beyond the
+    /// detour, so the map still ends on a perfect X with every cell typed and the full run restored.
+    ///
+    /// <para>The total is NOT the clean run's 1000000, and the gap is the one thing the detour really
+    /// costs: the word gap was typed once, at combo 0 immediately after the break, and the retype of
+    /// it on the way back through is scoring-inert, so its combo-weighted portion is the one the
+    /// broken run gave it. Both clients have to agree on that too (see the WireCompat pin).</para>
+    /// </summary>
+    [Test]
+    public void AFullyReclaimedSkipEndsOnAPerfectRun()
+    {
+        var clean = Run("cleanRun").GetProperty("submitted");
+        var reclaimed = Run("fullyReclaimedRun").GetProperty("submitted");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(clean.GetProperty("totalScore").GetInt64(), Is.EqualTo(1_000_000));
+
+            Assert.That(Int(reclaimed, "maxCombo"), Is.EqualTo(7), "the streak the skip broke came back");
+            Assert.That(Double(reclaimed, "completion"), Is.EqualTo(1));
+            Assert.That(reclaimed.GetProperty("rank").GetString(), Is.EqualTo("X"));
+            Assert.That(reclaimed.GetProperty("statistics").GetProperty("great").GetInt32(), Is.EqualTo(7));
+            Assert.That(reclaimed.GetProperty("statistics").TryGetProperty("miss", out _), Is.False,
+                "every cell was typed in the end");
+
+            Assert.That(reclaimed.GetProperty("totalScore").GetInt64(), Is.EqualTo(984633));
+        });
+    }
+}

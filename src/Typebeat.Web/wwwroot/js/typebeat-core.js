@@ -592,8 +592,18 @@
             // rejected exactly as a wrong key on any other cell is. Mirrors TypingCell.IsFreestyle,
             // which is (IsTypeable && marker) and so is exactly this here.
             freestyle: isFreestyle(expected),
-            state: 'untyped',        // untyped | correct | wrong | missed | autoskip
-            judgeType: null,         // Great | Ok | Meh | Premature | Lagging | Miss | WrongChar
+            // untyped | correct | wrong | missed | autoskip | abandoned.
+            //
+            // ABANDONED (CellState.Abandoned, backlog 167) is the PHANTOM state a word skip leaves
+            // behind: not a resolution, just a character the player has walked past and may still
+            // come back into. It resolves nothing (no osu result is applied at the skip, which is
+            // exactly what leaves the cell earnable), it holds its line open like an untyped cell,
+            // and it leaves the state by exactly one of two exits: a backspace steps transparently
+            // back over it (processBackspace) or the line seals on it and it becomes the miss it
+            // turned out to be (sealLine).
+            state: 'untyped',
+            // Great | Ok | Meh | Premature | Lagging | Miss | WrongChar | Abandoned
+            judgeType: null,
             typedChar: null,
             judgedDelta: null,
             firstCorrectDelta: null,
@@ -638,7 +648,16 @@
         return type === 'Great' ? 300 : type === 'Ok' ? 150 : type === 'Meh' ? 50 : 0;
     }
 
-    // Engine judgement -> osu HitResult (DrawableTypeBeatHitObject.toHitResult).
+    // Engine judgement -> osu HitResult (DrawableTypeBeatHitObject.toHitResult, i.e.
+    // TypeBeatResultMapping.CellResult). The three quality tiers are the identity and everything
+    // else here is a miss.
+    //
+    // The two DEFERRED judgements never reach this function, on either side: 'WrongChar' (backlog
+    // 109) and 'Abandoned' (backlog 167) map to NO result at all, which is precisely what leaves
+    // the cell's one and only result available to a later retype. Neither is passed here, because
+    // neither path calls applyCellResult: the typo branch of processKey applies nothing, and
+    // skipCurrentWord applies nothing. Both cells are finally resolved either by that retype or by
+    // sealLine, which picks the result itself rather than asking here.
     function toHitResult(judgeType) {
         switch (judgeType) {
             case 'Great': return 'great';
@@ -707,6 +726,14 @@
     //      markComboNeutral and the branch in applyResult below). It is a hit for accuracy and for
     //      the note count, and NOT for completion (see computeScore), which is backlog 126: a cell
     //      typed wrong is not a cell typed, and it costs rank exactly as a miss does.
+    //   6. TypeBeatPlayfield.onWordAbandoned -> scoreProcessor.Combo.Value = 0, and
+    //      TypeBeatPlayfield.onAbandonSealed -> MarkComboNeutral on every cell the skip gave up
+    //      (backlog 167). A word skip resolves NOTHING at the keypress, so like the seams in 2 and 3
+    //      it has no result to carry its break and mirrors it by hand; and the Misses those cells
+    //      finally take at the seal must not take that break a second time, which is the same ledger
+    //      as the typo in 5, redeemed in the same place but in the opposite direction (a break to
+    //      suppress rather than an increment). onAbandonReclaimed is not mirrored at all: it carries
+    //      health, and health here is a derived read rather than an account.
     //
     // Judgement rewind (ScoreProcessor.RevertResultInternal) has no counterpart: gameplay here is
     // never rewound, and neither is the desktop client's outside replay seeking.
@@ -747,21 +774,25 @@
 
         // ScoreProcessor.ApplyResultInternal, for the accuracy-affecting basic results a cell can
         // take (great/ok/meh/good/miss). All five are scorable, none is a bonus, and all five
-        // affect combo: the four hits increase it, a miss breaks it. `good` only ever arrives
-        // combo-neutral, so its increment is suppressed below.
+        // affect combo: the four hits increase it, a miss breaks it.
         applyResult(result, cell) {
             this.counts[result]++;
 
             // TypeBeatScoreProcessor.MarkComboNeutral / ApplyScoreChange, folded into one branch
             // here. The C# cannot do that (ApplyResultInternal is sealed, so it moves combo first
-            // and the ruleset hook puts it back afterwards), but the observable rule is this: an
-            // unfixed typo's result neither breaks the run nor extends it, and it takes its
-            // combo-portion weight from the combo it FOUND. Its break was already paid at the
-            // keypress (breakCombo below), which is the whole combo cost of getting a character
-            // wrong. highestCombo is skipped with it: unlike a suppressed break, a suppressed
-            // INCREMENT can raise a running maximum, so leaving it would inflate max_combo by one
-            // per typo.
-            if (!this.comboNeutral.has(cell)) {
+            // and the ruleset hook puts it back afterwards), but the observable rule is this: a
+            // combo-neutral cell's result neither breaks the run nor extends it, because its combo
+            // consequence was already paid by hand at the keypress or the skip that spoiled it.
+            // highestCombo is skipped with it: unlike a suppressed break, a suppressed INCREMENT
+            // can raise a running maximum, so leaving it would inflate max_combo by one per typo.
+            //
+            // TWO results are ever marked, and they move combo in OPPOSITE directions (backlog
+            // 167): the unfixed typo's 'good', a hit that must not extend the run, and the SEAL
+            // MISS of a cell a word skip abandoned and nobody came back for, a break that must not
+            // be taken a second time.
+            const neutral = this.comboNeutral.has(cell);
+
+            if (!neutral) {
                 if (result === 'miss') this.combo = 0;
                 else this.combo++;
 
@@ -774,16 +805,26 @@
 
             // GetComboScoreChange: the MAX result's base score weighted by the combo AFTER this
             // judgement. A miss therefore contributes 300 * 0^0.5 = 0, and every later hit is
-            // weighted by a combo that this break restarted from zero. A combo-neutral cell moved
-            // nothing, so this is exactly the combo it found.
-            this.comboPortion += MAX_RESULT_BASE_SCORE * Math.pow(this.combo, COMBO_EXPONENT);
+            // weighted by a combo that this break restarted from zero.
+            //
+            // The C# override is gated on HitResultExtensions.IncreasesCombo, which is the whole of
+            // the difference between the ledger's two marked results, and this is that gate. A
+            // marked HIT moved nothing, so it is weighted by the combo it FOUND, which is what
+            // `this.combo` still holds. A marked MISS is weighted by the combo AFTER the judgement,
+            // which the base implementation leaves at zero: it is a character nobody typed, and
+            // paying it a full combo-weighted portion because the break was taken elsewhere would
+            // be paying for it twice (measured on the C# fixture as 492794 instead of 421582).
+            const weight = (neutral && result === 'miss') ? 0 : this.combo;
+
+            this.comboPortion += MAX_RESULT_BASE_SCORE * Math.pow(weight, COMBO_EXPONENT);
         }
 
         // TypeBeatScoreProcessor.MarkComboNeutral: the result about to be applied to this cell must
         // leave combo alone, because the cell's break was taken by hand at the keypress that spoiled
-        // it. Marked at the seam that APPLIES it (the seal), never at the keypress, which is what
-        // keeps a CORRECTED typo working: the retype resolves the cell with an ordinary
-        // combo-increasing hit that never consults this set.
+        // it or at the word skip that abandoned it. Marked at the seam that APPLIES it (the seal),
+        // never at the keypress or the skip, which is what keeps a CORRECTED typo and a RECLAIMED
+        // skip working: the retype resolves the cell with an ordinary combo-increasing hit that
+        // never consults this set.
         markComboNeutral(cell) {
             this.comboNeutral.add(cell);
         }
@@ -883,23 +924,32 @@
             // a mods payload, this is the flag GK would clear.
             this.allowWrongInput = true;
             // "Space to skip current word" (TypeBeatRulesetSetting.SpaceSkipsWord, backlog 110): a
-            // space pressed inside a word abandons the rest of it as misses and moves on to the next
-            // word. DEFAULTED OFF, like caseSensitive/mashingEnabled above and for the same reason:
+            // space pressed inside a word abandons the rest of it and moves on to the next word.
+            // Since backlog 167 abandoning is not giving up: the cells enter a PHANTOM state, one
+            // backspace re-enters the word, and re-typing them earns their ordinary judgements and
+            // the streak the skip broke. What the skip takes immediately is a single combo break;
+            // the miss COUNT and the osu RESULTS wait for the seal, so a skip nobody goes back for
+            // costs exactly what it always cost and one the player returns to costs nothing beyond
+            // the detour. There is no era switch here (the C# WordSkipRule), for the same reason
+            // there is no ComboRestoreRule: the browser only ever plays LIVE.
+            // DEFAULTED OFF, like caseSensitive/mashingEnabled above and for the same reason:
             // the browser has no settings payload, so /play is permanently non-skipping and the
             // default path stays byte-identical to the desktop's default. If /play ever grows one,
             // this is the flag it sets, and it would ALSO have to travel in whatever the browser's
             // equivalent of the replay CONFIG frame is (the desktop carries it as bit 1), because it
             // changes how a recorded space is judged.
             this.spaceSkipsWord = false;
-            // The one outstanding combo snapshot (TypingEngine.restorable, backlog 140):
-            // { lineIndex, cellIndex, streak }, the cell a wrong keypress spoiled and the streak that
-            // keypress broke, or null when there is nothing to go back for. Set by the wrong
-            // keypress, redeemed by the correction of that same cell, and discarded by any other
-            // combo break (discardRestorableStreak). The seams that discard it here are the four the
-            // browser can reach: a seal with misses, an abandoned word, a Premature/Lagging press
-            // and a rejected key. The C# has a fifth, Fletcher's rush cap, which has no counterpart
-            // in this file because it has no Fletcher (no mods payload) and therefore no rush cap
-            // branch to hang it on.
+            // The one outstanding combo snapshot (TypingEngine.restorable, backlog 140, widened by
+            // 167): { lineIndex, cellIndex, streak }, the cell a wrong keypress spoiled or a word
+            // skip abandoned and the streak that break cost, or null when there is nothing to go
+            // back for. Set by that keypress or skip, redeemed by typing that same cell correctly,
+            // and discarded by any other combo break (discardRestorableStreak). The seams that
+            // discard it here are the three the browser can reach: a seal with unforeseen misses, a
+            // Premature/Lagging press and a rejected key. A word skip TAKES a snapshot rather than
+            // discarding one since backlog 167, because it is a break the player can walk back into
+            // and undo. The C# has a fourth discard seam, Fletcher's rush cap, which has no
+            // counterpart in this file because it has no Fletcher (no mods payload) and therefore no
+            // rush cap branch to hang it on.
             //
             // There is no ComboRestoreRule here, and that is a statement about /play rather than a
             // simplification: the enum exists in the C# so that RE-DERIVING a score stored before
@@ -950,8 +1000,18 @@
             return this.caretIndex >= line.cells.length;
         }
 
+        // The negation of TypingEngine.hasUntypedTypeable, which is what canSeal's EARLY seal
+        // ("nothing left to type, do not hold the next line up") hangs off.
+        //
+        // An ABANDONED cell counts as untyped (backlog 167): the player owes that character exactly
+        // as much as one they simply have not reached, and it is re-typeable until the line seals,
+        // so a line the player can still come back into must not seal early. That is what keeps the
+        // reclaim window running to the line's own deadline, which is the window the grace exists
+        // to grant, and without it a skip near the end of a line closes its own escape hatch.
         noTypeableUntyped(line) {
-            for (const c of line.cells) if (c.typeable && c.state === 'untyped') return false;
+            for (const c of line.cells) {
+                if (c.typeable && (c.state === 'untyped' || c.state === 'abandoned')) return false;
+            }
             return true;
         }
 
@@ -971,7 +1031,13 @@
 
         sealLine(idx) {
             const line = this.lines[idx];
-            let missed = 0;
+
+            // The cells the line really did run out of time on, as opposed to the ones a word skip
+            // had already given up: the only group whose break has not been taken yet, and
+            // therefore the only one that can break combo here. The C# keeps the wider MISSED count
+            // alongside it for LineSealResult.MissedCells, which this mirror raises no event for.
+            let unforeseen = 0;
+
             for (const c of line.cells) {
                 // The engine's own miss count (TypingEngine.Update's seal loop), which drives the
                 // HUD combo below and nothing that is submitted. A cell the line ran out of time on,
@@ -980,10 +1046,18 @@
                 // a miss, it keeps 'wrong' on screen, and it does not break the HUD combo here,
                 // because its break was taken at the keypress. That is what puts the HUD combo back
                 // in agreement with the submitted max_combo (backlog 123).
-                if (c.typeable && c.state === 'untyped') {
+                //
+                // An ABANDONED cell (backlog 167) is a miss, and this is where it becomes one: the
+                // player skipped its word and never reclaimed it, so it turned out to be a character
+                // they never typed. It counts and resolves exactly as an untyped cell does, and the
+                // ONE thing it does not do is break combo, for precisely the reason a still-wrong
+                // cell does not: that break was taken at the skip.
+                const phantom = c.state === 'abandoned';
+
+                if (c.typeable && (c.state === 'untyped' || phantom)) {
                     c.state = 'missed';
                     c.judgeType = 'Miss';
-                    missed++;
+                    if (!phantom) unforeseen++;
                 }
 
                 // DrawableTypeBeatHitObject.ApplySealResults: EVERY still-unjudged nested char
@@ -1002,11 +1076,19 @@
                         this.processor.markComboNeutral(c);
                         this.applyCellResult(c, 'good');
                     } else {
+                        // TypeBeatPlayfield.onAbandonSealed, which the C# raises immediately BEFORE
+                        // the seal results land, for exactly the reason this line sits immediately
+                        // before the call below: the ledger has to be written before the result
+                        // consults it. A cell a word skip gave up already paid its break at the
+                        // skip, so the Miss it is about to take must leave combo where it finds it,
+                        // or it would wipe a run the player rebuilt through the rest of the line
+                        // while the engine's own combo kept it.
+                        if (phantom) this.processor.markComboNeutral(c);
                         this.applyCellResult(c, 'miss');
                     }
                 }
             }
-            if (missed > 0) {
+            if (unforeseen > 0) {
                 this.combo = 0;
 
                 // A real break, so it owns the streak (backlog 140). Distinct from the line-scoped
@@ -1035,12 +1117,17 @@
             this.restorable = null;
         }
 
-        // TypingEngine.resumeStreakIfThisFixesTheTypo. Redeem the outstanding snapshot if the cell
-        // about to be typed correctly is the cell it was taken against: the run resumes at that
+        // TypingEngine.resumeStreakIfThisRedeemsTheBreak. Redeem the outstanding snapshot if the
+        // cell about to be typed correctly is the cell it was taken against: the run resumes at that
         // streak plus everything earned since, which is exactly combo + streak because no break has
         // landed in between (any that had would have discarded the snapshot). The claim is spent
         // either way, so a second correct retype of the same cell restores nothing.
-        resumeStreakIfThisFixesTheTypo(cellIndex) {
+        //
+        // Two breaks can be waiting here, and the redemption is identical for both: the wrong
+        // keypress that spoiled the cell (backlog 140), and the word skip that abandoned it
+        // (backlog 167). In both cases the cell is the one the player has to come back to, so typing
+        // it is what says they came back.
+        resumeStreakIfThisRedeemsTheBreak(cellIndex) {
             const claim = this.restorable;
 
             if (claim === null) return;
@@ -1076,6 +1163,15 @@
         // caret on the word gap after it (or at the end of the line, for a word with no gap).
         // No `time` parameter, unlike the C#, which needs it only for the per-cell judgement deltas
         // this mirror does not raise (see the onCharJudged note below).
+        //
+        // Since backlog 167 the cells enter the PHANTOM state rather than being missed on the spot,
+        // and everything except the BREAK moves out of here on to the two places a phantom cell can
+        // end up: the backspace that reclaims it (processBackspace) and the seal that resolves it as
+        // a miss (sealLine). What is left is the entry into that state, the break, and the SNAPSHOT
+        // of the streak the break cost, taken against the first abandoned cell so that typing it
+        // later resumes the run through the same backlog 140 machinery a corrected typo redeems.
+        // That replaces the outright discard the skip used to do: a skip is a break the player can
+        // walk back into, which is exactly what a typo's break is.
         skipCurrentWord() {
             const cells = this.lines[this.activeLineIndex].cells;
 
@@ -1087,7 +1183,10 @@
             while (start > 0 && !(cells[start - 1].typeable && cells[start - 1].expected === ' ')) start--;
             while (end < cells.length && !(cells[end].typeable && cells[end].expected === ' ')) end++;
 
-            let missed = 0;
+            // The cells this skip puts into the phantom state, in ascending order. The FIRST of them
+            // is the one the snapshot is taken against, and there is always at least one (the cell
+            // the caret is sitting on), so the break always has a cell behind it.
+            const abandoned = [];
 
             for (let i = start; i < end; i++) {
                 const c = cells[i];
@@ -1108,36 +1207,47 @@
                 // available to an unfixed typo was a Miss.
                 if (c.state !== 'untyped') continue;
 
-                c.state = 'missed';
-                c.judgeType = 'Miss';
-                missed++;
-
-                // The C# announces each abandoned cell IMMEDIATELY (CharJudged carrying a Miss ->
-                // ApplyCharJudgement -> ApplyEngineResult), so the submitted account takes the miss
-                // here rather than at seal time and osu's combo breaks with the engine's instead of
-                // counting on to the end of the line. sealLine is then a no-op on these cells.
-                this.applyCellResult(c, 'miss');
+                // The PHANTOM state, and NOT a resolution: no result is applied here, which is
+                // precisely what leaves the cell's one and only result available to a retype (a
+                // cell takes only its first, see applyCellResult). The miss COUNT waits for the
+                // seal alongside it, because counting it now would say the character is lost while
+                // the player can still walk back into it and type it.
+                c.state = 'abandoned';
+                c.judgeType = 'Abandoned';
+                abandoned.push(i);
             }
 
             this.caretIndex = end;
 
-            if (missed === 0) return;
+            if (abandoned.length === 0) return;
 
-            // AT MOST ONE combo break for the whole word, the rule sealLine's misses follow. The
-            // processor's own combo was already broken by the first applyCellResult('miss').
+            // AT MOST ONE combo break for the whole word, the rule sealLine's misses follow.
+            const brokenStreak = this.combo;
+
             this.combo = 0;
 
-            // An abandoned word is a break like any other, so it takes ownership of the streak and
-            // ends any older cell's claim on it (backlog 140).
-            this.discardRestorableStreak();
+            // Snapshotted against the FIRST abandoned cell, so re-typing that cell resumes the run.
+            // Written unconditionally, so a skip discards an older cell's claim the way any other
+            // intervening break would.
+            this.restorable = { lineIndex: this.activeLineIndex, cellIndex: abandoned[0], streak: brokenStreak };
+
             if (this.onComboBroken) this.onComboBroken();
+
+            // TypeBeatPlayfield.onWordAbandoned: the skip's one break on the SUBMITTED account, by
+            // hand. It used to ride on the Miss the first abandoned cell took here; those results
+            // now arrive at the seal, a whole line later, so with nothing left to carry the break
+            // this seam carries it, exactly as the wrong-keypress path carries its own. The other
+            // half of the C# seam is HEALTH (MISS_HEALTH_DRAIN per cell, refunded at either exit
+            // from the phantom state), which has no counterpart here: the browser models health as
+            // a derived read off consecutiveWrongKeys (see `health`), not as an account.
+            this.processor.breakCombo();
 
             // NO onCharJudged for the abandoned cells, deliberately, and the omission mirrors the
             // wrong-char path above: that hook is this renderer's rolling-WPM tap, and the C#
             // pushRollingSample() sits on the accepted-keypress path only, so tapping it here would
             // drift the browser's WPM readout away from the desktop's. The cells repaint from state.
-            // engine `counts` is left alone too: it is the scored-only dict, and sealLine does not
-            // record its misses there either (the submitted miss count comes off the processor).
+            // engine `counts` is left alone too: it is the scored-only dict, and the C# records
+            // nothing for an abandoned cell either (its Miss is counted at the seal).
         }
 
         update(time) {
@@ -1335,9 +1445,10 @@
             //
             // Scoped to the CELL and not to the KEY: a space that lands on a lyric character never
             // reaches here, it was either rejected above (combo break, mistype, wrong-key streak) or
-            // consumed by the word skip, which has already missed the abandoned cells and taken its
-            // one break. And an untimed space is not a free one: a space cell nobody pressed still
-            // seals a miss like any other untyped character (sealLine).
+            // consumed by the word skip, which has already given the abandoned cells up and taken
+            // its one break before the caret ever reached the gap. And an untimed space is not a
+            // free one: a space cell nobody pressed still seals a miss like any other untyped
+            // character (sealLine).
             //
             // The C# half of backlog 148 has one more clause with nothing to mirror here: it keeps
             // the exempt space OUT of its SyncTimeline, the offset-analysis series a play's results
@@ -1349,14 +1460,15 @@
             const untimedSpace = cell.expected === ' ';
             if (untimedSpace) delta = 0;
 
-            // COMBO RESTORE (backlog 140), before anything about this press is judged: if this is
-            // the correction of the cell a wrong keypress spoiled, the run resumes at the streak
-            // that keypress broke plus everything earned since. Placed here so the press below is
+            // COMBO RESTORE (backlog 140, widened to the word skip by backlog 167), before anything
+            // about this press is judged: if this is the cell a wrong keypress spoiled or a skip
+            // abandoned, the run resumes at the streak that break cost plus everything earned since.
+            // Placed here so the press below is
             // scored at the RESUMED streak, which is what makes fixing a typo worth score rather
             // than only accuracy: the combo portion weights every judgement by the combo AFTER it.
             // Not scoring-inert even for an inert retype, because the streak belongs to the FIX and
             // not to the cell's judgement.
-            this.resumeStreakIfThisFixesTheTypo(this.caretIndex);
+            this.resumeStreakIfThisRedeemsTheBreak(this.caretIndex);
 
             const w = windowsFor(cell.tier);
             const inertRetype = cell.firstCorrectDelta !== null;
@@ -1420,19 +1532,64 @@
             return true;
         }
 
+        // TypingEngine.ProcessBackspace. Erase the most recent typed cell within the active line,
+        // stepping back transparently over auto-skipped punctuation (which is un-skipped so retyping
+        // re-marks it) and, since backlog 167, over the ABANDONED cells of a skipped word (which go
+        // back to 'untyped' for the same reason: retyping them re-earns them). Returns false when
+        // there was nothing to do. The erased keypress stays in the accuracy counts.
+        //
+        // Both step-overs are transparent because neither cell holds anything the player put there,
+        // so neither is an erase. That is what makes ONE press re-enter a skipped word and land on
+        // the last character actually typed, however many characters were given up.
+        //
+        // Scan first, mutate after, exactly as the C# does, because the two have to be told apart
+        // before anything moves: a press with nothing typed behind it did SOMETHING if it reclaimed
+        // a word, and nothing at all if it did not.
         processBackspace() {
-            if (this.activeLineIndex < 0) return;
+            if (this.finished || this.activeLineIndex < 0) return false;
+
             const cells = this.lines[this.activeLineIndex].cells;
-            let i = this.caretIndex - 1;
-            while (i >= 0 && cells[i].state === 'autoskip') { cells[i].state = 'untyped'; i--; }
-            if (i < 0) { this.caretIndex = 0; return; }
-            const cell = cells[i];
+
+            let target = this.caretIndex - 1;
+            while (target >= 0 && (cells[target].state === 'autoskip' || cells[target].state === 'abandoned')) target--;
+
+            let reclaimed = 0;
+            for (let i = target + 1; i < this.caretIndex; i++) {
+                if (cells[i].state === 'abandoned') reclaimed++;
+            }
+
+            if (target < 0 && reclaimed === 0) return false;
+
+            // Un-skip the punctuation and re-open the abandoned cells we stepped back over. The C#
+            // announces the reclaimed ones on AbandonReclaimed, which carries HEALTH alone (the
+            // refund of what the skip drained); the browser has no health account, so there is
+            // nothing for this mirror to raise.
+            for (let i = target + 1; i < this.caretIndex; i++) {
+                if (cells[i].state === 'autoskip' || cells[i].state === 'abandoned') {
+                    cells[i].state = 'untyped';
+                    cells[i].judgeType = null;
+                }
+            }
+
+            if (target < 0) {
+                // Nothing typed is left behind the caret. Ordinarily that is "nothing to erase", but
+                // a word skipped at the very start of a line leaves phantom cells and no keypress
+                // before them, and refusing here would make that one word the only unreclaimable one
+                // on the map. The reclaim IS the state change, so the press did something: put the
+                // caret back at the head of the word it just re-opened.
+                this.caretIndex = 0;
+                this.autoSkipForward();
+                return true;
+            }
+
+            const cell = cells[target];
             cell.state = 'untyped';
             cell.typedChar = null;
             cell.judgedDelta = null;
             cell.judgeType = null;
             // firstCorrectDelta intentionally retained (inert-retype guard).
-            this.caretIndex = i;
+            this.caretIndex = target;
+            return true;
         }
 
         // The character to type right now (or null).
