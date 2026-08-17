@@ -162,6 +162,17 @@
                     {
                         <div class="stat-row"><span class="stat-row__label">Average WPM</span><span class="stat-row__value">@averageWpm.ToString("0", CultureInfo.InvariantCulture)</span></div>
                     }
+                    @* Directly under Average WPM because it is what makes that number readable: a
+                       WPM here is CPM/5 flat, so this says how far the map's own words are from the
+                       5 the unit assumes. One decimal is not decoration: the shipped maps measure
+                       4.11 to 4.57 cells per word, so whole-character rounding would print "4" for
+                       every one of them and the row would carry no information at all. Same label
+                       and same format as the game's song-select wedge, so the two clients read
+                       identically. *@
+                    @if (Model.Diff.AverageCharsPerWord is double charsPerWord)
+                    {
+                        <div class="stat-row"><span class="stat-row__label">Chars/word</span><span class="stat-row__value">@charsPerWord.ToString("0.0", CultureInfo.InvariantCulture)</span></div>
+                    }
                     <div class="stat-row">
                         <span class="stat-row__label">Stars</span>
                         <span class="stat-row__value" style="color:@DifficultyColour.ForStars(Model.Diff.Stars)">&#9733; @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
@@ -204,8 +215,15 @@
                         {
                             <div class="stat-row"><span class="stat-row__label">Average WPM</span><span class="stat-row__value">@avgWpm.ToString("0", CultureInfo.InvariantCulture)</span></div>
                         }
+                        @if (Model.Diff.AverageCharsPerWord is double paceCharsPerWord)
+                        {
+                            <div class="stat-row"><span class="stat-row__label">Chars/word</span><span class="stat-row__value">@paceCharsPerWord.ToString("0.0", CultureInfo.InvariantCulture)</span></div>
+                        }
                         <p class="wpm-graph__caption faint">
                             Rolling 30-keystroke pace, from the first typed character to the last.
+                            A word is five keystrokes here, the typing-test convention, so the WPM
+                            is exactly the CPM over five and the row above says how long this map's
+                            own words actually run.
                         </p>
                     }
                     else

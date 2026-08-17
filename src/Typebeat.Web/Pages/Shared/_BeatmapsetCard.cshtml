@@ -47,9 +47,13 @@
             <span class="pill @Model.PillClass">@Model.StatusLabel</span>
             <span class="chip">
                 <span class="chip-value" style="color:@Typebeat.Web.DifficultyColour.ForStars(Model.Stars)">&#9733; @Model.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
+                @* No chars/word here: the card has one line for stars and pace, and the word length
+                   is context for the WPM rather than a headline. The title says which WPM this is,
+                   since LyricPace v15 made it the typing-test one (five keystrokes to the word,
+                   the same unit the game's HUD and results screen use). *@
                 @if (Model.Wpm is double wpm)
                 {
-                    <span class="chip-label">@wpm.ToString("0", CultureInfo.InvariantCulture) WPM</span>
+                    <span class="chip-label" title="average words per minute, five keystrokes to the word">@wpm.ToString("0", CultureInfo.InvariantCulture) WPM</span>
                 }
             </span>
         </span>

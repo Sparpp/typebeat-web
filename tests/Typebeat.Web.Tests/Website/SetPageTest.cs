@@ -45,6 +45,12 @@ public class SetPageTest
             Assert.That(html, Does.Contain("Average WPM"));
             Assert.That(html, Does.Contain(">80<"));
 
+            // Chars/word sits under Average WPM and needs no column: it is char_count / word_count
+            // off the same row, 600/120 = 5.0 here. ONE DECIMAL, matching the game's wedge, because
+            // real maps land between 4.1 and 4.6 and would all print "4" rounded to a whole number.
+            Assert.That(html, Does.Contain("Chars/word"));
+            Assert.That(html, Does.Contain(">5.0<"));
+
             // BPM is gone from the box; the seeded set's 128 must not surface anywhere.
             Assert.That(html, Does.Not.Contain(">BPM<"));
             Assert.That(html, Does.Not.Contain(">128<"));

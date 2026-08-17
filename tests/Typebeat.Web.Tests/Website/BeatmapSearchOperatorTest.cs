@@ -69,15 +69,26 @@ public class BeatmapSearchOperatorTest
     }
 
     [Test]
-    public async Task Cpm_DerivedFromStoredCounts_Filters()
+    public async Task Cpm_DerivedFromStoredWpm_Filters()
     {
-        // Alpha cpm = 100*500/100 = 500; Bravo cpm = 200*700/100 = 1400.
+        // Since LyricPace v15 a stored wpm IS cpm/5, so cpm: is wpm*5 and needs no counts at all:
+        // Alpha cpm = 100*5 = 500, Bravo cpm = 200*5 = 1000.
         var ids = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset cpm:>600")));
+
+        // NON-VACUITY, and the reason this test is worth having: the old derivation was
+        // wpm * char_count / word_count, which was the pre-v15 identity exactly. Bravo's seeded
+        // counts make its average word 700/100 = 7 cells, so that expression reads 1400 for it
+        // while the truth is 1000. A 1200 cut therefore separates the two derivations outright,
+        // and this assertion fails on the old one. Alpha cannot show the bug: its average word is
+        // exactly 5 cells, the one length at which the two expressions agree.
+        var overTwelveHundred = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset cpm:>1200")));
 
         Assert.Multiple(() =>
         {
             Assert.That(ids, Does.Contain(PublicSiteSeed.OpBravoId));
             Assert.That(ids, Does.Not.Contain(PublicSiteSeed.OpAlphaId));
+            Assert.That(overTwelveHundred, Does.Not.Contain(PublicSiteSeed.OpBravoId));
+            Assert.That(overTwelveHundred, Does.Not.Contain(PublicSiteSeed.OpAlphaId));
         });
     }
 

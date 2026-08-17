@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Typebeat.Web.Packages.Lyrics;
 
 namespace Typebeat.Web.Search;
 
@@ -22,9 +23,20 @@ public static class BeatmapSearchSql
         FilterField.Stars => "b.difficulty_rating",
         FilterField.Wpm => "b.wpm",
         // No stored CPM column (LyricPace computes AverageCpm at ingest but only wpm/word/char
-        // are persisted). Reconstruct it from the stored counts: cpm ≈ wpm × chars-per-word.
-        // NULLIF guards word_count 0/NULL (row then never matches, which is correct).
-        FilterField.Cpm => "(b.wpm * b.char_count::double precision / NULLIF(b.word_count, 0))",
+        // are persisted). Reconstruct it from the stored WPM, which since LyricPace v15 IS
+        // cpm / LyricPace.CHARS_PER_WORD, so the reconstruction is exact and needs no counts.
+        //
+        // It used to read wpm * char_count / word_count, which was the OLD identity exactly (an old
+        // WPM was real words per minute, so WPM times chars-per-word was the CPM). Against a v15
+        // wpm that expression evaluates to cpm * charsPerWord / 5, wrong for every map whose average
+        // word is not exactly 5 cells long, which is every map: it silently over-reports the long
+        // worded ones and under-reports the short worded ones, so cpm: would hand back a different
+        // set than it claims rather than fail loudly.
+        //
+        // The 5 is interpolated from the constant rather than typed out, which is safe (a compile
+        // time double, never user input) and is the whole lesson of the bug above: an identity
+        // written out twice is an identity waiting to drift.
+        FilterField.Cpm => $"(b.wpm::double precision * {LyricPace.CHARS_PER_WORD.ToString(CultureInfo.InvariantCulture)})",
         FilterField.Length => "b.total_length_s",
         _ => throw new ArgumentOutOfRangeException(nameof(field), field, "not a per-difficulty numeric field"),
     };
