@@ -70,11 +70,15 @@ public static class PublicSiteSeed
     // so a test can scope free text to just this pair, then narrow with an operator. Fixed past
     // submit dates make the date: assertions deterministic.
     //
-    // Alpha: submitted 2024-03-15, stars 4.5, wpm 100, length 90s (1:30), cpm 100*500/100 = 500.
+    // Alpha: submitted 2024-03-15, stars 4.5, wpm 100, length 90s (1:30), cpm 100*5 = 500. Its
+    // seeded counts happen to average exactly 5 cells per word (500/100), so it is the ONE fixture
+    // on which the pre-v15 cpm derivation and the current one agree; Bravo is the one that tells
+    // them apart.
     /// <summary>"Operator Alpha Synthwave": the low-stat operator fixture.</summary>
     public static long OpAlphaId { get; private set; }
 
-    // Bravo: submitted 2022-11-01, stars 7.0, wpm 200, length 240s (4:00), cpm 200*700/100 = 1400.
+    // Bravo: submitted 2022-11-01, stars 7.0, wpm 200, length 240s (4:00), cpm 200*5 = 1000. Its
+    // average word is 700/100 = 7 cells, so the pre-v15 derivation would have called this 1400.
     /// <summary>"Operator Bravo Ballad": the high-stat operator fixture.</summary>
     public static long OpBravoId { get; private set; }
 

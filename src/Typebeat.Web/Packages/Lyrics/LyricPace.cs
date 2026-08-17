@@ -8,11 +8,14 @@ namespace Typebeat.Web.Packages.Lyrics;
 ///  - pace: LyricPaceStatistics.Compute
 ///    (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricPaceStatistics.cs): a line's typing
 ///    window is EndTime - StartTime (the boundary-to-boundary time a player actually gets),
-///    floored at 500 ms; per line WPM = real words / window and CPM = real typeable cells /
-///    window (chars + one inter-word space per token gap; TypingLine's cell arithmetic);
-///    the map pace is the unweighted mean of per-line rates, so instrumental gaps between
-///    lines never dilute it. No "1 word = 5 chars" estimate anywhere: the CPM:WPM ratio is
-///    the map's true word length.
+///    floored at 500 ms; per line CPM = real typeable cells / window (chars + one inter-word
+///    space per token gap; TypingLine's cell arithmetic) and WPM is that CPM over
+///    <see cref="CHARS_PER_WORD"/>; the map pace is the unweighted mean of per-line rates, so
+///    instrumental gaps between lines never dilute it. The word convention is the TYPING-TEST
+///    one, so WPM here means what it means on MonkeyType, on the in-game HUD and on the results
+///    screen; the map's true word length is published separately as
+///    <see cref="PaceStatistics.AverageCharsPerWord"/> rather than left implicit in a CPM:WPM
+///    ratio nobody could read off the page.
 ///  - stars: <see cref="LyricDifficulty"/>, a duration-weighted soft maximum over per-word
 ///    typing strain (sr-formula-v1.md), mirroring the game's
 ///    typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty. Unlike the pace, this DOES use
@@ -101,6 +104,30 @@ public static class LyricPace
     /// be: <c>PerformancePoints.VERSION</c> bumps to 16 in the same change, having DELETED its own
     /// length factor, so every stored row reprices against both halves of the migration at once.
     ///
+    /// v15 = WPM IS REDEFINED as CPM / <see cref="CHARS_PER_WORD"/> (backlog 169/170), mirroring the
+    /// game. A word is now five typeable cells, the typing-test convention, instead of a real
+    /// whitespace-delimited word, so <c>beatmaps.wpm</c> and <c>peak_wpm</c> and every point of
+    /// <c>wpm_curve</c> move on every map whose average word is not exactly 5 cells long, which is
+    /// every map: the five shipped ones measure 4.11 to 4.57 cells per word, so their advertised
+    /// WPM falls by the same proportion (charsPerWord / 5, i.e. to between 0.82x and 0.91x). The
+    /// word length the old CPM:WPM ratio encoded implicitly is now published outright as
+    /// <see cref="PaceStatistics.AverageCharsPerWord"/>, which the set page prints under Average
+    /// WPM; it needs no column, being <c>char_count / word_count</c> off two columns that already
+    /// exist and do not move. NOTHING ELSE MOVES, and that is checked rather than assumed:
+    /// <c>difficulty_rating</c> and the five rate/Literate ratings, <c>word_count</c>,
+    /// <c>char_count</c>, <c>peak_cpm</c>, <c>skippable_s</c> and <c>lyrics</c> all rewrite
+    /// byte-identically, because only the FORMULA CONSUMING the counts changed and no count did.
+    /// <c>PerformancePoints.VERSION</c> deliberately stays where it is: pp reads star ratings, never
+    /// a WPM or a CPM. The sweep is still not free for scores, for the mechanical reason v13 was
+    /// not: it stamps <c>pp_version = 0</c> on every score of every row it rewrites, so the whole
+    /// score table reprices at the next boot, to identical values. That has been accepted rather
+    /// than gated. The <c>wpm:</c> search filter is deliberately NOT rescaled either: a saved search
+    /// or a shared URL carrying a wpm range keeps working and simply means the new figure. The
+    /// <c>cpm:</c> filter is a different matter and WAS a bug, fixed in the same change:
+    /// <see cref="Search.BeatmapSearchSql"/> derived it as <c>wpm * char_count / word_count</c>,
+    /// which was the old identity exactly, and would now read <c>cpm * charsPerWord / 5</c>. It is
+    /// <c>wpm * 5</c> from here on.
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -113,25 +140,56 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 14;
+    public const int VERSION = 15;
+
+    /// <summary>
+    /// Typeable cells per word, the typing-test convention. Same 5 as the game's
+    /// <c>LyricPaceStatistics.CHARS_PER_WORD</c> and <c>TypingEngine.LiveWpm</c>, and as
+    /// <see cref="LyricWpmCurve.CHARS_PER_WORD"/> next door; all of them must agree or the map's
+    /// advertised pace stops meaning what the HUD shows.
+    /// </summary>
+    public const double CHARS_PER_WORD = 5.0;
 
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;
 
+    /// <param name="AverageCpm">Mean of per-line (typeable cells / boundary window) rates.</param>
     /// <param name="DifficultyRating">Stars from <see cref="LyricDifficulty"/> (no-mod baseline).</param>
     public readonly record struct PaceStatistics(
-        double AverageWpm,
         double AverageCpm,
         int TypeableCellCount,
         int WordCount,
-        double DifficultyRating);
+        double DifficultyRating)
+    {
+        /// <summary>
+        /// <see cref="AverageCpm"/> over <see cref="CHARS_PER_WORD"/>. DERIVED rather than
+        /// accumulated in its own sum, mirroring the game, so the two figures cannot drift apart by
+        /// so much as a rounding step whatever the map does.
+        /// </summary>
+        public double AverageWpm => AverageCpm / CHARS_PER_WORD;
+
+        /// <summary>
+        /// Typeable cells per word over the WHOLE map (<see cref="TypeableCellCount"/> /
+        /// <see cref="WordCount"/>), inter-word spaces included because the 5 in
+        /// <see cref="CHARS_PER_WORD"/> counts them too: a "word" in a typing test is five
+        /// keystrokes, and the space after a word is a keystroke. This is the number the old
+        /// CPM:WPM ratio encoded implicitly; 0 for a map with no words, rather than a NaN the set
+        /// page would print.
+        ///
+        /// <para>A map total, not a mean of per-line ratios, so it is the length of the average word
+        /// the player types rather than the average of the lines' averages. WPM and CPM go the other
+        /// way (unweighted per-line means) because they are RATES and a per-line mean is what keeps
+        /// a long instrumental gap from diluting them, while this is a pure count ratio with no time
+        /// in it to dilute.</para>
+        /// </summary>
+        public double AverageCharsPerWord => WordCount == 0 ? 0 : (double)TypeableCellCount / WordCount;
+    }
 
     public static PaceStatistics Compute(IReadOnlyList<LyricLine> lines)
     {
         int totalCells = 0;
         int totalWords = 0;
         int lineCount = 0;
-        double wpmSum = 0;
         double cpmSum = 0;
 
         foreach (var line in lines)
@@ -172,7 +230,9 @@ public static class LyricPace
 
             double windowMinutes = Math.Max(line.EndTime - line.StartTime, min_line_window_ms) / 60000.0;
 
-            wpmSum += words / windowMinutes;
+            // WPM is not accumulated here: it is CPM / CHARS_PER_WORD by definition (see
+            // PaceStatistics.AverageWpm), so a second sum could only introduce a way for the two to
+            // disagree. The word COUNT is still accumulated, because AverageCharsPerWord needs it.
             cpmSum += cells / windowMinutes;
             totalCells += cells;
             totalWords += words;
@@ -183,7 +243,6 @@ public static class LyricPace
             return default;
 
         return new PaceStatistics(
-            wpmSum / lineCount,
             cpmSum / lineCount,
             totalCells,
             totalWords,

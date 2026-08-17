@@ -218,7 +218,9 @@ public class PackageIngestDbTest
             Assert.That(beatmap.Checksum, Has.Length.EqualTo(32));
             Assert.That(beatmap.WordCount, Is.EqualTo(2));
             Assert.That(beatmap.CharCount, Is.EqualTo(5));
-            Assert.That((double)beatmap.Wpm, Is.EqualTo(40).Within(1e-6));
+            // 5 cells / 0.05 min = 100 CPM, stored WPM = 100/5 = 20 (LyricPace v15). The two counts
+            // above are what the stored figure is derived from and neither of them moved.
+            Assert.That((double)beatmap.Wpm, Is.EqualTo(20).Within(1e-6));
             Assert.That(beatmap.Difficulty, Is.EqualTo(0.63).Within(0.01)); // strain-based stars
             Assert.That(beatmap.Lyrics, Is.EqualTo("ab cd")); // the lyrics: search haystack
         });
@@ -420,7 +422,7 @@ public class PackageIngestDbTest
         Assert.Multiple(() =>
         {
             // The regression package: "ab cd" over a 3000 ms boundary window.
-            Assert.That((double)row.Wpm, Is.EqualTo(40).Within(1e-6));
+            Assert.That((double)row.Wpm, Is.EqualTo(20).Within(1e-6));
             Assert.That(row.Difficulty, Is.EqualTo(0.63).Within(0.01)); // strain-based stars
             Assert.That(row.WordCount, Is.EqualTo(2));
             Assert.That(row.CharCount, Is.EqualTo(5));

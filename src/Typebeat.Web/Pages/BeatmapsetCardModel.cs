@@ -9,7 +9,9 @@ namespace Typebeat.Web.Pages;
 /// <param name="CoverUrl">Site-relative list-cover URL (150×150 bucket), or null → gradient placeholder (never a broken img).</param>
 /// <param name="PreviewUrl">Site-relative 30s preview mp3, or null → no play button.</param>
 /// <param name="Date">submitted_at; timestamptz arrives from Npgsql as UTC DateTime.</param>
-/// <param name="Wpm">Perfect-play words per minute of the hardest difficulty, null when unknown.</param>
+/// <param name="Wpm">Perfect-play words per minute of the hardest difficulty, null when unknown. A
+/// word is five typeable cells (LyricPace.CHARS_PER_WORD), the typing-test convention, so this is
+/// exactly that difficulty's CPM over five and means what a WPM means anywhere else.</param>
 /// <param name="HasPackage">False for pre-M3 sets with no uploaded package: the download rail
 /// icon becomes an inert "available in-game only" hint instead of a dead 404 link.</param>
 /// <param name="Explicit">Creator-declared explicit content (submission wizard toggle): renders

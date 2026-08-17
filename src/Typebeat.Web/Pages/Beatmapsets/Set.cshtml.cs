@@ -399,6 +399,21 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         public bool HasPaceCurve => WpmCurve is { Length: > 0 } curve && curve.Any(v => v > 0);
 
         /// <summary>
+        /// Typeable cells per word over the whole difficulty, the same quantity as
+        /// <c>LyricPace.PaceStatistics.AverageCharsPerWord</c> and computed the same way, from the
+        /// two counts already on the row: NO COLUMN OF ITS OWN, because there is nothing here that
+        /// <c>char_count</c> and <c>word_count</c> do not already say.
+        ///
+        /// <para>It sits beside Average WPM on the page because it is what turns that number into
+        /// something a reader can interpret: WPM is CPM/5 flat since LyricPace v15, so this says how
+        /// far the map's own words are from the 5 the unit assumes. Null (row omitted) when either
+        /// count is missing or the map has no words, so the page never prints a NaN or a fabricated
+        /// 0, exactly as the Words and Characters rows above it already behave.</para>
+        /// </summary>
+        public double? AverageCharsPerWord =>
+            WordCount is int words and > 0 && CharCount is int chars ? (double)chars / words : null;
+
+        /// <summary>
         /// The stored curve laid out for the graph: one bar per point, each a percentage of the
         /// plot's height, tallest bar at 100. Computed here rather than in the .cshtml because
         /// Razor is a poor place for arithmetic (no test can reach it, and every expression has to

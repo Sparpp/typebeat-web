@@ -327,10 +327,21 @@ public class BeatmapSearchQueryTest
     }
 
     [Test]
-    public void Sql_Cpm_IsDerivedFromStoredCounts()
+    public void Sql_Cpm_IsDerivedFromStoredWpm()
     {
         var (sql, _) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("cpm:>600"));
-        Assert.That(sql, Does.Contain("b.wpm * b.char_count").IgnoreCase);
+
+        Assert.Multiple(() =>
+        {
+            // Since LyricPace v15 a stored wpm IS cpm/5, so the reconstruction is one multiply.
+            Assert.That(sql, Does.Contain("b.wpm::double precision * 5").IgnoreCase);
+
+            // And it must NOT go back through the counts: that was the pre-v15 identity
+            // (wpm * chars-per-word), which against a v15 wpm reads cpm * charsPerWord / 5 and is
+            // wrong for every map whose average word is not exactly 5 cells long.
+            Assert.That(sql, Does.Not.Contain("char_count").IgnoreCase);
+            Assert.That(sql, Does.Not.Contain("word_count").IgnoreCase);
+        });
     }
 
     [Test]

@@ -16,8 +16,8 @@ public static class SyntheticPackage
     /// <summary>
     /// The [Lyrics] payload of the game's own pace regression test
     /// (LyricPaceStatisticsTest.ComputesBoundaryWindowPace): "ab cd", 2 words, 5 typeable cells,
-    /// boundary window 3000 ms (start 1000 -> line end 4000) -> WPM 40, CPM 100 ->
-    /// difficulty 40/25 = 1.6.
+    /// boundary window 3000 ms (start 1000 -> line end 4000) -> CPM 100, WPM 20 (CPM/5 since
+    /// LyricPace v15), 2.5 cells per word.
     /// </summary>
     public const string PaceRegressionLyrics =
         """

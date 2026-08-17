@@ -6,8 +6,9 @@ namespace Typebeat.Web.Tests;
 /// The pace + difficulty arithmetic against known values. Pace anchors on the game's own
 /// regression test (typebeat-osu typebeat.Game.Rulesets.TypeBeat.Tests/NonVisual/
 /// LyricPaceStatisticsTest.cs): "ab cd" over a 3000 ms boundary window -> 5 cells, 2 words,
-/// WPM 40, CPM 100. Stars follow <see cref="LyricDifficulty"/> (strain-based); the hand-computed
-/// "cat cat" -> 0.79 anchor is shared with the game's LyricDifficultyTest to lock the two ports.
+/// CPM 100, WPM 20 (CPM/5), 2.5 cells per word. Stars follow <see cref="LyricDifficulty"/>
+/// (strain-based); the hand-computed "cat cat" -> 0.79 anchor is shared with the game's
+/// LyricDifficultyTest to lock the two ports.
 /// </summary>
 public class LyricPaceTest
 {
@@ -31,12 +32,18 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
+            // NEITHER COUNT MOVES under the WPM redefinition: only the formula consuming them did.
             Assert.That(pace.TypeableCellCount, Is.EqualTo(5));
             Assert.That(pace.WordCount, Is.EqualTo(2));
-            // Boundary window 4000 - 1000 = 3000 ms: WPM = 2 / 0.05 min, CPM = 5 / 0.05 min.
-            Assert.That(pace.AverageWpm, Is.EqualTo(40.0).Within(1e-9));
+            // Boundary window 4000 - 1000 = 3000 ms: CPM = 5 cells / 0.05 min = 100, and WPM is
+            // that over 5 = 20. The real-word convention this replaced said 2 / 0.05 = 40; the
+            // line averages 5/2 = 2.5 cells per word, exactly half the 5 the unit assumes, so the
+            // new figure is exactly half the old one.
             Assert.That(pace.AverageCpm, Is.EqualTo(100.0).Within(1e-9));
-            // stars from LyricDifficulty (per-word strain sum + power remap).
+            Assert.That(pace.AverageWpm, Is.EqualTo(20.0).Within(1e-9));
+            Assert.That(pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
+            // stars from LyricDifficulty (per-word strain sum + power remap), UNMOVED: the star
+            // model never read a WPM.
             Assert.That(pace.DifficultyRating, Is.EqualTo(0.63).Within(0.01));
         });
     }
@@ -44,8 +51,9 @@ public class LyricPaceTest
     [Test]
     public void AveragesPerLineRates_Unweighted()
     {
-        // Line 1: "ab cd" over 3000 ms -> 40 WPM / 100 CPM.
-        // Line 2: "ab cd" over 1500 ms -> 80 WPM / 200 CPM.
+        // Line 1: "ab cd" over 3000 ms -> 100 CPM / 20 WPM.
+        // Line 2: "ab cd" over 1500 ms -> 200 CPM / 40 WPM.
+        // Map = unweighted mean of per-line rates: 150 CPM / 30 WPM.
         var second = new LyricLine
         {
             RawText = "ab cd",
@@ -61,10 +69,106 @@ public class LyricPaceTest
         {
             Assert.That(pace.TypeableCellCount, Is.EqualTo(10));
             Assert.That(pace.WordCount, Is.EqualTo(4));
-            Assert.That(pace.AverageWpm, Is.EqualTo(60.0).Within(1e-9));
             Assert.That(pace.AverageCpm, Is.EqualTo(150.0).Within(1e-9));
+            Assert.That(pace.AverageWpm, Is.EqualTo(30.0).Within(1e-9));
+            Assert.That(pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
         });
     }
+
+    /// <summary>
+    /// The one identity the whole convention change rests on, and the reason the new metric counts
+    /// inter-word spaces: a line whose average word is exactly 5 CELLS long has the same WPM under
+    /// the typing-test convention (cells/5) as under the real-word one (words), so the change is a
+    /// reweighting around 5, not an arbitrary rescaling, and AverageCharsPerWord is precisely the
+    /// old CPM:WPM ratio made visible. Ported from the game's LyricPaceStatisticsTest so both sides
+    /// of the mirror are pinned on it.
+    ///
+    /// <para>Stated at LINE granularity, and the fixture gives every line an average of exactly 5
+    /// rather than only the map total: WPM and CPM are unweighted means of per-line rates, so a map
+    /// that averages 5 overall while its individual lines do not would not satisfy the identity line
+    /// by line.</para>
+    /// </summary>
+    [Test]
+    public void FiveCellWords_MakeTheNewWpmEqualTheOldOne()
+    {
+        // Line 1, "abcd efghi" over 3000 ms: 2 words, 4 + 1 + 5 = 10 cells, 10/2 = 5 exactly.
+        //   old WPM = 2 words / 0.05 min   = 40
+        //   CPM     = 10 cells / 0.05 min  = 200
+        //   new WPM = 200 / 5              = 40   (equal)
+        //
+        // Line 2, "abcd efgh ijkl mnopq" over 1500 ms: 4 words, 17 chars + 3 spaces = 20 cells,
+        // 20/4 = 5 exactly.
+        //   old WPM = 4 words / 0.025 min  = 160
+        //   CPM     = 20 cells / 0.025 min = 800
+        //   new WPM = 800 / 5              = 160  (equal)
+        //
+        // Map: mean CPM = (200 + 800) / 2 = 500, mean WPM = (40 + 160) / 2 = 100 = 500 / 5, and
+        // chars/word = (10 + 20) / (2 + 4) = 30 / 6 = 5.
+        var lines = new[] { windowLine("abcd efghi", 1000, 4000), windowLine("abcd efgh ijkl mnopq", 4000, 5500) };
+
+        var pace = LyricPace.Compute(lines);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pace.TypeableCellCount, Is.EqualTo(30));
+            Assert.That(pace.WordCount, Is.EqualTo(6));
+            Assert.That(pace.AverageCharsPerWord, Is.EqualTo(5.0).Within(1e-9));
+            Assert.That(pace.AverageCpm, Is.EqualTo(500.0).Within(1e-9));
+            Assert.That(pace.AverageWpm, Is.EqualTo(100.0).Within(1e-9));
+
+            // And the old convention, recomputed here from the same boundary windows, agrees:
+            // mean of (words / minutes) over the two lines.
+            double oldConventionWpm = (2 / (3000 / 60000.0) + 4 / (1500 / 60000.0)) / 2;
+
+            Assert.That(pace.AverageWpm, Is.EqualTo(oldConventionWpm).Within(1e-9));
+        });
+    }
+
+    [Test]
+    public void WpmIsCpmOverFive_WhateverTheWordLength()
+    {
+        // The identity above is conditional on 5-cell words; THIS one is unconditional, which is the
+        // point of deriving AverageWpm from AverageCpm instead of summing it separately. Lines
+        // chosen to average nothing like 5: 5/2 = 2.5 and 18/2 = 9.0 cells per word, 23/4 = 5.75
+        // over the map.
+        var pace = LyricPace.Compute([windowLine("ab cd", 1000, 4000), windowLine("abcdefgh ijklmnopq", 4000, 9000)]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pace.AverageWpm, Is.EqualTo(pace.AverageCpm / LyricPace.CHARS_PER_WORD).Within(1e-12));
+            Assert.That(pace.AverageCharsPerWord, Is.EqualTo(23 / 4.0).Within(1e-9));
+        });
+    }
+
+    [Test]
+    public void CharsPerWord_CountsInterWordSpaces_AndIsZeroWithoutWords()
+    {
+        // "ab cd ef": 3 words, 6 chars + 2 spaces = 8 cells, so 8/3 and not 6/3. Spaces are in
+        // because the 5 in "5 chars = 1 word" counts them: they are keystrokes like any other, and
+        // leaving them out here would put the two metrics in different units and break the identity
+        // pinned above.
+        var pace = LyricPace.Compute([windowLine("ab cd ef", 1000, 4000)]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pace.TypeableCellCount, Is.EqualTo(8));
+            Assert.That(pace.WordCount, Is.EqualTo(3));
+            Assert.That(pace.AverageCharsPerWord, Is.EqualTo(8 / 3.0).Within(1e-9));
+
+            // No words to divide by: 0 rather than a NaN the set page would print as "NaN".
+            Assert.That(LyricPace.Compute([]).AverageCharsPerWord, Is.Zero);
+        });
+    }
+
+    /// <summary>A one-unit line spanning its own boundary window, for the count arithmetic.</summary>
+    private static LyricLine windowLine(string text, double start, double end) => new()
+    {
+        RawText = text,
+        StartTime = start,
+        EndTime = end,
+        SingEndTime = end,
+        Units = [new TimedUnit { Text = text, StartTime = start, EndTime = end }],
+    };
 
     [Test]
     public void EmptyMap_IsZero()
@@ -210,7 +314,10 @@ public class LyricPaceTest
     public void MinimumLineWindow_GuardsDegenerateBoundaries()
     {
         // A 100 ms boundary window clamps to the 500 ms floor:
-        // 1 word / (500 ms / 60000) = 120 WPM; 5 cells -> 600 CPM.
+        // 5 cells / (500 ms / 60000) = 600 CPM; WPM = 600 / 5 = 120.
+        //
+        // Unmoved by the redefinition, and not by luck: "abcde" is 5 cells over 1 word, exactly the
+        // 5 the unit assumes, which is the equality FiveCellWords_MakeTheNewWpmEqualTheOldOne pins.
         var line = new LyricLine
         {
             RawText = "abcde",
@@ -251,7 +358,7 @@ public class LyricPaceTest
 
         // The parsed section reproduces the regression pace exactly.
         var pace = LyricPace.Compute(lines);
-        Assert.That(pace.AverageWpm, Is.EqualTo(40.0).Within(1e-9));
+        Assert.That(pace.AverageWpm, Is.EqualTo(20.0).Within(1e-9));
     }
 
     [Test]
@@ -429,9 +536,9 @@ public class LyricPaceTest
             // flattening reaches the same 8 cells).
             Assert.That(pace.TypeableCellCount, Is.EqualTo(8));
             Assert.That(pace.WordCount, Is.EqualTo(3));
-            // Boundary window 7000 - 1000 = 6000 ms: 3 words / 0.1 min, 8 cells / 0.1 min.
-            Assert.That(pace.AverageWpm, Is.EqualTo(30.0).Within(1e-9));
+            // Boundary window 7000 - 1000 = 6000 ms: 8 cells / 0.1 min = 80 CPM, WPM = 80/5 = 16.
             Assert.That(pace.AverageCpm, Is.EqualTo(80.0).Within(1e-9));
+            Assert.That(pace.AverageWpm, Is.EqualTo(16.0).Within(1e-9));
         });
     }
 
@@ -454,8 +561,10 @@ public class LyricPaceTest
             Assert.That(lines[0].RawText, Is.EqualTo("me you"));
             Assert.That(pace.TypeableCellCount, Is.EqualTo(6));
             Assert.That(pace.WordCount, Is.EqualTo(2));
-            Assert.That(pace.AverageWpm, Is.EqualTo(20.0).Within(1e-9));
+            // 6 cells / 0.1 min = 60 CPM, WPM = 60/5 = 12. The CELL AND WORD COUNTS are what this
+            // back-compat pin is actually about, and neither moved.
             Assert.That(pace.AverageCpm, Is.EqualTo(60.0).Within(1e-9));
+            Assert.That(pace.AverageWpm, Is.EqualTo(12.0).Within(1e-9));
         });
 
         // "freestyle" must be strictly true; anything else is the legacy path.
@@ -555,7 +664,7 @@ public class LyricPaceTest
         var lines = LyricTiming.BuildLines(raw, songEnd);
         var pace = LyricPace.Compute(lines);
 
-        TestContext.WriteLine($"Real map -> WPM {pace.AverageWpm:0.0}, CPM {pace.AverageCpm:0.0}, stars {pace.DifficultyRating:0.00}");
+        TestContext.WriteLine($"Real map -> WPM {pace.AverageWpm:0.0}, CPM {pace.AverageCpm:0.0}, chars/word {pace.AverageCharsPerWord:0.00}, stars {pace.DifficultyRating:0.00}");
 
         Assert.Multiple(() =>
         {
@@ -564,6 +673,10 @@ public class LyricPaceTest
             // A real song sits in a sane human WPM band (and stars stay on the 0..10 scale).
             Assert.That(pace.AverageWpm, Is.InRange(10, 400));
             Assert.That(pace.DifficultyRating, Is.InRange(0.1, 10));
+            // And a real English lyric averages a bit under the 5 cells the unit assumes: the five
+            // shipped maps measure 4.11 to 4.57, which is why the set page prints ONE DECIMAL and
+            // not a whole number (every one of them would round to "4").
+            Assert.That(pace.AverageCharsPerWord, Is.InRange(3.0, 7.0));
         });
     }
 }
