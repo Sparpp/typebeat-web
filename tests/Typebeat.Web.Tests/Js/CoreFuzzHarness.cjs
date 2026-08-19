@@ -1,0 +1,342 @@
+// Node harness for the DIFFERENTIAL parity guard on the browser scoring core (backlog 172).
+//
+// Every other harness beside this one drives ONE named behaviour through a hand-written keystroke
+// sequence, so each pins the rule it was written for and nothing else. This one exists for the
+// rules NOBODY thought to write a scenario for: it generates long, mixed keystroke streams
+// (correct chars at every judgement tier, typed-through typos, backspaces, rejected keys, word
+// skips, idle stretches that let lines seal) and emits BOTH the stream it played and the account
+// the browser produced. EngineFuzzLiveParityTest.cs replays the very same stream through the
+// game's own TypeBeatReplayScorer and compares the two accounts field for field, so a divergence
+// anywhere in processKey / processBackspace / sealLine / computeScore surfaces as a failing case
+// rather than waiting for somebody to guess it.
+//
+// THE STREAM IS EMITTED, NOT RE-DERIVED. The generator drives a throwaway engine so it always
+// knows which character the caret wants, which is what makes the stream interesting; the browser's
+// answer is then measured on a FRESH engine fed exactly as TypeBeatReplayScorer.feed feeds the
+// C# one (a 1000/60 ms cadence loop, each due frame applied as update(t) then the key, mirroring
+// ReplayEngineFeed.Apply). So the generator can lean on browser behaviour without the comparison
+// inheriting it: whatever it produced, both sides then play the identical script.
+//
+// TWO DELIBERATE LIMITS ON WHAT IS GENERATED, both of them properties of the browser rather than
+// of the fuzzer:
+//
+//   * A REJECTED key is never generated once engine.consecutiveWrongKeys reaches 8. The browser
+//     fails a play at 13 consecutive rejections (WRONG_KEY_FAIL_STREAK) and then refuses every
+//     later key, while TypeBeatReplayScorer simulates no health at all and would carry on. That is
+//     the browser's stand-in for the desktop's TypeBeatHealthProcessor, not engine drift, and a
+//     failed run is unranked on both sides, so the fuzzer stays clear of it rather than pinning a
+//     difference that is by design.
+//   * Press times are monotonic non-decreasing. The replay feed consumes frames in list order as
+//     the clock passes them, so an out-of-order frame would be applied at a time the recorded run
+//     never had, on both sides equally but for no useful reason.
+//
+// Usage: node CoreFuzzHarness.cjs <absolute path to typebeat-core.js>
+
+'use strict';
+
+const corePath = process.argv[2];
+if (!corePath) {
+    process.stderr.write('missing typebeat-core.js path\n');
+    process.exit(2);
+}
+
+global.window = {};
+require(corePath);
+const TB = global.window.TypeBeatCore;
+
+// ReplayEngineFeed.FRAME_MS, and TypeBeatReplayScorer.tail_ms. Both sides accumulate `now` the
+// same way from the same literal, and IEEE 754 doubles add identically in C# and JS, so the two
+// clocks land on bit-identical frame times.
+const FRAME_MS = 1000.0 / 60;
+const TAIL_MS = 10000;
+
+// ---------------------------------------------------------------------------------------------
+// Fixtures. Each is written as the JSON a real map carries AND rebuilt on the C# side as the
+// LyricLine/TimedUnit shape the game's own tests use; the test asserts the two loaders agree on
+// every cell before it compares a single account, so a fixture that drifted cannot masquerade as
+// engine drift.
+// ---------------------------------------------------------------------------------------------
+function osu(lines, songEndMs, granularity) {
+    return '[General]\nAudioFilename: a.mp3\n[Metadata]\nTitle: t\nArtist: a\n[Lyrics]\n' +
+        JSON.stringify({ granularity: granularity || 'line', version: 2, song_end_ms: songEndMs }) + '\n' +
+        lines.map(l => JSON.stringify(l)).join('\n') + '\n';
+}
+
+const FIXTURES = {
+    // "cat dog" on [1000, 6000), sing end 5000: c@1000 a@1666.67 t@2333.33 ' '@3000 d@3000
+    // o@3666.67 g@4333.33. The word-skip fixture, so the skip cases have a three-letter word to
+    // lose more than one cell from.
+    catDog: osu([{
+        text: 'cat dog', start_ms: 1000, end_ms: 5000,
+        words: [{ text: 'cat', start_ms: 1000, end_ms: 3000, score: 1 },
+                { text: 'dog', start_ms: 3000, end_ms: 5000, score: 1 }]
+    }], 6000),
+
+    // "ab cd" on [1000, 4000), sing end 3000: a@1000 b@1500 ' '@2000 c@2000 d@2500. The tightest
+    // map here, so a single stray press moves a large share of the account.
+    abCd: osu([{
+        text: 'ab cd', start_ms: 1000, end_ms: 3000,
+        words: [{ text: 'ab', start_ms: 1000, end_ms: 2000, score: 1 },
+                { text: 'cd', start_ms: 2000, end_ms: 3000, score: 1 }]
+    }], 4000),
+
+    // Two lines with a gap between them, which is the only shape where a seal happens while the
+    // play CARRIES ON: the combo-neutral marks, the restorable snapshot a seal drops, and every
+    // judgement weighted by a combo the seal did or did not wipe are all observable only here.
+    catDogThenHi: osu([{
+        text: 'cat dog', start_ms: 1000, end_ms: 5000,
+        words: [{ text: 'cat', start_ms: 1000, end_ms: 3000, score: 1 },
+                { text: 'dog', start_ms: 3000, end_ms: 5000, score: 1 }]
+    }, {
+        text: 'hi', start_ms: 6000, end_ms: 7000,
+        words: [{ text: 'hi', start_ms: 6000, end_ms: 7000, score: 1 }]
+    }], 10000),
+
+    // The longest fixture: 5 words over 2 lines, 25 cells. Enough combo for the combo cap and the
+    // combo-portion exponent to matter, and enough words for several skips in one run.
+    quickBrownFox: osu([{
+        text: 'the quick brown', start_ms: 1000, end_ms: 4000,
+        words: [{ text: 'the', start_ms: 1000, end_ms: 1600, score: 1 },
+                { text: 'quick', start_ms: 1600, end_ms: 2800, score: 1 },
+                { text: 'brown', start_ms: 2800, end_ms: 4000, score: 1 }]
+    }, {
+        text: 'fox jumps', start_ms: 5000, end_ms: 7000,
+        words: [{ text: 'fox', start_ms: 5000, end_ms: 5800, score: 1 },
+                { text: 'jumps', start_ms: 5800, end_ms: 7000, score: 1 }]
+    }], 12000),
+
+    // Everything the four maps above leave out of the CELL side, in one fixture, because the
+    // judgement windows a press is graded against are a property of the cell and not of the engine:
+    //   * WORD granularity, so the windows are the 0.6 ladder rather than the 1.0 one;
+    //   * a SYLLABLE subdivision inside "bad-cat", which warps the char-to-time mapping within the
+    //     word instead of running one flat ramp across it;
+    //   * a LOW-CONFIDENCE word ("sat.", score 0.1 under LOW_CONFIDENCE_SCORE), whose cells fall
+    //     back to the widest Line ladder while the rest of the line stays at Word;
+    //   * an ESTIMATED line, which does the same thing a whole line at a time;
+    //   * PUNCTUATION and CASE, so the cells are the derived default stream ("the bad cat sat")
+    //     rather than the authored text: a hyphen becomes a typed space on the slot the hyphen
+    //     held, a period disappears, and capitals fold.
+    // A press graded on the wrong ladder lands in a different tier, which moves the statistics, the
+    // accuracy and the score, so this is scoring surface and not decoration.
+    mixedTiers: osu([{
+        text: 'The bad-cat sat.', start_ms: 1000, end_ms: 4000,
+        words: [{ text: 'The', start_ms: 1000, end_ms: 1600, score: 1 },
+                { text: 'bad-cat', start_ms: 1600, end_ms: 2800, score: 1, syllables: [{ start_ms: 2200 }] },
+                { text: 'sat.', start_ms: 2800, end_ms: 4000, score: 0.1 }]
+    }, {
+        text: 'Oh no', start_ms: 5000, end_ms: 6500, estimated: true,
+        words: [{ text: 'Oh', start_ms: 5000, end_ms: 5700, score: 1 },
+                { text: 'no', start_ms: 5700, end_ms: 6500, score: 1 }]
+    }], 12000, 'word'),
+
+    // The tightest ladder there is: SYLLABLE granularity scales every window to 0.45, so the same
+    // press offsets the other fixtures grade as Great land two tiers lower here. Nothing else about
+    // it is unusual, which is the point: it isolates the tier scale.
+    syllabic: osu([{
+        text: 'one two', start_ms: 1000, end_ms: 3000,
+        words: [{ text: 'one', start_ms: 1000, end_ms: 2000, score: 1, syllables: [{ start_ms: 1500 }] },
+                { text: 'two', start_ms: 2000, end_ms: 3000, score: 1 }]
+    }], 6000, 'syllable')
+};
+
+function build(name) {
+    return TB.buildBeatmap(TB.parseLyricOsu(FIXTURES[name]), false);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Generation
+// ---------------------------------------------------------------------------------------------
+
+/** Numerical Recipes' LCG, so a seed reproduces a case exactly on any machine. */
+function lcg(seed) {
+    let s = (seed >>> 0) || 1;
+    return function () {
+        s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+        return s / 4294967296;
+    };
+}
+
+// Press offsets against the cell's own target, chosen to land in every band the Line-granularity
+// ladder has: Great [-250, 400], Ok [-600, 1000], Meh [-1200, 2000], and Premature / Lagging
+// outside it. A run therefore exercises the scoring tiers, the two zero-point tiers that break
+// combo, and the sync quality ramp, rather than only the happy path.
+const OFFSETS = [0, 120, -180, 380, 700, -520, 1400, -900, 1900, 2600, -1600];
+
+const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
+
+/**
+ * One generated run: the keystroke script, produced by walking a throwaway engine so the generator
+ * always knows the character the caret wants. `spaceSkipsWord` is fed to the throwaway too, so a
+ * skip run really does generate skips rather than rejections.
+ */
+function generate(name, seed, spaceSkipsWord) {
+    const rnd = lcg(seed);
+    const engine = new TB.TypingEngine(build(name));
+    engine.spaceSkipsWord = spaceSkipsWord;
+
+    const keys = [];
+    let skipPresses = 0;
+    let t = 0;
+
+    for (let step = 0; step < 140 && !engine.finished && !engine.failed; step++) {
+        engine.update(t);
+
+        if (engine.activeLineIndex < 0) {
+            // Pre-roll or the dead zone between two lines: nothing is typeable, so move the clock.
+            t += 120 + Math.floor(rnd() * 900);
+            continue;
+        }
+
+        const cell = engine.caretCell;
+
+        if (cell === null) {
+            t += 120 + Math.floor(rnd() * 900);
+            continue;
+        }
+
+        const roll = rnd();
+        // A key that would be REJECTED (a space on a lyric cell without the skip setting, or a
+        // letter on a word gap) is off the table near the fail streak; see the header.
+        const mayBeRejected = engine.consecutiveWrongKeys < 8;
+
+        if (roll < 0.10) {
+            // Idle: let the clock run, which is how cells reach a seal untyped.
+            t += 250 + Math.floor(rnd() * 1400);
+            continue;
+        }
+
+        if (roll < 0.20) {
+            keys.push([t, '\b']);
+            engine.update(t);
+            engine.processBackspace();
+            continue;
+        }
+
+        let ch;
+
+        if (roll < 0.32 && cell.expected !== ' ') {
+            // A typed-through typo (or, with the skip setting on and the roll below, a skip).
+            do { ch = LETTERS[Math.floor(rnd() * LETTERS.length)]; } while (ch === cell.expected);
+        } else if (roll < 0.40 && (spaceSkipsWord || mayBeRejected)) {
+            // A space. Inside a word it skips it (setting on) or is rejected (setting off); on a
+            // word gap it is simply the right key.
+            ch = ' ';
+        } else if (roll < 0.44 && cell.expected === ' ' && mayBeRejected) {
+            // A letter on a word gap: rejected in every model, on both sides.
+            ch = LETTERS[Math.floor(rnd() * LETTERS.length)];
+        } else {
+            ch = cell.expected;
+        }
+
+        // Press at the cell's own target plus an offset, never earlier than the clock already is.
+        const pressTime = Math.max(t, cell.target + OFFSETS[Math.floor(rnd() * OFFSETS.length)]);
+
+        if (ch === ' ' && cell.expected !== ' ' && spaceSkipsWord) skipPresses++;
+
+        keys.push([pressTime, ch]);
+        engine.update(pressTime);
+        engine.processKey(ch, pressTime);
+        t = pressTime;
+    }
+
+    return { keys: keys, skipPresses: skipPresses };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Playback: TypeBeatReplayScorer.feed, exactly.
+// ---------------------------------------------------------------------------------------------
+function endTimeFor(beatmap, keys) {
+    const last = beatmap.lines[beatmap.lines.length - 1];
+    let end = beatmap.lines.length > 0 ? last.endTime + last.sealGraceMs + TAIL_MS : TAIL_MS;
+    if (keys.length > 0) end = Math.max(end, keys[keys.length - 1][0] + TAIL_MS);
+    return end;
+}
+
+function play(name, keys, spaceSkipsWord) {
+    const beatmap = build(name);
+    const engine = new TB.TypingEngine(beatmap);
+    engine.spaceSkipsWord = spaceSkipsWord;
+
+    // TypingEngine.ComboRestored, counted so the coverage guard can prove the sweep really does
+    // reach the fix-a-typo / reclaim-a-skip seam rather than only the happy and hopeless paths.
+    let restores = 0;
+    engine.onComboRestored = () => { restores++; };
+
+    const end = endTimeFor(beatmap, keys);
+    let next = 0;
+
+    // ReplayEngineFeed.Apply: update(frame time) FIRST, then the key.
+    function apply(frame) {
+        engine.update(frame[0]);
+        if (frame[1] === '\b') engine.processBackspace();
+        else engine.processKey(frame[1], frame[0]);
+    }
+
+    for (let now = 0; now <= end; now += FRAME_MS) {
+        while (next < keys.length && keys[next][0] <= now) { apply(keys[next]); next++; }
+        engine.update(now);
+    }
+
+    while (next < keys.length) { apply(keys[next]); next++; }
+    engine.update(end);
+
+    const score = TB.computeScore(engine);
+
+    return {
+        submitted: {
+            statistics: score.statistics,
+            maximumStatistics: score.maximumStatistics,
+            maxCombo: score.maxCombo,
+            totalScore: score.totalScore,
+            accuracy: score.accuracy,
+            completion: score.completion,
+            rank: score.rank
+        },
+        engineFinished: engine.finished,
+        engineFailed: engine.failed,
+        engineMaxCombo: engine.maxCombo,
+        engineScore: engine.score,
+        mistypes: engine.mistypes,
+        restores: restores
+    };
+}
+
+// ---------------------------------------------------------------------------------------------
+// The cells each fixture resolves to, so the test can pin the two loaders against each other
+// before it trusts a single account.
+// ---------------------------------------------------------------------------------------------
+function cellsOf(name) {
+    const beatmap = build(name);
+    return beatmap.lines.map(line => ({
+        endTime: line.endTime,
+        activationTime: line.activationTime,
+        sealGraceMs: line.sealGraceMs,
+        cells: line.cells.map(c => ({ expected: c.expected, target: c.target, tier: c.tier }))
+    }));
+}
+
+// ---------------------------------------------------------------------------------------------
+const names = ['catDog', 'abCd', 'catDogThenHi', 'quickBrownFox', 'mixedTiers', 'syllabic'];
+const cases = [];
+
+for (const name of names) {
+    for (let seed = 1; seed <= 30; seed++) {
+        for (const spaceSkipsWord of [false, true]) {
+            const generated = generate(name, seed * 7919 + (spaceSkipsWord ? 104729 : 0), spaceSkipsWord);
+            const run = play(name, generated.keys, spaceSkipsWord);
+
+            cases.push(Object.assign({
+                name: name + '/' + seed + '/' + (spaceSkipsWord ? 'skip' : 'noskip'),
+                fixture: name,
+                spaceSkipsWord: spaceSkipsWord,
+                skipPresses: generated.skipPresses,
+                keys: generated.keys
+            }, run));
+        }
+    }
+}
+
+const fixtures = {};
+for (const name of names) fixtures[name] = cellsOf(name);
+
+process.stdout.write(JSON.stringify({ fixtures: fixtures, cases: cases }));

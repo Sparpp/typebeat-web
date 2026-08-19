@@ -1267,7 +1267,19 @@
             // (2) seal every line whose deadline passed, in order.
             while (this.nextSealIndex < this.lines.length && this.canSeal(this.lines[this.nextSealIndex], time)) {
                 this.sealLine(this.nextSealIndex);
-                if (this.activeLineIndex === this.nextSealIndex) this.activeLineIndex = -1;
+
+                if (this.activeLineIndex === this.nextSealIndex) {
+                    this.activeLineIndex = -1;
+                    // The caret goes back to 0 with it, exactly as TypingEngine.Update's seal loop
+                    // does it. Nothing here reads the caret while no line is active (typebeat-
+                    // player.js gates every read on `active`, and processKey / processBackspace /
+                    // autoSkipForward all bail), and the next activation sets it to 0 anyway, so
+                    // this changes no behaviour today. It is mirrored because a stale caret sitting
+                    // on a sealed line is a trap for the next reader of either file, not because
+                    // anything can currently see it.
+                    this.caretIndex = 0;
+                }
+
                 this.nextSealIndex++;
             }
 
