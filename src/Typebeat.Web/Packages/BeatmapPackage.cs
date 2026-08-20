@@ -56,6 +56,19 @@ public sealed class ParsedDifficulty
     public double? Bpm { get; init; }
 
     // [Lyrics]-derived.
+
+    /// <summary>
+    /// The RAW text lines of the <c>[Lyrics]</c> section, in file order, each already trimmed and
+    /// with blank/comment lines dropped (exactly what the parser fed to
+    /// <see cref="LyricTiming.ParseSection"/>). Kept alongside the resolved
+    /// <see cref="Lines"/> because <see cref="GameplayFingerprint"/> needs the payload the parse
+    /// DROPS as well as the part it keeps: the judge-granularity and seal-grace keys are
+    /// deliberately not ported into <see cref="LyricLine"/> (they move gameplay windows, not cell
+    /// target times), and a fingerprint blind to them would let a ranked map's judgement change
+    /// under its own leaderboard.
+    /// </summary>
+    public required IReadOnlyList<string> LyricSectionLines { get; init; }
+
     public required IReadOnlyList<LyricLine> Lines { get; init; }
     public required LyricPace.PaceStatistics Pace { get; init; }
 

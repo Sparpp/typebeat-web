@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
@@ -851,6 +852,446 @@ public class PackageIngestDbTest
         var parsed = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
 
         return LyricDifficulty.Compute(parsed.Lines, rate, literate: true);
+    }
+
+
+    // ---------------------------------------------------------------------------------------------
+    // Gameplay fingerprint + automatic ranked -> pending demotion (030_gameplay_fingerprint.sql,
+    // backlog 173). Each of these owns a FRESH set so the shared fixture set above is untouched.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The fixture lyric, retimed: identical words, every time shifted. This is the edit
+    /// beatmaps.lyrics (the search haystack) is structurally blind to, and the whole reason the
+    /// fingerprint could not just reuse that column.
+    /// </summary>
+    private const string retimed_lyrics =
+        """
+        {"version":2,"song_end_ms":4000,"granularity":"Word"}
+        {"text":"ab cd","start_ms":1200,"end_ms":3400,"words":[{"text":"ab","start_ms":1200,"end_ms":2100,"score":1},{"text":"cd","start_ms":2100,"end_ms":3400,"score":1}]}
+        """;
+
+    /// <summary>The fixture lyric with only the menu-only beatdrop added to the header.</summary>
+    private const string beatdrop_lyrics =
+        """
+        {"version":2,"song_end_ms":4000,"beatdrop_ms":1750,"granularity":"Word"}
+        {"text":"ab cd","start_ms":1000,"end_ms":3000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1},{"text":"cd","start_ms":2000,"end_ms":3000,"score":1}]}
+        """;
+
+    /// <summary>A second difficulty's lyric, so an added diff carries real content.</summary>
+    private const string second_diff_lyrics =
+        """
+        {"version":2,"song_end_ms":9000,"granularity":"Line"}
+        {"text":"we type at night","start_ms":1000,"end_ms":8000}
+        """;
+
+    private long rankedSetId;
+    private long rankedDiffA;
+    private long rankedDiffB;
+
+    /// <summary>
+    /// Creates a set with two allocated difficulty rows, ingests a first version carrying only
+    /// difficulty A, and forces it to 'ranked' exactly as a reviewer would.
+    /// </summary>
+    private async Task<(long SetId, long DiffA, long DiffB)> newRankedSetAsync()
+    {
+        await using var conn = await db.OpenAsync();
+
+        long id = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO beatmapsets (owner_id, status, intended_status) VALUES (@uploaderId, 'hidden', 'pending') RETURNING id",
+            new { uploaderId });
+
+        long a = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO beatmaps (set_id, checksum_md5) VALUES (@id, md5(random()::text)) RETURNING id", new { id });
+        long b = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO beatmaps (set_id, checksum_md5) VALUES (@id, md5(random()::text)) RETURNING id", new { id });
+
+        rankedSetId = id;
+        rankedDiffA = a;
+        rankedDiffB = b;
+
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'ranked' WHERE id = @id", new { id });
+
+        return (id, a, b);
+    }
+
+    /// <summary>Ingests into the current ranked-demotion set with both of its allocated ids permitted.</summary>
+    private async Task ingestRankedAsync(params (string Name, byte[] Content)[] entries)
+    {
+        using var zip = SyntheticPackage.Zip(entries);
+        var parsed = BeatmapPackageParser.Parse(zip);
+
+        PackageValidator.Validate(parsed, rankedSetId, [rankedDiffA, rankedDiffB], "uploader");
+
+        await using var scope = await ingest.BeginSetScopeAsync(rankedSetId);
+        await ingest.IngestAsync(scope, zip, parsed, rankedSetId, uploaderId);
+    }
+
+    private async Task<string?> statusOfAsync(long id)
+    {
+        await using var conn = await db.OpenAsync();
+        return await conn.ExecuteScalarAsync<string?>("SELECT status FROM beatmapsets WHERE id = @id", new { id });
+    }
+
+    private async Task<List<(string Action, long ActorId, string Note)>> auditOfAsync(long id)
+    {
+        await using var conn = await db.OpenAsync();
+
+        return (await conn.QueryAsync<(string Action, long ActorId, string Note)>(
+            "SELECT action AS Action, actor_id AS ActorId, note AS Note FROM moderation_actions WHERE set_id = @id ORDER BY id",
+            new { id })).ToList();
+    }
+
+    [Test]
+    [Order(14)]
+    public async Task GameplayChange_DemotesARankedSet_AndAuditsItAsAutoUnrank()
+    {
+        var (id, a, _) = await newRankedSetAsync();
+
+        string? before;
+        await using (var conn = await db.OpenAsync())
+            before = await conn.ExecuteScalarAsync<string?>("SELECT gameplay_fingerprint FROM beatmaps WHERE id = @a", new { a });
+
+        Assert.That(before, Does.StartWith("v1:"), "ingest stamps the fingerprint with its recipe version");
+
+        // Identical words, shifted times: invisible to beatmaps.lyrics, invisible to a metadata
+        // comparison, and the single most gameplay-affecting edit a mapper can make.
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id, lyrics: retimed_lyrics))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("pending"), "a retimed ranked map goes back for re-review");
+
+        await using (var conn = await db.OpenAsync())
+        {
+            string? after = await conn.ExecuteScalarAsync<string?>("SELECT gameplay_fingerprint FROM beatmaps WHERE id = @a", new { a });
+            Assert.That(after, Is.Not.EqualTo(before), "the stored fingerprint moves with the timing");
+
+            // The lyrics haystack did NOT move, which is exactly why it could not have caught this.
+            Assert.That(await conn.ExecuteScalarAsync<string?>("SELECT lyrics FROM beatmaps WHERE id = @a", new { a }),
+                Is.EqualTo("ab cd"));
+        }
+
+        var audit = await auditOfAsync(id);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(audit, Has.Count.EqualTo(1));
+            Assert.That(audit[0].Action, Is.EqualTo("auto_unrank"), "distinct from the reviewer's manual 'unrank'");
+            Assert.That(audit[0].ActorId, Is.EqualTo(uploaderId), "actor_id is NOT NULL, so the uploading mapper owns the row");
+            Assert.That(audit[0].Note, Does.Contain("1 changed"));
+        });
+    }
+
+    [Test]
+    [Order(15)]
+    public async Task MetadataOnlyChange_KeepsTheRank()
+    {
+        var (id, a, _) = await newRankedSetAsync();
+
+        // Everything the item listed as must-not-demote, in one upload: title, both unicode
+        // variants, artist, difficulty name, source, tags, language, background, video, preview
+        // time. Plus a brand-new unrelated file, so a new version really is cut.
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+                title: "Neon Nights (Remastered)", titleUnicode: "Neon Nights R",
+                artist: "Synth Rider and Friends", artistUnicode: "Synth Rider F",
+                version: "insane", source: "Some Album", tags: "retimed nothing at all",
+                language: "Japanese", background: "bg2.jpg", video: "clip.mp4", previewTime: 7500,
+                beatmapId: a, beatmapSetId: id))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg2.jpg", SyntheticPackage.TinyPng()),
+            ("clip.mp4", SyntheticPackage.Utf8("not really a video")),
+            ("extra.txt", SyntheticPackage.Utf8("liner notes")));
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("ranked"), "a cosmetic re-upload must not cost the mapper their rank");
+        Assert.That(await auditOfAsync(id), Is.Empty);
+
+        await using var conn = await db.OpenAsync();
+
+        // The metadata really did land, so this is a "no demotion" pin and not a "nothing
+        // happened" one.
+        Assert.That(await conn.ExecuteScalarAsync<string?>("SELECT title FROM beatmapsets WHERE id = @id", new { id }),
+            Is.EqualTo("Neon Nights (Remastered)"));
+        Assert.That(await conn.ExecuteScalarAsync<int>("SELECT current_version FROM beatmapsets WHERE id = @id", new { id }),
+            Is.EqualTo(2), "a new version WAS cut; the fingerprint simply did not move");
+    }
+
+    [Test]
+    [Order(16)]
+    public async Task BeatdropOnlyChange_KeepsTheRank()
+    {
+        var (id, a, _) = await newRankedSetAsync();
+
+        // The game normalises beatdrop_ms out of its own ranked-status comparison
+        // (TypeBeatRuleset.NativeEncodingsEquivalentForStatus) because the beatdrop only
+        // soundtracks the main-menu intro. The server draws the line in the same place.
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id, lyrics: beatdrop_lyrics))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("ranked"));
+        Assert.That(await auditOfAsync(id), Is.Empty);
+    }
+
+    [Test]
+    [Order(17)]
+    public async Task AudioSwapWithIdenticalLyrics_Demotes()
+    {
+        var (id, a, _) = await newRankedSetAsync();
+
+        byte[] unchangedOsu = SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id));
+
+        // Backlog 171 made this reachable: the .osu is byte-identical (same filename, same every
+        // timing), only the recording behind audio.mp3 changed. A fingerprint over lyrics alone
+        // would keep the rank on timings that no longer match the song.
+        await ingestRankedAsync(
+            ("a.osu", unchangedOsu),
+            ("audio.mp3", SyntheticPackage.Utf8("a completely different recording")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        await using (var conn = await db.OpenAsync())
+        {
+            Assert.That(await conn.ExecuteScalarAsync<string?>("SELECT checksum_md5 FROM beatmaps WHERE id = @a", new { a }),
+                Is.EqualTo(Convert.ToHexStringLower(MD5.HashData(unchangedOsu))),
+                "the difficulty file itself did not change at all");
+        }
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("pending"));
+        Assert.That((await auditOfAsync(id))[0].Action, Is.EqualTo("auto_unrank"));
+    }
+
+    [Test]
+    [Order(18)]
+    public async Task RenamingTheAudioWithoutChangingItsBytes_KeepsTheRank()
+    {
+        var (id, a, _) = await newRankedSetAsync();
+
+        // The audio is fingerprinted by BYTES, not by name, so pointing the same recording at a
+        // new filename is the cosmetic edit it looks like.
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id, audioFilename: "song.mp3"))),
+            ("song.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("ranked"));
+        Assert.That(await auditOfAsync(id), Is.Empty);
+    }
+
+    [Test]
+    [Order(19)]
+    public async Task AddingADifficultyToARankedSet_Demotes()
+    {
+        var (id, a, b) = await newRankedSetAsync();
+
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id))),
+            ("b.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(version: "hard", beatmapId: b, beatmapSetId: id, lyrics: second_diff_lyrics))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("pending"),
+            "a new difficulty arrives pre-ranked with a live board no reviewer has seen");
+        Assert.That((await auditOfAsync(id))[0].Note, Does.Contain("1 added"));
+    }
+
+    [Test]
+    [Order(20)]
+    public async Task RemovingADifficultyFromARankedSet_Demotes()
+    {
+        var (id, a, b) = await newRankedSetAsync();
+
+        // Grow to two diffs, then re-rank, so the removal below starts from a ranked two-diff set.
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id))),
+            ("b.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(version: "hard", beatmapId: b, beatmapSetId: id, lyrics: second_diff_lyrics))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        await using (var conn = await db.OpenAsync())
+        {
+            await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'ranked' WHERE id = @id", new { id });
+            await conn.ExecuteAsync("DELETE FROM moderation_actions WHERE set_id = @id", new { id });
+
+            // What the BSS metadata PUT does in the request BEFORE the upload: it drops the diff by
+            // nulling filename. The fingerprint is deliberately NOT cleared there, which is the
+            // only reason the ingest below can still tell that b used to be part of the set.
+            await conn.ExecuteAsync("UPDATE beatmaps SET filename = NULL WHERE id = @b", new { b });
+        }
+
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("pending"), "a removed difficulty takes a ranked leaderboard offline");
+        Assert.That((await auditOfAsync(id))[0].Note, Does.Contain("1 removed"));
+
+        await using (var conn = await db.OpenAsync())
+        {
+            Assert.That(await conn.ExecuteScalarAsync<string?>("SELECT gameplay_fingerprint FROM beatmaps WHERE id = @b", new { b }),
+                Is.Null, "a diff that stopped being live loses its fingerprint with its filename");
+        }
+    }
+
+    [Test]
+    [Order(21)]
+    public async Task PendingAndUnrankedSets_AreUnaffected()
+    {
+        foreach (string status in new[] { "pending", "unranked" })
+        {
+            var (id, a, _) = await newRankedSetAsync();
+
+            await using (var conn = await db.OpenAsync())
+                await conn.ExecuteAsync("UPDATE beatmapsets SET status = @status WHERE id = @id", new { id, status });
+
+            await ingestRankedAsync(
+                ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id, lyrics: retimed_lyrics))),
+                ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+                ("bg.jpg", SyntheticPackage.TinyPng()));
+
+            Assert.That(await statusOfAsync(id), Is.EqualTo(status), $"a '{status}' set has no rank to lose");
+            Assert.That(await auditOfAsync(id), Is.Empty, status);
+        }
+    }
+
+    [Test]
+    [Order(22)]
+    public async Task Demotion_LeavesExistingScoresAttachedAndRanked()
+    {
+        var (id, a, _) = await newRankedSetAsync();
+
+        await using (var conn = await db.OpenAsync())
+        {
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO scores (user_id, beatmap_id, total_score, accuracy, max_combo, rank, passed, ranked)
+                VALUES (@uploaderId, @a, 500000, 0.97, 40, 'A', true, true)
+                """,
+                new { uploaderId, a });
+        }
+
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id, lyrics: retimed_lyrics))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("pending"));
+
+        await using (var conn = await db.OpenAsync())
+        {
+            var score = await conn.QuerySingleAsync<(long BeatmapId, bool Ranked)>(
+                "SELECT beatmap_id AS BeatmapId, ranked AS Ranked FROM scores WHERE beatmap_id = @a", new { a });
+
+            Assert.Multiple(() =>
+            {
+                // Deliberate, and a known limitation: scores.beatmap_id has no version link, so the
+                // schema cannot tell a play on the old content from a play on the new. Nothing is
+                // wiped; the rows come back with the set when a reviewer re-ranks it.
+                Assert.That(score.BeatmapId, Is.EqualTo(a));
+                Assert.That(score.Ranked, Is.True, "a demotion never rewrites scores.ranked");
+            });
+        }
+    }
+
+    [Test]
+    [Order(23)]
+    public async Task GameplayFingerprintBackfill_RefillsLiveRows_AndLeavesDeadOnesNull()
+    {
+        var (id, a, b) = await newRankedSetAsync();
+
+        string? expected;
+
+        await using (var conn = await db.OpenAsync())
+        {
+            expected = await conn.ExecuteScalarAsync<string?>("SELECT gameplay_fingerprint FROM beatmaps WHERE id = @a", new { a });
+
+            // Exactly the state prod is in the moment 030 applies: the column exists, every ranked
+            // map predates it, nothing has a value. Row b is an allocated-but-never-uploaded shell,
+            // i.e. the not-live case.
+            await conn.ExecuteAsync("UPDATE beatmaps SET gameplay_fingerprint = NULL WHERE set_id = @id", new { id });
+        }
+
+        await GameplayFingerprintBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        await using (var conn = await db.OpenAsync())
+        {
+            Assert.That(await conn.ExecuteScalarAsync<string?>("SELECT gameplay_fingerprint FROM beatmaps WHERE id = @a", new { a }),
+                Is.EqualTo(expected), "recomputing from the stored blobs reproduces what ingest wrote");
+            Assert.That(await conn.ExecuteScalarAsync<string?>("SELECT gameplay_fingerprint FROM beatmaps WHERE id = @b", new { b }),
+                Is.Null, "a row that is not live in the current version has no fingerprint to fill");
+        }
+
+        // With the column filled, the very next upload behaves normally: a metadata-only edit on a
+        // still-ranked map keeps its rank. This is the deploy-day case the sweep exists for.
+        Assert.That(await statusOfAsync(id), Is.EqualTo("ranked"));
+
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(title: "Backfilled", beatmapId: a, beatmapSetId: id))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("ranked"));
+
+        // Idempotent: a second sweep finds nothing stale and changes nothing.
+        await GameplayFingerprintBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        await using (var conn = await db.OpenAsync())
+        {
+            // Scoped to this set on purpose. The fixture also holds hand-seeded beatmap rows whose
+            // set has no set_versions at all (the LanguageBackfill cases above write beatmaps.lyrics
+            // directly), and those are the documented unreachable case: no current version means no
+            // manifest and no blob to recompute from. They are not producible through the real
+            // upload path, where a filename is only ever written by an ingest that cut a version.
+            int stale = await conn.ExecuteScalarAsync<int>(
+                """
+                SELECT count(*) FROM beatmaps
+                WHERE set_id = @id AND filename IS NOT NULL
+                  AND (gameplay_fingerprint IS NULL OR gameplay_fingerprint NOT LIKE 'v1:%')
+                """,
+                new { id });
+            Assert.That(stale, Is.Zero);
+        }
+    }
+
+    [Test]
+    [Order(24)]
+    public void CanonicalForm_ExcludesMetadataAndTheBeatdrop_ButNotTheTiming()
+    {
+        var files = new List<PackageFileEntry>
+        {
+            new PackageFileEntry(SHA256.HashData(SyntheticPackage.Utf8("audio")), 5, "audio.mp3"),
+        };
+
+        string form(string osu) =>
+            GameplayFingerprint.CanonicalForm(BeatmapPackageParser.ParseDifficulty("m.osu", SyntheticPackage.Utf8(osu)), files);
+
+        string baseline = form(SyntheticPackage.OsuText());
+
+        Assert.Multiple(() =>
+        {
+            // Nothing cosmetic reaches the hashed bytes at all, which is a stronger statement than
+            // "the two hashes happened to collide".
+            Assert.That(form(SyntheticPackage.OsuText(title: "X", titleUnicode: "Y", artist: "Z", artistUnicode: "W",
+                    creator: "someone else", version: "another diff", source: "Album", tags: "a b c",
+                    language: "Japanese", background: "other.png", video: "v.mp4", previewTime: 9999)),
+                Is.EqualTo(baseline));
+
+            Assert.That(form(SyntheticPackage.OsuText(lyrics: beatdrop_lyrics)), Is.EqualTo(baseline),
+                "beatdrop_ms is normalised out, mirroring TypeBeatRuleset.NativeEncodingsEquivalentForStatus");
+
+            Assert.That(form(SyntheticPackage.OsuText(lyrics: retimed_lyrics)), Is.Not.EqualTo(baseline));
+
+            // The audio arm, driven purely by the resolved blob hash.
+            Assert.That(baseline, Does.Contain("audio:" + Convert.ToHexStringLower(SHA256.HashData(SyntheticPackage.Utf8("audio")))));
+        });
     }
 
     private static string readEmbeddedMigration(string name)

@@ -1,0 +1,55 @@
+-- typebeat-web migration 030: the per-difficulty GAMEPLAY fingerprint, and the automatic
+-- ranked -> pending demotion that hangs off it (backlog 173).
+--
+-- THE HOLE THIS CLOSES. Until now a set's status was written in exactly two places: the publish
+-- latch in Packages/PackageIngest.cs (guarded by status = 'hidden', so it fires once per set for
+-- the life of the set) and the reviewer's pending <-> ranked flip on the set page. The BSS
+-- metadata PUT deliberately leaves a ranked set alone (status = CASE WHEN status IN ('pending',
+-- 'unranked') ...). So NOTHING demoted a ranked map when its own mapper re-uploaded it: arbitrary
+-- new content could land on a ranked set and its leaderboards stayed live, collecting scores on a
+-- map no reviewer ever saw.
+--
+-- WHY A NEW COLUMN AND NOT AN EXISTING ONE. The obvious candidates both fail, in opposite
+-- directions. beatmaps.checksum_md5 is the MD5 of the whole .osu, so it moves for a tag fix or a
+-- background swap: demoting on it would punish every cosmetic save. beatmaps.lyrics
+-- (018_lyrics_search.sql) is the plain-text search haystack, so it cannot see a timing-only edit
+-- at all (same words, shifted times): demoting on it would miss the single most gameplay-relevant
+-- edit there is. The fingerprint is the narrow thing between them, computed at ingest over the
+-- [Lyrics] timing payload (minus the menu-only beatdrop) plus the SHA256 of the audio the
+-- difficulty points at. Packages/GameplayFingerprint.cs is the canonical statement of what is in
+-- and out; the short version is that everything a player types against is in, and title, artist,
+-- creator, source, tags, language, background, video, preview time and the beatdrop are out.
+--
+-- WHY THE AUDIO IS IN IT, stated separately because it is the newest arm. Backlog 171 let a mapper
+-- swap a ranked map's audio while keeping every timing byte identical. A fingerprint over lyrics
+-- alone would keep the rank on a different recording that the stored timings no longer match, so
+-- the audio blob's hash is folded in. It is hashed by BYTES, not by name: renaming the mp3 without
+-- changing a sample is cosmetic and keeps the rank.
+--
+-- TEXT, NOT bytea, and version-prefixed ("v1:<sha256 hex>"). The prefix is what makes a future
+-- recipe change safe: Packages/GameplayFingerprintBackfill.cs treats anything not matching the
+-- current prefix as stale and rewrites it, and that sweep runs at startup BEFORE the app serves a
+-- request, so a recipe change can never be mistaken for a mapper's gameplay edit.
+--
+-- NULL means "not live", and that is load-bearing rather than merely tolerated. The value is
+-- cleared for a difficulty that drops out of the current version (alongside the existing
+-- filename = NULL liveness marker), so the set of rows with a non-NULL fingerprint is exactly "the
+-- difficulties the previous current version contained". That is what lets the ingest detect a diff
+-- REMOVED from a ranked set: the BSS metadata PUT nulls filename in an EARLIER request than the
+-- upload, so filename alone can no longer tell the ingest what used to be there, but the
+-- fingerprint still can.
+--
+-- EXISTING SCORES ARE DELIBERATELY NOT TOUCHED by a demotion. scores.ranked is left alone, no
+-- recalc is queued, and the leaderboard rows simply stop being displayed as ranked with the set;
+-- they reappear when a reviewer re-ranks. Known and accepted limitation: scores.beatmap_id has no
+-- version link, so the schema cannot distinguish a score set on the OLD content from one set on
+-- the new, and there is therefore no honest subset to invalidate. Wiping all of them would punish
+-- players for their mapper's edit; keeping them is the lesser wrong and is reversible.
+--
+-- THE DEMOTION IS AUDITED with action = 'auto_unrank', deliberately distinct from the reviewer's
+-- 'unrank'. moderation_actions is read in exactly one place (Endpoints/BuddyEndpoints.cs, the
+-- Discord ranked-map feed) and it filters on ma.action = 'rank', so a new value is invisible to it
+-- by construction. actor_id is NOT NULL REFERENCES users(id), so the actor is the uploading
+-- mapper: they caused it, and widening the schema to express "the server did this" would cost more
+-- than it explains.
+ALTER TABLE beatmaps ADD COLUMN gameplay_fingerprint text;

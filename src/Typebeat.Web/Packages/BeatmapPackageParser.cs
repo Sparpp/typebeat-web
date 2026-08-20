@@ -274,6 +274,7 @@ public static class BeatmapPackageParser
             BackgroundFilename = background,
             VideoFilename = video,
             Bpm = bpm,
+            LyricSectionLines = lyricLines,
             Lines = parsedLines,
             Pace = LyricPace.Compute(parsedLines),
         };
