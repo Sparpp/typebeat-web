@@ -104,6 +104,18 @@ await PaceBackfill.RunAsync(
     app.Services.GetRequiredService<IFileStore>(),
     app.Logger);
 
+// Fill beatmaps.gameplay_fingerprint for every live difficulty that has none, or whose stored value
+// predates the current GameplayFingerprint.VERSION (030_gameplay_fingerprint.sql). MUST run before
+// the app serves a request, which it does: every map ranked before this feature deployed has no
+// stored fingerprint, and the ingest reads a missing one as "changed", so without this sweep the
+// first re-upload of each would demote a ranked map for a metadata-only edit. Independent of the
+// pace sweep above (it reads the stored blobs, not the pace columns), but kept after it so all the
+// blob-reading sweeps sit together. No-op once every live difficulty is current.
+await GameplayFingerprintBackfill.RunAsync(
+    app.Services.GetRequiredService<Db>(),
+    app.Services.GetRequiredService<IFileStore>(),
+    app.Logger);
+
 // Detect the song language of every set that still has none (019_language.sql), offline, from the
 // lyric text the backfill above is what fills in, so it MUST run after it. Only ever writes rows
 // that are still unset, so a mapper's own language tag is never overwritten. No-op once every set

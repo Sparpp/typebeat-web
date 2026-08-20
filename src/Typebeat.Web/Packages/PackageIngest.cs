@@ -20,7 +20,10 @@ namespace Typebeat.Web.Packages;
 ///    cut, only <c>beatmapsets.updated_at</c> is touched;
 ///  - otherwise a new version is cut, blobs stored, set metadata + search vector refreshed,
 ///    beatmap rows upserted by their allocated ids, and the full package zip assembled for the
-///    website download path.
+///    website download path;
+///  - and a RANKED set whose gameplay moved is demoted back to 'pending' for re-review
+///    (030_gameplay_fingerprint.sql), which is the one status write here that is not the
+///    once-per-set publish latch.
 ///
 /// Concurrency + crash-safety doctrine (the two invariants everything below hangs off):
 ///
@@ -150,11 +153,13 @@ public sealed class PackageIngest(
     {
         var conn = scope.Connection;
 
-        long? ownerId = await conn.ExecuteScalarAsync<long?>(
-            "SELECT owner_id FROM beatmapsets WHERE id = @setId", new { setId });
+        var set = await conn.QuerySingleOrDefaultAsync<(long OwnerId, string Status)?>(
+            "SELECT owner_id AS OwnerId, status AS Status FROM beatmapsets WHERE id = @setId", new { setId });
 
-        if (ownerId == null)
+        if (set == null)
             throw new InvalidOperationException($"Beatmap set {setId} does not exist.");
+
+        long ownerId = set.Value.OwnerId;
 
         var latest = await conn.QuerySingleOrDefaultAsync<(long VersionId, int VersionNo)?>(
             """
@@ -198,7 +203,7 @@ public sealed class PackageIngest(
                 // lands here and must finish the job (publish the set, settle diff liveness,
                 // notify watchers). An identical resubmission of an ALREADY published set flips
                 // nothing, so it notifies nobody, which is the whole point of the latch.
-                await refreshLivenessAndPublishAsync(conn, package, setId, ownerId.Value, ct);
+                await refreshLivenessAndPublishAsync(conn, package, setId, ownerId, ct);
 
                 // Repair path: versions recorded before the assemble-before-commit invariant
                 // existed (or damaged by operator error) can have a package_key with no object
@@ -215,6 +220,32 @@ public sealed class PackageIngest(
                 return new IngestResult(setId, latestVersion.VersionNo, false, package.Files, "unchanged", "unchanged");
             }
         }
+
+        // ---- the gameplay-fingerprint snapshot, taken BEFORE anything below overwrites it
+        //      (030_gameplay_fingerprint.sql, backlog 173). Only this branch can reach it: an
+        //      identical-content resubmission returned above, and identical content cannot have
+        //      moved a fingerprint.
+        //
+        //      The predicate is "has a fingerprint", NOT "is live", and the difference is the
+        //      whole reason a REMOVED difficulty is detectable here. The BSS metadata PUT nulls
+        //      beatmaps.filename for dropped diffs in an EARLIER request than this upload, so by
+        //      now filename can no longer say what the previous version contained. The fingerprint
+        //      can: it is cleared in the same statement that clears filename during THIS ingest
+        //      (refreshLivenessAndPublishAsync), so a non-NULL value means exactly "live in the
+        //      version this upload is about to replace". ----
+
+        var previousFingerprints = (await conn.QueryAsync<(long Id, string Fingerprint)>(
+                """
+                SELECT id AS Id, gameplay_fingerprint AS Fingerprint
+                FROM beatmaps
+                WHERE set_id = @setId AND gameplay_fingerprint IS NOT NULL
+                """,
+                new { setId }))
+            .ToDictionary(r => r.Id, r => r.Fingerprint);
+
+        var incomingFingerprints = package.Difficulties.ToDictionary(
+            d => d.BeatmapId!.Value,
+            d => GameplayFingerprint.Compute(d, package.Files));
 
         // ---- dedup-insert files rows + store blobs (content-addressed; orphans are harmless
         //      if the transaction later rolls back, so blob writes need no compensation). ----
@@ -329,12 +360,12 @@ public sealed class PackageIngest(
                     (id, set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s,
                      difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics,
                      sr_dt, sr_ht, sr_literate, sr_literate_dt, sr_literate_ht,
-                     peak_wpm, peak_cpm, wpm_curve)
+                     peak_wpm, peak_cpm, wpm_curve, gameplay_fingerprint)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
                      @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
                      @srDt, @srHt, @srLiterate, @srLiterateDt, @srLiterateHt,
-                     @peakWpm, @peakCpm, @wpmCurve)
+                     @peakWpm, @peakCpm, @wpmCurve, @gameplayFingerprint)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -356,7 +387,8 @@ public sealed class PackageIngest(
                     sr_literate_ht = EXCLUDED.sr_literate_ht,
                     peak_wpm = EXCLUDED.peak_wpm,
                     peak_cpm = EXCLUDED.peak_cpm,
-                    wpm_curve = EXCLUDED.wpm_curve;
+                    wpm_curve = EXCLUDED.wpm_curve,
+                    gameplay_fingerprint = EXCLUDED.gameplay_fingerprint;
 
                 -- A re-upload can move this difficulty's star ratings, and the stored per-score pp
                 -- is a function of them, so hand every score set on this map back to PpBackfill
@@ -401,6 +433,11 @@ public sealed class PackageIngest(
                     peakWpm = diff.PeakWpm,
                     peakCpm = diff.PeakCpm,
                     wpmCurve = diff.WpmCurvePoints,
+                    // The identity of this difficulty's GAMEPLAY (030_gameplay_fingerprint.sql):
+                    // the [Lyrics] timing payload minus the menu-only beatdrop, plus the hash of
+                    // the audio it points at. Compared against the snapshot above to decide
+                    // whether this upload demotes a ranked set.
+                    gameplayFingerprint = incomingFingerprints[diff.BeatmapId!.Value],
                 });
         }
 
@@ -413,10 +450,18 @@ public sealed class PackageIngest(
         // uncommitted allocations, so under concurrency it could REWIND the sequence and make
         // later allocations 500 on primary-key collisions.
 
+        // ---- the ranked demotion, still inside the transaction so a rolled-back upload can
+        //      never leave a set demoted for content that was never stored. Runs BEFORE the
+        //      liveness refresh only for readability; the comparison itself reads the snapshot
+        //      taken above, so the order of these two is not load-bearing. ----
+
+        await demoteIfGameplayChangedAsync(
+            conn, setId, set.Value.Status, uploaderId, versionNo, previousFingerprints, incomingFingerprints);
+
         // ---- diff liveness + publish, still inside the transaction (crossing submissions must
         //      never NULL a diff the newer current version contains). ----
 
-        await refreshLivenessAndPublishAsync(conn, package, setId, ownerId.Value, ct);
+        await refreshLivenessAndPublishAsync(conn, package, setId, ownerId, ct);
 
         // ---- artifacts: download package, covers, preview, BEFORE the commit, so a version
         //      row is only ever durable with its package object already in the store (a crash
@@ -475,6 +520,94 @@ public sealed class PackageIngest(
     }
 
     /// <summary>
+    /// The moderation_actions.action value an automatic demotion writes, deliberately distinct
+    /// from the reviewer's manual 'unrank' so the two are separable in the audit trail. Safe by
+    /// construction against the table's only reader: the Discord ranked-map feed
+    /// (Endpoints/BuddyEndpoints.cs) filters on <c>ma.action = 'rank'</c>.
+    /// </summary>
+    public const string AutoUnrankAction = "auto_unrank";
+
+    /// <summary>
+    /// BACKLOG 173: a mapper who re-uploads a ranked map with GAMEPLAY-AFFECTING changes sends it
+    /// back to 'pending' for re-review. Anything else, a background swap, a tag fix, a metadata
+    /// edit, a preview-time change, a beatdrop tweak, keeps the rank, because none of those change
+    /// what the player types against. That line is drawn by
+    /// <see cref="GameplayFingerprint"/>, and it is the same line the game already draws locally:
+    /// <c>TypeBeatRuleset.NativeEncodingsEquivalentForStatus</c> normalises the beatdrop out of a
+    /// save precisely so a cosmetic edit cannot demote a ranked map to LocallyModified.
+    ///
+    /// <para>
+    /// A DIFFICULTY ADDED OR REMOVED COUNTS AS A GAMEPLAY CHANGE, both directions, deliberately.
+    /// An added difficulty is content no reviewer has ever seen, arriving pre-ranked with a live
+    /// leaderboard, which is the exact hole this whole check exists to close. A removed difficulty
+    /// takes a ranked leaderboard offline while the set keeps its rank, so the set's ranked claim
+    /// no longer describes what it ships. Neither is representable as a moved fingerprint on a
+    /// surviving row, so both are tested for by key rather than by value.
+    /// </para>
+    ///
+    /// <para>
+    /// AN UNKNOWN (missing) STORED FINGERPRINT READS AS A CHANGE, which is the fail-safe
+    /// direction and falls out of the "added" rule for free. It should not be reachable in
+    /// practice: <see cref="GameplayFingerprintBackfill"/> fills every live difficulty at startup
+    /// before the app serves a request. If it ever is, a metadata-only edit on that one map
+    /// demotes it, which a reviewer undoes in one click, and the alternative (assume unchanged)
+    /// would silently reproduce the bug this closes.
+    /// </para>
+    ///
+    /// <para>
+    /// SCORES ARE NOT TOUCHED. No <c>scores.ranked</c> write, no recalc: the rows stay attached to
+    /// their beatmaps and come back with the set when a reviewer re-ranks. The schema cannot do
+    /// better, <c>scores.beatmap_id</c> carries no version link, so there is no way to tell a score
+    /// set on the old content from one set on the new; see 030_gameplay_fingerprint.sql.
+    /// </para>
+    /// </summary>
+    private static async Task demoteIfGameplayChangedAsync(
+        NpgsqlConnection conn,
+        long setId,
+        string status,
+        long uploaderId,
+        int versionNo,
+        IReadOnlyDictionary<long, string> previous,
+        IReadOnlyDictionary<long, string> incoming)
+    {
+        // Only a RANKED set can be demoted. 'pending' and 'unranked' have nothing to lose,
+        // 'hidden' is a set that has never published (the publish latch below is what handles it),
+        // and 'removed' is a takedown, which is final and never re-enters circulation.
+        if (status != "ranked")
+            return;
+
+        int added = incoming.Keys.Count(id => !previous.ContainsKey(id));
+        int removed = previous.Keys.Count(id => !incoming.ContainsKey(id));
+        int changed = incoming.Count(kv => previous.TryGetValue(kv.Key, out string? was) && was != kv.Value);
+
+        if (added + removed + changed == 0)
+            return;
+
+        await conn.ExecuteAsync(
+            "UPDATE beatmapsets SET status = 'pending', updated_at = now() WHERE id = @setId AND status = 'ranked'",
+            new { setId });
+
+        // Audited, and NOT best-effort. The set-page reviewer flip swallows a failed audit insert
+        // because its status change had already committed and a 500 there would lie about a rank
+        // that really happened; here both statements are in the ingest transaction, so a failure
+        // rolls the demotion back with it and there is nothing to be inconsistent with.
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO moderation_actions (actor_id, set_id, action, note)
+            VALUES (@actorId, @setId, @action, @note)
+            """,
+            new
+            {
+                // NOT NULL REFERENCES users(id), so somebody has to own this row. The uploading
+                // mapper is the honest choice: they caused it, and it is their map.
+                actorId = uploaderId,
+                setId,
+                action = AutoUnrankAction,
+                note = $"ranked -> pending (gameplay change in v{versionNo}: {changed} changed, {added} added, {removed} removed)",
+            });
+    }
+
+    /// <summary>
     /// The uploaded package IS the current version: any diff row not in it stops being live
     /// (<c>filename = NULL</c> is the repo-wide marker; validated ids ⊆ allocated, so this only
     /// ever clears rows of this set), and a set still 'hidden' is published by its first
@@ -486,8 +619,10 @@ public sealed class PackageIngest(
     /// guarded by <c>status = 'hidden'</c>, the pre-publish shell a set is created in
     /// (BssEndpoints' INSERT), and NO code path anywhere puts a set back into it: the only other
     /// status writes in the repo are the BSS PUT's pending/unranked intent switch (which cannot
-    /// produce 'hidden'), the reviewer's pending &lt;-&gt; ranked transitions, and takedowns to
-    /// 'removed', which are an admin-SQL lever and deliberately final. So this statement's row
+    /// produce 'hidden'), the reviewer's pending &lt;-&gt; ranked transitions, the automatic
+    /// ranked -&gt; pending demotion above (<see cref="demoteIfGameplayChangedAsync"/>, which
+    /// likewise only ever writes 'pending'), and takedowns to 'removed', which are an admin-SQL
+    /// lever and deliberately final. So this statement's row
     /// count is exactly "this set became publicly visible for the first time", once per set for
     /// the life of the set, and it is therefore the honest trigger for "a mapper you watch
     /// uploaded something". Hanging the fan-out off <c>CutNewVersion</c> instead would notify
@@ -512,8 +647,12 @@ public sealed class PackageIngest(
     {
         long[] liveIds = package.Difficulties.Select(d => d.BeatmapId!.Value).ToArray();
 
+        // gameplay_fingerprint rides along with the filename liveness marker on purpose
+        // (030_gameplay_fingerprint.sql): "has a fingerprint" is what the next upload's demotion
+        // check reads as "was in the previous current version", and a diff that just stopped being
+        // live must not still answer yes to that on the upload after this one.
         await conn.ExecuteAsync(
-            "UPDATE beatmaps SET filename = NULL WHERE set_id = @setId AND id <> ALL(@liveIds)",
+            "UPDATE beatmaps SET filename = NULL, gameplay_fingerprint = NULL WHERE set_id = @setId AND id <> ALL(@liveIds)",
             new { setId, liveIds });
 
         // Publication is never ranked: leaderboards stay locked until a map reviewer (or admin)
