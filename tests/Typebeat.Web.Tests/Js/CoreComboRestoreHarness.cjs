@@ -17,6 +17,11 @@
 //     thirteen-cell map re-derives max_combo 13 under the live rule and 11 under the pre-140 one.
 //     The browser is permanently live (see `restorable` in typebeat-core.js), so 13 is the only
 //     answer available to it, and 11 is what it produced before this landed.
+//   - the three backlog 176 pairs in ComboRestoreTest (adjacent typos, one cell fumbled twice, a
+//     word skipped over a typo), whose live arm is the only one this file has: a break takes
+//     ownership of the streak only if it HAS a streak to own, so an empty break leaves an
+//     outstanding claim alone. The C# also pins each shape under ComboClaimRule.LatestBreakWins,
+//     the arm every score stored before 176 was played under, which the browser cannot be in.
 //
 // Usage: node CoreComboRestoreHarness.cjs <absolute path to typebeat-core.js>
 
@@ -220,8 +225,114 @@ function restoreBeyondTheWatermark() {
     });
 }
 
+// ComboRestoreTest.TwoWrongKeysOnAdjacentCellsKeepTheStreakWhenBothAreFixed, and the shape a real
+// submitted run took: score 6212 on "Joji - PIXELATED KISSES [Insane]", 447 combo deep into "if you
+// never hear from me", where the player typed 'a' onto the 'm' cell and then 'm' onto the 'e' cell,
+// backspaced twice and typed "me" out correctly. The second wrong key breaks a run of ZERO, because
+// the first one already took the streak, so it has nothing to take the claim with and the older
+// cell keeps it: fixing that cell resumes the run.
+//
+// Deliberately stronger than interveningBreak above, which is the same two wrong keys with a run
+// REBUILT between them, so there the second break really does cost something and really does take
+// the claim. Nothing is lost between these two, which is exactly why the older claim survives. This
+// is the case the browser got wrong for as long as its two snapshot sites wrote unconditionally.
+function adjacentTyposBothFixed() {
+    const engine = started();
+
+    typeCorrectly(engine, 0, 4);
+    const comboBeforeTypos = engine.combo;
+
+    typo(engine, 4);            // snapshots 4 against cell 4
+    typo(engine, 5);            // breaks a run of 0, so it has nothing to take the claim with
+
+    // Both spoiled cells corrected, oldest first, exactly as the reported run did.
+    fix(engine, 4);
+    engine.processKey(WORD[5], target(5));
+
+    return Object.assign(snapshot(engine), { comboBeforeTypos: comboBeforeTypos });
+}
+
+// ComboRestoreTest.ASecondWrongKeyOnTheSameCellKeepsTheStreakTheFirstOneSnapshotted. The same-cell
+// sibling: fumble cell 2, erase it, fumble it AGAIN, then correct it. It differs from
+// repeatedCycles only in that no successful fix separates the two wrong keys, so there is no second
+// streak to snapshot and the first one's claim is the only one there has ever been.
+function sameCellFumbledTwice() {
+    const engine = started();
+
+    typeCorrectly(engine, 0, 2);
+
+    typo(engine, 2);            // snapshots 2 against cell 2
+    engine.processBackspace();  // erases it, caret back on cell 2
+    typo(engine, 2);            // breaks a run of 0, on the SAME cell
+
+    fix(engine, 2);
+
+    return snapshot(engine);
+}
+
 // ---------------------------------------------------------------------------------------------
-// Fixture 2: TypeBeatReplayScorerTest's map, transcribed. One twelve-cell word on [0, 240000] with
+// Fixture 2: ComboRestoreTest's twoWordMap, for the skip sibling. One line, "abcd efg" on
+// [1000, 8000): a@1000 b@2000 c@3000 d@4000 ' '@5000 e@5000 f@6000 g@7000. A word skip needs a word
+// to give up on, which fixture 1 (one eight-letter word) has no room for.
+// ---------------------------------------------------------------------------------------------
+const TWO_WORD_OSU =
+    '[General]\n' +
+    'AudioFilename: a.mp3\n' +
+    '[Metadata]\n' +
+    'Title: t\n' +
+    'Artist: a\n' +
+    '[Lyrics]\n' +
+    '{"granularity":"line","version":2,"song_end_ms":60000}\n' +
+    '{"text":"abcd efg","start_ms":1000,"end_ms":8000,"words":[' +
+    '{"text":"abcd","start_ms":1000,"end_ms":5000,"score":1},' +
+    '{"text":"efg","start_ms":5000,"end_ms":8000,"score":1}]}\n';
+
+// ComboRestoreTest.AWordSkipOverATypoLeavesThatTyposSnapshotAlone. The OTHER redeemable break under
+// the same rule: type "ab", fumble 'c', give up on the word with a space (abandoning 'd'), then
+// backspace into it and type both cells out. The skip's own break costs nothing, because the typo
+// already zeroed the run, so it has no streak to claim the cell with and backlog 167's promise
+// survives in the case it is worth most: the player who fumbles, gives up, then goes back and types
+// the whole word out has undone everything they did wrong.
+function wordSkippedOverATypo() {
+    const beatmap = TB.buildBeatmap(TB.parseLyricOsu(TWO_WORD_OSU), false);
+    const engine = new TB.TypingEngine(beatmap);
+
+    engine.spaceSkipsWord = true;
+    engine.restored = [];
+    engine.breaks = 0;
+    engine.onComboRestored = (streak) => engine.restored.push(streak);
+    engine.onComboBroken = () => { engine.breaks++; };
+
+    engine.update(1000);
+
+    engine.processKey('a', 1000);
+    engine.processKey('b', 2000);
+    const comboBeforeTypo = engine.combo;
+
+    // The typo on 'c', which snapshots the run of 2 against cell 2.
+    engine.processKey('z', 3000);
+
+    // Space inside the word: 'd' is abandoned, on a run the typo has already zeroed.
+    engine.processKey(' ', 4000);
+    const caretAfterSkip = engine.caretIndex;
+
+    // Back into the word (one press reclaims 'd' and erases the typo) and type it out.
+    engine.processBackspace(); // erases the typed space
+    engine.processBackspace(); // steps over 'd', erases the typo
+    const caretAfterBackspaces = engine.caretIndex;
+
+    engine.processKey('c', 3000);
+    engine.processKey('d', 4000);
+
+    return Object.assign(snapshot(engine), {
+        comboBeforeTypo: comboBeforeTypo,
+        caretAfterSkip: caretAfterSkip,
+        caretAfterBackspaces: caretAfterBackspaces
+    });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fixture 3: TypeBeatReplayScorerTest's map, transcribed. One twelve-cell word on [0, 240000] with
 // its line running to 300000, plus a one-cell second line. Thirteen cells, every one strikeable
 // dead on its target, which is what makes 13 vs 11 a clean read on the rule alone.
 // ---------------------------------------------------------------------------------------------
@@ -288,6 +399,11 @@ const out = {
     interveningBreak: interveningBreak(),
     repeatedCycles: repeatedCycles(),
     restoreBeyondTheWatermark: restoreBeyondTheWatermark(),
+
+    // The backlog 176 shapes: an empty break never takes a live claim.
+    adjacentTyposBothFixed: adjacentTyposBothFixed(),
+    sameCellFumbledTwice: sameCellFumbledTwice(),
+    wordSkippedOverATypo: wordSkippedOverATypo(),
 
     // The replay-scorer pair: the same thirteen cells, clean and with a fixed typo on cell 2.
     replayClean: playReplayShaped(-1),
