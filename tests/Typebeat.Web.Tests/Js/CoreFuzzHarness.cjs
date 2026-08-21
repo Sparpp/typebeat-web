@@ -136,7 +136,47 @@ const FIXTURES = {
         text: 'one two', start_ms: 1000, end_ms: 3000,
         words: [{ text: 'one', start_ms: 1000, end_ms: 2000, score: 1, syllables: [{ start_ms: 1500 }] },
                 { text: 'two', start_ms: 2000, end_ms: 3000, score: 1 }]
-    }], 6000, 'syllable')
+    }], 6000, 'syllable'),
+
+    // Backlog 179's own surface. Every fixture above is built from ONE-syllable words, so each of
+    // their tokens resolves to a single group spanning the whole word: real span judgement, but
+    // never the case where a word carries SEVERAL spans and a press has to land in the right one.
+    // These words do: "tonight" splits to|night, "little" to lit|tle and "people" to peo|ple (a
+    // pinned exception), so the boundary between two spans of the same word is scoring surface here
+    // and a syllabifier that split one character off moves the account.
+    //
+    // "cake" is the shape the rule was asked for: one group over the whole word, so every character
+    // of it is perfectly timed anywhere inside the sung span rather than only on its own point.
+    syllableWords: osu([{
+        text: 'cake tonight', start_ms: 1000, end_ms: 4000,
+        words: [{ text: 'cake', start_ms: 1000, end_ms: 2400, score: 1 },
+                { text: 'tonight', start_ms: 2400, end_ms: 4000, score: 1 }]
+    }, {
+        text: 'little people', start_ms: 5000, end_ms: 8000,
+        words: [{ text: 'little', start_ms: 5000, end_ms: 6500, score: 1 },
+                { text: 'people', start_ms: 6500, end_ms: 8000, score: 1 }]
+    }], 12000),
+
+    // The STYLISED gate (backlog 178) under the span rule. "ohhh" is not an English spelling the
+    // syllabifier can defend a boundary in, so it gets NO groups and its cells keep the classic
+    // per-character POINT judgement, while "little" beside it is grouped and judged on spans. Both
+    // halves are in one line on purpose: the fixture pins that the gate is read per TOKEN and that
+    // an ungrouped token leaves a gap between groups rather than swallowing its neighbour.
+    stylised: osu([{
+        text: 'ohhh little', start_ms: 1000, end_ms: 3500,
+        words: [{ text: 'ohhh', start_ms: 1000, end_ms: 2000, score: 1 },
+                { text: 'little', start_ms: 2000, end_ms: 3500, score: 1 }]
+    }], 8000),
+
+    // A SUBTIMED word whose syllable count comes from the mapper rather than the rules: two
+    // boundaries force "tonight" to three groups, whose edges are the boundary times themselves
+    // (2800 and 3300) rather than anything read off the char targets. The forced count also drives
+    // the syllabifier's reconciliation, which the natural arm never exercises.
+    subtimed: osu([{
+        text: 'cake tonight', start_ms: 1000, end_ms: 4000,
+        words: [{ text: 'cake', start_ms: 1000, end_ms: 2400, score: 1, syllables: [{ start_ms: 1700 }] },
+                { text: 'tonight', start_ms: 2400, end_ms: 4000, score: 1, syllables: [{ start_ms: 2800 }, { start_ms: 3300 }] }]
+    }], 8000)
 };
 
 function build(name) {
@@ -274,6 +314,21 @@ function play(name, keys, spaceSkipsWord) {
         snapshotBreak(cellIndex, brokenStreak);
     };
 
+    // Backlog 179 coverage: presses the SPAN rule actually decided, counted by wrapping the one
+    // place a judged delta is produced. A press is only counted when its cell is in a syllable
+    // group AND the span answer differs from the classic point answer, so a sweep that reached
+    // groups but only ever pressed dead on target cannot pass for coverage. Without this the whole
+    // port could silently stop being exercised (a fixture edit that ungrouped every token would
+    // leave both sides agreeing on point deltas, green and meaningless).
+    let spanJudgements = 0;
+    const judgedDelta = engine.judgedDeltaFor.bind(engine);
+
+    engine.judgedDeltaFor = function (line, cellIndex, time) {
+        const delta = judgedDelta(line, cellIndex, time);
+        if (TB.syllableIndexOf(line, cellIndex) >= 0 && delta !== time - line.cells[cellIndex].target) spanJudgements++;
+        return delta;
+    };
+
     const end = endTimeFor(beatmap, keys);
     let next = 0;
 
@@ -310,7 +365,8 @@ function play(name, keys, spaceSkipsWord) {
         engineScore: engine.score,
         mistypes: engine.mistypes,
         restores: restores,
-        passiveBreaks: passiveBreaks
+        passiveBreaks: passiveBreaks,
+        spanJudgements: spanJudgements
     };
 }
 
@@ -324,7 +380,15 @@ function cellsOf(name) {
         endTime: line.endTime,
         activationTime: line.activationTime,
         sealGraceMs: line.sealGraceMs,
-        cells: line.cells.map(c => ({ expected: c.expected, target: c.target, tier: c.tier }))
+        cells: line.cells.map(c => ({ expected: c.expected, target: c.target, tier: c.tier })),
+        // The SYLLABLE groups and the per-cell membership map (backlog 179). Emitted beside the
+        // cells and pinned before any account, for the same reason the cells are: the spans are now
+        // what a press is judged against, so a group that drifted would reach the account
+        // comparison wearing the engine's clothes.
+        syllables: line.syllables.map(g => ({
+            startCell: g.startCell, endCellExclusive: g.endCellExclusive, startTime: g.startTime, endTime: g.endTime
+        })),
+        cellSyllable: line.cellSyllable.slice()
     }));
 }
 
@@ -370,11 +434,56 @@ const SCRIPTED = [
                [3280, 'o'], [3520, 'w'], [3760, 'n'],
                [5000, 'f'], [5267, 'o'], [5533, 'x'], [5800, ' '], [5800, 'j'], [6040, 'u'],
                [6280, 'm'], [6520, 'p'], [6760, 's']]
+    },
+    {
+        // Backlog 179's asked-for shape, on "cake tonight" / "little people". Every character is
+        // pressed WELL AHEAD of its own point target but still inside the sung span of the syllable
+        // it belongs to, so under the span rule every one of them is delta 0 and the whole map is
+        // typed clean. Under the classic point rule the same fingers would be graded Ok and Meh:
+        // "cake" runs [1000, 2400] but its 'e' points at 2050, and the "night" span runs
+        // [2857.14, 4000] while its 'n' points at 2857.14 and its trailing 't' at 3771.43, so a
+        // press at 3900 is dead centre of the syllable and a full second late on the character.
+        name: 'scripted/insideTheSpan', fixture: 'syllableWords', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'c'], [1100, 'a'], [1200, 'k'], [1300, 'e'], [2400, ' '],
+               [2500, 't'], [2600, 'o'], [3900, 'n'], [3910, 'i'], [3920, 'g'], [3930, 'h'], [3940, 't'],
+               [5000, 'l'], [5100, 'i'], [5200, 't'], [6400, 't'], [6410, 'l'], [6420, 'e'], [6500, ' '],
+               [6600, 'p'], [6700, 'e'], [6800, 'o'], [7900, 'p'], [7910, 'l'], [7920, 'e']]
+    },
+    {
+        // The other side of the same rule: presses OUTSIDE the span, which are graded on the signed
+        // distance to the nearer edge and so still move through the whole ladder. 'n' and 'i' land
+        // before the "night" span opens at 2857.14 (early by 437 and 357, both nearer the edge than
+        // their own points), and 'g', 'h', 't' land after it closes at 4000. The two engines have to
+        // agree tier for tier here, not only on the zero inside.
+        name: 'scripted/offSpanEdges', fixture: 'syllableWords', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'c'], [1050, 'a'], [2380, 'k'], [2390, 'e'], [2400, ' '],
+               [2400, 't'], [2410, 'o'], [2420, 'n'], [2500, 'i'], [4500, 'g'], [4700, 'h'], [4900, 't']]
+    },
+    {
+        // The STYLISED token stays on POINT deltas while its grouped neighbour is judged on spans,
+        // in one line and one run. The three 'h' presses of "ohhh" are 650, 450 and 240 off their
+        // own characters and are graded on exactly that, because the word has no groups; had the
+        // browser grouped it the way it groups "little", the first of them would have been a Great
+        // instead of an Ok and the accounts would part. The "little" presses that follow are 450 and
+        // 650 off their characters and are graded ZERO, because those cells ARE in a group.
+        name: 'scripted/stylisedStaysOnPoints', fixture: 'stylised', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'o'], [1900, 'h'], [1950, 'h'], [1990, 'h'], [2000, ' '],
+               [2000, 'l'], [2700, 'i'], [2740, 't'], [3400, 't'], [3450, 'l'], [3490, 'e']]
+    },
+    {
+        // A SUBTIMED word: the mapper's boundary times are the span edges, so "tonight" is three
+        // groups over [2400, 2800], [2800, 3300] and [3300, 4000] whatever the char targets say, and
+        // the syllabifier is asked for a FORCED count of 3 rather than the natural 2. Each press
+        // sits deep inside its own hand-authored window and nowhere near its point.
+        name: 'scripted/subtimedSpans', fixture: 'subtimed', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'c'], [1600, 'a'], [1650, 'k'], [2300, 'e'], [2400, ' '],
+               [2400, 't'], [2700, 'o'], [2900, 'n'], [3200, 'i'], [3400, 'g'], [3900, 'h'], [3950, 't']]
     }
 ];
 
 // ---------------------------------------------------------------------------------------------
-const names = ['catDog', 'abCd', 'catDogThenHi', 'quickBrownFox', 'mixedTiers', 'syllabic'];
+const names = ['catDog', 'abCd', 'catDogThenHi', 'quickBrownFox', 'mixedTiers', 'syllabic',
+               'syllableWords', 'stylised', 'subtimed'];
 const cases = [];
 
 for (const scripted of SCRIPTED) {

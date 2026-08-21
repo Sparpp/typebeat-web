@@ -110,7 +110,15 @@ public class UntimedSpaceParityTest
         {
             Assert.That(Num(r, "comboAfterSpace"), Is.EqualTo(3));
             Assert.That(Arr(r, "judgeTypes")[3], Is.EqualTo("Lagging"));
-            Assert.That(Delta(r, 3), Is.EqualTo(5100));
+
+            // 4100, where the game's own fixture pins 5100, and the gap is the ERA rather than a
+            // drift: that fixture drives a bare TypingEngine, whose SyllableTiming defaults OFF, so
+            // it measures the press against 'c''s own 2000 target. The browser has no era axis at
+            // all (it only plays live), so it measures the press against the sung span of the
+            // syllable "cd", [2000, 3000], exactly as live desktop play does. Everything the case
+            // is actually about is unchanged: the press is just as late, still Lagging, still worth
+            // nothing, and it still breaks the combo the space kept alive.
+            Assert.That(Delta(r, 3), Is.EqualTo(4100));
             Assert.That(Num(r, "combo"), Is.Zero);
             Assert.That(Num(r, "breaks"), Is.EqualTo(1));
             Assert.That(Num(r, "score"), Is.EqualTo(918), "Lagging scores nothing, so the total is unmoved");

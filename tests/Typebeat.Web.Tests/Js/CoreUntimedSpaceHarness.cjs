@@ -110,7 +110,12 @@ function lyricCharPressedJustAsLate() {
     engine.processKey('b', 1500);
     engine.processKey(' ', 7000);   // exempt
     const comboAfterSpace = engine.combo;
-    engine.processKey('c', 7100);   // delta 5100 on a lyric char: Lagging, no points, combo breaks
+    // Delta 4100 on a lyric char: Lagging, no points, combo breaks. 4100 and not the 5100 the game's
+    // own fixture pins, because that fixture drives a BARE engine (classic era, judged on 'c''s own
+    // 2000 target) while the browser only ever plays live and judges the span of the syllable "cd",
+    // which is sung over [2000, 3000]. Live desktop play measures the same 4100. Nothing the case is
+    // about moves with it: the press is just as late, still Lagging, still worth nothing.
+    engine.processKey('c', 7100);
     return Object.assign(snapshot(engine), { comboAfterSpace: comboAfterSpace });
 }
 
