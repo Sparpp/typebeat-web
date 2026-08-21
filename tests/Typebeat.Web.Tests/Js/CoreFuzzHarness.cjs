@@ -262,6 +262,18 @@ function play(name, keys, spaceSkipsWord) {
     let restores = 0;
     engine.onComboRestored = () => { restores++; };
 
+    // Backlog 176 coverage: a REDEEMABLE break (a wrong key, or a word skip) landing at a streak of
+    // ZERO while a claim is still outstanding, which is the one case that rule decides and the one
+    // the browser used to get wrong. Counted by wrapping the engine's single snapshot write site, so
+    // it counts what the engine actually reached rather than what a script looks like it reaches.
+    let passiveBreaks = 0;
+    const snapshotBreak = engine.snapshotRedeemableBreak.bind(engine);
+
+    engine.snapshotRedeemableBreak = function (cellIndex, brokenStreak) {
+        if (brokenStreak <= 0 && engine.restorable !== null) passiveBreaks++;
+        snapshotBreak(cellIndex, brokenStreak);
+    };
+
     const end = endTimeFor(beatmap, keys);
     let next = 0;
 
@@ -297,7 +309,8 @@ function play(name, keys, spaceSkipsWord) {
         engineMaxCombo: engine.maxCombo,
         engineScore: engine.score,
         mistypes: engine.mistypes,
-        restores: restores
+        restores: restores,
+        passiveBreaks: passiveBreaks
     };
 }
 
@@ -316,8 +329,63 @@ function cellsOf(name) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// SCRIPTED cases, played and compared exactly like the generated ones.
+//
+// The generator rolls its own shapes, and 360 of its runs never once reached the one backlog 176
+// decides: a redeemable break landing at a streak of ZERO while another claim is still outstanding,
+// with BOTH spoiled cells then corrected. It is a narrow target (two breaks in a row with nothing
+// earned between them, and a walk back into the older one), which is why a random walk misses it and
+// why the case is written out by hand here rather than waited for. Each is a real player shape:
+// backlog 176 came out of a submitted run that hit the first one and got none of a 447 streak back.
+//
+// The times are the cells' own targets, so every press lands in a scoring tier rather than on a
+// window edge, and they are monotonic non-decreasing, which is what the replay feed requires.
+const SCRIPTED = [
+    {
+        // The reported shape (ComboRestoreTest.TwoWrongKeysOnAdjacentCellsKeepTheStreakWhenBothAreFixed):
+        // "cat " typed clean for a run of 4, a wrong key on the 'd' that snapshots it, a wrong key on
+        // the 'o' at a combo of zero, then both erased and the word typed out. The second break has no
+        // streak to take the claim with, so the 'd' keeps it and the fix resumes the 4.
+        name: 'scripted/adjacentTypos', fixture: 'catDog', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'c'], [1667, 'a'], [2333, 't'], [3000, ' '], [3000, 'z'], [3667, 'x'],
+               [3667, '\b'], [3667, '\b'], [3700, 'd'], [3800, 'o'], [4333, 'g']]
+    },
+    {
+        // The same-cell sibling: fumble the 'c' on a run of 3, erase it, fumble it AGAIN, then correct
+        // it. No successful fix separates the two wrong keys, so there is no second streak to snapshot.
+        name: 'scripted/sameCellTwice', fixture: 'abCd', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'a'], [1500, 'b'], [2000, ' '], [2000, 'z'], [2050, '\b'], [2100, 'y'],
+               [2150, '\b'], [2200, 'c'], [2500, 'd']]
+    },
+    {
+        // The OTHER redeemable break: a run of 6, a typo on the 'i' of "quick", then a space that
+        // gives up on the rest of the word while the run is already zeroed, then back into the word
+        // and out through both lines. The skip cost nothing, so the typo's claim survives it, and
+        // two backspaces are all it takes to get back: the first erases the typed space, the second
+        // reclaims both abandoned cells and erases the typo in one step.
+        name: 'scripted/skipOverATypo', fixture: 'quickBrownFox', spaceSkipsWord: true, skipPresses: 1,
+        keys: [[1000, 't'], [1200, 'h'], [1400, 'e'], [1600, ' '], [1600, 'q'], [1840, 'u'],
+               [2080, 'z'], [2120, ' '], [2200, '\b'], [2200, '\b'],
+               [2300, 'i'], [2320, 'c'], [2560, 'k'], [2800, ' '], [2800, 'b'], [3040, 'r'],
+               [3280, 'o'], [3520, 'w'], [3760, 'n'],
+               [5000, 'f'], [5267, 'o'], [5533, 'x'], [5800, ' '], [5800, 'j'], [6040, 'u'],
+               [6280, 'm'], [6520, 'p'], [6760, 's']]
+    }
+];
+
+// ---------------------------------------------------------------------------------------------
 const names = ['catDog', 'abCd', 'catDogThenHi', 'quickBrownFox', 'mixedTiers', 'syllabic'];
 const cases = [];
+
+for (const scripted of SCRIPTED) {
+    cases.push(Object.assign({
+        name: scripted.name,
+        fixture: scripted.fixture,
+        spaceSkipsWord: scripted.spaceSkipsWord,
+        skipPresses: scripted.skipPresses,
+        keys: scripted.keys
+    }, play(scripted.fixture, scripted.keys, scripted.spaceSkipsWord)));
+}
 
 for (const name of names) {
     for (let seed = 1; seed <= 30; seed++) {

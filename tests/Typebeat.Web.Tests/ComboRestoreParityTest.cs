@@ -29,6 +29,15 @@ namespace Typebeat.Web.Tests;
 /// the only answer available to it. 11 is what it produced before this landed, which is what makes
 /// the replay-shaped case the non-vacuity proof as well as the pin.</para>
 ///
+/// <para>Backlog 176 narrowed the rule that decides WHICH break holds the claim, and the narrowing
+/// is mirrored here by the last three cases: a break takes ownership of the streak only if it HAS a
+/// streak to own, so a wrong key or a skip landing on a run something else already zeroed leaves the
+/// outstanding claim alone instead of replacing it with an empty one. Their sequences and numbers are
+/// the game's own pins again (<c>ComboRestoreTest</c>'s three backlog 176 shapes), and each is pinned
+/// there twice, once live and once under <c>ComboClaimRule.LatestBreakWins</c>. The browser has no
+/// counterpart to that second arm, for the same reason it has no <c>ComboRestoreRule.Never</c>: it
+/// only ever plays live and never re-derives a stored row.</para>
+///
 /// <para>Both combo accounts are asserted throughout, because the class of bug lives in them
 /// disagreeing: the engine's own <c>combo</c> is what the HUD counts up, and the score processor
 /// mirror's <c>highestCombo</c> is what is submitted as <c>max_combo</c>. They are kept equal by
@@ -207,6 +216,108 @@ public class ComboRestoreParityTest
             Assert.That(Int(run, "processorCombo"), Is.EqualTo(5));
             Assert.That(Int(run, "processorHighestCombo"), Is.EqualTo(5),
                 "the submitted max_combo has to reach the HUD's 5, which only the restore can put there");
+        });
+    }
+
+    /// <summary>
+    /// BACKLOG 176, and the shape a real submitted run took
+    /// (<c>ComboRestoreTest.TwoWrongKeysOnAdjacentCellsKeepTheStreakWhenBothAreFixed</c>): score 6212
+    /// on "Joji - PIXELATED KISSES [Insane]", 447 combo deep into "if you never hear from me", where
+    /// the player typed 'a' onto the 'm' cell and then 'm' onto the 'e' cell, backspaced twice and
+    /// typed "me" out correctly. The second wrong key breaks a run of ZERO, because the first one
+    /// already took the streak, so it has nothing to take the claim with and the 'm' cell keeps it:
+    /// fixing that cell resumes the run.
+    ///
+    /// <para>Deliberately stronger than
+    /// <see cref="AnInterveningBreakOwnsTheStreakSoTheOlderFixRestoresNothing"/>, which is the same
+    /// two wrong keys with a run REBUILT between them, so there the second break really does cost
+    /// something and really does take the claim. Nothing is lost between these two, which is exactly
+    /// why the older claim survives.</para>
+    ///
+    /// <para>This is the case the browser got wrong for as long as its two snapshot sites wrote
+    /// unconditionally, which they did until this landed: the same keystrokes restored nothing and
+    /// ended the run at 2 rather than 6.</para>
+    /// </summary>
+    [Test]
+    public void TwoWrongKeysOnAdjacentCellsKeepTheStreakWhenBothAreFixed()
+    {
+        var run = Harness().GetProperty("adjacentTyposBothFixed");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Int(run, "comboBeforeTypos"), Is.EqualTo(4));
+
+            Assert.That(Ints(run, "restored"), Is.EqualTo(new[] { 4 }), "the empty break left cell 4's claim alone");
+            Assert.That(Int(run, "combo"), Is.EqualTo(6), "4 restored + the two fixes");
+            Assert.That(Int(run, "maxCombo"), Is.EqualTo(6));
+            Assert.That(Int(run, "processorCombo"), Is.EqualTo(6));
+            Assert.That(Int(run, "processorHighestCombo"), Is.EqualTo(6));
+
+            // The two wrong KEYPRESSES are still spent: the fix buys back the streak, never the typo
+            // count, and both breaks were taken when they happened.
+            Assert.That(Int(run, "breaks"), Is.EqualTo(2));
+            Assert.That(Int(run, "mistypes"), Is.EqualTo(2));
+        });
+    }
+
+    /// <summary>
+    /// The same-cell sibling
+    /// (<c>ComboRestoreTest.ASecondWrongKeyOnTheSameCellKeepsTheStreakTheFirstOneSnapshotted</c>):
+    /// fumble cell 2, erase it, fumble it AGAIN, then correct it. It differs from
+    /// <see cref="RepeatedWrongFixCyclesOnOneCellBreakAndRestoreEachTime"/> only in that no successful
+    /// fix separates the two wrong keys, so there is no second streak to snapshot and the first one's
+    /// claim is the only one there has ever been.
+    /// </summary>
+    [Test]
+    public void ASecondWrongKeyOnTheSameCellKeepsTheStreakTheFirstOneSnapshotted()
+    {
+        var run = Harness().GetProperty("sameCellFumbledTwice");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Ints(run, "restored"), Is.EqualTo(new[] { 2 }), "the first wrong key's claim survived the second");
+            Assert.That(Int(run, "combo"), Is.EqualTo(3), "2 restored + the fix");
+            Assert.That(Int(run, "maxCombo"), Is.EqualTo(3));
+            Assert.That(Int(run, "processorHighestCombo"), Is.EqualTo(3));
+
+            Assert.That(Int(run, "breaks"), Is.EqualTo(2));
+            Assert.That(Int(run, "mistypes"), Is.EqualTo(2));
+        });
+    }
+
+    /// <summary>
+    /// The OTHER redeemable break under the same rule
+    /// (<c>ComboRestoreTest.AWordSkipOverATypoLeavesThatTyposSnapshotAlone</c>), on the two-word map:
+    /// type "ab", fumble 'c', give up on the word with a space (abandoning 'd'), then backspace into
+    /// it and type both cells out. The skip's own break costs nothing, because the typo already
+    /// zeroed the run, so it has no streak to claim the cell with, and backlog 167's promise survives
+    /// in the case it is worth most: the player who fumbles, gives up, then goes back and types the
+    /// whole word out has undone everything they did wrong.
+    ///
+    /// <para>The browser reaches this path with <c>spaceSkipsWord</c> set on the engine directly.
+    /// <c>/play</c> has no settings payload, so a live browser play is permanently non-skipping, but
+    /// the two snapshot sites share one write site on both sides and this is the half of it the typo
+    /// cases cannot reach.</para>
+    /// </summary>
+    [Test]
+    public void AWordSkipOverATypoLeavesThatTyposSnapshotAlone()
+    {
+        var run = Harness().GetProperty("wordSkippedOverATypo");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Int(run, "comboBeforeTypo"), Is.EqualTo(2));
+            Assert.That(Int(run, "caretAfterSkip"), Is.EqualTo(5), "the space landed on the word gap");
+            Assert.That(Int(run, "caretAfterBackspaces"), Is.EqualTo(2), "one press reclaims 'd', the next erases the typo");
+
+            Assert.That(Ints(run, "restored"), Is.EqualTo(new[] { 2 }), "the skip had no streak to take the claim with");
+            Assert.That(Int(run, "combo"), Is.EqualTo(5), "the space, 2 restored at the 'c', then both cells");
+            Assert.That(Int(run, "maxCombo"), Is.EqualTo(5));
+            Assert.That(Int(run, "processorHighestCombo"), Is.EqualTo(5));
+
+            // Two breaks, the typo's and the skip's, and one mistyped KEYPRESS: the skip is not one.
+            Assert.That(Int(run, "breaks"), Is.EqualTo(2));
+            Assert.That(Int(run, "mistypes"), Is.EqualTo(1));
         });
     }
 

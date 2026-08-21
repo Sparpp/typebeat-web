@@ -41,6 +41,12 @@ namespace Typebeat.WireCompat;
 /// <para>The C# side is fed under every LIVE rule, because the browser selects no era on any axis:
 /// it has no mods payload, no replay input, and nothing anywhere re-scores a stored row through
 /// that file.</para>
+///
+/// <para>A handful of the cases are SCRIPTED rather than generated, and they are played and
+/// compared identically. The generator reaches what it happens to roll, and backlog 176 found a
+/// rule it never once rolled the deciding shape for: two redeemable breaks in a row with nothing
+/// earned between them, and a walk back into the older one. The scripted cases are written out in
+/// the harness beside the generator, so a shape that matters is not left to a seed.</para>
 /// </summary>
 [TestFixture]
 public class EngineFuzzLiveParityTest
@@ -348,7 +354,7 @@ public class EngineFuzzLiveParityTest
         var cases = browser_runs.Value.GetProperty("cases");
 
         int withTypos = 0, withMisses = 0, withOk = 0, withMeh = 0, perfect = 0;
-        int skipPresses = 0, comboRestores = 0, backspaces = 0;
+        int skipPresses = 0, comboRestores = 0, backspaces = 0, passiveBreaks = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -362,6 +368,7 @@ public class EngineFuzzLiveParityTest
 
             skipPresses += browserCase.GetProperty("skipPresses").GetInt32();
             comboRestores += browserCase.GetProperty("restores").GetInt32();
+            passiveBreaks += browserCase.GetProperty("passiveBreaks").GetInt32();
             backspaces += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "");
         }
 
@@ -375,6 +382,13 @@ public class EngineFuzzLiveParityTest
             Assert.That(backspaces, Is.GreaterThan(0), "no run ever erased anything");
             Assert.That(skipPresses, Is.GreaterThan(0), "no run abandoned a word");
             Assert.That(comboRestores, Is.GreaterThan(0), "no run walked back into a break and resumed the streak");
+
+            // Backlog 176's own rule: a redeemable break landing at a streak of ZERO with a claim
+            // already outstanding, which is the only case where whose claim it is gets decided. The
+            // scripted cases guarantee this one, because thirty seeds per fixture never reached the
+            // full shape (they reach the break, but not the walk back into the older cell that makes
+            // the two rules differ), and a sweep that never reaches it cannot pin it.
+            Assert.That(passiveBreaks, Is.GreaterThan(0), "no run took a redeemable break that had no streak to claim with");
         });
     }
 }

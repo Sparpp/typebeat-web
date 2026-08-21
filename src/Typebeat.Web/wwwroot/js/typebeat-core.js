@@ -839,7 +839,7 @@
 
         // TypeBeatScoreProcessor.RestoreCombo (backlog 140): put back the streak a corrected typo's
         // wrong keypress broke. The engine decides WHETHER and BY HOW MUCH
-        // (resumeStreakIfThisFixesTheTypo); this is the hand-mirror into the submitted account, the
+        // (resumeStreakIfThisRedeemsTheBreak); this is the hand-mirror into the submitted account, the
         // exact counterpart of the hand-mirrored break above.
         //
         // A DELTA, not an overwrite with the engine's own combo, and the JS needs that care for the
@@ -942,22 +942,30 @@
             // The one outstanding combo snapshot (TypingEngine.restorable, backlog 140, widened by
             // 167): { lineIndex, cellIndex, streak }, the cell a wrong keypress spoiled or a word
             // skip abandoned and the streak that break cost, or null when there is nothing to go
-            // back for. Set by that keypress or skip, redeemed by typing that same cell correctly,
-            // and discarded by any other combo break (discardRestorableStreak). The seams that
-            // discard it here are the three the browser can reach: a seal with unforeseen misses, a
-            // Premature/Lagging press and a rejected key. A word skip TAKES a snapshot rather than
-            // discarding one since backlog 167, because it is a break the player can walk back into
-            // and undo. The C# has a fourth discard seam, Fletcher's rush cap, which has no
-            // counterpart in this file because it has no Fletcher (no mods payload) and therefore no
-            // rush cap branch to hang it on.
+            // back for. Set by that keypress or skip (through snapshotRedeemableBreak, the one
+            // write site the two share), redeemed by typing that same cell correctly, and discarded
+            // by any other combo break that had a streak to take (discardRestorableStreak). The
+            // seams that discard it here are the three the browser can reach: a seal with unforeseen
+            // misses, a Premature/Lagging press and a rejected key. A word skip TAKES a snapshot
+            // rather than discarding one since backlog 167, because it is a break the player can
+            // walk back into and undo. The C# has a fourth discard seam, Fletcher's rush cap, which
+            // has no counterpart in this file because it has no Fletcher (no mods payload) and
+            // therefore no rush cap branch to hang it on.
+            //
+            // "That had a streak to take" is backlog 176: a break landing while the run is ALREADY
+            // at zero costs nothing, so it leaves an outstanding claim alone rather than replacing
+            // it with an empty one, and correcting the older cell still resumes the run (see
+            // snapshotRedeemableBreak).
             //
             // There is no ComboRestoreRule here, and that is a statement about /play rather than a
             // simplification: the enum exists in the C# so that RE-DERIVING a score stored before
             // backlog 140 does not hand it combo its fingers never earned. The browser only ever
             // plays LIVE (it has no mods payload, no replay input, and nothing anywhere re-scores a
             // stored row through this file: computeScore is called once, at the end of the play it
-            // just ran), so ComboRestoreRule.OnFix is the only rule it can be in and the snapshot is
-            // taken unconditionally.
+            // just ran), so ComboRestoreRule.OnFix is the only rule it can be in and a snapshot is
+            // always taken. There is no ComboClaimRule either, backlog 176's own era axis, for the
+            // identical reason: LatestBreakWins exists in the C# to re-derive a row stored before
+            // that rule, and StreakedBreakWins is the only arm a live play can be in.
             this.restorable = null;
             // event hooks (optional; set by the renderer)
             this.onCharJudged = null;
@@ -1110,11 +1118,35 @@
         // TypingEngine.discardRestorableStreak. A combo break that is nobody's fixable typo just
         // happened, so the outstanding snapshot (if any) is discarded: the streak it was holding has
         // been lost to THIS break, and correcting the older cell later cannot bring back a run that
-        // ended after it. Called at every combo-break seam except the wrong keypress's own, which
-        // takes the snapshot instead, so a second wrong key simply overwriting the snapshot falls out
-        // of the same rule and needs no case of its own.
+        // ended after it. Called at every combo-break seam except the two REDEEMABLE ones, a wrong
+        // keypress and a word skip, which snapshot instead (snapshotRedeemableBreak): a break of
+        // either kind that cost a streak of its own takes the claim there, so it needs no case here.
         discardRestorableStreak() {
             this.restorable = null;
+        }
+
+        // TypingEngine.snapshotRedeemableBreak. Take the snapshot for a REDEEMABLE break (a wrong
+        // keypress, or a word skip): the streak it cost, against the cell the player has to come
+        // back to. The one write site for `restorable` other than the discards, so the two breaks
+        // that can be walked back into cannot drift apart, which is the shape the C# refactored to
+        // when backlog 176 gave the two of them a condition to share.
+        //
+        // A break takes ownership of the streak only if it HAS a streak to own (backlog 176). One
+        // landing at a combo of zero costs the player nothing, so it does not get to end an older
+        // cell's claim on a run that is still redeemable: the claim it would write is empty, and
+        // swapping a live claim for an empty one is a pure loss to a player who then goes back and
+        // fixes both cells. With NOTHING outstanding it still writes its own empty claim, so that
+        // redeeming it restores nothing, which is what resumeStreakIfThisRedeemsTheBreak has always
+        // done with a zero.
+        //
+        // The C# reads two era switches here that this file has no counterpart to, for the reason
+        // set out on `restorable`: ComboRestoreRule, which decides whether any snapshot is taken at
+        // all, and ComboClaimRule, which decides the condition below. The browser only ever plays
+        // live, so both are pinned to their live arms and the condition stands unguarded.
+        snapshotRedeemableBreak(cellIndex, brokenStreak) {
+            if (brokenStreak <= 0 && this.restorable !== null) return;
+
+            this.restorable = { lineIndex: this.activeLineIndex, cellIndex: cellIndex, streak: brokenStreak };
         }
 
         // TypingEngine.resumeStreakIfThisRedeemsTheBreak. Redeem the outstanding snapshot if the
@@ -1227,9 +1259,16 @@
             this.combo = 0;
 
             // Snapshotted against the FIRST abandoned cell, so re-typing that cell resumes the run.
-            // Written unconditionally, so a skip discards an older cell's claim the way any other
-            // intervening break would.
-            this.restorable = { lineIndex: this.activeLineIndex, cellIndex: abandoned[0], streak: brokenStreak };
+            // A skip discards an older cell's claim the way any other intervening break would, but
+            // only if it broke a streak of its own (backlog 176): a skip taken over a typo that has
+            // already zeroed the run leaves that typo's claim redeemable, because the skip itself
+            // cost nothing.
+            //
+            // The C# guards this call with its `reclaimable` flag and discards outright when that is
+            // false, because under the pre-167 rule the abandoned cells are gone and there is
+            // nothing to come back to. That arm has no counterpart here: the browser has no
+            // WordSkipRule, so a skip in this file is permanently reclaimable.
+            this.snapshotRedeemableBreak(abandoned[0], brokenStreak);
 
             if (this.onComboBroken) this.onComboBroken();
 
@@ -1359,9 +1398,9 @@
 
                     // The streak this keypress is about to break, snapshotted against the cell it
                     // spoils: correcting that cell resumes it (backlog 140, see restorable and
-                    // resumeStreakIfThisFixesTheTypo). Written unconditionally, so a wrong key on a
-                    // SECOND cell discards the first cell's claim exactly as any other intervening
-                    // break would.
+                    // resumeStreakIfThisRedeemsTheBreak). A wrong key on a SECOND cell discards the
+                    // first cell's claim the way any other intervening break would, but only if it
+                    // broke a streak of its own (backlog 176, see snapshotRedeemableBreak).
                     const brokenStreak = this.combo;
 
                     this.combo = 0;
@@ -1372,7 +1411,8 @@
                     cell.judgeType = 'WrongChar';
 
                     const wrongCellIndex = this.caretIndex;
-                    this.restorable = { lineIndex: this.activeLineIndex, cellIndex: wrongCellIndex, streak: brokenStreak };
+
+                    this.snapshotRedeemableBreak(wrongCellIndex, brokenStreak);
 
                     this.caretIndex++;
                     this.autoSkipForward();
