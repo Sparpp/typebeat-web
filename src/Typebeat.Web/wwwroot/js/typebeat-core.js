@@ -3,8 +3,8 @@
  * type!beat typing gameplay for the browser.
  *
  * This mirrors the desktop client's headless gameplay core
- * (typebeat.Game.Rulesets.TypeBeat: TypingEngine, TypingLine, Judgement,
- * TypeBeatHealthProcessor) and the standardised scorer (osu ScoreProcessor +
+ * (typebeat.Game.Rulesets.TypeBeat: TypingEngine, TypingLine, Syllabifier,
+ * Judgement, TypeBeatHealthProcessor) and the standardised scorer (osu ScoreProcessor +
  * TypeBeatScoreProcessor) closely enough that a play here produces the same
  * statistics / total_score the desktop would, so scores interoperate on the
  * same leaderboards. See the recon spec in the repo history for the exact rules
@@ -317,6 +317,534 @@
 
     const EMPTY_BOUNDARIES = [];
 
+    // ---------------------------------------------------------------------------
+    // Syllabifier: rule-based English syllabification of ONE gameplay word (mirrors
+    // typebeat.Game.Rulesets.TypeBeat/Gameplay/Syllabifier.cs, rule for rule). This is scoring
+    // surface since backlog 179: the groups it produces are the time SPANS a keypress is judged
+    // against, so a split that lands one character off moves a real judgement.
+    //
+    // The analysis is orthographic phonotactics, not a dictionary: vowel groups are syllable
+    // nuclei (y is a vowel when it is not an onset glide, and u is silent in qu/gu+vowel), a run
+    // of adjacent vowels is one nucleus except for the common hiatus pairs (ia io iu ua uo eo, and
+    // ie before t, plus -Ving), silent terminal e is dropped (including -ed/-es) except the
+    // syllabic C+le/C+re case, and boundaries fall V|CV, VC|CV with inseparable onset clusters and
+    // digraphs kept whole, and doubled consonants split down the middle. A small table pins very
+    // common lyric words the rules cannot get right.
+    //
+    // Non-letter input is defensive territory: punctuation is transparent (it attaches to the
+    // surrounding syllable and never starts one), and a maximal DIGIT run is one syllable of its
+    // own ("24" is one group, "b2b" is three). Case is folded before analysis; indices always refer
+    // to the original string.
+    // ---------------------------------------------------------------------------
+
+    // char.IsLetter / char.IsDigit are Unicode category tests in the C#, so these are too rather
+    // than the ASCII ranges isTypeable uses: normalize already narrows gameplay text to ASCII, but
+    // the syllabifier answers for whatever it is handed.
+    const LETTER_RE = /\p{L}/u;
+    const DIGIT_RE = /\p{Nd}/u;
+
+    function isLetterChar(c) { return c !== undefined && LETTER_RE.test(c); }
+
+    function isDigitChar(c) { return c !== undefined && DIGIT_RE.test(c); }
+
+    // char.ToLowerInvariant: ONE char in, one char out. JS toLowerCase can lengthen a char (the
+    // dotted capital I becomes two), which would shift every index the analysis reports, so a
+    // lengthening fold is refused and the char is left as it was, exactly as the C# leaves it.
+    function lowerChar(ch) {
+        const lowered = ch.toLowerCase();
+        return lowered.length === 1 ? lowered : ch;
+    }
+
+    // Very common lyric words whose pronunciation the orthographic rules cannot recover (mostly
+    // medial silent e in compounds, and the ev(e)ry family which is sung with the first e elided).
+    // Keyed on the exact lower-cased word, and held in a Map so a word like "constructor" cannot
+    // pick an answer off Object.prototype.
+    const SYLLABLE_EXCEPTIONS = new Map([
+        ['people', [3]], // peo|ple: "eo" is one nucleus here, unlike vid|e|o
+        ['every', [2]], // ev|ery, 2 syllables (sung form; formal ev|er|y is 3)
+        ['everything', [2, 5]], // ev|ery|thing
+        ['everyone', [2, 5]], // ev|ery|one
+        ['everybody', [2, 5, 7]], // ev|ery|bo|dy
+        ['everywhere', [2, 5]], // ev|ery|where
+        ['something', [4]], // some|thing: medial silent e
+        ['sometimes', [4]], // some|times
+        ['somewhere', [4]], // some|where
+        ['someone', [4]], // some|one
+        ['somebody', [4, 6]], // some|bo|dy
+        ['lovely', [4]], // love|ly: medial silent e before suffix
+        ['lonely', [4]], // lone|ly
+        ['maybe', [3]], // may|be: compound of may + be, final e is a nucleus
+        ['million', [3]], // mil|lion: "io" fuses here but splits in li|on
+        ['billion', [3]], // bil|lion
+        ['create', [3]] // cre|ate: "ea" is hiatus here, unlike dream
+    ]);
+
+    // Consonant pairs that stay together as the onset of the following syllable (inseparable
+    // clusters and digraphs): ta|ble, a|pron, no|thing, e|qual.
+    const TWO_CLUSTERS = new Set([
+        'bl', 'br', 'ch', 'cl', 'cr', 'dr', 'fl', 'fr', 'gh', 'gl', 'gr', 'ph', 'pl', 'pr',
+        'qu', 'sc', 'sh', 'sk', 'sl', 'sm', 'sn', 'sp', 'st', 'sw', 'th', 'tr', 'tw', 'wh', 'wr'
+    ]);
+
+    // Three-consonant onsets: in|stru|ment.
+    const THREE_CLUSTERS = new Set(['chr', 'phr', 'sch', 'scr', 'shr', 'spl', 'spr', 'squ', 'str', 'thr']);
+
+    function isVowelLetter(c) { return c === 'a' || c === 'e' || c === 'i' || c === 'o' || c === 'u'; }
+
+    function isSoftener(c) { return c === 'c' || c === 'g' || c === 's' || c === 't' || c === 'x'; }
+
+    function isVowelish(c) { return isVowelLetter(c) || c === 'y'; }
+
+    // Whether word looks like an English word the rules above can actually analyse, rather than a
+    // STYLISED spelling (mirrors Syllabifier.IsSyllabifiable, backlog 178). ONE rule: a run of
+    // THREE OR MORE identical LETTERS is not standard English, so the word fails. DOUBLED letters
+    // are ordinary and pass (little, good, hello, ooh), digits never fail a word ("1000", "b2b"),
+    // and punctuation only ever BREAKS a run. Case is folded. Null/empty is false.
+    //
+    // This is the gate buildSyllables uses to decide whether a token gets groups at all: a word
+    // that fails is left UNGROUPED, so its cells keep the classic per-character point judgement.
+    function isSyllabifiable(word) {
+        if (!word) return false;
+
+        // Compare against the PREVIOUS character rather than carrying a sentinel: a run only ever
+        // extends when both ends are the same letter, so a digit or a mark fails the test and
+        // resets the count.
+        let run = 1;
+
+        for (let i = 1; i < word.length; i++) {
+            const c = lowerChar(word[i]);
+            const previous = lowerChar(word[i - 1]);
+
+            run = (isLetterChar(c) && c === previous) ? run + 1 : 1;
+
+            if (run >= 3) return false;
+        }
+
+        return true;
+    }
+
+    // Number of syllables in an English word: never less than 1 for a non-empty word, 0 for empty.
+    function countSyllables(word) {
+        if (!word) return 0;
+        return naturalSplits(word).length + 1;
+    }
+
+    // The 0-based indices into word at which a new syllable STARTS, strictly ascending, never
+    // containing 0, length == syllables - 1 (mirrors Syllabifier.SplitPoints).
+    //
+    // forcedCount, when given (a mapper's hand-authored subtimings say how many syllables the word
+    // has), is authoritative and the natural analysis is bent to hit it: extra splits are added at
+    // the best remaining interior position of the longest group, surplus boundaries are merged
+    // weakest (smallest merged group) first. Over-forcing degrades gracefully, because a word
+    // carries at most length - 1 splits. A forced count below 1 is treated as 1.
+    function splitPoints(word, forcedCount) {
+        if (!word) return [];
+
+        const splits = naturalSplits(word);
+
+        if (forcedCount === undefined || forcedCount === null) return splits;
+
+        const target = clamp(forcedCount - 1, 0, word.length - 1);
+
+        while (splits.length > target) mergeWeakest(splits, word.length);
+        while (splits.length < target && addBestSplit(splits, word)) { /* keep adding while there is room */ }
+
+        return splits;
+    }
+
+    function naturalSplits(word) {
+        let lower = '';
+        for (let i = 0; i < word.length; i++) lower += lowerChar(word[i]);
+
+        const pinned = SYLLABLE_EXCEPTIONS.get(lower);
+        if (pinned) return pinned.slice();
+
+        const boundaries = [];
+        const segment = []; // original indices of the current letter run (punctuation is transparent)
+        let anyContent = false;
+        let inDigits = false;
+
+        for (let i = 0; i < lower.length; i++) {
+            const c = lower[i];
+
+            if (isLetterChar(c)) {
+                if (inDigits) {
+                    // the digit run just before this letter was its own syllable.
+                    boundaries.push(i);
+                    inDigits = false;
+                }
+
+                segment.push(i);
+                anyContent = true;
+            } else if (isDigitChar(c)) {
+                if (!inDigits) {
+                    flushSegment(lower, segment, boundaries);
+
+                    if (anyContent) boundaries.push(i);
+
+                    inDigits = true;
+                    anyContent = true;
+                }
+            }
+
+            // anything else (apostrophes, punctuation, the freestyle marker) is transparent: it
+            // attaches to whichever syllable surrounds it and never starts one.
+        }
+
+        flushSegment(lower, segment, boundaries);
+        return boundaries;
+    }
+
+    function flushSegment(lower, segment, boundaries) {
+        if (segment.length === 0) return;
+        analyzeLetters(lower, segment, boundaries);
+        segment.length = 0;
+    }
+
+    // The phonotactic core: syllabifies one contiguous letter sequence (seg holds the original
+    // index of each letter) and appends the resulting split indices to boundaries.
+    function analyzeLetters(lower, seg, boundaries) {
+        const n = seg.length;
+        let s = '';
+
+        for (let j = 0; j < n; j++) s += lower[seg[j]];
+
+        const endsIng = n >= 4 && s[n - 3] === 'i' && s[n - 2] === 'n' && s[n - 1] === 'g';
+
+        // 1. classify vowels.
+        const vowel = new Array(n).fill(false);
+
+        for (let j = 0; j < n; j++) {
+            const c = s[j];
+
+            if (isVowelLetter(c)) vowel[j] = true;
+            else if (c === 'y') {
+                const next = j + 1 < n ? s[j + 1] : '\0';
+
+                if (!isVowelLetter(next)) vowel[j] = true; // no following vowel: y is the nucleus (rhythm, happy, cry)
+                else if (next === 'e' && j + 1 === n - 1) vowel[j] = true; // word-final "ye": the e is silent (goodbye, dye)
+                else if (endsIng && j === n - 4) vowel[j] = true; // "-ying": dy|ing, say|ing (the split is forced below)
+
+                // otherwise y is an onset glide (yes, beyond, canyon)
+            }
+        }
+
+        // u is not a nucleus in "qu" (quiet, equal) nor in "gu" + vowel (guard, guess, league).
+        for (let j = 1; j < n; j++) {
+            if (s[j] === 'u' && vowel[j] && (s[j - 1] === 'q' || (s[j - 1] === 'g' && j + 1 < n && isVowelLetter(s[j + 1])))) {
+                vowel[j] = false;
+            }
+        }
+
+        // 2. nucleus groups: maximal vowel runs, broken at hiatus pairs.
+        const groups = [];
+
+        for (let j = 0; j < n; j++) {
+            if (!vowel[j]) continue;
+
+            const start = j;
+
+            while (j + 1 < n && vowel[j + 1] && !isHiatus(s, endsIng, j)) j++;
+
+            groups.push({ start: start, end: j });
+        }
+
+        // 3. silent final e. Only ever a single-vowel group (a preceding vowel keeps it: goes,
+        // memories) and only when another nucleus remains (the, be, bye keep theirs).
+        let syllabicLe = false;
+
+        if (groups.length >= 2) {
+            const last = groups[groups.length - 1];
+
+            if (last.start === last.end && s[last.start] === 'e') {
+                const p = last.start;
+                let silent = false;
+
+                if (p === n - 1) {
+                    // plain final e: silent (make, love, alone) except syllabic C+le / C+re (table,
+                    // little, acre), where the e-group survives as the last syllable.
+                    const prev = s[p - 1];
+                    syllabicLe = (prev === 'l' || prev === 'r') && p >= 2 && !vowel[p - 2];
+                    silent = !syllabicLe;
+                } else if (p === n - 2 && s[n - 1] === 'd') {
+                    // -ed: silent (loved, called) unless after t/d (wanted, needed).
+                    silent = s[p - 1] !== 't' && s[p - 1] !== 'd';
+                } else if (p === n - 2 && s[n - 1] === 's') {
+                    // -es: silent (makes, times, clothes) unless after a sibilant (wishes, changes).
+                    const prev = s[p - 1];
+                    const sibilant = prev === 's' || prev === 'z' || prev === 'x' || prev === 'c' || prev === 'g'
+                        || (prev === 'h' && p >= 2 && (s[p - 2] === 's' || s[p - 2] === 'c'));
+                    silent = !sibilant;
+                }
+
+                if (silent) groups.pop();
+            }
+        }
+
+        // 4. place one boundary between each pair of adjacent nuclei.
+        for (let g = 1; g < groups.length; g++) {
+            const prevEnd = groups[g - 1].end;
+            const curStart = groups[g].start;
+            const gap = curStart - prevEnd - 1;
+            let split;
+
+            if (gap === 0) split = curStart; // hiatus: the new nucleus starts the syllable (qui|et, radi|o)
+            else if (gap === 1) split = prevEnd + 1; // V|CV: the consonant onsets the second syllable (o|pen)
+            else if (syllabicLe && g === groups.length - 1) split = curStart - 2; // the syllabic-le/re syllable is Cle/Cre (tur|tle, a|cre)
+            else if (s[prevEnd + 1] === s[prevEnd + 2]) split = prevEnd + 2; // doubled consonant splits down the middle (bet|ter)
+            else if (gap >= 3 && THREE_CLUSTERS.has(s.slice(curStart - 3, curStart))) split = curStart - 3; // in|stru...
+            else if (TWO_CLUSTERS.has(s.slice(curStart - 2, curStart))) split = curStart - 2; // ta|ble, no|thing
+            else split = curStart - 1; // otherwise a single-consonant onset (VC|CV, pump|kin)
+
+            boundaries.push(seg[split]);
+        }
+    }
+
+    // Whether adjacent vowels at j, j+1 are two nuclei (hiatus) rather than one digraph.
+    function isHiatus(s, endsIng, j) {
+        const a = s[j], b = s[j + 1];
+        const k = j + 1;
+
+        // vowel + "-ing" is always two syllables: be|ing, go|ing, dy|ing, say|ing.
+        if (endsIng && b === 'i' && k === s.length - 3) return true;
+
+        // ...except -tion/-cial/-gion/-cious style endings, where the i fuses with the preceding
+        // softened consonant: na|tion, spe|cial, but radi|o, med|i|a, gen|i|us.
+        if (a === 'i' && (b === 'a' || b === 'o' || b === 'u')) return j === 0 || !isSoftener(s[j - 1]);
+
+        // qui|et, di|et; believe, friend, die stay fused.
+        if (a === 'i' && b === 'e') return k + 1 < s.length && s[k + 1] === 't';
+
+        // vide|o, stere|o split; gor|geous (a softener before) does not.
+        if (a === 'e' && b === 'o') return j === 0 || !isSoftener(s[j - 1]);
+
+        // u|su|al, act|u|al, du|o
+        if (a === 'u' && (b === 'a' || b === 'o')) return true;
+
+        return false;
+    }
+
+    // Removes the boundary whose removal produces the smallest merged group (the weakest boundary
+    // separates the two smallest neighbours); leftmost on ties.
+    function mergeWeakest(splits, length) {
+        let best = 0;
+        let bestMerged = Infinity;
+
+        for (let i = 0; i < splits.length; i++) {
+            const left = i === 0 ? 0 : splits[i - 1];
+            const right = i === splits.length - 1 ? length : splits[i + 1];
+            const merged = right - left;
+
+            if (merged < bestMerged) {
+                bestMerged = merged;
+                best = i;
+            }
+        }
+
+        splits.splice(best, 1);
+    }
+
+    // Adds one split at the best interior position of the longest current group: prefer a
+    // vowel-to-consonant transition (a fresh onset: fi|re), then consonant-to-vowel, then inside a
+    // vowel run, then anywhere; nearest the group's midpoint on ties. Returns false when every
+    // group is a single character, so no position remains.
+    function addBestSplit(splits, word) {
+        let bestStart = -1, bestLen = 1;
+
+        for (let i = 0; i <= splits.length; i++) {
+            const start = i === 0 ? 0 : splits[i - 1];
+            const end = i === splits.length ? word.length : splits[i];
+
+            if (end - start > bestLen) {
+                bestLen = end - start;
+                bestStart = start;
+            }
+        }
+
+        if (bestStart < 0) return false;
+
+        const mid = bestStart + bestLen / 2;
+        let bestPos = -1;
+        let bestClass = Infinity;
+        let bestDist = Infinity;
+
+        for (let p = bestStart + 1; p < bestStart + bestLen; p++) {
+            const cls = transitionClass(word, p);
+            const dist = Math.abs(p - mid);
+
+            if (cls < bestClass || (cls === bestClass && dist < bestDist)) {
+                bestClass = cls;
+                bestDist = dist;
+                bestPos = p;
+            }
+        }
+
+        // List.BinarySearch + Insert(~idx): bestPos is strictly interior to a group and so is never
+        // already present, which makes this exactly the insertion point that keeps splits sorted.
+        let idx = 0;
+        while (idx < splits.length && splits[idx] < bestPos) idx++;
+        splits.splice(idx, 0, bestPos);
+        return true;
+    }
+
+    function transitionClass(word, p) {
+        const a = lowerChar(word[p - 1]);
+        const b = lowerChar(word[p]);
+
+        if (!isLetterChar(a) || !isLetterChar(b)) return 4;
+
+        const va = isVowelish(a), vb = isVowelish(b);
+
+        if (va && !vb) return 1; // V|C: the consonant onsets the new group
+        if (!va && vb) return 2; // C|V
+        if (va && vb) return 3; // splitting inside a vowel run (fi|re when over-forced)
+
+        return 4; // C|C
+    }
+
+    // Groups a line's cells into SYLLABLES (mirrors TypingLine.buildSyllables, backlog 174/178/179):
+    // per whitespace token, the syllabifier decides WHICH characters form each syllable and the
+    // timing data decides WHEN it is sung. Pure derivation: no cell target moves, so the classic
+    // sweep and every readout built on it stay byte-identical.
+    //
+    // A token whose unit carries mapper subtimings (N boundaries = N + 1 syllables) is split with
+    // the count FORCED to N + 1: the boundary times are the window edges, so syllable i spans
+    // [edge_i, edge_i+1] with edge_0 the unit's start, the interior edges the boundary times and
+    // the last edge the unit's end. When the syllabifier degrades to G < N + 1 groups (an
+    // over-forced short word) the first G - 1 boundary times are the interior edges and the last
+    // group runs to the unit's end.
+    //
+    // A token WITHOUT subtimings is split naturally and each group's span is read off the EXISTING
+    // flat-ramp char targets: it starts at its first cell's target and ends where the next group
+    // starts (last group of the token: the unit's end). That natural arm is GATED on
+    // isSyllabifiable: a stylised spelling like "wooooooords" gets NO groups and its cells stay at
+    // syllableIndexOf -1, keeping the classic per-character point judgement. The gate does NOT
+    // apply to a subtimed token: the mapper hand-authored its count, and that is authoritative.
+    //
+    // Split indices index the TOKEN string and are mapped to cells through the same projection that
+    // assigned the targets, so punctuation lands inside the syllable of the letter it attaches to.
+    // A SPACE cell (the inter-word gap, or a hyphen turned into a typed space) belongs to NO group,
+    // a group whose every character the default stream deleted is dropped, and kept spans are
+    // clamped monotonic non-decreasing, the same guard the targets themselves get.
+    function buildSyllables(text, units, lineStart, singEndTime, cells, sources) {
+        const rawGroup = new Array(text.length).fill(-1);
+
+        // Provisional groups in token order: span edges, and whether the span is still to be
+        // resolved from cell targets (NaN start; NaN end = "the next group's start").
+        const starts = [];
+        const ends = [];
+        const tokens = text.split(' ');
+        let tokStart = 0;
+
+        for (let m = 0; m < tokens.length; m++) {
+            const token = tokens[m];
+
+            // Same malformed-data clamp as the target-time walk in buildCells.
+            const unit = units.length > 0 ? units[Math.min(m, units.length - 1)] : null;
+            const unitStart = unit ? unit.start : lineStart;
+            const unitEnd = unit ? unit.end : singEndTime;
+            const boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
+            const subtimed = boundaries.length > 0;
+
+            // A stylised spelling gets no groups at all UNLESS the mapper subtimed it, in which case
+            // the hand-authored count wins over anything the rules would have guessed.
+            if (token.length > 0 && (subtimed || isSyllabifiable(token))) {
+                const splits = subtimed ? splitPoints(token, boundaries.length + 1) : splitPoints(token);
+                const groupBase = starts.length;
+                const groupCount = splits.length + 1;
+
+                for (let g = 0; g < groupCount; g++) {
+                    if (subtimed) {
+                        starts.push(g === 0 ? unitStart : boundaries[g - 1]);
+                        ends.push(g === groupCount - 1 ? unitEnd : boundaries[g]);
+                    } else {
+                        starts.push(NaN);
+                        ends.push(g === groupCount - 1 ? unitEnd : NaN);
+                    }
+                }
+
+                // Token char t belongs to the group of the last split at or before it, so
+                // punctuation (transparent to the syllabifier) attaches to the syllable around it.
+                let inGroup = 0;
+
+                for (let t = 0; t < token.length; t++) {
+                    if (inGroup < splits.length && t === splits[inGroup]) inGroup++;
+                    rawGroup[tokStart + t] = groupBase + inGroup;
+                }
+            }
+
+            tokStart += token.length + 1; // the inter-word space raw char stays in no group
+        }
+
+        // Map raw-index groups onto cells through the same projection that assigned the targets. A
+        // SPACE cell is in no group whatever raw char produced it (hyphens too).
+        const cellSyllable = new Array(cells.length).fill(-1);
+
+        for (let i = 0; i < cells.length; i++) {
+            if (!cells[i].typeable || cells[i].expected === ' ') continue;
+            cellSyllable[i] = rawGroup[sources ? sources[i] : i];
+        }
+
+        const provisional = starts.length;
+        const firstCell = new Array(provisional).fill(-1);
+        const lastCell = new Array(provisional).fill(0);
+
+        for (let i = 0; i < cellSyllable.length; i++) {
+            const g = cellSyllable[i];
+
+            if (g < 0) continue;
+
+            if (firstCell[g] < 0) firstCell[g] = i;
+            lastCell[g] = i;
+        }
+
+        // Resolve the target-derived spans. Starts first (a group starts at its first cell's
+        // target), then the NaN ends: only a non-last group of an un-subtimed token has one, and its
+        // successor sits in the same token and always owns a letter or digit cell, so its start is
+        // known; the fallback degenerate span is defensive only.
+        for (let g = 0; g < provisional; g++) {
+            if (isNaN(starts[g]) && firstCell[g] >= 0) starts[g] = cells[firstCell[g]].target;
+        }
+
+        for (let g = 0; g < provisional; g++) {
+            if (!isNaN(ends[g])) continue;
+
+            const next = g + 1 < provisional ? starts[g + 1] : NaN;
+            ends[g] = isNaN(next) ? starts[g] : next;
+        }
+
+        // Compact to the groups that own at least one cell, clamping spans monotonic.
+        const groups = [];
+        const remap = new Array(provisional).fill(-1);
+        let clock = -Infinity;
+
+        for (let g = 0; g < provisional; g++) {
+            if (firstCell[g] < 0 || isNaN(starts[g])) continue;
+
+            const start = Math.max(starts[g], clock);
+            const end = Math.max(isNaN(ends[g]) ? start : ends[g], start);
+            clock = end;
+
+            remap[g] = groups.length;
+            groups.push({ startCell: firstCell[g], endCellExclusive: lastCell[g] + 1, startTime: start, endTime: end });
+        }
+
+        for (let i = 0; i < cellSyllable.length; i++) {
+            cellSyllable[i] = cellSyllable[i] >= 0 ? remap[cellSyllable[i]] : -1;
+        }
+
+        return { syllables: groups, cellSyllable: cellSyllable };
+    }
+
+    // Index into line.syllables of the group that judges cell cellIndex, or -1 when the cell is in
+    // no group (space cells, an unsyllabifiable token's cells, and any out-of-range index). Mirrors
+    // TypingLine.SyllableIndexOf: membership is read through this and NEVER by cell range, because
+    // an ungrouped cell can sit positionally inside a group's [startCell, endCellExclusive).
+    function syllableIndexOf(line, cellIndex) {
+        const map = line.cellSyllable;
+        return (map && cellIndex >= 0 && cellIndex < map.length) ? map[cellIndex] : -1;
+    }
+
     // Target time of typeable char j (0-based, of k in the word) under piecewise-linear syllable
     // timing (mirrors TypingLine.syllableCharTarget). The word spans [unitStart, unitEnd]; each
     // entry of boundaries (absolute ms, strictly inside, ascending) splits it into one more
@@ -431,6 +959,12 @@
 
         const cells = [];
 
+        // The projection each cell came through, or null under Literate where a cell IS its
+        // authored char (mirrors TypingLine.FromLyricLine's defaultSources). buildSyllables maps
+        // token split indices onto cells through exactly this, so it is returned rather than
+        // recomputed: one projection, one answer.
+        let sources = null;
+
         if (literate) {
             // One cell per authored char, all of them typed. A mark is a first-class typeable cell.
             for (let i = 0; i < n; i++) {
@@ -441,6 +975,7 @@
             // authored char it came from, so a hyphen-turned-space lands on the interpolated slot
             // the hyphen held between the two letters it separated.
             const projected = projectDefault(text);
+            sources = projected.sources;
             for (let i = 0; i < projected.text.length; i++) {
                 const src = projected.sources[i];
                 const ch = projected.text[i];
@@ -448,7 +983,7 @@
             }
         }
 
-        return cells;
+        return { cells: cells, sources: sources };
     }
 
     // literate mirrors the desktop client's Literate mod: the cells become the authored line
@@ -540,7 +1075,12 @@
                 ? buildExplicitUnits(tokens, line.words, start, endTime)
                 : interpolateUnits(line.text, start, singEndTime);
 
-            const cells = buildCells(line.text, units, line.estimated, granularity, literate);
+            const flattened = buildCells(line.text, units, line.estimated, granularity, literate);
+            const cells = flattened.cells;
+
+            // The line's syllable GROUPS, built ALWAYS (cheap and pure) because they are what a
+            // keypress on a grouped cell is judged against (see TypingEngine.judgedDeltaFor).
+            const grouped = buildSyllables(line.text, units, start, singEndTime, cells, flattened.sources);
 
             const firstTarget = cells.length ? cells[0].target : start;
             const activationTime = Math.max(start, firstTarget - CUE_LEAD_MS);
@@ -561,7 +1101,13 @@
                 activationTime: activationTime,
                 sealGraceMs: grace,
                 estimated: line.estimated,
-                cells: cells
+                cells: cells,
+                // TypingLine.Syllables: ordered, non-overlapping cell ranges with the time span each
+                // syllable is sung over. Coverage is PARTIAL and every consumer must tolerate a gap,
+                // so membership is read through syllableIndexOf and never by range.
+                syllables: grouped.syllables,
+                // TypingLine.cellSyllable: per display cell, the index into syllables, or -1.
+                cellSyllable: grouped.cellSyllable
             });
         }
 
@@ -1340,6 +1886,38 @@
             }
         }
 
+        // The delta a press on cell cellIndex is judged, stored and announced on (mirrors
+        // TypingEngine.judgedDeltaFor). A cell inside a SYLLABLE GROUP is judged against the
+        // group's sung SPAN: 0 anywhere inside [startTime, endTime] (edge-inclusive), the signed
+        // distance to the nearer edge outside it (negative early, positive late), so the same
+        // asymmetric classify ladder grades distance from the syllable's edge.
+        //
+        // A cell in NO group keeps the classic point delta (time minus the cell's own target), and
+        // that fallback is what gives a stylised word its per-character judgement: space cells,
+        // lines with no groups, and every cell of an unsyllabifiable token land in the same arm.
+        //
+        // No era arm here, unlike the C#. The desktop engine defaults to CLASSIC and turns the
+        // span rule on for live play, because it must also RE-DERIVE stored replays under the rule
+        // their fingers were graded on (the replay's CONFIG frame, flags bit 2). The browser only
+        // ever plays live: it has no mods payload, no replay input, it writes no replay frames (a
+        // /play submission carries the aggregate account alone, and PUT /api/v2/scores/{id}/replay
+        // is the desktop client's own upload path), and nothing re-scores a stored row through this
+        // file. So the live rule is the only rule this engine can be in, and it is unconditional.
+        judgedDeltaFor(line, cellIndex, time) {
+            const syllable = syllableIndexOf(line, cellIndex);
+
+            if (syllable >= 0) {
+                const group = line.syllables[syllable];
+
+                if (time < group.startTime) return time - group.startTime;
+                if (time > group.endTime) return time - group.endTime;
+
+                return 0;
+            }
+
+            return time - line.cells[cellIndex].target;
+        }
+
         processKey(c, time) {
             if (this.finished || this.failed) return false;
             if (this.activeLineIndex < 0) return false; // dead zone / pre-roll: harmless
@@ -1372,7 +1950,7 @@
                 cell = line.cells[this.caretIndex]; // the word gap, judged as an ordinary space below
             }
 
-            let delta = time - cell.target;
+            let delta = this.judgedDeltaFor(line, this.caretIndex, time);
             // FREESTYLE cell: every char EXCEPT SPACE matches, in any case, under every mod (so the
             // Literate mod's exact-case rule is bypassed for it). The press is then judged exactly
             // like a correct char: same windows, points, combo, accuracy and completion, with the
@@ -1780,6 +2358,9 @@
         isTypeable, isFreestyle, isCell, isPunctuation, normalize,
         defaultChar, projectDefault, toDefaultStream,
         parseLyricOsu, buildBeatmap, syllableCharTarget,
+        // The syllabifier and the group derivation, exported so the fidelity harnesses can hold
+        // them against the game's own Syllabifier / TypingLine.Syllables word for word.
+        isSyllabifiable, countSyllables, splitPoints, buildSyllables, syllableIndexOf,
         TypingEngine, computeScore, rankFromCompletion,
         windowsFor, classify, toHitResult,
         freestyleTick, freestyleGlyph,

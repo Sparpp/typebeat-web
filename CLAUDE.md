@@ -111,7 +111,13 @@ WireCompat is where that is provable, because it is the only project that compil
 
 - **`typebeat-core.js` is a hand-written JS reimplementation of the C# engine** and must stay
   byte-compatible, or browser `/play` scores diverge from desktop on the same leaderboards. Any
-  engine edit needs a matching JS edit. It does **not** compute pp.
+  engine edit needs a matching JS edit. It does **not** compute pp. Since backlog 179 it also ports
+  `Gameplay/Syllabifier.cs` and `TypingLine.buildSyllables`, because a press on a grouped cell is
+  judged against its syllable's sung SPAN: a split one character off moves a real judgement. The
+  browser has no era axis (it only plays live, writes no replay frames, and `/play/submit` carries
+  the aggregate account alone), so it judges on spans unconditionally, which is why
+  `EngineFuzzLiveParityTest` has to set **flags bit 2** in the CONFIG frames it feeds the C# arm:
+  `TypeBeatReplayScorer` follows the frame and defaults to the classic point rule.
 - **`docs/pp.md` is the canonical pp spec**: every constant in `PerformancePoints.cs` is pinned there
   and must not drift from it. `PerformancePoints.VERSION` is shared with the game copy, stamps
   `scores.pp_version`, and drives `Packages/PpBackfill.cs`'s reprice-at-boot sweep, so bumping it is

@@ -253,8 +253,9 @@ public class WebplayDisplayTest
         {
             Assert.That(Num(loose, "sync"), Is.EqualTo(Num(tight, "sync")).Within(1e-12));
 
-            // Four lyric chars 200 ms late at tier Word (Meh-late 1200), so q = 5/6 each, over the
-            // four TIMED cells. Counted in at its zeroed delta the space would lift this to 86.67.
+            // Four lyric chars 200 ms past their syllable's span at tier Word (Meh-late 1200), so
+            // q = 5/6 each, over the four TIMED cells. Counted in at its zeroed delta the space
+            // would lift this to 86.67.
             Assert.That(Num(loose, "sync"), Is.EqualTo(500.0 / 6).Within(1e-12));
 
             // ...and the space is still a character the player owes, so completion is untouched.
@@ -331,18 +332,22 @@ public class WebplayDisplayTest
 
             // 'b' at +600ms against a 1200ms Ok-late window: quality 0.5, so half of the ramp
             // above the 50% floor, i.e. 75%. This is the assertion that makes the tint continuous
-            // rather than the two-bucket approximation /play shipped before.
+            // rather than the two-bucket approximation /play shipped before. Since backlog 179 the
+            // +600 is measured from the late edge of the SYLLABLE "ab" is sung over, not from 'b''s
+            // own target, because that is the delta the engine judges and stores.
             Assert.That(Cls(paint, 1), Is.EqualTo("tb-c tb-c-hit"));
             Assert.That(Fill(paint, 1), Is.EqualTo("75.00%"));
 
-            // Cell 2 is the word GAP, pressed at the same +100ms as 'c' beside it. Since backlog 148
-            // a space is judged on a zeroed delta, so it stores quality 1 and paints at the full hit
-            // colour rather than at 'c''s 95.83%. Invisible in practice (a space renders as a gap),
-            // but the desktop's LyricLineDisplay reads back the same zeroed delta, so the mirror has
-            // to agree with it here too.
+            // Cell 2 is the word GAP, pressed at the same instant as 'c' beside it, which is +100
+            // past the span of the syllable 'c' belongs to. Since backlog 148 a space is judged on a
+            // zeroed delta, so it stores quality 1 and paints at the full hit colour rather than at
+            // 'c''s 95.83%. Invisible in practice (a space renders as a gap), but the desktop's
+            // LyricLineDisplay reads back the same zeroed delta, so the mirror has to agree here too.
+            // A space is also in NO syllable group, so the span rule leaves it on this arm.
             Assert.That(Fill(paint, 2), Is.EqualTo("100%"));
 
-            // +100ms on a LYRIC character: high quality, but distinctly not the full colour.
+            // +100ms past a LYRIC character's syllable span: high quality, but distinctly not the
+            // full colour, which is what separates it from the space beside it.
             Assert.That(Fill(paint, 3), Is.EqualTo("95.83%"));
         });
     }
@@ -366,7 +371,7 @@ public class WebplayDisplayTest
 
         Assert.Multiple(() =>
         {
-            // 'd' at +1300ms, past the 1200ms Ok edge: correct, but off-time.
+            // 'd' at +1300ms past its syllable's span, beyond the 1200ms Ok edge: correct, but off-time.
             Assert.That(Cls(mixed, 4), Is.EqualTo("tb-c tb-c-off"));
             Assert.That(Fill(mixed, 4), Is.Null);
 

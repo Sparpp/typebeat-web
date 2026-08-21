@@ -81,15 +81,20 @@ function playOneKeyThenSeal() {
     return engine;
 }
 
-// A late press, to prove sync is a real timing measure and not just a hit count. 'b' targets
-// 1500 with tier Word (Ok-late window 2000 * 0.6 = 1200), so +600ms is exactly half quality.
+// A late press, to prove sync is a real timing measure and not just a hit count.
+//
+// Every press time here is measured from the SYLLABLE SPAN the cell belongs to, not from the cell's
+// own target (backlog 179): 'a' and 'b' are the two characters of the word "ab", which is sung over
+// [1000, 2000], so a press anywhere in that window is delta 0 and a press at 2600 is +600 past the
+// span's late edge. Tier Word puts the Meh-late window at 2000 * 0.6 = 1200, so that is exactly
+// half quality, which is the number this scenario exists to produce.
 function playOneLatePress() {
     const map = build(abcdOsu);
     const engine = new TB.TypingEngine(map);
     engine.update(1000);
-    engine.processKey('a', 1000);   // on target, q = 1
-    engine.update(2100);
-    engine.processKey('b', 2100);   // delta +600, q = 0.5
+    engine.processKey('a', 1000);   // inside the "ab" span, q = 1
+    engine.update(2600);
+    engine.processKey('b', 2600);   // +600 past the span's end, q = 0.5
     return engine;
 }
 
@@ -98,15 +103,19 @@ function playOneLatePress() {
 // the Meh-late window is 2000 * 0.6 = 1200 and q = 1 - 200/1200 = 5/6 apiece); only the space moves
 // between the two runs, and the two syncs must come out identical. Counted IN at its zeroed delta
 // the loose run would read 100 * (4*5/6 + 1) / 5, i.e. a free lift toward the grade thresholds.
+//
+// "200 ms late" is 200 ms past the SYLLABLE SPAN each character belongs to (backlog 179), which is
+// why both letters of a word share a press time: "ab" is sung over [1000, 2000] and "cd" over
+// [2000, 3000], so 2200 is +200 for BOTH of a and b, and 3200 is +200 for both of c and d.
 function playWithSpaceAt(spaceTime) {
     const map = build(abcdOsu);
     const engine = new TB.TypingEngine(map);
     engine.update(1000);
-    engine.processKey('a', 1200);
-    engine.processKey('b', 1700);
+    engine.processKey('a', 2200);
+    engine.processKey('b', 2200);
     engine.processKey(' ', spaceTime);
-    engine.processKey('c', 2200);
-    engine.processKey('d', 2700);
+    engine.processKey('c', 3200);
+    engine.processKey('d', 3200);
     return engine;
 }
 
@@ -118,13 +127,13 @@ function playMixedTiming() {
     const map = build(abcdOsu);
     const engine = new TB.TypingEngine(map);
     engine.update(1000);
-    engine.processKey('a', 1000);   // target 1000, delta 0     -> q 1
-    engine.update(2100);
-    engine.processKey('b', 2100);   // target 1500, delta +600  -> q 0.5 (Ok-late window 1200)
-    engine.processKey(' ', 2100);   // target 2000, delta +100
-    engine.processKey('c', 2100);   // target 2000, delta +100
+    engine.processKey('a', 1000);   // inside the "ab" span [1000, 2000], delta 0     -> q 1
+    engine.update(2600);
+    engine.processKey('b', 2600);   // +600 past that span's end, delta +600  -> q 0.5 (Ok-late window 1200)
+    engine.processKey(' ', 3100);   // the word gap: untimed, judged on a zeroed delta whenever it lands
+    engine.processKey('c', 3100);   // +100 past the "cd" span [2000, 3000], delta +100
     engine.update(3800);
-    engine.processKey('d', 3800);   // target 2500, delta +1300 -> past the Ok edge, Lagging
+    engine.processKey('d', 4300);   // +1300 past that span's end -> past the Ok edge, Lagging
     return engine;
 }
 
