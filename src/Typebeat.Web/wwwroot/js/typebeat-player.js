@@ -295,7 +295,10 @@
             cls += (jt === 'Great' || jt === 'Ok' || jt === 'Meh') ? ' tb-c-hit' : ' tb-c-off';
         } else if (cell.state === 'wrong') {
             // Typed through wrong (the default model). The desktop shows the EXPECTED glyph in
-            // error red, not the char that was pressed, so only the colour changes here.
+            // error red on a LYRIC cell, not the char that was pressed, so only the colour changes
+            // there; on a WORD GAP it shows the typed char instead, because a space painted red is
+            // nothing at all (see cellGlyph, mirroring LyricLineDisplay.CellGlyph). Either way the
+            // class is this one: the colour decision does not depend on which cell it is.
             cls += ' tb-c-wrong';
         } else if (cell.state === 'missed') {
             cls += ' tb-c-miss';
@@ -310,6 +313,31 @@
         if (isCaret) cls += ' tb-c-at';
         if (popping) cls += ' tb-c-pop';
         return cls;
+    }
+
+    /// The GLYPH a non-freestyle cell shows, the companion of cellClass() and pure for the same
+    /// reason (LyricLineDisplay.CellGlyph). Almost always the cell's own expected character: a
+    /// lyric cell shows its lyric character in every state, and a WRONG one shows that character
+    /// in the error red rather than the char the player pressed, so a mistyped line still reads as
+    /// the line it was meant to be.
+    ///
+    /// The one exception is a WRONG WORD GAP (backlog 181, the cell state that could not exist
+    /// before it): there the expected character is a space, and a space painted red is nothing at
+    /// all, so the cell shows the TYPED character instead. That is the whole of the difference, and
+    /// it is forced rather than chosen: the state has to be visible, and the gap has no glyph of
+    /// its own to make visible. A gap in any other state, the typo once backspaced included, is a
+    /// space again.
+    ///
+    /// Layout does not move with it, which is the desktop's rule reached by a different road: there
+    /// the advances were measured once at load, here the lyric stack is set in JetBrains Mono (see
+    /// --font-display), so the letter occupies exactly the advance the nbsp did and no cell after it
+    /// moves. Re-measuring is not even reached: measureRow() runs on a line change and a resize,
+    /// never on a keypress, so a reflow here would silently unregister the caret, the sweep and the
+    /// cue bars from the glyphs rather than move them with it.
+    function cellGlyph(cell) {
+        return cell.expected === ' ' && cell.state === 'wrong' && cell.typedChar !== null
+            ? cell.typedChar
+            : cell.expected;
     }
 
     // Which line the cue-in bars belong to (mirrors LyricStage.updateApproachCue). A line
@@ -509,7 +537,7 @@
         }
 
         function cellText(cell, shimmerTick, i) {
-            let ch = cell.expected;
+            let ch = cellGlyph(cell);
             if (cell.freestyle) ch = cell.typedChar !== null ? cell.typedChar : Core.freestyleGlyph(shimmerTick, i);
             // A space (a word gap's expected char, or a space typed into a freestyle slot) must
             // render as nbsp or the browser collapses it away.
@@ -1026,6 +1054,7 @@
         syncTintFill,
         cellFill,
         cellClass,
+        cellGlyph,
         liveStats,
         cueTargetLine,
         outQuint,

@@ -78,9 +78,10 @@ const WRONG_KEY = 'z';
  *                   me fix it" run.
  *   'wrongErase'    as 'wrong', then Backspace and nothing else. Only valid on the FINAL cell,
  *                   because it leaves the caret on the cell and everything after would land wrong.
- *   'reject'        press a key the default model still refuses (WRONG_KEY on a word gap, or a
- *                   space on a letter), which is rejected with the caret held, then the expected
- *                   char, which therefore still lands on this cell.
+ *   'reject'        press a key the default model still refuses (a SPACE on a letter cell, the
+ *                   only such key left since backlog 181 opened the word gap to wrong letters),
+ *                   which is rejected with the caret held, then the expected char, which therefore
+ *                   still lands on this cell.
  *   'skip'          press nothing, so the cell seals as a Miss. Only valid on trailing cells, for
  *                   the same caret-alignment reason as 'wrongErase'.
  *
@@ -110,6 +111,8 @@ function play(script, probeAt, osu) {
             }
 
             if (action === 'wrong' || action === 'wrongFix' || action === 'wrongErase' || action === 'reject') {
+                // A rejection is only reachable on a LETTER cell now (press a space at it): the
+                // word gap takes WRONG_KEY like any other cell since backlog 181.
                 const key = (action === 'reject' && cell.expected !== ' ') ? ' ' : WRONG_KEY;
                 engine.processKey(key, cell.target);
 
@@ -193,11 +196,21 @@ const out = {
     // recovers the cell, its completion and its rank. The mistype and the combo break it cost stay.
     midCellWrongThenFixed: play({ 5: 'wrongFix' }, 5),
 
-    // A WORD GAP still refuses a wrong key in every model, so this one is rejected: caret held, no
-    // cell written, and the mash-fail streak fed.
-    wrongKeyOnWordGap: play({ 3: 'reject' }, 3),
+    // A WORD GAP takes a wrong letter exactly as a lyric cell does (backlog 181): the gap holds the
+    // typo, the caret moves past it, and the seal resolves it as an unfixed typo. Before that it
+    // was the one wrong LETTER the browser rejected, which is why this case changed sides rather
+    // than being added beside the old one.
+    wordGapTypedWrong: play({ 3: 'wrong' }, 3),
 
-    // ...and so does a SPACE pressed on a letter cell, the other half of the same carve-out.
+    // ...and the fix cycle on the same cell, which is the whole reason to type a typo through
+    // rather than refuse it: backspace takes it back and the corrected SPACE earns the cell's real
+    // judgement plus the streak the typo broke.
+    wordGapWrongThenFixed: play({ 3: 'wrongFix' }, 3),
+
+    // The one wrong key the browser still rejects: a SPACE pressed on a letter cell. The space is
+    // the word-advance key, not a glyph a player means to leave in a lyric, so no cell ever takes
+    // one; it is therefore also the only keypress a browser player can make that still feeds the
+    // 13-in-a-row mash guard.
     spaceKeyOnLetter: play({ 0: 'reject' }, 0),
 
     // The two-line pair (backlog 122). Same typo on cell 5, left alone, but now with a line 1 for
@@ -208,9 +221,9 @@ const out = {
     twoLineClean: play({}, undefined, TWO_LINE_OSU),
     twoLineMidCellTypedWrong: play({ 5: 'wrong' }, 5, TWO_LINE_OSU),
 
-    // Backlog 126's forcing case: every LETTER cell typed wrong and left that way. The three word
-    // gaps are typed correctly, because a wrong key on a gap is still rejected and would hold the
-    // caret and derail every cell after it. So 12 of 15 cells end as uncorrected typos and the play
+    // Backlog 126's forcing case: every LETTER cell typed wrong and left that way, with the three
+    // word gaps typed correctly (they are the run's only typed cells, which is what makes the
+    // completion arithmetic below legible). So 12 of 15 cells end as uncorrected typos and the play
     // typed 3 of them: completion 0.2 and a D. Under backlog 124 the same run read completion 1 and
     // took an X, because every one of those cells resolved as a HIT and completion counted hits.
     everyLetterTypedWrong: play({

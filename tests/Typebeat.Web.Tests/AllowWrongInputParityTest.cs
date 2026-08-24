@@ -27,8 +27,11 @@ namespace Typebeat.Web.Tests;
 /// <para>The keypress itself costs a mistype and a combo break in BOTH models, and in neither does
 /// that break travel on a judgement result, so both sides mirror it by hand into the score processor
 /// (<c>TypeBeatPlayfield.onMistyped</c>). That is what stops <c>max_combo</c> counting on through the
-/// rest of the line after a break the engine has already taken. Space stays strict in both models on
-/// both sides, and the mash-fail streak stays on the rejection path only.</para>
+/// rest of the line after a break the engine has already taken. The space KEY stays strict in both
+/// models on both sides, and the mash-fail streak stays on the rejection path only. WHICH CELLS the
+/// type-through reaches moved once more in backlog 181: the lyric characters always, and the word
+/// gap too, which is live on the desktop for every mod stack and therefore unconditional here (the
+/// browser plays live and only live, so it cannot be on the far side of that era flag).</para>
 ///
 /// <para>As in <see cref="MistypeParityTest"/>, nothing is hardcoded twice: the Node harness runs
 /// real plays through the SHIPPED JS and the dictionaries it emits are fed to the server's own
@@ -401,8 +404,8 @@ public class AllowWrongInputParityTest
     /// <summary>
     /// Backlog 126 stated as the case that forced it, on the browser side of the seam: a run typed
     /// almost entirely WRONG. Twelve of the map's fifteen cells end holding a wrong character (the
-    /// three word gaps are typed correctly, since a wrong key on a gap is still rejected); the play
-    /// finished every cell and typed three of them.
+    /// three word gaps are typed correctly, which is what leaves the run three typed cells); the
+    /// play finished every cell and typed three of them.
     ///
     /// <para>Between backlog 124 and 126 this submitted completion 1 and an X, because every one of
     /// those cells resolved as a HIT and completion counted hits. It now reads 3/15 and a D on both
@@ -440,39 +443,108 @@ public class AllowWrongInputParityTest
     }
 
     /// <summary>
-    /// The carve-out that did not move: SPACE is the word-advance key, not a glyph, so neither
-    /// direction of it is ever typed through. Both halves still take the rejection path, in the
-    /// default model, on both sides, and they are therefore the only wrong keypresses a browser
-    /// player can make that still feed the 13-in-a-row mash guard.
+    /// The half of the carve-out that did not move: the SPACE KEY. It is the word-advance key and
+    /// not a glyph a player means to leave sitting in a lyric, so no cell ever takes a wrong one,
+    /// and a space pressed on a letter is still REJECTED with the caret held. It is therefore the
+    /// only wrong keypress a browser player can make that still feeds the 13-in-a-row mash guard,
+    /// now that the other one (a letter on the word gap) is typed through.
     /// </summary>
     [Test]
-    public void SpaceStaysStrictInBothDirections()
+    public void TheSpaceKeyStaysStrictOnALyricCell()
     {
         var root = Harness();
+        var run = root.GetProperty("spaceKeyOnLetter");
+        var probe = run.GetProperty("probe");
 
         Assert.Multiple(() =>
         {
-            foreach (string name in new[] { "wrongKeyOnWordGap", "spaceKeyOnLetter" })
+            Assert.That(probe.GetProperty("state").GetString(), Is.EqualTo("untyped"), "nothing was written");
+            Assert.That(probe.GetProperty("typedChar").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(probe.GetProperty("consecutiveWrongKeys").GetInt32(), Is.EqualTo(1),
+                "the rejection path is the one that feeds the mash guard");
+            Assert.That(probe.GetProperty("mistypes").GetInt32(), Is.EqualTo(1));
+
+            // Caret held means the SAME cell is still the target, so it is typed correctly straight
+            // afterwards and nothing is missed.
+            Assert.That(probe.GetProperty("caretIndex").GetInt32(), Is.Zero);
+
+            var stats = Dict(run, "statistics");
+            Assert.That(stats.GetValueOrDefault("great"), Is.EqualTo(15));
+            Assert.That(stats, Does.Not.ContainKey("miss"));
+            Assert.That(stats[mistype_key], Is.EqualTo(1));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 181: a wrong LETTER pressed on the word gap is typed THROUGH, exactly as one pressed
+    /// on a lyric character is. It was the one wrong letter the browser rejected, so this is the
+    /// same fixture cell asserting the opposite of what it used to.
+    ///
+    /// <para>Unconditional here, and that is the port rather than an omission: the C# gates it on
+    /// <c>TypingEngine.WrongInputOnWordGaps</c>, an ERA flag that live play sets for every mod stack
+    /// (Hard Rock included) and a stored replay carries in its own CONFIG frame, and the browser
+    /// only ever plays live. The flag's other arm is reachable from the game repo alone, which is
+    /// where it is pinned (the game's SpaceTypoTest, and the sweep's era guard in
+    /// Typebeat.WireCompat.EngineFuzzLiveParityTest).</para>
+    ///
+    /// <para>Every particular of the type-through is the lyric cell's: the gap holds the typo, the
+    /// caret moves past it, the streak is gone, the mistype is counted, the cell resolves NOTHING at
+    /// the keypress, and the mash-fail streak (a rejection-path guard) is untouched. The seal then
+    /// resolves it as an unfixed typo, so it costs completion like a miss without being one, and the
+    /// fix cycle earns the cell back along with the streak the typo broke.</para>
+    /// </summary>
+    [Test]
+    public void AWrongLetterOnTheWordGapIsTypedThrough()
+    {
+        var root = Harness();
+        var typed = root.GetProperty("wordGapTypedWrong");
+        var fixedRun = root.GetProperty("wordGapWrongThenFixed");
+        var probe = typed.GetProperty("probe");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(probe.GetProperty("state").GetString(), Is.EqualTo("wrong"), "the gap took the character");
+            Assert.That(probe.GetProperty("typedChar").GetString(), Is.EqualTo("z"));
+            Assert.That(probe.GetProperty("caretIndex").GetInt32(), Is.EqualTo(4), "the caret advanced past the gap");
+            Assert.That(probe.GetProperty("consecutiveWrongKeys").GetInt32(), Is.Zero,
+                "type-through never feeds the mash-fail streak");
+            Assert.That(probe.GetProperty("mistypes").GetInt32(), Is.EqualTo(1));
+
+            // The backlog-109 pair, on a cell that could not reach it before: nothing was handed to
+            // the processor, yet the submitted combo has already broken.
+            Assert.That(probe.GetProperty("judged").GetBoolean(), Is.False);
+            Assert.That(probe.GetProperty("processorCombo").GetInt32(), Is.Zero);
+            Assert.That(probe.GetProperty("processorJudged").GetInt32(), Is.EqualTo(3), "only the three cells before it");
+
+            // Left alone, it seals as an unfixed typo: a HIT, so no miss is counted, and 14 of 15
+            // cells are typed, which costs the rank exactly as a miss would.
+            var stats = Dict(typed, "statistics");
+            Assert.That(stats, Is.EquivalentTo(new Dictionary<string, int>
             {
-                var probe = root.GetProperty(name).GetProperty("probe");
+                ["great"] = 14, ["good"] = 1, [mistype_key] = 1
+            }));
+            Assert.That(typed.GetProperty("completion").GetDouble(), Is.EqualTo(14 / 15.0).Within(1e-12));
+            Assert.That(typed.GetProperty("rank").GetString(), Is.EqualTo("A"));
 
-                Assert.That(probe.GetProperty("state").GetString(), Is.EqualTo("untyped"), $"{name}: nothing was written");
-                Assert.That(probe.GetProperty("typedChar").ValueKind, Is.EqualTo(JsonValueKind.Null), name);
-                Assert.That(probe.GetProperty("consecutiveWrongKeys").GetInt32(), Is.EqualTo(1),
-                    $"{name}: the rejection path is the one that feeds the mash guard");
-                Assert.That(probe.GetProperty("mistypes").GetInt32(), Is.EqualTo(1), name);
+            // ...and the server recomputes the same thing off the submitted dictionaries.
+            var recomputed = Recompute(typed);
+            Assert.That(recomputed.Completion, Is.EqualTo(14 / 15.0).Within(1e-12));
+            Assert.That(recomputed.Rank, Is.EqualTo("A"));
+            Assert.That(recomputed.StatisticsValid, Is.True);
 
-                // The cell was held, so it is still typed correctly afterwards: no miss anywhere.
-                var stats = Dict(root.GetProperty(name), "statistics");
-                Assert.That(stats.GetValueOrDefault("great"), Is.EqualTo(15), name);
-                Assert.That(stats, Does.Not.ContainKey("miss"), name);
-                Assert.That(stats[mistype_key], Is.EqualTo(1), name);
-            }
-
-            // Caret held means the SAME cell is still the target: cell 3 for the word gap, cell 0
-            // for the letter.
-            Assert.That(root.GetProperty("wrongKeyOnWordGap").GetProperty("probe").GetProperty("caretIndex").GetInt32(), Is.EqualTo(3));
-            Assert.That(root.GetProperty("spaceKeyOnLetter").GetProperty("probe").GetProperty("caretIndex").GetInt32(), Is.EqualTo(0));
+            // Fixed instead: backspace clears the WRONG space and the corrected space earns the
+            // cell's real Great plus the streak the typo broke, so the combo multiset is the clean
+            // run's 1..15 and the whole map is typed. Only the mistype survives, which is what pp
+            // prices the mistake with.
+            Assert.That(Dict(fixedRun, "statistics"), Is.EquivalentTo(new Dictionary<string, int>
+            {
+                ["great"] = 15, [mistype_key] = 1
+            }));
+            Assert.That(fixedRun.GetProperty("maxCombo").GetInt32(), Is.EqualTo(15), "the streak came back at the fix");
+            Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(1));
+            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"));
+            Assert.That(fixedRun.GetProperty("totalScore").GetInt64(),
+                Is.EqualTo(root.GetProperty("clean").GetProperty("totalScore").GetInt64()));
         });
     }
 
@@ -509,9 +581,18 @@ public class AllowWrongInputParityTest
     /// and the total is 1000000. Under the pre-140 rule the same keystrokes read 881162 off a
     /// portion of 300·(Σ(1..5)√i + Σ(1..10)√i) = 9255.183160, i.e. comboProgress 0.762323276, which
     /// is what a restore applied AFTER the judgement would still produce.</item>
-    /// <item><c>wrongKeyOnWordGap</c>: 15 greats, one rejected key breaking combo before cell 3, so
-    /// combo runs 1..3 then 1..12. Portion 10018.580688, comboProgress 0.825202173, accuracy 1,
-    /// total = round(500000·0.825202173 + 500000) = 912601.</item>
+    /// <item><c>wordGapTypedWrong</c>: the same shape as <c>midCellTypedWrong</c>, on the WORD GAP
+    /// (cell 3), which used to reject the key instead (backlog 181). Greats at combo 1..3, the typo
+    /// (a hand-written break, no result), greats at combo 1..11, and then the seal's typo result,
+    /// combo-neutral at combo 11 and so contributing 300·√11. Portion
+    /// 300·(Σ(1..3)√i + Σ(1..11)√i + √11) = 9974.337641, comboProgress 0.821557998, accuracy
+    /// (14·300 + 50)/4500 = 0.944444, total = 763667. Under the pre-181 rejection the identical
+    /// keystrokes read max_combo 12 and 912601 off a portion of 300·(Σ(1..3)√i + Σ(1..12)√i) =
+    /// 10018.580688 with a flat accuracy of 1, because the caret was held and the gap was then typed
+    /// correctly.</item>
+    /// <item><c>wordGapWrongThenFixed</c>: the fix cycle on that same gap. The restore puts the
+    /// streak of 3 back BEFORE the corrected space is judged, so the combo multiset is the clean
+    /// run's 1..15 and the total is 1000000, exactly as <c>midCellWrongThenFixed</c> is.</item>
     /// <item><c>spaceKeyOnLetter</c>: the break lands on an already-zero combo, so the run is still
     /// 1..15 and the score is still exactly 1000000. A wrong keypress on the opening cell costs
     /// combo nothing; it still costs pp, through the mistype count.</item>
@@ -530,7 +611,8 @@ public class AllowWrongInputParityTest
             ("lastCellWrongThenErased", 14, 776_129, 1),
             ("midCellTypedWrong", 9, 733_802, 1),
             ("midCellWrongThenFixed", 15, 1_000_000, 1),
-            ("wrongKeyOnWordGap", 12, 912_601, 1),
+            ("wordGapTypedWrong", 11, 763_667, 1),
+            ("wordGapWrongThenFixed", 15, 1_000_000, 1),
             ("spaceKeyOnLetter", 15, 1_000_000, 1),
         ];
 

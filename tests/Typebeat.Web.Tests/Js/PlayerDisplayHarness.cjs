@@ -165,11 +165,41 @@ function playFreestyle() {
     return engine;
 }
 
-// Class + tint exactly as paintRow would write them, for every cell of a line.
+// A wrong LETTER on the word gap (backlog 181): it lands IN the gap, which is the one cell whose
+// glyph is not fixed for the whole play. Typed and then left there, so the seal below resolves it
+// as an unfixed typo and the run is what a player would actually see on a finished line.
+function playGapTypo() {
+    const map = build(abcdOsu);
+    const engine = new TB.TypingEngine(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    engine.processKey('b', 1500);
+    engine.processKey('x', 2000);   // the gap takes the typo, the caret moves past it
+    engine.processKey('c', 2000);
+    engine.processKey('d', 2500);
+    engine.update(5000);            // seal: the gap stays WRONG, showing the character that went in
+    return engine;
+}
+
+// The same typo taken back. Backspace clears the cell, so the gap is a space again: the typed
+// glyph belongs to the WRONG state and to nothing else.
+function playGapTypoErased() {
+    const map = build(abcdOsu);
+    const engine = new TB.TypingEngine(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    engine.processKey('b', 1500);
+    engine.processKey('x', 2000);
+    engine.processBackspace();
+    return engine;
+}
+
+// Class, tint and GLYPH exactly as paintRow would write them, for every cell of a line.
 function paint(engine, lineIndex) {
     return engine.lines[lineIndex].cells.map(c => ({
         cls: D.cellClass(c, false, false),
-        fill: D.cellFill(c)
+        fill: D.cellFill(c),
+        glyph: D.cellGlyph(c)
     }));
 }
 
@@ -252,6 +282,8 @@ const out = {
     sealedPaint: paint(playOneKeyThenSeal(), 0),
     backspacedPaint: paint(playThenBackspace(), 0),
     freestylePaint: paint(playFreestyle(), 0),
+    gapTypoPaint: paint(playGapTypo(), 0),
+    gapTypoErasedPaint: paint(playGapTypoErased(), 0),
 
     // Live HUD readouts off real engine runs.
     perfectStats: D.liveStats(perfect),

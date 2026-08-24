@@ -235,8 +235,10 @@ function generate(name, seed, spaceSkipsWord) {
         }
 
         const roll = rnd();
-        // A key that would be REJECTED (a space on a lyric cell without the skip setting, or a
-        // letter on a word gap) is off the table near the fail streak; see the header.
+        // The one key that is still REJECTED (a space on a lyric cell without the skip setting) is
+        // off the table near the fail streak; see the header. Since backlog 181 a letter on a word
+        // gap is no longer in that company: it is typed through like any other wrong letter, and
+        // the type-through path never feeds the streak at all.
         const mayBeRejected = engine.consecutiveWrongKeys < 8;
 
         if (roll < 0.10) {
@@ -261,8 +263,11 @@ function generate(name, seed, spaceSkipsWord) {
             // A space. Inside a word it skips it (setting on) or is rejected (setting off); on a
             // word gap it is simply the right key.
             ch = ' ';
-        } else if (roll < 0.44 && cell.expected === ' ' && mayBeRejected) {
-            // A letter on a word gap: rejected in every model, on both sides.
+        } else if (roll < 0.44 && cell.expected === ' ') {
+            // A wrong letter on a WORD GAP. Rejected in every model before backlog 181, typed
+            // through into the gap since, which is the shape gapTypos below counts: the browser is
+            // live-only and so is always on the type-through arm, and the C# arm of the parity test
+            // has to set CONFIG flags bit 3 to be on it too.
             ch = LETTERS[Math.floor(rnd() * LETTERS.length)];
         } else {
             ch = cell.expected;
@@ -329,6 +334,22 @@ function play(name, keys, spaceSkipsWord) {
         return delta;
     };
 
+    // Backlog 181 coverage: presses the WORD-GAP arm actually decided. A gap cell can only ever be
+    // left WRONG by the type-through this task ported, so counting the gaps that BECOME wrong
+    // counts exactly the presses whose outcome differs from the strict rule the browser used to
+    // have (which would have rejected them, moving nothing). Measured on the cells rather than on
+    // the script, so a stream that happens to press a letter at a gap the caret is not on does not
+    // count, and a run where the port silently stopped reaching gaps reads zero.
+    let gapTypos = 0;
+    const processKey = engine.processKey.bind(engine);
+
+    engine.processKey = function (c, time) {
+        const before = wrongGapCount(engine);
+        const handled = processKey(c, time);
+        if (wrongGapCount(engine) > before) gapTypos++;
+        return handled;
+    };
+
     const end = endTimeFor(beatmap, keys);
     let next = 0;
 
@@ -366,8 +387,20 @@ function play(name, keys, spaceSkipsWord) {
         mistypes: engine.mistypes,
         restores: restores,
         passiveBreaks: passiveBreaks,
-        spanJudgements: spanJudgements
+        spanJudgements: spanJudgements,
+        gapTypos: gapTypos
     };
+}
+
+/** Word-gap cells currently holding a typo, over the whole map (see gapTypos in play()). */
+function wrongGapCount(engine) {
+    let n = 0;
+    for (const line of engine.lines) {
+        for (const cell of line.cells) {
+            if (cell.expected === ' ' && cell.state === 'wrong') n++;
+        }
+    }
+    return n;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -404,6 +437,11 @@ function cellsOf(name) {
 //
 // The times are the cells' own targets, so every press lands in a scoring tier rather than on a
 // window edge, and they are monotonic non-decreasing, which is what the replay feed requires.
+
+// The replay feed's BACKSPACE sentinel (TypeBeatReplayFrame.BACKSPACE), spelled without a
+// string escape so the scripted keystrokes below read as data rather than as escapes.
+const BS = String.fromCharCode(8);
+
 const SCRIPTED = [
     {
         // The reported shape (ComboRestoreTest.TwoWrongKeysOnAdjacentCellsKeepTheStreakWhenBothAreFixed):
@@ -469,6 +507,48 @@ const SCRIPTED = [
         name: 'scripted/stylisedStaysOnPoints', fixture: 'stylised', spaceSkipsWord: false, skipPresses: 0,
         keys: [[1000, 'o'], [1900, 'h'], [1950, 'h'], [1990, 'h'], [2000, ' '],
                [2000, 'l'], [2700, 'i'], [2740, 't'], [3400, 't'], [3450, 'l'], [3490, 'e']]
+    },
+    {
+        // Backlog 181's fix cycle on the WORD GAP, which is the shape the generator can roll the
+        // first half of but never the whole of: a wrong letter into the gap, backspaced, and the
+        // space typed correctly, which resumes the streak the typo broke. "ab" is a run of 2, so
+        // the corrected space lands at combo 3 and the map comes out with the clean run's combo
+        // multiset (1..5) and its full 1000000.
+        name: 'scripted/gapTypoFixed', fixture: 'abCd', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'a'], [1500, 'b'], [2000, 'x'], [2000, BS], [2000, ' '], [2000, 'c'], [2500, 'd']]
+    },
+    {
+        // The same typo left alone through the seal: the gap resolves as an UNFIXED TYPO, a hit and
+        // not a miss, so four of the map's five cells are typed and the run takes the completion
+        // cost a miss would have cost it (the game's SpaceTypoTest pins the same 4/5).
+        name: 'scripted/gapTypoUnfixed', fixture: 'abCd', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'a'], [1500, 'b'], [2000, 'x'], [2000, 'c'], [2500, 'd']]
+    },
+    {
+        // A gap typo on a map judged by SYLLABLE SPANS, with every lyric press deep inside its own
+        // span (the insideTheSpan case above, with the gap fumbled). The gap is in no group and is
+        // untimed, so its typo carries a ZEROED delta on both sides; the two rules meeting on one
+        // cell is what this case exists to hold, because the zeroing moved above the match to make
+        // it true.
+        name: 'scripted/gapTypoInSpans', fixture: 'syllableWords', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'c'], [1100, 'a'], [1200, 'k'], [1300, 'e'], [2400, 'z'],
+               [2500, 't'], [2600, 'o'], [3900, 'n'], [3910, 'i'], [3920, 'g'], [3930, 'h'], [3940, 't'],
+               [5000, 'l'], [5100, 'i'], [5200, 't'], [6400, 't'], [6410, 'l'], [6420, 'e'], [6500, ' '],
+               [6600, 'p'], [6700, 'e'], [6800, 'o'], [7900, 'p'], [7910, 'l'], [7920, 'e']]
+    },
+    {
+        // The gap typo meeting the WORD SKIP, i.e. the two redeemable breaks on one cell. A space
+        // inside "quick" abandons the rest of it and is typed on the gap that follows; a backspace
+        // takes that space back; the wrong letter then lands on the SAME gap and is typed through;
+        // and a second backspace pair walks out of it and back into the abandoned run, which is
+        // reclaimed and typed out. Every seam backlog 176 arbitrates is in here at once.
+        name: 'scripted/gapTypoAfterWordSkip', fixture: 'quickBrownFox', spaceSkipsWord: true, skipPresses: 1,
+        keys: [[1000, 't'], [1200, 'h'], [1400, 'e'], [1600, ' '], [1600, 'q'], [1840, 'u'],
+               [2080, ' '], [2200, BS], [2300, 'z'], [2350, BS], [2400, BS],
+               [2450, 'u'], [2500, 'i'], [2560, 'c'], [2600, 'k'], [2800, ' '], [2800, 'b'],
+               [3040, 'r'], [3280, 'o'], [3520, 'w'], [3760, 'n'],
+               [5000, 'f'], [5267, 'o'], [5533, 'x'], [5800, ' '], [5800, 'j'], [6040, 'u'],
+               [6280, 'm'], [6520, 'p'], [6760, 's']]
     },
     {
         // A SUBTIMED word: the mapper's boundary times are the span edges, so "tonight" is three

@@ -1526,10 +1526,11 @@
         }
 
         // The mash guard, and it survives the backlog-107 flip on both sides for the same reason:
-        // the streak only ever grows on the REJECTION path, and the two space cases (a space pressed
-        // on a lyric char, any key pressed on a word gap) take that path in every model. So a
-        // browser player mashing space still fails at 13 exactly as a desktop one does, while a
-        // player mashing LETTERS no longer fails at all unless they picked Gatekeeper.
+        // the streak only ever grows on the REJECTION path, and the space KEY on a lyric char takes
+        // that path in every model. So a browser player mashing space still fails at 13 exactly as a
+        // desktop one does, while a player mashing LETTERS no longer fails at all unless they picked
+        // Gatekeeper. It used to be two cases: a wrong letter on the WORD GAP was the other, and
+        // backlog 181 moved it onto the type-through path, which feeds no streak.
         get health() { return Math.max(0, 1 - this.consecutiveWrongKeys / WRONG_KEY_FAIL_STREAK); }
 
         // Wrong KEYPRESSES so far: the play's persisted mistype stat (TypingEngine.Mistypes).
@@ -1951,6 +1952,17 @@
             }
 
             let delta = this.judgedDeltaFor(line, this.caretIndex, time);
+
+            // SPACES ARE UNTIMED (backlog 148), decided here rather than after the match so that
+            // EVERY reading of this press agrees on what its cell was worth: the correct press
+            // below, and the wrong one typed through it since backlog 181, whose judgement carries
+            // exactly the delta a correct press on the same cell would have carried. The rule and
+            // its argument are on the untimed-space block further down; only the POSITION moved,
+            // and the move reaches nothing new: the predicate is false for every LYRIC cell, so the
+            // only press it can newly touch is the gap typo it was moved for.
+            const untimedSpace = cell.expected === ' ';
+            if (untimedSpace) delta = 0;
+
             // FREESTYLE cell: every char EXCEPT SPACE matches, in any case, under every mod (so the
             // Literate mod's exact-case rule is bypassed for it). The press is then judged exactly
             // like a correct char: same windows, points, combo, accuracy and completion, with the
@@ -1959,18 +1971,31 @@
             // means to leave sitting in a lyric, so it falls through to the ordinary non-match path
             // below and is judged exactly as a wrong key on any other cell would be. The strict
             // rejection is the only outcome available to it, because the allow-wrong-input path
-            // already refuses to type a space through (c !== ' ').
+            // refuses to type a space through into ANY cell (c !== ' ' guards it on the word gap
+            // too, which is the one cell backlog 181 opened to wrong letters).
             const matched = (cell.freestyle && c !== ' ') ||
                 (this.caseSensitive ? c === cell.expected : fold(c) === fold(cell.expected));
 
             if (!matched) {
                 // DEFAULT (allowWrongInput): a wrong LETTER is typed through, marked wrong,
-                // backspaceable, instead of rejected. The space key stays strict on BOTH sides (no
-                // wrong space, and no wrong char consuming a word boundary), and this path never
-                // feeds the mash-fail streak, so the browser has no 13-key fail at all, which is
-                // correct: that guard belongs to the rejection model (the Gatekeeper mod) and the
-                // browser can never be in it.
-                if (this.allowWrongInput && c !== ' ' && cell.expected !== ' ') {
+                // backspaceable, instead of rejected. The space KEY stays strict everywhere
+                // (c !== ' '): there is no cell a wrong space is typed into, because it is the
+                // word-advance key and not a glyph a player means to leave sitting in a lyric. This
+                // path never feeds the mash-fail streak, so the browser has no 13-key fail at all,
+                // which is correct: that guard belongs to the rejection model (the Gatekeeper mod)
+                // and the browser can never be in it.
+                //
+                // The WORD GAP takes a wrong letter exactly as a lyric cell does (backlog 181), and
+                // unconditionally, which is where this parts from the C# gate
+                // (`AllowWrongInput && c != ' ' && (WrongInputOnWordGaps || cell.Expected != ' ')`).
+                // That third clause is an ERA arm the browser cannot be on the far side of: it plays
+                // live and only live, writes no replay frames and re-derives no stored row, so the
+                // live value (true, for every mod stack, Hard Rock included, see
+                // DrawableTypeBeatRuleset.createEngine) is the only value it can hold, and the clause
+                // collapses. Same shape as the span rule above, and for the same reason. The C# arm
+                // of the fuzz parity test therefore has to SET that flag (CONFIG flags bit 3) or
+                // every wrong key its script lands on a gap would be rejected there and typed here.
+                if (this.allowWrongInput && c !== ' ') {
                     this.totalKeypresses++;
                     this.errorCount++;
 
@@ -2028,8 +2053,8 @@
                 }
 
                 // GATEKEEPER (strict). Wrong key REJECTED: costs a keypress + combo + streak; caret
-                // unmoved. Unreachable from the browser for a letter, reached for the two space
-                // cases the default path refuses above.
+                // unmoved. Unreachable from the browser for a letter, reached for the one case the
+                // default path still refuses above: the space KEY pressed on a lyric character.
                 this.totalKeypresses++;
                 this.errorCount++;
                 this.consecutiveWrongKeys++;
@@ -2058,14 +2083,15 @@
 
             this.consecutiveWrongKeys = 0;
 
-            // SPACES ARE UNTIMED (backlog 148), mirroring TypingEngine.ProcessKey exactly. Reaching
-            // here on a space CELL means a SPACE was typed on it: fold is only toLowerCase so
-            // nothing but ' ' folds onto ' ', a freestyle cell refuses space outright, and under
-            // mashing the press was already rewritten to the cell's expected char. The spacebar is
-            // deliberately outside the timing challenge (the word gap is where a typist's hands
-            // reset, not a note to hit), so the press is judged as though it landed dead on target:
-            // top tier whatever the clock said, and never one of the two zero-point tiers that
-            // break combo.
+            // SPACES ARE UNTIMED (backlog 148), mirroring TypingEngine.ProcessKey exactly; the
+            // zeroing itself is done ABOVE the match, where a typed-through gap typo can read the
+            // same value. Reaching HERE on a space CELL means a SPACE was typed on it: fold is only
+            // toLowerCase so nothing but ' ' folds onto ' ', a freestyle cell refuses space
+            // outright, and under mashing the press was already rewritten to the cell's expected
+            // char. The spacebar is deliberately outside the timing challenge (the word gap is
+            // where a typist's hands reset, not a note to hit), so the press is judged as though it
+            // landed dead on target: top tier whatever the clock said, and never one of the two
+            // zero-point tiers that break combo.
             //
             // A ZEROED DELTA rather than a forced judgement type, again as in the C#, so every
             // reader agrees with the judgement: classify(0) is 'Great', the inert retype
@@ -2078,7 +2104,10 @@
             // consumed by the word skip, which has already given the abandoned cells up and taken
             // its one break before the caret ever reached the gap. And an untimed space is not a
             // free one: a space cell nobody pressed still seals a miss like any other untyped
-            // character (sealLine).
+            // character (sealLine). Since backlog 181 the cell has a fourth way of being resolved,
+            // a wrong LETTER typed into it, and that one takes the zeroed delta too, for the reason
+            // the hoisted block above states: a typo is priced at what a correct press on the same
+            // cell would have been priced at.
             //
             // The C# half of backlog 148 has one more clause with nothing to mirror here: it keeps
             // the exempt space OUT of its SyncTimeline, the offset-analysis series a play's results
@@ -2086,9 +2115,9 @@
             // samples), so there is no omission to fix, only an asymmetry to expect. The other
             // consumer of the zeroed delta IS mirrored: typebeat-player.js reads judgedDelta back
             // for the cell tint and for its live sync percent, and that readout excludes space cells
-            // from both halves of its mean the way LiveSyncPercent does.
-            const untimedSpace = cell.expected === ' ';
-            if (untimedSpace) delta = 0;
+            // from both halves of its mean the way LiveSyncPercent does. A cell left WRONG is out
+            // of that mean too, on both sides and in every state: the readout filters on the CELL
+            // (typeable and not a space), never on what happened to it.
 
             // COMBO RESTORE (backlog 140, widened to the word skip by backlog 167), before anything
             // about this press is judged: if this is the cell a wrong keypress spoiled or a skip

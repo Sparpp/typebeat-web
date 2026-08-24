@@ -40,11 +40,13 @@ namespace Typebeat.WireCompat;
 ///
 /// <para>The C# side is fed under every LIVE rule, because the browser selects no era on any axis:
 /// it has no mods payload, no replay input, and nothing anywhere re-scores a stored row through
-/// that file. Since backlog 179 that includes SYLLABLE-SPAN judgement, which the game reads off
-/// each replay's own CONFIG frame and defaults OFF, so the generated frames here have to set bit 2
-/// or the C# arm would re-derive on point targets while the browser judges spans (see
-/// <see cref="Keystrokes"/>). The one place the two rules are asserted APART rather than together
-/// is <see cref="ClearingTheConfigFrameSyllableBitReDerivesTheClassicRule"/>.</para>
+/// that file. Since backlog 179 that includes SYLLABLE-SPAN judgement and since backlog 181 the
+/// WORD-GAP input model, both of which the game reads off each replay's own CONFIG frame and
+/// defaults OFF, so the generated frames here have to set bits 2 and 3 or the C# arm would re-derive
+/// on point targets while the browser judges spans, and reject the wrong keys the browser types into
+/// word gaps (see <see cref="Keystrokes"/>). The places those rules are asserted APART rather than
+/// together are <see cref="ClearingTheConfigFrameSyllableBitReDerivesTheClassicRule"/> and
+/// <see cref="ClearingTheConfigFrameWordGapBitRejectsTheTypoInstead"/>.</para>
 ///
 /// <para>A handful of the cases are SCRIPTED rather than generated, and they are played and
 /// compared identically. The generator reaches what it happens to roll, and backlog 176 found a
@@ -172,24 +174,27 @@ public class EngineFuzzLiveParityTest
     #region Driving the two sides
 
     /// <summary>
-    /// The generated stream as a replay, headed by the CONFIG frame the three judgement-relevant
+    /// The generated stream as a replay, headed by the CONFIG frame the four judgement-relevant
     /// settings travel in: bit 0 allow-wrong-input (on, the default model and all the browser has),
-    /// bit 1 space-skips-word (whichever half of the case matrix this run is) and bit 2
-    /// syllable-span judgement.
+    /// bit 1 space-skips-word (whichever half of the case matrix this run is), bit 2 syllable-span
+    /// judgement and bit 3 wrong-input-on-word-gaps.
     ///
-    /// <para>Bit 2 is ON here, and getting it wrong would quietly gut the whole sweep rather than
-    /// fail loudly in one place. <see cref="TypeBeatReplayScorer"/> follows the CONFIG frame for it
-    /// (<c>ReplayEngineFeed.Apply</c>), and the engine's DEFAULT is the classic point rule, because
-    /// a replay recorded before backlog 179 must re-derive under the rule its fingers were graded
-    /// on. The browser has no era axis at all: it only plays live, so it judges on spans
-    /// unconditionally. A config frame without bit 2 would therefore put the C# arm on point deltas
-    /// while the JS arm is on spans, and every case that ever pressed inside a span would part.</para>
+    /// <para>Bits 2 and 3 are ON here, and getting either wrong would quietly gut the whole sweep
+    /// rather than fail loudly in one place. <see cref="TypeBeatReplayScorer"/> follows the CONFIG
+    /// frame for both (<c>ReplayEngineFeed.Apply</c>), and the engine's DEFAULTS are the classic
+    /// point rule and the strict word gap, because a replay recorded before backlog 179 or 181 must
+    /// re-derive under the rules its fingers were graded on. The browser has no era axis at all: it
+    /// only plays live, so it judges on spans and types wrong letters into word gaps
+    /// unconditionally. A config frame without bit 2 would put the C# arm on point deltas while the
+    /// JS arm is on spans, and every case that ever pressed inside a span would part; one without
+    /// bit 3 would have the C# arm REJECT every wrong key the script lands on a gap, holding a caret
+    /// the browser moved, so every keystroke after it would land on a different cell.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true)
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -471,7 +476,7 @@ public class EngineFuzzLiveParityTest
         var cases = browser_runs.Value.GetProperty("cases");
 
         int withTypos = 0, withMisses = 0, withOk = 0, withMeh = 0, perfect = 0;
-        int skipPresses = 0, comboRestores = 0, backspaces = 0, passiveBreaks = 0, spanJudgements = 0;
+        int skipPresses = 0, comboRestores = 0, backspaces = 0, passiveBreaks = 0, spanJudgements = 0, gapTypos = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -487,6 +492,7 @@ public class EngineFuzzLiveParityTest
             comboRestores += browserCase.GetProperty("restores").GetInt32();
             passiveBreaks += browserCase.GetProperty("passiveBreaks").GetInt32();
             spanJudgements += browserCase.GetProperty("spanJudgements").GetInt32();
+            gapTypos += browserCase.GetProperty("gapTypos").GetInt32();
             backspaces += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "");
         }
 
@@ -515,6 +521,14 @@ public class EngineFuzzLiveParityTest
             // That is the failure mode this counter exists for: it cannot be caught by comparing
             // the two arms, because both would be wrong in the same direction.
             Assert.That(spanJudgements, Is.GreaterThan(0), "no run judged a press against its syllable's span");
+
+            // Backlog 181's own rule: a wrong letter landing IN a word gap. Counted on the CELLS
+            // (a gap that became Wrong), which is exactly the set of presses whose outcome differs
+            // from the strict rule, because the strict arm rejects them and writes nothing. Same
+            // failure mode as the counter above: a generator that stopped rolling letters at gaps,
+            // or a port that quietly went back to rejecting them, would leave both arms agreeing on
+            // rejections, green, and no longer covering the rule.
+            Assert.That(gapTypos, Is.GreaterThan(0), "no run typed a wrong letter into a word gap");
         });
     }
 
@@ -561,6 +575,62 @@ public class EngineFuzzLiveParityTest
             Assert.That(classic.TotalScore, Is.LessThan(spans.TotalScore), "classic era: total score");
             Assert.That(classic.Accuracy, Is.LessThan(spans.Accuracy), "classic era: accuracy");
         });
+    }
+
+    /// <summary>
+    /// The other ERA arm the browser does not have and cannot prove: a replay whose CONFIG frame
+    /// leaves bit 3 CLEAR REJECTS a wrong letter pressed on a word gap, exactly as the run was
+    /// played before backlog 181, while the identical keystrokes type it through when the bit is
+    /// set.
+    ///
+    /// <para>Judgement relevant in the strongest sense there is: the two arms disagree about whether
+    /// the CARET MOVED, so a single such frame decoded under the wrong arm desynchronises every
+    /// keystroke after it. That is what the numbers below say. Under the live arm the typo consumes
+    /// the gap and "cd" lands on its own two cells, leaving one unfixed typo and a completion of
+    /// 4/5; under the stored arm the caret never leaves the gap, so the 'c' and the 'd' are rejected
+    /// there in turn and the line seals with three characters nobody typed.</para>
+    ///
+    /// <para>It is also the guard on the reconciliation the sweep above depends on: if the scorer
+    /// ever stopped following the flag, every generated case would still pass (both arms typing gap
+    /// typos through) while every old replay silently re-scored under a model its player never
+    /// touched.</para>
+    /// </summary>
+    [Test]
+    public void ClearingTheConfigFrameWordGapBitRejectsTheTypoInstead()
+    {
+        // The harness's scripted/gapTypoUnfixed case, written out here rather than read from it so
+        // this test needs no node: "ab cd" typed clean up to the word gap, a wrong letter on the
+        // gap, then the second word pressed on its own targets.
+        (double time, char key)[] keys = [(1000, 'a'), (1500, 'b'), (2000, 'x'), (2000, 'c'), (2500, 'd')];
+
+        var through = ScoreGapTypo(keys, wrongInputOnWordGaps: true);
+        var strict = ScoreGapTypo(keys, wrongInputOnWordGaps: false);
+
+        Assert.Multiple(() =>
+        {
+            var live = Wire(through.Statistics);
+            Assert.That(live.GetValueOrDefault("great"), Is.EqualTo(4), "live era: the four lyric characters");
+            Assert.That(live.GetValueOrDefault(WireCounts.Key(TypeBeatResultMapping.UNFIXED_TYPO)), Is.EqualTo(1), "live era: the gap is an unfixed typo");
+            Assert.That(live.GetValueOrDefault("miss"), Is.Zero, "live era: a typo is not a miss");
+            Assert.That(through.Completion, Is.EqualTo(4 / 5.0).Within(1e-9), "live era: completion");
+
+            var stored = Wire(strict.Statistics);
+            Assert.That(stored.GetValueOrDefault("great"), Is.EqualTo(2), "stored era: only the cells before the gap");
+            Assert.That(stored.GetValueOrDefault("miss"), Is.EqualTo(3), "stored era: the caret never left the gap, so nothing after it was typed");
+            Assert.That(strict.Completion, Is.EqualTo(2 / 5.0).Within(1e-9), "stored era: completion");
+            Assert.That(strict.TotalScore, Is.LessThan(through.TotalScore), "stored era: total score");
+        });
+    }
+
+    private static TypeBeatReplayAccount ScoreGapTypo((double time, char key)[] keys, bool wrongInputOnWordGaps)
+    {
+        var replay = new Replay();
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: false, syllableTiming: true, wrongInputOnWordGaps: wrongInputOnWordGaps));
+
+        foreach (var (time, key) in keys)
+            replay.Frames.Add(new TypeBeatReplayFrame(time, key));
+
+        return TypeBeatReplayScorer.Score(Map(GranularityOf("abCd"), Fixture("abCd")), Array.Empty<Mod>(), replay, TypoRule.Deferred, ComboRestoreRule.OnFix);
     }
 
     private static TypeBeatReplayAccount ScoreWithEra((double time, char key)[] keys, bool syllableTiming)

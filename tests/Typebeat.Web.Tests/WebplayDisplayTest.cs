@@ -266,6 +266,8 @@ public class WebplayDisplayTest
 
     private static string Cls(JsonElement paint, int i) => paint[i].GetProperty("cls").GetString()!;
 
+    private static string Glyph(JsonElement paint, int i) => paint[i].GetProperty("glyph").GetString()!;
+
     private static string? Fill(JsonElement paint, int i)
     {
         var e = paint[i].GetProperty("fill");
@@ -383,6 +385,49 @@ public class WebplayDisplayTest
             // Typed, then backspaced: back to untyped, and the fill goes with it.
             Assert.That(Cls(backspaced, 0), Is.EqualTo("tb-c tb-c-todo"));
             Assert.That(Fill(backspaced, 0), Is.Null);
+        });
+    }
+
+    /// <summary>
+    /// A wrong letter typed into the WORD GAP (backlog 181) shows the character that went in, in
+    /// the same error red a wrong lyric cell wears. It is the one cell whose glyph is not fixed for
+    /// the whole play, and the exception is forced rather than chosen: a lyric cell keeps showing
+    /// its own character because a mistyped line still has to read as the line it was meant to be,
+    /// but the gap's own character is a space, and a space painted red is nothing at all.
+    ///
+    /// <para>Mirrors <c>LyricLineDisplay.CellGlyph</c>, whose rule is exactly this one: the typed
+    /// char for a Wrong SPACE cell, the expected char otherwise. The gap in every other state is a
+    /// space again, the typo once backspaced included, which is the second half asserted here.</para>
+    /// </summary>
+    [Test]
+    public void AWrongWordGapShowsTheTypedCharacterInErrorRed()
+    {
+        var root = Harness();
+        var typo = root.GetProperty("gapTypoPaint");
+        var erased = root.GetProperty("gapTypoErasedPaint");
+
+        Assert.Multiple(() =>
+        {
+            // Cell 2 is the word gap of "ab cd". 'x' went in, the seal left it wrong, and it is
+            // drawn as the typo rather than as an invisible red space.
+            Assert.That(Cls(typo, 2), Is.EqualTo("tb-c tb-c-wrong"));
+            Assert.That(Glyph(typo, 2), Is.EqualTo("x"));
+            Assert.That(Fill(typo, 2), Is.Null, "a wrong cell is not on the sync ramp");
+
+            // Nothing else moved: the letters either side are ordinary hits still showing their own
+            // characters, which is what says the typo did not shift the line.
+            Assert.That(Glyph(typo, 1), Is.EqualTo("b"));
+            Assert.That(Cls(typo, 3), Is.EqualTo("tb-c tb-c-hit"));
+            Assert.That(Glyph(typo, 3), Is.EqualTo("c"));
+
+            // Backspaced: the cell is untyped again, so the glyph goes back to the space with it.
+            Assert.That(Cls(erased, 2), Is.EqualTo("tb-c tb-c-todo"));
+            Assert.That(Glyph(erased, 2), Is.EqualTo(" "));
+
+            // And a gap nobody has touched shows a space in every other run here, which is what
+            // makes the line above an exception rather than the rule.
+            Assert.That(Glyph(root.GetProperty("mixedPaint"), 2), Is.EqualTo(" "));
+            Assert.That(Glyph(root.GetProperty("sealedPaint"), 2), Is.EqualTo(" "));
         });
     }
 
