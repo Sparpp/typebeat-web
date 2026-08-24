@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using typebeat.Game.Beatmaps;
 using typebeat.Game.Beatmaps.ControlPoints;
@@ -61,6 +59,13 @@ public class EngineFuzzLiveParityTest
 
     private static TimedUnit Unit(string text, double start, double end, double confidence = 1, params double[] syllables)
         => new TimedUnit { Text = text, StartTime = start, EndTime = end, Confidence = confidence, SyllableBoundaries = syllables };
+
+    /// <summary>
+    /// A subdivided word carrying an AUTHORED character split (backlog 181), the word-level
+    /// <c>split_chars</c> the harness writes into the same fixture's JSON.
+    /// </summary>
+    private static TimedUnit Authored(string text, double start, double end, int[] splits, params double[] syllables)
+        => new TimedUnit { Text = text, StartTime = start, EndTime = end, SyllableBoundaries = syllables, SyllableSplits = splits };
 
     private static LyricLine Line(string text, double start, double end, double singEnd, params TimedUnit[] units)
         => new LyricLine { RawText = text, StartTime = start, EndTime = end, SingEndTime = singEnd, Units = units };
@@ -143,6 +148,14 @@ public class EngineFuzzLiveParityTest
                     Line("cake tonight", 1000, 7000, 4000,
                         Unit("cake", 1000, 2400, 1, 1700),
                         Unit("tonight", 2400, 4000, 1, 2800, 3300)),
+                ];
+
+            case "authoredSplit":
+                return
+                [
+                    Line("beautiful tonight", 1000, 7000, 4000,
+                        Authored("beautiful", 1000, 1900, [6], 1450),
+                        Authored("tonight", 1900, 4000, [2, 5], 2600, 3200)),
                 ];
 
             default:
@@ -244,58 +257,7 @@ public class EngineFuzzLiveParityTest
     /// parses its stdout as JSON. Node is optional on a dev box, so a missing node ignores the test
     /// rather than failing it (CI has node), which is the rule every other JS guard already applies.
     /// </summary>
-    private static JsonElement RunHarness(string harnessFileName)
-    {
-        string root = RepoRoot();
-        string core = Path.Combine(root, "src", "Typebeat.Web", "wwwroot", "js", "typebeat-core.js");
-        string harness = Path.Combine(root, "tests", "Typebeat.Web.Tests", "Js", harnessFileName);
-
-        var psi = new ProcessStartInfo("node")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            StandardOutputEncoding = new UTF8Encoding(false),
-            StandardErrorEncoding = new UTF8Encoding(false),
-        };
-
-        psi.ArgumentList.Add(harness);
-        psi.ArgumentList.Add(core);
-
-        Process process;
-
-        try
-        {
-            process = Process.Start(psi)!;
-        }
-        catch (Exception ex)
-        {
-            Assert.Ignore($"node is not available to run the JS fidelity harness: {ex.Message}");
-            throw; // unreachable
-        }
-
-        string stdout = process.StandardOutput.ReadToEnd();
-        string stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-
-        Assert.That(process.ExitCode, Is.EqualTo(0), $"harness failed: {stderr}");
-        return JsonDocument.Parse(stdout).RootElement;
-    }
-
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (dir != null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "src", "Typebeat.Web", "wwwroot", "js", "typebeat-core.js")))
-                return dir.FullName;
-
-            dir = dir.Parent;
-        }
-
-        throw new FileNotFoundException("could not locate the repo root");
-    }
+    private static JsonElement RunHarness(string harnessFileName) => NodeHarness.Run(harnessFileName);
 
     #endregion
 
@@ -370,6 +332,73 @@ public class EngineFuzzLiveParityTest
                 }
             }
         });
+    }
+
+    /// <summary>
+    /// COVERAGE, not behaviour: the sweep's authored-split fixture has to actually exercise the
+    /// authored arm, or every case above would keep passing while both sides quietly derived.
+    ///
+    /// <para>The counter is the number of cells whose target time or syllable membership MOVES when
+    /// the same fixture's <c>split_chars</c> are taken away, and it is asserted greater than zero.
+    /// Both halves of the split are counted, because the whole point of the feature is that one cut
+    /// drives the two together: a port that honoured the field for the targets and not for the
+    /// groups (or the reverse) would show a smaller count here and part from the browser above.</para>
+    /// </summary>
+    [Test]
+    public void TheAuthoredSplitFixtureReallyExercisesTheAuthoredArm()
+    {
+        var authored = TypingLine.FromLyricLine(Fixture("authoredSplit")[0], GranularityOf("authoredSplit"));
+        var derived = TypingLine.FromLyricLine(WithoutSplits(Fixture("authoredSplit")[0]), GranularityOf("authoredSplit"));
+
+        Assert.That(derived.Cells.Count, Is.EqualTo(authored.Cells.Count), "stripping the split must not change the cells themselves");
+
+        int movedTargets = 0;
+        int movedMembership = 0;
+
+        for (int c = 0; c < authored.Cells.Count; c++)
+        {
+            if (authored.Cells[c].TargetTime != derived.Cells[c].TargetTime)
+                movedTargets++;
+
+            if (authored.SyllableIndexOf(c) != derived.SyllableIndexOf(c))
+                movedMembership++;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(movedTargets, Is.GreaterThan(0), "the authored split moved no target: the sweep stopped exercising it");
+            Assert.That(movedMembership, Is.GreaterThan(0), "the authored split moved no cell into another group: the sweep stopped exercising it");
+        });
+    }
+
+    /// <summary>The same line with every authored split taken away, i.e. as a pre-181 map carries it.</summary>
+    private static LyricLine WithoutSplits(LyricLine line)
+    {
+        var units = new List<TimedUnit>(line.Units.Count);
+
+        foreach (var unit in line.Units)
+        {
+            units.Add(new TimedUnit
+            {
+                Text = unit.Text,
+                StartTime = unit.StartTime,
+                EndTime = unit.EndTime,
+                Source = unit.Source,
+                Confidence = unit.Confidence,
+                SyllableBoundaries = unit.SyllableBoundaries,
+            });
+        }
+
+        return new LyricLine
+        {
+            RawText = line.RawText,
+            StartTime = line.StartTime,
+            EndTime = line.EndTime,
+            SingEndTime = line.SingEndTime,
+            Units = units,
+            SealGraceMs = line.SealGraceMs,
+            Estimated = line.Estimated,
+        };
     }
 
     /// <summary>

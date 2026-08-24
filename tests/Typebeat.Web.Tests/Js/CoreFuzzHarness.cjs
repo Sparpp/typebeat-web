@@ -176,6 +176,23 @@ const FIXTURES = {
         text: 'cake tonight', start_ms: 1000, end_ms: 4000,
         words: [{ text: 'cake', start_ms: 1000, end_ms: 2400, score: 1, syllables: [{ start_ms: 1700 }] },
                 { text: 'tonight', start_ms: 2400, end_ms: 4000, score: 1, syllables: [{ start_ms: 2800 }, { start_ms: 3300 }] }]
+    }], 8000),
+
+    // Backlog 181's surface: the same subtimed shape, plus a word-level AUTHORED character split
+    // (split_chars) on BOTH words, chosen so it disagrees with the syllabifier's forced answer in
+    // each. "beautiful" derives beau|tiful and is authored beauti|ful ([6]); "tonight" forced to
+    // three derives to|ni|ght and is authored to|nig|ht ([2,5]). So the authored cut moves the
+    // judgement GROUPS (which span a press is graded against) and the per-char TARGETS together,
+    // and a browser that ignored the field would put cells 4 and 5 of "beautiful" and the 'g' of
+    // "tonight" in the neighbouring syllable. The cosmetic syllable[].text strings are deliberately
+    // NOT the authored cut here, because the loader must never read them.
+    authoredSplit: osu([{
+        text: 'beautiful tonight', start_ms: 1000, end_ms: 4000,
+        words: [{ text: 'beautiful', start_ms: 1000, end_ms: 1900, score: 1,
+                  syllables: [{ text: 'beau', start_ms: 1000 }, { text: 'tiful', start_ms: 1450 }], split_chars: [6] },
+                { text: 'tonight', start_ms: 1900, end_ms: 4000, score: 1,
+                  syllables: [{ text: 'to', start_ms: 1900 }, { text: 'ni', start_ms: 2600 }, { text: 'ght', start_ms: 3200 }],
+                  split_chars: [2, 5] }]
     }], 8000)
 };
 
@@ -558,12 +575,26 @@ const SCRIPTED = [
         name: 'scripted/subtimedSpans', fixture: 'subtimed', spaceSkipsWord: false, skipPresses: 0,
         keys: [[1000, 'c'], [1600, 'a'], [1650, 'k'], [2300, 'e'], [2400, ' '],
                [2400, 't'], [2700, 'o'], [2900, 'n'], [3200, 'i'], [3400, 'g'], [3900, 'h'], [3950, 't']]
+    },
+    {
+        // Backlog 181: every press deep inside the span the AUTHORED cut gives its cell, which for
+        // three of them is the neighbouring span under the derived cut. Under the authored split
+        // the whole map is delta 0; had the browser fallen back to the syllabifier, 't' and 'i' of
+        // "beautiful" (pressed at 1200 and 1250, inside beauti|ful's first span but 250 and 200
+        // before beau|tiful's second one opens at 1450) and the 'g' of "tonight" (pressed at 2900,
+        // inside to|nig|ht's middle span but 300 before to|ni|ght's last one opens at 3200) would
+        // each be graded off an edge instead. The C# arm reads the same split_chars, so the two
+        // sides part on this case the moment either stops honouring it.
+        name: 'scripted/authoredSpans', fixture: 'authoredSplit', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'b'], [1050, 'e'], [1100, 'a'], [1150, 'u'], [1200, 't'], [1250, 'i'],
+               [1500, 'f'], [1600, 'u'], [1700, 'l'], [1900, ' '],
+               [1950, 't'], [2100, 'o'], [2700, 'n'], [2800, 'i'], [2900, 'g'], [3300, 'h'], [3400, 't']]
     }
 ];
 
 // ---------------------------------------------------------------------------------------------
 const names = ['catDog', 'abCd', 'catDogThenHi', 'quickBrownFox', 'mixedTiers', 'syllabic',
-               'syllableWords', 'stylised', 'subtimed'];
+               'syllableWords', 'stylised', 'subtimed', 'authoredSplit'];
 const cases = [];
 
 for (const scripted of SCRIPTED) {

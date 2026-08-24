@@ -274,6 +274,13 @@
 
     // One TimedUnit per whitespace token, from explicit word times clamped into the line
     // (mirrors TimingJsonLoader.buildExplicitUnits).
+    //
+    // The AUTHORED char split rides along (backlog 181) and is validated HERE rather than at parse
+    // time, because only this function knows how many boundaries actually survived clamping. The
+    // rule is deliberately strict, because a split is a char index and a wrong one would silently
+    // re-cut a word rather than fail: it is kept only when the clamping above DROPPED NOTHING (a
+    // boundary lost to a narrowed word would re-pair every later split with the wrong segment) and
+    // the indices themselves are a valid split of this token. Anything else falls back to derived.
     function buildExplicitUnits(tokens, words, lineStart, lineEnd) {
         const units = [];
         let prevEnd = lineStart;
@@ -284,12 +291,19 @@
             if (we < ws) we = ws;
             // Keep only subdivisions that stayed strictly inside the (possibly clamped) word,
             // deduped + sorted ascending (mirrors TimingJsonLoader.buildExplicitUnits).
+            const raw = words[m].syllables || EMPTY_BOUNDARIES;
             const boundaries = [];
-            for (const b of (words[m].syllables || [])) {
+            for (const b of raw) {
                 if (b > ws && b < we && boundaries.indexOf(b) < 0) boundaries.push(b);
             }
             boundaries.sort((a, b) => a - b);
-            units.push({ text: tokens[m], start: ws, end: we, conf: clamp(words[m].score, 0, 1), syllables: boundaries });
+
+            const authored = words[m].splitChars || EMPTY_SPLITS;
+            const splits = boundaries.length === raw.length && isAuthoredValid(tokens[m], boundaries.length + 1, authored)
+                ? authored.slice()
+                : EMPTY_SPLITS;
+
+            units.push({ text: tokens[m], start: ws, end: we, conf: clamp(words[m].score, 0, 1), syllables: boundaries, splits: splits });
             prevEnd = we;
         }
         return units;
@@ -310,12 +324,101 @@
             const unitStart = start + span * (cumulative / totalWeight);
             cumulative += weights[i];
             const unitEnd = start + span * (cumulative / totalWeight);
-            units.push({ text: tokens[i], start: unitStart, end: unitEnd, conf: 1, syllables: EMPTY_BOUNDARIES });
+            units.push({ text: tokens[i], start: unitStart, end: unitEnd, conf: 1, syllables: EMPTY_BOUNDARIES, splits: EMPTY_SPLITS });
         }
         return units;
     }
 
     const EMPTY_BOUNDARIES = [];
+    const EMPTY_SPLITS = [];
+
+    // ---------------------------------------------------------------------------
+    // SyllableSegments: WHERE a subdivided word's characters are cut into syllable segments
+    // (mirrors typebeat.Game.Rulesets.TypeBeat/Gameplay/SyllableSegments.cs). The ONE derivation
+    // both the per-char targets and the judgement groups read, so the split a mapper authored on
+    // the desktop timeline strip ("ap|ple") is exactly the split the browser judges on.
+    //
+    // A word carrying N boundaries has N + 1 segments and therefore N character splits. They come
+    // from one of two places: the mapper AUTHORED them (split_chars) or they are DERIVED by the
+    // syllabifier forced to the boundary count. Authored wins, but only while it is still VALID for
+    // the word it is attached to; anything else silently falls back to derived rather than
+    // throwing, because a split is a CHAR INDEX and any edit that retypes a word or changes its
+    // boundary count can invalidate one.
+    //
+    // Splits index the TOKEN string (punctuation included, exactly like splitPoints), never the
+    // typed cell stream. The conversion to cell space, which is what the target spread needs, is
+    // cellCuts.
+    // ---------------------------------------------------------------------------
+
+    // Whether `authored` is a usable char split of `token` into `segments` segments: exactly
+    // segments - 1 indices, strictly ascending, every one strictly inside (0, token.length) so no
+    // segment is empty. An EMPTY list is "derived", not "valid", and returns false (the caller
+    // falls back). Mirrors SyllableSegments.IsAuthoredValid.
+    function isAuthoredValid(token, segments, authored) {
+        if (!authored || authored.length === 0 || !token) return false;
+        if (segments < 2 || authored.length !== segments - 1) return false;
+
+        let previous = 0;
+
+        for (const split of authored) {
+            if (split <= previous || split >= token.length) return false;
+            previous = split;
+        }
+
+        return true;
+    }
+
+    // The split the syllabifier picks for a word forced to `segments` segments. Can return FEWER
+    // than segments - 1 indices on an over-forced short word (the syllabifier degrades rather than
+    // inventing splits); buildSyllables has always tolerated that. Mirrors SyllableSegments.Derived.
+    function derivedSplits(token, segments) {
+        return (segments < 2 || !token) ? EMPTY_SPLITS : splitPoints(token, segments);
+    }
+
+    // The EFFECTIVE split: `authored` when it is valid, the derived split otherwise. This is the
+    // function every reader goes through. Mirrors SyllableSegments.SplitsFor.
+    function splitsFor(token, segments, authored) {
+        return isAuthoredValid(token, segments, authored) ? authored : derivedSplits(token, segments);
+    }
+
+    // The split expressed in CELL space: cuts[s] is the number of isCell characters of `token`
+    // before segment s starts, so cuts[0] === 0 and cuts[last] === k (the word's typeable char
+    // count). Length is splits.length + 2. Mirrors SyllableSegments.CellCuts.
+    //
+    // This is the bridge the target spread needs: it counts what buildCells counts, so punctuation
+    // (which is timed by interpolation, never by the per-word spread) rides inside whichever
+    // segment surrounds it without spending a slot.
+    function cellCuts(token, splits) {
+        const cuts = new Array(splits.length + 2).fill(0);
+        let cells = 0;
+        let next = 0;
+
+        for (let i = 0; i < token.length; i++) {
+            while (next < splits.length && splits[next] === i) cuts[++next] = cells;
+            if (isCell(token[i])) cells++;
+        }
+
+        while (next < splits.length) cuts[++next] = cells;
+
+        cuts[cuts.length - 1] = cells;
+        return cuts;
+    }
+
+    // The segment holding typeable-char index j: the LAST segment whose cut is at or before it.
+    // Taking the last (rather than the first) is what makes a segment with no typeable char of its
+    // own, a lone hyphen between two letters, transparent in exactly the way buildSyllables's group
+    // assignment already makes it. Mirrors SyllableSegments.SegmentOf.
+    function segmentOf(cuts, j) {
+        const segments = cuts.length - 1;
+        let s = 0;
+
+        for (let i = 1; i < segments; i++) {
+            if (cuts[i] <= j) s = i;
+            else break;
+        }
+
+        return s;
+    }
 
     // ---------------------------------------------------------------------------
     // Syllabifier: rule-based English syllabification of ONE gameplay word (mirrors
@@ -749,7 +852,9 @@
             // A stylised spelling gets no groups at all UNLESS the mapper subtimed it, in which case
             // the hand-authored count wins over anything the rules would have guessed.
             if (token.length > 0 && (subtimed || isSyllabifiable(token))) {
-                const splits = subtimed ? splitPoints(token, boundaries.length + 1) : splitPoints(token);
+                const splits = subtimed
+                    ? splitsFor(token, boundaries.length + 1, unit ? unit.splits : null)
+                    : splitPoints(token);
                 const groupBase = starts.length;
                 const groupCount = splits.length + 1;
 
@@ -850,18 +955,32 @@
     // entry of boundaries (absolute ms, strictly inside, ascending) splits it into one more
     // segment, and the k chars are distributed evenly by index across the segments. With no
     // boundaries this is exactly unitStart + j*(unitEnd-unitStart)/k; char j = 0 lands on unitStart.
-    function syllableCharTarget(unitStart, unitEnd, boundaries, k, j) {
+    //
+    // `cuts`, when given (cellCuts of an AUTHORED split, backlog 181), replaces that even
+    // distribution with the mapper's own: segment s covers cell-index range [cuts[s], cuts[s+1])
+    // instead of [s*k/S, (s+1)*k/S], so "ap|ple" puts two chars on the first syllable and three on
+    // the second however long the word is. Null means derived, and the arithmetic below is then
+    // untouched, which is what makes a map with no authored split flatten byte-identically.
+    function syllableCharTarget(unitStart, unitEnd, boundaries, k, j, cuts) {
         if (k <= 0) return unitStart;
         if (boundaries.length === 0) return unitStart + j * (unitEnd - unitStart) / k;
 
         const segments = boundaries.length + 1;
+        let s, segIndexLo, segIndexHi;
 
-        // Which segment holds char index j (floor of j scaled into segment-space), clamped to last.
-        let s = Math.floor(j * segments / k);
-        if (s >= segments) s = segments - 1;
+        if (cuts && cuts.length === segments + 1) {
+            s = segmentOf(cuts, j);
+            segIndexLo = cuts[s];
+            segIndexHi = cuts[s + 1];
+        } else {
+            // Which segment holds char index j (floor of j scaled into segment-space), clamped to last.
+            s = Math.floor(j * segments / k);
+            if (s >= segments) s = segments - 1;
 
-        const segIndexLo = s * k / segments;
-        const segIndexHi = (s + 1) * k / segments;
+            segIndexLo = s * k / segments;
+            segIndexHi = (s + 1) * k / segments;
+        }
+
         const timeLo = s === 0 ? unitStart : boundaries[s - 1];
         const timeHi = s === segments - 1 ? unitEnd : boundaries[s];
 
@@ -907,6 +1026,14 @@
             let k = 0;
             for (let t = 0; t < token.length; t++) if (isCell(token[t])) k++;
 
+            // An AUTHORED char split (backlog 181, "ap|ple") replaces the even distribution within
+            // the word: the mapper's own cut says how many chars ride each segment, so the same
+            // split drives the targets here and the judgement groups in buildSyllables. Derived
+            // (absent, or stale) leaves the index-even spread untouched.
+            const cuts = (unit && isAuthoredValid(token, boundaries.length + 1, unit.splits))
+                ? cellCuts(token, unit.splits)
+                : null;
+
             let j = 0;
             for (let t = 0; t < token.length; t++) {
                 const ch = token[t];
@@ -914,7 +1041,7 @@
                 tiers[pos] = tier;
                 if (isCell(ch)) {
                     typeableFlags[pos] = true;
-                    targets[pos] = syllableCharTarget(unitStart, unitEnd, boundaries, k, j);
+                    targets[pos] = syllableCharTarget(unitStart, unitEnd, boundaries, k, j, cuts);
                     j++;
                 }
                 pos++;
@@ -1038,7 +1165,21 @@
                             if (isFinite(sm) && sm > ws && sm < we) syllables.push(sm);
                         }
                     }
-                    words.push({ text: typeof w.text === 'string' ? w.text : '', start: ws, end: we, score: score, syllables: syllables });
+                    // Optional AUTHORED character split (type!beat editor extension, backlog 181):
+                    // the char indices at which each syllable segment starts. Read RAW here and
+                    // validated in buildExplicitUnits, which is the only place that knows how many
+                    // boundaries actually survived clamping. A non-numeric or fractional entry is
+                    // SKIPPED rather than fatal, exactly as TimingJsonLoader.tryGetInt skips it: a
+                    // string "2" is not a JSON number and must not decode as one.
+                    const splitChars = [];
+                    if (Array.isArray(w.split_chars)) {
+                        for (const s of w.split_chars) {
+                            if (typeof s !== 'number' || !isFinite(s) || Math.floor(s) !== s) continue;
+                            if (s < -2147483648 || s > 2147483647) continue; // int32, as the C# reader parses it
+                            splitChars.push(s);
+                        }
+                    }
+                    words.push({ text: typeof w.text === 'string' ? w.text : '', start: ws, end: we, score: score, syllables: syllables, splitChars: splitChars });
                 }
             }
             const sealGraceMs = isFinite(+o.seal_grace_ms) ? +o.seal_grace_ms : null;
@@ -2390,6 +2531,9 @@
         // The syllabifier and the group derivation, exported so the fidelity harnesses can hold
         // them against the game's own Syllabifier / TypingLine.Syllables word for word.
         isSyllabifiable, countSyllables, splitPoints, buildSyllables, syllableIndexOf,
+        // SyllableSegments (backlog 181): the shared authored-vs-derived split derivation, exported
+        // for the same reason, so the game's own SyllableSegments can be held against it.
+        isAuthoredValid, derivedSplits, splitsFor, cellCuts, segmentOf,
         TypingEngine, computeScore, rankFromCompletion,
         windowsFor, classify, toHitResult,
         freestyleTick, freestyleGlyph,
