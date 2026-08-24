@@ -1555,6 +1555,13 @@
     const COMBO_CAP = 50;
     const WRONG_KEY_FAIL_STREAK = 13;
 
+    // TypingEngine.isWordGap. A WORD GAP: the typeable SPACE cell that separates two words. The one
+    // boundary both word-level queries below (wordBackspaceTarget, retypeSelectionAnchor) are
+    // written against, and the same test skipCurrentWord scans a word with, so "word" means one
+    // thing in this file. A non-typeable cell (punctuation the default stream kept, and every mark
+    // under Literate) is NOT a boundary: it rides inside the word it is attached to.
+    function isWordGap(cell) { return cell.typeable && cell.expected === ' '; }
+
     class TypingEngine {
         constructor(beatmap) {
             this.beatmap = beatmap;
@@ -2390,6 +2397,87 @@
             // firstCorrectDelta intentionally retained (inert-retype guard).
             this.caretIndex = target;
             return true;
+        }
+
+        // TypingEngine.WordBackspaceTarget. Where a CTRL+BACKSPACE (backlog 182, the typing-site
+        // "erase the previous word" gesture) should leave the caret: a PURE QUERY, mutating nothing.
+        // The caller composes the gesture out of ordinary processBackspace calls
+        // (`while (caretIndex > target && processBackspace());`), which is what keeps the whole
+        // gesture inside the vocabulary the engine already has: the desktop records the same run of
+        // backspace frames a player holding the plain key down would have produced, and this mirror
+        // needs no new call at all.
+        //
+        // The rule is the one every typing site implements. Walk back over the word GAPS immediately
+        // behind the caret, then over the word behind them, and stop at that word's first cell. So a
+        // caret sitting mid-word erases back to the start of the word it is inside, and a caret
+        // sitting at the head of a word (the gap immediately behind it) erases that gap AND the whole
+        // word before it. At the head of the line the answer is caretIndex itself, which makes the
+        // composed gesture a no-op: it never calls the engine.
+        //
+        // The target is a FLOOR, not a promise: one processBackspace steps transparently back over
+        // auto-skipped and abandoned cells, so a press over a word that was entirely given up to a
+        // word skip can land the caret further back than this, exactly as a plain backspace there
+        // would. That is the existing reclaim behaviour and is deliberately not fought here.
+        //
+        // Answers caretIndex unchanged when no line is active or the run has finished, so the caller
+        // needs no second guard.
+        get wordBackspaceTarget() {
+            if (this.finished || this.activeLineIndex < 0) return this.caretIndex;
+
+            const cells = this.lines[this.activeLineIndex].cells;
+            let target = Math.min(this.caretIndex, cells.length);
+
+            // The gaps directly behind the caret (normally one; a map never authors two in a row,
+            // and the loop costs nothing for being written to survive one that did).
+            while (target > 0 && isWordGap(cells[target - 1])) target--;
+
+            // Then the word they follow, back to the gap that opens it or to the line's head.
+            while (target > 0 && !isWordGap(cells[target - 1])) target--;
+
+            return target;
+        }
+
+        // TypingEngine.RetypeSelectionAnchor. Where a CTRL+A (backlog 182, "select back to the
+        // mistake I have to retype") should put the start of its selection: the first cell of the
+        // nearest run at or behind the caret holding an UNFIXED TYPO, or -1 when there is no typo
+        // behind the caret at all (the gesture is then a no-op). The selection itself is the
+        // half-open range [this, caretIndex), and it is pure UI state: nothing in the engine knows it
+        // exists. Consuming it is composed, like the gesture above, out of ordinary processBackspace
+        // calls back to this index plus at most one processKey (see typebeat-player.js).
+        //
+        // A typo is a cell in the 'wrong' state: a wrong character typed through and not yet
+        // backspaced away. The scan runs backwards from the caret and stops at the FIRST one it
+        // meets, which is why a typo in the word the player is halfway through typing anchors on that
+        // word's start rather than on some earlier one.
+        //
+        // WHICH run the typo's cell opens has two cases, and they are the same rule stated twice: the
+        // selection starts at the first cell the player must retype to fix the typo. For an ordinary
+        // lyric character that is its WORD's first cell (walk back to the gap before it). For a WORD
+        // GAP holding a typo (possible since backlog 181, and unconditional here: the browser is
+        // always on the live arm of that rule) the gap IS the cell to retype and it belongs to no
+        // word, so the selection starts on the gap itself; walking back from it would swallow the
+        // perfectly good word in front of it for nothing.
+        //
+        // The answer is never equal to caretIndex when it is non-negative: the typo is strictly
+        // behind the caret (a cell ahead of it has nothing typed in it), so a selection always covers
+        // at least one cell.
+        get retypeSelectionAnchor() {
+            if (this.finished || this.activeLineIndex < 0) return -1;
+
+            const cells = this.lines[this.activeLineIndex].cells;
+            let typo = Math.min(this.caretIndex, cells.length) - 1;
+
+            while (typo >= 0 && cells[typo].state !== 'wrong') typo--;
+
+            if (typo < 0) return -1;
+
+            if (isWordGap(cells[typo])) return typo;
+
+            let anchor = typo;
+
+            while (anchor > 0 && !isWordGap(cells[anchor - 1])) anchor--;
+
+            return anchor;
         }
 
         // The character to type right now (or null).

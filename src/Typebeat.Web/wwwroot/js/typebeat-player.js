@@ -406,11 +406,15 @@
         stack.append(rowPrev.row, rowCur.row, rowNext.row);
 
         // Carets and the wrong-key pops live INSIDE the active row, so they inherit its scale
-        // and its position without a second coordinate space.
+        // and its position without a second coordinate space. So does the retype-selection wash
+        // (backlog 182), which is painted BEHIND the glyphs (CSS z-index, see .tb-selection) so
+        // every character keeps the colour its own state gives it: the highlight says "these are
+        // about to go", not "these are wrong".
         const playerCaret = el('div', 'tb-caret tb-caret-player');
         const sungCaret = el('div', 'tb-caret tb-caret-sung');
         const wrongLayer = el('div', 'tb-wrongkeys');
-        rowCur.row.append(sungCaret, playerCaret, wrongLayer);
+        const selectionBox = el('div', 'tb-selection');
+        rowCur.row.append(selectionBox, sungCaret, playerCaret, wrongLayer);
 
         const gap = el('div', 'tb-gap');
         const gapLabel = el('span', 'tb-gap-label', '');
@@ -462,9 +466,63 @@
         }
 
         // --- input -----------------------------------------------------------
+        // The live RETYPE SELECTION (backlog 182), or null: the half-open cell range
+        // [startCell, endCell) of line lineIndex that a Ctrl+A has offered to erase and retype.
+        // endCell is always the caret index it was taken at, which is what makes the selection
+        // self-invalidating: any caret move that did not go through the consume path leaves it
+        // stale and the render loop drops it (see dropStaleSelection).
+        //
+        // PURE UI STATE, exactly as on the desktop (TypeBeatPlayfield.CurrentRetypeSelection): the
+        // engine never learns it exists, and consuming it is composed out of ordinary engine calls,
+        // which is why neither gesture needs anything new in typebeat-core.js beyond the two pure
+        // queries that say where each one stops.
+        let selection = null;
+
+        // TypeBeatKeyHandler.OnKeyDown's word-gesture carve-out: Control without Alt, on exactly
+        // two keys, so every other browser and OS shortcut still reaches the browser. Meta is
+        // excluded here where the desktop does not name it, because a Cmd combo on macOS is the
+        // browser's own shortcut surface and gameplay must not start eating it.
+        function isWordGesture(e) {
+            if (!e.ctrlKey || e.altKey || e.metaKey) return false;
+            return e.key === 'Backspace' || e.key === 'a' || e.key === 'A' || e.code === 'KeyA';
+        }
+
+        // TypeBeatKeyHandler.eraseBackTo. Erase back to target with ordinary processBackspace
+        // calls: the same run of erases a player holding the plain key down would have made, which
+        // is the whole point of composing the gesture rather than teaching the engine a wider one.
+        //
+        // The trailing check is defensive termination only. Every erase that reports a mutation
+        // moves the caret back, but one that reclaimed abandoned cells at the head of a line can
+        // land on 0 and be auto-skipped forward again, and a gesture must never spin.
+        function eraseBackTo(target) {
+            while (engine.caretIndex > target) {
+                const before = engine.caretIndex;
+                if (!engine.processBackspace()) break;
+                if (engine.caretIndex >= before) break;
+            }
+        }
+
+        // TypeBeatKeyHandler.collapseSelection. Collapse a live retype selection: a mass backspace
+        // to its anchor. Returns whether there was one to collapse, so the caller can tell "the
+        // selection ate this key" from "there was nothing there". The selection is dropped BEFORE
+        // the erases so the staleness check cannot race them.
+        function collapseSelection() {
+            if (!selection) return false;
+            const start = selection.startCell;
+            setSelection(null);
+            eraseBackTo(start);
+            return true;
+        }
+
         function onKeyDown(e) {
             if (!running || !engine) return;
-            if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+            // The two word-level gestures the player owns (backlog 182). Carved out BEFORE the
+            // fall-through below, which is otherwise unchanged: every other Ctrl/Alt/Meta combo is
+            // left to the browser.
+            const wordGesture = isWordGesture(e);
+            if ((e.ctrlKey || e.altKey || e.metaKey) && !wordGesture) return;
+
             // Backspace, gated exactly as TypeBeatPlayfield's key handler gates it: erasing only
             // ever has something to undo where a wrong char can land, so it reads the engine's
             // allowWrongInput flag rather than a rule of its own. That flag is on for every browser
@@ -472,17 +530,58 @@
             // backspace is LIVE here, where under the old strict-only model it was inert. The key is
             // still swallowed either way, and the engine is still where the erase is decided:
             // processBackspace no-ops when there is nothing behind the caret.
+            //
+            // preventDefault covers the plain key (which navigates back on older browsers) and the
+            // Ctrl combo (which the browser reads as "delete the previous word"). Repeat is honoured
+            // for BOTH widths, exactly as on the desktop: this branch returns above the e.repeat
+            // guard, so holding either erases.
+            //
+            // CTRL takes the whole word. A live SELECTION takes precedence over either width: an
+            // erase key over one collapses it and types nothing, which is the same mass erase a
+            // letter would do before landing.
             if (e.key === 'Backspace') {
                 e.preventDefault();
-                if (engine.allowWrongInput) engine.processBackspace();
+                if (!engine.allowWrongInput) return;
+                if (!collapseSelection()) {
+                    if (wordGesture) eraseBackTo(engine.wordBackspaceTarget);
+                    else engine.processBackspace();
+                }
                 return;
             }
+
+            if (wordGesture) {
+                // CTRL+A: offer the run back to the nearest unfixed typo for retyping. preventDefault
+                // because the browser's own Ctrl+A selects the whole page. Gated on the same flag the
+                // erase is, and for the same reason: with no wrong character able to land there would
+                // never be a typo to select.
+                e.preventDefault();
+                if (!engine.allowWrongInput) return;
+
+                const anchor = engine.retypeSelectionAnchor;
+
+                // No typo behind the caret: a genuine no-op, nothing to select and nothing to clear
+                // (a selection can only exist where the query just answered). Pressing it again with
+                // one already open simply recomputes the same range.
+                if (anchor >= 0) {
+                    setSelection({ lineIndex: engine.activeLineIndex, startCell: anchor, endCell: engine.caretIndex });
+                }
+                return;
+            }
+
             if (e.repeat) return;
             let ch = null;
             if (e.key === ' ' || e.code === 'Space') ch = ' ';
             else if (e.key && e.key.length === 1 && KEY_RE.test(e.key)) ch = e.key;
             if (ch !== null) {
                 e.preventDefault();
+                // A retype selection is consumed FIRST, so this key lands on the anchor cell: mass
+                // backspace, then the ordinary judged keypress. Space is not special here, nor is any
+                // other typeable key: "collapse, then process normally" is the whole rule. The
+                // desktop additionally has to suspend its line-complete fall-through to the skip
+                // overlay while a selection is live; the browser has no skip key to fall through to
+                // (a dead zone gets a labelled countdown, see updateGap), so there is nothing here to
+                // suspend and a typeable key is always a typing key.
+                collapseSelection();
                 engine.processKey(ch, nowMs());
             }
         }
@@ -748,6 +847,42 @@
             return dampContinuously(current, target, halfTime, elapsed);
         }
 
+        // TypeBeatPlayfield.applyRetypeSelection: the ONE write site for the selection, so the
+        // highlight and the state it is drawn from cannot drift apart.
+        function setSelection(next) {
+            selection = next;
+            paintSelection();
+        }
+
+        // LyricLineDisplay.SetSelection. The wash over the half-open cell range the gesture offered,
+        // in the row-local (pre-scale) coordinate space the caret already lives in, so it stays
+        // registered to the glyphs through a fit or a resize. An empty (or stale, hence clamped by
+        // xAt) range paints nothing rather than a zero-width sliver, which is the desktop's
+        // width > 0 alpha rule.
+        function paintSelection() {
+            if (!selection || !rowCur.line) { selectionBox.style.display = 'none'; return; }
+
+            const x = xAt(rowCur, selection.startCell);
+            const width = xAt(rowCur, selection.endCell) - x;
+
+            if (!(width > 0)) { selectionBox.style.display = 'none'; return; }
+
+            selectionBox.style.display = '';
+            selectionBox.style.transform = 'translateX(' + x.toFixed(2) + 'px)';
+            selectionBox.style.width = width.toFixed(2) + 'px';
+        }
+
+        // TypeBeatPlayfield.Update's staleness drop. A retype selection is a gesture held open on the
+        // ACTIVE line between two keystrokes, so anything that moves out from under it drops it: the
+        // line deactivating or sealing (the index changes, or goes to -1), and any caret move that
+        // did not go through the consume path. Checked per frame because both of those can happen on
+        // a plain clock tick, with no key event to notice them.
+        function dropStaleSelection() {
+            if (selection && (engine.activeLineIndex !== selection.lineIndex || engine.caretIndex !== selection.endCell)) {
+                setSelection(null);
+            }
+        }
+
         // A long instrumental stretch (and the pre-roll before the first line) is dead air the
         // desktop covers with osu's skip overlay. The browser cannot seek its scheduled audio
         // source without moving the gameplay clock, so it labels the wait and counts it down
@@ -802,6 +937,10 @@
             const active = engine.activeLineIndex >= 0;
             const curIdx = active ? engine.activeLineIndex
                 : Math.min(engine.nextSealIndex, beatmap.lines.length - 1);
+
+            // Before anything is painted, so a selection the clock has just invalidated is gone in
+            // the same frame the caret it no longer matches moves.
+            dropStaleSelection();
             // Freestyle shimmer tick: the current row repaints every frame so its open slots
             // animate; the neighbour rows only repaint on a line change, so theirs hold a still
             // glyph until the line becomes current (cheap, and never the raw marker).
@@ -824,6 +963,9 @@
             updateScroll(time);
             updateSweeps(time);
             updateCarets(time, elapsed, active);
+            // Repainted per frame like the caret, and for the same reason: a fit or a resize moves
+            // every cell offset under it.
+            paintSelection();
             updateCue(time, active);
             updateGap(time, active);
 
@@ -901,6 +1043,7 @@
             gap.classList.remove('tb-gap-on');
             stack.style.transform = 'none';
             wrongLayer.textContent = '';
+            setSelection(null);
             rolling = makeRollingWpm(ROLLING_WPM_WINDOW);
             removeStartKey();
             // A fresh play (including "play again") starts a new scoring session; let the host

@@ -2505,8 +2505,35 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 /* vertical-align:top, not the default baseline: a baseline-aligned inline-block leaves the
    strut's descent below it, which would make each row taller than its line-height and drift the
-   scroll pitch the stack animation measures. */
-.tb-cells { display: inline-block; vertical-align: top; white-space: nowrap; }
+   scroll pitch the stack animation measures.
+   position/z-index carry NO layout (a relative box with no offsets sits exactly where it did) and
+   exist only to place the glyphs in the row's paint order: above the retype-selection wash and
+   below every other overlay, which is where the desktop puts them (LyricLineDisplay adds its
+   selection Box before the glyph sprites). Without it an absolutely positioned wash would paint
+   over the characters it is supposed to sit behind, whatever the DOM order. */
+.tb-cells { display: inline-block; vertical-align: top; white-space: nowrap; position: relative; z-index: 1; }
+
+/* ---- retype selection (backlog 182) ----
+   The block a Ctrl+A paints behind the characters it has offered to erase and retype. The PLAYER
+   CARET's own colour at 22% alpha, ported by outcome like every desktop colour in this player
+   (TypeBeatStyle.Selection is the desktop caret's yellow at 22% for the same reason): the highlight
+   reads as "the caret is holding this run" rather than as a sixth character state, and it cannot be
+   confused with the error red (which says a cell IS wrong) or the sung blue (which says where the
+   song is). --violet (#c9f24d) inlined because rgba() cannot take a hex custom property.
+   Low enough alpha that every character state above it, the untyped grey included, keeps
+   its own contrast. Sits on the caret's own vertical extent and is moved by the player with the
+   same row-local translateX the caret uses, so it stays registered to the glyphs through a fit or
+   a resize. */
+.tb-selection {
+    position: absolute;
+    left: 0;
+    top: .16em;
+    height: 1.05em;
+    width: 0;
+    z-index: 0;
+    background: rgba(201, 242, 77, 0.22);
+    pointer-events: none;
+}
 
 /* inline-block so a Perfect hit can scale the glyph in place (PlayJudgementFeedback). */
 .tb-c { display: inline-block; transition: color .06s linear; }
@@ -2571,6 +2598,10 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     margin-left: -1.5px;
     border-radius: 1px;
     pointer-events: none;
+    /* Above .tb-cells, which had to be given a layer of its own for the selection wash to sit
+       behind it; this (and the same on the sweep, the cue and the wrong-key layer) keeps every
+       overlay painting over the glyphs exactly as it did before. */
+    z-index: 2;
 }
 .tb-caret-player { background: var(--violet); }
 .tb-caret-sung { background: var(--tb-sung); }
@@ -2586,6 +2617,7 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     height: 3px;
     background: rgba(126, 200, 227, 0.20);
     pointer-events: none;
+    z-index: 2;
 }
 .tb-sweep-fill { position: absolute; left: 0; top: 0; height: 100%; width: 0; background: rgba(126, 200, 227, 0.60); }
 .tb-sweep-glow { position: absolute; left: 0; top: 0; height: 100%; width: 6px; margin-left: -3px; background: var(--tb-sung); opacity: 0; }
@@ -2595,13 +2627,13 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
    BOUNDARY and a 50%-opaque one landing on the FIRST WORD (a mapper may set the boundary
    earlier, so the two can be distinct signals). Sit on the same baseline as the sweep and draw
    over it; the boundary bar is second in the DOM so it wins where they overlap. */
-.tb-cue { position: absolute; left: 0; top: 1.28em; width: 0; height: 4px; pointer-events: none; }
+.tb-cue { position: absolute; left: 0; top: 1.28em; width: 0; height: 4px; pointer-events: none; z-index: 2; }
 .tb-cue-bar { position: absolute; left: 0; top: 0; height: 4px; width: 0; background: var(--tb-sung); opacity: 0; }
 
 /* ---- rejected wrong key ----
    The offending letter pops up beside the caret (alternating sides), falls away and fades; it
    never enters the line. Pure decoration, so this one animation runs on wall time. */
-.tb-wrongkeys { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; }
+.tb-wrongkeys { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 2; }
 .tb-wrongkey {
     position: absolute;
     left: 0; top: 0;
