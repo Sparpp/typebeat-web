@@ -38,6 +38,8 @@ public class DownloadPageTest
             Assert.That(html, Does.Not.Contain("href=\"/download/game\""));
             Assert.That(html, Does.Not.Contain("href=\"/download/game-linux\""));
             Assert.That(html, Does.Not.Contain("href=\"/download/game-macos\""));
+            // No mirror link either: mirrors only render for available downloads.
+            Assert.That(html, Does.Not.Contain("direct mirror"));
         });
     }
 
@@ -90,6 +92,13 @@ public class DownloadPageTest
                 Assert.That(html, Does.Contain("6 MB"));
                 Assert.That(html, Does.Contain("Apple Silicon"));
 
+                // Direct-mirror fallback (backlog 191): one per available card, on the direct-origin
+                // host, same root-relative route.
+                Assert.That(html, Does.Contain("href=\"https://bss.typebeat.mingda.sh/download/game\""));
+                Assert.That(html, Does.Contain("href=\"https://bss.typebeat.mingda.sh/download/game-linux\""));
+                Assert.That(html, Does.Contain("href=\"https://bss.typebeat.mingda.sh/download/game-macos\""));
+                Assert.That(html, Does.Contain("direct mirror"));
+
                 // Card order IS the L-shaped layout (two-column grid, macOS last so it lands under
                 // Windows). Pin it: a reorder silently reshapes the page.
                 Assert.That(html.IndexOf("/download/game-linux", StringComparison.Ordinal),
@@ -137,5 +146,16 @@ public class DownloadPageTest
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15";
 
         Assert.That(DownloadModel.DetectOs(ipad_desktop_ua), Is.EqualTo("macos"));
+    }
+
+    /// <summary>
+    /// The direct-mirror host (backlog 191) is a pure string rewrite onto bss.typebeat.mingda.sh,
+    /// which the server's Caddy already proxies to the same app, so the same root-relative route
+    /// serves there unchanged.
+    /// </summary>
+    [Test]
+    public void MirrorHref_RewritesOntoDirectOriginHost()
+    {
+        Assert.That(DownloadModel.MirrorHref("/download/game"), Is.EqualTo("https://bss.typebeat.mingda.sh/download/game"));
     }
 }

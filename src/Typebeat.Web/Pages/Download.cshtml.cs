@@ -14,6 +14,18 @@ namespace Typebeat.Web.Pages;
 /// </summary>
 public sealed class DownloadModel(IFileStore store, IConfiguration config) : TypebeatPageModel
 {
+    /// <summary>
+    /// Direct-origin host, proxied by the same Caddy in front of this app, so every root-relative
+    /// route (including /download/game etc.) serves identically there: zero routing change. Exists
+    /// because Cloudflare-proxied sustained transfers stall for some users (backlog 191: on-path
+    /// throttling of CF-proxied hosts observed for RU traffic, not a server issue) and this host
+    /// gives them a fallback that skips the CF proxy hop entirely.
+    /// </summary>
+    public const string DIRECT_MIRROR_ROOT = "https://bss.typebeat.mingda.sh";
+
+    /// <summary>Rewrites a root-relative download href onto the direct-origin mirror host.</summary>
+    public static string MirrorHref(string href) => DIRECT_MIRROR_ROOT + href;
+
     public PlatformDownload Windows { get; private set; } = PlatformDownload.Unavailable("windows");
     public PlatformDownload Linux { get; private set; } = PlatformDownload.Unavailable("linux");
     public PlatformDownload Macos { get; private set; } = PlatformDownload.Unavailable("macos");

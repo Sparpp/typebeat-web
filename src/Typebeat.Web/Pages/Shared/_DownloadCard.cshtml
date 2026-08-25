@@ -23,6 +23,7 @@
     {
         <a class="btn @(featured ? "btn-primary" : "btn-ghost") btn-big" href="@p.Href" download>Download for @label</a>
         <p class="download-card__meta">@p.FileName &middot; @p.SizeDisplay &middot; @requirement</p>
+        <p class="download-card__mirror"><a href="@DownloadModel.MirrorHref(p.Href!)" download>Download stalling? Try the direct mirror.</a></p>
     }
     else
     {

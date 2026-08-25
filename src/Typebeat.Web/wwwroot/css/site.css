@@ -1712,6 +1712,10 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 .download-card__meta { color: var(--text-muted); font-size: var(--text-sm); margin: 0; }
 
+.download-card__mirror { margin: 0; font-size: var(--text-xs); }
+
+.download-card__mirror a { color: var(--text-muted); text-decoration: underline; }
+
 .download-card .btn.is-disabled {
     pointer-events: none;
     opacity: 0.6;
