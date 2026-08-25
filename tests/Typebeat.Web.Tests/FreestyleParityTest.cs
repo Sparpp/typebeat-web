@@ -96,12 +96,22 @@ public class FreestyleParityTest
         });
     }
 
+    /// <summary>
+    /// The freestyle slot still refuses the space key, and since backlog 184 it is the ONLY cell
+    /// that does: on an ordinary lyric character the same press is typed through (see the contrast
+    /// below). The slot is carved out because it has no expected glyph to redden and renders the
+    /// character the player pressed, so a space typed into it would BLANK it rather than mark it.
+    ///
+    /// <para>The equality is therefore held against the STRICT control now (the same press on an
+    /// ordinary cell with the rejection model selected), which is the branch the slot still takes,
+    /// rather than against the live one it used to share.</para>
+    /// </summary>
     [Test]
-    public void SpaceIsRejectedOnAFreestyleCellExactlyLikeAnyWrongKey()
+    public void SpaceIsRejectedOnAFreestyleCellExactlyLikeAStrictlyRejectedKey()
     {
         var root = Harness();
         var free = root.GetProperty("spaceOnFreestyle");
-        var ordinary = root.GetProperty("spaceOnOrdinary");
+        var ordinary = root.GetProperty("spaceOnOrdinaryStrict");
 
         Assert.Multiple(() =>
         {
@@ -124,13 +134,39 @@ public class FreestyleParityTest
             Assert.That(Str(free, "refillState"), Is.EqualTo("correct"));
             Assert.That(Num(free, "refillWrongKeys"), Is.EqualTo(0));
 
-            // And every one of those observations matches a space pressed on an ORDINARY cell:
-            // that equality IS the semantics ("same consequences as any wrong key").
+            // And every one of those observations matches a space pressed on an ORDINARY cell under
+            // the rejection model: that equality IS the semantics ("same consequences as any
+            // strictly rejected key").
             foreach (string field in new[] { "caretIndex", "combo", "consecutiveWrongKeys", "liveAccuracy", "judged", "refillWrongKeys", "score", "maxCombo", "finalAccuracy" })
                 Assert.That(Num(free, field), Is.EqualTo(Num(ordinary, field)), field);
 
             foreach (string field in new[] { "state", "rejected", "refillState" })
                 Assert.That(Str(free, field), Is.EqualTo(Str(ordinary, field)), field);
+        });
+    }
+
+    /// <summary>
+    /// The other side of that carve-out (backlog 184): the identical press on an ORDINARY cell in
+    /// the model the browser actually plays under is typed THROUGH as a typo, not rejected. With no
+    /// word to skip a space inside a word is nothing but a wrong character, so it takes the path
+    /// every other wrong character takes: the cell holds it, the caret advances, the mash-fail
+    /// streak is untouched, and no rejection is announced to the renderer.
+    /// </summary>
+    [Test]
+    public void AMidWordSpaceOnAnOrdinaryCellIsTypedThroughInstead()
+    {
+        var live = Harness().GetProperty("spaceOnOrdinaryLive");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Flag(live, "handled"), Is.True);
+            Assert.That(Str(live, "state"), Is.EqualTo("wrong"), "the cell took the space");
+            Assert.That(Str(live, "typedChar"), Is.EqualTo(" "));
+            Assert.That(Num(live, "caretIndex"), Is.EqualTo(2), "and the caret moved on with it");
+            Assert.That(Num(live, "combo"), Is.Zero, "the typo still breaks the streak");
+            Assert.That(Num(live, "consecutiveWrongKeys"), Is.Zero, "but never feeds the mash guard");
+            Assert.That(Str(live, "rejected"), Is.Empty, "and nothing was announced as rejected");
+            Assert.That(Num(live, "judged"), Is.Zero, "the cell's result is deferred, as for any typo");
         });
     }
 

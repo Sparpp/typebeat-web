@@ -17,8 +17,10 @@ namespace Typebeat.Web.Tests;
 ///
 /// <para>Half of this is the NEGATIVE half. The exemption is keyed on the CELL being a space, not on
 /// the KEY being one, and the three surfaces that would have opened up otherwise are pinned here:
-/// the rejection of a space on a lyric character, the consecutive-wrong-key streak that accrues on
-/// it, and (on the desktop side only, since the browser has no Fletcher mod) the rush cap.</para>
+/// what a space pressed on a lyric character costs (since backlog 184 it is typed through as a typo
+/// rather than rejected), the consecutive-wrong-key streak, which is now pinned on the strict model
+/// that still reaches the rejection path, and (on the desktop side only, since the browser has no
+/// Fletcher mod) the rush cap.</para>
 /// </summary>
 public class UntimedSpaceParityTest
 {
@@ -126,39 +128,73 @@ public class UntimedSpaceParityTest
     }
 
     /// <summary>
-    /// Scoped to the CELL, hole 1: with space-skip off (the default), a space pressed on a LYRIC
-    /// character is still rejected outright. Keying the exemption off "the key was a space" instead
-    /// would have made space-mashing free.
+    /// Scoped to the CELL, hole 1: the exemption is keyed on the cell being a space and never on the
+    /// KEY being one, so a space pressed on a LYRIC character earns nothing. Keying it off the key
+    /// instead would have made space-mashing free.
+    ///
+    /// <para>What that press costs changed with backlog 184: with space-skip off (the browser's
+    /// permanent setting) there is no word for it to skip, so it is nothing but a wrong character
+    /// and is TYPED THROUGH as one, taking the cell rather than being refused at the door. The cell
+    /// still renders its own expected character in the error red, since the browser substitutes the
+    /// typed char for word GAPS only.</para>
     /// </summary>
     [Test]
-    public void ASpaceOnALyricCharacterIsStillRejected()
+    public void ASpaceOnALyricCharacterIsTypedThroughAsATypo()
     {
-        var r = Harness().GetProperty("rejectedSpace");
+        var r = Harness().GetProperty("midWordSpace");
 
         Assert.Multiple(() =>
         {
             Assert.That(Flag(r, "spaceSkipsWord"), Is.False);
-            Assert.That(Str(r, "rejected"), Is.EqualTo(" "));
-            Assert.That(Num(r, "caretIndex"), Is.EqualTo(1), "caret unmoved: nothing entered the cell");
-            Assert.That(Arr(r, "states")[1], Is.EqualTo("untyped"));
+            Assert.That(r.GetProperty("rejected").ValueKind, Is.EqualTo(JsonValueKind.Null), "not a rejection any more");
+            Assert.That(Num(r, "caretIndex"), Is.EqualTo(2), "the caret moved on, as it does for any typo");
+            Assert.That(Arr(r, "states")[1], Is.EqualTo("wrong"));
+            Assert.That(Str(r, "typedChar"), Is.EqualTo(" "), "the cell holds the space that landed in it");
             Assert.That(Num(r, "combo"), Is.Zero);
             Assert.That(Num(r, "breaks"), Is.EqualTo(1));
             Assert.That(Num(r, "mistypes"), Is.EqualTo(1));
-            Assert.That(Num(r, "consecutiveWrongKeys"), Is.EqualTo(1));
-            Assert.That(Num(r, "liveAccuracy"), Is.EqualTo(0.5), "the rejected space still costs accuracy");
+            Assert.That(Num(r, "consecutiveWrongKeys"), Is.Zero, "a typed-through key never feeds the mash guard");
+            Assert.That(Num(r, "liveAccuracy"), Is.EqualTo(0.5), "and it still costs accuracy");
         });
     }
 
     /// <summary>
-    /// Scoped to the CELL, hole 2: the consecutive-wrong-key streak still accrues on that same
-    /// rejection path and still fails the play at 13. The browser is permanently on the
-    /// typed-through model, where a wrong LETTER never touches this streak, so a mashed spacebar is
-    /// one of the only ways to build it at all. (The desktop splits the same rule across two types:
-    /// the engine counts the streak and TypeBeatHealthProcessor.WRONG_KEY_FAIL_STREAK fails on it;
-    /// the browser core does both inline, which is why `failed` is observable here and not there.)
+    /// The knock-on backlog 184 accepts, stated rather than left to be discovered: a mashed spacebar
+    /// no longer builds the consecutive-wrong-key streak in live play, because it no longer reaches
+    /// the rejection branch that grows it. Thirteen of them spell the line wrong instead, which costs
+    /// the player more than the old rejection did rather than less.
     /// </summary>
     [Test]
-    public void TheMashFailStreakStillAccruesOnRejectedSpaces()
+    public void MashedSpacesNoLongerFeedTheFailStreakInLivePlay()
+    {
+        var r = Harness().GetProperty("mashed").GetProperty("live");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(JsHarness.Doubles(r, "streak"), Is.All.Zero);
+            Assert.That(Num(r, "consecutiveWrongKeys"), Is.Zero);
+            Assert.That(Flag(r, "failed"), Is.False, "13 mashed spaces no longer fail the play");
+
+            // "ab cd": the four LYRIC cells took a space each and the word gap took one correctly,
+            // which is the whole line, so the presses after the fifth reach no cell at all.
+            Assert.That(Arr(r, "states"), Is.EqualTo(new[] { "wrong", "wrong", "correct", "wrong", "wrong" }));
+            Assert.That(Num(r, "caretIndex"), Is.EqualTo(5), "the mashing typed the line out, wrongly");
+            Assert.That(Num(r, "mistypes"), Is.EqualTo(4));
+        });
+    }
+
+    /// <summary>
+    /// Scoped to the CELL, hole 2: the consecutive-wrong-key streak still accrues on the rejection
+    /// path and still fails the play at 13. Since backlog 184 the browser cannot reach that path
+    /// with a space (see above), so the guard is pinned where it is still reachable, on the engine's
+    /// STRICT model (the desktop's Gatekeeper mod, which /play has no mods payload to select). The
+    /// rule itself is unchanged and must not rot for want of a reachable arm. (The desktop splits it
+    /// across two types: the engine counts the streak and
+    /// TypeBeatHealthProcessor.WRONG_KEY_FAIL_STREAK fails on it; the browser core does both inline,
+    /// which is why `failed` is observable here and not there.)
+    /// </summary>
+    [Test]
+    public void TheMashFailStreakStillAccruesOnStrictlyRejectedSpaces()
     {
         var r = Harness().GetProperty("mashed");
 

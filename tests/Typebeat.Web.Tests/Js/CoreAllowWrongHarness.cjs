@@ -78,10 +78,10 @@ const WRONG_KEY = 'z';
  *                   me fix it" run.
  *   'wrongErase'    as 'wrong', then Backspace and nothing else. Only valid on the FINAL cell,
  *                   because it leaves the caret on the cell and everything after would land wrong.
- *   'reject'        press a key the default model still refuses (a SPACE on a letter cell, the
- *                   only such key left since backlog 181 opened the word gap to wrong letters),
- *                   which is rejected with the caret held, then the expected char, which therefore
- *                   still lands on this cell.
+ *   'spaceKey'      press a SPACE on a letter cell. Backlog 184 types that through as an ordinary
+ *                   typo (with no word to skip it is nothing but a wrong character), so it is
+ *                   followed by Backspace and the expected char, exactly as 'wrongFix' is, which is
+ *                   what keeps every later cell aligned.
  *   'skip'          press nothing, so the cell seals as a Miss. Only valid on trailing cells, for
  *                   the same caret-alignment reason as 'wrongErase'.
  *
@@ -110,10 +110,10 @@ function play(script, probeAt, osu) {
                 continue;
             }
 
-            if (action === 'wrong' || action === 'wrongFix' || action === 'wrongErase' || action === 'reject') {
-                // A rejection is only reachable on a LETTER cell now (press a space at it): the
-                // word gap takes WRONG_KEY like any other cell since backlog 181.
-                const key = (action === 'reject' && cell.expected !== ' ') ? ' ' : WRONG_KEY;
+            if (action === 'wrong' || action === 'wrongFix' || action === 'wrongErase' || action === 'spaceKey') {
+                // The SPACE key on a letter cell, which since backlog 184 is typed through like any
+                // other wrong character rather than refused.
+                const key = action === 'spaceKey' ? ' ' : WRONG_KEY;
                 engine.processKey(key, cell.target);
 
                 if (probeAt === i) {
@@ -132,7 +132,7 @@ function play(script, probeAt, osu) {
                 }
 
                 if (action === 'wrong') { i++; continue; }
-                if (action === 'wrongFix' || action === 'wrongErase') engine.processBackspace();
+                if (action === 'wrongFix' || action === 'wrongErase' || action === 'spaceKey') engine.processBackspace();
                 if (action === 'wrongErase') { i++; continue; }
             }
 
@@ -207,11 +207,12 @@ const out = {
     // judgement plus the streak the typo broke.
     wordGapWrongThenFixed: play({ 3: 'wrongFix' }, 3),
 
-    // The one wrong key the browser still rejects: a SPACE pressed on a letter cell. The space is
-    // the word-advance key, not a glyph a player means to leave in a lyric, so no cell ever takes
-    // one; it is therefore also the only keypress a browser player can make that still feeds the
-    // 13-in-a-row mash guard.
-    spaceKeyOnLetter: play({ 0: 'reject' }, 0),
+    // The SPACE key on a letter cell, which backlog 184 moved onto this same type-through path: with
+    // no word to skip it is nothing but a wrong character, so the cell takes it, the caret advances
+    // and backspace fixes it. It was the last wrong key the browser rejected, so this case changed
+    // sides exactly as the word gap did above, and with it went the browser's last route into the
+    // 13-in-a-row mash guard (that guard belongs to Gatekeeper, which /play cannot select).
+    spaceKeyOnLetter: play({ 0: 'spaceKey' }, 0),
 
     // The two-line pair (backlog 122). Same typo on cell 5, left alone, but now with a line 1 for
     // the combo run to carry into: line 0's cells 6..14 rebuild a run of 9, the seal resolves cell 5,

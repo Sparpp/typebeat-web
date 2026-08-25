@@ -1,7 +1,10 @@
 // Node harness for the WORD-LEVEL EDITING GESTURES in the browser scoring core (backlog 182).
 // Ctrl+Backspace erases the previous word (the gaps behind the caret, then the word behind them);
-// Ctrl+A offers back the run from the caret to the start of the nearest word holding an unfixed
-// typo, so it can be retyped in one go.
+// Ctrl+A offers back the run from the caret to the start of the EARLIEST word holding an unfixed
+// typo (backlog 184 widened it from the nearest one), so every mistake can be retyped in one go.
+// Since backlog 184 the same step scripts also carry the SPACE DISCIPLINE, because both of its
+// halves move the caret: a gap typo parks it, and a mid-word space is a typo rather than a
+// rejection.
 //
 // The engine's whole share of that is TWO PURE QUERIES, engine.wordBackspaceTarget and
 // engine.retypeSelectionAnchor, mirrored from TypingEngine.WordBackspaceTarget and
@@ -78,8 +81,8 @@ function makeSession(scenario) {
     engine.caseSensitive = scenario.literate === true;
 
     // The browser is always on the live arm of the wrong-input rules, so there is no flag here to
-    // set: allowWrongInput defaults on and wrong input on word gaps is unconditional. The C# arm
-    // has to select both explicitly (see WordInputParityTest.Started).
+    // set: allowWrongInput defaults on, and wrong input on word gaps and the space discipline are
+    // unconditional. The C# arm has to select all three explicitly (see WordInputParityTest.Started).
     engine.update(scenario.startTime);
 
     return { engine: engine, selection: null, erases: 0 };

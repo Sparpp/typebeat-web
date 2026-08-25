@@ -4,13 +4,15 @@
 //
 // Written as SEQUENCES rather than as transcribed literals, in the style of
 // CoreComboRestoreHarness: the point of a parity guard is to drive the shipped JS through the same
-// keystrokes the game's own fixture uses (NonVisual/UntimedSpaceTest.cs) and let the C# side assert
+// keystrokes the game's own fixture uses (NonVisual/UntimedSpaceTest.cs and, for the space key's
+// own fate on a lyric cell, NonVisual/SpaceDisciplineTest.cs) and let the C# side assert
 // what came out, so a divergence shows up as a wrong number rather than as a test nobody updated.
 //
 // Half of this is the NEGATIVE half, and it matters as much: the exemption is keyed on the CELL
-// being a space, not on the KEY being one, so a space that lands anywhere else must still be
-// rejected, must still cost a mistype, and must still build the consecutive-wrong-key streak that
-// fails a masher at 13.
+// being a space, not on the KEY being one, so a space that lands anywhere else must still cost the
+// player. Since backlog 184 what it costs is the CELL (it is typed through as an ordinary typo)
+// rather than a rejection, so the mash-fail streak it used to build is pinned on the arm that still
+// reaches the rejection path, the engine's strict model.
 //
 // Usage: node CoreUntimedSpaceHarness.cjs <absolute path to typebeat-core.js>
 
@@ -119,8 +121,12 @@ function lyricCharPressedJustAsLate() {
     return Object.assign(snapshot(engine), { comboAfterSpace: comboAfterSpace });
 }
 
-// Scoped to the CELL, hole 1: a space pressed on a LYRIC character is still rejected outright.
-// spaceSkipsWord is off (its default), so nothing consumes the press.
+// Scoped to the CELL, hole 1: the exemption is keyed on the cell being a space, never on the KEY
+// being one, so a space pressed on a LYRIC character earns nothing. Since backlog 184 it is TYPED
+// THROUGH as an ordinary typo rather than rejected (with spaceSkipsWord off, which is the browser's
+// permanent setting, there is no word for the press to skip and it is simply a wrong character), so
+// what it costs the player is the cell. Keying the exemption off the key instead would have made
+// space-mashing free, which is what this pins either way.
 function spaceOnALyricChar() {
     const engine = started(LONG);
     engine.rejected = null;
@@ -129,30 +135,45 @@ function spaceOnALyricChar() {
     engine.processKey(' ', 1500); // caret is on 'b', dead on ITS target
     return Object.assign(snapshot(engine), {
         spaceSkipsWord: !!engine.spaceSkipsWord,
-        rejected: engine.rejected
+        rejected: engine.rejected,
+        typedChar: engine.lines[0].cells[1].typedChar
     });
 }
 
-// Scoped to the CELL, hole 2: the consecutive-wrong-key streak still accrues on that rejection
-// path, and still fails the play at 13. The browser is permanently on the typed-through model, so
-// a wrong LETTER never touches this streak: a mashed spacebar is one of the only ways to build it.
+// Scoped to the CELL, hole 2, in the two models. Backlog 184 took the mid-word space off the
+// rejection path, so a mashed spacebar now spells the line wrong instead of building the
+// consecutive-wrong-key streak: `live` is that, and it is what every /play run does. The streak and
+// its 13-key fail are unchanged where the rejection path is still reachable, which the browser can
+// only be put on by hand (Gatekeeper has no mods payload to arrive through), so `strict` drives it
+// directly. The engine's mash guard is what this keeps covered: a rule with no reachable arm left
+// would otherwise go untested and rot.
 function mashedSpaces() {
-    const engine = started(LONG);
+    const live = started(LONG);
+    const liveStreak = [];
+    for (let i = 0; i < 13; i++) {
+        live.processKey(' ', 1000 + i);
+        liveStreak.push(live.consecutiveWrongKeys);
+    }
+
+    const strict = started(LONG);
+    strict.allowWrongInput = false;
     const streak = [];
     for (let i = 0; i < 13; i++) {
-        engine.processKey(' ', 1000 + i);
-        streak.push(engine.consecutiveWrongKeys);
+        strict.processKey(' ', 1000 + i);
+        streak.push(strict.consecutiveWrongKeys);
     }
-    const failedAt13 = Object.assign(snapshot(engine), { streak: streak });
+    const failedAt13 = Object.assign(snapshot(strict), { streak: streak });
 
     // ...and any accepted char resets it. Cleared on a fresh engine, since the one above is failed.
     const fresh = started(LONG);
+    fresh.allowWrongInput = false;
     for (let i = 0; i < 3; i++) fresh.processKey(' ', 1000 + i);
     const beforeReset = fresh.consecutiveWrongKeys;
     fresh.processKey('a', 1000);
     return Object.assign(failedAt13, {
         streakBeforeReset: beforeReset,
-        streakAfterAccepted: fresh.consecutiveWrongKeys
+        streakAfterAccepted: fresh.consecutiveWrongKeys,
+        live: Object.assign(snapshot(live), { streak: liveStreak })
     });
 }
 
@@ -194,7 +215,7 @@ process.stdout.write(JSON.stringify({
     late: spacePressedAt(7000),
     onTime: spacePressedAt(2000),
     lyricLate: lyricCharPressedJustAsLate(),
-    rejectedSpace: spaceOnALyricChar(),
+    midWordSpace: spaceOnALyricChar(),
     mashed: mashedSpaces(),
     sealed: untypedSpaceSeals(),
     retyped: retypeIsInert()

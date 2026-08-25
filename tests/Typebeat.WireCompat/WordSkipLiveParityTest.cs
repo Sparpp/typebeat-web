@@ -107,19 +107,22 @@ public class WordSkipLiveParityTest
     /// <summary>
     /// A replay of the given keystrokes, headed by the CONFIG frame the settings travel in: bit 0
     /// allow-wrong-input (the default model, which is all the browser has), bit 1 space-skips-word
-    /// (on, or there is nothing to test) and bit 3 wrong-input-on-word-gaps (on, the live model
-    /// since backlog 181, which is likewise all the browser has).
+    /// (on, or there is nothing to test), bit 3 wrong-input-on-word-gaps (on, the live model since
+    /// backlog 181) and bit 4 strict-spaces (on, the live model since backlog 184), both of which
+    /// are likewise all the browser has.
     ///
-    /// <para>Bit 3 changes no run below, because none of them presses a wrong LETTER on a word gap:
-    /// it is set because this arm is supposed to be the live one on every axis, so a case added
-    /// later cannot silently be scored under a stored era the browser can never select. The bit is
-    /// pinned on its own where it does move a run, in <c>EngineFuzzLiveParityTest</c>.</para>
+    /// <para>Neither bit changes a run below, because none of them presses a wrong LETTER on a word
+    /// gap (which is what bit 4's park is scoped to, and what bit 3 decides at all) and every space
+    /// they do press is either on a gap or a deliberate skip. They are set because this arm is
+    /// supposed to be the live one on every axis, so a case added later cannot silently be scored
+    /// under a stored era the browser can never select. Both are pinned on their own where they do
+    /// move a run, in <c>EngineFuzzLiveParityTest</c>.</para>
     /// </summary>
     private static Replay Keystrokes(params (double time, char character)[] keys)
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, wrongInputOnWordGaps: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, wrongInputOnWordGaps: true, strictSpaces: true));
 
         foreach ((double time, char character) in keys)
             replay.Frames.Add(new TypeBeatReplayFrame(time, character));

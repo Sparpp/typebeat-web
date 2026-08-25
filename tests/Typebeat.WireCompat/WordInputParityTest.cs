@@ -11,9 +11,15 @@ namespace Typebeat.WireCompat;
 
 /// <summary>
 /// The cross-repo pin on the two WORD-LEVEL EDITING GESTURES (backlog 182): Ctrl+Backspace erases
-/// the previous word, Ctrl+A offers back the run to the nearest unfixed typo so it can be retyped in
-/// one go. The desktop got them first (<c>TypeBeatKeyHandler</c>); this is the browser holding its
-/// half against the game's live engine.
+/// the previous word, Ctrl+A offers back the run to the earliest unfixed typo (backlog 184 widened
+/// it from the nearest one) so every mistake can be retyped in one go. The desktop got them first
+/// (<c>TypeBeatKeyHandler</c>); this is the browser holding its half against the game's live engine.
+///
+/// <para>Since backlog 184 it also carries the SPACE DISCIPLINE, which belongs here rather than in a
+/// fixture of its own because both of its halves are about where the caret ends up: a wrong letter
+/// on a word gap PARKS the caret on it (with word skipping on), and a space typed inside a word is a
+/// typo rather than a rejection (with word skipping off). A caret that parts between the two clients
+/// puts every later keystroke on a different cell.</para>
 ///
 /// <para>The engine's whole share of both gestures is TWO PURE QUERIES,
 /// <see cref="TypingEngine.WordBackspaceTarget"/> and <see cref="TypingEngine.RetypeSelectionAnchor"/>,
@@ -213,8 +219,9 @@ public class WordInputParityTest
             Steps = [Key('a', a_t), Key('x', b_t), Key(' ', gap1_t), Key('c', c_t), Churn(), CtrlA()],
         },
 
-        // A typo in the word the player is halfway through anchors on THAT word, because the scan
-        // stops at the first typo behind the caret rather than at the earliest one on the line.
+        // A typo in the word the player is halfway through anchors on THAT word: it is the only one
+        // on the line, and the scan takes the earliest, so the selection is the partial word alone
+        // rather than everything typed before it.
         new Scenario
         {
             Name = "aTypoInTheCurrentPartialWordAnchorsOnThatWord",
@@ -222,10 +229,12 @@ public class WordInputParityTest
             Steps = [Key('a', a_t), Key('b', b_t), Key(' ', gap1_t), Key('z', c_t), Churn(), CtrlA()],
         },
 
-        // Two unfixed typos, one per word, caret in the third word: the NEAREST one wins.
+        // Two unfixed typos, one per word, caret in the third word: the EARLIEST one wins (backlog
+        // 184), so one gesture offers back everything that has to be retyped rather than the most
+        // recent word alone.
         new Scenario
         {
-            Name = "theNearestTypoBehindTheCaretWins",
+            Name = "theEarliestTypoBehindTheCaretWins",
             Osu = AbCdEf(),
             Steps =
             [
@@ -321,6 +330,58 @@ public class WordInputParityTest
             Name = "aStaleSelectionIsDroppedWhenTheLineGoes",
             Osu = AbCdEf(),
             Steps = [Key('a', a_t), Key('x', b_t), CtrlA(), CtrlA(), Update(61000), Churn(), CtrlA()],
+        },
+
+        // ---- Space discipline (backlog 184) ------------------------------------------------------
+
+        // THE PARK, end to end. With word skipping on, a wrong letter on the word GAP spoils it
+        // WITHOUT moving the caret, a second wrong letter overwrites that same cell rather than
+        // spoiling the next one, the space then STEPS OVER the typo (crediting accuracy, judging
+        // nothing, leaving the cell wrong), and the next word types out clean. Ctrl+A in the middle
+        // of it is a deliberate no-op: the parked typo sits AT the caret, outside the scan's
+        // [0, caret) range, because it is one backspace away rather than a selection away.
+        new Scenario
+        {
+            Name = "aGapTypoParksTheCaretAndTheSpaceStepsOverIt",
+            Osu = AbCdEf(),
+            SpaceSkipsWord = true,
+            Steps =
+            [
+                Key('a', a_t), Key('b', b_t), Key('c', gap1_t), Churn(), CtrlA(),
+                Key('z', gap1_t), Churn(), Key(' ', gap1_t),
+                Key('c', c_t), Key('d', d_t), Key(' ', gap2_t), Key('e', e_t), Key('f', f_t),
+            ],
+        },
+
+        // Backspace on a parked gap clears it WHERE IT SITS: one press, one cell, caret unmoved, and
+        // the perfectly good word behind it untouched. The corrected space then earns the cell and
+        // the streak the typo broke, through the existing combo-restore machinery.
+        new Scenario
+        {
+            Name = "backspaceClearsAParkedGapInPlace",
+            Osu = AbCdEf(),
+            SpaceSkipsWord = true,
+            Steps =
+            [
+                Key('a', a_t), Key('b', b_t), Key('x', gap1_t), Churn(), Backspace(), Churn(),
+                Key(' ', gap1_t), Key('c', c_t),
+            ],
+        },
+
+        // The other half of backlog 184, on the arm the browser actually plays: with no word to skip
+        // a SPACE inside a word is nothing but a wrong character, so it is typed through into the
+        // cell exactly as a wrong letter is. The anchor then treats it as the ordinary lyric typo it
+        // is (the head of "ab", not the cell itself, because a lyric typo is retyped with its word),
+        // and the erase key over that selection collapses it, after which the word types out clean.
+        new Scenario
+        {
+            Name = "aMidWordSpaceIsTypedThroughAsAnOrdinaryTypo",
+            Osu = AbCdEf(),
+            Steps =
+            [
+                Key('a', a_t), Key(' ', b_t), Churn(), CtrlA(), Backspace(),
+                Key('a', a_t), Key('b', b_t), Key(' ', gap1_t), Key('c', c_t),
+            ],
         },
 
         // ---- A mark inside a word (Literate) -----------------------------------------------------
@@ -425,15 +486,17 @@ public class WordInputParityTest
     /// <summary>
     /// A started engine on the scenario's map, under every LIVE rule, which is the only arm the
     /// browser can be compared against: it has no mods payload, writes no replay frames and
-    /// re-derives no stored row. AllowWrongInput is the default; WrongInputOnWordGaps has to be set
-    /// by hand here because the C# keeps it as an era arm and the browser is permanently on its live
-    /// side (see the note in typebeat-core.js's wrong-key path).
+    /// re-derives no stored row. AllowWrongInput is the default; WrongInputOnWordGaps and
+    /// StrictSpaces have to be set by hand here because the C# keeps both as era arms (CONFIG flags
+    /// bits 3 and 4) and the browser is permanently on their live side (see the notes in
+    /// typebeat-core.js's wrong-key path).
     /// </summary>
     private static Session Started(Scenario scenario)
     {
         var engine = new TypingEngine(Load(scenario.Osu), scenario.Literate)
         {
             WrongInputOnWordGaps = true,
+            StrictSpaces = true,
             SpaceSkipsWord = scenario.SpaceSkipsWord,
         };
 
@@ -761,9 +824,12 @@ public class WordInputParityTest
             Assert.That(probes["aTypoAnchorsOnItsOwnWordsStart"][^1].SelectionStart, Is.Zero, "the head of \"ab\"");
             Assert.That(probes["aTypoAnchorsOnItsOwnWordsStart"][^1].SelectionEnd, Is.EqualTo(4), "back to the caret");
 
-            Assert.That(probes["aTypoInTheCurrentPartialWordAnchorsOnThatWord"][^1].SelectionStart, Is.EqualTo(3), "the head of \"cd\", not of the line");
+            Assert.That(probes["aTypoInTheCurrentPartialWordAnchorsOnThatWord"][^1].SelectionStart, Is.EqualTo(3), "the head of \"cd\", the only typo's own word");
 
-            Assert.That(probes["theNearestTypoBehindTheCaretWins"][^1].SelectionStart, Is.EqualTo(3), "the LATER typo's word");
+            Assert.That(probes["theEarliestTypoBehindTheCaretWins"][^2].States[0], Is.EqualTo("wrong"), "a typo in the first word");
+            Assert.That(probes["theEarliestTypoBehindTheCaretWins"][^2].States[3], Is.EqualTo("wrong"), "and another in the second");
+            Assert.That(probes["theEarliestTypoBehindTheCaretWins"][^1].SelectionStart, Is.Zero, "the EARLIER typo's word, so one gesture offers both back");
+            Assert.That(probes["theEarliestTypoBehindTheCaretWins"][^1].SelectionEnd, Is.EqualTo(7), "back to the caret in the third word");
 
             Assert.That(probes["aGapTypoAnchorsOnTheGapItself"][^2].States[2], Is.EqualTo("wrong"), "a wrong letter landed on the word gap");
             Assert.That(probes["aGapTypoAnchorsOnTheGapItself"][^1].SelectionStart, Is.EqualTo(2), "the gap itself, so \"ab\" is left alone");
@@ -803,6 +869,41 @@ public class WordInputParityTest
             Assert.That(stale[^3].SelectionStart, Is.EqualTo(-1), "so the selection was dropped");
             Assert.That(stale[^1].WordBackspaceTarget, Is.EqualTo(stale[^1].CaretIndex), "and both queries answer inertly off a finished run");
             Assert.That(stale[^1].RetypeSelectionAnchor, Is.EqualTo(-1));
+
+            // Space discipline (backlog 184): the park, its in-place erase, and the mid-word typo.
+            var park = probes["aGapTypoParksTheCaretAndTheSpaceStepsOverIt"];
+            Assert.That(park[3].CaretIndex, Is.EqualTo(2), "the caret PARKED on the gap it spoiled");
+            Assert.That(park[3].States[2], Is.EqualTo("wrong"));
+            Assert.That(park[3].Typed[2], Is.EqualTo("c"));
+            Assert.That(park[5].RetypeSelectionAnchor, Is.EqualTo(-1), "a typo AT the caret is outside the scan");
+            Assert.That(park[5].SelectionStart, Is.EqualTo(-1), "so Ctrl+A selected nothing");
+            Assert.That(park[6].Typed[2], Is.EqualTo("z"), "a second wrong letter overwrote the same cell");
+            Assert.That(park[6].CaretIndex, Is.EqualTo(2), "and still did not move the caret");
+            Assert.That(park[6].States.Count(s => s == "wrong"), Is.EqualTo(1), "one spoiled cell, not two");
+            Assert.That(park[8].CaretIndex, Is.EqualTo(3), "the space stepped over the gap");
+            Assert.That(park[8].States[2], Is.EqualTo("wrong"), "leaving the typo standing");
+            Assert.That(park[8].Accuracy, Is.EqualTo(3 / 5.0).Within(1e-12), "and counting itself CORRECT: 2 letters + this space, over 5 presses");
+            Assert.That(park[^1].States.Count(s => s == "correct"), Is.EqualTo(7), "the rest of the line typed out clean");
+            Assert.That(park[^1].Mistypes, Is.EqualTo(2), "both attempts at the gap are still wrong keypresses");
+
+            var parkedErase = probes["backspaceClearsAParkedGapInPlace"];
+            Assert.That(parkedErase[3].CaretIndex, Is.EqualTo(2), "parked again");
+            Assert.That(parkedErase[5].States[2], Is.EqualTo("untyped"), "the parked cell was cleared");
+            Assert.That(parkedErase[5].States[1], Is.EqualTo("correct"), "and the word in front of it was not touched");
+            Assert.That(parkedErase[5].CaretIndex, Is.EqualTo(2), "with the caret exactly where it was");
+            Assert.That(parkedErase[5].Erases, Is.EqualTo(1), "one press, one cell");
+            Assert.That(parkedErase[^2].States[2], Is.EqualTo("correct"), "the space then earns the gap");
+            Assert.That(parkedErase[^2].Combo, Is.EqualTo(3), "at the streak the typo broke, put back");
+
+            var midWordSpace = probes["aMidWordSpaceIsTypedThroughAsAnOrdinaryTypo"];
+            Assert.That(midWordSpace[2].States[1], Is.EqualTo("wrong"), "the cell took the space");
+            Assert.That(midWordSpace[2].Typed[1], Is.EqualTo(" "));
+            Assert.That(midWordSpace[2].CaretIndex, Is.EqualTo(2), "and the caret moved on with it");
+            Assert.That(midWordSpace[2].Accuracy, Is.EqualTo(0.5).Within(1e-12));
+            Assert.That(midWordSpace[4].SelectionStart, Is.Zero, "the anchor is the head of \"ab\", as for any lyric typo");
+            Assert.That(midWordSpace[5].CaretIndex, Is.Zero, "the erase key collapsed that selection");
+            Assert.That(midWordSpace[5].Erases, Is.EqualTo(2));
+            Assert.That(midWordSpace[^1].States.Take(4), Is.All.EqualTo("correct"), "and the word was retyped clean");
 
             // A mark is a cell but never a boundary.
             var markAnchor = probes["aTypoOnAMarkAnchorsOnItsWholeWord"];

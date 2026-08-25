@@ -128,13 +128,18 @@ function playThrough(osuText, middle) {
     };
 }
 
-// Space is the ONE key a freestyle slot refuses (backlog 50). It must be rejected with exactly the
-// consequences a wrong key has on an ordinary cell, so the same run is played against the plain
-// "axb" map as a control and both sets of observations are emitted for comparison.
-function spaceRejected(osuText, refill) {
+// Space is the ONE key a freestyle slot refuses (backlog 50), and since backlog 184 it is the one
+// cell that refuses it: on an ordinary cell a mid-word space is typed through like any other wrong
+// character. So the slot's rejection is held against the STRICT control (the same run on the plain
+// "axb" map with allowWrongInput off, which is the branch the slot still takes) and against the LIVE
+// one (the same run with the flag on, which now types the space through). All three sets of
+// observations are emitted, and the test asserts the equality with one and the contrast with the
+// other.
+function spaceRejected(osuText, refill, strict) {
     const engine = activeEngine(osuText);
     const rejected = [];
     let judged = 0;
+    engine.allowWrongInput = strict !== true;
     engine.onWrongKey = ch => rejected.push(ch);
 
     engine.processKey('a', 1000);
@@ -332,7 +337,8 @@ const out = {
     anyKeyZ: anyKey('Z'),
     anyKey7: anyKey('7'),
     spaceOnFreestyle: spaceRejected(FREESTYLE_OSU, '7'),
-    spaceOnOrdinary: spaceRejected(PLAIN_OSU, 'x'),
+    spaceOnOrdinaryStrict: spaceRejected(PLAIN_OSU, 'x', true),
+    spaceOnOrdinaryLive: spaceRejected(PLAIN_OSU, 'x'),
     freeRun: playThrough(FREESTYLE_OSU, 'q'),
     plainRun: playThrough(PLAIN_OSU, 'x'),
     literate: literate(),

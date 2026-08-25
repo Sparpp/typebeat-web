@@ -172,8 +172,12 @@ function submitted(engine) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// SpaceSkipWordTest.SpaceInsideAWordIsStillRejectedWhenTheSettingIsOff. The default path, and so
-// also the pin that nothing here reaches a run with the setting off.
+// SpaceSkipWordTest.SpaceInsideAWordIsStillRejectedWhenTheSettingIsOff, as backlog 184 leaves it on
+// the live arm the browser is permanently on: with no word to skip the press is nothing but a wrong
+// character, so it is TYPED THROUGH into the cell rather than rejected (the game's own fixture keeps
+// the classic arm, where it is still refused; see SpaceDisciplineTest for the live one). The default
+// path either way, and so also the pin that nothing the skip added reaches a run with the setting
+// off.
 // ---------------------------------------------------------------------------------------------
 function settingOff() {
     const engine = started(CAT_DOG, false);

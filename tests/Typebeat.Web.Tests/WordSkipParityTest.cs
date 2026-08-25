@@ -49,23 +49,29 @@ public class WordSkipParityTest
     }
 
     /// <summary>
-    /// <c>SpaceInsideAWordIsStillRejectedWhenTheSettingIsOff</c>. With the setting off a space
-    /// pressed on a lyric character is REJECTED exactly as it always was: nothing enters the cell,
-    /// the caret does not move, and the press is a mistype. Also the pin that nothing added here
-    /// reaches a run with the setting off, which is every browser <c>/play</c> today.
+    /// <c>SpaceInsideAWordIsStillRejectedWhenTheSettingIsOff</c>, as backlog 184 leaves it on the
+    /// live arm: with the setting off there is no word for the press to skip, so it is nothing but a
+    /// wrong character and is TYPED THROUGH as one. The cell takes it, the caret advances, the press
+    /// is a mistype, and no rejection is announced. Also the pin that nothing the skip added reaches
+    /// a run with the setting off, which is every browser <c>/play</c> today.
+    ///
+    /// <para>The game's own fixture asserts the rejection still, because a bare engine there is on
+    /// the CLASSIC space era (<c>StrictSpaces</c> false) that every stored replay carries; the
+    /// browser has no era axis and plays the live rule unconditionally, exactly as it does for the
+    /// word-gap type-through.</para>
     /// </summary>
     [Test]
-    public void SpaceInsideAWordIsStillRejectedWhenTheSettingIsOff()
+    public void SpaceInsideAWordIsTypedThroughWhenTheSettingIsOff()
     {
         var run = Run("settingOff");
 
         Assert.Multiple(() =>
         {
-            Assert.That(Strings(run, "rejected"), Is.EqualTo(new[] { " " }));
-            Assert.That(Int(run, "caretIndex"), Is.EqualTo(1), "caret unmoved, still on 'a'");
-            Assert.That(Strings(run, "states"), Is.EqualTo(new[] { "correct", "untyped", "untyped", "untyped", "untyped", "untyped", "untyped" }));
+            Assert.That(Strings(run, "rejected"), Is.Empty, "not a rejection any more");
+            Assert.That(Int(run, "caretIndex"), Is.EqualTo(2), "the caret moved on, as it does for any typo");
+            Assert.That(Strings(run, "states"), Is.EqualTo(new[] { "correct", "wrong", "untyped", "untyped", "untyped", "untyped", "untyped" }));
             Assert.That(Int(run, "processorMisses"), Is.Zero);
-            Assert.That(Int(run, "mistypes"), Is.EqualTo(1), "the rejected space is a mistype");
+            Assert.That(Int(run, "mistypes"), Is.EqualTo(1), "the typed-through space is a mistype");
         });
     }
 

@@ -550,7 +550,8 @@
             }
 
             if (wordGesture) {
-                // CTRL+A: offer the run back to the nearest unfixed typo for retyping. preventDefault
+                // CTRL+A: offer the run back to the earliest unfixed typo for retyping (backlog 184
+                // widened it from the nearest one, so one press offers every mistake). preventDefault
                 // because the browser's own Ctrl+A selects the whole page. Gated on the same flag the
                 // erase is, and for the same reason: with no wrong character able to land there would
                 // never be a typo to select.

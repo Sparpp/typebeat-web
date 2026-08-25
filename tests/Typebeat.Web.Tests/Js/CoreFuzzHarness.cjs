@@ -17,18 +17,18 @@
 // ReplayEngineFeed.Apply). So the generator can lean on browser behaviour without the comparison
 // inheriting it: whatever it produced, both sides then play the identical script.
 //
-// TWO DELIBERATE LIMITS ON WHAT IS GENERATED, both of them properties of the browser rather than
-// of the fuzzer:
+// ONE DELIBERATE LIMIT ON WHAT IS GENERATED: press times are monotonic non-decreasing. The replay
+// feed consumes frames in list order as the clock passes them, so an out-of-order frame would be
+// applied at a time the recorded run never had, on both sides equally but for no useful reason.
 //
-//   * A REJECTED key is never generated once engine.consecutiveWrongKeys reaches 8. The browser
-//     fails a play at 13 consecutive rejections (WRONG_KEY_FAIL_STREAK) and then refuses every
-//     later key, while TypeBeatReplayScorer simulates no health at all and would carry on. That is
-//     the browser's stand-in for the desktop's TypeBeatHealthProcessor, not engine drift, and a
-//     failed run is unranked on both sides, so the fuzzer stays clear of it rather than pinning a
-//     difference that is by design.
-//   * Press times are monotonic non-decreasing. The replay feed consumes frames in list order as
-//     the clock passes them, so an out-of-order frame would be applied at a time the recorded run
-//     never had, on both sides equally but for no useful reason.
+// There used to be a second, a cap on REJECTED keys: the browser fails a play at 13 consecutive
+// rejections (WRONG_KEY_FAIL_STREAK) while TypeBeatReplayScorer simulates no health at all and would
+// carry on, so the generator stayed clear of that streak rather than pinning a difference that is by
+// design. Backlog 184 made it moot on these fixtures: the mid-word space was the last key any of
+// them could be rejected on, and it is typed through now, so no run here can build the streak at
+// all. The cap is gone rather than left as an unreachable guard, and the reason it can go is worth
+// stating: a fixture with a FREESTYLE slot in it (the one cell that still refuses the space key)
+// would need it back.
 //
 // Usage: node CoreFuzzHarness.cjs <absolute path to typebeat-core.js>
 
@@ -252,11 +252,6 @@ function generate(name, seed, spaceSkipsWord) {
         }
 
         const roll = rnd();
-        // The one key that is still REJECTED (a space on a lyric cell without the skip setting) is
-        // off the table near the fail streak; see the header. Since backlog 181 a letter on a word
-        // gap is no longer in that company: it is typed through like any other wrong letter, and
-        // the type-through path never feeds the streak at all.
-        const mayBeRejected = engine.consecutiveWrongKeys < 8;
 
         if (roll < 0.10) {
             // Idle: let the clock run, which is how cells reach a seal untyped.
@@ -276,15 +271,22 @@ function generate(name, seed, spaceSkipsWord) {
         if (roll < 0.32 && cell.expected !== ' ') {
             // A typed-through typo (or, with the skip setting on and the roll below, a skip).
             do { ch = LETTERS[Math.floor(rnd() * LETTERS.length)]; } while (ch === cell.expected);
-        } else if (roll < 0.40 && (spaceSkipsWord || mayBeRejected)) {
-            // A space. Inside a word it skips it (setting on) or is rejected (setting off); on a
-            // word gap it is simply the right key.
+        } else if (roll < 0.40) {
+            // A space, and it means four different things depending on where it lands and which arm
+            // the run is on, which is why it is rolled everywhere rather than only inside a word.
+            // On a word GAP it is simply the right key; on a gap a typo has PARKED the caret on it
+            // steps over that typo (backlog 184); inside a word it skips the word (setting on) or,
+            // since backlog 184, is typed through as an ordinary typo (setting off, which is the
+            // browser's permanent arm and the one midWordSpaceTypos below counts).
             ch = ' ';
         } else if (roll < 0.44 && cell.expected === ' ') {
             // A wrong letter on a WORD GAP. Rejected in every model before backlog 181, typed
             // through into the gap since, which is the shape gapTypos below counts: the browser is
             // live-only and so is always on the type-through arm, and the C# arm of the parity test
-            // has to set CONFIG flags bit 3 to be on it too.
+            // has to set CONFIG flags bit 3 to be on it too. With the skip setting ON it also PARKS
+            // the caret on the gap (backlog 184, CONFIG flags bit 4), so the next roll is made with
+            // the caret still sitting on the spoiled cell: that is how the sweep reaches both the
+            // overwrite and the step-over without either being scripted.
             ch = LETTERS[Math.floor(rnd() * LETTERS.length)];
         } else {
             ch = cell.expected;
@@ -358,12 +360,34 @@ function play(name, keys, spaceSkipsWord) {
     // the script, so a stream that happens to press a letter at a gap the caret is not on does not
     // count, and a run where the port silently stopped reaching gaps reads zero.
     let gapTypos = 0;
+
+    // Backlog 184 coverage, the same shape and for the same reason, one counter per rule the task
+    // added. A PARK is a gap typo the caret did not move away from (only the skip arm produces one);
+    // a STEP OVER is a space pressed while the caret sat on such a cell, which advances past it and
+    // leaves it wrong; a MID-WORD SPACE TYPO is a lyric cell left holding a space, which is the only
+    // way one can get there. All three are measured on the engine's own state around the call rather
+    // than on the script, so a generator that stopped rolling the shapes, or a port that quietly
+    // went back to advancing and rejecting, reads zero instead of staying green.
+    let parkedGapTypos = 0;
+    let stepOvers = 0;
+    let midWordSpaceTypos = 0;
     const processKey = engine.processKey.bind(engine);
 
     engine.processKey = function (c, time) {
         const before = wrongGapCount(engine);
+        const beforeCaret = engine.caretIndex;
+        const beforeMidWord = midWordSpaceCount(engine);
+        const parkedOn = parkedCell(engine);
         const handled = processKey(c, time);
-        if (wrongGapCount(engine) > before) gapTypos++;
+
+        if (wrongGapCount(engine) > before) {
+            gapTypos++;
+            if (engine.caretIndex === beforeCaret) parkedGapTypos++;
+        }
+
+        if (parkedOn !== null && c === ' ' && engine.caretIndex > beforeCaret && parkedOn.state === 'wrong') stepOvers++;
+        if (midWordSpaceCount(engine) > beforeMidWord) midWordSpaceTypos++;
+
         return handled;
     };
 
@@ -405,7 +429,10 @@ function play(name, keys, spaceSkipsWord) {
         restores: restores,
         passiveBreaks: passiveBreaks,
         spanJudgements: spanJudgements,
-        gapTypos: gapTypos
+        gapTypos: gapTypos,
+        parkedGapTypos: parkedGapTypos,
+        stepOvers: stepOvers,
+        midWordSpaceTypos: midWordSpaceTypos
     };
 }
 
@@ -418,6 +445,28 @@ function wrongGapCount(engine) {
         }
     }
     return n;
+}
+
+/** LYRIC cells currently holding a typed SPACE, which only backlog 184 can produce. */
+function midWordSpaceCount(engine) {
+    let n = 0;
+    for (const line of engine.lines) {
+        for (const cell of line.cells) {
+            if (cell.expected !== ' ' && cell.state === 'wrong' && cell.typedChar === ' ') n++;
+        }
+    }
+    return n;
+}
+
+/** The cell the caret is parked on when it is a spoiled word gap, else null (see stepOvers). */
+function parkedCell(engine) {
+    if (engine.activeLineIndex < 0) return null;
+
+    const cells = engine.lines[engine.activeLineIndex].cells;
+    if (engine.caretIndex >= cells.length) return null;
+
+    const cell = cells[engine.caretIndex];
+    return cell.expected === ' ' && cell.state === 'wrong' ? cell : null;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -443,14 +443,20 @@ public class AllowWrongInputParityTest
     }
 
     /// <summary>
-    /// The half of the carve-out that did not move: the SPACE KEY. It is the word-advance key and
-    /// not a glyph a player means to leave sitting in a lyric, so no cell ever takes a wrong one,
-    /// and a space pressed on a letter is still REJECTED with the caret held. It is therefore the
-    /// only wrong keypress a browser player can make that still feeds the 13-in-a-row mash guard,
-    /// now that the other one (a letter on the word gap) is typed through.
+    /// The last half of the carve-out to move, and backlog 184 moved it: the SPACE KEY on a lyric
+    /// character. With no word to skip (the browser hardcodes that setting off) the press means
+    /// nothing but a wrong character, so it takes the same type-through path every other wrong
+    /// character takes: the cell holds it, the caret advances, and backspace takes it back.
+    ///
+    /// <para>Two knock-ons are asserted here rather than left implied. The mash-fail streak is
+    /// UNTOUCHED, because the type-through path never feeds it, so the browser now has no route into
+    /// the 13-in-a-row guard at all (that guard belongs to Gatekeeper, which /play cannot select).
+    /// And the cell keeps rendering its own EXPECTED character in the error red, since the browser's
+    /// cellGlyph substitutes the typed char for word GAPS only, which is what makes an invisible red
+    /// space a non-problem.</para>
     /// </summary>
     [Test]
-    public void TheSpaceKeyStaysStrictOnALyricCell()
+    public void TheSpaceKeyIsTypedThroughOnALyricCell()
     {
         var root = Harness();
         var run = root.GetProperty("spaceKeyOnLetter");
@@ -458,18 +464,18 @@ public class AllowWrongInputParityTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(probe.GetProperty("state").GetString(), Is.EqualTo("untyped"), "nothing was written");
-            Assert.That(probe.GetProperty("typedChar").ValueKind, Is.EqualTo(JsonValueKind.Null));
-            Assert.That(probe.GetProperty("consecutiveWrongKeys").GetInt32(), Is.EqualTo(1),
-                "the rejection path is the one that feeds the mash guard");
+            Assert.That(probe.GetProperty("state").GetString(), Is.EqualTo("wrong"), "the cell took the space");
+            Assert.That(probe.GetProperty("typedChar").GetString(), Is.EqualTo(" "));
+            Assert.That(probe.GetProperty("consecutiveWrongKeys").GetInt32(), Is.Zero,
+                "a typed-through key never feeds the mash guard");
             Assert.That(probe.GetProperty("mistypes").GetInt32(), Is.EqualTo(1));
 
-            // Caret held means the SAME cell is still the target, so it is typed correctly straight
-            // afterwards and nothing is missed.
-            Assert.That(probe.GetProperty("caretIndex").GetInt32(), Is.Zero);
+            // The caret moved on, exactly as it does for a wrong letter: the harness therefore fixes
+            // the cell with a backspace before typing it, which is the run the totals below describe.
+            Assert.That(probe.GetProperty("caretIndex").GetInt32(), Is.EqualTo(1));
 
             var stats = Dict(run, "statistics");
-            Assert.That(stats.GetValueOrDefault("great"), Is.EqualTo(15));
+            Assert.That(stats.GetValueOrDefault("great"), Is.EqualTo(15), "the fix earns the cell back");
             Assert.That(stats, Does.Not.ContainKey("miss"));
             Assert.That(stats[mistype_key], Is.EqualTo(1));
         });
@@ -593,9 +599,10 @@ public class AllowWrongInputParityTest
     /// <item><c>wordGapWrongThenFixed</c>: the fix cycle on that same gap. The restore puts the
     /// streak of 3 back BEFORE the corrected space is judged, so the combo multiset is the clean
     /// run's 1..15 and the total is 1000000, exactly as <c>midCellWrongThenFixed</c> is.</item>
-    /// <item><c>spaceKeyOnLetter</c>: the break lands on an already-zero combo, so the run is still
-    /// 1..15 and the score is still exactly 1000000. A wrong keypress on the opening cell costs
-    /// combo nothing; it still costs pp, through the mistype count.</item>
+    /// <item><c>spaceKeyOnLetter</c>: a space typed through into the opening cell (backlog 184) and
+    /// then fixed. The break lands on an already-zero combo and the restore puts nothing back, so the
+    /// run is still 1..15 and the score is still exactly 1000000. A wrong keypress on the opening
+    /// cell costs combo nothing; it still costs pp, through the mistype count.</item>
     /// </list>
     /// </summary>
     [Test]

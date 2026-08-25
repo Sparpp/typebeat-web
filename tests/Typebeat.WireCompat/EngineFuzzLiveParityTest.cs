@@ -187,27 +187,30 @@ public class EngineFuzzLiveParityTest
     #region Driving the two sides
 
     /// <summary>
-    /// The generated stream as a replay, headed by the CONFIG frame the four judgement-relevant
+    /// The generated stream as a replay, headed by the CONFIG frame the five judgement-relevant
     /// settings travel in: bit 0 allow-wrong-input (on, the default model and all the browser has),
     /// bit 1 space-skips-word (whichever half of the case matrix this run is), bit 2 syllable-span
-    /// judgement and bit 3 wrong-input-on-word-gaps.
+    /// judgement, bit 3 wrong-input-on-word-gaps and bit 4 strict-spaces.
     ///
-    /// <para>Bits 2 and 3 are ON here, and getting either wrong would quietly gut the whole sweep
-    /// rather than fail loudly in one place. <see cref="TypeBeatReplayScorer"/> follows the CONFIG
-    /// frame for both (<c>ReplayEngineFeed.Apply</c>), and the engine's DEFAULTS are the classic
-    /// point rule and the strict word gap, because a replay recorded before backlog 179 or 181 must
-    /// re-derive under the rules its fingers were graded on. The browser has no era axis at all: it
-    /// only plays live, so it judges on spans and types wrong letters into word gaps
-    /// unconditionally. A config frame without bit 2 would put the C# arm on point deltas while the
-    /// JS arm is on spans, and every case that ever pressed inside a span would part; one without
-    /// bit 3 would have the C# arm REJECT every wrong key the script lands on a gap, holding a caret
-    /// the browser moved, so every keystroke after it would land on a different cell.</para>
+    /// <para>Bits 2, 3 and 4 are ON here, and getting any of them wrong would quietly gut the whole
+    /// sweep rather than fail loudly in one place. <see cref="TypeBeatReplayScorer"/> follows the
+    /// CONFIG frame for all three (<c>ReplayEngineFeed.Apply</c>), and the engine's DEFAULTS are the
+    /// classic point rule, the strict word gap and the classic space rules, because a replay
+    /// recorded before backlog 179, 181 or 184 must re-derive under the rules its fingers were
+    /// graded on. The browser has no era axis at all: it only plays live, so it judges on spans,
+    /// types wrong letters into word gaps and applies the space discipline unconditionally. A config
+    /// frame without bit 2 would put the C# arm on point deltas while the JS arm is on spans, and
+    /// every case that ever pressed inside a span would part; one without bit 3 would have the C#
+    /// arm REJECT every wrong key the script lands on a gap, holding a caret the browser moved; one
+    /// without bit 4 would have it reject every mid-word space and advance past every gap typo,
+    /// which is the same failure again. All three end the same way: every keystroke after the first
+    /// such press lands on a different cell.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true)
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -506,6 +509,7 @@ public class EngineFuzzLiveParityTest
 
         int withTypos = 0, withMisses = 0, withOk = 0, withMeh = 0, perfect = 0;
         int skipPresses = 0, comboRestores = 0, backspaces = 0, passiveBreaks = 0, spanJudgements = 0, gapTypos = 0;
+        int parkedGapTypos = 0, stepOvers = 0, midWordSpaceTypos = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -522,6 +526,9 @@ public class EngineFuzzLiveParityTest
             passiveBreaks += browserCase.GetProperty("passiveBreaks").GetInt32();
             spanJudgements += browserCase.GetProperty("spanJudgements").GetInt32();
             gapTypos += browserCase.GetProperty("gapTypos").GetInt32();
+            parkedGapTypos += browserCase.GetProperty("parkedGapTypos").GetInt32();
+            stepOvers += browserCase.GetProperty("stepOvers").GetInt32();
+            midWordSpaceTypos += browserCase.GetProperty("midWordSpaceTypos").GetInt32();
             backspaces += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "");
         }
 
@@ -558,6 +565,17 @@ public class EngineFuzzLiveParityTest
             // or a port that quietly went back to rejecting them, would leave both arms agreeing on
             // rejections, green, and no longer covering the rule.
             Assert.That(gapTypos, Is.GreaterThan(0), "no run typed a wrong letter into a word gap");
+
+            // Backlog 184's own three rules, counted the same way and for the same reason. The park
+            // and the step-over only exist on the skip arm of the matrix and the mid-word typo only
+            // on the other one, so all three together say the sweep is exercising both halves of the
+            // space discipline. Each is measured on the ENGINE's state around the press: a port that
+            // went back to advancing past a gap typo, or to rejecting a mid-word space, would leave
+            // both arms agreeing (the C# arm follows the same CONFIG bit), green, and covering
+            // nothing.
+            Assert.That(parkedGapTypos, Is.GreaterThan(0), "no run parked the caret on a gap it spoiled");
+            Assert.That(stepOvers, Is.GreaterThan(0), "no run pressed the space that steps over a parked typo");
+            Assert.That(midWordSpaceTypos, Is.GreaterThan(0), "no run typed a space into a lyric character");
         });
     }
 
@@ -651,10 +669,64 @@ public class EngineFuzzLiveParityTest
         });
     }
 
+    /// <summary>
+    /// The THIRD era arm the browser does not have and cannot prove (backlog 184): a replay whose
+    /// CONFIG frame leaves bit 4 CLEAR REJECTS a space pressed inside a word, exactly as the run was
+    /// played before that task, while the identical keystrokes type it through when the bit is set.
+    ///
+    /// <para>Judgement relevant in the same strongest sense as the word-gap bit above: the two arms
+    /// disagree about whether the CARET MOVED. Under the stored arm the space is refused, the 'b'
+    /// then lands on its own cell and the line is typed out but for its last character, which seals
+    /// as a miss (4/5). Under the live arm the space takes the 'b' cell, so everything after it is
+    /// one cell out and every remaining press is a typo of its own (1/5).</para>
+    ///
+    /// <para>With word skipping OFF, which is what the browser hardcodes, the bit's other half (the
+    /// gap-typo park) is inert by construction: that half is scoped to the skip setting, because the
+    /// skip gate is what a spoiled gap used to be fed to. It is pinned on the game side, where the
+    /// setting exists (<c>SpaceDisciplineTest</c>).</para>
+    /// </summary>
+    [Test]
+    public void ClearingTheConfigFrameStrictSpaceBitRejectsTheMidWordSpaceInstead()
+    {
+        // "ab cd" with a space fumbled onto the 'b': then the 'b' itself, the real word gap, and the
+        // 'c', each pressed on its own target, so the only thing that moves between the two arms is
+        // where that first space left the caret.
+        (double time, char key)[] keys = [(1000, 'a'), (1500, ' '), (1500, 'b'), (2000, ' '), (2000, 'c')];
+
+        var through = ScoreSpaceDiscipline(keys, strictSpaces: true);
+        var strict = ScoreSpaceDiscipline(keys, strictSpaces: false);
+
+        Assert.Multiple(() =>
+        {
+            var live = Wire(through.Statistics);
+            Assert.That(live.GetValueOrDefault("great"), Is.EqualTo(1), "live era: only the 'a', pressed before the fumble");
+            Assert.That(live.GetValueOrDefault(WireCounts.Key(TypeBeatResultMapping.UNFIXED_TYPO)), Is.EqualTo(4), "live era: every later press landed one cell early");
+            Assert.That(live.GetValueOrDefault("miss"), Is.Zero, "live era: the line was typed out, wrongly");
+            Assert.That(through.Completion, Is.EqualTo(1 / 5.0).Within(1e-9), "live era: completion");
+
+            var stored = Wire(strict.Statistics);
+            Assert.That(stored.GetValueOrDefault("great"), Is.EqualTo(4), "stored era: the space was refused, so nothing after it moved");
+            Assert.That(stored.GetValueOrDefault("miss"), Is.EqualTo(1), "stored era: the 'd' the run never reached");
+            Assert.That(strict.Completion, Is.EqualTo(4 / 5.0).Within(1e-9), "stored era: completion");
+            Assert.That(through.TotalScore, Is.LessThan(strict.TotalScore), "live era: a typed-through space costs more than a refused one");
+        });
+    }
+
     private static TypeBeatReplayAccount ScoreGapTypo((double time, char key)[] keys, bool wrongInputOnWordGaps)
     {
         var replay = new Replay();
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: false, syllableTiming: true, wrongInputOnWordGaps: wrongInputOnWordGaps));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: false, syllableTiming: true, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: true));
+
+        foreach (var (time, key) in keys)
+            replay.Frames.Add(new TypeBeatReplayFrame(time, key));
+
+        return TypeBeatReplayScorer.Score(Map(GranularityOf("abCd"), Fixture("abCd")), Array.Empty<Mod>(), replay, TypoRule.Deferred, ComboRestoreRule.OnFix);
+    }
+
+    private static TypeBeatReplayAccount ScoreSpaceDiscipline((double time, char key)[] keys, bool strictSpaces)
+    {
+        var replay = new Replay();
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: false, syllableTiming: true, wrongInputOnWordGaps: true, strictSpaces: strictSpaces));
 
         foreach (var (time, key) in keys)
             replay.Frames.Add(new TypeBeatReplayFrame(time, key));

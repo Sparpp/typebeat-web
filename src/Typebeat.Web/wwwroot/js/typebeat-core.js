@@ -1673,12 +1673,15 @@
             this.onFailed = null;
         }
 
-        // The mash guard, and it survives the backlog-107 flip on both sides for the same reason:
-        // the streak only ever grows on the REJECTION path, and the space KEY on a lyric char takes
-        // that path in every model. So a browser player mashing space still fails at 13 exactly as a
-        // desktop one does, while a player mashing LETTERS no longer fails at all unless they picked
-        // Gatekeeper. It used to be two cases: a wrong letter on the WORD GAP was the other, and
-        // backlog 181 moved it onto the type-through path, which feeds no streak.
+        // The mash guard. The streak only ever grows on the REJECTION path, and backlog 184 took the
+        // last key the browser could reach it with off that path: a mid-word space is typed through
+        // now, so a browser player mashing the spacebar spells the line wrong rather than failing at
+        // 13. That is the desktop's live behaviour too, and the guard is not weakened by it: it
+        // belongs to Gatekeeper, where every wrong key is still rejected, and the browser can never
+        // be in that model. It used to be three cases, and the other two went the same way: a wrong
+        // letter on the WORD GAP moved onto the type-through path in backlog 181, and a wrong letter
+        // anywhere else in backlog 107. What still rejects here is the space key on a FREESTYLE slot,
+        // which is not a key a player can mash a fail out of (the slot takes every other character).
         get health() { return Math.max(0, 1 - this.consecutiveWrongKeys / WRONG_KEY_FAIL_STREAK); }
 
         // Wrong KEYPRESSES so far: the play's persisted mistype stat (TypingEngine.Mistypes).
@@ -2099,6 +2102,35 @@
                 cell = line.cells[this.caretIndex]; // the word gap, judged as an ordinary space below
             }
 
+            // STEP OVER A SPOILED GAP (backlog 184, mirroring TypingEngine's StrictSpaces branch):
+            // the caret is PARKED on a word gap that a wrong letter took, and the space that gap was
+            // owed has arrived. It walks the caret past the gap and leaves the typo exactly as it is.
+            // The cell is NOT rewritten to correct, because the character sitting in it is not the one
+            // that was owed: it stays an unfixed, backspace-redeemable claim, and the seal resolves it
+            // as an unfixed typo like every other one. It judges nothing: no tier, no points, no combo
+            // gained and none broken (the typo already took the break, and this press cannot be asked
+            // to pay for it twice).
+            //
+            // Counted as a CORRECT keypress, which is the same argument once more: the space IS the
+            // right key for the cell it lands on, the gap it was owed, and the typo has already paid
+            // an error and a break of its own. correctKeypresses feeds liveAccuracy alone, so this
+            // credits accuracy and moves nothing else: the cell still resolves as an unfixed typo and
+            // still costs COMPLETION, which is where an unfixed typo is supposed to be paid for.
+            //
+            // Gated on the CELL STATE rather than on an era flag, exactly as the C# gates it: the
+            // caret can only come to rest on a wrong cell through the park below, so this branch is
+            // unreachable for any run that never parked. The C# follows this with
+            // rollForwardIfFinishedEarly(), which has no counterpart here for the reason every other
+            // Fletcher seam has none: the browser offers no mods payload and so no Fletcher.
+            if (c === ' ' && cell.expected === ' ' && cell.state === 'wrong') {
+                this.totalKeypresses++;
+                this.correctKeypresses++;
+
+                this.caretIndex++;
+                this.autoSkipForward();
+                return true;
+            }
+
             let delta = this.judgedDeltaFor(line, this.caretIndex, time);
 
             // SPACES ARE UNTIMED (backlog 148), decided here rather than after the match so that
@@ -2118,20 +2150,32 @@
             // SPACE is carved out (backlog 50): it is the word-advance key, not a glyph a player
             // means to leave sitting in a lyric, so it falls through to the ordinary non-match path
             // below and is judged exactly as a wrong key on any other cell would be. The strict
-            // rejection is the only outcome available to it, because the allow-wrong-input path
-            // refuses to type a space through into ANY cell (c !== ' ' guards it on the word gap
-            // too, which is the one cell backlog 181 opened to wrong letters).
+            // REJECTION is still the only outcome available to it on a freestyle slot, which is the
+            // one cell backlog 184 left out of the type-through it opened to the space key: the slot
+            // renders the character the player pressed, so a space typed into one would blank it
+            // rather than mark it (see spaceMayLand below).
             const matched = (cell.freestyle && c !== ' ') ||
                 (this.caseSensitive ? c === cell.expected : fold(c) === fold(cell.expected));
 
             if (!matched) {
                 // DEFAULT (allowWrongInput): a wrong LETTER is typed through, marked wrong,
-                // backspaceable, instead of rejected. The space KEY stays strict everywhere
-                // (c !== ' '): there is no cell a wrong space is typed into, because it is the
-                // word-advance key and not a glyph a player means to leave sitting in a lyric. This
-                // path never feeds the mash-fail streak, so the browser has no 13-key fail at all,
-                // which is correct: that guard belongs to the rejection model (the Gatekeeper mod)
-                // and the browser can never be in it.
+                // backspaceable, instead of rejected. This path never feeds the mash-fail streak, so
+                // the browser has no 13-key fail at all for a letter, which is correct: that guard
+                // belongs to the rejection model (the Gatekeeper mod) and the browser can never be
+                // in it.
+                //
+                // The space KEY is admitted too since backlog 184 (the C# StrictSpaces era, which
+                // the browser is permanently on for the reason the word-gap clause below states):
+                // with spaceSkipsWord off there is no word for the press to skip, so it means nothing
+                // but a wrong character and is treated as one, no differently from a wrong letter.
+                // The cell still renders its own expected character in the error red (cellGlyph in
+                // typebeat-player.js substitutes the typed char for GAPS only), which is what makes
+                // an invisible red space a non-problem. With spaceSkipsWord on the same press never
+                // arrives here: the skip gate above consumed it. A FREESTYLE slot is the one cell
+                // that keeps refusing the key, because it has no expected glyph to redden and would
+                // render blank instead of wrong (backlog 50's promise: any character EXCEPT the
+                // word-advance key). The knock-on is deliberate: mid-word spaces stop feeding the
+                // mash-fail streak, because they no longer reach the rejection branch that grows it.
                 //
                 // The WORD GAP takes a wrong letter exactly as a lyric cell does (backlog 181), and
                 // unconditionally, which is where this parts from the C# gate
@@ -2143,7 +2187,11 @@
                 // collapses. Same shape as the span rule above, and for the same reason. The C# arm
                 // of the fuzz parity test therefore has to SET that flag (CONFIG flags bit 3) or
                 // every wrong key its script lands on a gap would be rejected there and typed here.
-                if (this.allowWrongInput && c !== ' ') {
+                // Backlog 184's space half is the same shape and needs the same treatment on that
+                // arm: it is CONFIG flags bit 4 there and unconditional here.
+                const spaceMayLand = !this.spaceSkipsWord && !cell.freestyle;
+
+                if (this.allowWrongInput && (c !== ' ' || spaceMayLand)) {
                     this.totalKeypresses++;
                     this.errorCount++;
 
@@ -2165,8 +2213,26 @@
 
                     this.snapshotRedeemableBreak(wrongCellIndex, brokenStreak);
 
-                    this.caretIndex++;
-                    this.autoSkipForward();
+                    // PARK on a spoiled word gap (backlog 184), instead of moving on: the space is
+                    // still owed, so the player pays it (which steps over the typo, see the branch
+                    // above) or backspaces it away, rather than being carried into the next word
+                    // behind a gap the skip gate can no longer read as one. A further wrong letter
+                    // lands on this same cell and overwrites this same character, so one park is one
+                    // unfixed typo however many letters arrive; the snapshot above is idempotent for
+                    // the same reason (a break with no streak behind it leaves the standing claim
+                    // alone, see snapshotRedeemableBreak).
+                    //
+                    // Scoped to spaceSkipsWord because that is where the damage was: with the setting
+                    // off, an advancing gap typo costs the player one cell, and with it on the next
+                    // space fed the skip gate a spoiled gap and gave up a whole word. Every typo on a
+                    // LYRIC cell advances exactly as it always has, under both arms. The browser
+                    // hardcodes the setting OFF, so the park is unreachable in a live /play run and
+                    // exists here to keep the mirror whole: the desktop can turn it on, and the two
+                    // engines feed one leaderboard.
+                    if (!(this.spaceSkipsWord && cell.expected === ' ')) {
+                        this.caretIndex++;
+                        this.autoSkipForward();
+                    }
 
                     if (this.onComboBroken) this.onComboBroken();
                     // NO result for the cell (backlog 109), exactly as in the C#: the CELL's
@@ -2201,8 +2267,9 @@
                 }
 
                 // GATEKEEPER (strict). Wrong key REJECTED: costs a keypress + combo + streak; caret
-                // unmoved. Unreachable from the browser for a letter, reached for the one case the
-                // default path still refuses above: the space KEY pressed on a lyric character.
+                // unmoved. Unreachable from the browser for a letter, and since backlog 184 for a
+                // mid-word space too: the one case the default path still refuses above is the space
+                // KEY pressed on a FREESTYLE slot.
                 this.totalKeypresses++;
                 this.errorCount++;
                 this.consecutiveWrongKeys++;
@@ -2248,9 +2315,10 @@
             // LiveSyncPercent), which would otherwise still dock a space for its timing.
             //
             // Scoped to the CELL and not to the KEY: a space that lands on a lyric character never
-            // reaches here, it was either rejected above (combo break, mistype, wrong-key streak) or
-            // consumed by the word skip, which has already given the abandoned cells up and taken
-            // its one break before the caret ever reached the gap. And an untimed space is not a
+            // reaches here, it was consumed by the word skip (which has already given the abandoned
+            // cells up and taken its one break before the caret ever reached the gap), typed through
+            // as an ordinary typo above (backlog 184, the arm with no word to skip) or rejected there
+            // on a freestyle slot. And an untimed space is not a
             // free one: a space cell nobody pressed still seals a miss like any other untyped
             // character (sealLine). Since backlog 181 the cell has a fourth way of being resolved,
             // a wrong LETTER typed into it, and that one takes the zeroed delta too, for the reason
@@ -2349,6 +2417,10 @@
         // so neither is an erase. That is what makes ONE press re-enter a skipped word and land on
         // the last character actually typed, however many characters were given up.
         //
+        // The one case that does not erase BEHIND the caret is a typo the caret is parked ON, which
+        // only the word-gap park can produce (backlog 184): that cell is cleared in place and the
+        // caret does not move, because the gap it sits on is still owed its space.
+        //
         // Scan first, mutate after, exactly as the C# does, because the two have to be told apart
         // before anything moves: a press with nothing typed behind it did SOMETHING if it reclaimed
         // a word, and nothing at all if it did not.
@@ -2356,6 +2428,28 @@
             if (this.finished || this.activeLineIndex < 0) return false;
 
             const cells = this.lines[this.activeLineIndex].cells;
+
+            // A typo the caret is PARKED ON (backlog 184): cleared where it sits, not erased from
+            // behind. The gap is still owed its space, so the caret has no business retreating into
+            // the perfectly good word in front of it, and the character the player wants back is the
+            // one they are looking at. One press, one cell, caret unmoved.
+            //
+            // Keyed on the STATE rather than on an era flag, exactly as the C# keys it: only the park
+            // ever leaves the caret sitting on a wrong cell, because everywhere else resolving a cell
+            // is how the caret got past it. The C# raises TypoErased here, which this mirror has no
+            // counterpart for on either backspace path: that event carries the HEALTH refund of the
+            // drain a typo took, and the browser models health as a read off consecutiveWrongKeys
+            // rather than as an account.
+            if (this.caretIndex < cells.length && cells[this.caretIndex].state === 'wrong') {
+                const parked = cells[this.caretIndex];
+
+                parked.state = 'untyped';
+                parked.typedChar = null;
+                parked.judgedDelta = null;
+                parked.judgeType = null;
+                // firstCorrectDelta intentionally retained, as on the erase below.
+                return true;
+            }
 
             let target = this.caretIndex - 1;
             while (target >= 0 && (cells[target].state === 'autoskip' || cells[target].state === 'abandoned')) target--;
@@ -2438,17 +2532,20 @@
         }
 
         // TypingEngine.RetypeSelectionAnchor. Where a CTRL+A (backlog 182, "select back to the
-        // mistake I have to retype") should put the start of its selection: the first cell of the
-        // nearest run at or behind the caret holding an UNFIXED TYPO, or -1 when there is no typo
-        // behind the caret at all (the gesture is then a no-op). The selection itself is the
-        // half-open range [this, caretIndex), and it is pure UI state: nothing in the engine knows it
-        // exists. Consuming it is composed, like the gesture above, out of ordinary processBackspace
-        // calls back to this index plus at most one processKey (see typebeat-player.js).
+        // mistake I have to retype") should put the start of its selection: the first cell of the run
+        // holding the EARLIEST unfixed typo behind the caret, or -1 when there is no typo behind the
+        // caret at all (the gesture is then a no-op). The selection itself is the half-open range
+        // [this, caretIndex), and it is pure UI state: nothing in the engine knows it exists.
+        // Consuming it is composed, like the gesture above, out of ordinary processBackspace calls
+        // back to this index plus at most one processKey (see typebeat-player.js).
         //
         // A typo is a cell in the 'wrong' state: a wrong character typed through and not yet
-        // backspaced away. The scan runs backwards from the caret and stops at the FIRST one it
-        // meets, which is why a typo in the word the player is halfway through typing anchors on that
-        // word's start rather than on some earlier one.
+        // backspaced away. The scan takes the EARLIEST one on the line, so the selection covers every
+        // unfixed typo behind the caret rather than only the most recent (backlog 184). The gesture
+        // is "fix my mistakes", and it is one keystroke: offering the shortest retype would leave a
+        // player with two spoiled words pressing it, retyping, pressing it again, and having no way
+        // to see from the caret how many rounds are left. Retyping the cells in between costs
+        // nothing, since a correct cell re-typed is scoring-inert.
         //
         // WHICH run the typo's cell opens has two cases, and they are the same rule stated twice: the
         // selection starts at the first cell the player must retype to fix the typo. For an ordinary
@@ -2458,16 +2555,20 @@
         // word, so the selection starts on the gap itself; walking back from it would swallow the
         // perfectly good word in front of it for nothing.
         //
-        // The answer is never equal to caretIndex when it is non-negative: the typo is strictly
-        // behind the caret (a cell ahead of it has nothing typed in it), so a selection always covers
-        // at least one cell.
+        // The answer is never equal to caretIndex when it is non-negative: the scan is over
+        // [0, caretIndex), so a selection always covers at least one cell. The one typo that can sit
+        // AT the caret, the gap a park is holding (backlog 184), is deliberately outside that range:
+        // it needs no selection, being one backspace away under the same rule that parked it.
         get retypeSelectionAnchor() {
             if (this.finished || this.activeLineIndex < 0) return -1;
 
             const cells = this.lines[this.activeLineIndex].cells;
-            let typo = Math.min(this.caretIndex, cells.length) - 1;
+            const limit = Math.min(this.caretIndex, cells.length);
+            let typo = -1;
 
-            while (typo >= 0 && cells[typo].state !== 'wrong') typo--;
+            for (let i = 0; i < limit; i++) {
+                if (cells[i].state === 'wrong') { typo = i; break; }
+            }
 
             if (typo < 0) return -1;
 
