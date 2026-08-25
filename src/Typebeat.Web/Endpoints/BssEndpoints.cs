@@ -2,6 +2,10 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using Dapper;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
+// Alias rather than a namespace using: Kestrel.Core also exports an obsolete
+// BadHttpRequestException that would make the references below ambiguous.
+using MinDataRate = Microsoft.AspNetCore.Server.Kestrel.Core.MinDataRate;
 using Newtonsoft.Json;
 using Npgsql;
 using Typebeat.Web.Auth;
@@ -67,6 +71,20 @@ public static class BssEndpoints
     /// request path.
     /// </summary>
     public const long MaxUploadBodyBytes = 100L * 1024 * 1024;
+
+    /// <summary>
+    /// Kestrel minimum body data rate for the two package-upload routes only. Kestrel's default
+    /// floor (240 bytes/s after a 5 s grace period) aborts the exact connections the direct-origin
+    /// host exists for: a throttled user's upload reaches the app but the body trickles under the
+    /// floor, Kestrel hangs up mid-read ("Reading the request body timed out due to data arriving
+    /// too slowly"), the 4xx lands before the body is drained so the client sees a generic
+    /// transport error, and the transport retry burns its attempts against the same floor. A tiny
+    /// floor is kept rather than null: slowloris exposure on these routes is already bounded
+    /// (bearer-authed, 12/h per user, 100 MB cap, and legit clients release the connection at
+    /// their own 600 s request timeout), but a free open-socket sink is still not worth handing
+    /// out. Every other route keeps Kestrel's default, which is right for them.
+    /// </summary>
+    public static readonly MinDataRate UploadMinBodyDataRate = new MinDataRate(bytesPerSecond: 30, gracePeriod: TimeSpan.FromSeconds(30));
 
     // In-memory speed bump on the two upload routes, keyed by user id. Since backlog 189, uploads
     // arrive via the direct-origin host (not proxied through Cloudflare), so on that path this
@@ -502,9 +520,11 @@ public static class BssEndpoints
             "SELECT verified_at IS NOT NULL FROM users WHERE id = @userId", new { userId });
 
     /// <summary>
-    /// Raises Kestrel's per-request body cap on this endpoint only (the feature is absent under
-    /// TestServer and read-only once the body started flowing, both cases are skipped). Runs
-    /// as an endpoint filter, i.e. before the handler ever touches Request.Body/Form.
+    /// Raises Kestrel's per-request body cap and lowers its minimum body data rate to
+    /// <see cref="UploadMinBodyDataRate"/> on this endpoint only (both features are absent under
+    /// TestServer, and the size feature is read-only once the body started flowing; those cases
+    /// are skipped). Runs as an endpoint filter, i.e. before the handler ever touches
+    /// Request.Body/Form.
     /// </summary>
     private static TBuilder WithUploadBodyLimit<TBuilder>(this TBuilder builder) where TBuilder : IEndpointConventionBuilder
     {
@@ -512,10 +532,15 @@ public static class BssEndpoints
         {
             endpointBuilder.FilterFactories.Add((_, next) => async invocationContext =>
             {
-                var feature = invocationContext.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+                var sizeFeature = invocationContext.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
 
-                if (feature is { IsReadOnly: false })
-                    feature.MaxRequestBodySize = MaxUploadBodyBytes;
+                if (sizeFeature is { IsReadOnly: false })
+                    sizeFeature.MaxRequestBodySize = MaxUploadBodyBytes;
+
+                var rateFeature = invocationContext.HttpContext.Features.Get<IHttpMinRequestBodyDataRateFeature>();
+
+                if (rateFeature != null)
+                    rateFeature.MinDataRate = UploadMinBodyDataRate;
 
                 return await next(invocationContext);
             });
