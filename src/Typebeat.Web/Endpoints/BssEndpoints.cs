@@ -222,9 +222,10 @@ public static class BssEndpoints
     // ---------------------------------------------------------------------------------------------
     // PUT /bss/beatmapsets/{id}: full package upload (single "beatmapArchive" file part).
     // ---------------------------------------------------------------------------------------------
-    private static async Task<IResult> UploadFullPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest)
+    private static async Task<IResult> UploadFullPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
+        var logger = loggerFactory.CreateLogger("BssUpload");
 
         if (await gateUploadAsync(ctx, db, setId, user) is { } gateError)
             return gateError;
@@ -232,7 +233,10 @@ public static class BssEndpoints
         // Guarded (rather than letting ReadFormAsync throw InvalidOperationException → raw 500):
         // a missing or non-form Content-Type is a client-shaped request error.
         if (!ctx.Request.HasFormContentType)
+        {
+            logger.LogWarning("Set {SetId}: full upload rejected, body is not multipart/form-data.", setId);
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "The upload body could not be read as multipart/form-data.");
+        }
 
         IFormCollection form;
 
@@ -242,13 +246,17 @@ public static class BssEndpoints
         }
         catch (Exception e) when (isClientBodyError(e))
         {
+            logger.LogWarning(e, "Set {SetId}: full upload body could not be read.", setId);
             return uploadBodyError(e);
         }
 
         var archive = form.Files.GetFile("beatmapArchive");
 
         if (archive == null)
+        {
+            logger.LogWarning("Set {SetId}: full upload rejected, missing beatmapArchive part.", setId);
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "The request is missing the beatmapArchive file part.");
+        }
 
         // Parse/ingest need one seekable stream over the whole package; multipart sections are
         // forward-only, so buffer to a self-deleting temp file first.
@@ -260,16 +268,17 @@ public static class BssEndpoints
         // Enter the per-set critical section only now that the body is fully buffered.
         await using var scope = await ingest.BeginSetScopeAsync(setId, ctx.RequestAborted);
 
-        return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, ctx.RequestAborted);
+        return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, "full", logger, ctx.RequestAborted);
     }
 
     // ---------------------------------------------------------------------------------------------
     // PATCH /bss/beatmapsets/{id}: delta upload, latest version overlaid with filesChanged
     // minus filesDeleted, rebuilt into a full package, then the same ingest path.
     // ---------------------------------------------------------------------------------------------
-    private static async Task<IResult> PatchPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, IFileStore fileStore)
+    private static async Task<IResult> PatchPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, IFileStore fileStore, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
+        var logger = loggerFactory.CreateLogger("BssUpload");
 
         if (await gateUploadAsync(ctx, db, setId, user) is { } gateError)
             return gateError;
@@ -289,6 +298,7 @@ public static class BssEndpoints
             }
             catch (Exception e) when (isClientBodyError(e))
             {
+                logger.LogWarning(e, "Set {SetId}: patch upload body could not be read.", setId);
                 return uploadBodyError(e);
             }
         }
@@ -302,7 +312,10 @@ public static class BssEndpoints
         var manifest = await ingest.GetLatestVersionFilesAsync(scope, setId);
 
         if (manifest.Count == 0)
+        {
+            logger.LogWarning("Set {SetId}: patch rejected, no uploaded version to patch.", setId);
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "This beatmap set has no uploaded version to patch; upload the full package instead.");
+        }
 
         // EXACT (case-SENSITIVE, slash-normalized) filename semantics, matching the client's
         // diff: a case-only rename arrives as filesChanged=[bg.JPG] + filesDeleted=[bg.jpg] and
@@ -324,7 +337,10 @@ public static class BssEndpoints
             foreach (var file in form.Files.Where(f => f.Name == "filesChanged"))
             {
                 if (string.IsNullOrEmpty(file.FileName))
+                {
+                    logger.LogWarning("Set {SetId}: patch rejected, a filesChanged part is missing its filename.", setId);
                     return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "A filesChanged part is missing its archive path (multipart filename).");
+                }
 
                 changed[BeatmapPackageParser.NormalizeFilename(file.FileName)] = file;
             }
@@ -358,7 +374,7 @@ public static class BssEndpoints
             }
         }
 
-        return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, ctx.RequestAborted);
+        return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, "patch", logger, ctx.RequestAborted);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -408,7 +424,8 @@ public static class BssEndpoints
     /// the commit, so a crash at any point leaves either the whole new version or none of it.
     /// </summary>
     private static async Task<IResult> parseValidateIngestAsync(
-        Stream package, long setId, AuthedUser user, PackageIngest ingest, PackageIngest.SetScope scope, CancellationToken ct)
+        Stream package, long setId, AuthedUser user, PackageIngest ingest, PackageIngest.SetScope scope,
+        string route, ILogger logger, CancellationToken ct)
     {
         // Read under the scope's lock: the snapshot validation pins embedded ids against.
         long[] allocatedIds = (await scope.Connection.QueryAsync<long>(
@@ -423,6 +440,8 @@ public static class BssEndpoints
         }
         catch (PackageValidationException e)
         {
+            logger.LogWarning(e, "Set {SetId}: {Route} upload rejected for user {UserId} ({Username}): {Message}",
+                setId, route, user.Id, user.Username, e.Message);
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, e.Message);
         }
 
