@@ -42,6 +42,13 @@ namespace Typebeat.Web.Endpoints;
 ///  - beatmap rows are NEVER deleted (scores FK); a diff dropped from beatmaps_to_keep, or
 ///    absent from an uploaded package, gets <c>filename = NULL</c>, which is the repo-wide
 ///    "not part of the current version" marker (live diffs have <c>filename IS NOT NULL</c>);
+///  - because nothing is ever deleted, allocation on the create PUT REUSES the set's existing
+///    NEVER-LIVE placeholder rows before inserting new ones. Without that, every failed upload
+///    attempt leaks a row per difficulty: the client re-runs the same create on each retry, so
+///    one real set accreted five attempts' worth of ids in forty minutes. "Never live" is
+///    <c>filename IS NULL AND word_count IS NULL</c>: filename alone also matches a ONCE-live
+///    diff that was just dropped, and handing that id out again would attach a new difficulty
+///    to an id that already carries scores and stats;
 ///  - newly allocated beatmap rows carry a random placeholder checksum until the first upload
 ///    overwrites it (checksum_md5 is NOT NULL UNIQUE); every beatmap id comes from nextval at
 ///    allocation time, so PackageIngest's explicit-id upserts can never outrun the sequence;
@@ -194,7 +201,42 @@ public static class BssEndpoints
 
             var newIds = new List<long>(request.BeatmapsToCreate);
 
-            for (int i = 0; i < request.BeatmapsToCreate; i++)
+            // Slot reuse. The client re-runs this exact create after a failed package upload, so
+            // allocating unconditionally leaked beatmaps_to_create rows per failed attempt, and
+            // rows are never deleted (scores FK). Hand back the set's own never-live placeholders
+            // first and insert only the shortfall, which makes the retry idempotent.
+            //
+            // The predicate is load-bearing on BOTH columns. filename IS NULL also matches a
+            // ONCE-live diff (dropped by the keep UPDATE just above, or by a package that no
+            // longer contains it); those keep their ingest stats and may carry scores, so reusing
+            // one would silently graft a new difficulty onto an old id. word_count is written only
+            // by PackageIngest's upsert and is never nulled again, so word_count IS NULL is the
+            // "never ingested" marker. The scores NOT EXISTS is belt and braces: it should be
+            // vacuous, since a never-live row was never playable.
+            //
+            // FOR UPDATE keeps two creates racing in-flight off the same candidates. Once the
+            // first commits, a second create for the SAME set can still pick the same ids, because
+            // reuse leaves the rows never-live; that overlap is the idempotency this exists for.
+            // Different sets can never collide: the predicate is set-scoped.
+            if (request.BeatmapsetId != null && request.BeatmapsToCreate > 0)
+            {
+                newIds.AddRange(await conn.QueryAsync<long>(
+                    """
+                    SELECT b.id
+                    FROM beatmaps b
+                    WHERE b.set_id = @setId
+                      AND b.filename IS NULL
+                      AND b.word_count IS NULL
+                      AND b.id <> ALL(@keep)
+                      AND NOT EXISTS (SELECT 1 FROM scores s WHERE s.beatmap_id = b.id)
+                    ORDER BY b.id
+                    LIMIT @wanted
+                    FOR UPDATE
+                    """,
+                    new { setId, keep, wanted = request.BeatmapsToCreate }));
+            }
+
+            for (int i = newIds.Count; i < request.BeatmapsToCreate; i++)
             {
                 newIds.Add(await conn.ExecuteScalarAsync<long>(
                     "INSERT INTO beatmaps (set_id, checksum_md5) VALUES (@setId, @placeholder) RETURNING id",
