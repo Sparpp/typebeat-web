@@ -35,7 +35,10 @@ per-section files under the session scratchpad
   paths `files/{sha256hex}`, covers `covers/{setId}/{version}/{size}.jpg`, previews
   `previews/{setId}.mp3`, downloads `downloads/`. R2 swap later = new IFileStore impl.
 - **Upload cap ~95 MB** (Cloudflare proxied request bodies cap at 100 MB on our plan). Kestrel
-  default is ~28.6 MB — must be raised per-endpoint on the BSS routes only.
+  default is ~28.6 MB — must be raised per-endpoint on the BSS routes only. Since backlog 189, BSS
+  uploads arrive via the direct-origin host (`bss.typebeat.mingda.sh`, DNS-only, not proxied
+  through Cloudflare), so this Cloudflare figure motivated the original cap but no longer bounds
+  the live request path; the cap number itself is unchanged.
 - **DMCA minimum:** `/legal/dmca` static page + per-set report form writing to the existing
   `reports` table; takedown = flip `beatmapsets.status` to `removed` (admin SQL for now).
 
@@ -115,8 +118,11 @@ migrations are embedded resources applied at startup in filename order.
 - Link-out: `OsuGame.HandleLink` stubbed cases → `OpenUrlExternally` against WebsiteUrl;
   wire ClickableAvatar/ClickableUsername; fix Settings quick-action ppy URLs.
 - Submission port (~14 upstream files, trimmed wizard) with **native-encoder exporter** (never
-  LegacyBeatmapExporter — it drops `[Lyrics]`); `BeatmapSubmissionServiceUrl =
-  {root}/bss`.
+  LegacyBeatmapExporter — it drops `[Lyrics]`); `BeatmapSubmissionServiceUrl = {root}/bss` in dev
+  (derived from the local root). In production, since backlog 189, this points at the distinct
+  direct-origin host `https://bss.typebeat.mingda.sh` instead, with the `/bss` path prefix
+  unchanged: uploads bypass the Cloudflare-proxied main hostname because sustained upload bodies
+  were dying mid-flight between the client and the CF edge (see `deploy/Caddyfile`).
 - Registry identity rename: `Software\typebeat\Capabilities`, progIds `typebeat.File/.Uri`,
   scheme `typebeat://` (package extension renamed to `.typb` server-side — 2026-07-17; `.osz`
   stays importable).
@@ -129,6 +135,9 @@ migrations are embedded resources applied at startup in filename order.
 - Run server: `dotnet run --project src/Typebeat.Web` (port 5089). Tests: `dotnet test
   tests/Typebeat.Web.Tests`, `dotnet test tests/Typebeat.WireCompat` (needs local Postgres).
 - Config flags via `Flags.IsEnabled` (empty-string-safe). Errors to APIv2 clients use the existing
-  envelope helpers. Rate limiting: in-memory speed bumps + Cloudflare, per existing pattern.
+  envelope helpers. Rate limiting: in-memory speed bumps + Cloudflare, per existing pattern. Since
+  backlog 189, BSS uploads go direct-origin (not proxied through Cloudflare), so on that path the
+  in-memory limiter and the request body cap above are the only layers; unaffected routes are
+  unchanged.
 - Pushing typebeat-web `main` triggers CI **deploy to production** — commit locally during the
   build; push only at deployable checkpoints.

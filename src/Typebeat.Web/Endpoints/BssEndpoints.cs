@@ -61,12 +61,17 @@ public static class BssEndpoints
     /// <summary>
     /// Per-endpoint Kestrel body cap for the two package-upload routes only (~100 MB: above
     /// PackageValidator's 95 MiB package cap + multipart overhead, below Cloudflare's 100 MB
-    /// proxied-body limit). Everything else keeps Kestrel's ~28.6 MB default.
+    /// proxied-body limit). Everything else keeps Kestrel's ~28.6 MB default. Since backlog 189,
+    /// uploads arrive via the direct-origin host (bss.typebeat.mingda.sh, not proxied through
+    /// Cloudflare), so the Cloudflare figure motivated this cap but no longer bounds the live
+    /// request path.
     /// </summary>
     public const long MaxUploadBodyBytes = 100L * 1024 * 1024;
 
-    // In-memory speed bump on the two upload routes, keyed by user id (Cloudflare WAF is the
-    // real production layer, same doctrine as the login/register limiters).
+    // In-memory speed bump on the two upload routes, keyed by user id. Since backlog 189, uploads
+    // arrive via the direct-origin host (not proxied through Cloudflare), so on that path this
+    // limiter and the body cap above are the only layers, same doctrine as the login/register
+    // limiters otherwise.
     private const int uploads_per_window = 12;
     private static readonly FixedWindowLimiter upload_limiter = new(uploads_per_window, TimeSpan.FromHours(1));
 

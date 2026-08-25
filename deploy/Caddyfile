@@ -11,3 +11,21 @@ typebeat.mingda.sh {
 		format console
 	}
 }
+
+# Direct-origin path for BSS uploads (backlog 189): a user's package uploads died 7/7 with the
+# body reset mid-flight between their client and the Cloudflare edge (an on-path middlebox
+# killing sustained request bodies to CF-proxied hosts; CF Security Events showed nothing, so the
+# drop is not a WAF/rate-limit decision). This name's DNS record is grey-cloud (DNS-only, no CF
+# proxy), so Caddy's ACME HTTP-01 challenge reaches this box directly the same way it did for the
+# main site, and the cert auto-provisions into the existing caddy_data volume on first deploy. No
+# app changes needed: AllowedHosts is "*" and the forwarded-headers config is already permissive.
+bss.typebeat.mingda.sh {
+	encode zstd gzip
+
+	reverse_proxy app:8080
+
+	log {
+		output stdout
+		format console
+	}
+}

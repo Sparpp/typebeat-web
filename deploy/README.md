@@ -53,10 +53,15 @@ Browser caches cannot be purged remotely; the one-day `max-age` bounds them.
 
 ## Origin-side ingest (upload dies at the edge)
 
-When a submission never reaches Kestrel (the Cloudflare edge or the user's own network path
-drops the body mid-flight), the user cannot retry their way out of it: nothing on our side ever
-saw the request. The workaround is to run the upload from the box itself, straight at the app
-container over the compose network, holding a short-lived token that acts AS that user.
+Since backlog 189, the client submits BSS uploads via the direct-origin host
+(`bss.typebeat.mingda.sh`, DNS-only, not proxied through Cloudflare) already, so this runbook now
+covers the rarer case where even the direct host is unreachable from the user's network (their own
+path drops the body mid-flight, not a Cloudflare-edge issue). The triage below (BssUpload log
+grep) is unchanged.
+
+When a submission never reaches Kestrel, the user cannot retry their way out of it: nothing on our
+side ever saw the request. The workaround is to run the upload from the box itself, straight at
+the app container over the compose network, holding a short-lived token that acts AS that user.
 
 **First confirm the request really never arrived.** Every server-side rejection logs under the
 `BssUpload` category:
