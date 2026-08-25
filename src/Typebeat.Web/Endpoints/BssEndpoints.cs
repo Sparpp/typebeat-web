@@ -234,7 +234,7 @@ public static class BssEndpoints
         // a missing or non-form Content-Type is a client-shaped request error.
         if (!ctx.Request.HasFormContentType)
         {
-            logger.LogWarning("Set {SetId}: full upload rejected, body is not multipart/form-data.", setId);
+            logger.LogWarning("Set {SetId}: full upload rejected for user {UserId}, body is not multipart/form-data.", setId, user.Id);
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "The upload body could not be read as multipart/form-data.");
         }
 
@@ -246,7 +246,7 @@ public static class BssEndpoints
         }
         catch (Exception e) when (isClientBodyError(e))
         {
-            logger.LogWarning(e, "Set {SetId}: full upload body could not be read.", setId);
+            logger.LogWarning(e, "Set {SetId}: full upload body from user {UserId} could not be read.", setId, user.Id);
             return uploadBodyError(e);
         }
 
@@ -254,7 +254,7 @@ public static class BssEndpoints
 
         if (archive == null)
         {
-            logger.LogWarning("Set {SetId}: full upload rejected, missing beatmapArchive part.", setId);
+            logger.LogWarning("Set {SetId}: full upload rejected for user {UserId}, missing beatmapArchive part.", setId, user.Id);
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "The request is missing the beatmapArchive file part.");
         }
 
@@ -298,7 +298,7 @@ public static class BssEndpoints
             }
             catch (Exception e) when (isClientBodyError(e))
             {
-                logger.LogWarning(e, "Set {SetId}: patch upload body could not be read.", setId);
+                logger.LogWarning(e, "Set {SetId}: patch upload body from user {UserId} could not be read.", setId, user.Id);
                 return uploadBodyError(e);
             }
         }
@@ -313,7 +313,7 @@ public static class BssEndpoints
 
         if (manifest.Count == 0)
         {
-            logger.LogWarning("Set {SetId}: patch rejected, no uploaded version to patch.", setId);
+            logger.LogWarning("Set {SetId}: patch rejected for user {UserId}, no uploaded version to patch.", setId, user.Id);
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "This beatmap set has no uploaded version to patch; upload the full package instead.");
         }
 
@@ -338,7 +338,7 @@ public static class BssEndpoints
             {
                 if (string.IsNullOrEmpty(file.FileName))
                 {
-                    logger.LogWarning("Set {SetId}: patch rejected, a filesChanged part is missing its filename.", setId);
+                    logger.LogWarning("Set {SetId}: patch rejected for user {UserId}, a filesChanged part is missing its filename.", setId, user.Id);
                     return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "A filesChanged part is missing its archive path (multipart filename).");
                 }
 
