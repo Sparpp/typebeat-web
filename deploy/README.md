@@ -51,6 +51,127 @@ caches keep serving until you finish all four steps:
 
 Browser caches cannot be purged remotely; the one-day `max-age` bounds them.
 
+## Origin-side ingest (upload dies at the edge)
+
+When a submission never reaches Kestrel (the Cloudflare edge or the user's own network path
+drops the body mid-flight), the user cannot retry their way out of it: nothing on our side ever
+saw the request. The workaround is to run the upload from the box itself, straight at the app
+container over the compose network, holding a short-lived token that acts AS that user.
+
+**First confirm the request really never arrived.** Every server-side rejection logs under the
+`BssUpload` category:
+
+```
+docker compose -f deploy/compose.prod.yml logs --since 24h app | grep BssUpload
+```
+
+Lines naming the user's set (422 / 413 / missing `beatmapArchive`) mean the app DID receive the
+upload and rejected it: that is a normal rejection, fix the package with the user rather than
+ingesting around it. **NOTHING** for the window in which the user says they tried, while they
+report a transport failure client-side, is this runbook's case.
+
+1. Get the package. Ask the user for the exact `.osz` their client tried to submit, over any
+   channel that is not our origin (DM, drive link). Land it on the box, then verify it before
+   touching the API:
+   ```
+   ls -l /root/ingest/package.osz                # must be under 95 MiB (PackageValidator cap)
+   sha256sum /root/ingest/package.osz            # cross-check against the user's own hash
+   unzip -t /root/ingest/package.osz             # archive must be intact
+   unzip -p /root/ingest/package.osz '*.osu' | grep -iE 'BeatmapID|BeatmapSetID'
+   ```
+   The ids from the last line are what the server validates the package against, so they tell
+   you which set and difficulty slots this package expects to land in.
+
+2. Check whether those slots already exist. In an edge failure they almost always do: the
+   client's JSON step is tiny and succeeds, only the multipart body dies.
+   ```
+   docker exec -it typebeat-web-postgres-1 psql -U typebeat -d typebeat -c \
+     "SELECT bs.id AS set_id, bs.status, b.id AS beatmap_id, b.filename
+        FROM beatmapsets bs LEFT JOIN beatmaps b ON b.set_id = bs.id
+       WHERE bs.owner_id = (SELECT id FROM users WHERE username = '<USERNAME>')
+       ORDER BY bs.id, b.id;"
+   ```
+   Ids matching the package's embedded ids = slots are allocated, **skip step 4**.
+
+3. Issue a short-lived token for the user. The admin CLI is not in the published app image, so
+   run it in a throwaway SDK container (that image is already on the box as the app's build
+   stage) joined to the compose network. `mkdir` first: NuGet hard-fails restore when the local
+   feed declared in `nuget.config` is absent, and `external/packages` is not in the checkout.
+   ```
+   mkdir -p /opt/typebeat-web/external/packages
+   set -a; . /opt/typebeat-web/deploy/.env; set +a
+   docker run --rm --network typebeat-web_default -v /opt/typebeat-web:/repo -w /repo \
+     -e TYPEBEAT_DB="Host=postgres;Port=5432;Database=typebeat;Username=typebeat;Password=$POSTGRES_PASSWORD" \
+     mcr.microsoft.com/dotnet/sdk:10.0 \
+     dotnet run --project tools/admin -- issue-token <USERNAME> 30
+   ```
+   It prints the bearer token on its own line plus the token id to revoke in step 6. 30 minutes
+   is the default and 240 the maximum; take the shortest window that fits the op. Confirm the
+   network name with `docker network ls --filter name=typebeat` if the run cannot resolve
+   `postgres`. Export the token for the curls below: `TOKEN=<paste>`.
+
+4. **Only if step 2 showed no allocated slots**, create or re-target the set. `app:8080` is the
+   app's container-internal address (`ASPNETCORE_URLS` in `compose.prod.yml`, the same target
+   `deploy/Caddyfile` proxies to), so this bypasses Cloudflare entirely.
+   ```
+   docker run --rm --network typebeat-web_default curlimages/curl:latest \
+     -sS -i -X PUT http://app:8080/bss/beatmapsets \
+     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d '{"beatmapset_id":null,"beatmaps_to_create":1,"beatmaps_to_keep":[],"target":"Pending","explicit":false,"notify_on_discussion_replies":false}'
+   ```
+   200 returns `{beatmapset_id, beatmap_ids, files}`. Semantics worth getting right:
+   - `beatmapset_id`: `null` creates a fresh set (status `hidden` until the first successful
+     upload publishes it); an id re-targets that existing owned set.
+   - `beatmaps_to_create`: how many new difficulty ids to allocate.
+   - `beatmaps_to_keep`: the existing difficulty ids that stay in the set. Any live difficulty
+     NOT listed is dropped from the current version (the row survives for the scores FK, its
+     `filename` goes NULL), so an omission silently unpublishes a difficulty. List every id the
+     package contains. `keep + create` must land in 1..128.
+   - The returned ids must match the `BeatmapID`/`BeatmapSetID` baked into the package's `.osu`
+     files or step 5 will 422. That is exactly why this step is normally skipped: the user's
+     client already ran it and built the zip around the ids it got back.
+
+5. Upload the full package (`beatmapArchive` is the field name the server looks for):
+   ```
+   docker run --rm --network typebeat-web_default -v /root/ingest:/pkg:ro curlimages/curl:latest \
+     -sS -i -X PUT http://app:8080/bss/beatmapsets/<SET_ID> \
+     -H "Authorization: Bearer $TOKEN" \
+     -F "beatmapArchive=@/pkg/package.osz"
+   ```
+   **204 No Content** is success: the version was cut and covers/preview/package artifacts are
+   published. A 422 body carries the same message the in-editor wizard would have shown (take it
+   back to the user), 403 means the token's user does not own the set, 429 is the rate limit
+   below. Then verify:
+   ```
+   docker exec -it typebeat-web-postgres-1 psql -U typebeat -d typebeat -c \
+     "SELECT id, status, updated_at FROM beatmapsets WHERE id = <SET_ID>;"
+   curl -sS -o /dev/null -w '%{http_code}\n' https://typebeat.mingda.sh/beatmapsets/<SET_ID>
+   ```
+
+6. Revoke the token. Do this even if it is about to expire on its own:
+   ```
+   docker run --rm --network typebeat-web_default -v /opt/typebeat-web:/repo -w /repo \
+     -e TYPEBEAT_DB="Host=postgres;Port=5432;Database=typebeat;Username=typebeat;Password=$POSTGRES_PASSWORD" \
+     mcr.microsoft.com/dotnet/sdk:10.0 \
+     dotnet run --project tools/admin -- revoke-token <TOKEN_ID>
+   ```
+
+Caveats:
+
+- **This acts AS the user.** The set is owned by them, the creator field is force-set to their
+  username, and nothing records that a maintainer pushed the bytes. Only ever run it on the
+  package they sent you, with their say-so.
+- **Rate limit: 12 uploads per hour per user** on the two upload routes, in-memory per app
+  process. The user's failed attempts never reached the app so they did not count, but ask them
+  to stop retrying while you work, and note the window resets when the app container restarts.
+- **Body cap: 100 MB** on the upload routes, with the package itself capped at 95 MiB. Going
+  through `app:8080` bypasses Cloudflare's 100 MB proxied-body limit but neither of these.
+- The normal gates still apply: an unverified account 422s, a non-owner 403s, and a set already
+  taken down (`status = 'removed'`) 422s. The token grants no extra authority.
+- The wire contract for these endpoints lives in `docs/m3-spec.md` (iron rule 2, lines 44-56).
+  If anything above disagrees with it, that file wins. `PATCH /bss/beatmapsets/{id}` exists for
+  delta uploads and is deliberately not used here: for this op the full package is what you have.
+
 ## Backups
 
 `deploy/backup.sh`: LOCAL only (offsite/R2 copy is a follow-up):

@@ -33,7 +33,8 @@ then talks to this instance.
 - `tools/seed`: packages a lyriclab `.osz` for online play: assigns IDs, injects them into
   each `.osu`'s `[Metadata]`, hashes the FINAL bytes (the beatmap_hash identity contract),
   inserts DB rows, emits the finalized `.osz` to import into the client.
-- `tools/admin`: block/unblock builds, unrank scores, restrict users.
+- `tools/admin`: block/unblock builds, unrank scores, restrict users, issue/revoke a
+  short-lived bearer token for a user (the origin-side ingest op in `deploy/README.md`).
 - `tests/Typebeat.Web.Tests`: unit tests (NUnit).
 
 ## Iron rules
