@@ -194,6 +194,19 @@ function playGapTypoErased() {
     return engine;
 }
 
+// A space typed INSIDE a word (backlog 185's near miss). With space-skip off there is no word for
+// the press to skip, so it is typed through as an ordinary wrong character: cell 1 of "ab cd" is a
+// wrong LYRIC cell showing its own 'b' in red. It is the cell that proves the gap dimming is keyed
+// on what the cell EXPECTS, not on what was pressed.
+function playMidWordSpaceTypo() {
+    const map = build(abcdOsu);
+    const engine = new TB.TypingEngine(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    engine.processKey(' ', 1500);   // lands on 'b', wrong, and the caret moves past it
+    return engine;                  // left unsealed, so the untouched gap after it is still todo
+}
+
 // Class, tint and GLYPH exactly as paintRow would write them, for every cell of a line.
 function paint(engine, lineIndex) {
     return engine.lines[lineIndex].cells.map(c => ({
@@ -284,6 +297,7 @@ const out = {
     freestylePaint: paint(playFreestyle(), 0),
     gapTypoPaint: paint(playGapTypo(), 0),
     gapTypoErasedPaint: paint(playGapTypoErased(), 0),
+    midWordSpacePaint: paint(playMidWordSpaceTypo(), 0),
 
     // Live HUD readouts off real engine runs.
     perfectStats: D.liveStats(perfect),

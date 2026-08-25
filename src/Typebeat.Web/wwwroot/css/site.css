@@ -2559,9 +2559,15 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
    expected char is a space, and a space painted red is invisible, so cellGlyph() hands over the
    TYPED character instead. The lyric stack is monospaced, so that letter takes exactly the advance
    the space had and no cell after it moves. --bad is this site's own coral, which is the same
-   signal in the site's palette; it is deliberately NOT dimmed like .tb-c-miss, because a wrong char
-   is something the player can still go back and fix. */
+   signal in the site's palette; a wrong LYRIC cell is deliberately NOT dimmed like .tb-c-miss,
+   because it is showing its own character and is something the player can still go back and fix.
+   The GAP is the exception (backlog 185): its red letter stands where a space was, so a burst of
+   them closes the word boundaries up into one run of text. .tb-c-wrong-gap dims that letter alone,
+   additively over the colour above, which keeps it readable as an error while letting the boundary
+   read as a boundary again. Between full strength and .tb-c-miss's .4, since the gap typo is still
+   live and fixable rather than sealed away. */
 .tb-c-wrong, .tb-line-cur .tb-c-wrong { color: var(--bad); }
+.tb-c-wrong-gap { opacity: .55; }
 /* Missed at seal: the desktop dims the untyped glyph (alpha 0.4) rather than recolouring it,
    which keeps a sealed line readable instead of turning it into a wall of red. */
 .tb-c-miss { color: var(--text-muted); opacity: .4; }

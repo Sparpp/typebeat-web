@@ -297,9 +297,20 @@
             // Typed through wrong (the default model). The desktop shows the EXPECTED glyph in
             // error red on a LYRIC cell, not the char that was pressed, so only the colour changes
             // there; on a WORD GAP it shows the typed char instead, because a space painted red is
-            // nothing at all (see cellGlyph, mirroring LyricLineDisplay.CellGlyph). Either way the
-            // class is this one: the colour decision does not depend on which cell it is.
+            // nothing at all (see cellGlyph, mirroring LyricLineDisplay.CellGlyph). Both keep
+            // tb-c-wrong, so the error colour is the same one in both cases.
+            //
+            // The GAP takes a second, additive class (backlog 185). Its glyph is a letter standing
+            // where a space was, so during a typo burst the run of them reads as solid text and the
+            // word boundaries it was drawn to preserve vanish into it. Dimming that letter (the
+            // opacity lives on .tb-c-wrong-gap in site.css) keeps it legible as an error while
+            // letting the boundary read through again. A wrong LYRIC cell is deliberately left at
+            // full strength: it is showing its OWN character, so it takes no space away, and the
+            // desktop dims the same lane for the same reason.
             cls += ' tb-c-wrong';
+            // Strictly expected === ' ', not "the typed char is a space": a mid-word space typo is
+            // a wrong LYRIC cell showing its own letter in red, and must not be dimmed.
+            if (cell.expected === ' ') cls += ' tb-c-wrong-gap';
         } else if (cell.state === 'missed') {
             cls += ' tb-c-miss';
         } else {

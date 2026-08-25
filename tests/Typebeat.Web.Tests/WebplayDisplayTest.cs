@@ -409,8 +409,9 @@ public class WebplayDisplayTest
         Assert.Multiple(() =>
         {
             // Cell 2 is the word gap of "ab cd". 'x' went in, the seal left it wrong, and it is
-            // drawn as the typo rather than as an invisible red space.
-            Assert.That(Cls(typo, 2), Is.EqualTo("tb-c tb-c-wrong"));
+            // drawn as the typo rather than as an invisible red space. The second class is backlog
+            // 185's dimming lane, carried only by a gap (see TheDimmingIsKeyedOnTheGapNotTheKey).
+            Assert.That(Cls(typo, 2), Is.EqualTo("tb-c tb-c-wrong tb-c-wrong-gap"));
             Assert.That(Glyph(typo, 2), Is.EqualTo("x"));
             Assert.That(Fill(typo, 2), Is.Null, "a wrong cell is not on the sync ramp");
 
@@ -428,6 +429,44 @@ public class WebplayDisplayTest
             // makes the line above an exception rather than the rule.
             Assert.That(Glyph(root.GetProperty("mixedPaint"), 2), Is.EqualTo(" "));
             Assert.That(Glyph(root.GetProperty("sealedPaint"), 2), Is.EqualTo(" "));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 185: a wrong WORD GAP is dimmed, because the letter it shows is standing where a
+    /// space was, and a burst of them welds the words either side into one run. A wrong LYRIC cell
+    /// is not, because it shows its own character and takes no boundary away.
+    ///
+    /// <para>The predicate is what the cell EXPECTS, not what was pressed, and the cell below is
+    /// the one that separates the two: a space typed inside a word. Space-skip is hardcoded off in
+    /// the browser, so that press is typed through as an ordinary wrong character on a lyric cell,
+    /// which still shows its own 'b' in red. Keying on the typed char instead would dim it and
+    /// start dimming half the wrong cells on the line.</para>
+    ///
+    /// <para>The dimming itself is CSS, ported by OUTCOME rather than by literal: the desktop dims
+    /// its own cell-alpha lane, /play dims with this site's own idiom, the same one .tb-c-miss
+    /// already uses.</para>
+    /// </summary>
+    [Test]
+    public void TheDimmingIsKeyedOnTheGapNotTheKey()
+    {
+        var root = Harness();
+        var midWord = root.GetProperty("midWordSpacePaint");
+
+        string css = File.ReadAllText(Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "css", "site.css"));
+
+        Assert.Multiple(() =>
+        {
+            // Cell 1 of "ab cd" took a SPACE where 'b' was expected: wrong, but a lyric cell, so it
+            // keeps its own glyph, the undimmed error red, and no gap class.
+            Assert.That(Cls(midWord, 1), Is.EqualTo("tb-c tb-c-wrong"));
+            Assert.That(Glyph(midWord, 1), Is.EqualTo("b"));
+
+            // The gap on that same run is untouched, so the class above is not simply missing.
+            Assert.That(Cls(midWord, 2), Is.EqualTo("tb-c tb-c-todo"));
+
+            // And the class the gap typo does carry has to mean something: the dim lives here.
+            Assert.That(css, Does.Contain(".tb-c-wrong-gap { opacity: .55; }"));
         });
     }
 
