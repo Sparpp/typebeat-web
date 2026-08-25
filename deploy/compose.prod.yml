@@ -9,8 +9,15 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    # The Caddyfile is reached through a DIRECTORY mount, not a single-file bind: Docker binds a
+    # single file by inode, and the CI deploy's tar extraction replaces the file (unlink+create,
+    # new inode), so a file bind leaves the running container reading the deleted old copy forever
+    # (backlog 190: the bss site block sat dark for a full deploy this way). A directory mount
+    # resolves the path on every access, so a replaced file is picked up by the next
+    # restart/reload; CI reloads caddy after every deploy for this reason.
+    command: ["caddy", "run", "--config", "/etc/caddy/deploy/Caddyfile", "--adapter", "caddyfile"]
     volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy:/etc/caddy/deploy:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:

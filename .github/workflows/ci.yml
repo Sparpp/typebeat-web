@@ -122,6 +122,18 @@ jobs:
           curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -q ok
           echo "healthy"
 
+      # Caddyfile changes used to never reach the running container (backlog 190): the old
+      # single-file bind held the pre-deploy inode, and nothing here ever touched caddy. Now:
+      # `up -d caddy` recreates the container only when its compose definition changed (which is
+      # also how the directory-mount change itself rolls out), and the graceful `caddy reload`
+      # picks up Caddyfile content changes with zero downtime (a no-op when nothing changed or
+      # the container was just recreated).
+      - name: Reload caddy config
+        run: |
+          ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web \
+            && ./deploy/up.sh up -d caddy \
+            && ./deploy/up.sh exec -T caddy caddy reload --config /etc/caddy/deploy/Caddyfile --adapter caddyfile'
+
       # The aligner worker (torch/demucs) is a separate long-lived service, deployed AFTER the app
       # is already live+healthy so its heavy build can never gate an app deploy. Docker layer cache
       # on the box makes this a no-op fast path unless deploy/aligner/* changed; restart:

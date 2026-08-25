@@ -26,6 +26,15 @@ git pull   # once the repo is under version control
 docker compose -f deploy/compose.prod.yml up -d --build
 ```
 
+After any `deploy/Caddyfile` change, verify the running container actually sees the new content
+(CI reloads caddy on every deploy, but if the md5s below ever differ, `docker compose -f
+deploy/compose.prod.yml up -d --force-recreate caddy` and re-check):
+
+```
+md5sum deploy/Caddyfile
+docker compose -f deploy/compose.prod.yml exec -T caddy md5sum /etc/caddy/deploy/Caddyfile
+```
+
 ## Takedown runbook (DMCA / removed sets)
 
 Flipping `beatmapsets.status` alone is NOT the whole takedown; stored artifacts and edge
