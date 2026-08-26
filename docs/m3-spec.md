@@ -96,7 +96,11 @@ envelope:
   `patch`, naming which of the two handlers will run. Gated on a verified account owning a
   submittable set, but NOT on the hourly upload limit. An identical declaration returns the
   existing session (with whatever it already holds) rather than forking one, which is how a client
-  that lost its session id resumes; three live sessions per user, 429 beyond that.
+  that lost its session id resumes. A NON-identical declaration for the same set and kind
+  supersedes (deletes) the stale session for them, and a user already holding three live sessions
+  has their oldest evicted rather than being refused: sessions can leak when a client dies between
+  its last chunk and complete, and a hard cap turned three leaks into a day-long lockout. Three
+  per user is thus a disk bound, and create never answers 429.
 - `PUT /bss/upload-sessions/{id}/chunks/{n}`: the raw slice as the body, with its own
   `X-Chunk-Sha256`. 204 on store, and re-sending an index overwrites it.
 - `GET /bss/upload-sessions/{id}`: the same shape as create, for resuming.

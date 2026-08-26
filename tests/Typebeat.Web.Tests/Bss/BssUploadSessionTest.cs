@@ -218,9 +218,72 @@ public class BssUploadSessionTest
             Assert.That((int)again["total_chunks"]!, Is.EqualTo(3));
         });
 
-        // A different payload is a different upload, so it gets its own session.
+        // A different payload for the same set and kind is a NEW declaration: it supersedes the
+        // old session outright, chunks included. The client rebuilds its multipart payload per
+        // attempt (fresh boundary, fresh hash), so once a new declaration exists the old payload
+        // can never complete, and keeping its husk alive only burns a session slot.
         var other = await CreateSessionAsync(owner.Bearer, owner.SetId, "full", Noise(UploadSessionStore.ChunkBytes), multipart_content_type);
-        Assert.That((string)other["session_id"]!, Is.Not.EqualTo(sessionId));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((string)other["session_id"]!, Is.Not.EqualTo(sessionId));
+            Assert.That(SessionDirectory(sessionId), Does.Not.Exist, "the superseded session keeps nothing");
+        });
+    }
+
+    [Test]
+    public async Task NewDeclaration_SupersedesOnlyItsOwnSetAndKind()
+    {
+        var owner = await NewOwnerAsync("supersede scope");
+        var (otherSetId, _) = await CreateSetAsync(owner.Bearer, diffs: 1);
+
+        string fullHere = (string)(await CreateSessionAsync(owner.Bearer, owner.SetId, "full", Noise(100), multipart_content_type))["session_id"]!;
+        string patchHere = (string)(await CreateSessionAsync(owner.Bearer, owner.SetId, "patch", Noise(200), multipart_content_type))["session_id"]!;
+        string fullThere = (string)(await CreateSessionAsync(owner.Bearer, otherSetId, "full", Noise(300), multipart_content_type))["session_id"]!;
+
+        // At the disk bound with three live sessions, yet this create needs no eviction: it
+        // supersedes the same-set same-kind session first, freeing the slot it then takes.
+        var replacement = await CreateSessionAsync(owner.Bearer, owner.SetId, "full", Noise(400), multipart_content_type);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(SessionDirectory(fullHere), Does.Not.Exist, "same set, same kind: superseded");
+            Assert.That(SessionDirectory(patchHere), Does.Exist, "same set, other kind: untouched");
+            Assert.That(SessionDirectory(fullThere), Does.Exist, "other set: untouched");
+            Assert.That(SessionDirectory((string)replacement["session_id"]!), Does.Exist);
+        });
+    }
+
+    [Test]
+    public async Task CreateSession_AtTheDiskBound_EvictsTheOldestSession_InsteadOfRefusing()
+    {
+        // The lockout this prevents was real: a client bug leaked one session per failed upload of
+        // one set, and after three of them the old hard 429 blocked every OTHER set the user owned
+        // for the full session lifetime. Different sets, so supersession cannot apply.
+        var owner = await NewOwnerAsync("evict", diffs: 1);
+        var (setB, _) = await CreateSetAsync(owner.Bearer, diffs: 1);
+        var (setC, _) = await CreateSetAsync(owner.Bearer, diffs: 1);
+        var (setD, _) = await CreateSetAsync(owner.Bearer, diffs: 1);
+
+        string oldest = (string)(await CreateSessionAsync(owner.Bearer, owner.SetId, "full", Noise(100), multipart_content_type))["session_id"]!;
+        string middle = (string)(await CreateSessionAsync(owner.Bearer, setB, "full", Noise(200), multipart_content_type))["session_id"]!;
+        string newest = (string)(await CreateSessionAsync(owner.Bearer, setC, "full", Noise(300), multipart_content_type))["session_id"]!;
+
+        // Age them apart: three sessions created in one test tick can share a timestamp, and the
+        // eviction order must be provable, not incidental.
+        await BackdateAsync(oldest, TimeSpan.FromHours(3));
+        await BackdateAsync(middle, TimeSpan.FromHours(2));
+        await BackdateAsync(newest, TimeSpan.FromHours(1));
+
+        var fourth = await CreateSessionAsync(owner.Bearer, setD, "full", Noise(400), multipart_content_type);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(SessionDirectory(oldest), Does.Not.Exist, "the oldest live session is the one evicted");
+            Assert.That(SessionDirectory(middle), Does.Exist);
+            Assert.That(SessionDirectory(newest), Does.Exist);
+            Assert.That(SessionDirectory((string)fourth["session_id"]!), Does.Exist);
+        });
     }
 
     [Test]
@@ -537,6 +600,16 @@ public class BssUploadSessionTest
     }
 
     private static string Sha256Hex(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
+
+    /// <summary>Rewrites a session's manifest to look created this much earlier: the only way a
+    /// test can order or expire sessions, since their timestamps are stamped server-side.</summary>
+    private static async Task BackdateAsync(string sessionId, TimeSpan age)
+    {
+        string metaPath = Path.Combine(SessionDirectory(sessionId), "meta.json");
+        var meta = JObject.Parse(await File.ReadAllTextAsync(metaPath));
+        meta["created_at_utc"] = DateTimeOffset.UtcNow - age;
+        await File.WriteAllTextAsync(metaPath, meta.ToString(Formatting.None));
+    }
 
     private static string SessionDirectory(string sessionId)
         => Path.Combine(BssFixture.FileRoot, "upload-sessions", sessionId);

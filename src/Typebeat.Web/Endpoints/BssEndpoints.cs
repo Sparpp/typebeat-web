@@ -550,14 +550,6 @@ public static class BssEndpoints
         var session = await sessions.CreateOrResumeAsync(
             user.Id, setId, kind, contentType, request.TotalBytes, request.Sha256!.ToLowerInvariant(), ctx.RequestAborted);
 
-        if (session == null)
-        {
-            logger.LogWarning("Set {SetId}: upload session rejected for user {UserId}, {Max} sessions already live.",
-                setId, user.Id, UploadSessionStore.MaxLiveSessionsPerUser);
-            return WireJson.Error(StatusCodes.Status429TooManyRequests,
-                $"Too many upload sessions in flight (limit {UploadSessionStore.MaxLiveSessionsPerUser}). Finish or abandon one before starting another.");
-        }
-
         logger.LogInformation(
             "Set {SetId}: upload session {SessionId} ({Kind}) open for user {UserId}, {TotalBytes} bytes in {TotalChunks} chunks.",
             setId, session.SessionId, session.Kind, user.Id, session.TotalBytes, session.TotalChunks);

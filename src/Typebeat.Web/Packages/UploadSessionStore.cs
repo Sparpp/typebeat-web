@@ -35,7 +35,12 @@ public sealed class UploadSessionStore
     /// </summary>
     public const int ChunkBytes = 8192;
 
-    /// <summary>Live sessions one user may hold at once (the sweep runs first, so expired ones do not count).</summary>
+    /// <summary>
+    /// Live sessions one user may hold at once. A disk bound, not a refusal: creating past it
+    /// evicts the user's oldest live session rather than failing, because a session can leak
+    /// client-side (a flow that dies between its last chunk and complete) and a hard cap turned
+    /// three such leaks into a 24 hour lockout of EVERY set the user owns.
+    /// </summary>
     public const int MaxLiveSessionsPerUser = 3;
 
     /// <summary>How long a session stays resumable after its creation.</summary>
@@ -88,23 +93,27 @@ public sealed class UploadSessionStore
     /// <summary>
     /// Returns the caller's existing unexpired session for the same payload (same set, kind,
     /// sha256 and total_bytes) so a client that lost its session id can pick up where it left off,
-    /// otherwise creates one. Null means the caller is already holding
-    /// <see cref="MaxLiveSessionsPerUser"/> live sessions, which the route answers with a 429.
+    /// otherwise creates one. Creation is self-healing on two fronts, because a session can leak
+    /// when a client flow dies between its last chunk and complete: a fresh declaration for the
+    /// same set and kind SUPERSEDES any stale session for them (the client rebuilds its multipart
+    /// payload per attempt, so the old payload can never complete once a new declaration exists),
+    /// and a caller already holding <see cref="MaxLiveSessionsPerUser"/> live sessions has their
+    /// oldest one evicted rather than being refused, so leaked sessions on one set can never lock
+    /// the user out of another.
     /// </summary>
-    public async Task<Session?> CreateOrResumeAsync(
+    public async Task<Session> CreateOrResumeAsync(
         long userId, long setId, string kind, string contentType, long totalBytes, string sha256, CancellationToken ct)
     {
         await SweepExpiredAsync(ct);
 
-        int live = 0;
+        var mine = (await liveSessionsAsync(ct))
+                   .Where(s => s.UserId == userId)
+                   .OrderBy(s => s.CreatedAtUtc)
+                   .ThenBy(s => s.SessionId, StringComparer.Ordinal)
+                   .ToList();
 
-        foreach (var existing in await liveSessionsAsync(ct))
+        foreach (var existing in mine)
         {
-            if (existing.UserId != userId)
-                continue;
-
-            live++;
-
             if (existing.SetId == setId
                 && string.Equals(existing.Kind, kind, StringComparison.Ordinal)
                 && existing.TotalBytes == totalBytes
@@ -114,8 +123,22 @@ public sealed class UploadSessionStore
             }
         }
 
-        if (live >= MaxLiveSessionsPerUser)
-            return null;
+        // No resume, so this declaration replaces whatever it made stale, then whatever the disk
+        // bound demands, oldest first.
+        mine.RemoveAll(s =>
+        {
+            if (s.SetId != setId || !string.Equals(s.Kind, kind, StringComparison.Ordinal))
+                return false;
+
+            Delete(s);
+            return true;
+        });
+
+        while (mine.Count >= MaxLiveSessionsPerUser)
+        {
+            Delete(mine[0]);
+            mine.RemoveAt(0);
+        }
 
         var session = new Session(
             Guid.NewGuid().ToString("N"), userId, setId, kind, contentType, totalBytes, sha256, DateTimeOffset.UtcNow);
