@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using Dapper;
@@ -6,6 +7,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
 // Alias rather than a namespace using: Kestrel.Core also exports an obsolete
 // BadHttpRequestException that would make the references below ambiguous.
 using MinDataRate = Microsoft.AspNetCore.Server.Kestrel.Core.MinDataRate;
+using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Npgsql;
 using Typebeat.Web.Auth;
@@ -101,6 +103,14 @@ public static class BssEndpoints
         app.MapPut("/bss/beatmapsets", PutBeatmapSetAsync).RequireBearer();
         app.MapPut("/bss/beatmapsets/{setId:long}", UploadFullPackageAsync).RequireBearer().WithUploadBodyLimit();
         app.MapPatch("/bss/beatmapsets/{setId:long}", PatchPackageAsync).RequireBearer().WithUploadBodyLimit();
+
+        // Chunked alternative to the two routes above, for clients whose network cannot carry a
+        // single large request body (see UploadSessionStore for the ~20 KB middlebox ceiling this
+        // exists for). Same payloads, same gate, same parse path; only the transport differs.
+        app.MapPost("/bss/beatmapsets/{setId:long}/upload-sessions", CreateUploadSessionAsync).RequireBearer();
+        app.MapGet("/bss/upload-sessions/{sessionId}", GetUploadSessionAsync).RequireBearer();
+        app.MapPut("/bss/upload-sessions/{sessionId}/chunks/{index:int}", PutUploadSessionChunkAsync).RequireBearer();
+        app.MapPost("/bss/upload-sessions/{sessionId}/complete", CompleteUploadSessionAsync).RequireBearer();
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -295,6 +305,17 @@ public static class BssEndpoints
         if (await gateUploadAsync(ctx, db, setId, user) is { } gateError)
             return gateError;
 
+        return await uploadFullPackageCoreAsync(setId, ctx, user, ingest, logger);
+    }
+
+    /// <summary>
+    /// Everything the full-upload route does AFTER its gate, reading the multipart body straight
+    /// off <c>ctx.Request</c>. Split out so the upload-session complete route can run the gate
+    /// exactly once (calling the route handler would consume a second slot of the rate limiter)
+    /// and then replay its assembled body through this identical path.
+    /// </summary>
+    private static async Task<IResult> uploadFullPackageCoreAsync(long setId, HttpContext ctx, AuthedUser user, PackageIngest ingest, ILogger logger)
+    {
         // Guarded (rather than letting ReadFormAsync throw InvalidOperationException → raw 500):
         // a missing or non-form Content-Type is a client-shaped request error.
         if (!ctx.Request.HasFormContentType)
@@ -348,6 +369,17 @@ public static class BssEndpoints
         if (await gateUploadAsync(ctx, db, setId, user) is { } gateError)
             return gateError;
 
+        return await patchPackageCoreAsync(setId, ctx, user, ingest, fileStore, logger);
+    }
+
+    /// <summary>
+    /// Everything the patch route does AFTER its gate, reading the multipart body straight off
+    /// <c>ctx.Request</c>. Split out for the same reason as
+    /// <see cref="uploadFullPackageCoreAsync"/>: the session complete route gates once, then
+    /// replays its assembled body through this exact code.
+    /// </summary>
+    private static async Task<IResult> patchPackageCoreAsync(long setId, HttpContext ctx, AuthedUser user, PackageIngest ingest, IFileStore fileStore, ILogger logger)
+    {
         // A no-change resubmission arrives with NO body at all: the client's diff is empty and
         // osu-framework's WebRequest only builds multipart content when it has parts, so there
         // is no Content-Type to read a form from. Treat any absent/non-form body as an empty
@@ -441,6 +473,281 @@ public static class BssEndpoints
 
         return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, "patch", logger, ctx.RequestAborted);
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // Chunked upload sessions. Same two payloads as the routes above, delivered as a series of
+    // small requests instead of one large body, for clients whose path to this host black-holes
+    // any single request past roughly 20 KB (see UploadSessionStore). The assembled payload is
+    // fed back through the SAME handlers, so the two transports cannot diverge in what they
+    // accept: only the delivery differs.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// POST /bss/beatmapsets/{id}/upload-sessions: declare a payload and get a session to send it
+    /// in. Gated on a verified account owning a submittable set, but deliberately NOT on the
+    /// upload rate limiter: a session is not an upload, and a client that has to resume one after
+    /// a network failure must not burn a slot doing it. The limiter is consumed at complete.
+    /// </summary>
+    private static async Task<IResult> CreateUploadSessionAsync(
+        long setId, HttpContext ctx, Db db, UploadSessionStore sessions, ILoggerFactory loggerFactory)
+    {
+        var user = ctx.AuthedUser();
+        var logger = loggerFactory.CreateLogger("BssUpload");
+
+        BssUploadSessionRequest? request;
+
+        try
+        {
+            using var reader = new StreamReader(ctx.Request.Body);
+            request = JsonConvert.DeserializeObject<BssUploadSessionRequest>(await reader.ReadToEndAsync(ctx.RequestAborted));
+        }
+        catch (JsonException)
+        {
+            request = null;
+        }
+
+        if (request == null)
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "The request body is not a valid upload session request.");
+
+        await using (var conn = await db.OpenAsync(ctx.RequestAborted))
+        {
+            if (!await isVerifiedAsync(conn, user.Id))
+                return WireJson.Error(StatusCodes.Status422UnprocessableEntity, verification_required_message);
+
+            if (await loadOwnedSetForSubmissionAsync(conn, setId, user) is { } error)
+                return error;
+        }
+
+        string kind = request.Kind ?? "";
+
+        if (kind is not ("full" or "patch"))
+        {
+            logger.LogWarning("Set {SetId}: upload session rejected for user {UserId}, unknown kind.", setId, user.Id);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "kind must be \"full\" or \"patch\".");
+        }
+
+        string contentType = request.ContentType ?? "";
+
+        if (!contentType.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning("Set {SetId}: upload session rejected for user {UserId}, content_type is not multipart/form-data.", setId, user.Id);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "content_type must be the multipart/form-data content type of the upload body.");
+        }
+
+        if (request.TotalBytes <= 0 || request.TotalBytes > MaxUploadBodyBytes)
+        {
+            logger.LogWarning("Set {SetId}: upload session rejected for user {UserId}, total_bytes {TotalBytes} out of range.", setId, user.Id, request.TotalBytes);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity,
+                $"total_bytes must be between 1 and {MaxUploadBodyBytes}.");
+        }
+
+        if (!isSha256Hex(request.Sha256))
+        {
+            logger.LogWarning("Set {SetId}: upload session rejected for user {UserId}, malformed sha256.", setId, user.Id);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "sha256 must be 64 hexadecimal characters.");
+        }
+
+        var session = await sessions.CreateOrResumeAsync(
+            user.Id, setId, kind, contentType, request.TotalBytes, request.Sha256!.ToLowerInvariant(), ctx.RequestAborted);
+
+        if (session == null)
+        {
+            logger.LogWarning("Set {SetId}: upload session rejected for user {UserId}, {Max} sessions already live.",
+                setId, user.Id, UploadSessionStore.MaxLiveSessionsPerUser);
+            return WireJson.Error(StatusCodes.Status429TooManyRequests,
+                $"Too many upload sessions in flight (limit {UploadSessionStore.MaxLiveSessionsPerUser}). Finish or abandon one before starting another.");
+        }
+
+        logger.LogInformation(
+            "Set {SetId}: upload session {SessionId} ({Kind}) open for user {UserId}, {TotalBytes} bytes in {TotalChunks} chunks.",
+            setId, session.SessionId, session.Kind, user.Id, session.TotalBytes, session.TotalChunks);
+
+        return WireJson.Ok(sessionPayload(session, sessions));
+    }
+
+    /// <summary>GET /bss/upload-sessions/{id}: the resume view, same shape as create.</summary>
+    private static async Task<IResult> GetUploadSessionAsync(string sessionId, HttpContext ctx, UploadSessionStore sessions)
+    {
+        var user = ctx.AuthedUser();
+        var session = await sessions.TryGetAsync(sessionId, ctx.RequestAborted);
+
+        if (session == null || session.UserId != user.Id)
+            return unknownUploadSession();
+
+        return WireJson.Ok(sessionPayload(session, sessions));
+    }
+
+    /// <summary>
+    /// PUT /bss/upload-sessions/{id}/chunks/{index}: one raw slice of the payload, hash-checked
+    /// against the caller's X-Chunk-Sha256 header. Re-PUTting an index overwrites it, so a client
+    /// that never saw a 204 can simply send the chunk again.
+    /// </summary>
+    private static async Task<IResult> PutUploadSessionChunkAsync(
+        string sessionId, int index, HttpContext ctx, UploadSessionStore sessions, ILoggerFactory loggerFactory)
+    {
+        var user = ctx.AuthedUser();
+        var logger = loggerFactory.CreateLogger("BssUpload");
+
+        // Load-bearing, on EVERY response from this route including the errors: the ceiling this
+        // protocol exists for is per TCP CONNECTION, not per request, so a pooled keep-alive
+        // connection would accumulate chunk after chunk and die partway through the third one.
+        // Closing server-side bounds every connection at a single chunk whatever the client does
+        // with its pool.
+        ctx.Response.Headers.Connection = "close";
+
+        var session = await sessions.TryGetAsync(sessionId, ctx.RequestAborted);
+
+        if (session == null || session.UserId != user.Id)
+            return unknownUploadSession();
+
+        if (index < 0 || index >= session.TotalChunks)
+        {
+            logger.LogWarning("Set {SetId}: chunk {Index} rejected for user {UserId}, outside session {SessionId}.",
+                session.SetId, index, user.Id, session.SessionId);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity,
+                $"chunk index must be between 0 and {session.TotalChunks - 1}.");
+        }
+
+        string declared = ctx.Request.Headers["X-Chunk-Sha256"].ToString();
+
+        if (!isSha256Hex(declared))
+        {
+            logger.LogWarning("Set {SetId}: chunk {Index} rejected for user {UserId}, missing or malformed X-Chunk-Sha256.",
+                session.SetId, index, user.Id);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "X-Chunk-Sha256 must be 64 hexadecimal characters.");
+        }
+
+        int expected = session.ChunkLength(index);
+
+        // One byte of headroom: reading MORE than the chunk length is as wrong as reading less,
+        // and this is how the difference gets noticed without buffering the overflow.
+        byte[] buffer = new byte[expected + 1];
+        int read = await ctx.Request.Body.ReadAtLeastAsync(buffer, expected + 1, throwOnEndOfStream: false, ctx.RequestAborted);
+
+        if (read != expected)
+        {
+            logger.LogWarning("Set {SetId}: chunk {Index} rejected for user {UserId}, {Read} bytes where {Expected} were declared.",
+                session.SetId, index, user.Id, read, expected);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity, $"chunk {index} must carry exactly {expected} bytes.");
+        }
+
+        byte[] content = buffer[..expected];
+        string actual = Convert.ToHexStringLower(SHA256.HashData(content));
+
+        if (!string.Equals(actual, declared, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning("Set {SetId}: chunk {Index} rejected for user {UserId}, hash mismatch.", session.SetId, index, user.Id);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity, $"chunk {index} does not match its X-Chunk-Sha256.");
+        }
+
+        await sessions.WriteChunkAsync(session, index, content, ctx.RequestAborted);
+
+        return Results.NoContent();
+    }
+
+    /// <summary>
+    /// POST /bss/upload-sessions/{id}/complete: assemble, verify, then run the real upload. The
+    /// session survives everything that a retry could still fix (missing chunks, a rate limit, a
+    /// verification or ownership problem) and is dropped once the payload is either proven corrupt
+    /// or actually handed to the ingest, success or failure.
+    /// </summary>
+    private static async Task<IResult> CompleteUploadSessionAsync(
+        string sessionId, HttpContext ctx, Db db, PackageIngest ingest, IFileStore fileStore,
+        UploadSessionStore sessions, ILoggerFactory loggerFactory)
+    {
+        var user = ctx.AuthedUser();
+        var logger = loggerFactory.CreateLogger("BssUpload");
+
+        var session = await sessions.TryGetAsync(sessionId, ctx.RequestAborted);
+
+        if (session == null || session.UserId != user.Id)
+            return unknownUploadSession();
+
+        int received = sessions.ReceivedIndexes(session).Count;
+
+        if (received != session.TotalChunks)
+        {
+            logger.LogWarning("Set {SetId}: session {SessionId} completion rejected for user {UserId}, {Received} of {TotalChunks} chunks present.",
+                session.SetId, session.SessionId, user.Id, received, session.TotalChunks);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity,
+                $"The upload session is missing {session.TotalChunks - received} of its {session.TotalChunks} chunks.");
+        }
+
+        await using var buffer = createTempBuffer();
+
+        await sessions.AssembleAsync(session, buffer, ctx.RequestAborted);
+
+        buffer.Position = 0;
+        string assembledSha = Convert.ToHexStringLower(await SHA256.HashDataAsync(buffer, ctx.RequestAborted));
+
+        if (!string.Equals(assembledSha, session.Sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            // Every chunk matched its own hash yet the whole does not: the client's declaration
+            // was wrong (or the payload changed under it), so nothing about this session is
+            // salvageable and a retry has to start over.
+            sessions.Delete(session);
+            logger.LogWarning("Set {SetId}: session {SessionId} for user {UserId} assembled to {Actual}, not the declared {Declared}.",
+                session.SetId, session.SessionId, user.Id, assembledSha, session.Sha256);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity,
+                "The assembled upload does not match the declared sha256; start a new upload session.");
+        }
+
+        buffer.Position = 0;
+
+        // The one and only rate-limiter consumption of the whole session: the transport was free,
+        // the actual submission costs a slot exactly like a direct upload does.
+        if (await gateUploadAsync(ctx, db, session.SetId, user) is { } gateError)
+        {
+            logger.LogWarning("Set {SetId}: session {SessionId} completion gated for user {UserId}.", session.SetId, session.SessionId, user.Id);
+            return gateError;
+        }
+
+        // Replay the assembled payload through the ORIGINAL read path: swapping the request body
+        // (plus its content type, length and a fresh form feature over them) means the core
+        // handlers below parse a session upload with exactly the code that parses a direct one,
+        // so the two transports cannot drift in what they accept.
+        ctx.Request.Body = buffer;
+        ctx.Request.ContentType = session.ContentType;
+        ctx.Request.ContentLength = buffer.Length;
+        ctx.Features.Set<IFormFeature>(new FormFeature(ctx.Request, ctx.RequestServices.GetRequiredService<IOptions<FormOptions>>().Value));
+
+        try
+        {
+            logger.LogInformation("Set {SetId}: session {SessionId} ({Kind}) completing for user {UserId}, {TotalBytes} bytes assembled.",
+                session.SetId, session.SessionId, session.Kind, user.Id, session.TotalBytes);
+
+            return session.Kind == "full"
+                ? await uploadFullPackageCoreAsync(session.SetId, ctx, user, ingest, logger)
+                : await patchPackageCoreAsync(session.SetId, ctx, user, ingest, fileStore, logger);
+        }
+        finally
+        {
+            // The core ran, so the payload has been consumed: whatever it answered, re-completing
+            // the same session would re-submit the same package. Dropped either way.
+            sessions.Delete(session);
+        }
+    }
+
+    /// <summary>
+    /// The single answer for an upload session that is absent, expired, malformed or somebody
+    /// else's. One shape for all four so a caller cannot probe other users' session ids.
+    /// </summary>
+    private static IResult unknownUploadSession()
+        => WireJson.Error(StatusCodes.Status404NotFound, "upload session not found");
+
+    private static BssUploadSessionResponse sessionPayload(UploadSessionStore.Session session, UploadSessionStore sessions)
+        => new BssUploadSessionResponse
+        {
+            SessionId = session.SessionId,
+            ChunkBytes = UploadSessionStore.ChunkBytes,
+            TotalChunks = session.TotalChunks,
+            Received = sessions.ReceivedIndexes(session),
+            ExpiresAt = session.ExpiresAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+        };
+
+    /// <summary>64 hex characters, either case (both the declared payload hash and the per-chunk header).</summary>
+    private static bool isSha256Hex(string? value)
+        => value is { Length: 64 } && value.All(char.IsAsciiHexDigit);
 
     // ---------------------------------------------------------------------------------------------
     // Shared plumbing.

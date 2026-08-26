@@ -82,6 +82,44 @@ per-section files under the session scratchpad
 9. Downloads: `GET /beatmapsets/{id}/download` streams the latest version package (assembled zip),
    logs to `beatmapset_downloads`, bumps the denormalized counter. Anonymous allowed.
 
+## Chunked upload sessions (backlog 193)
+
+Some users sit behind a middlebox that black-holes any single request to this host once its body
+passes roughly 20 KB: every attempt read the same 20099 bytes of a 37714-byte PATCH and then died
+on a read timeout, identically, on both the Cloudflare-proxied and the direct-origin path. No
+monolithic upload above that ceiling can ever complete for them, so the two package routes get a
+chunked alternative. Four bearer-authed routes, all errors in the usual `{"error": "..."}`
+envelope:
+
+- `POST /bss/beatmapsets/{id}/upload-sessions` with `{kind, content_type, total_bytes, sha256}`
+  → 200 `{session_id, chunk_bytes, total_chunks, received[], expires_at}`. `kind` is `full` or
+  `patch`, naming which of the two handlers will run. Gated on a verified account owning a
+  submittable set, but NOT on the hourly upload limit. An identical declaration returns the
+  existing session (with whatever it already holds) rather than forking one, which is how a client
+  that lost its session id resumes; three live sessions per user, 429 beyond that.
+- `PUT /bss/upload-sessions/{id}/chunks/{n}`: the raw slice as the body, with its own
+  `X-Chunk-Sha256`. 204 on store, and re-sending an index overwrites it.
+- `GET /bss/upload-sessions/{id}`: the same shape as create, for resuming.
+- `POST /bss/upload-sessions/{id}/complete`: assemble, verify the whole-payload sha256, then run
+  the real upload. Answers exactly what the direct route would (204, or its 422/413).
+
+Details that are load-bearing rather than incidental:
+
+- **The payload is the VERBATIM multipart body** the client would otherwise have PUT or PATCHed,
+  `content_type` is that body's own Content-Type header (boundary included), and complete replays
+  it through the same handler the direct route uses. There is no second parser to drift.
+- **`chunk_bytes` is 8192** and the chunk response always carries `Connection: close`. The ceiling
+  is per TCP connection, not per request, so pooled keep-alive reuse would accumulate chunks on
+  one connection and cross the limit partway through the third; the server closing bounds every
+  connection at a single chunk whatever the client's pool does.
+- **The hourly upload limit is consumed at complete, exactly once**, not by opening a session and
+  not by any chunk: transport retries are free, submissions cost what they always did.
+- Sessions live under `{FileStore}/upload-sessions/{id}/` (manifest plus chunk files, not through
+  IFileStore, which has no enumeration), expire 24 hours after creation and are swept whenever a
+  session is created. A session survives everything a retry can still fix (missing chunks, the
+  rate limit, a verification or ownership failure) and is dropped once the payload is either
+  proven corrupt or actually handed to the ingest.
+
 ## Schema migration 002 (single owner)
 
 `users`: + `last_visit timestamptz` (touched by /me and website page loads, throttled).

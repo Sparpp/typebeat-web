@@ -78,6 +78,10 @@ builder.Services.AddSingleton<CoverGenerator>();
 builder.Services.AddSingleton<PreviewGenerator>();
 builder.Services.AddSingleton<PackageIngest>();
 
+// Chunked BSS uploads: session directories under {TYPEBEAT_FILE_ROOT}/upload-sessions, so a
+// half-sent payload survives a restart and the client resumes instead of starting over.
+builder.Services.AddSingleton<UploadSessionStore>();
+
 // Server-side lyric alignment (file-based job exchange with the aligner worker container).
 builder.Services.AddSingleton<AlignJobStore>();
 
@@ -192,6 +196,30 @@ app.UseWhen(
         site.UseExceptionHandler("/error/500");
         site.UseStatusCodePagesWithReExecute("/error/{0}");
     });
+
+// /bss is excluded from the handlers above (IsWireRoute), so nothing on that path catches the
+// OperationCanceledException that a response write throws when the client has already gone: every
+// wire response is written with RequestAborted (WireJson), and an upload client that dies mid
+// exchange trips it on the way out. Unhandled, it reaches Sentry as a server error (issue
+// 77a49caa) when it is nothing of the kind: the request was abandoned by the client, there is
+// nothing to answer and nobody to notify, so rethrowing only pages the maintainer for somebody
+// else's network. Anything cancelled for another reason still propagates.
+var bssLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("BssUpload");
+
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/bss"),
+    bss => bss.Use(async (ctx, next) =>
+    {
+        try
+        {
+            await next(ctx);
+        }
+        catch (OperationCanceledException) when (ctx.RequestAborted.IsCancellationRequested)
+        {
+            bssLogger.LogDebug("{Method} {Path} was abandoned by the client before its response could be written.",
+                ctx.Request.Method, ctx.Request.Path);
+        }
+    }));
 
 app.UseWebSockets();
 

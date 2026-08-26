@@ -75,3 +75,50 @@ public sealed class BssFileWire
     [JsonProperty("sha2_hash")]
     public required string Sha2Hash { get; init; }
 }
+
+/// <summary>
+/// Body of POST /bss/beatmapsets/{id}/upload-sessions: the client declaring the payload it is
+/// about to send in chunks. The payload is the VERBATIM multipart body it would otherwise have
+/// PUT/PATCHed in one request, so <see cref="ContentType"/> is that body's own Content-Type
+/// header (boundary included) and <see cref="Sha256"/> covers the whole of it.
+/// </summary>
+public sealed class BssUploadSessionRequest
+{
+    /// <summary>"full" (the PUT route's body) or "patch" (the PATCH route's body).</summary>
+    [JsonProperty("kind")]
+    public string? Kind { get; init; }
+
+    [JsonProperty("content_type")]
+    public string? ContentType { get; init; }
+
+    [JsonProperty("total_bytes")]
+    public long TotalBytes { get; init; }
+
+    /// <summary>Hex SHA-256 of the whole payload, verified server-side at complete.</summary>
+    [JsonProperty("sha256")]
+    public string? Sha256 { get; init; }
+}
+
+/// <summary>
+/// 200 body of the session create and status routes. <see cref="Received"/> is what the server
+/// already holds, so a client resuming an interrupted upload sends only the gaps.
+/// </summary>
+public sealed class BssUploadSessionResponse
+{
+    [JsonProperty("session_id")]
+    public required string SessionId { get; init; }
+
+    [JsonProperty("chunk_bytes")]
+    public required int ChunkBytes { get; init; }
+
+    [JsonProperty("total_chunks")]
+    public required int TotalChunks { get; init; }
+
+    /// <summary>Stored chunk indexes, ascending.</summary>
+    [JsonProperty("received")]
+    public required IReadOnlyList<int> Received { get; init; }
+
+    /// <summary>ISO 8601 UTC instant after which the session is swept.</summary>
+    [JsonProperty("expires_at")]
+    public required string ExpiresAt { get; init; }
+}
