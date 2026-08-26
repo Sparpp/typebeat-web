@@ -54,7 +54,7 @@ public static class Report
             output.WriteLine("== SUPERSEDE: every stored number below is being REPLACED ==");
             output.WriteLine();
             output.WriteLine("judged under                 TypoRule.Deferred + ComboRestoreRule.OnFix + SpaceTimingRule.Untimed");
-            output.WriteLine("                             + RateWindowRule.ScaledByRate (all of today's rules)");
+            output.WriteLine("                             + RateWindowRule.ScaledByRate + OffTimeRule.MehHit (all of today's rules)");
             output.WriteLine("total_score priced with      today's mod multipliers");
             output.WriteLine();
             output.WriteLine("What that costs, deliberately, and what to look for in the numbers below:");
@@ -71,6 +71,10 @@ public static class Report
             output.WriteLine("    indifferent to this one.");
             output.WriteLine("  - a DT / NC / HT row is re-judged on windows SCALED by its clock rate (backlog 150), so");
             output.WriteLine("    an up-rate row gains tolerance and a down-rate row loses it. No other row is affected.");
+            output.WriteLine("  - EVERY row that ever fumbled a beat gains on its OFF-TIME presses. Backlog 199 made the");
+            output.WriteLine("    right character struck outside every window a HIT worth no points: it is re-judged as a");
+            output.WriteLine("    Meh rather than a Miss, so the row loses that miss, keeps the streak the press used to");
+            output.WriteLine("    break, and gains max_combo, completion and rank while paying the same accuracy.");
             output.WriteLine("  - a row whose mods were retuned since it was played is re-priced at today's multiplier,");
             output.WriteLine("    unlike a reproduce sweep, which carries the row's own. That is the point: a superseded");
             output.WriteLine("    score has to be one today's client could actually produce.");
@@ -80,12 +84,13 @@ public static class Report
             output.WriteLine("== REPRODUCE: verify, then reprice what today's TYPO rule alone changes ==");
             output.WriteLine();
             output.WriteLine("judged under                 TypoRule.Deferred, every other era axis held at the era proved");
-            output.WriteLine("                             for the ROW (combo restore, the spacebar, the rate windows)");
+            output.WriteLine("                             for the ROW (combo restore, the spacebar, the rate windows, the");
+            output.WriteLine("                             off-time rule)");
             output.WriteLine("verified against             the typo rule that judged the ROW: Deferred where the row's own");
             output.WriteLine("                             statistics prove it (a `good` key), ImmediateMiss otherwise");
-            output.WriteLine("                             and the spacebar / rate windows / combo restore that judged the");
-            output.WriteLine("                             ROW, proved by reconstruction where the oldest arms do not");
-            output.WriteLine("                             re-derive it");
+            output.WriteLine("                             and the spacebar / rate windows / combo restore / off-time rule");
+            output.WriteLine("                             that judged the ROW, proved by reconstruction where the oldest");
+            output.WriteLine("                             arms do not re-derive it");
             output.WriteLine("total_score priced with      the row's OWN mod multiplier, recovered not reapplied");
         }
 
@@ -252,8 +257,8 @@ public static class Report
     /// population, so the line for the all-live combination growing run over run is the expected
     /// reading, and that line staying at zero while new rows appear would mean the search is not
     /// reaching them. A COMBO-RULE OR TYPO-RULE PIN IS VISIBLE HERE RATHER THAN SILENT for the same
-    /// reason: the combination is spelled out on all four axes, so a row reconstructed onto today's
-    /// combo rule or today's typo rule says so.</para>
+    /// reason: the combination is spelled out on all five axes, so a row reconstructed onto today's
+    /// combo rule, today's typo rule or today's off-time rule says so.</para>
     ///
     /// <para>Rows no combination reproduced are NOT here. They have no era, they are counted as
     /// unexplained below, and that is the property worth checking: a search that always found an
@@ -265,8 +270,8 @@ public static class Report
 
         output.WriteLine($"  of these, era proved by    {searched.Count,-6}  the arms their own keys start them at did not re-derive");
         output.WriteLine("  reconstruction                     them, so each remaining combination of the spacebar, rate-window,");
-        output.WriteLine("                                     combo-restore and typo axes was tried and the row pinned to the one");
-        output.WriteLine("                                     that reproduced it exactly. A row whose `good` key PROVES its typo");
+        output.WriteLine("                                     combo-restore, typo and off-time axes was tried and the row pinned to");
+        output.WriteLine("                                     the one that reproduced it exactly. A row whose `good` key PROVES its typo");
         output.WriteLine("                                     era is not searched on that axis: the proof wins. No release time is");
         output.WriteLine("                                     used anywhere here, since a client updates when its player updates");
         output.WriteLine("                                     it and a submission time therefore cannot date the rules.");
@@ -278,7 +283,7 @@ public static class Report
                                       .OrderByDescending(g => g.Count())
                                       .ThenBy(g => g.Key.ToString(), StringComparer.Ordinal))
         {
-            output.WriteLine($"      {group.Key,-100} {group.Count(),5}");
+            output.WriteLine($"      {group.Key,-125} {group.Count(),5}");
         }
     }
 

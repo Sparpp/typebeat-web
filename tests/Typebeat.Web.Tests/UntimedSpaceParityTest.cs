@@ -5,7 +5,8 @@ namespace Typebeat.Web.Tests;
 /// <summary>
 /// Fidelity guard for UNTIMED SPACES in the browser scoring core (backlog 148). A space typed on a
 /// SPACE CELL is judged as though it landed dead on that cell's target, so it takes the top tier
-/// whatever the clock said and can never fall into one of the two zero-point tiers that break combo.
+/// whatever the clock said and can never fall into one of the two zero-point tiers, which since
+/// backlog 199 cost accuracy rather than the run.
 /// The hand-written wwwroot/js/typebeat-core.js must reproduce the desktop rule exactly, or /play
 /// scores diverge from desktop on the SHARED leaderboards: this one changes what a word gap is
 /// worth, which is every few characters of every map.
@@ -101,7 +102,16 @@ public class UntimedSpaceParityTest
 
     /// <summary>
     /// The same press one cell later is NOT exempt: it was the spacebar that left the timing
-    /// challenge, not the player's sense of rhythm.
+    /// challenge, not the player's sense of rhythm. The press is still judged Lagging on its real
+    /// delta and still earns nothing.
+    ///
+    /// <para>WHAT IT COSTS MOVED AT BACKLOG 199, and this is the browser half of that rule. An
+    /// off-time press (the right character outside the outermost Meh window) is a HIT: it extends
+    /// the run instead of ending it, raises no combo break, and resolves its cell as an osu Meh, so
+    /// the whole of the punishment is accuracy, the lowest weight a judged cell can take. The
+    /// exemption this file is about is untouched by that: the space is still judged on a zeroed
+    /// delta and the lyric character is still judged on the clock, which is the difference the pair
+    /// of runs exists to show.</para>
     /// </summary>
     [Test]
     public void ALyricCharacterPressedJustAsLateIsStillLagging()
@@ -118,11 +128,17 @@ public class UntimedSpaceParityTest
             // it measures the press against 'c''s own 2000 target. The browser has no era axis at
             // all (it only plays live), so it measures the press against the sung span of the
             // syllable "cd", [2000, 3000], exactly as live desktop play does. Everything the case
-            // is actually about is unchanged: the press is just as late, still Lagging, still worth
-            // nothing, and it still breaks the combo the space kept alive.
+            // is actually about is unchanged: the press is just as late and still Lagging.
             Assert.That(Delta(r, 3), Is.EqualTo(4100));
-            Assert.That(Num(r, "combo"), Is.Zero);
-            Assert.That(Num(r, "breaks"), Is.EqualTo(1));
+
+            // Backlog 199: the run the space kept alive survives the fumble as well, and grows by
+            // the press, because an off-time press is an accepted character worth zero points
+            // rather than a break.
+            Assert.That(Num(r, "combo"), Is.EqualTo(4));
+            Assert.That(Num(r, "maxCombo"), Is.EqualTo(4));
+            Assert.That(Num(r, "breaks"), Is.Zero);
+            Assert.That(Num(r, "processorHighestCombo"), Is.EqualTo(4),
+                "the cell resolves as a Meh, so the SUBMITTED combo follows the engine's without being mirrored by hand");
             Assert.That(Num(r, "score"), Is.EqualTo(918), "Lagging scores nothing, so the total is unmoved");
         });
     }

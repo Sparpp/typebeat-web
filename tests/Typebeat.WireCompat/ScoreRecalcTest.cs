@@ -171,11 +171,20 @@ public class ScoreRecalcTest
     private const RateWindowRule rate_window_rule = RateWindowRule.Unscaled;
 
     /// <summary>
+    /// The fifth axis (backlog 199), and the same story again: every row in the table was played
+    /// when an off-time press (the right character struck outside the outermost Meh window) zeroed
+    /// the run and spent its cell on a Miss, so a synthetic stored row is built under that unless a
+    /// test is deliberately building a row a client running today's rule produced.
+    /// </summary>
+    private const OffTimeRule off_time_rule = OffTimeRule.BreaksCombo;
+
+    /// <summary>
     /// The stored row a client of the OLDEST era would have produced for this run.
     ///
     /// <para>Every era axis is a parameter, because every one of them moved while the score table was
     /// already filling and the table therefore holds rows from both sides of each: the typo rule
-    /// (backlog 155), the spacebar and the rate windows (backlog 156) and combo restore (backlog 157).
+    /// (backlog 155), the spacebar and the rate windows (backlog 156), combo restore (backlog 157)
+    /// and what an off-time press cost (backlog 199).
     /// A synthetic row for a later population has to be built under the rule that judged it, or it is
     /// a row no client ever produced.</para>
     /// </summary>
@@ -188,9 +197,10 @@ public class ScoreRecalcTest
         RateWindowRule rateRule = rate_window_rule,
         ComboRestoreRule comboRule = combo_restore_rule,
         TypoRule typoRule = TypoRule.ImmediateMiss,
+        OffTimeRule offTimeRule = off_time_rule,
         params Mod[] mods)
     {
-        var old = TypeBeatReplayScorer.Score(map, mods, replay, typoRule, comboRule, spaceRule, rateRule);
+        var old = TypeBeatReplayScorer.Score(map, mods, replay, typoRule, comboRule, spaceRule, rateRule, offTimeRule: offTimeRule);
 
         var statistics = ToWire(old.Statistics);
 
@@ -1341,14 +1351,14 @@ public class ScoreRecalcTest
     }
 
     /// <summary>
-    /// The run re-derived under one point of the search space, with every one of the four era axes
+    /// The run re-derived under one point of the search space, with every one of the five era axes
     /// taken from the candidate rather than written out at the call site. Since backlog 158 the typo
-    /// rule is a member of <see cref="SearchedEra"/> like the other three, and a test that passed a
-    /// literal <c>TypoRule.ImmediateMiss</c> next to <c>era.Space</c> would silently stop sweeping the
-    /// axis it claims to sweep.
+    /// rule is a member of <see cref="SearchedEra"/> like the others, and since backlog 199 so is the
+    /// off-time rule; a test that passed a literal <c>TypoRule.ImmediateMiss</c> next to
+    /// <c>era.Space</c> would silently stop sweeping the axis it claims to sweep.
     /// </summary>
     private static TypeBeatReplayAccount ScoreUnder(IBeatmap map, Replay replay, SearchedEra era, params Mod[] mods)
-        => TypeBeatReplayScorer.Score(map, mods, replay, era.Typo, era.Combo, era.Space, era.Rate);
+        => TypeBeatReplayScorer.Score(map, mods, replay, era.Typo, era.Combo, era.Space, era.Rate, offTimeRule: era.OffTime);
 
     /// <summary>Every cell on target except the SPACE, 2500 ms late: outside even the Meh window.</summary>
     private static Replay LateSpaceReplay()
@@ -1821,10 +1831,13 @@ public class ScoreRecalcTest
     ///
     /// <para>Backlog 157 made this commoner rather than rarer: the combo axis is inert on a run with
     /// no typo corrected in it, which is most runs, so folding it in doubled the number of arms that
-    /// reproduce this row from two to four. Backlog 158 doubled it again to eight, and on the widest
-    /// axis of the four: a run with NO typo in it is judged identically by both typo rules, so every
-    /// arm that reproduces it under one reproduces it under the other. That costs nothing precisely
-    /// because they agree, and this test asserts the agreement rather than asserting the pin alone.</para>
+    /// reproduce this row from two to four. Backlog 158 doubled it again to eight: a run with NO typo
+    /// in it is judged identically by both typo rules, so every
+    /// arm that reproduces it under one reproduces it under the other. Backlog 199 doubled it a third
+    /// time, to sixteen, on the axis that reaches the most rows of all: this run never strikes a
+    /// character off the ladder, so the off-time arms grade it identically too. That costs nothing
+    /// precisely because they agree, and this test asserts the agreement rather than asserting the
+    /// pin alone.</para>
     /// </summary>
     [Test]
     public void AnAmbiguousEraIsPinnedDeterministicallyBecauseEveryReproducingArmAgrees()
@@ -1845,20 +1858,22 @@ public class ScoreRecalcTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(reproducing, Has.Count.EqualTo(8),
-                "the rate axis is inert on a row with no rate mod, and the combo AND typo axes on a run with no typo, so all eight of their arms reproduce");
+            Assert.That(reproducing, Has.Count.EqualTo(16),
+                "the rate axis is inert on a row with no rate mod, the combo AND typo axes on a run with no typo, and the off-time axis on a run with no mistimed press, so all sixteen of their arms reproduce");
             Assert.That(reproducing.Select(x => x.era.Space), Is.All.EqualTo(SpaceTimingRule.Untimed), "the SPACE axis is the one this row can prove");
             Assert.That(reproducing.Select(x => x.account.MaxCombo).Distinct().Count(), Is.EqualTo(1), "and the reproducing arms agree, which is why the choice cannot matter");
 
-            Assert.That(reproducing.Select(x => x.era.Typo), Is.EquivalentTo(new[]
-            {
-                TypoRule.ImmediateMiss, TypoRule.ImmediateMiss, TypoRule.ImmediateMiss, TypoRule.ImmediateMiss,
-                TypoRule.Deferred, TypoRule.Deferred, TypoRule.Deferred, TypoRule.Deferred,
-            }), "backlog 158 doubled the ambiguity rather than resolving any: a run with no typo reads the same under both rules");
+            Assert.That(reproducing.Count(x => x.era.Typo == TypoRule.ImmediateMiss), Is.EqualTo(8),
+                "backlog 158 doubled the ambiguity rather than resolving any: a run with no typo reads the same under both rules");
+            Assert.That(reproducing.Count(x => x.era.Typo == TypoRule.Deferred), Is.EqualTo(8));
+            Assert.That(reproducing.Count(x => x.era.OffTime == OffTimeRule.BreaksCombo), Is.EqualTo(8),
+                "and backlog 199 doubled it again: a run that never strikes a character off the ladder reads the same under both off-time rules");
+            Assert.That(reproducing.Count(x => x.era.OffTime == OffTimeRule.MehHit), Is.EqualTo(8));
 
             Assert.That(result.ReproducedUnderEra, Is.EqualTo(reproducing[0].era), "the pin is the FIRST reproducing arm in the search order");
-            Assert.That(result.ReproducedUnderEra, Is.EqualTo(new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred)),
-                "which is the combination a real client actually shipped, preferred over the corners no build ever offered");
+            Assert.That(result.ReproducedUnderEra,
+                Is.EqualTo(new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred, OffTimeRule.BreaksCombo)),
+                "which is the combination a real client actually shipped (the 2026-08-13 release up to backlog 199), preferred over the corners no build ever offered");
         });
     }
 
@@ -2067,7 +2082,11 @@ public class ScoreRecalcTest
         var map = SpacedBeatmap();
         var replay = MarginalSpaceWithACorrectedTypoReplay();
 
-        // Exactly what today's client stores for this run: all four axes at the live rule.
+        // What a client of the 2026-08-13 release stores for this run: the four axes this run can
+        // tell apart at the live rule. The fifth (backlog 199's off-time rule) is left where
+        // StoredFor puts it, because this run never strikes a character off the ladder and the two
+        // arms therefore grade it identically, which is why the era it is pinned to below carries
+        // the older arm: the search prefers it and nothing can tell the difference.
         var stored = StoredFor(
             map, replay,
             spaceRule: SpaceTimingRule.Untimed,
@@ -2075,14 +2094,14 @@ public class ScoreRecalcTest
             comboRule: ComboRestoreRule.OnFix,
             typoRule: TypoRule.Deferred);
 
-        var live = new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred);
+        var judgedUnder = new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred, OffTimeRule.BreaksCombo);
 
         var result = Recalculation.Run(stored, Decoded(map, replay));
         var plan = WritePlan.Build(new[] { result }, RecalcMode.Reproduce, new Dictionary<UnreplayableCase, UnreplayablePolicy>(), filtered: false);
 
         // The combination that reproduces it, which the search could not reach before backlog 158
         // because the typo axis was pinned before the search started.
-        var underTheRuleThatJudgedIt = ScoreUnder(map, replay, live);
+        var underTheRuleThatJudgedIt = ScoreUnder(map, replay, judgedUnder);
 
         // The arm the row starts at, which is what used to be its last word. This is the production
         // signature of the two rows this item closed: a miss the stored row does not carry, and a
@@ -2115,11 +2134,127 @@ public class ScoreRecalcTest
             Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
             Assert.That(result.Reproduced, Is.True);
             Assert.That(result.EraProvedByReconstruction, Is.True);
-            Assert.That(result.ReproducedUnderEra, Is.EqualTo(live), "and it lands in the era that judged it, on all four axes");
+            Assert.That(result.ReproducedUnderEra, Is.EqualTo(judgedUnder), "and it lands in the era that judged it, on all five axes");
             Assert.That(plan.PinnedByEraSearch.Select(r => r.Stored.ScoreId), Is.EquivalentTo(new[] { stored.ScoreId }));
 
             Assert.That(result.Moves, Is.False,
                 "it was already judged under today's typo rule, so a reproduce sweep has nothing left to reprice it by");
+        });
+    }
+
+    /// <summary>
+    /// The third cell struck 2600 ms late on <see cref="PlainBeatmap"/>, which targets it at 8000:
+    /// past the Line ladder's outermost Meh edge (2000 late), so it is an OFF-TIME press, the right
+    /// character outside every window. The first two land dead on target, so the off-time rule is the
+    /// only thing that can move this run and it moves both quantities the gate compares: under the
+    /// pre-199 rule the press zeroes the run and spends its cell on a Miss, and under the live one it
+    /// is a Meh that extends it.
+    ///
+    /// <para>A LYRIC character rather than the space <see cref="LateSpaceReplay"/> mistimes, so the
+    /// space axis is not entangled with this one: a space cannot reach the off-time tiers at all
+    /// under the live space rule.</para>
+    /// </summary>
+    private static Replay OffTimeReplay() => Pressed((0, 'a'), (4000, 'b'), (10600, 'c'));
+
+    /// <summary>
+    /// WHY BACKLOG 199 NEEDS AN ERA AXIS, and the two halves of what one is for. Every row in the
+    /// table was played when an off-time press broke the run and took a Miss, so the reproduce pass
+    /// has to re-derive one under THAT rule (it does, under the default, with no search), and the
+    /// supersede pass has to be able to reprice it under today's (it does, and the row gains its
+    /// combo back and loses the miss).
+    ///
+    /// <para>Reproduction is the gate for repricing, which is why both are asserted here rather than
+    /// the supersede half alone: a harness that cannot reproduce the old numbers has no business
+    /// writing new ones.</para>
+    ///
+    /// <para>A REPRODUCE sweep does NOT reprice it, and that is deliberate rather than an omission:
+    /// that sweep varies the typo rule alone and holds every other axis at the era it proved, exactly
+    /// as it does for the spacebar (see
+    /// <see cref="ReproduceHoldsTheProvedWindowEraStillOnBothArms"/>). Backlog 199's repricing is a
+    /// supersede question.</para>
+    /// </summary>
+    [Test]
+    public void ARowPlayedBeforeTheOffTimeRuleReproducesUnderItAndIsRepricedBySupersede()
+    {
+        var map = PlainBeatmap();
+        var replay = OffTimeReplay();
+        var stored = StoredFor(map, replay);
+
+        var reproduce = Recalculation.Run(stored, Decoded(map, replay));
+        var supersede = Recalculation.Run(stored, Decoded(map, replay), mode: RecalcMode.Supersede);
+
+        Assert.Multiple(() =>
+        {
+            // The row as a pre-199 client stored it, and the fixture's non-vacuity: the mistimed
+            // press really did cost a cell and a streak.
+            Assert.That(WireCounts.Parse(stored.StatisticsJson)["miss"], Is.EqualTo(1));
+            Assert.That(WireCounts.Parse(stored.StatisticsJson)["great"], Is.EqualTo(2));
+            Assert.That(stored.MaxCombo, Is.EqualTo(2), "the run ended on the mistimed press");
+
+            Assert.That(reproduce.Skip, Is.EqualTo(SkipReason.None), "a pre-199 row must be re-derivable");
+            Assert.That(reproduce.Reproduced, Is.True);
+            Assert.That(reproduce.ReproducedUnderEra, Is.EqualTo(Recalculation.DefaultEra));
+            Assert.That(reproduce.EraProvedByReconstruction, Is.False, "it came back under the default, so nothing was searched");
+            Assert.That(reproduce.OldRuleStatistics!["miss"], Is.EqualTo(1));
+            Assert.That(reproduce.OldRuleMaxCombo, Is.EqualTo(2));
+            Assert.That(reproduce.Moves, Is.False, "a reproduce sweep varies the TYPO rule alone, and there is no typo in this run");
+
+            // ...and today's rule is what the supersede sweep judges it under: the press is a Meh
+            // that keeps the run, so the miss goes and max_combo runs to the end of the map.
+            Assert.That(supersede.Skip, Is.EqualTo(SkipReason.None));
+            Assert.That(supersede.NewStatistics!.GetValueOrDefault("miss"), Is.Zero, "an off-time press is not a dropped character any more");
+            Assert.That(supersede.NewStatistics!["meh"], Is.EqualTo(1), "it takes the lowest weight a judged cell can take, so accuracy is the punishment");
+            Assert.That(supersede.NewStatistics!["great"], Is.EqualTo(2));
+            Assert.That(supersede.NewMaxCombo, Is.EqualTo(3), "and the run is unbroken");
+            Assert.That(supersede.NewCompletion, Is.EqualTo(1), "the cell counts as typed, which it always was");
+            Assert.That(supersede.Moves, Is.True);
+        });
+    }
+
+    /// <summary>
+    /// The other side of the same axis, and the one that grows with every play: a row a client
+    /// running today's rule submitted does not come back under the default, so the pass PROVES its
+    /// off-time era by reconstruction exactly as it does the spacebar's (backlog 156) and combo
+    /// restore's (157). Without the axis in the search such a row would report as unexplained, which
+    /// is the failure mode every one of those items was written for.
+    ///
+    /// <para>The signature is asserted rather than described, and doubles as the non-vacuity: under
+    /// the pre-199 default the row demonstrably does NOT come back, and it comes back wrong in the
+    /// shape this rule change makes (a miss the row does not carry, and a max_combo shortfall moving
+    /// with it).</para>
+    /// </summary>
+    [Test]
+    public void ARowPlayedSinceTheOffTimeRuleHasThatAxisProvedByReconstruction()
+    {
+        var map = PlainBeatmap();
+        var replay = OffTimeReplay();
+
+        var stored = StoredFor(map, replay, offTimeRule: OffTimeRule.MehHit);
+        var storedStatistics = WireCounts.Parse(stored.StatisticsJson);
+
+        // The same run under the era the pass tries first, i.e. the rule every older row was played
+        // under.
+        var underTheDefault = ScoreUnder(map, replay, Recalculation.DefaultEra);
+
+        var result = Recalculation.Run(stored, Decoded(map, replay));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(storedStatistics["meh"], Is.EqualTo(1), "today's client stores the mistimed press as a Meh");
+            Assert.That(storedStatistics.ContainsKey("miss"), Is.False);
+            Assert.That(stored.MaxCombo, Is.EqualTo(3));
+
+            // The non-vacuity: the default arm disagrees, and disagrees in the shape 199 makes.
+            Assert.That(underTheDefault.Statistics.GetValueOrDefault(HitResult.Miss), Is.EqualTo(1), "a miss the row does not carry...");
+            Assert.That(underTheDefault.MaxCombo, Is.EqualTo(2), "...and a max_combo shortfall moving with it");
+
+            // ...and the pass proves the era instead of reporting the row as unexplained.
+            Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
+            Assert.That(result.Reproduced, Is.True);
+            Assert.That(result.EraProvedByReconstruction, Is.True);
+            Assert.That(result.ReproducedUnderEra!.Value.OffTime, Is.EqualTo(OffTimeRule.MehHit));
+            Assert.That(result.OldRuleStatistics!["meh"], Is.EqualTo(1));
+            Assert.That(result.OldRuleMaxCombo, Is.EqualTo(3));
         });
     }
 
@@ -2148,13 +2283,13 @@ public class ScoreRecalcTest
         {
             Assert.That(stored.ProvablyJudgedUnderTheDeferredTypoRule, Is.True, "the fixture only means anything if the key is there");
 
-            Assert.That(Recalculation.EraSearch, Has.Count.EqualTo(16), "the whole space is four axes wide");
-            Assert.That(candidates, Has.Count.EqualTo(8), "a proved row is offered half of it");
+            Assert.That(Recalculation.EraSearch, Has.Count.EqualTo(32), "the whole space is five axes wide");
+            Assert.That(candidates, Has.Count.EqualTo(16), "a proved row is offered half of it");
             Assert.That(candidates.Select(e => e.Typo), Is.All.EqualTo(TypoRule.Deferred), "and only the arm its key proves");
 
-            Assert.That(candidates.Select(e => new SearchedEra(e.Space, e.Rate, e.Combo, TypoRule.ImmediateMiss)),
+            Assert.That(candidates.Select(e => e with { Typo = TypoRule.ImmediateMiss }),
                 Is.EquivalentTo(Recalculation.EraSearch.Where(e => e.Typo == TypoRule.ImmediateMiss)),
-                "pinning removes an axis, it does not remove a combination of the other three");
+                "pinning removes an axis, it does not remove a combination of the other four");
 
             Assert.That(candidates[0], Is.EqualTo(Recalculation.DefaultEraFor(stored)), "the row's starting point is the first thing it is offered");
             Assert.That(Recalculation.DefaultEraFor(stored), Is.Not.EqualTo(Recalculation.DefaultEra), "which is NOT the table-wide default, because the key moved it");
@@ -2195,7 +2330,7 @@ public class ScoreRecalcTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(Recalculation.EraSearch, Is.Unique, "sixteen corners, no duplicates");
+            Assert.That(Recalculation.EraSearch, Is.Unique, "thirty-two corners, no duplicates");
             Assert.That(Recalculation.EraSearch[0], Is.EqualTo(Recalculation.DefaultEra));
 
             foreach (var stored in new[] { proved, unprovable })
@@ -2218,7 +2353,8 @@ public class ScoreRecalcTest
     /// breakdown is the finding. It is also the one population that grows with every play: every row
     /// submitted since the release is in it, so a reader has to be able to watch it move.
     ///
-    /// <para>The breakdown names all FOUR axes since backlog 158, which is what keeps a typo-rule
+    /// <para>The breakdown names all FIVE axes (four since backlog 158, the off-time rule since
+    /// backlog 199), which is what keeps a typo-rule or off-time
     /// reconstruction from hiding inside a line that only spells out the windows. The two populations
     /// stay separate in the headline: a row PINNED by its own <c>good</c> key is counted above, under
     /// PINNED TO TypoRule.Deferred, and is not in here unless something else about it was searched.</para>
@@ -2253,8 +2389,8 @@ public class ScoreRecalcTest
 
                 Assert.That(text, Does.Contain("PINNED BY ERA RECONSTRUCTION 1"), $"{mode}: the headline names the population");
                 Assert.That(text, Does.Contain("of these, era proved by    1"), $"{mode}: so does the reproduction section");
-                Assert.That(text, Does.Contain("SpaceTimingRule.Untimed + RateWindowRule.ScaledByRate + ComboRestoreRule.OnFix + TypoRule.Deferred"),
-                    $"{mode}: broken down by which era they landed in, on all FOUR axes, so a combo-rule or typo-rule pin is visible rather than silent");
+                Assert.That(text, Does.Contain("SpaceTimingRule.Untimed + RateWindowRule.ScaledByRate + ComboRestoreRule.OnFix + TypoRule.Deferred + OffTimeRule.BreaksCombo"),
+                    $"{mode}: broken down by which era they landed in, on all FIVE axes, so a combo-rule, typo-rule or off-time pin is visible rather than silent");
             });
         }
     }

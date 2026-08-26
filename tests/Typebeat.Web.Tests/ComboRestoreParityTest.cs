@@ -38,6 +38,12 @@ namespace Typebeat.Web.Tests;
 /// counterpart to that second arm, for the same reason it has no <c>ComboRestoreRule.Never</c>: it
 /// only ever plays live and never re-derives a stored row.</para>
 ///
+/// <para>Backlog 199 took an off-time press OUT of the set of breaks that discard a claim, and
+/// <see cref="AnOffTimePressBetweenATypoAndItsFixKeepsTheClaim"/> is that case: a right character
+/// struck outside the outermost Meh window is a hit worth no points, so it no longer costs a
+/// pending fix its restore. Same pattern again, the game pinning both arms and the browser only the
+/// live one.</para>
+///
 /// <para>Both combo accounts are asserted throughout, because the class of bug lives in them
 /// disagreeing: the engine's own <c>combo</c> is what the HUD counts up, and the score processor
 /// mirror's <c>highestCombo</c> is what is submitted as <c>max_combo</c>. They are kept equal by
@@ -317,6 +323,52 @@ public class ComboRestoreParityTest
 
             // Two breaks, the typo's and the skip's, and one mistyped KEYPRESS: the skip is not one.
             Assert.That(Int(run, "breaks"), Is.EqualTo(2));
+            Assert.That(Int(run, "mistypes"), Is.EqualTo(1));
+        });
+    }
+
+    /// <summary>
+    /// BACKLOG 199, and the browser half of
+    /// <c>ComboRestoreTest.AnOffTimePressBetweenATypoAndItsFixKeepsTheClaim</c>: an off-time press
+    /// between a typo and its fix does NOT discard the claim. Only a BREAK takes a claim away, and a
+    /// right character struck outside the outermost Meh window is no longer a break: it earns no
+    /// points, keeps the run, raises no combo break, and leaves the older cell redeemable, so
+    /// fumbling the beat while a typo is sitting there no longer costs the fix its restore.
+    ///
+    /// <para>The game pins the same keystrokes under <c>OffTimeRule.BreaksCombo</c> as well, where
+    /// the mistimed press loses the snapshot and the fix restores nothing at all. The browser has no
+    /// counterpart to that arm, for the reason it has none for <c>ComboRestoreRule.Never</c>: it only
+    /// ever plays live. So the pin here is the live numbers, and its non-vacuity is that a break
+    /// would produce different ones (an empty <c>restored</c> and a run of 3 rather than 4).</para>
+    ///
+    /// <para>The press TIMES are the browser's rather than the C# fixture's, exactly as
+    /// <see cref="UntimedSpaceParityTest.ALyricCharacterPressedJustAsLateIsStillLagging"/> records
+    /// for its 4100: the game's fixture drives a bare engine judged on each cell's own point target,
+    /// while the browser only ever plays live and judges a cell against its SYLLABLE's sung span.
+    /// The tiers, their order and the rule under test are the same.</para>
+    /// </summary>
+    [Test]
+    public void AnOffTimePressBetweenATypoAndItsFixKeepsTheClaim()
+    {
+        var run = Harness().GetProperty("offTimePressBetweenATypoAndItsFix");
+
+        Assert.Multiple(() =>
+        {
+            // The fixture is only about the claim if the mistimed press really was off the ladder,
+            // and only interesting if the press after it was not.
+            Assert.That(run.GetProperty("offTimeJudgeType").GetString(), Is.EqualTo("Lagging"));
+            Assert.That(run.GetProperty("followUpJudgeType").GetString(), Is.EqualTo("Meh"));
+
+            Assert.That(Int(run, "comboBeforeTypo"), Is.EqualTo(1));
+            Assert.That(Int(run, "comboBeforeFix"), Is.EqualTo(2), "both presses after the typo extended the run, the off-time one included");
+
+            Assert.That(Ints(run, "restored"), Is.EqualTo(new[] { 1 }), "the mistimed press took nothing away");
+            Assert.That(Int(run, "combo"), Is.EqualTo(4), "1 restored + the 2 earned since + the fix itself");
+            Assert.That(Int(run, "maxCombo"), Is.EqualTo(4));
+            Assert.That(Int(run, "processorHighestCombo"), Is.EqualTo(4));
+
+            // One break and one mistyped keypress, both the typo's: the off-time press is neither.
+            Assert.That(Int(run, "breaks"), Is.EqualTo(1));
             Assert.That(Int(run, "mistypes"), Is.EqualTo(1));
         });
     }

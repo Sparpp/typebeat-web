@@ -10,6 +10,7 @@ using typebeat.Game.Rulesets.TypeBeat.Gameplay;
 using typebeat.Game.Rulesets.TypeBeat.Objects;
 using typebeat.Game.Rulesets.TypeBeat.Replays;
 using typebeat.Game.Rulesets.TypeBeat.Scoring;
+using typebeat.Game.Scoring;
 using Typebeat.Tools.ScoreRecalc;
 
 namespace Typebeat.WireCompat;
@@ -445,6 +446,31 @@ public class EngineFuzzLiveParityTest
         });
     }
 
+    /// <summary>
+    /// The rank the GAME's own ladder gives for the run the game just derived, which is what the
+    /// browser's rank is compared against instead of <see cref="TypeBeatReplayAccount.Rank"/>
+    /// itself.
+    ///
+    /// <para>THE DIFFERENCE IS AN OSU STALENESS QUIRK, not a scoring rule. <c>ScoreProcessor</c>
+    /// recomputes its live rank only when ACCURACY CHANGES (<c>updateRank</c> is wired to
+    /// <c>Accuracy.ValueChanged</c> and to nothing else), so a run whose judged cells ALL carry the
+    /// same accuracy weight never moves accuracy after its first judgement and its live rank stays
+    /// where that first judgement left it. A run made entirely of Mehs and unfixed typos is exactly
+    /// that: both are worth 50 of 300 (<c>TypeBeatScoreProcessor.GetBaseScoreForResult</c>
+    /// re-weights the typo), so accuracy sits at 1/6 from the first press to the last and the
+    /// client's own readout still says X. Backlog 199 is what made such runs reachable in the
+    /// sweep: an off-time press is a Meh now rather than a weight-zero Miss.</para>
+    ///
+    /// <para>It reaches no leaderboard, which is why this is a comparison basis rather than a bug
+    /// the browser has to copy: <c>ScoreEndpoints</c> recomputes rank from the SUBMITTED statistics
+    /// through <c>ScoringContract.RankFromCompletion</c> and stores that, so the stored rank is the
+    /// value computed here whichever client played the run. Comparing against it keeps the parity
+    /// this test is for (the two clients' ladders, over the same completion) without pinning the
+    /// desktop HUD's staleness into the browser.</para>
+    /// </summary>
+    private static ScoreRank RankOf(TypeBeatReplayAccount game)
+        => game.Rank == ScoreRank.F ? ScoreRank.F : TypeBeatScoreProcessor.RankFromCompletion(game.Completion);
+
     private static int[] Ints(JsonElement element, string key)
     {
         var values = new List<int>();
@@ -491,7 +517,7 @@ public class EngineFuzzLiveParityTest
                 Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(game.TotalScore), $"{scenario}: total_score");
                 Assert.That(submitted.GetProperty("accuracy").GetDouble(), Is.EqualTo(game.Accuracy), $"{scenario}: accuracy");
                 Assert.That(submitted.GetProperty("completion").GetDouble(), Is.EqualTo(game.Completion), $"{scenario}: completion");
-                Assert.That(submitted.GetProperty("rank").GetString(), Is.EqualTo(game.Rank.ToString()), $"{scenario}: rank");
+                Assert.That(submitted.GetProperty("rank").GetString(), Is.EqualTo(RankOf(game).ToString()), $"{scenario}: rank");
             }
         });
     }

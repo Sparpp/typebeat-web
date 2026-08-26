@@ -290,8 +290,12 @@
         let cls = 'tb-c';
         if (cell.state === 'correct') {
             const jt = cell.judgeType;
-            // Typed but off-time (Premature/Lagging) scores as a miss; desktop draws it like
-            // any other correct char, the browser keeps a distinct warn tint as a free hint.
+            // Typed but off-time (Premature/Lagging) scores nothing and pays the most accuracy a
+            // judged cell can pay (backlog 199 made it a Meh rather than a Miss, so it no longer
+            // breaks the run); desktop draws it like any other correct char, the browser keeps a
+            // distinct warn tint as a free hint. The RENDERING is untouched by 199: the two tiers
+            // are still their own judgement types, which is exactly where the distinction the
+            // statistics blob gives up on survives.
             cls += (jt === 'Great' || jt === 'Ok' || jt === 'Meh') ? ' tb-c-hit' : ' tb-c-off';
         } else if (cell.state === 'wrong') {
             // Typed through wrong (the default model). The desktop shows the EXPECTED glyph in

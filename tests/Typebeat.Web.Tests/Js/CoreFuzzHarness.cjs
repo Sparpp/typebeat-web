@@ -215,8 +215,9 @@ function lcg(seed) {
 
 // Press offsets against the cell's own target, chosen to land in every band the Line-granularity
 // ladder has: Great [-250, 400], Ok [-600, 1000], Meh [-1200, 2000], and Premature / Lagging
-// outside it. A run therefore exercises the scoring tiers, the two zero-point tiers that break
-// combo, and the sync quality ramp, rather than only the happy path.
+// outside it. A run therefore exercises the scoring tiers, the two zero-point tiers (which since
+// backlog 199 are hits that pay accuracy rather than breaks that end the run), and the sync quality
+// ramp, rather than only the happy path.
 const OFFSETS = [0, 120, -180, 380, 700, -520, 1400, -900, 1900, 2600, -1600];
 
 const LETTERS = 'abcdefghijklmnopqrstuvwxyz';

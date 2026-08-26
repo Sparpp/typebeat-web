@@ -1,6 +1,7 @@
 // Node harness for UNTIMED SPACES in the browser scoring core (backlog 148): a space typed on a
 // SPACE CELL is judged as though it landed dead on that cell's target, so it takes the top tier
-// whatever the clock said and can never fall into one of the two zero-point tiers that break combo.
+// whatever the clock said and can never fall into one of the two zero-point tiers, which since
+// backlog 199 cost accuracy rather than the run.
 //
 // Written as SEQUENCES rather than as transcribed literals, in the style of
 // CoreComboRestoreHarness: the point of a parity guard is to drive the shipped JS through the same
@@ -116,11 +117,12 @@ function lyricCharPressedJustAsLate() {
     engine.processKey('b', 1500);
     engine.processKey(' ', 7000);   // exempt
     const comboAfterSpace = engine.combo;
-    // Delta 4100 on a lyric char: Lagging, no points, combo breaks. 4100 and not the 5100 the game's
-    // own fixture pins, because that fixture drives a BARE engine (classic era, judged on 'c''s own
-    // 2000 target) while the browser only ever plays live and judges the span of the syllable "cd",
-    // which is sung over [2000, 3000]. Live desktop play measures the same 4100. Nothing the case is
-    // about moves with it: the press is just as late, still Lagging, still worth nothing.
+    // Delta 4100 on a lyric char: Lagging, no points, and since backlog 199 no break either (the
+    // press is a hit that pays accuracy). 4100 and not the 5100 the game's own fixture pins, because
+    // that fixture drives a BARE engine (classic era, judged on 'c''s own 2000 target) while the
+    // browser only ever plays live and judges the span of the syllable "cd", which is sung over
+    // [2000, 3000]. Live desktop play measures the same 4100. Nothing the case is about moves with
+    // it: the press is just as late, still Lagging, still worth nothing.
     engine.processKey('c', 7100);
     return Object.assign(snapshot(engine), { comboAfterSpace: comboAfterSpace });
 }

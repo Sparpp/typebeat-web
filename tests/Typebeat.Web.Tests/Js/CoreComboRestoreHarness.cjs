@@ -272,6 +272,48 @@ function sameCellFumbledTwice() {
     return snapshot(engine);
 }
 
+// ComboRestoreTest.AnOffTimePressBetweenATypoAndItsFixKeepsTheClaim (backlog 199). Only a BREAK
+// takes a claim away, and a right character struck outside the outermost Meh window is no longer a
+// break: it earns no points, keeps the run, raises no combo break, and leaves the older cell
+// redeemable. The C# pins the same keystrokes under OffTimeRule.BreaksCombo too, where the mistimed
+// press loses the snapshot and the fix restores nothing at all; the browser has only the live arm
+// (see `restorable` in typebeat-core.js), so the contrast here is against the numbers rather than
+// against a second run.
+//
+// THE PRESS TIMES ARE THE BROWSER'S, NOT THE C# FIXTURE'S, for the reason CoreUntimedSpaceHarness
+// records for its 4100: that fixture drives a bare TypingEngine judged on each cell's own point
+// target, while the browser only ever plays live and judges a cell against its SYLLABLE's sung
+// span. This line's spans are cells 0-2 over [1000, 2500] and cells 3-7 over [2500, 5000], so the
+// off-time press is cell 2 struck at 4600 (2100 past its span, off the Line ladder whose MehLate is
+// 2000) and the ordinary press after it is cell 3 struck at 6700 (1700 past its span, still on it,
+// so an honest Meh). Same shape as the C# case, same tiers in the same order, and chronological.
+function offTimePressBetweenATypoAndItsFix() {
+    const engine = started();
+
+    typeCorrectly(engine, 0, 1);
+    const comboBeforeTypo = engine.combo;
+
+    typo(engine, 1);            // snapshots the run of 1 against cell 1
+
+    engine.processKey(WORD[2], 4600);   // off the ladder: a hit worth nothing since backlog 199
+    engine.processKey(WORD[3], 6700);   // still on it: an ordinary Meh
+    const comboBeforeFix = engine.combo;
+
+    // Read BEFORE the fix, which backspaces over both cells on its way to cell 1 and clears the
+    // judgement each is displaying (their awarded judgements stand, in firstCorrectDelta).
+    const offTimeJudgeType = engine.lines[0].cells[2].judgeType;
+    const followUpJudgeType = engine.lines[0].cells[3].judgeType;
+
+    fix(engine, 1);
+
+    return Object.assign(snapshot(engine), {
+        comboBeforeTypo: comboBeforeTypo,
+        comboBeforeFix: comboBeforeFix,
+        offTimeJudgeType: offTimeJudgeType,
+        followUpJudgeType: followUpJudgeType
+    });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Fixture 2: ComboRestoreTest's twoWordMap, for the skip sibling. One line, "abcd efg" on
 // [1000, 8000): a@1000 b@2000 c@3000 d@4000 ' '@5000 e@5000 f@6000 g@7000. A word skip needs a word
@@ -408,6 +450,9 @@ const out = {
     adjacentTyposBothFixed: adjacentTyposBothFixed(),
     sameCellFumbledTwice: sameCellFumbledTwice(),
     wordSkippedOverATypo: wordSkippedOverATypo(),
+
+    // The backlog 199 shape: an off-time press is not a break, so it takes no claim either.
+    offTimePressBetweenATypoAndItsFix: offTimePressBetweenATypoAndItsFix(),
 
     // The replay-scorer pair: the same thirteen cells, clean and with a fixed typo on cell 2.
     replayClean: playReplayShaped(-1),

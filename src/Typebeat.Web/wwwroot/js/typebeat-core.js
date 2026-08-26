@@ -1336,8 +1336,24 @@
     }
 
     // Engine judgement -> osu HitResult (DrawableTypeBeatHitObject.toHitResult, i.e.
-    // TypeBeatResultMapping.CellResult). The three quality tiers are the identity and everything
-    // else here is a miss.
+    // TypeBeatResultMapping.CellResult). The three quality tiers are the identity, an OFF-TIME
+    // press ('Premature' / 'Lagging', the right character struck outside the outermost Meh window)
+    // is a 'meh' since backlog 199, and only a genuinely untyped cell is a miss.
+    //
+    // THE OFF-TIME MAPPING IS HALF OF BACKLOG 199, the other half being the keypress arm in
+    // processKey, and the two have to say the same thing or the engine's combo and the processor's
+    // part company. 'meh' is the lowest weight a judged cell can take (50 of 300), so ACCURACY is
+    // the whole punishment: the press stops counting as a miss statistic, stops costing completion
+    // and rank, and EXTENDS the submitted combo exactly as the engine now extends its own, which is
+    // why nothing about it has to be hand-mirrored at the seam.
+    //
+    // The collision this accepts (and it is accepted, not overlooked): an off-time press and a
+    // press that landed just INSIDE the Meh window arrive here as the same result, so no consumer
+    // of the submitted statistics can tell them apart. The candidate set is forced (a cell may only
+    // ever resolve as one of miss/meh/ok/good/great, and 'good' is spent on the unfixed typo), so
+    // there is no free key to keep them apart, and the distinction survives everywhere it is
+    // actually used live: 'Premature' and 'Lagging' are still their own judgement tiers, still
+    // counted separately in `counts`, and typebeat-player.js still tints them apart.
     //
     // The two DEFERRED judgements never reach this function, on either side: 'WrongChar' (backlog
     // 109) and 'Abandoned' (backlog 167) map to NO result at all, which is precisely what leaves
@@ -1345,12 +1361,18 @@
     // neither path calls applyCellResult: the typo branch of processKey applies nothing, and
     // skipCurrentWord applies nothing. Both cells are finally resolved either by that retype or by
     // sealLine, which picks the result itself rather than asking here.
+    //
+    // There is no era axis, unlike the C#'s OffTimeRule.BreaksCombo arm, for the reason written on
+    // `restorable`: the browser only ever plays live, so the pre-199 rule (an off-time press
+    // resolving as a Miss that broke the run) is one it can never be in.
     function toHitResult(judgeType) {
         switch (judgeType) {
             case 'Great': return 'great';
             case 'Ok': return 'ok';
             case 'Meh': return 'meh';
-            default: return 'miss'; // Premature, Lagging, Miss, or untyped
+            case 'Premature': return 'meh'; // an off-time press is a HIT since backlog 199...
+            case 'Lagging': return 'meh';
+            default: return 'miss'; // ...and only 'Miss' or an untyped cell reaches here now.
         }
     }
 
@@ -1374,13 +1396,18 @@
     //
     //   1. TypeBeatPlayfield.onCharJudged -> DrawableTypeBeatHitObject.ApplyCharJudgement ->
     //      DrawableTypeBeatCharObject.ApplyEngineResult -> ApplyResult(toHitResult(type)).
-    //      Great/Ok/Meh are the identity on the osu results of the same names and INCREASE
-    //      combo; Premature/Lagging become
-    //      Miss, which BREAKS it. A WrongChar becomes NOTHING (backlog 109): ApplyCharJudgement
-    //      returns before applying anything, so a typo defers its cell's result instead of spending
-    //      it on a Miss. The cell drawable applies at most ONE result ever (`if (Judged) return;`),
-    //      so a backspace-and-retype after a typo is that cell's real (first) result, while an
-    //      inert retype of an already-correct cell moves nothing.
+    //      Great/Ok/Meh are the identity on the osu results of the same names and INCREASE combo;
+    //      Premature/Lagging become Meh since backlog 199 and increase it too, which is the whole
+    //      of what an off-time press now costs the account: Meh is the lowest weight a judged cell
+    //      can take, so it pays the most ACCURACY available and nothing else, and the engine
+    //      extending its own run on the same press is what keeps the two counters together with
+    //      nothing mirrored by hand. It also makes an off-time press indistinguishable in the
+    //      submitted statistics from a press that landed just inside the Meh window, which is
+    //      accepted rather than overlooked (see toHitResult). A WrongChar becomes NOTHING (backlog
+    //      109): ApplyCharJudgement returns before applying anything, so a typo defers its cell's
+    //      result instead of spending it on a Miss. The cell drawable applies at most ONE result
+    //      ever (`if (Judged) return;`), so a backspace-and-retype after a typo is that cell's real
+    //      (first) result, while an inert retype of an already-correct cell moves nothing.
     //   2. TypeBeatPlayfield.onMistyped -> scoreProcessor.Combo.Value = 0, and
     //      TypeBeatScoreProcessor.RecordMistype. One seam for BOTH input models since backlog 109,
     //      because neither raises a result for a wrong keypress any more: a rejected key never did,
@@ -1640,12 +1667,15 @@
             // back for. Set by that keypress or skip (through snapshotRedeemableBreak, the one
             // write site the two share), redeemed by typing that same cell correctly, and discarded
             // by any other combo break that had a streak to take (discardRestorableStreak). The
-            // seams that discard it here are the three the browser can reach: a seal with unforeseen
-            // misses, a Premature/Lagging press and a rejected key. A word skip TAKES a snapshot
-            // rather than discarding one since backlog 167, because it is a break the player can
-            // walk back into and undo. The C# has a fourth discard seam, Fletcher's rush cap, which
-            // has no counterpart in this file because it has no Fletcher (no mods payload) and
-            // therefore no rush cap branch to hang it on.
+            // seams that discard it here are the two the browser can reach: a seal with unforeseen
+            // misses and a rejected key. A word skip TAKES a snapshot rather than discarding one
+            // since backlog 167, because it is a break the player can walk back into and undo. An
+            // off-time press left the list at backlog 199: it is a hit now, it breaks nothing, and
+            // only a break discards a claim, so fumbling the beat between a typo and its fix no
+            // longer costs the fix its restore. It rejoins the list in the C# under
+            // OffTimeRule.BreaksCombo, the pre-199 era, which this file has no arm for. The C# has
+            // one further discard seam, Fletcher's rush cap, which has no counterpart here because
+            // it has no Fletcher (no mods payload) and therefore no rush cap branch to hang it on.
             //
             // "That had a streak to take" is backlog 176: a break landing while the run is ALREADY
             // at zero costs nothing, so it leaves an outstanding claim alone rather than replacing
@@ -2307,7 +2337,7 @@
             // char. The spacebar is deliberately outside the timing challenge (the word gap is
             // where a typist's hands reset, not a note to hit), so the press is judged as though it
             // landed dead on target: top tier whatever the clock said, and never one of the two
-            // zero-point tiers that break combo.
+            // zero-point tiers, which since backlog 199 cost accuracy rather than the run.
             //
             // A ZEROED DELTA rather than a forced judgement type, again as in the C#, so every
             // reader agrees with the judgement: classify(0) is 'Great', the inert retype
@@ -2368,19 +2398,31 @@
                 type = classify(delta, w);
                 const bp = basePoints(type);
                 if (bp > 0) {
+                    // Multiplier reads combo BEFORE the increment; capped at COMBO_CAP => up to 2.0x.
                     points = Math.round(bp * (1 + Math.min(this.combo, COMBO_CAP) / COMBO_CAP));
                     this.score += points;
-                    this.combo++;
-                    if (this.combo > this.maxCombo) this.maxCombo = this.combo;
-                } else {
-                    // right char, wrong time: Premature/Lagging, no points, combo breaks. A break
-                    // like any other, so it owns the streak and discards the snapshot (backlog 140);
-                    // a fix judged Premature therefore resumes the run and loses it again in the
-                    // same keypress, which is the C#'s behaviour too and falls out of the ordering.
-                    this.combo = 0;
-                    this.discardRestorableStreak();
-                    if (this.onComboBroken) this.onComboBroken();
                 }
+
+                // An OFF-TIME press (Premature/Lagging: the right character, outside the outermost
+                // Meh window) earns nothing above, and since backlog 199 that is the whole of what
+                // it costs the score ladder. It is a HIT: it extends the combo like any other
+                // accepted character, raises no onComboBroken, and leaves an outstanding restorable
+                // claim alone, because only a BREAK discards one, so fumbling the beat between a
+                // typo and its fix no longer costs the fix its restore. Its cell resolves as an osu
+                // 'meh' below (toHitResult), which is what makes ACCURACY the punishment and what
+                // lets the submitted combo follow the engine's with nothing mirrored by hand.
+                //
+                // So the increment is unconditional here, exactly as the C# arm is with its two era
+                // arms collapsed: this file has neither of the branches TypingEngine keeps around
+                // it. OffTimeRule.BreaksCombo is the pre-199 era, which a browser play (live only)
+                // can never be in, and Fletcher's rush cap needs a mods payload the browser has no
+                // way to receive.
+                //
+                // A space can never reach the off-time tiers at all: an untimed space is judged on a
+                // zeroed delta and always takes the top tier (see the block above).
+                this.combo++;
+                if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+
                 cell.state = 'correct';
                 cell.typedChar = c;
                 cell.judgedDelta = delta;
@@ -2388,9 +2430,10 @@
                 cell.judgeType = type;
                 this.counts[type] = (this.counts[type] || 0) + 1;
                 // The cell's one-and-only osu result, applied the moment it is judged: this is
-                // TypeBeatPlayfield.onCharJudged -> ApplyCharJudgement -> ApplyResult. Great/
-                // Ok/Meh increase the submitted combo, Premature/Lagging break it (they map to
-                // Miss), and the combo portion is weighted by the combo as it stands right here.
+                // TypeBeatPlayfield.onCharJudged -> ApplyCharJudgement -> ApplyResult. Great/Ok/Meh
+                // increase the submitted combo, and since backlog 199 so do Premature/Lagging
+                // (they map to Meh, and the engine has just extended its own run on the same
+                // press), and the combo portion is weighted by the combo as it stands right here.
                 // Guarded rather than unconditional, because the guard is the mirror of
                 // ApplyEngineResult's `if (Judged) return;` and not of the inert-retype rule. A cell
                 // typed WRONG and then backspaced comes back through here with firstCorrectDelta

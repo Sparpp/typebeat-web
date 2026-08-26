@@ -63,8 +63,13 @@ Factor by factor, in descending priority:
   it over the range real plays live in (backlog 131), so a broken combo costs roughly its face
   value rather than several times it. That is the point: combo overlaps with misses (a miss
   breaks combo), so it must not read as a second heavy penalty. It still earns its place,
-  because combo can break without a miss (a badly-timed hit) and because it distinguishes
-  spread-out misses from one choke that dropped several.
+  because combo can break without a miss (a wrong keypress the player then corrects, or a word
+  given up on with the space-skip setting: both break the run and neither is a miss) and because
+  it distinguishes spread-out misses from one choke that dropped several. Backlog 199 took the
+  other example off that list: a badly-timed hit (the right character struck outside the outermost
+  Meh window) used to break the run and resolve its cell as a miss, and is now an accepted
+  character worth zero points that EXTENDS the run and resolves as a `meh`, so it is priced by
+  `acc` alone and touches neither `maxcombo` nor the miss count. No constant here moves with it.
 
 **Definitions (pinned to the score row):**
 
