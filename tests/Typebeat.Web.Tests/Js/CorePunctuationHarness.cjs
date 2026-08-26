@@ -87,6 +87,8 @@ function shape(beatmap) {
 function playThrough(osuText, literate) {
     const beatmap = TB.buildBeatmap(TB.parseLyricOsu(osuText), literate);
     const engine = new TB.TypingEngine(beatmap);
+    // Authored on the skip-OFF arm; declared since backlog 198 flipped the engine default to skip-on.
+    engine.spaceSkipsWord = false;
     engine.caseSensitive = !!literate;
 
     for (const line of beatmap.lines) {

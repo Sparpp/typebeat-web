@@ -61,6 +61,8 @@ function build(osuText) {
 // A fresh engine on a fresh beatmap (cells carry play state), already active on line 0.
 function activeEngine(osuText) {
     const engine = new TB.TypingEngine(build(osuText || FREESTYLE_OSU));
+    // Authored on the skip-OFF arm; declared since backlog 198 flipped the engine default to skip-on.
+    engine.spaceSkipsWord = false;
     engine.update(1000);
     return engine;
 }
@@ -105,6 +107,8 @@ function anyKey(pressed) {
 function playThrough(osuText, middle) {
     const beatmap = build(osuText);
     const engine = new TB.TypingEngine(beatmap);
+    // Authored on the skip-OFF arm; declared since backlog 198 flipped the engine default to skip-on.
+    engine.spaceSkipsWord = false;
     engine.update(1000);
     engine.processKey('a', 1000);
     engine.update(2000);

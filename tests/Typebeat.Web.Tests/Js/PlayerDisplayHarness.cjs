@@ -56,6 +56,16 @@ const gapOsu = OSU_HEADER +
 
 function build(osu) { return TB.buildBeatmap(TB.parseLyricOsu(osu)); }
 
+// Every scenario in this file was authored on the skip-OFF arm (a mid-word space is a typo, typed
+// through, never a word skip). Since backlog 198 the engine DEFAULTS to skip-on, so the arm is
+// declared at each construction rather than inherited: these pins are about the display, and none
+// of them means to exercise the skip.
+function engineFor(map) {
+    const engine = new TB.TypingEngine(map);
+    engine.spaceSkipsWord = false;
+    return engine;
+}
+
 const abcd = build(abcdOsu);
 const gapMap = build(gapOsu);
 const line0 = abcd.lines[0];
@@ -64,7 +74,7 @@ const points = D.buildSungPoints(line0);
 // --- a perfect run and a one-key run, for the live HUD readouts ---
 function playPerfect() {
     const map = build(abcdOsu);
-    const engine = new TB.TypingEngine(map);
+    const engine = engineFor(map);
     engine.update(1000);
     const keys = [['a', 1000], ['b', 1500], [' ', 2000], ['c', 2000], ['d', 2500]];
     for (const [c, t] of keys) { engine.update(t); engine.processKey(c, t); }
@@ -74,7 +84,7 @@ function playPerfect() {
 
 function playOneKeyThenSeal() {
     const map = build(abcdOsu);
-    const engine = new TB.TypingEngine(map);
+    const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 1000);
     engine.update(5000);
@@ -90,7 +100,7 @@ function playOneKeyThenSeal() {
 // half quality, which is the number this scenario exists to produce.
 function playOneLatePress() {
     const map = build(abcdOsu);
-    const engine = new TB.TypingEngine(map);
+    const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 1000);   // inside the "ab" span, q = 1
     engine.update(2600);
@@ -109,7 +119,7 @@ function playOneLatePress() {
 // [2000, 3000], so 2200 is +200 for BOTH of a and b, and 3200 is +200 for both of c and d.
 function playWithSpaceAt(spaceTime) {
     const map = build(abcdOsu);
-    const engine = new TB.TypingEngine(map);
+    const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 2200);
     engine.processKey('b', 2200);
@@ -125,7 +135,7 @@ function playWithSpaceAt(spaceTime) {
 // cell but must keep .tb-c-off's flat warn tint instead of joining the ramp.
 function playMixedTiming() {
     const map = build(abcdOsu);
-    const engine = new TB.TypingEngine(map);
+    const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 1000);   // inside the "ab" span [1000, 2000], delta 0     -> q 1
     engine.update(2600);
@@ -141,7 +151,7 @@ function playMixedTiming() {
 // with it and the glyph go back to untyped rather than keeping the brightness it had earned.
 function playThenBackspace() {
     const map = build(abcdOsu);
-    const engine = new TB.TypingEngine(map);
+    const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 1000);
     engine.processBackspace();
@@ -157,7 +167,7 @@ const freestyleOsu = OSU_HEADER +
 
 function playFreestyle() {
     const map = build(freestyleOsu);
-    const engine = new TB.TypingEngine(map);
+    const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 1000);   // ordinary cell, dead on target
     engine.update(2000);
@@ -170,7 +180,7 @@ function playFreestyle() {
 // as an unfixed typo and the run is what a player would actually see on a finished line.
 function playGapTypo() {
     const map = build(abcdOsu);
-    const engine = new TB.TypingEngine(map);
+    const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 1000);
     engine.processKey('b', 1500);
@@ -185,7 +195,7 @@ function playGapTypo() {
 // glyph belongs to the WRONG state and to nothing else.
 function playGapTypoErased() {
     const map = build(abcdOsu);
-    const engine = new TB.TypingEngine(map);
+    const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 1000);
     engine.processKey('b', 1500);
@@ -200,7 +210,7 @@ function playGapTypoErased() {
 // on what the cell EXPECTS, not on what was pressed.
 function playMidWordSpaceTypo() {
     const map = build(abcdOsu);
-    const engine = new TB.TypingEngine(map);
+    const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 1000);
     engine.processKey(' ', 1500);   // lands on 'b', wrong, and the caret moves past it

@@ -55,6 +55,10 @@ const SEALING = osu(4000);
 
 function started(source) {
     const engine = new TB.TypingEngine(TB.buildBeatmap(TB.parseLyricOsu(source)));
+    // Every scenario in this file was authored on the skip-OFF arm (a mid-word space is a typo,
+    // typed through), so the arm is declared rather than inherited: since backlog 198 the engine
+    // DEFAULTS to skip-on, and these pins are about the untimed-space exemption, not the skip.
+    engine.spaceSkipsWord = false;
     engine.breaks = 0;
     engine.onComboBroken = () => { engine.breaks++; };
     engine.update(1000);
@@ -123,10 +127,10 @@ function lyricCharPressedJustAsLate() {
 
 // Scoped to the CELL, hole 1: the exemption is keyed on the cell being a space, never on the KEY
 // being one, so a space pressed on a LYRIC character earns nothing. Since backlog 184 it is TYPED
-// THROUGH as an ordinary typo rather than rejected (with spaceSkipsWord off, which is the browser's
-// permanent setting, there is no word for the press to skip and it is simply a wrong character), so
-// what it costs the player is the cell. Keying the exemption off the key instead would have made
-// space-mashing free, which is what this pins either way.
+// THROUGH as an ordinary typo rather than rejected (on the skip-OFF arm this file declares, there
+// is no word for the press to skip and it is simply a wrong character), so what it costs the
+// player is the cell. Keying the exemption off the key instead would have made space-mashing
+// free, which is what this pins either way.
 function spaceOnALyricChar() {
     const engine = started(LONG);
     engine.rejected = null;

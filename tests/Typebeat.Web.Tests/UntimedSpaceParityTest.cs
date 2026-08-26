@@ -132,11 +132,12 @@ public class UntimedSpaceParityTest
     /// KEY being one, so a space pressed on a LYRIC character earns nothing. Keying it off the key
     /// instead would have made space-mashing free.
     ///
-    /// <para>What that press costs changed with backlog 184: with space-skip off (the browser's
-    /// permanent setting) there is no word for it to skip, so it is nothing but a wrong character
-    /// and is TYPED THROUGH as one, taking the cell rather than being refused at the door. The cell
-    /// still renders its own expected character in the error red, since the browser substitutes the
-    /// typed char for word GAPS only.</para>
+    /// <para>What that press costs changed with backlog 184: with space-skip off (the arm the
+    /// harness declares; since backlog 198 the browser DEFAULTS to skip-on, but this pin is about
+    /// the typed-through typo, not the skip) there is no word for it to skip, so it is nothing but
+    /// a wrong character and is TYPED THROUGH as one, taking the cell rather than being refused at
+    /// the door. The cell still renders its own expected character in the error red, since the
+    /// browser substitutes the typed char for word GAPS only.</para>
     /// </summary>
     [Test]
     public void ASpaceOnALyricCharacterIsTypedThroughAsATypo()
@@ -145,7 +146,7 @@ public class UntimedSpaceParityTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(Flag(r, "spaceSkipsWord"), Is.False);
+            Assert.That(Flag(r, "spaceSkipsWord"), Is.False, "the harness pins the skip-off arm explicitly");
             Assert.That(r.GetProperty("rejected").ValueKind, Is.EqualTo(JsonValueKind.Null), "not a rejection any more");
             Assert.That(Num(r, "caretIndex"), Is.EqualTo(2), "the caret moved on, as it does for any typo");
             Assert.That(Arr(r, "states")[1], Is.EqualTo("wrong"));

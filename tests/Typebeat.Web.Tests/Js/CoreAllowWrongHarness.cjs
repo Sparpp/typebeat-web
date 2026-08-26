@@ -91,6 +91,8 @@ const WRONG_KEY = 'z';
 function play(script, probeAt, osu) {
     const beatmap = TB.buildBeatmap(TB.parseLyricOsu(osu || OSU), false);
     const engine = new TB.TypingEngine(beatmap);
+    // Authored on the skip-OFF arm; declared since backlog 198 flipped the engine default to skip-on.
+    engine.spaceSkipsWord = false;
 
     const cells = [];
     for (const line of beatmap.lines) for (const cell of line.cells) cells.push(cell);

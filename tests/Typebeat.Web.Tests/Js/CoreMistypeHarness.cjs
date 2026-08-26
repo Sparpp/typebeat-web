@@ -62,6 +62,8 @@ function play(options) {
 
     const beatmap = TB.buildBeatmap(TB.parseLyricOsu(OSU), false);
     const engine = new TB.TypingEngine(beatmap);
+    // Authored on the skip-OFF arm; declared since backlog 198 flipped the engine default to skip-on.
+    engine.spaceSkipsWord = false;
     // These runs pin the REJECTION model (the desktop client's Gatekeeper mod, and the browser's
     // only model before backlog 107), which is what the golden combo/score table in
     // MistypeParityTest was derived from. Kept as its own fixture rather than rewritten: the

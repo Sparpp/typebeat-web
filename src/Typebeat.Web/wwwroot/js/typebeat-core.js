@@ -1626,13 +1626,14 @@
             // costs exactly what it always cost and one the player returns to costs nothing beyond
             // the detour. There is no era switch here (the C# WordSkipRule), for the same reason
             // there is no ComboRestoreRule: the browser only ever plays LIVE.
-            // DEFAULTED OFF, like caseSensitive/mashingEnabled above and for the same reason:
-            // the browser has no settings payload, so /play is permanently non-skipping and the
-            // default path stays byte-identical to the desktop's default. If /play ever grows one,
-            // this is the flag it sets, and it would ALSO have to travel in whatever the browser's
-            // equivalent of the replay CONFIG frame is (the desktop carries it as bit 1), because it
-            // changes how a recorded space is judged.
-            this.spaceSkipsWord = false;
+            // DEFAULTED ON since backlog 198, tracking the desktop's SHIPPED default (its config
+            // row, not the C# engine property, which stays off for replay decoding): the browser
+            // has no settings payload, so /play is permanently skip-on and the default path stays
+            // the desktop's default feel. If /play ever grows a toggle, this is the flag it sets,
+            // and it would ALSO have to travel in whatever the browser's equivalent of the replay
+            // CONFIG frame is (the desktop carries it as bit 1), because it changes how a recorded
+            // space is judged.
+            this.spaceSkipsWord = true;
             // The one outstanding combo snapshot (TypingEngine.restorable, backlog 140, widened by
             // 167): { lineIndex, cellIndex, streak }, the cell a wrong keypress spoiled or a word
             // skip abandoned and the streak that break cost, or null when there is nothing to go

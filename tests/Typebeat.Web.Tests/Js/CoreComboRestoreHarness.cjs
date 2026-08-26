@@ -64,6 +64,8 @@ function target(cellIndex) { return 1000 + 500 * cellIndex; }
 function started() {
     const beatmap = TB.buildBeatmap(TB.parseLyricOsu(WORD_OSU), false);
     const engine = new TB.TypingEngine(beatmap);
+    // Authored on the skip-OFF arm; declared since backlog 198 flipped the engine default to skip-on.
+    engine.spaceSkipsWord = false;
 
     engine.restored = [];
     engine.breaks = 0;
@@ -362,6 +364,8 @@ function replayTarget(cellIndex) { return 20000 * cellIndex; }
 function playReplayShaped(typoAt) {
     const beatmap = TB.buildBeatmap(TB.parseLyricOsu(REPLAY_OSU), false);
     const engine = new TB.TypingEngine(beatmap);
+    // Authored on the skip-OFF arm; declared since backlog 198 flipped the engine default to skip-on.
+    engine.spaceSkipsWord = false;
 
     for (let i = 0; i < REPLAY_WORD.length; i++) {
         const t = replayTarget(i);
