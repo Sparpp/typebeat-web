@@ -420,8 +420,11 @@ public class LyricPaceTest
             Assert.That(Typeability.Normalize("Héllo,  wörld!"), Is.EqualTo("Hello, world!"));
             Assert.That(Typeability.Normalize("don’t stop"), Is.EqualTo("don't stop"));
 
-            // Unsupported chars still vanish outright.
-            Assert.That(Typeability.Normalize("a*b/c"), Is.EqualTo("abc"));
+            // The marks backlog 202 added survive normalization like any other supported mark
+            // (they used to vanish here), while chars still outside the set vanish outright.
+            Assert.That(Typeability.Normalize("a*b/c"), Is.EqualTo("a*b/c"));
+            Assert.That(Typeability.Normalize("50% of $9 x^2 <hey>"), Is.EqualTo("50% of $9 x^2 <hey>"));
+            Assert.That(Typeability.Normalize("a#b@c_d~e"), Is.EqualTo("abcde"));
 
             Assert.That(Typeability.StripBackingVocals("go (ooh) now [aah]"), Is.EqualTo("go  now "));
             Assert.That(Typeability.Normalize(Typeability.StripBackingVocals("(all backing)")), Is.Empty);

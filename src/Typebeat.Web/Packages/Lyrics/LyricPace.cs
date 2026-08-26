@@ -128,6 +128,19 @@ public static class LyricPace
     /// which was the old identity exactly, and would now read <c>cpm * charsPerWord / 5</c>. It is
     /// <c>wpm * 5</c> from here on.
     ///
+    /// <para>BACKLOG 202 WIDENED <see cref="Typeability.PUNCTUATION"/> by seven marks (dollar sign,
+    /// percent sign, caret, asterisk, the two angle brackets and the forward slash) and DELIBERATELY
+    /// DID NOT BUMP THIS. Every mark but the hyphen is still deleted from the DEFAULT stream that
+    /// every stat here is measured on, so a newly supported mark WEDGED INSIDE a word ("up/down",
+    /// "100% off") derives exactly what it derived while it was being stripped outright. A mark
+    /// standing as its OWN token does not: "ride / or" used to normalize to "ride or" and now
+    /// normalizes to "ride / or", whose default stream keeps both authored spaces instead of one,
+    /// i.e. one extra cell. That is the behaviour the original thirteen have always had ("a , b" has
+    /// always been "a  b"), and it can only reach a stored row through this sweep, so leaving VERSION
+    /// alone is exactly what keeps every existing beatmap row (word count, cell count, pace, the six
+    /// ratings and therefore pp) byte-identical. The next bump, whenever one comes for its own
+    /// reasons, will drag that re-derive along just as v9 dragged task 59's.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now

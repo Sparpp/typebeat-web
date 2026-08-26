@@ -39,8 +39,9 @@ const SAMPLES = [
     'a“b”c„d″e', // every double-quote variant
     'a–b—c―d−e', // every dash variant
     'Héllo,  wörld!',     // diacritics
-    'a,b.c\'d-e?f!g;h:i(j)k[l]m"n', // every supported mark, once each
-    'a*b/c#d&e',                    // unsupported chars
+    'a,b.c\'d-e?f!g;h:i(j)k[l]m"n$o%p^q*r<s>t/u', // every supported mark, once each
+    '100% of my $$ <so> 2*3 up/down x^2',         // the marks added by backlog 202, in prose
+    'a#b@c_d&e~f',                                // unsupported chars
     'a - b',
     'a-b',
     'a--b',
@@ -120,7 +121,9 @@ const out = {
     // under Literate.
     marksAreNotTypeable: TB.constants.PUNCTUATION.split('').every(c => !TB.isTypeable(c) && !TB.isCell(c)),
     marksAreRecognised: TB.constants.PUNCTUATION.split('').every(c => TB.isPunctuation(c)),
-    unsupportedAreNot: '&/*_`#@$%^+=<>|~\\'.split('').every(c => !TB.isPunctuation(c)),
+    // Chars still outside the set after backlog 202 widened it ('&' is the freestyle marker, which
+    // is deliberately not punctuation on either side).
+    unsupportedAreNot: '&_`#@+=|~\\'.split('').every(c => !TB.isPunctuation(c)),
 
     samples: SAMPLES,
     normalized: SAMPLES.map(s => TB.normalize(s)),

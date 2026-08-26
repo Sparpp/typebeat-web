@@ -58,6 +58,44 @@ public class PunctuationParityTest
         });
     }
 
+    /// <summary>
+    /// The seven marks backlog 202 added ($ % ^ * &lt; &gt; /) behave exactly like the original
+    /// thirteen, which is what makes the widening safe for every stored per-map figure.
+    /// </summary>
+    [Test]
+    public void TheMarksAddedByBacklog202AreDeletedFromTheDefaultStreamLikeAnyOther()
+    {
+        Assert.Multiple(() =>
+        {
+            foreach (char c in "$%^*<>/")
+            {
+                Assert.That(Typeability.IsPunctuation(c), Is.True, $"'{c}' is supported now");
+                Assert.That(Typeability.IsTypeable(c), Is.False, $"'{c}' is not a plain typeable char");
+                Assert.That(Typeability.IsCell(c), Is.False, $"'{c}' is not a cell");
+                Assert.That(Typeability.DefaultChar(c), Is.Null, $"'{c}' is deleted without Literate");
+            }
+
+            // Normalize KEEPS them now, where it used to strip them outright, so the author's form
+            // survives for the Literate branch to type.
+            const string authored = "100% up/down x^2 <so> 2*3 $";
+            Assert.That(Typeability.Normalize(authored), Is.EqualTo(authored));
+
+            // The DEFAULT stream, which every stored stat is measured on, still drops them, so a
+            // mark wedged inside a word derives exactly what it derived before it was supported.
+            Assert.That(Typeability.ToDefaultStream("up/down"), Is.EqualTo("updown"));
+            Assert.That(Typeability.ToDefaultStream("100% off"), Is.EqualTo("100 off"));
+            Assert.That(Typeability.ToDefaultStream("x^2 and 3*4"), Is.EqualTo("x2 and 34"));
+
+            // A mark standing as its OWN token is the one shape that does not, and it behaves
+            // exactly as an original mark always has: both authored spaces around it survive, so
+            // the stream carries one more cell than it would with the mark absent. Nothing stored
+            // moves because of it, since LyricPace.VERSION is deliberately not bumped and only its
+            // sweep re-derives an existing row (see the note on LyricPace.VERSION).
+            Assert.That(Typeability.ToDefaultStream("ride / or"), Is.EqualTo("ride  or"));
+            Assert.That(Typeability.ToDefaultStream("ride , or"), Is.EqualTo("ride  or"));
+        });
+    }
+
     [Test]
     public void DerivationMatchesTheServersOwnTypeability()
     {

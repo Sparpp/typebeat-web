@@ -37,13 +37,20 @@ public static class Typeability
     /// <summary>
     /// The punctuation type!beat supports inside an authored lyric line, defined ONCE here:
     /// comma, period, apostrophe, hyphen, question mark, exclamation mark, semicolon, colon,
-    /// round brackets, square brackets, straight double quote.
+    /// round brackets, square brackets, straight double quote, dollar sign, percent sign, caret,
+    /// asterisk, angle brackets, forward slash.
     ///
     /// <para>A map stores the AUTHOR'S form: punctuated and case-sensitive. What the player types
     /// (and sees) is derived from it: verbatim under the client's LITERATE mod, and through
     /// <see cref="ToDefaultStream"/> otherwise. (LyricBeatmap.cs, Typeability.PUNCTUATION.)</para>
+    ///
+    /// <para>Widening this set cannot move a stored per-map STAT: every mark but
+    /// <see cref="WORD_BREAK"/> is deleted by <see cref="DefaultChar"/>, so a char that used to be
+    /// dropped by <see cref="Normalize"/> as unsupported is now kept in the author's line and
+    /// dropped one step later, leaving the DEFAULT stream (which every stat is measured on)
+    /// byte-identical.</para>
     /// </summary>
-    public const string PUNCTUATION = ",.'-?!;:()[]\"";
+    public const string PUNCTUATION = ",.'-?!;:()[]\"$%^*<>/";
 
     /// <summary>
     /// The one supported mark that reads as a WORD BREAK rather than as decoration: without

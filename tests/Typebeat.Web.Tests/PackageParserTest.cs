@@ -139,12 +139,12 @@ public class PackageParserTest
             """
             {"version":2,"song_end_ms":9000}
             {"text":"Neon SKYLINE, glowing!","start_ms":1000,"end_ms":3000}
-            {"text":"we Type* at Night","start_ms":4000,"end_ms":8000}
+            {"text":"we Type# at 100% Night","start_ms":4000,"end_ms":8000}
             """;
 
         var diff = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: lyrics)));
 
-        Assert.That(diff.LyricsText, Is.EqualTo("Neon SKYLINE, glowing!\nwe Type at Night"));
+        Assert.That(diff.LyricsText, Is.EqualTo("Neon SKYLINE, glowing!\nwe Type at 100% Night"));
     }
 
     [Test]

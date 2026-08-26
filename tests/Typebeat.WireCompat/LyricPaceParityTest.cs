@@ -1,10 +1,12 @@
 using ClientCurve = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricWpmCurve;
 using ClientLine = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricLine;
 using ClientPace = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricPaceStatistics;
+using ClientTypeability = typebeat.Game.Rulesets.TypeBeat.Beatmaps.Typeability;
 using ClientUnit = typebeat.Game.Rulesets.TypeBeat.Beatmaps.TimedUnit;
 using ServerCurve = Typebeat.Web.Packages.Lyrics.LyricWpmCurve;
 using ServerLine = Typebeat.Web.Packages.Lyrics.LyricLine;
 using ServerPace = Typebeat.Web.Packages.Lyrics.LyricPace;
+using ServerTypeability = Typebeat.Web.Packages.Lyrics.Typeability;
 using ServerUnit = Typebeat.Web.Packages.Lyrics.TimedUnit;
 
 namespace Typebeat.WireCompat;
@@ -50,6 +52,36 @@ public class LyricPaceParityTest
             Assert.That(ServerCurve.CHARS_PER_WORD, Is.EqualTo(ClientCurve.CHARS_PER_WORD), "rolling window");
             Assert.That(ServerCurve.CHARS_PER_WORD, Is.EqualTo(ServerPace.CHARS_PER_WORD), "the two server copies");
             Assert.That(ServerPace.CHARS_PER_WORD, Is.EqualTo(5.0), "and it is 5, the typing-test convention");
+        });
+    }
+
+    [Test]
+    public void TheSupportedPunctuationIsTheSameSetInBothRepos()
+    {
+        // Typeability is the text authority every pace figure is measured THROUGH: a map stores the
+        // author's punctuated line, and the counts (and therefore the ratings and pp) come off the
+        // DEFAULT stream derived from it. A whitelist that differs by one mark makes the two sides
+        // normalize the same blob into different lines and count a different map. None of it is on
+        // the wire, so, as with CHARS_PER_WORD above, this is the only place the mirror is provable,
+        // and until backlog 202 it was not pinned anywhere.
+        const string authored = "a,b.c'd-e?f!g;h:i(j)k[l]m\"n$o%p^q*r<s>t/u";
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ServerTypeability.PUNCTUATION, Is.EqualTo(ClientTypeability.PUNCTUATION), "the supported set");
+            Assert.That(ServerTypeability.WORD_BREAK, Is.EqualTo(ClientTypeability.WORD_BREAK), "the one mark that is a word break");
+            Assert.That(ServerTypeability.FREESTYLE_MARKER, Is.EqualTo(ClientTypeability.FREESTYLE_MARKER), "and the marker that is not a mark at all");
+
+            foreach (char c in ServerTypeability.PUNCTUATION)
+            {
+                Assert.That(ClientTypeability.IsPunctuation(c), Is.True, $"'{c}' is a mark on the client too");
+                Assert.That(ClientTypeability.IsTypeable(c), Is.False, $"'{c}' is not a plain typeable char");
+                Assert.That(ClientTypeability.IsCell(c), Is.False, $"'{c}' is not a cell");
+            }
+
+            // The derivation the set feeds, on a line carrying every mark once.
+            Assert.That(ServerTypeability.Normalize(authored), Is.EqualTo(ClientTypeability.Normalize(authored)), "the author's form");
+            Assert.That(ServerTypeability.ToDefaultStream(authored), Is.EqualTo(ClientTypeability.ToDefaultStream(authored)), "the played stream");
         });
     }
 

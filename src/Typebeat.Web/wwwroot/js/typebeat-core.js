@@ -40,13 +40,18 @@
 
     // The punctuation type!beat supports inside an authored lyric line, defined ONCE here (mirrors
     // Typeability.PUNCTUATION): comma, period, apostrophe, hyphen, question mark, exclamation mark,
-    // semicolon, colon, round brackets, square brackets, straight double quote.
+    // semicolon, colon, round brackets, square brackets, straight double quote, dollar sign,
+    // percent sign, caret, asterisk, angle brackets, forward slash.
     //
     // A map stores the AUTHOR'S form: punctuated and case-sensitive. What the player types (and
     // sees) is derived from it: verbatim under the desktop client's LITERATE mod, and through
     // toDefaultStream otherwise. Deliberately outside isTypeable, so a mark never counts as a plain
     // typeable char for the interpolation weights or the cell counts.
-    const PUNCTUATION = ",.'-?!;:()[]\"";
+    //
+    // Widening this set cannot move a stored per-map stat: every mark but WORD_BREAK is deleted by
+    // defaultChar, so a char that used to be dropped by normalize as unsupported is now kept in the
+    // author's line and dropped one step later, leaving the DEFAULT stream byte-identical.
+    const PUNCTUATION = ",.'-?!;:()[]\"$%^*<>/";
 
     // The one supported mark that reads as a WORD BREAK rather than as decoration: without
     // Literate, "bad-cat" is typed "bad cat", not "badcat" (mirrors Typeability.WORD_BREAK).
