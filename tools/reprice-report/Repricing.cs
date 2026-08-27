@@ -64,7 +64,7 @@ internal sealed class PpRow
     public bool Repriced => Map.Resolved && NewPp is not null;
 
     /// <summary>The cells the play's own stream carries, i.e. the length that priced it.</summary>
-    public long Cells => Map.CellsFor(Literate ? SrVariant.Literate : SrVariant.Base);
+    public double Cells => Map.CellsFor(Literate ? SrVariant.Literate : SrVariant.Base);
 
     /// <summary>New over stored. Null when there is no stored price to compare against.</summary>
     public double? Ratio => Stored.Pp > 0 && NewPp is double now ? now / Stored.Pp : null;

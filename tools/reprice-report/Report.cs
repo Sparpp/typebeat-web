@@ -133,8 +133,8 @@ internal static class Report
 
             foreach (var b in Take(f.MonotonicityBreaks, run.FullTable))
             {
-                output.WriteLine($"  {b.Variant,-18} beatmap {b.LongerBeatmapId} ({b.LongerCells} cells) gained {b.LongerDelta:+0.0000;-0.0000}");
-                output.WriteLine($"  {string.Empty,-18} beatmap {b.ShorterBeatmapId} ({b.ShorterCells} cells) gained {b.ShorterDelta:+0.0000;-0.0000}  <- shorter, gained more");
+                output.WriteLine($"  {b.Variant,-18} beatmap {b.LongerBeatmapId} ({Cells(b.LongerCells)} cells) gained {b.LongerDelta:+0.0000;-0.0000}");
+                output.WriteLine($"  {string.Empty,-18} beatmap {b.ShorterBeatmapId} ({Cells(b.ShorterCells)} cells) gained {b.ShorterDelta:+0.0000;-0.0000}  <- shorter, gained more");
             }
 
             Hidden(output, f.MonotonicityBreaks.Count, run.FullTable);
@@ -168,7 +168,7 @@ internal static class Report
             double after = m.New(SrVariant.Base)!.Value;
 
             output.WriteLine(
-                $"{m.Stored.BeatmapId,-9}{m.Cells,-8}{m.LiterateCells,-8}"
+                $"{m.Stored.BeatmapId,-9}{Cells(m.Cells),-8}{Cells(m.LiterateCells),-8}"
                 + $"{before.ToString("0.00", CultureInfo.InvariantCulture) + " -> " + after.ToString("0.00", CultureInfo.InvariantCulture),-18}"
                 + $"{(after - before).ToString("+0.0000;-0.0000", CultureInfo.InvariantCulture),-10}"
                 + $"{m.ExpectedBonus(SrVariant.Base).ToString("0.0000", CultureInfo.InvariantCulture),-10}"
@@ -469,6 +469,13 @@ internal static class Report
 
     private static string Pct(double fraction)
         => (fraction >= 0 ? "+" : string.Empty) + (100 * fraction).ToString("0.0", CultureInfo.InvariantCulture) + "%";
+
+    /// <summary>
+    /// A PRICED cell count, which is fractional since backlog 211 (a freestyle slot is a quarter of
+    /// a cell). Whole counts still print whole, so the table reads exactly as it always has on the
+    /// maps that carry no markers, which is nearly all of them.
+    /// </summary>
+    private static string Cells(double cells) => cells.ToString("0.##", CultureInfo.InvariantCulture);
 
     private static string Truncate(string text, int max)
         => text.Length <= max ? text : text[..(max - 1)] + "~";

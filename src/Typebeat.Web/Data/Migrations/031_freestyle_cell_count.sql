@@ -1,0 +1,39 @@
+-- typebeat-web migration 031: how many of a difficulty's cells are FREESTYLE slots (LyricPace v16,
+-- backlog 211).
+--
+-- WHY THIS EXISTS NOW. A freestyle slot is a cell with a real deadline and no letter to find, and
+-- until backlog 211 the star rating could not see one at all: LyricDifficulty stripped the markers
+-- before it measured anything, so a freestyle section rated exactly nothing while paying full price
+-- in scoring. It is now priced at a quarter of an ordinary cell, which means a map's rating is a
+-- function of a quantity NOTHING STORED: char_count counts a slot as one cell (v6) and every star
+-- column prices it as a quarter, and no row said how many there were. So a rating that looks wrong
+-- could not be explained from the row, only by refetching and reparsing the .osu blob. This column
+-- is that explanation, and it is the reason the tooling that prices maps offline
+-- (tools/reprice-report) can carry the map payload faithfully rather than approximately.
+--
+-- It is DESCRIPTIVE, not an input. Nothing prices off this column: the quarter is applied inside
+-- LyricDifficulty and reaches pp through difficulty_rating / sr_dt / sr_ht and their Literate
+-- triple, exactly as 020 and 029 arranged. Deriving the rating from a stored count instead would be
+-- a second definition of "how long is this map" (see LyricDifficulty's cell accumulator, which
+-- deliberately counts inside Compute for that reason), and client and server would eventually
+-- disagree about it on the same map.
+--
+-- NULL, no DEFAULT, and not 0, on 029's argument rather than in spite of it. 0 is a REAL
+-- MEASUREMENT here and by far the commonest one: nearly every map has no flagged freestyle line at
+-- all, and its row must be able to SAY so. A NOT NULL DEFAULT 0 would give every pre-migration row
+-- that same answer without anything having looked, so a row that had genuinely been measured and a
+-- row nobody had reached yet would be indistinguishable, which is exactly the distinction 028 and
+-- 029 kept. NULL therefore means one thing only: the v16 sweep has not filled this row yet (or
+-- failed on it and will retry next boot). Ingest always writes a number, 0 included.
+--
+-- This cannot be computed in SQL (the count comes off the parsed [Lyrics] payload, like 016 / 018 /
+-- 028 / 029 before it), so Packages/PaceBackfill.cs reparses the stored blobs at startup and fills
+-- it. No third staleness arm is needed: the LyricPace VERSION bump to 16 is what makes that sweep
+-- revisit every existing row, which is the same idiom v7, v8, v11 and v13 used for their columns.
+-- Unlike those four, v16 is NOT arithmetically free: it moves all six star ratings on any map that
+-- does have freestyle content, which is the point of the bump.
+--
+-- integer, not smallint and not bigint: a slot count is bounded by the map's cell count, which
+-- char_count already stores as an integer, so the two are comparable without a cast and a reader
+-- can hold one against the other.
+ALTER TABLE beatmaps ADD COLUMN freestyle_cell_count integer;

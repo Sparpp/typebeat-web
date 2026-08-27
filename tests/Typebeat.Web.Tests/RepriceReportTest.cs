@@ -615,8 +615,8 @@ public class RepriceReportTest
         var parsed = BeatmapPackageParser.ParseDifficulty("long.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: LongLyrics(lines))));
 
         double perDecade = bonusPerDecade ?? Length.LENGTH_STARS;
-        long cells = Length.Count(parsed.Lines, literate: false);
-        long literateCells = Length.Count(parsed.Lines, literate: true);
+        double cells = Length.Count(parsed.Lines, literate: false);
+        double literateCells = Length.Count(parsed.Lines, literate: true);
         double bonus = perDecade * Math.Max(0, Math.Log10(cells / Length.REFERENCE_CELLS));
         double literateBonus = perDecade * Math.Max(0, Math.Log10(literateCells / Length.REFERENCE_CELLS));
 
@@ -628,7 +628,8 @@ public class RepriceReportTest
             parsed.SrHalfTime - bonus,
             parsed.SrLiterate - literateBonus,
             parsed.SrLiterateDoubleTime - literateBonus,
-            parsed.SrLiterateHalfTime - literateBonus);
+            parsed.SrLiterateHalfTime - literateBonus,
+            FreestyleCellCount: parsed.Pace.FreestyleCellCount);
 
         return SrRow.Recompute(stored, SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: LongLyrics(lines))));
     }
@@ -671,7 +672,8 @@ public class RepriceReportTest
 
     private static StoredBeatmap Stored(long beatmapId, long cells, double rating)
         => new(beatmapId, beatmapId, "map.osu", new string('0', 32), "Fixture", "Map", "Artist", "ranked",
-            PaceVersion: 13, CharCount: (int)cells, rating, rating, rating, rating, rating, rating);
+            PaceVersion: 13, CharCount: (int)cells, rating, rating, rating, rating, rating, rating,
+            FreestyleCellCount: 0);
 
     /// <summary>
     /// A score whose STORED price is what the pre-152 formula would have produced: today's price at

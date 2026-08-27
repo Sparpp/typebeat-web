@@ -31,6 +31,12 @@ internal static class Length
     public const double REFERENCE_CELLS = 100;
 
     /// <summary>
+    /// <c>LyricDifficulty.freestyle_cost_weight</c>: what one freestyle slot is worth as a fraction
+    /// of an ordinary cell. Backlog 211 set it to 0.25, having priced it at nothing before that.
+    /// </summary>
+    public const double FREESTYLE_COST_WEIGHT = 0.25;
+
+    /// <summary>
     /// pp's DELETED length factor, <c>max(0.1, 1 + 0.50*log10(notes/100))</c>. It is gone from
     /// <c>PerformancePoints</c>, which is the whole point of 152, and it lives on here as the
     /// prediction for what a stored pp should divide by: a row's stored price ought to be its
@@ -50,7 +56,7 @@ internal static class Length
     /// The additive star bonus a map of <paramref name="cells"/> typeable cells gains under 152.
     /// Mirrors the tail of <c>LyricDifficulty.Compute</c>.
     /// </summary>
-    public static double StarBonus(long cells)
+    public static double StarBonus(double cells)
         => cells <= 0 ? 0 : LENGTH_STARS * Math.Max(0, Math.Log10(cells / REFERENCE_CELLS));
 
     /// <summary>
@@ -61,10 +67,15 @@ internal static class Length
         => notes <= 0 ? LENGTH_FLOOR : Math.Max(LENGTH_FLOOR, 1 + LENGTH_WEIGHT * Math.Log10(notes / REFERENCE_CELLS));
 
     /// <summary>
-    /// A map's TYPEABLE CELL COUNT as the length bonus counts it: mirrors
-    /// <c>LyricDifficulty.cellStream</c> summed over the tokens of every line, which is a different
-    /// number from <c>LyricPace.PaceStatistics.TypeableCellCount</c> (that one adds a cell per token
-    /// gap and counts freestyle slots, this one counts neither).
+    /// A map's PRICED CELL COUNT as the length bonus counts it: mirrors
+    /// <c>LyricDifficulty</c>'s own accumulator summed over the tokens of every line, which is a
+    /// different number from <c>LyricPace.PaceStatistics.TypeableCellCount</c> (that one adds a
+    /// cell per token gap and counts a freestyle slot as a whole cell).
+    ///
+    /// <para>FRACTIONAL since backlog 211, because that accumulator is: a freestyle slot is worth
+    /// <c>LyricDifficulty.freestyle_cost_weight</c>, a quarter of an ordinary cell, and counting it
+    /// as nothing (which is what this did while the rating did too) would now understate the length
+    /// of every map with a freestyle section and make its bonus look unexplained.</para>
     ///
     /// <para>Restated rather than read because 152 deliberately made the count private: "computed
     /// inside Compute from the lines it already walks, never threaded in from outside, so client and
@@ -78,9 +89,9 @@ internal static class Length
     /// so the three <c>sr_literate*</c> ratings gain a bonus computed off a LARGER count than the
     /// three plain ones.
     /// </param>
-    public static long Count(IReadOnlyList<LyricLine> lines, bool literate)
+    public static double Count(IReadOnlyList<LyricLine> lines, bool literate)
     {
-        long cells = 0;
+        double cells = 0;
 
         foreach (var line in lines)
         {
@@ -90,6 +101,8 @@ internal static class Length
                 {
                     if (Typeability.IsTypeable(c) || (literate && Typeability.IsPunctuation(c)))
                         cells++;
+                    else if (Typeability.IsFreestyle(c))
+                        cells += FREESTYLE_COST_WEIGHT;
                 }
             }
         }

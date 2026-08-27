@@ -51,7 +51,11 @@ internal sealed record StoredBeatmap(
     double? SrHt,
     double? SrLiterate,
     double? SrLiterateDt,
-    double? SrLiterateHt)
+    double? SrLiterateHt,
+    // APPENDED, never inserted: this is a positional record and Dapper fills it by constructor
+    // position when a query hands back columns in order. 031_freestyle_cell_count.sql, and NULL on
+    // any row the v16 pace sweep has not reached, which is exactly what the column means.
+    int? FreestyleCellCount)
 {
     public string Name => $"{Artist} - {Title} [{VersionName}]";
 
@@ -82,15 +86,16 @@ internal sealed class SrRow
     /// <summary>Human-readable reason, for anything other than <see cref="MapResolution.Recomputed"/>.</summary>
     public string? Detail { get; init; }
 
-    /// <summary>Typeable cells on the default stream, i.e. what the plain trio's bonus is computed from.</summary>
-    public long Cells { get; init; }
+    /// <summary>PRICED cells on the default stream, i.e. what the plain trio's bonus is computed from.</summary>
+    public double Cells { get; init; }
 
-    /// <summary>Typeable cells under Literate, i.e. what the literate trio's bonus is computed from.</summary>
-    public long LiterateCells { get; init; }
+    /// <summary>PRICED cells under Literate, i.e. what the literate trio's bonus is computed from.</summary>
+    public double LiterateCells { get; init; }
 
     /// <summary>
     /// <c>LyricPace</c>'s own cell count, which is a DIFFERENT number (it adds a cell per token gap
-    /// and counts freestyle slots). Carried only so the report can hold it against the stored
+    /// and counts a freestyle slot whole, where the two above count it a quarter). Carried only so
+    /// the report can hold it against the stored
     /// <c>char_count</c> column: a disagreement there says the stored row is stale for reasons that
     /// have nothing to do with 152, which is exactly the kind of thing a residual outlier turns out
     /// to be.
@@ -102,7 +107,7 @@ internal sealed class SrRow
 
     public bool Resolved => Resolution == MapResolution.Recomputed;
 
-    public long CellsFor(SrVariant variant)
+    public double CellsFor(SrVariant variant)
         => variant is SrVariant.Literate or SrVariant.LiterateDoubleTime or SrVariant.LiterateHalfTime
             ? LiterateCells
             : Cells;
@@ -211,11 +216,11 @@ internal sealed record MonotonicityBreak(
     SrVariant Variant,
     long LongerBeatmapId,
     string LongerName,
-    long LongerCells,
+    double LongerCells,
     double LongerDelta,
     long ShorterBeatmapId,
     string ShorterName,
-    long ShorterCells,
+    double ShorterCells,
     double ShorterDelta);
 
 /// <summary>Everything 152's SR acceptance clause asks, answered over the rows the run resolved.</summary>
@@ -267,7 +272,7 @@ internal static class SrAnalysis
                     findings.OutOfRange.Add(new SrFinding(row.Stored.BeatmapId, row.Stored.Name, variant, delta, $"gain exceeds the +{tolerances.MaxStarGain:0.00} cap"));
 
                 if (row.Residual(variant) is double residual && Math.Abs(residual) > tolerances.Star)
-                    findings.BonusMismatch.Add(new SrFinding(row.Stored.BeatmapId, row.Stored.Name, variant, residual, $"moved by {delta:0.0000}, the length bonus for {row.CellsFor(variant)} cells is {row.ExpectedBonus(variant):0.0000}"));
+                    findings.BonusMismatch.Add(new SrFinding(row.Stored.BeatmapId, row.Stored.Name, variant, residual, $"moved by {delta:0.0000}, the length bonus for {row.CellsFor(variant):0.##} cells is {row.ExpectedBonus(variant):0.0000}"));
 
                 if (row.Stored.Rating(variant) is double before && row.New(variant) is double after && Math.Floor(before) != Math.Floor(after))
                     findings.WholeStarCrossing.Add(new SrFinding(row.Stored.BeatmapId, row.Stored.Name, variant, after - before, $"{before:0.00} -> {after:0.00} crosses a whole star"));

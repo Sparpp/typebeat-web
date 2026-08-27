@@ -360,12 +360,12 @@ public sealed class PackageIngest(
                     (id, set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s,
                      difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics,
                      sr_dt, sr_ht, sr_literate, sr_literate_dt, sr_literate_ht,
-                     peak_wpm, peak_cpm, wpm_curve, gameplay_fingerprint)
+                     peak_wpm, peak_cpm, wpm_curve, gameplay_fingerprint, freestyle_cell_count)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
                      @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
                      @srDt, @srHt, @srLiterate, @srLiterateDt, @srLiterateHt,
-                     @peakWpm, @peakCpm, @wpmCurve, @gameplayFingerprint)
+                     @peakWpm, @peakCpm, @wpmCurve, @gameplayFingerprint, @freestyleCellCount)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -388,7 +388,8 @@ public sealed class PackageIngest(
                     peak_wpm = EXCLUDED.peak_wpm,
                     peak_cpm = EXCLUDED.peak_cpm,
                     wpm_curve = EXCLUDED.wpm_curve,
-                    gameplay_fingerprint = EXCLUDED.gameplay_fingerprint;
+                    gameplay_fingerprint = EXCLUDED.gameplay_fingerprint,
+                    freestyle_cell_count = EXCLUDED.freestyle_cell_count;
 
                 -- A re-upload can move this difficulty's star ratings, and the stored per-score pp
                 -- is a function of them, so hand every score set on this map back to PpBackfill
@@ -438,6 +439,11 @@ public sealed class PackageIngest(
                     // the audio it points at. Compared against the snapshot above to decide
                     // whether this upload demotes a ranked set.
                     gameplayFingerprint = incomingFingerprints[diff.BeatmapId!.Value],
+                    // How many of charCount are freestyle slots (031_freestyle_cell_count.sql).
+                    // A subset of that count, not an addition to it, and always written (0 for a
+                    // map with no flagged freestyle line); NULL there means only that the pace
+                    // backfill has not reached the row yet.
+                    freestyleCellCount = diff.Pace.FreestyleCellCount,
                 });
         }
 

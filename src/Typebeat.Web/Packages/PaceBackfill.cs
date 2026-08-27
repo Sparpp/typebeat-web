@@ -34,6 +34,13 @@ namespace Typebeat.Web.Packages;
 /// this sweep FAILED on rather than never reached, and they cover the new columns implicitly: the
 /// six ratings are written by one UPDATE, so a row missing any of them is missing all of them.
 /// </para>
+///
+/// <para>
+/// <c>freestyle_cell_count</c> (031_freestyle_cell_count.sql, v16) gets no arm of its own either,
+/// for the same reason and one more: it rides the same UPDATE as the ratings, and v16 moves those
+/// ratings on every map with freestyle content anyway, so the bump has to sweep the catalogue
+/// regardless of whether the new column is filled.
+/// </para>
 /// </summary>
 public static class PaceBackfill
 {
@@ -94,6 +101,7 @@ public static class PaceBackfill
                         peak_wpm = @peakWpm,
                         peak_cpm = @peakCpm,
                         wpm_curve = @wpmCurve,
+                        freestyle_cell_count = @freestyleCellCount,
                         pace_version = @paceVersion
                     WHERE id = @id;
 
@@ -130,6 +138,11 @@ public static class PaceBackfill
                         peakWpm = diff.PeakWpm,
                         peakCpm = diff.PeakCpm,
                         wpmCurve = diff.WpmCurvePoints,
+                        // v16: how many of char_count are freestyle slots, the cells the star
+                        // rating prices at a quarter each (031_freestyle_cell_count.sql). Rows
+                        // this sweep cannot reach keep NULL, which is the one thing NULL means
+                        // there: 0 is a real measurement and the commonest one.
+                        freestyleCellCount = diff.Pace.FreestyleCellCount,
                         paceVersion = LyricPace.VERSION,
                     });
 

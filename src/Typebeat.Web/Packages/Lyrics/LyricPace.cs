@@ -141,6 +141,28 @@ public static class LyricPace
     /// ratings and therefore pp) byte-identical. The next bump, whenever one comes for its own
     /// reasons, will drag that re-derive along just as v9 dragged task 59's.</para>
     ///
+    /// <para>v16 = A FREESTYLE SLOT IS PRICED AT A QUARTER OF A CELL by the star rating (backlog
+    /// 211). <see cref="LyricDifficulty"/> used to drop freestyle markers from its cell stream
+    /// outright, so a freestyle section was worth exactly nothing to the rating while paying full
+    /// price in scoring; a slot is now worth 0.25 of an ordinary cell in the per-word cost, in the
+    /// per-character window floor and in the length bonus' cell accumulator, and a token of nothing
+    /// but markers is a word rather than being dropped from the map. This is v6's other half: v6
+    /// made those markers count towards the PACE, and the rating has caught up. All six star
+    /// columns rise on a map with any flagged freestyle line, and NOTHING moves on a map without
+    /// one, which is not a tolerance claim: the weight is a cell COUNT, that count is zero there,
+    /// so every such row rewrites bit-identically. The pace columns are untouched either way, no
+    /// word or cell count and no WPM figure changes. It is NOT free for scores and is not meant to
+    /// be: the sweep stamps <c>pp_version = 0</c> on every score of every row it rewrites, so a
+    /// play on a freestyle map reprices against its honest rating.
+    /// <c>PerformancePoints.VERSION</c> deliberately stays where it is, exactly as at v12: the
+    /// quarter reaches pp through the star ratings and the pp FORMULA does not move. It also fills
+    /// a new column, as v7, v8, v11 and v13 did for theirs: <c>beatmaps.freestyle_cell_count</c>
+    /// (031_freestyle_cell_count.sql), the map's freestyle slot count as parsed. AND IT IS THE
+    /// BUMP THE PARAGRAPH ABOVE NAMES: backlog 202's widened punctuation reaches stored rows only
+    /// through a sweep, so an .osz-conversion map whose lyrics carry a mark STANDING AS ITS OWN
+    /// TOKEN re-derives one cell longer here. That was deferred to whatever bump came next for its
+    /// own reasons, and this is that bump.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -153,7 +175,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 15;
+    public const int VERSION = 16;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's
@@ -168,11 +190,21 @@ public static class LyricPace
 
     /// <param name="AverageCpm">Mean of per-line (typeable cells / boundary window) rates.</param>
     /// <param name="DifficultyRating">Stars from <see cref="LyricDifficulty"/> (no-mod baseline).</param>
+    /// <param name="FreestyleCellCount">
+    /// How many of <paramref name="TypeableCellCount"/> are FREESTYLE slots, i.e. cells with a
+    /// deadline and no letter (<see cref="Typeability.IsFreestyle"/>), stored as
+    /// <c>beatmaps.freestyle_cell_count</c> (031_freestyle_cell_count.sql). A SUBSET of that count
+    /// and never an addition to it: markers have counted towards the pace since v6, and this says
+    /// how much of it they are. 0 on every map without a line flagged <c>"freestyle": true</c>,
+    /// which is nearly all of them, and the number the star rating prices at a quarter each since
+    /// v16 (<see cref="LyricDifficulty"/>).
+    /// </param>
     public readonly record struct PaceStatistics(
         double AverageCpm,
         int TypeableCellCount,
         int WordCount,
-        double DifficultyRating)
+        double DifficultyRating,
+        int FreestyleCellCount)
     {
         /// <summary>
         /// <see cref="AverageCpm"/> over <see cref="CHARS_PER_WORD"/>. DERIVED rather than
@@ -202,6 +234,7 @@ public static class LyricPace
     {
         int totalCells = 0;
         int totalWords = 0;
+        int totalFreestyle = 0;
         int lineCount = 0;
         double cpmSum = 0;
 
@@ -220,6 +253,7 @@ public static class LyricPace
 
             int cells = tokens.Length - 1;
             int words = 0;
+            int freestyle = 0;
 
             foreach (string token in tokens)
             {
@@ -230,6 +264,15 @@ public static class LyricPace
                     // Freestyle slots are keypresses too, so they count towards the pace.
                     if (Typeability.IsCell(ch))
                         typeable++;
+
+                    // And they are counted AGAIN on their own, as a subset rather than an
+                    // addition: beatmaps.freestyle_cell_count says how much of the map is cells
+                    // with a deadline and no letter, which is what the star rating prices at a
+                    // quarter each (v16). Counted here, on the same walk over the same default
+                    // stream every other per-map stat is measured on, so it cannot end up
+                    // describing a different text from the one the counts above describe.
+                    if (Typeability.IsFreestyle(ch))
+                        freestyle++;
                 }
 
                 cells += typeable;
@@ -249,6 +292,7 @@ public static class LyricPace
             cpmSum += cells / windowMinutes;
             totalCells += cells;
             totalWords += words;
+            totalFreestyle += freestyle;
             lineCount++;
         }
 
@@ -259,6 +303,7 @@ public static class LyricPace
             cpmSum / lineCount,
             totalCells,
             totalWords,
-            LyricDifficulty.Compute(lines));
+            LyricDifficulty.Compute(lines),
+            totalFreestyle);
     }
 }

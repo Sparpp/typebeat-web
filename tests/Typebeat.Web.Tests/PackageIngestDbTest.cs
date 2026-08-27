@@ -1294,6 +1294,84 @@ public class PackageIngestDbTest
         });
     }
 
+    /// <summary>A flagged freestyle line: three '&amp;' slots the parser keeps as cells.</summary>
+    private const string freestyle_lyrics =
+        """
+        {"version":2,"song_end_ms":9000,"granularity":"Line"}
+        {"text":"me &&& you","start_ms":1000,"end_ms":8000,"freestyle":true}
+        """;
+
+    [Test]
+    [Order(25)]
+    public async Task Ingest_StoresTheFreestyleCellCount_AndTheSweepRefillsIt()
+    {
+        // 031_freestyle_cell_count.sql. The column is a SUBSET of char_count (markers have counted
+        // towards the pace since v6), and it is written on every difficulty, 0 included: NULL means
+        // one thing only, that the v16 sweep has not reached the row.
+        await using var conn = await db.OpenAsync();
+
+        long id = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO beatmapsets (owner_id, status, intended_status) VALUES (@uploaderId, 'hidden', 'pending') RETURNING id",
+            new { uploaderId });
+
+        long plain = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO beatmaps (set_id, checksum_md5) VALUES (@id, md5(random()::text)) RETURNING id", new { id });
+        long free = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO beatmaps (set_id, checksum_md5) VALUES (@id, md5(random()::text)) RETURNING id", new { id });
+
+        (string Name, byte[] Content)[] entries =
+        [
+            ("plain.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: plain, beatmapSetId: id))),
+            ("free.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(version: "freestyle", beatmapId: free, beatmapSetId: id, lyrics: freestyle_lyrics))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()),
+        ];
+
+        using (var zip = SyntheticPackage.Zip(entries))
+        {
+            var parsed = BeatmapPackageParser.Parse(zip);
+            PackageValidator.Validate(parsed, id, [plain, free], "uploader");
+
+            await using var scope = await ingest.BeginSetScopeAsync(id);
+            await ingest.IngestAsync(scope, zip, parsed, id, uploaderId);
+        }
+
+        async Task<(int? Freestyle, int Chars, double Rating)> rowOf(long beatmapId) =>
+            await conn.QuerySingleAsync<(int? Freestyle, int Chars, double Rating)>(
+                """
+                SELECT freestyle_cell_count AS Freestyle, char_count AS Chars, difficulty_rating AS Rating
+                FROM beatmaps WHERE id = @beatmapId
+                """,
+                new { beatmapId });
+
+        var plainRow = await rowOf(plain);
+        var freeRow = await rowOf(free);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(plainRow.Freestyle, Is.Zero, "a map with no flagged line stores 0, not NULL");
+            // "me &&& you": 5 letters + 2 inter-word spaces + the 3 slots = 10 cells, 3 of them slots.
+            Assert.That(freeRow.Freestyle, Is.EqualTo(3));
+            Assert.That(freeRow.Chars, Is.EqualTo(10), "the slots are inside char_count, not added to it");
+            Assert.That(freeRow.Rating, Is.GreaterThan(0));
+        });
+
+        // And the v16 sweep fills it: NULL the column and roll the row back, exactly the state prod
+        // is in on the deploy that ships this migration.
+        await conn.ExecuteAsync(
+            "UPDATE beatmaps SET freestyle_cell_count = NULL, pace_version = 15 WHERE id = @free", new { free });
+
+        await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        var refilled = await rowOf(free);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(refilled.Freestyle, Is.EqualTo(3), "the pace sweep fills the new column from the stored blob");
+            Assert.That(refilled.Rating, Is.EqualTo(freeRow.Rating), "and rewrites the rating byte-identically");
+        });
+    }
+
     private static string readEmbeddedMigration(string name)
     {
         var assembly = typeof(Db).GetTypeInfo().Assembly;

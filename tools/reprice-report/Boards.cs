@@ -10,8 +10,8 @@ internal sealed record OrderChange(
     long ScoreBelow,
     int NotesAbove,
     int NotesBelow,
-    long CellsAbove,
-    long CellsBelow)
+    double CellsAbove,
+    double CellsBelow)
 {
     /// <summary>
     /// Whether LENGTH is what separated these two. 152 allows an order change only here: the deleted

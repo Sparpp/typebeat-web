@@ -255,7 +255,8 @@ internal static class RepriceCli
                         b.sr_ht             AS SrHt,
                         b.sr_literate       AS SrLiterate,
                         b.sr_literate_dt    AS SrLiterateDt,
-                        b.sr_literate_ht    AS SrLiterateHt
+                        b.sr_literate_ht    AS SrLiterateHt,
+                        b.freestyle_cell_count AS FreestyleCellCount
                  FROM beatmaps b
                  JOIN beatmapsets bs ON bs.id = b.set_id
                  WHERE b.ruleset_id = 0 {filter}
@@ -388,6 +389,11 @@ internal static class RepriceCli
                 m.LiterateCells,
                 m.PaceCells,
                 storedCharCount = m.Stored.CharCount,
+                // Both halves of the row's length as STORED, so a rating this run cannot explain
+                // can be read against the map's freestyle content without refetching its blob:
+                // cells above are PRICED (a slot counts a quarter since backlog 211), while
+                // char_count counts a slot whole and this says how many of them there are.
+                storedFreestyleCellCount = m.Stored.FreestyleCellCount,
                 variants = SrAnalysis.Variants.Select(v => new
                 {
                     variant = v,

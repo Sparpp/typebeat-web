@@ -11,6 +11,7 @@ using ClientUnit = typebeat.Game.Rulesets.TypeBeat.Beatmaps.TimedUnit;
 using ServerDifficulty = Typebeat.Web.Packages.Lyrics.LyricDifficulty;
 using ServerLine = Typebeat.Web.Packages.Lyrics.LyricLine;
 using ServerPp = Typebeat.Web.Scoring.PerformancePoints;
+using ServerTypeability = Typebeat.Web.Packages.Lyrics.Typeability;
 using ServerUnit = Typebeat.Web.Packages.Lyrics.TimedUnit;
 
 namespace Typebeat.WireCompat;
@@ -667,6 +668,65 @@ public class PerformancePointsParityTest
         return Twin([.. source]);
     }
 
+    /// <summary>
+    /// A twin carrying FREESTYLE SLOTS, the cells backlog 211 started pricing at a quarter each.
+    /// Neither fixture above has a single marker in it, so neither could tell the two ports apart on
+    /// the quarter: a map with no slots rates bit-identically to what it rated before 211, which is
+    /// the whole point of the weight being a cell COUNT, and it means the existing pins stayed green
+    /// through the change on both sides. A divergence here is invisible everywhere except on a
+    /// freestyle map's stored rating against the one song select draws for the same map.
+    ///
+    /// <para>Three shapes, because the weight enters three different ways: a word with slots at its
+    /// END, a word with one in the MIDDLE (which must price the same as the first, the markers being
+    /// a count and not characters of the stream text), and a token of NOTHING BUT slots, which used
+    /// to be dropped from the map outright and is now a word of weight 1. The 72 words put the map
+    /// over the 100-cell length pivot on both settings (282 priced cells with the markers, 240
+    /// without), so the length accumulator's quarter is exercised as well as the per-word cost.</para>
+    ///
+    /// <para><paramref name="markers"/> false deletes every marker and IS the pre-211 number rather
+    /// than an approximation of it: that code stripped markers before measuring, so a token of
+    /// nothing but them became the empty token this builder emits, which both ports skip.</para>
+    /// </summary>
+    private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) FreestyleTwinMaps(bool markers = true)
+    {
+        string[] pool = ["flame", "river", "cider", "amber", "otter", "nudge"];
+        const int line_count = 12;
+        const int words_per_line = 6;
+        const double line_ms = 1800;
+        const double word_ms = line_ms / words_per_line;
+
+        string slots(int n) => markers ? new string(ServerTypeability.FREESTYLE_MARKER, n) : string.Empty;
+
+        var source = new List<(string Text, double Start, double End, (string Text, double Start, double End)[] Units)>();
+        int wordIndex = 0;
+
+        for (int l = 0; l < line_count; l++)
+        {
+            double lineStart = l * line_ms;
+            var units = new (string Text, double Start, double End)[words_per_line];
+
+            for (int w = 0; w < words_per_line; w++)
+            {
+                double wordStart = lineStart + w * word_ms;
+                string word = pool[wordIndex % pool.Length];
+
+                string text = (wordIndex % 3) switch
+                {
+                    0 => word + slots(2),
+                    1 => word.Insert(2, slots(1)),
+                    _ => slots(4),
+                };
+
+                wordIndex++;
+                units[w] = (text, wordStart, wordStart + word_ms);
+            }
+
+            source.Add((string.Join(" ", units.Select(u => u.Text)), lineStart, lineStart + line_ms, units));
+        }
+
+        return Twin([.. source]);
+    }
+
     /// <summary>The one lyric shape, projected into each repo's own <c>LyricLine</c> type.</summary>
     private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) Twin(
         (string Text, double Start, double End, (string Text, double Start, double End)[] Units)[] source)
@@ -736,6 +796,104 @@ public class PerformancePointsParityTest
             Assert.That(ClientDifficulty.Compute(client, ClientPp.HALF_TIME_BASE_RATE),
                 Is.EqualTo(ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate)), "sr_ht (0.75x)");
         });
+    }
+
+    [Test]
+    public void TheTwoPortsPriceAFreestyleSlotAtTheSameQuarter()
+    {
+        // Backlog 211. Every other fixture in this file is markerless, and a markerless map rates
+        // bit-identically to what it rated before slots were priced at all, so none of them can see
+        // this seam: both ports could have shipped a different weight, or one of them no weight at
+        // all, without a single assertion above moving.
+        var (client, server) = FreestyleTwinMaps();
+        var (excludedClient, excludedServer) = FreestyleTwinMaps(markers: false);
+
+        Assert.Multiple(() =>
+        {
+            // The premise, on both sides independently: the markers have to MOVE the rating, or the
+            // fixture is just another markerless map and this test pins nothing. The comparison map
+            // is the pre-211 number exactly (see the builder), so this is also the claim that the
+            // change reached the client and the server rather than neither.
+            Assert.That(ClientDifficulty.Compute(client), Is.GreaterThan(ClientDifficulty.Compute(excludedClient)), "client: the slots must cost something");
+            Assert.That(ServerDifficulty.Compute(server), Is.GreaterThan(ServerDifficulty.Compute(excludedServer)), "server: the slots must cost something");
+
+            // And the six ratings a beatmap row stores, on the map that has them.
+            Assert.That(ClientDifficulty.Compute(client), Is.EqualTo(ServerDifficulty.Compute(server)), "difficulty_rating (1.00x)");
+            Assert.That(ClientDifficulty.Compute(client, ClientPp.DOUBLE_TIME_BASE_RATE),
+                Is.EqualTo(ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate)), "sr_dt (1.50x)");
+            Assert.That(ClientDifficulty.Compute(client, ClientPp.HALF_TIME_BASE_RATE),
+                Is.EqualTo(ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate)), "sr_ht (0.75x)");
+            Assert.That(ClientDifficulty.Compute(client, 1, literate: true),
+                Is.EqualTo(ServerDifficulty.Compute(server, 1, literate: true)), "sr_literate (1.00x)");
+            Assert.That(ClientDifficulty.Compute(client, ClientPp.DOUBLE_TIME_BASE_RATE, literate: true),
+                Is.EqualTo(ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate, literate: true)), "sr_literate_dt (1.50x)");
+            Assert.That(ClientDifficulty.Compute(client, ClientPp.HALF_TIME_BASE_RATE, literate: true),
+                Is.EqualTo(ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate, literate: true)), "sr_literate_ht (0.75x)");
+
+            // The pre-211 map has to agree too, which is the other half of the mirror: the change
+            // must have moved the marker map on both sides and left the markerless one alone.
+            Assert.That(ClientDifficulty.Compute(excludedClient), Is.EqualTo(ServerDifficulty.Compute(excludedServer)), "and the markerless twin still agrees");
+        });
+    }
+
+    [Test]
+    public void TheTwoPortsAgreeOnWhatAFreestyleSlotIsWorthAndOnHowManyThereAre()
+    {
+        // The quarter itself, stated as the identity the game's own LyricDifficultyTest states and
+        // proved HERE ACROSS THE REPOS: four slots weigh exactly one ordinary cell, so a map of
+        // "a&&&&," words rates bit-identically to the same map written "ab,", on both ports. Neither
+        // repo's copy of the weight can move without this failing, which is stronger than each
+        // repo's own regression pin (both of those would still pass if both copies moved together
+        // to, say, a half).
+        var (freeClient, freeServer) = QuarterTwinMaps(freestyle: true);
+        var (fullClient, fullServer) = QuarterTwinMaps(freestyle: false);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ClientDifficulty.Compute(freeClient), Is.EqualTo(ClientDifficulty.Compute(fullClient)), "client: four slots are one cell");
+            Assert.That(ServerDifficulty.Compute(freeServer), Is.EqualTo(ServerDifficulty.Compute(fullServer)), "server: four slots are one cell");
+            Assert.That(ClientDifficulty.Compute(freeClient), Is.EqualTo(ServerDifficulty.Compute(freeServer)), "and the two ports agree on the number");
+        });
+    }
+
+    /// <summary>
+    /// Two maps of the same WEIGHT written differently: <c>freestyle</c> true gives "a&amp;&amp;&amp;&amp;," words (one
+    /// fixed key plus four quarters), false gives "ab," (two fixed keys). Uniform spans, so both cvs
+    /// are 0; no repeated letter, so every run factor is 1; the same word indices, so the repetition
+    /// factors match word for word; and 60 words, so both clear the 100-cell length pivot and the
+    /// accumulator has to count the quarter as well.
+    /// </summary>
+    private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) QuarterTwinMaps(bool freestyle)
+    {
+        const string alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+        const int word_count = 60;
+        const int words_per_line = 6;
+        const double step_ms = 400;
+        const double span_ms = 350;
+
+        var source = new List<(string Text, double Start, double End, (string Text, double Start, double End)[] Units)>();
+        double t = 0;
+
+        for (int i = 0; i < word_count; i += words_per_line)
+        {
+            var units = new (string Text, double Start, double End)[words_per_line];
+
+            for (int w = 0; w < words_per_line; w++)
+            {
+                int index = i + w;
+                char first = alphabet[index % alphabet.Length];
+                string word = freestyle
+                    ? first + new string(ServerTypeability.FREESTYLE_MARKER, 4) + ","
+                    : first.ToString() + alphabet[(index + 1) % alphabet.Length] + ",";
+
+                units[w] = (word, t + w * step_ms, t + w * step_ms + span_ms);
+            }
+
+            source.Add((string.Join(" ", units.Select(u => u.Text)), t, t + words_per_line * step_ms, units));
+            t += words_per_line * step_ms;
+        }
+
+        return Twin([.. source]);
     }
 
     [Test]
