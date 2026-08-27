@@ -187,12 +187,26 @@ public class ScoreRecalcTest
     private const CorrectionCreditRule correction_credit_rule = CorrectionCreditRule.Full;
 
     /// <summary>
+    /// The seventh axis (backlog 213), and the same story a fourth time: every row in the table was
+    /// played when a cell left holding a WRONG character was re-weighted to a Meh's 50 of 300, not
+    /// to a miss's 0. A synthetic stored row is built under that unless a test is deliberately
+    /// building a row a client running today's fold produced.
+    ///
+    /// <para>IT IS THE ONE AXIS THE SEARCH CANNOT PROVE, because the fold moved no key: both arms
+    /// re-derive byte-identical <c>statistics</c> and <c>max_combo</c>, which are the only two
+    /// quantities the reproduction gate compares. So the arm a row is pinned to is decided by the
+    /// search ORDER alone, and it is this one, which is why a stored row must be built here.</para>
+    /// </summary>
+    private const UnfixedTypoWorthRule unfixed_typo_worth_rule = UnfixedTypoWorthRule.MehCredit;
+
+    /// <summary>
     /// The stored row a client of the OLDEST era would have produced for this run.
     ///
     /// <para>Every era axis is a parameter, because every one of them moved while the score table was
     /// already filling and the table therefore holds rows from both sides of each: the typo rule
     /// (backlog 155), the spacebar and the rate windows (backlog 156), combo restore (backlog 157),
-    /// what an off-time press cost (backlog 199) and what a corrected typo was worth (backlog 210).
+    /// what an off-time press cost (backlog 199), what a corrected typo was worth (backlog 210) and
+    /// what an UNCORRECTED one was worth (backlog 213).
     /// A synthetic row for a later population has to be built under the rule that judged it, or it is
     /// a row no client ever produced.</para>
     /// </summary>
@@ -207,9 +221,10 @@ public class ScoreRecalcTest
         TypoRule typoRule = TypoRule.ImmediateMiss,
         OffTimeRule offTimeRule = off_time_rule,
         CorrectionCreditRule creditRule = correction_credit_rule,
+        UnfixedTypoWorthRule worthRule = unfixed_typo_worth_rule,
         params Mod[] mods)
     {
-        var old = TypeBeatReplayScorer.Score(map, mods, replay, typoRule, comboRule, spaceRule, rateRule, offTimeRule: offTimeRule, creditRule: creditRule);
+        var old = TypeBeatReplayScorer.Score(map, mods, replay, typoRule, comboRule, spaceRule, rateRule, offTimeRule: offTimeRule, creditRule: creditRule, worthRule: worthRule);
 
         var statistics = ToWire(old.Statistics);
 
@@ -1400,7 +1415,7 @@ public class ScoreRecalcTest
     /// <c>era.Space</c> would silently stop sweeping the axis it claims to sweep.
     /// </summary>
     private static TypeBeatReplayAccount ScoreUnder(IBeatmap map, Replay replay, SearchedEra era, params Mod[] mods)
-        => TypeBeatReplayScorer.Score(map, mods, replay, era.Typo, era.Combo, era.Space, era.Rate, offTimeRule: era.OffTime, creditRule: era.Credit);
+        => TypeBeatReplayScorer.Score(map, mods, replay, era.Typo, era.Combo, era.Space, era.Rate, offTimeRule: era.OffTime, creditRule: era.Credit, worthRule: era.Worth);
 
     /// <summary>Every cell on target except the SPACE, 2500 ms late: outside even the Meh window.</summary>
     private static Replay LateSpaceReplay()
@@ -1610,7 +1625,29 @@ public class ScoreRecalcTest
             Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
             Assert.That(result.Reproduced, Is.True);
             Assert.That(result.OldRuleStatistics!.GetValueOrDefault("good"), Is.EqualTo(1));
-            Assert.That(result.Moves, Is.False, "today's typo rule already judged it, so it has nothing left to be repriced by");
+
+            // THE TYPO AXIS HAS NOTHING LEFT TO REPRICE, which is what this test has always said,
+            // and it is now stated on the quantities that axis moves rather than on `Moves`:
+            // today's typo rule already judged this row, so the varied arm re-derives the same
+            // account, and the reproduce arm holds the worth era, so the total is the row's own.
+            Assert.That(result.NewStatistics, Is.EquivalentTo(result.OldRuleStatistics!));
+            Assert.That(result.NewMaxCombo, Is.EqualTo(stored.MaxCombo));
+            Assert.That(result.NewTotalScore, Is.EqualTo(stored.TotalScore));
+            Assert.That(result.NewCompletion, Is.EqualTo(stored.Completion).Within(1e-12));
+            Assert.That(result.NewRank, Is.EqualTo(stored.Rank));
+
+            // WHAT DOES MOVE IS ACCURACY, AND ONLY ACCURACY (backlog 213). The server's contract
+            // weights the `good` key at a miss's 0 unconditionally, where this row was played (and
+            // stored) under the 50 backlog 124 gave it, so re-reading the row through today's
+            // contract costs it exactly the Meh credit those cells used to carry. Derived from the
+            // row's own dictionaries rather than pasted: one cell's lost 50, over the map's total
+            // base score of 300 per cell.
+            int cells = Typebeat.Web.Scoring.ScoringContract.CountAccuracyAffecting(WireCounts.Parse(stored.MaximumStatisticsJson));
+            double foldCost = 50.0 * storedStatistics.GetValueOrDefault("good") / (300.0 * cells);
+
+            Assert.That(foldCost, Is.GreaterThan(0), "the fixture only means anything if there is a cell to reprice");
+            Assert.That(stored.Accuracy - result.NewAccuracy, Is.EqualTo(foldCost).Within(1e-12));
+            Assert.That(result.Moves, Is.True, "backlog 213 reprices this row's accuracy, and that is the whole of the move");
         });
     }
 
@@ -1879,7 +1916,10 @@ public class ScoreRecalcTest
     /// time, to sixteen, on the axis that reaches the most rows of all: this run never strikes a
     /// character off the ladder, so the off-time arms grade it identically too. Backlog 210 doubled
     /// it a fourth time, to thirty-two: this run has no typo to correct, so the credit arms agree as
-    /// well. That costs nothing
+    /// well. Backlog 213 doubled it a fifth time, to sixty-four, and that one is not about this run
+    /// at all: the worth axis moves accuracy and <c>total_score</c> and neither of the two quantities
+    /// this gate compares, so its two arms agree on EVERY row there is, not merely on runs shaped
+    /// like this one. That costs nothing
     /// precisely because they agree, and this test asserts the agreement rather than asserting the
     /// pin alone.</para>
     /// </summary>
@@ -1902,24 +1942,29 @@ public class ScoreRecalcTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(reproducing, Has.Count.EqualTo(32),
-                "the rate axis is inert on a row with no rate mod, the combo AND typo axes on a run with no typo, the off-time axis on a run with no mistimed press, and the credit axis on a run with no typo to correct, so all thirty-two of their arms reproduce");
+            Assert.That(reproducing, Has.Count.EqualTo(64),
+                "the rate axis is inert on a row with no rate mod, the combo AND typo axes on a run with no typo, the off-time axis on a run with no mistimed press, the credit axis on a run with no typo to correct, and the worth axis on every row there is, so all sixty-four of their arms reproduce");
             Assert.That(reproducing.Select(x => x.era.Space), Is.All.EqualTo(SpaceTimingRule.Untimed), "the SPACE axis is the one this row can prove");
+            Assert.That(reproducing.Select(x => x.account.TotalScore).Distinct().Count(), Is.EqualTo(1),
+                "and this run leaves no wrong character standing, so even total_score, which the worth axis DOES move, is the same under every arm here");
             Assert.That(reproducing.Select(x => x.account.MaxCombo).Distinct().Count(), Is.EqualTo(1), "and the reproducing arms agree, which is why the choice cannot matter");
 
-            Assert.That(reproducing.Count(x => x.era.Typo == TypoRule.ImmediateMiss), Is.EqualTo(16),
+            Assert.That(reproducing.Count(x => x.era.Typo == TypoRule.ImmediateMiss), Is.EqualTo(32),
                 "backlog 158 doubled the ambiguity rather than resolving any: a run with no typo reads the same under both rules");
-            Assert.That(reproducing.Count(x => x.era.Typo == TypoRule.Deferred), Is.EqualTo(16));
-            Assert.That(reproducing.Count(x => x.era.OffTime == OffTimeRule.BreaksCombo), Is.EqualTo(16),
+            Assert.That(reproducing.Count(x => x.era.Typo == TypoRule.Deferred), Is.EqualTo(32));
+            Assert.That(reproducing.Count(x => x.era.OffTime == OffTimeRule.BreaksCombo), Is.EqualTo(32),
                 "and backlog 199 doubled it again: a run that never strikes a character off the ladder reads the same under both off-time rules");
-            Assert.That(reproducing.Count(x => x.era.OffTime == OffTimeRule.MehHit), Is.EqualTo(16));
-            Assert.That(reproducing.Count(x => x.era.Credit == CorrectionCreditRule.Full), Is.EqualTo(16),
+            Assert.That(reproducing.Count(x => x.era.OffTime == OffTimeRule.MehHit), Is.EqualTo(32));
+            Assert.That(reproducing.Count(x => x.era.Credit == CorrectionCreditRule.Full), Is.EqualTo(32),
                 "and backlog 210 a fourth time: a run with no typo has no correction for the cap to reach, so both credit arms grade it identically");
-            Assert.That(reproducing.Count(x => x.era.Credit == CorrectionCreditRule.Capped), Is.EqualTo(16));
+            Assert.That(reproducing.Count(x => x.era.Credit == CorrectionCreditRule.Capped), Is.EqualTo(32));
+            Assert.That(reproducing.Count(x => x.era.Worth == UnfixedTypoWorthRule.MehCredit), Is.EqualTo(32),
+                "and backlog 213 a fifth time, on the one axis whose arms agree on every row: the gate compares statistics and max_combo, and the fold moves neither");
+            Assert.That(reproducing.Count(x => x.era.Worth == UnfixedTypoWorthRule.Nothing), Is.EqualTo(32));
 
             Assert.That(result.ReproducedUnderEra, Is.EqualTo(reproducing[0].era), "the pin is the FIRST reproducing arm in the search order");
             Assert.That(result.ReproducedUnderEra,
-                Is.EqualTo(new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred, OffTimeRule.BreaksCombo, CorrectionCreditRule.Full)),
+                Is.EqualTo(new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred, OffTimeRule.BreaksCombo, CorrectionCreditRule.Full, UnfixedTypoWorthRule.MehCredit)),
                 "which is the combination a real client actually shipped (the 2026-08-13 release up to backlog 199), preferred over the corners no build ever offered");
         });
     }
@@ -1941,8 +1986,8 @@ public class ScoreRecalcTest
 
         Assert.Multiple(() =>
         {
-            // No spaces, no rate mod and no typo, so the search would have had a free choice of all
-            // sixteen.
+            // No spaces, no rate mod and no typo, so the search would have had a free choice of
+            // every one of the hundred and twenty-eight combinations.
             foreach (var era in Recalculation.EraSearchFor(stored))
             {
                 var account = ScoreUnder(map, replay, era);
@@ -2149,7 +2194,7 @@ public class ScoreRecalcTest
             comboRule: ComboRestoreRule.OnFix,
             typoRule: TypoRule.Deferred);
 
-        var judgedUnder = new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred, OffTimeRule.BreaksCombo, CorrectionCreditRule.Full);
+        var judgedUnder = new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred, OffTimeRule.BreaksCombo, CorrectionCreditRule.Full, UnfixedTypoWorthRule.MehCredit);
 
         var result = Recalculation.Run(stored, Decoded(map, replay));
         var plan = WritePlan.Build(new[] { result }, RecalcMode.Reproduce, new Dictionary<UnreplayableCase, UnreplayablePolicy>(), filtered: false);
@@ -2338,13 +2383,13 @@ public class ScoreRecalcTest
         {
             Assert.That(stored.ProvablyJudgedUnderTheDeferredTypoRule, Is.True, "the fixture only means anything if the key is there");
 
-            Assert.That(Recalculation.EraSearch, Has.Count.EqualTo(64), "the whole space is six axes wide");
-            Assert.That(candidates, Has.Count.EqualTo(32), "a proved row is offered half of it");
+            Assert.That(Recalculation.EraSearch, Has.Count.EqualTo(128), "the whole space is seven axes wide");
+            Assert.That(candidates, Has.Count.EqualTo(64), "a proved row is offered half of it");
             Assert.That(candidates.Select(e => e.Typo), Is.All.EqualTo(TypoRule.Deferred), "and only the arm its key proves");
 
             Assert.That(candidates.Select(e => e with { Typo = TypoRule.ImmediateMiss }),
                 Is.EquivalentTo(Recalculation.EraSearch.Where(e => e.Typo == TypoRule.ImmediateMiss)),
-                "pinning removes an axis, it does not remove a combination of the other five");
+                "pinning removes an axis, it does not remove a combination of the other six");
 
             Assert.That(candidates[0], Is.EqualTo(Recalculation.DefaultEraFor(stored)), "the row's starting point is the first thing it is offered");
             Assert.That(Recalculation.DefaultEraFor(stored), Is.Not.EqualTo(Recalculation.DefaultEra), "which is NOT the table-wide default, because the key moved it");

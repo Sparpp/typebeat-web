@@ -23,7 +23,8 @@ public class FourTierEraTest
 {
     /// <summary>
     /// TODAY'S rules, stated directly rather than through a play: <c>great</c> is the whole cell at
-    /// 300, <c>ok</c> 100, <c>meh</c> 50, and <c>good</c> (the uncorrected typo) 50, against a
+    /// 300, <c>ok</c> 100, <c>meh</c> 50, and <c>good</c> (the uncorrected typo) 0 since backlog
+    /// 213, against a
     /// per-cell maximum of 300. This is the arm the era discriminator falls to for anything that is
     /// not stamped as four-tier, including a malformed dictionary.
     /// </summary>
@@ -43,10 +44,17 @@ public class FourTierEraTest
             Assert.That(allOk.Accuracy, Is.EqualTo(100d / 300).Within(1e-12));
             Assert.That(allMeh.Accuracy, Is.EqualTo(50d / 300).Within(1e-12));
 
-            // The typo is re-weighted to the meh value, so it still pays the most accuracy a judged
-            // cell can pay, and it is still NOT typed, so it still costs rank exactly as a miss does.
-            Assert.That(allTypo.Accuracy, Is.EqualTo(allMeh.Accuracy));
+            // The typo is re-weighted to a MISS's 0 since backlog 213, where backlog 124 had put it
+            // at the meh's 50: an uncorrected typo is a miss, so it pays the whole cell in accuracy
+            // and not merely the most a judged cell could pay. It is still NOT typed, so it still
+            // costs rank exactly as a miss does, which is the half backlog 126 had already done.
+            var allMiss = ScoringContract.Recompute(new Dictionary<string, int> { ["miss"] = 15 }, greatMax, 0);
+
+            Assert.That(allTypo.Accuracy, Is.Zero);
+            Assert.That(allTypo.Accuracy, Is.EqualTo(allMiss.Accuracy));
+            Assert.That(allTypo.Accuracy, Is.LessThan(allMeh.Accuracy), "the fold is a real drop, not a relabelling");
             Assert.That(allTypo.Completion, Is.Zero);
+            Assert.That(allTypo.Completion, Is.EqualTo(allMiss.Completion));
             Assert.That(allTypo.Rank, Is.EqualTo("D"));
 
             // ...and all three quality tiers ARE typed, so any of them alone is a full completion.

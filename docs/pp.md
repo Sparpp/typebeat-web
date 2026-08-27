@@ -32,19 +32,26 @@ Factor by factor, in descending priority:
 * **SR_eff^2.00**: difficulty is the primary driver. SR_eff is the map's star rating
   **recomputed at the play's clock rate** for DT/HT and **on the map the conversion mods produced**
   for LT (see mods below), not the base SR.
-* **cleanliness^10**: dropped cells. The raw COUNT carries a power, not the ratio, since the
+* **cleanliness^10**: cells the play did not type right. Since the backlog-213 amendment that is
+  `miss + good`, i.e. a cell nobody finished PLUS one finished with the wrong character and never
+  corrected; before it, `miss` alone. The raw COUNT carries a power, not the ratio, since the
   backlog-97 amendment, and that power has been the declared constant `count_power` since the
   backlog-101 one. It stands at 1.6. That makes this a steep curve and a CLAMPED one: the base
   `1 - miss^1.6/notes` reaches zero at `miss = notes^(1/1.6)`, i.e. 49 misses on a 500-note map, and
   `max(0, ...)` holds it there rather than letting it go negative. Past that point a play earns
   exactly nothing from any factor, and well before it the term is already negligible. A give-up run
   (e.g. 900+ misses) collapses to exactly 0.
-* **typos^4**: wrong keypresses, priced separately since the backlog-89 amendment, and with its
-  own count under the same power since the backlog-97 one. Still the cheaper of the two failures
+* **typos^4**: wrong keypresses the play RECOVERED from, priced separately since the backlog-89
+  amendment, and with its own count under the same power since the backlog-97 one. Since the
+  backlog-213 amendment that is `max(0, combo_break - good)`: the keypresses that produced an
+  uncorrected cell leave this term, because that cell is now priced by cleanliness and one flub must
+  be priced ONCE. Still the cheaper of the two failures
   (4 against 10), because a stumble you recover from is not the same failure as never typing the
   cell at all, and because the count sits in its denominator too, which pushes its cliff out to the
   positive root of `m^1.6 - m - notes = 0` (52 typos at 500 notes) rather than to
-  `notes^(1/1.6)`.
+  `notes^(1/1.6)`. The two terms therefore price DISJOINT populations of events, which they did not
+  before 213: an uncorrected typo used to be charged to this term through its keypress while
+  completion already charged the cell as a miss.
 * **`count_power`** is where a rebalance of the two penalties is made, rather than the exponents 10
   and 4: it alone decides at what count each term reaches its cliff, and how that cliff scales with
   map size. The backlog-101 amendment records the two arguments that were used to set it, at 1.2;
@@ -74,15 +81,26 @@ Factor by factor, in descending priority:
 **Definitions (pinned to the score row):**
 
 * `acc` is standard osu hit accuracy, over the three quality tiers a cell can land in:
-  `(300·great + 100·ok + 50·meh + 50·good) / (300·notes)`. This is the stored `accuracy` column
-  for a completed play. (`good` is the uncorrected typo, re-weighted to the `meh` value. Backlog
+  `(300·great + 100·ok + 50·meh + 0·good) / (300·notes)`. This is the stored `accuracy` column
+  for a completed play. (`good` is the uncorrected typo. It was re-weighted to the `meh` value of
+  50 from backlog 124 until the backlog-213 amendment, which takes it to a miss's 0; the cell's
+  MAXIMUM stays a `great`, so the denominator does not move and the re-weight is paid in full.
+  Backlog
   133 made the ladder four tiers deep, `perfect` 300 and `great` 200, and backlog 147 reverted it;
   a row stored while that shipped is read on the old weights, keyed off its own
   `maximum_statistics`. See `ScoringContract.JudgedUnderTheFourthTier`.)
 * `notes = perfect + great + ok + meh + good + miss` from `statistics`. **`ignore_hit` is
   excluded**; the line containers would otherwise inflate `notes` and dilute every factor.
   `perfect` is on the list only for those four-tier rows, and no play judged today can produce
-  one.
+  one. **The backlog-213 amendment does NOT change this**: `good` stays in `notes`, because the
+  cell is one cell of the map however it was typed.
+* `miss = miss + good` from `statistics`, the cleanliness term's count, since the backlog-213
+  amendment. Read straight off the `miss` key before it.
+* `typos = max(0, combo_break - good)` from `statistics`, the typo term's count, since the same
+  amendment. Read straight off `combo_break` before it. **The clamp is load-bearing, not
+  defensive**: the two counts arrive off the wire independently, so `good` can exceed `combo_break`
+  on a row stored before the mistype stat existed at all (no `combo_break` key, backlog 72) and on
+  any tamper-shaped dictionary, and a negative count under the fractional `count_power` is NaN.
 * `maxcombo` is the stored `max_combo`; the theoretical max equals `notes` for a typing map.
 
 ## Eligibility
@@ -999,3 +1017,84 @@ on a negative base is non-real.
 
 **`VERSION` bumps to 17.** Every stored row the change values differently is repriced by
 `PpBackfill` at the next boot, reading only columns; no migration is needed.
+
+## Amendment (2026-08-27): an uncorrected typo is a MISS (backlog 213)
+
+> No constant moves and neither does the SHAPE. What moves is the DERIVATION of two of the three
+> counts the formula takes from a play's `statistics`, so the 2026-08-14 amendment above is not
+> superseded and every number it states is still in force.
+
+A cell the player finished with the WRONG character and never went back for is stored under its own
+key, `good` (the game's `TypeBeatResultMapping.UNFIXED_TYPO`). Backlog 124 gave it that key so such
+a cell could be told apart from one the line simply ran out of time on, and priced the difference:
+50 of 300 in accuracy, and this file's TYPO term rather than its cleanliness term. The field report
+that ended that reading was a stored score displaying MISS 0 while carrying `good: 2`: two
+characters the player never typed right, appearing in no column at all and costing half what
+dropping them would have.
+
+The two events say the same thing about the play, which is that the character is not there. So they
+are priced the same way from here on:
+
+```
+BEFORE:  misses = statistics.miss
+         typos  = statistics.combo_break
+
+AFTER:   misses = statistics.miss + statistics.good
+         typos  = max(0, statistics.combo_break - statistics.good)
+```
+
+**ONE FLUB IS PRICED BY EXACTLY ONE TERM**, which is the whole of the second line and is not a
+tidying of the first. Every uncorrected typo cell implied a wrong KEYPRESS, and that keypress is
+already in `combo_break`; charging the cleanliness term for the cell AND the typo term for the
+keypress would price one mistake twice, at exponent 10 and again at 4. A CORRECTED typo is
+untouched and stays a typo event, because its cell resolved as an ordinary hit and never reached
+the `good` key at all, so nothing subtracts it. Fix it and it stays a typo; leave it and it becomes
+a miss.
+
+**THE CLAMP ON THE SUBTRACTION IS LOAD-BEARING, NOT DEFENSIVE.** The two counts arrive off the wire
+independently, so `good` can exceed `combo_break` on a row stored before the mistype stat existed at
+all (backlog 72: no `combo_break` key, but `good` cells aplenty) and on any tamper-shaped
+dictionary. A negative count goes into `Math.Pow(typos, count_power)` under a FRACTIONAL power and
+comes back NaN, not merely wrong, which is the same reason the counts are clamped non-negative
+before they reach the powers at all.
+
+`notes` is UNTOUCHED and `good` stays in it: the cell is one cell of the map however it was typed,
+and dropping it would shorten the map pp thinks was played, hardening both penalty terms and
+inflating the combo ratio. `maxcombo`, the mod multipliers, the Half Time mirror multiplier,
+eligibility and the aggregation are all untouched too.
+
+Both derivations reduce to the pre-213 ones at `good = 0`, so a play with no uncorrected typo in it
+is priced bit-identically and only rows carrying the key move, downwards:
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=10, good=5, combo_break=20` | `0.542001` | `0.479586` | -11.5% |
+| `notes=400, miss=43, good=7, combo_break=20` | `0.052257` | `0.033074` | -36.7% |
+| `notes=100, miss=0, good=2, combo_break=5` | `0.761979` | `0.683689` | -10.3% |
+| `notes=500, miss=60, good=0, combo_break=80` | `0.008341` | `0.008341` | +0% |
+| `notes=500, miss=0, good=0, combo_break=0` | `1.000000` | `1.000000` | +0% |
+
+(The figures are the two penalty terms multiplied together, which is the only part of the product
+this amendment can move.)
+
+**THE WIRE DOES NOT MOVE, AND THAT IS THE SHAPE OF THE WHOLE CHANGE.** The seal still writes the
+same key, so nothing about submission, storage or the replay format changes, stored rows stay
+comparable with new ones, and the typo-versus-timeout distinction survives in the DATA even though
+nothing prices it any more. Every CONSUMER reclassifies instead, which is the pattern backlog 140
+used for the mistype's `combo_break` key. Outside this file that means the accuracy weight of the
+`good` key drops from 50 to 0 (`ScoringContract.BaseScore`, the game's
+`TypeBeatScoreProcessor.GetBaseScoreForResult` under the new `UnfixedTypoWorthRule`, and
+`typebeat-core.js`'s `HIT_BASE_SCORE`), and the MISS column of every display becomes `miss + good`
+so the shown columns sum to the judged cell count again.
+
+COMPLETION and therefore RANK are deliberately untouched, and the fold found that half already
+done: backlog 126 took an uncorrected typo out of completion's numerator, so it has cost the grade
+exactly as a miss does ever since. That is why accuracy could be re-weighted without touching
+`ScoringContract.CountsAsTyped` or `RankFromCompletion`.
+
+**`VERSION` bumps to 18.** Every stored row carrying a `good` key is repriced, downwards, by
+`PpBackfill`'s sweep at the next boot; no migration is needed, since the sweep reads only columns
+that already exist and the fold changes no stored value but `pp` and `pp_version`. A row's stored
+`accuracy`, `total_score`, `completion` and `rank` do NOT move: the accuracy re-weight applies to
+what a client computes and to what the contract recomputes at SUBMIT time, and nothing recomputes a
+settled row's accuracy.

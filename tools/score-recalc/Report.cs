@@ -55,7 +55,8 @@ public static class Report
             output.WriteLine();
             output.WriteLine("judged under                 TypoRule.Deferred + ComboRestoreRule.OnFix + SpaceTimingRule.Untimed");
             output.WriteLine("                             + RateWindowRule.ScaledByRate + OffTimeRule.MehHit");
-            output.WriteLine("                             + CorrectionCreditRule.Capped (all of today's rules)");
+            output.WriteLine("                             + CorrectionCreditRule.Capped + UnfixedTypoWorthRule.Nothing");
+            output.WriteLine("                             (all of today's rules)");
             output.WriteLine("total_score priced with      today's mod multipliers");
             output.WriteLine();
             output.WriteLine("What that costs, deliberately, and what to look for in the numbers below:");
@@ -263,8 +264,11 @@ public static class Report
     /// population, so the line for the all-live combination growing run over run is the expected
     /// reading, and that line staying at zero while new rows appear would mean the search is not
     /// reaching them. A COMBO-RULE OR TYPO-RULE PIN IS VISIBLE HERE RATHER THAN SILENT for the same
-    /// reason: the combination is spelled out on all six axes, so a row reconstructed onto today's
-    /// combo rule, today's typo rule, today's off-time rule or today's correction cap says so.</para>
+    /// reason: the combination is spelled out on all seven axes, so a row reconstructed onto today's
+    /// combo rule, today's typo rule, today's off-time rule or today's correction cap says so. The
+    /// WORTH axis is spelled out too, and reads as the stored arm on all but the rows a later
+    /// candidate carried onto the live one: it moves neither quantity the gate compares, so nothing
+    /// can reconstruct it (see Recalculation.SearchedEra).</para>
     ///
     /// <para>Rows no combination reproduced are NOT here. They have no era, they are counted as
     /// unexplained below, and that is the property worth checking: a search that always found an
@@ -276,7 +280,8 @@ public static class Report
 
         output.WriteLine($"  of these, era proved by    {searched.Count,-6}  the arms their own keys start them at did not re-derive");
         output.WriteLine("  reconstruction                     them, so each remaining combination of the spacebar, rate-window,");
-        output.WriteLine("                                     combo-restore, typo, off-time and correction-credit axes was tried and pinned to");
+        output.WriteLine("                                     combo-restore, typo, off-time, correction-credit and unfixed-typo-worth");
+        output.WriteLine("                                     axes was tried and pinned to");
         output.WriteLine("                                     the one that reproduced it exactly. A row whose `good` key PROVES its typo");
         output.WriteLine("                                     era is not searched on that axis: the proof wins. No release time is");
         output.WriteLine("                                     used anywhere here, since a client updates when its player updates");
@@ -289,7 +294,7 @@ public static class Report
                                       .OrderByDescending(g => g.Count())
                                       .ThenBy(g => g.Key.ToString(), StringComparer.Ordinal))
         {
-            output.WriteLine($"      {group.Key,-160} {group.Count(),5}");
+            output.WriteLine($"      {group.Key,-200} {group.Count(),5}");
         }
     }
 

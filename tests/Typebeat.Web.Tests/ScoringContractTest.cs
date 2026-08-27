@@ -57,13 +57,16 @@ public class ScoringContractTest
     }
 
     /// <summary>
-    /// The uncorrected-typo key (backlog 124 and 126). Held against the two things it must sit
-    /// between: a <c>meh</c>, which is a cell TYPED (late, but right), and a <c>miss</c>, which is a
-    /// cell the line ran out of time on. The typo weighs the same as the meh for accuracy and costs
-    /// the same as the miss for completion, and stays its own key so pp can tell it from both.
+    /// The uncorrected-typo key (backlog 124 and 126, folded by 213). Held against the two things it
+    /// used to sit between: a <c>meh</c>, which is a cell TYPED (late, but right), and a
+    /// <c>miss</c>, which is a cell the line ran out of time on. It cost completion like the miss
+    /// from backlog 126 and accuracy like the meh from backlog 124; since backlog 213 it costs BOTH
+    /// like the miss, because the player did not put that character in that cell either way. It
+    /// keeps its own key, which is what lets the site show it, old rows stay comparable and pp take
+    /// the keypress that produced it back out of the typo term.
     /// </summary>
     [Test]
-    public void UncorrectedTypos_CostCompletionLikeAMiss_AndAccuracyLikeAMeh()
+    public void UncorrectedTypos_CostCompletionAndAccuracyLikeAMiss()
     {
         var typo = ScoringContract.Recompute(Dict(("great", 9), ("good", 1)), Dict(("great", 10)), maxCombo: 9);
         var meh = ScoringContract.Recompute(Dict(("great", 9), ("meh", 1)), Dict(("great", 10)), maxCombo: 10);
@@ -73,15 +76,22 @@ public class ScoringContractTest
         {
             Assert.That(typo.StatisticsValid, Is.True);
 
-            // Accuracy: (300·9 + 50) / 3000, i.e. the meh weight and NOT the base ruleset's 200 for
-            // `good`. The client re-weights the tier, and this table has to carry the same number.
-            Assert.That(typo.Accuracy, Is.EqualTo(2750.0 / 3000.0).Within(1e-12));
-            Assert.That(typo.Accuracy, Is.EqualTo(meh.Accuracy).Within(1e-12));
+            // Accuracy: (300·9 + 0) / 3000, i.e. the MISS weight since backlog 213, where backlog
+            // 124 put it at the meh's 50 and the base ruleset would give `good` 200. The cell's
+            // maximum stays a great, so the denominator does not move and the whole 300 is paid.
+            Assert.That(typo.Accuracy, Is.EqualTo(2700.0 / 3000.0).Within(1e-12));
+            Assert.That(typo.Accuracy, Is.EqualTo(miss.Accuracy).Within(1e-12));
+
+            // The fold is a real drop and not a relabelling: exactly the meh credit it used to get.
+            Assert.That(meh.Accuracy - typo.Accuracy, Is.EqualTo(50.0 / 3000.0).Within(1e-12));
 
             // Completion: 9 of 10 typed, exactly as the miss reads, and NOT the meh's 10 of 10.
+            // UNTOUCHED by backlog 213, which found this half done: backlog 126 took the typo out of
+            // the numerator, so rank fell for it long before accuracy did.
             Assert.That(typo.Completion, Is.EqualTo(0.9).Within(1e-12));
             Assert.That(typo.Completion, Is.EqualTo(miss.Completion).Within(1e-12));
             Assert.That(typo.Rank, Is.EqualTo("A"));
+            Assert.That(typo.Rank, Is.EqualTo(miss.Rank));
             Assert.That(meh.Completion, Is.EqualTo(1.0).Within(1e-12));
             Assert.That(meh.Rank, Is.EqualTo("X"));
 
@@ -89,15 +99,22 @@ public class ScoringContractTest
             // completion 0 and a D, not 1-over-nothing.
             var allTypos = ScoringContract.Recompute(Dict(("good", 10)), Dict(("great", 10)), maxCombo: 0);
             Assert.That(allTypos.StatisticsValid, Is.True, "one judgement per cell, so still in bounds");
+            Assert.That(allTypos.Accuracy, Is.Zero, "and it is worth nothing, so such a run is accuracy 0 as well");
             Assert.That(allTypos.Completion, Is.Zero);
             Assert.That(allTypos.Rank, Is.EqualTo("D"));
 
-            // ...and pp still counts it as a note that is not a miss, which is the whole reason it
-            // is not simply stored as a miss.
+            // ...and pp counts it as a note that IS a miss (backlog 213), taking the keypress that
+            // produced it back out of the typo term so one flub is priced by exactly one term.
             var counts = PerformancePoints.CountNotes(Dict(("great", 9), ("good", 1), ("combo_break", 1)));
-            Assert.That(counts.Notes, Is.EqualTo(10));
-            Assert.That(counts.Misses, Is.Zero);
-            Assert.That(counts.Typos, Is.EqualTo(1));
+            Assert.That(counts.Notes, Is.EqualTo(10), "the cell is still one cell of the map");
+            Assert.That(counts.Misses, Is.EqualTo(1));
+            Assert.That(counts.Typos, Is.Zero, "the one wrong keypress was never corrected, so it is not a typo event any more");
+
+            // The keypress stays a typo when the player DID go back for it: the cell then resolves
+            // as an ordinary hit and never reaches the `good` key, so nothing subtracts it.
+            var corrected = PerformancePoints.CountNotes(Dict(("great", 9), ("ok", 1), ("combo_break", 1)));
+            Assert.That(corrected.Misses, Is.Zero);
+            Assert.That(corrected.Typos, Is.EqualTo(1));
         });
     }
 

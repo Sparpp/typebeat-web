@@ -1557,11 +1557,20 @@
     // ---------------------------------------------------------------------------
 
     // ScoreProcessor.GetBaseScoreForResult for the five results a type!beat cell can take. `good`
-    // is the uncorrected-typo tier and is 50, NOT the base game's 200: the client re-weights it
-    // (TypeBeatScoreProcessor.GetBaseScoreForResult) so a typo pays the most accuracy a judged cell
-    // can pay, i.e. exactly what it paid while backlog 124 stored it as a `meh`. The server's
-    // ScoringContract.BaseScore carries the same 50.
-    const HIT_BASE_SCORE = { great: 300, ok: 100, meh: 50, good: 50, miss: 0 };
+    // is the uncorrected-typo tier and is 0 since backlog 213, NOT the base game's 200 and no
+    // longer the 50 backlog 124 gave it: an uncorrected typo IS a miss, because the player did not
+    // put that character in that cell. The desktop client re-weights the tier the same way
+    // (TypeBeatScoreProcessor.GetBaseScoreForResult) and the server's ScoringContract.BaseScore
+    // carries the same 0; all three must move together or a browser score and a desktop score of
+    // the same run stop agreeing on the shared leaderboards.
+    //
+    // UNCONDITIONAL here, where the desktop client's re-weight is era-gated by
+    // UnfixedTypoWorthRule. The browser has no era axis at all (it only plays live, and writes no
+    // replay to re-derive), which is the same reason it judges on syllable spans unconditionally.
+    //
+    // MAX_RESULT_BASE_SCORE below does not move with it: the cell's maximum is still a Great, so
+    // the cell stays in the accuracy fraction and pays 0 of 300 rather than quietly leaving it.
+    const HIT_BASE_SCORE = { great: 300, ok: 100, meh: 50, good: 0, miss: 0 };
 
     // Every cell judgement declares MaxResult = Great (TypeBeatCharJudgement), which is what both
     // the accuracy denominator (currentMaximumBaseScore) and the combo-portion weight

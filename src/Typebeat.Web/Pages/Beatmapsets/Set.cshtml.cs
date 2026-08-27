@@ -494,12 +494,18 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         public int Meh => Statistics.Value<int?>("meh") ?? 0;
 
         /// <summary>
-        /// Characters the song scrolled past untyped, or null for a play with none. Nullable, unlike
-        /// the quality tiers above, so that it renders BLANK at zero the way
+        /// Characters the play did not type right, or null for a play with none: cells the song
+        /// scrolled past untyped PLUS cells left holding a wrong character (the <c>good</c> key),
+        /// folded together by <see cref="JudgementDisplay.MissColumn"/> since backlog 213. Nullable,
+        /// unlike the quality tiers above, so that it renders BLANK at zero the way
         /// <see cref="Typos"/> beside it always has (backlog 140): a clean run showing "0 misses"
         /// next to an empty typo cell read as two different kinds of nothing.
+        ///
+        /// <para>With the fold, <see cref="Great"/> + <see cref="Ok"/> + <see cref="Meh"/> + this
+        /// column sum to the map's judged cell count, which they had not done since backlog 124 gave
+        /// the uncorrected typo a key nothing displayed.</para>
         /// </summary>
-        public int? Miss => Statistics.Value<int?>("miss") is int miss and > 0 ? miss : null;
+        public int? Miss => JudgementDisplay.MissColumn(Statistics);
 
         /// <summary>
         /// TYPOS: wrong KEYPRESSES, one per press, carried on the wire under the <c>combo_break</c>
@@ -512,14 +518,16 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         /// <para>This is the ONE typo number the site shows (backlog 140). The other one used to sit
         /// beside it: the count of cells left holding a wrong character at the seal, the <c>good</c>
         /// key. Every such cell implied a wrong keypress, so this event count already covers it, and
-        /// the seal-state count stopped being a surfaced statistic on both sides at once. The
-        /// mechanics it names are untouched, an uncorrected typo still costs accuracy, completion and
-        /// rank exactly as it did (see <c>ScoringContract</c>); only the accounting shown to players
-        /// collapsed to one number. Nothing on the wire moved, so every stored row stays readable.</para>
+        /// the seal-state count stopped being a surfaced statistic on both sides at once. Since
+        /// backlog 213 that cell count is not invisible either: it is in <see cref="Miss"/>, where
+        /// the character the player never typed right belongs.</para>
         ///
-        /// <para>Shown BESIDE Miss and never folded into it: a miss is a character the song left
-        /// behind, a typo is a key the player got wrong, and pp prices the two by different terms
-        /// (<see cref="PerformancePoints.CountNotes"/>, whose <c>Typos</c> is this same key).</para>
+        /// <para>NOT ITSELF FOLDED, and a different statement from the one beside it: this counts
+        /// wrong KEYPRESSES as events, the corrected ones included, where <see cref="Miss"/> counts
+        /// CELLS. pp does subtract the uncorrected ones from its typo term so that one flub is
+        /// priced by exactly one term (<see cref="PerformancePoints.CountNotes"/>), but that is
+        /// pricing and this is accounting: a player who mistyped nine characters and fixed five made
+        /// nine mistakes.</para>
         /// </summary>
         public int? Typos => Statistics.Value<int?>("combo_break");
 

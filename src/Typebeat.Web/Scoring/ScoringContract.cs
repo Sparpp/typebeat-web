@@ -74,25 +74,40 @@ namespace Typebeat.Web.Scoring;
 /// a CELL STATE, not the typo count: since backlog 140 the number players are shown is
 /// <c>combo_break</c> below, counting wrong keypresses, and this key is no longer surfaced anywhere
 /// (every cell left holding a wrong character implied one of those keypresses, so the event count
-/// covers it). Nothing here moved with that: the key still arrives, still weighs 50, still costs
-/// completion and rank, and every stored row stays comparable. The client
+/// covers it). Nothing here moved with that: the key still arrives, still carries a weight, still
+/// costs completion and rank, and every stored row stays comparable. The client
 /// picked it because a cell may only ever resolve as one of great/ok/meh/good/miss (osu refuses
 /// any other result for a Great-max, Miss-min judgement) and the other four are the three quality
 /// tiers plus the seal's miss; see the game's <c>TypeBeatResultMapping.UNFIXED_TYPO</c>. Two
 /// consequences here, both deliberate:</para>
 /// <list type="bullet">
-/// <item>Its base score is <b>50</b>, not the base ruleset's 200. The client re-weights the tier
-/// (<c>TypeBeatScoreProcessor.GetBaseScoreForResult</c>) so a typo costs the most accuracy a judged
-/// cell can cost, i.e. exactly what it cost while it was stored as <c>meh</c>. This table has to
-/// carry the same number or every recomputed accuracy would come out above what the client showed.
-/// A type!beat map can never produce a genuine <c>good</c>, so nothing else is affected.</item>
+/// <item>Its base score is <b>0</b> since backlog 213, and was <b>50</b> from backlog 124 until
+/// then; it has never been the base ruleset's 200. The client re-weights the tier
+/// (<c>TypeBeatScoreProcessor.GetBaseScoreForResult</c>) and this table has to carry the same
+/// number or every recomputed accuracy would come out above what the client showed. 124 put it at
+/// the most accuracy a JUDGED cell could cost, on the reading that a cell the player finished
+/// wrongly is not a cell the line ran out of time on; 213 takes it to a miss's 0, because the
+/// player did not put that character in that cell either way. The cell's MAXIMUM stays a
+/// <c>great</c> (<see cref="MaxBaseScore"/>), so the denominator does not move and the re-weight
+/// is paid in full. A type!beat map can never produce a genuine <c>good</c>, so nothing else is
+/// affected.</item>
 /// <item>It is accuracy-affecting and a judgement, so it is in completion's DENOMINATOR, but it is
 /// NOT typed (<see cref="CountsAsTyped"/>), so it is out of the numerator: an uncorrected typo costs
-/// completion and rank exactly as a miss does. It is still not a MISS, which is what lets
-/// <c>PerformancePoints</c> keep pricing it by the typo term rather than the cleanliness one.
+/// completion and rank exactly as a miss does, and has since backlog 126. That half is UNTOUCHED by
+/// backlog 213, which found it already done: the fold moved accuracy and pp onto the reading
+/// completion had used all along. <c>PerformancePoints</c> now prices the cell by the cleanliness
+/// term rather than the typo one (<c>misses = miss + good</c>), and takes the keypress that
+/// produced it back out of the typo count so one flub is priced once.
 /// Migration <c>008_completion_rank.sql</c> counts <c>good</c> as typed, which was right when it ran
 /// (it is a one-off backfill of rows that all predate this key) and must not be edited.</item>
 /// </list>
+///
+/// <para><b>THE FOLD IS ON THE READING, NOT ON THE WIRE</b> (backlog 213). The key still arrives,
+/// still means "a cell left holding a wrong character", and is still stored verbatim, so old rows
+/// and new ones stay comparable and the typo-versus-timeout distinction survives in the data. What
+/// changed is every CONSUMER: this table's weight, <c>PerformancePoints.CountNotes</c>, the game's
+/// display seam and the site's MISS column, which now shows <c>miss + good</c> so the shown columns
+/// sum to the cell count again.</para>
 ///
 /// <para><b>TYPOS</b> (backlog 72, so named by 140). A wrong KEYPRESS arrives as the
 /// <c>combo_break</c> key in <c>statistics</c>, one per press, and every classifier below already
@@ -413,9 +428,23 @@ public static class ScoringContract
         // where the fourth tier was made by moving Great DOWN rather than Perfect up, precisely so
         // the per-cell maximum, and therefore the accuracy denominator, did not move.
         "great" => fourthTier ? fourth_tier_great_base_score : great_base_score,
-        // NOT the base ruleset's 200: in type!beat `good` is the uncorrected-typo tier and the
-        // client re-weights it to the meh value (see the class docs). Keep the two in step.
-        "good" => 50,
+        // NOT the base ruleset's 200, and NOT the 50 backlog 124 set: in type!beat `good` is the
+        // uncorrected-typo tier, and since backlog 213 it is worth what a miss is worth, because
+        // the player did not put that character in that cell. The client re-weights the tier the
+        // same way (TypeBeatScoreProcessor.GetBaseScoreForResult under the live
+        // UnfixedTypoWorthRule.Nothing) and so does typebeat-core.js; keep the three in step.
+        //
+        // UNCONDITIONAL, where the client's re-weight is era-gated. This contract prices LIVE
+        // submissions, and every live client is on the new weight; a stored row's accuracy is not
+        // recomputed by anything that reaches this table (it stands as submitted), so there is no
+        // population here for an era arm to serve. The one path that re-runs this contract over
+        // stored rows is GateRefund.Qualifies, which uses the ceiling as a tamper bound: a
+        // pre-213 row carrying `good` therefore gets a slightly TIGHTER bound than the one it was
+        // submitted against, so such a row can fail a refund it would once have passed. That is a
+        // conservative direction (it withholds a refund, it cannot unrank anything), and the
+        // alternative, era-gating this table off `maximum_statistics` the way the fourth tier is,
+        // has nothing to key on: the fold moved no key at all.
+        "good" => 0,
         "ok" => 100,
         "meh" => 50,
         "slider_tail_hit" => 150,

@@ -17,6 +17,18 @@ namespace Typebeat.Web.Scoring;
 /// </code>
 ///
 /// <para>
+/// WHAT COUNTS AS A MISS AND WHAT COUNTS AS A TYPO (backlog 213). A miss is a cell the play did
+/// not type right: <c>miss + good</c>, i.e. a cell nobody finished PLUS one finished with the
+/// wrong character and never corrected. A typo is a wrong keypress the play recovered from:
+/// <c>max(0, combo_break - good)</c>, the mistype count with the uncorrected ones taken back
+/// out. So ONE FLUB IS PRICED BY EXACTLY ONE TERM: fix it and it stays a typo event, leave it
+/// and it becomes a miss. Both derivations are in <see cref="CountNotes(IReadOnlyDictionary{string, int})"/>
+/// and both reduce to the pre-213 ones at <c>good = 0</c>. <c>notes</c> is untouched by the fold,
+/// and <c>good</c> stays in <see cref="note_keys"/>: the cell is one cell of the map however it
+/// was typed.
+/// </para>
+///
+/// <para>
 /// MISSES and TYPOS are priced by SEPARATE terms (backlog 89), and neither appears in the
 /// other's. CLEANLINESS is dropped cells alone, over the plain note count, at the steeper exponent
 /// 10. The TYPO term (wrong keypresses, the <c>combo_break</c> statistics key, backlog 72) is
@@ -79,7 +91,8 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <para>
 /// Typos deliberately do NOT enter <c>notes</c>, which stays one entry per CELL
-/// (<c>great + ok + meh + good + miss</c>, where <c>good</c> is an uncorrected typo), the
+/// (<c>great + ok + meh + good + miss</c>, where <c>good</c> is an uncorrected typo and, since
+/// backlog 213, one of the cells the miss term prices), the
 /// map's cell count. Letting keypresses inflate it would hand a masher a smaller COMBO denominator
 /// and a bigger Flashlight bonus, paying for the mashing twice over. A play carrying no typo count
 /// at all (every score submitted before the stat existed) collapses the typo term to exactly 1.0,
@@ -277,6 +290,17 @@ public static class PerformancePoints
     /// scale separately. notes stays, for both penalty terms, the combo ratio and Flashlight.</item>
     /// <item>v17 = Global scale 9.6 to 12.4, a uniform rescale that holds the median ranked player's
     /// total pp flat across backlog 152.</item>
+    /// <item>v18 = the backlog-213 fold of the UNCORRECTED TYPO into the miss. No constant moves
+    /// and neither does the SHAPE: what moves is the DERIVATION of two of the formula's three
+    /// counts from a play's statistics (<see cref="CountNotes(IReadOnlyDictionary{string, int})"/>).
+    /// <c>misses</c> becomes
+    /// <c>miss + good</c> and <c>typos</c> becomes <c>max(0, combo_break - good)</c>, so a flub
+    /// the player never fixed is priced by the cleanliness term at exponent 10 instead of the
+    /// typo term at 4, and is priced ONCE rather than by both. <c>notes</c> is untouched:
+    /// <c>good</c> stays in <see cref="note_keys"/>, because the cell is still one cell of
+    /// the map. Every stored row carrying a <c>good</c> is repriced, downwards, which is what
+    /// forces the bump; a row with no uncorrected typo is priced bit-identically, since both
+    /// derivations reduce to the old ones at <c>good = 0</c>.</item>
     /// </list>
     ///
     /// <para>Rows are ALSO invalidated back to 0 whenever the beatmap they were set on has its star
@@ -293,7 +317,7 @@ public static class PerformancePoints
     /// there is no set of rows the change provably leaves alone. Bump this the moment a change
     /// values ANY stored row differently.</para>
     /// </summary>
-    public const int VERSION = 17;
+    public const int VERSION = 18;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -422,14 +446,15 @@ public static class PerformancePoints
     /// else the base ruleset can emit (ticks, bonuses) does not occur in a typing map and is not a
     /// note either.
     ///
-    /// <para><c>good</c> is the UNCORRECTED TYPO key (backlog 124/126, the client's
-    /// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>), and it belongs here for the same reason the
-    /// others do: it is one cell of the map the player reached and finished, so leaving it out
-    /// would shorten the map pp thinks was played, hardening both penalty terms and inflating the
-    /// combo ratio. It is deliberately NOT <see cref="miss_key"/>: a miss says the player was too slow to
-    /// finish the character at all, a typo says they finished it wrongly, and the typo term
-    /// already prices the second. That split is the whole reason the typo has its own key, even
-    /// though <c>ScoringContract</c> makes it cost completion exactly as a miss does.</para>
+    /// <para><see cref="unfixed_typo_key"/> IS a note, and that is the pp half of backlog 124
+    /// and 126. It is one cell of the map, so leaving it out would shorten the map pp thinks the
+    /// player played, hardening both penalty terms and inflating the combo ratio. Backlog 213
+    /// does NOT change that: the key stays on this list, and what changed is only which of the
+    /// two penalty terms it feeds. Through v17 it was deliberately not the
+    /// <see cref="miss_key"/>, on the reading that a cell finished wrongly is not a cell
+    /// nobody finished; since v18 it is counted as one, because the two say the same thing about
+    /// the play (the character is not there) and pricing them apart charged one flub through the
+    /// typo term while completion had already charged it as a miss.</para>
     ///
     /// <para><c>perfect</c> was backlog 133's fourth quality tier, and it stays on this list after
     /// backlog 147 took that tier back out. It is not dead weight: 133 SHIPPED, so rows stored
@@ -440,7 +465,20 @@ public static class PerformancePoints
     /// </summary>
     private static readonly string[] note_keys = ["perfect", "great", "ok", "meh", "good", "miss"];
 
+    /// <summary>The <see cref="note_keys"/> member that is a DROPPED cell: nobody typed it.</summary>
     private const string miss_key = "miss";
+
+    /// <summary>
+    /// The <see cref="note_keys"/> member that is an UNCORRECTED TYPO: the player finished the
+    /// cell with the wrong character and never went back for it (the client's
+    /// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>, which resolves to <c>HitResult.Good</c> and
+    /// therefore to this wire key).
+    ///
+    /// <para>Since backlog 213 it is priced as a MISS and not as a typo: see
+    /// <see cref="CountNotes(IReadOnlyDictionary{string, int})"/> for the derivation and for why
+    /// the wrong keypress that produced it is taken back out of the typo count.</para>
+    /// </summary>
+    private const string unfixed_typo_key = "good";
 
     /// <summary>
     /// The MISTYPE key: wrong keypresses, persisted by the client under
@@ -546,6 +584,10 @@ public static class PerformancePoints
     /// Notes, misses and typos from a play's <c>statistics</c> dictionary. Negative counts
     /// (tamper-shaped) contribute nothing rather than subtracting, and a missing
     /// <c>combo_break</c> key (every pre-backlog-72 score) reads as 0 typos.
+    ///
+    /// <para>Since backlog 213 <c>misses</c> and <c>typos</c> are DERIVED rather than read
+    /// straight off two keys: <c>misses = miss + good</c> and
+    /// <c>typos = max(0, combo_break - good)</c>. The body says why.</para>
     /// </summary>
     public static NoteCounts CountNotes(IReadOnlyDictionary<string, int>? statistics)
     {
@@ -561,13 +603,28 @@ public static class PerformancePoints
 
             notes += count;
 
-            if (key == miss_key)
+            // Backlog 213: an UNCORRECTED TYPO is a MISS. It keeps its own statistics key (the
+            // wire does not move, so old rows stay comparable and the distinction survives in
+            // the data), and this is the pp half of every consumer reclassifying instead.
+            if (key == miss_key || key == unfixed_typo_key)
                 misses += count;
         }
 
+        int unfixedTypos = statistics.TryGetValue(unfixed_typo_key, out int unfixedCount) && unfixedCount > 0 ? unfixedCount : 0;
         int typos = statistics.TryGetValue(mistype_key, out int typoCount) && typoCount > 0 ? typoCount : 0;
 
-        return new NoteCounts(notes, misses, typos);
+        // NO DOUBLE JEOPARDY, which is the other half of the fold. Every uncorrected typo cell
+        // implied a wrong KEYPRESS, and that keypress is already in combo_break, so charging the
+        // miss term for the cell AND the typo term for the keypress would price one flub twice.
+        // A corrected typo stays a typo event (its cell resolved as an ordinary hit, so nothing
+        // subtracts it); an uncorrected one becomes a miss and leaves the typo term.
+        //
+        // The clamp is load-bearing rather than defensive: the two counts arrive off the wire
+        // independently, so good can exceed combo_break on a row stored before the mistype stat
+        // existed at all (no combo_break key, backlog 72) and on any tamper-shaped dictionary. A
+        // negative typo count would raise Math.Pow(typos, count_power) to a NaN under the
+        // fractional power, or price the play ABOVE a clean one.
+        return new NoteCounts(notes, misses, Math.Max(0, typos - unfixedTypos));
     }
 
     /// <summary>

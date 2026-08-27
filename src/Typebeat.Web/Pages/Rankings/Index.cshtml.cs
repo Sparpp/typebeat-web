@@ -137,11 +137,14 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         private JObject Statistics => statistics ??= JObject.Parse(string.IsNullOrEmpty(StatisticsJson) ? "{}" : StatisticsJson);
 
         /// <summary>
-        /// Characters the song scrolled past untyped, or null for a play with none. Nullable so that
+        /// Characters the play did not type right, or null for a play with none: cells the song
+        /// scrolled past untyped PLUS cells left holding a wrong character (the <c>good</c> key),
+        /// folded together by <see cref="JudgementDisplay.MissColumn"/> since backlog 213, exactly
+        /// as the set page's leaderboard folds them. Nullable so that
         /// it renders BLANK at zero the way <see cref="Typos"/> beside it always has (backlog 140),
         /// rather than a "0" next to an empty typo cell.
         /// </summary>
-        public int? Miss => Statistics.Value<int?>("miss") is int miss and > 0 ? miss : null;
+        public int? Miss => JudgementDisplay.MissColumn(Statistics);
 
         /// <summary>
         /// TYPOS: wrong KEYPRESSES, on the wire under the <c>combo_break</c> key (docs/pp.md's
@@ -151,11 +154,13 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         /// the set page's leaderboard, so an old play never renders a fabricated clean run.
         ///
         /// <para>The site's ONE typo number since backlog 140. The seal-state count that used to sit
-        /// beside it (cells left holding a wrong character, the <c>good</c> key) is no longer
-        /// surfaced anywhere: every such cell implied a wrong keypress, so this event count covers
-        /// it. The wire is unchanged and the cell mechanics are untouched; only what players are
-        /// shown collapsed to one number. Beside Miss, never folded into it: both cost the grade,
-        /// only one is a character the song left behind.</para>
+        /// beside it (cells left holding a wrong character, the <c>good</c> key) took no column of
+        /// its own from then until backlog 213, which put it in <see cref="Miss"/>: every such cell
+        /// implied a wrong keypress, so this event count covered the EVENT, but the character the
+        /// player never typed right appeared nowhere at all.</para>
+        ///
+        /// <para>Beside Miss, and not folded into it: this counts wrong KEYPRESSES, the corrected
+        /// ones included, where Miss counts CELLS the play did not get right.</para>
         /// </summary>
         public int? Typos => Statistics.Value<int?>("combo_break");
 

@@ -1013,6 +1013,138 @@ public class PerformancePointsTest
     public void CountNotes_NegativeTypoCountsContributeNothing()
         => Assert.That(PerformancePoints.CountNotes(new Dictionary<string, int> { ["great"] = 100, ["combo_break"] = -50 }).Typos, Is.Zero);
 
+    // ---------------------------------------------------------------------------------------------
+    // Backlog 213: an UNCORRECTED TYPO is a MISS. misses = miss + good, typos =
+    // max(0, combo_break - good), notes untouched. The mirror of the game's UnfixedTypoFoldTest,
+    // held against the SERVER's CountNotes, which reads the same derivation off wire KEYS rather
+    // than off HitResults.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The derivation on a play carrying both kinds of flub. <c>misses</c> gains the uncorrected
+    /// cells and <c>typos</c> loses the keypresses that produced them, so what is left in the typo
+    /// term is exactly the keypresses the player CORRECTED. <c>notes</c> is untouched: an
+    /// uncorrected typo is still one cell of the map.
+    /// </summary>
+    [Test]
+    public void CountNotes_PricesAnUncorrectedTypoByTheMissTermAndTakesItOutOfTheTypoTerm()
+    {
+        var counts = PerformancePoints.CountNotes(new Dictionary<string, int>
+        {
+            ["great"] = 300,
+            ["ok"] = 40,
+            ["meh"] = 10,
+            ["good"] = 7,
+            ["miss"] = 43,
+            ["combo_break"] = 20,
+        });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(counts.Notes, Is.EqualTo(400), "the typo cells stay in the note count");
+            Assert.That(counts.Misses, Is.EqualTo(50), "43 cells nobody typed plus 7 left holding a wrong character");
+            Assert.That(counts.Typos, Is.EqualTo(13), "20 wrong keypresses, 7 of which were never corrected");
+
+            // The jsonb path reads it identically, which is the one PpBackfill actually walks.
+            Assert.That(
+                PerformancePoints.CountNotes("""{"great":300,"ok":40,"meh":10,"good":7,"miss":43,"combo_break":20}"""),
+                Is.EqualTo(counts));
+        });
+    }
+
+    /// <summary>
+    /// The fold stated as an equality: a cell left holding a wrong character prices EXACTLY as a
+    /// cell nobody typed. Both dictionaries describe a 400-cell map with one character missing; one
+    /// stores that cell as a miss and the other as the typo it was, with the keypress it took.
+    /// </summary>
+    [Test]
+    public void CountNotes_AnUncorrectedTypoPricesIdenticallyToADroppedCell()
+    {
+        var dropped = PerformancePoints.CountNotes(new Dictionary<string, int> { ["great"] = 399, ["miss"] = 1 });
+        var leftWrong = PerformancePoints.CountNotes(new Dictionary<string, int> { ["great"] = 399, ["good"] = 1, ["combo_break"] = 1 });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(leftWrong, Is.EqualTo(dropped));
+            Assert.That(PerformancePoints.Compute(4.2, leftWrong.Notes, leftWrong.Misses, 0.9, 380, no_mods, leftWrong.Typos),
+                Is.EqualTo(PerformancePoints.Compute(4.2, dropped.Notes, dropped.Misses, 0.9, 380, no_mods, dropped.Typos)));
+        });
+    }
+
+    /// <summary>
+    /// NO DOUBLE JEOPARDY from the other side: a typo the player FIXED stays a typo event and
+    /// nothing subtracts it, because its cell resolved as an ordinary hit and never reached the
+    /// <c>good</c> key at all. So the two shapes are priced differently, which is the incentive the
+    /// whole change rests on.
+    /// </summary>
+    [Test]
+    public void CountNotes_ACorrectedTypoIsStillPricedByTheTypoTerm()
+    {
+        var corrected = PerformancePoints.CountNotes(new Dictionary<string, int> { ["great"] = 399, ["ok"] = 1, ["combo_break"] = 1 });
+        var leftWrong = PerformancePoints.CountNotes(new Dictionary<string, int> { ["great"] = 399, ["good"] = 1, ["combo_break"] = 1 });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(corrected.Notes, Is.EqualTo(400));
+            Assert.That(corrected.Misses, Is.Zero);
+            Assert.That(corrected.Typos, Is.EqualTo(1));
+
+            // ...and it is worth strictly more than leaving the same flub standing, because the
+            // typo term is exponent 4 where cleanliness is 10.
+            Assert.That(PerformancePoints.Compute(4.2, corrected.Notes, corrected.Misses, 0.99, 400, no_mods, corrected.Typos),
+                Is.GreaterThan(PerformancePoints.Compute(4.2, leftWrong.Notes, leftWrong.Misses, 0.99, 400, no_mods, leftWrong.Typos)));
+        });
+    }
+
+    /// <summary>
+    /// The clamp on the typo subtraction, which is load-bearing rather than defensive: the two
+    /// counts arrive off the wire independently. A row stored before backlog 72 carries no
+    /// <c>combo_break</c> key at all while carrying <c>good</c> cells, and a tamper-shaped
+    /// dictionary can say anything; a negative typo count would go into
+    /// <c>Math.Pow(typos, count_power)</c> under a FRACTIONAL power and come back NaN.
+    /// </summary>
+    [TestCase(0, 5, 0, TestName = "CountNotes_TheTypoSubtractionIsClamped(a pre-backlog-72 row with no combo_break key)")]
+    [TestCase(3, 5, 0, TestName = "CountNotes_TheTypoSubtractionIsClamped(fewer keypresses stored than typo cells)")]
+    [TestCase(5, 5, 0, TestName = "CountNotes_TheTypoSubtractionIsClamped(every keypress went uncorrected)")]
+    [TestCase(9, 5, 4, TestName = "CountNotes_TheTypoSubtractionIsClamped(four of the nine were corrected)")]
+    public void CountNotes_TheTypoSubtractionIsClamped(int mistypes, int unfixedTypos, int expectedTypos)
+    {
+        var statistics = new Dictionary<string, int> { ["great"] = 100, ["good"] = unfixedTypos };
+
+        if (mistypes > 0)
+            statistics["combo_break"] = mistypes;
+
+        var counts = PerformancePoints.CountNotes(statistics);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(counts.Typos, Is.EqualTo(expectedTypos));
+            Assert.That(counts.Typos, Is.GreaterThanOrEqualTo(0));
+            Assert.That(counts.Misses, Is.EqualTo(unfixedTypos));
+            Assert.That(counts.Notes, Is.EqualTo(100 + unfixedTypos));
+
+            // The whole point of the clamp: a negative count would make this non-finite.
+            Assert.That(PerformancePoints.Compute(4.2, counts.Notes, counts.Misses, 0.9, 90, no_mods, counts.Typos),
+                Is.GreaterThanOrEqualTo(0));
+        });
+    }
+
+    /// <summary>
+    /// A row with no uncorrected typo prices BIT-IDENTICALLY across the fold, which is what makes
+    /// the v18 bump reach exactly the rows it should: both derivations reduce to the pre-213 ones at
+    /// <c>good = 0</c>. Stated as the equality against the counts written out by hand.
+    /// </summary>
+    [Test]
+    public void CountNotes_ARowWithNoUncorrectedTypoIsUnmovedByTheFold()
+    {
+        var counts = PerformancePoints.CountNotes(new Dictionary<string, int>
+        {
+            ["great"] = 300, ["ok"] = 40, ["meh"] = 10, ["miss"] = 50, ["combo_break"] = 137,
+        });
+
+        Assert.That(counts, Is.EqualTo(new PerformancePoints.NoteCounts(400, 50, 137)));
+    }
+
     /// <summary>
     /// The two penalty terms in isolation. Nothing else in the formula reads misses or typos, so
     /// dividing a play's pp by the pp of the same play with neither is EXACTLY
@@ -1324,6 +1456,10 @@ public class PerformancePointsTest
     [Test]
     public void Version_IsBumpedBecauseTheRebalanceRepricesStoredRows()
     {
+        // v18 = backlog 213, the fold of the uncorrected typo into the miss. No constant moves and
+        // neither does the shape: misses becomes miss + good and typos becomes
+        // max(0, combo_break - good), so every stored row carrying a `good` key is repriced
+        // (downwards), and a row with none is priced bit-identically.
         // v7 = backlog 101, count_power dropping from 2 to 1.2, which reprices every stored row
         // carrying even one miss or one typo (upwards, and away from zero for most of them).
         // v6 = backlog 97, the squaring of both penalty COUNTS, which reprices every stored row
@@ -1338,7 +1474,7 @@ public class PerformancePointsTest
         // That proof does not survive a steeper MISS exponent, which reprices every stored row with
         // even one miss, so PpBackfill has to sweep. If this moves, so do the game's
         // PerformancePoints.VERSION and docs/pp.md.
-        Assert.That(PerformancePoints.VERSION, Is.EqualTo(17)); // pp:version
+        Assert.That(PerformancePoints.VERSION, Is.EqualTo(18)); // pp:version
     }
 
     [Test]

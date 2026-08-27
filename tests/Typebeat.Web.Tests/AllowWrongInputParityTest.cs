@@ -97,10 +97,16 @@ public class AllowWrongInputParityTest
     /// their results land in the same place in the judgement stream and the comparison is exact:
     /// everything except the tier is held still.
     ///
-    /// <para>What the typo costs, since backlog 126: accuracy (the typo tier is weighted 50 against
-    /// the cell's 300 maximum), the mistype, the combo break already taken at the keypress, AND
-    /// completion and rank, exactly as the miss costs them. The two runs come apart only in the MISS
-    /// COUNT, and therefore in pp and in total score.</para>
+    /// <para>What the typo costs, since backlog 126: accuracy, the mistype, the combo break already
+    /// taken at the keypress, AND completion and rank, exactly as the miss costs them.</para>
+    ///
+    /// <para>BACKLOG 213 CLOSED THE LAST GAP BETWEEN THEM. The typo tier was weighted 50 against the
+    /// cell's 300 maximum, so an uncorrected typo out-scored a dropped cell; it is weighted 0 now,
+    /// because the player did not put that character in that cell either way. The two runs are
+    /// therefore the same account in every number that is derived (accuracy, total_score, completion,
+    /// rank, max_combo, and pp, whose <c>misses</c> is <c>miss + good</c>) and come apart only in
+    /// WHICH KEY the cell took, plus the mistype the wrong keypress left. That is the fold's whole
+    /// shape: the wire keeps the distinction and no consumer prices it.</para>
     /// </summary>
     [Test]
     public void AnUncorrectedTypoCostsCompletionLikeAMissButIsNotOne()
@@ -130,19 +136,30 @@ public class AllowWrongInputParityTest
             Assert.That(Recompute(wrong).Rank, Is.EqualTo("A"));
             Assert.That(Recompute(wrong).Completion, Is.EqualTo(14.0 / 15.0).Within(1e-12));
 
-            // What the typo pays in accuracy, at the re-weighted (Meh) rate, plus one mistype.
-            Assert.That(wrong.GetProperty("accuracy").GetDouble(), Is.EqualTo((14 * 300 + 50) / 4500.0).Within(1e-12));
+            // What the typo pays in accuracy: the WHOLE cell since backlog 213, which is exactly
+            // what the dropped cell pays. 50 of the 4500 lower than the pre-fold reading, and the
+            // browser's weight table is what makes it so (HIT_BASE_SCORE.good).
+            Assert.That(wrong.GetProperty("accuracy").GetDouble(), Is.EqualTo((14 * 300 + 0) / 4500.0).Within(1e-12));
             Assert.That(skipped.GetProperty("accuracy").GetDouble(), Is.EqualTo(14.0 / 15.0).Within(1e-12));
+            Assert.That(wrong.GetProperty("accuracy").GetDouble(), Is.EqualTo(skipped.GetProperty("accuracy").GetDouble()).Within(1e-12));
+            Assert.That(wrong.GetProperty("accuracy").GetDouble(), Is.LessThan((14 * 300 + 50) / 4500.0),
+                "and strictly below what the same run was worth under the backlog-124 weight");
 
             // Combo is the one number the two agree on, because the break was taken at the keypress
             // and the seal's hit is applied combo-neutral, so it cannot hand the cell back either.
             Assert.That(wrong.GetProperty("maxCombo").GetInt32(), Is.EqualTo(14));
             Assert.That(skipped.GetProperty("maxCombo").GetInt32(), Is.EqualTo(14));
 
-            // A miss still hurts more than a typo, and a typo still hurts.
-            Assert.That(wrong.GetProperty("totalScore").GetInt64(), Is.GreaterThan(skipped.GetProperty("totalScore").GetInt64()));
+            // A typo left standing hurts exactly as much as never typing the cell (backlog 213),
+            // and both hurt.
+            Assert.That(wrong.GetProperty("totalScore").GetInt64(), Is.EqualTo(skipped.GetProperty("totalScore").GetInt64()));
             Assert.That(wrong.GetProperty("totalScore").GetInt64(),
                 Is.LessThan(root.GetProperty("clean").GetProperty("totalScore").GetInt64()));
+
+            // ...and pp cannot tell them apart either: misses = miss + good, and the keypress that
+            // produced the typo leaves the typo term, so the two dictionaries yield equal counts.
+            Assert.That(PerformancePoints.CountNotes(Dict(wrong, "statistics")),
+                Is.EqualTo(PerformancePoints.CountNotes(Dict(skipped, "statistics"))));
         });
     }
 
@@ -172,10 +189,12 @@ public class AllowWrongInputParityTest
             Assert.That(erased.GetProperty("completion").GetDouble(), Is.EqualTo(skipped.GetProperty("completion").GetDouble()));
             Assert.That(erased.GetProperty("rank").GetString(), Is.EqualTo("A"));
 
-            // ...and it is strictly worse than leaving the wrong character sitting there, which is
-            // the point: the wrong character at least finished the cell.
+            // Since backlog 213 it is no WORSE than leaving the wrong character sitting there
+            // either, which is the fold: a cell finished with the wrong character and a cell nobody
+            // finished say the same thing about the play. Erasing it still costs the mistype
+            // nothing extra and still stores a different key, so the two rows stay comparable.
             Assert.That(erased.GetProperty("totalScore").GetInt64(),
-                Is.LessThan(root.GetProperty("lastCellTypedWrong").GetProperty("totalScore").GetInt64()));
+                Is.EqualTo(root.GetProperty("lastCellTypedWrong").GetProperty("totalScore").GetInt64()));
         });
     }
 
@@ -258,7 +277,10 @@ public class AllowWrongInputParityTest
             Assert.That(run.GetProperty("maxCombo").GetInt32(),
                 Is.LessThan(root.GetProperty("clean").GetProperty("maxCombo").GetInt32()));
 
-            Assert.That(run.GetProperty("totalScore").GetInt64(), Is.EqualTo(733_802));
+            // 708002 since backlog 213: the combo portion is untouched (comboProgress 0.758313370,
+            // see TheSubmittedTotalsMatchTheHandDerivedCsharpModel), and the typo cell's accuracy
+            // weight fell from 50 to 0, taking accuracy from 0.944444 to (14*300)/4500 = 0.933333.
+            Assert.That(run.GetProperty("totalScore").GetInt64(), Is.EqualTo(708_002));
             Assert.That(Dict(run, "statistics"),
                 Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 14, ["good"] = 1, ["combo_break"] = 1 }));
         });
@@ -330,7 +352,10 @@ public class AllowWrongInputParityTest
             Assert.That(Dict(run, "statistics"),
                 Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 24, ["good"] = 1, ["combo_break"] = 1 }));
 
-            Assert.That(run.GetProperty("accuracy").GetDouble(), Is.EqualTo((24 * 300 + 50) / 7500.0).Within(1e-12));
+            // The cell stays in the DENOMINATOR and pays 0 of its 300 (backlog 213, where 124 had
+            // it pay 50), which is what makes accuracy genuinely fall rather than the cell quietly
+            // leaving the fraction: 7200/7500, not 24/24.
+            Assert.That(run.GetProperty("accuracy").GetDouble(), Is.EqualTo((24 * 300 + 0) / 7500.0).Within(1e-12));
 
             // 25 cells JUDGED and 24 of them TYPED, which is the denominator doing its job: 24/25 is
             // an S, not the "1 over an empty denominator" a non-resolving cell would have produced.
@@ -426,8 +451,11 @@ public class AllowWrongInputParityTest
     ///
     /// <para>Between backlog 124 and 126 this submitted completion 1 and an X, because every one of
     /// those cells resolved as a HIT and completion counted hits. It now reads 3/15 and a D on both
-    /// sides of the seam. The MISS COUNT is still zero throughout, which is the property that has to
-    /// survive: pp prices this play by the mistype term, not the cleanliness term.</para>
+    /// sides of the seam. The STORED miss count is still zero throughout, which is the property that
+    /// has to survive: the wire did not move. What DID move is how pp reads it (backlog 213), and
+    /// this is the extreme case of the fold: twelve cells the player never typed right used to be
+    /// priced by the typo term at exponent 4 while carrying no miss at all, and are now twelve
+    /// misses at exponent 10 with their twelve keypresses taken back out of the typo term.</para>
     /// </summary>
     [Test]
     public void ARunTypedEntirelyWrongIsNotAnX()
@@ -449,13 +477,19 @@ public class AllowWrongInputParityTest
             Assert.That(recomputed.Completion, Is.EqualTo(3 / 15.0).Within(1e-12));
             Assert.That(recomputed.Rank, Is.EqualTo("D"));
 
-            // Not a single MISS, so pp still prices this through the mistype term: the player did
-            // reach and finish every character, they just got twelve of them wrong.
+            // Not a single stored MISS, and pp prices twelve of them anyway (backlog 213): the
+            // player reached and finished every character and got twelve of them wrong, which is the
+            // same thing as not typing them. The twelve keypresses leave the typo term with them, so
+            // one flub is priced by exactly one term.
             Assert.That(Dict(run, "statistics"), Does.Not.ContainKey("miss"));
             var counts = PerformancePoints.CountNotes(Dict(run, "statistics"));
-            Assert.That(counts.Notes, Is.EqualTo(15));
-            Assert.That(counts.Misses, Is.Zero);
-            Assert.That(counts.Typos, Is.EqualTo(12));
+            Assert.That(counts.Notes, Is.EqualTo(15), "the cells stay in the note count");
+            Assert.That(counts.Misses, Is.EqualTo(12));
+            Assert.That(counts.Typos, Is.Zero);
+
+            // ...and that is exactly the account of a run that dropped the same twelve cells.
+            Assert.That(counts, Is.EqualTo(PerformancePoints.CountNotes(
+                new Dictionary<string, int> { ["great"] = 3, ["miss"] = 12 })));
         });
     }
 
@@ -592,16 +626,17 @@ public class AllowWrongInputParityTest
     /// round(500000·0.933333·0.904297993 + 500000·0.933333^5) = 776129.</item>
     /// <item><c>lastCellTypedWrong</c>: the same run, except the last cell resolves as an unfixed
     /// typo. That result is applied COMBO-NEUTRAL, so it is weighted by the combo it found (0) and
-    /// the portion is unchanged at 10978.863976; what moves is accuracy, to (14·300 + 50)/4500 =
-    /// 0.944444, giving total = round(500000·0.944444·0.904297993 + 500000·0.944444^5) = 802739.
-    /// One typo instead of one Miss is worth 26610 here, and nothing else moves. Backlog 126 leaves
-    /// this number alone on purpose: the typo tier carries the Meh weight of 50 precisely so that
-    /// only completion, rank and health move.</item>
+    /// the portion is unchanged at 10978.863976; SINCE BACKLOG 213 accuracy does not move either,
+    /// because the typo tier is weighted 0 exactly as the Miss is, so this is 776129, the same
+    /// number to the byte as <c>lastCellSkipped</c>. It read 802739 while the tier carried backlog
+    /// 124's Meh weight of 50, i.e. one typo instead of one Miss used to be worth 26610 here; the
+    /// fold is precisely the decision that it is worth nothing.</item>
     /// <item><c>midCellTypedWrong</c>: greats at combo 1..5, the typo (a hand-written break, no
     /// result), greats at combo 1..9, and only THEN the seal's typo result, combo-neutral at combo 9
     /// and so contributing 300·√9 = 900. Portion 300·(Σ(1..5)√i + Σ(1..9)√i) + 900 = 9206.499862,
-    /// comboProgress 0.758313370, accuracy 0.944444, total = 733802. Weighting that same result at
-    /// 10, i.e. letting it extend the run, would read 735695 and max_combo 10.</item>
+    /// comboProgress 0.758313370, accuracy (14·300 + 0)/4500 = 0.933333 since backlog 213, total =
+    /// 708002 (it read 733802 at the old Meh weight of 50). Weighting that same result at
+    /// 10, i.e. letting it extend the run, would read 709874 and max_combo 10.</item>
     /// <item><c>midCellWrongThenFixed</c>: greats at combo 1..5, the typo, and then the fix, which
     /// since backlog 140 RESUMES the streak the wrong key broke BEFORE the retype is judged. The
     /// retype (the cell's own first and only result) therefore lands at combo 6 rather than 1, and
@@ -619,7 +654,8 @@ public class AllowWrongInputParityTest
     /// (a hand-written break, no result), greats at combo 1..11, and then the seal's typo result,
     /// combo-neutral at combo 11 and so contributing 300·√11. Portion
     /// 300·(Σ(1..3)√i + Σ(1..11)√i + √11) = 9974.337641, comboProgress 0.821557998, accuracy
-    /// (14·300 + 50)/4500 = 0.944444, total = 763667. Under the pre-181 rejection the identical
+    /// (14·300 + 0)/4500 = 0.933333 since backlog 213, total = 737517 (it read 763667 at the old
+    /// Meh weight of 50). Under the pre-181 rejection the identical
     /// keystrokes read max_combo 12 and 912601 off a portion of 300·(Σ(1..3)√i + Σ(1..12)√i) =
     /// 10018.580688 with a flat accuracy of 1, because the caret was held and the gap was then typed
     /// correctly.</item>
@@ -644,12 +680,12 @@ public class AllowWrongInputParityTest
         (string Run, int MaxCombo, long TotalScore, int Mistypes)[] expected =
         [
             ("clean", 15, 1_000_000, 0),
-            ("lastCellTypedWrong", 14, 802_739, 1),
+            ("lastCellTypedWrong", 14, 776_129, 1),
             ("lastCellSkipped", 14, 776_129, 0),
             ("lastCellWrongThenErased", 14, 776_129, 1),
-            ("midCellTypedWrong", 9, 733_802, 1),
+            ("midCellTypedWrong", 9, 708_002, 1),
             ("midCellWrongThenFixed", 15, 876_114, 1),
-            ("wordGapTypedWrong", 11, 763_667, 1),
+            ("wordGapTypedWrong", 11, 737_517, 1),
             ("wordGapWrongThenFixed", 15, 876_114, 1),
             ("spaceKeyOnLetter", 15, 876_114, 1),
         ];

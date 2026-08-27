@@ -1,3 +1,5 @@
+using Newtonsoft.Json.Linq;
+
 namespace Typebeat.Web.Pages;
 
 /// <summary>
@@ -117,4 +119,57 @@ public static class GradeDisplay
 
     /// <summary>The grade's colour class (site.css <c>.grade--ss</c> … <c>.grade--f</c>).</summary>
     public static string CssClass(string rank) => "grade--" + Label(rank).ToLowerInvariant();
+}
+
+/// <summary>
+/// How a stored <c>statistics</c> jsonb becomes the JUDGEMENT COLUMNS a page shows, shared by every
+/// surface that renders one (the set page's leaderboard and podium, the /rankings top-plays board),
+/// so no two of them account for the same row differently.
+///
+/// <para><b>THE MISS COLUMN COUNTS UNCORRECTED TYPOS</b> (backlog 213). A cell left holding a wrong
+/// character is stored under its own key, <c>good</c> (the game's
+/// <c>TypeBeatResultMapping.UNFIXED_TYPO</c>), and since backlog 140 that key has had no column of
+/// its own: the typo number players are shown is <c>combo_break</c>, which counts wrong KEYPRESSES.
+/// Between the two, a character the player never typed right appeared in NO column at all, which is
+/// the field report that ended the split: a row reading MISS 0 while carrying <c>good: 2</c>. So the
+/// MISS column is <c>miss + good</c>, the typo keeps no column, and the shown columns
+/// (great + ok + meh + MISS) sum to the judged cell count again.</para>
+///
+/// <para>THE FOLD IS ON THE READING, NOT ON THE WIRE, so it reaches old rows and new ones alike with
+/// no migration: nothing about what is stored moved. This is the site's half of the same fold the
+/// game does through <c>TypeBeatRuleset.GetDisplayResultFor</c>, the server does in
+/// <see cref="Scoring.ScoringContract"/>'s accuracy weight, and pp does in
+/// <c>PerformancePoints.CountNotes</c>.</para>
+///
+/// <para>TYPOS ARE NOT FOLDED and are a different statement: that column counts wrong keypresses as
+/// EVENTS, including the ones the player went back and fixed, where this one counts CELLS. pp does
+/// subtract the uncorrected ones from its typo term (one flub, one term), but pp is pricing and this
+/// is accounting: a player who mistyped nine characters and fixed five made nine mistakes.</para>
+/// </summary>
+public static class JudgementDisplay
+{
+    /// <summary>The statistics key an UNCORRECTED TYPO is stored under, folded into the miss column
+    /// since backlog 213. Named here rather than inlined so this file and
+    /// <c>ScoringContract.unfixed_typo_key</c> read as the same fact.</summary>
+    private const string unfixed_typo_key = "good";
+
+    private const string miss_key = "miss";
+
+    /// <summary>
+    /// The MISS column for one row: dropped cells plus cells left holding a wrong character, or
+    /// null for a play with neither.
+    ///
+    /// <para>NULL AND NOT ZERO, which is the rule the column has had since backlog 140: a clean run
+    /// renders a blank cell rather than a "0" next to the equally blank typo cell, because a "0
+    /// misses" beside an empty typo column read as two different kinds of nothing. Negative counts
+    /// cannot arrive from the submission path (<see cref="Scoring.ScoringContract"/> refuses them),
+    /// but a hand-edited row is clamped rather than shown as a negative miss count.</para>
+    /// </summary>
+    public static int? MissColumn(JObject statistics)
+    {
+        int misses = Math.Max(0, statistics.Value<int?>(miss_key) ?? 0)
+                     + Math.Max(0, statistics.Value<int?>(unfixed_typo_key) ?? 0);
+
+        return misses > 0 ? misses : null;
+    }
 }

@@ -222,9 +222,12 @@ public class CorrectionCreditParityTest
     /// still counts as typed. Accuracy and total_score are the only two that move.
     ///
     /// <para>And the ordering the cap is chosen to produce, read off a real run rather than off the
-    /// weights: clean (300 a cell) beats corrected (100) beats an unfixed typo (50, which also costs
-    /// completion, rank and the streak). That is "perfect play beats corrected play beats an unfixed
-    /// typo" as three accounts.</para>
+    /// weights: clean (300 a cell) beats corrected (100) beats an unfixed typo (0 since backlog 213,
+    /// where it was 50 when the cap landed, and which also costs completion, rank and the streak).
+    /// That is "perfect play beats corrected play beats an unfixed
+    /// typo" as three accounts, and backlog 213 widened the last gap rather than narrowing it: the
+    /// cell the player never fixed now pays its whole 300, so going back for a typo recovers a full
+    /// miss's worth of accuracy where it used to recover 250 of 300.</para>
     ///
     /// <para>The literals are the arithmetic of the combo portion and the accuracy portion, which is
     /// worth stating because the fixed run's combo multiset is EXACTLY the clean run's (the restore
@@ -275,12 +278,34 @@ public class CorrectionCreditParityTest
             // The ordering, on the run that leaves the typo standing: it is worth less than the fix
             // on accuracy AND loses completion, rank and the streak, which the fix keeps. So going
             // back for a typo is still strictly the right play, by a narrower margin than before.
-            Assert.That(Dict(unfixed, "statistics")["good"], Is.EqualTo(1), "the unfixed typo takes its own key");
-            Assert.That(unfixed.GetProperty("accuracy").GetDouble(), Is.EqualTo((7 * 300 + 50) / 2400.0).Within(1e-12));
+            Assert.That(Dict(unfixed, "statistics")["good"], Is.EqualTo(1), "the unfixed typo takes its own key, which backlog 213 did not move");
+            Assert.That(unfixed.GetProperty("accuracy").GetDouble(), Is.EqualTo((7 * 300 + 0) / 2400.0).Within(1e-12));
             Assert.That(unfixed.GetProperty("accuracy").GetDouble(), Is.LessThan(fixedRun.GetProperty("accuracy").GetDouble()));
+
+            // BACKLOG 213 MOVED THIS ACCOUNT AND ONLY THIS ACCOUNT. Its cell used to pay a Meh's 50
+            // of 300; it now pays a miss's 0, so the run scores strictly below its backlog-210-era
+            // value by exactly that 50, and the clean and fixed runs (which carry no `good` cell)
+            // are priced bit-identically to what they were.
+            Assert.That(unfixed.GetProperty("accuracy").GetDouble(), Is.LessThan((7 * 300 + 50) / 2400.0),
+                "an unfixed typo is worth strictly less than it was under the backlog-124 weight");
+            Assert.That((7 * 300 + 50) / 2400.0 - unfixed.GetProperty("accuracy").GetDouble(),
+                Is.EqualTo(50 / 2400.0).Within(1e-12), "and less by exactly the Meh credit the fold took away");
             Assert.That(unfixed.GetProperty("totalScore").GetInt64(), Is.LessThan(fixedRun.GetProperty("totalScore").GetInt64()));
             Assert.That(unfixed.GetProperty("completion").GetDouble(), Is.EqualTo(7 / 8.0).Within(1e-12));
             Assert.That(Str(unfixed, "rank"), Is.EqualTo("B"));
+
+            // WHAT BACKLOG 213 LEAVES ALONE, on the same account. THE WIRE DOES NOT MOVE: the
+            // browser still seals the cell under its own `good` key and never as a `miss`, which is
+            // what keeps old rows comparable with new ones and lets every consumer do the folding.
+            Assert.That(Dict(unfixed, "statistics"), Does.Not.ContainKey("miss"),
+                "the fold is on the READING, not on what the browser submits");
+
+            // COMPLETION and RANK are the values backlog 126 gave them and are untouched here (both
+            // asserted above), and so is max_combo: the typo broke the streak when its keypress
+            // landed, and leaving the cell wrong restores nothing, exactly as before the fold.
+            Assert.That(Int(unfixed, "maxCombo"), Is.LessThan(Int(clean, "maxCombo")));
+            Assert.That(Int(unfixed, "maxCombo"), Is.LessThan(Int(fixedRun, "maxCombo")),
+                "which is the streak the fix recovers and this run does not");
 
             // ...and the server recomputes each of the three off the browser's own dictionaries, so a
             // capped cell is not something the submission path has to be taught about.
