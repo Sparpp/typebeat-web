@@ -115,7 +115,8 @@ public sealed record StoredScore(
 /// <summary>
 /// One point in the space the reproduce pass SEARCHES: which spacebar rule (backlog 148), which
 /// rate-window rule (backlog 150), which combo-restore rule (backlog 140), which typo rule
-/// (backlog 109) and what an off-time press cost (backlog 199) graded a row. All five travel
+/// (backlog 109), what an off-time press cost (backlog 199) and what a CORRECTED typo's cell was
+/// worth (backlog 210) graded a row. All six travel
 /// together because a row that cannot PROVE which arm judged it has to be told, and the only honest
 /// way to decide what to tell it is to re-derive it under each and keep what comes back.
 ///
@@ -138,27 +139,39 @@ public sealed record StoredScore(
 /// by -2 in lockstep, which is the seam between 155 and 157 (combo restore only ever moves max_combo
 /// when a typo was corrected, and a corrected typo is precisely the case that leaves no key).</para>
 ///
-/// <para>THE QUINTUPLE IS A SEARCH SPACE, NOT A SETTING, and it is searched as a 2 x 2 x 2 x 2 x 2
-/// rather than as one switch even though real clients only ever shipped five of the thirty-two
-/// corners. They are five independent facts about how a press was graded (the game's own
+/// <para>THE SEXTUPLE IS A SEARCH SPACE, NOT A SETTING, and it is searched as a 2 x 2 x 2 x 2 x 2 x 2
+/// rather than as one switch even though real clients only ever shipped six of the sixty-four
+/// corners. They are six independent facts about how a press was graded (the game's own
 /// <c>RateWindowRule</c> doc says as much), they did not all move at the same time (the typo rule
 /// moved at backlog 109, combo restore at 140, the spacebar and the rate windows together at the
-/// 2026-08-13 release, the off-time rule at backlog 199), and the next change to any one of them has
-/// no reason to move the others.</para>
+/// 2026-08-13 release, the off-time rule at backlog 199, the correction cap at backlog 210), and the
+/// next change to any one of them has no reason to move the others.</para>
 ///
-/// <para>THE OFF-TIME AXIS IS THE WIDEST OF THE FIVE, alongside the spacebar. It reaches every row
+/// <para>THE OFF-TIME AXIS IS THE WIDEST OF THE SIX, alongside the spacebar. It reaches every row
 /// that ever fumbled a beat, which is nearly all of them: under
 /// <see cref="OffTimeRule.BreaksCombo"/>, the rule every stored row was played under, a right
 /// character struck outside the outermost Meh window zeroed the run and spent its cell on a Miss,
 /// and under the live rule it is a Meh that extends the run. So the two arms disagree on
 /// <c>statistics</c>, on <c>max_combo</c>, on accuracy, on completion and therefore on rank and
 /// pp.</para>
+///
+/// <para>THE CREDIT AXIS IS WIDE BUT SHALLOW (backlog 210). It reaches every row that ever fixed a
+/// typo, which is a large population, but it moves LESS per row than any of the other five: under
+/// <see cref="CorrectionCreditRule.Full"/>, the rule every row stored before it was played under, a
+/// corrected cell was graded on the retype's own timing alone, and under the live
+/// <see cref="CorrectionCreditRule.Capped"/> it resolves at min(that tier, Ok). So the two arms
+/// disagree on the TIER COUNTS in <c>statistics</c>, and therefore on accuracy and total_score, and
+/// on nothing else: <c>max_combo</c>, the miss count, the mistype count, completion and rank come
+/// back identical under both, because a capped cell is still a hit that extends the run and still
+/// counts as typed (pinned by the game's <c>CorrectionCreditTest</c>). It is still a searched axis
+/// and not a constant, because <c>statistics</c> is one of the two quantities the reproduction gate
+/// compares.</para>
 /// </summary>
-public readonly record struct SearchedEra(SpaceTimingRule Space, RateWindowRule Rate, ComboRestoreRule Combo, TypoRule Typo, OffTimeRule OffTime)
+public readonly record struct SearchedEra(SpaceTimingRule Space, RateWindowRule Rate, ComboRestoreRule Combo, TypoRule Typo, OffTimeRule OffTime, CorrectionCreditRule Credit)
 {
     /// <summary>The spelling the report prints, matching the rules' own type names.</summary>
     public override string ToString()
-        => $"SpaceTimingRule.{Space} + RateWindowRule.{Rate} + ComboRestoreRule.{Combo} + TypoRule.{Typo} + OffTimeRule.{OffTime}";
+        => $"SpaceTimingRule.{Space} + RateWindowRule.{Rate} + ComboRestoreRule.{Combo} + TypoRule.{Typo} + OffTimeRule.{OffTime} + CorrectionCreditRule.{Credit}";
 }
 
 /// <summary>
@@ -170,8 +183,9 @@ public enum RecalcMode
 {
     /// <summary>
     /// The verification sweep (backlog 114). Re-derives under the rules the row was PRICED under
-    /// (all FIVE era axes at the era that judged the row: the spacebar, the rate windows, combo
-    /// restore and the off-time rule PER ROW by reconstruction, and the typo rule from the row's own
+    /// (all SIX era axes at the era that judged the row: the spacebar, the rate windows, combo
+    /// restore, the off-time rule and the correction cap PER ROW by reconstruction, and the typo rule
+    /// from the row's own
     /// keys where they PROVE one and by reconstruction where they prove nothing, see
     /// <see cref="Recalculation.EraSearchFor"/>)
     /// and refuses any row it cannot reproduce exactly, then reports what today's TYPO rule alone would
@@ -183,8 +197,8 @@ public enum RecalcMode
     /// <summary>
     /// The superseding sweep (backlog 136 and 142). Re-judges the run under ALL of today's rules
     /// (<see cref="TypoRule.Deferred"/>, <see cref="ComboRestoreRule.OnFix"/>,
-    /// <see cref="SpaceTimingRule.Untimed"/>, <see cref="RateWindowRule.ScaledByRate"/> and
-    /// <see cref="OffTimeRule.MehHit"/>) and
+    /// <see cref="SpaceTimingRule.Untimed"/>, <see cref="RateWindowRule.ScaledByRate"/>,
+    /// <see cref="OffTimeRule.MehHit"/> and <see cref="CorrectionCreditRule.Capped"/>) and
     /// REPLACES the stored numbers with the result, because the user's decision is that a stored
     /// score must describe a game that is actually playable today.
     ///
@@ -647,11 +661,40 @@ public static class Recalculation
     private const OffTimeRule live_off_time_rule = OffTimeRule.MehHit;
 
     /// <summary>
+    /// The correction-credit era the reproduce pass TRIES FIRST (backlog 210): a cell that held a
+    /// wrong character before it was ever judged was graded on the RETYPE's own timing and nothing
+    /// else, so a fix struck inside the Great window was worth a full 300 and the typo cost the play
+    /// no accuracy at all.
+    ///
+    /// <para>True of every row in the table at the moment backlog 210 shipped, and (like the
+    /// spacebar and the off-time rule before it) it stops being true of every row the day a client
+    /// carrying the cap submits one, which is why it is a STARTING POINT rather than an assertion. A
+    /// row this default does not reproduce goes to <see cref="EraSearch"/> on this axis exactly as it
+    /// does on the other five.</para>
+    ///
+    /// <para>THE NARROWEST OF THE SIX IN WHAT IT MOVES, though not in what it reaches. It touches
+    /// only rows that corrected a typo, and for those it moves the TIER COUNTS alone: a corrected
+    /// cell's <c>great</c> becomes an <c>ok</c>. <c>max_combo</c> is identical under both arms, so
+    /// the reproduction gate catches this axis on <c>statistics</c> only, which is exactly the seam
+    /// that made a corrected typo invisible before backlog 158 (the corrected cell leaves no key of
+    /// its own).</para>
+    /// </summary>
+    private const CorrectionCreditRule stored_era_credit_rule = CorrectionCreditRule.Full;
+
+    /// <summary>
+    /// The correction-credit rule live play uses (backlog 210), and therefore the one a
+    /// <see cref="RecalcMode.Supersede"/> sweep re-judges under, and the one a row played since it
+    /// shipped has to be REPRODUCED under: a corrected cell resolves at min(the retype's own tier,
+    /// Ok), so perfect play strictly beats corrected play per cell.
+    /// </summary>
+    private const CorrectionCreditRule live_credit_rule = CorrectionCreditRule.Capped;
+
+    /// <summary>
     /// The era the reproduce pass tries first for a row that proves nothing, and the only one it tries
     /// for a row that comes back under it: the oldest of them all, with the spacebar inside the timing
     /// challenge, the windows unscaled by the rate, no combo given back for a corrected typo, a
-    /// wrong character spending its cell on a Miss the instant it lands and a mistimed one doing the
-    /// same. Every row stored before
+    /// wrong character spending its cell on a Miss the instant it lands, a mistimed one doing the
+    /// same and a corrected one graded on its retype's timing alone. Every row stored before
     /// backlog 109 is in this era, and it remains the overwhelming majority of the table, so the search
     /// below costs the table nothing.
     ///
@@ -659,7 +702,7 @@ public static class Recalculation
     /// a row whose <c>good</c> key proves the deferred rule starts on that arm instead. Use
     /// <see cref="DefaultEraFor"/> whenever the question is "what did THIS row start at".</para>
     /// </summary>
-    public static readonly SearchedEra DefaultEra = new(stored_era_space_rule, stored_era_rate_rule, stored_era_combo_rule, stored_era_typo_rule, stored_era_off_time_rule);
+    public static readonly SearchedEra DefaultEra = new(stored_era_space_rule, stored_era_rate_rule, stored_era_combo_rule, stored_era_typo_rule, stored_era_off_time_rule, stored_era_credit_rule);
 
     /// <summary>
     /// The era THIS row is tried first under, which is <see cref="DefaultEra"/> with the typo axis set
@@ -677,15 +720,16 @@ public static class Recalculation
         => DefaultEra with { Typo = StoredEraTypoRuleFor(stored) };
 
     /// <summary>
-    /// The four-axis order backlog 158 left behind, every entry on the OLDER off-time arm: the
+    /// The four-axis order backlog 158 left behind, every entry on the OLDER off-time arm and the
+    /// OLDER credit arm: the
     /// sixteen combinations of the spacebar, the rate windows, combo restore and the typo rule, with
     /// the four a real client shipped ahead of the twelve corners no build ever offered.
     ///
     /// <para>Kept as its own list, and kept in its own order, because <see cref="EraSearch"/> is
-    /// exactly this list with the off-time axis expanded over it (see the note there). Fold the
-    /// expansion into the literals and the fifth axis would be indistinguishable from the other four
-    /// in the source, which is the one thing that must stay visible: it is the axis whose arms are
-    /// interleaved rather than listed.</para>
+    /// exactly this list with the off-time and credit axes expanded over it (see the note there).
+    /// Fold the expansions into the literals and those two axes would be indistinguishable from the
+    /// other four in the source, which is the one thing that must stay visible: they are the axes
+    /// whose arms are interleaved rather than listed.</para>
     /// </summary>
     private static readonly IReadOnlyList<SearchedEra> four_axis_order = new[]
     {
@@ -693,26 +737,26 @@ public static class Recalculation
         // alone read as backlog 157's list did: everything old, then the live windows and combo rule,
         // then the middle era.
         DefaultEra,
-        new SearchedEra(stored_era_space_rule, stored_era_rate_rule, stored_era_combo_rule, live_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(live_space_rule, live_rate_rule, live_combo_rule, live_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(stored_era_space_rule, stored_era_rate_rule, live_combo_rule, live_typo_rule, stored_era_off_time_rule),
+        new SearchedEra(stored_era_space_rule, stored_era_rate_rule, stored_era_combo_rule, live_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(live_space_rule, live_rate_rule, live_combo_rule, live_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(stored_era_space_rule, stored_era_rate_rule, live_combo_rule, live_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
 
         // The twelve corners no build ever offered, which are searched anyway: each axis is an
         // independent fact about how a press was graded, and the next change to one of them has no
         // reason to move the others. The typo rule is in here for the same reason the other three are,
         // and only ever reaches a row whose keys prove nothing about it (see EraSearchFor).
-        new SearchedEra(live_space_rule, live_rate_rule, live_combo_rule, stored_era_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(stored_era_space_rule, stored_era_rate_rule, live_combo_rule, stored_era_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(live_space_rule, live_rate_rule, stored_era_combo_rule, stored_era_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(live_space_rule, live_rate_rule, stored_era_combo_rule, live_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(live_space_rule, stored_era_rate_rule, stored_era_combo_rule, stored_era_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(live_space_rule, stored_era_rate_rule, stored_era_combo_rule, live_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(live_space_rule, stored_era_rate_rule, live_combo_rule, stored_era_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(live_space_rule, stored_era_rate_rule, live_combo_rule, live_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(stored_era_space_rule, live_rate_rule, stored_era_combo_rule, stored_era_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(stored_era_space_rule, live_rate_rule, stored_era_combo_rule, live_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(stored_era_space_rule, live_rate_rule, live_combo_rule, stored_era_typo_rule, stored_era_off_time_rule),
-        new SearchedEra(stored_era_space_rule, live_rate_rule, live_combo_rule, live_typo_rule, stored_era_off_time_rule),
+        new SearchedEra(live_space_rule, live_rate_rule, live_combo_rule, stored_era_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(stored_era_space_rule, stored_era_rate_rule, live_combo_rule, stored_era_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(live_space_rule, live_rate_rule, stored_era_combo_rule, stored_era_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(live_space_rule, live_rate_rule, stored_era_combo_rule, live_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(live_space_rule, stored_era_rate_rule, stored_era_combo_rule, stored_era_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(live_space_rule, stored_era_rate_rule, stored_era_combo_rule, live_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(live_space_rule, stored_era_rate_rule, live_combo_rule, stored_era_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(live_space_rule, stored_era_rate_rule, live_combo_rule, live_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(stored_era_space_rule, live_rate_rule, stored_era_combo_rule, stored_era_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(stored_era_space_rule, live_rate_rule, stored_era_combo_rule, live_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(stored_era_space_rule, live_rate_rule, live_combo_rule, stored_era_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
+        new SearchedEra(stored_era_space_rule, live_rate_rule, live_combo_rule, live_typo_rule, stored_era_off_time_rule, stored_era_credit_rule),
     };
 
     /// <summary>
@@ -764,6 +808,14 @@ public static class Recalculation
     /// they disagree on, so the two have re-derived it to the same numbers and only the label
     /// differs.</para>
     ///
+    /// <para>THE CREDIT AXIS IS EXPANDED THE SAME WAY (backlog 210), over the off-time expansion
+    /// rather than under it, which doubles the list again to sixty-four. Same shape, same reason,
+    /// and the two properties it has to keep both survive: each of the thirty-two entries is still
+    /// immediately followed by its own credit twin, so filtering on any other axis still reads the
+    /// remaining ones in their own order, and the two all-live entries (before and since 210) are
+    /// again neighbours at the end of the first four-axis group's block. The timeline the shipped
+    /// eras form now has six points rather than five, the sixth being backlog 210.</para>
+    ///
     /// <para>THE ORDER IS BUILT SO THAT FILTERING IT DOES NOT DISTURB IT, which is what
     /// <see cref="EraSearchFor"/> does to pin a proved row. Read only the deferred-arm entries and you
     /// get backlog 157's eight combinations, each expanded over the off-time axis, in backlog 157's
@@ -783,6 +835,7 @@ public static class Recalculation
     /// </summary>
     public static readonly IReadOnlyList<SearchedEra> EraSearch = four_axis_order
         .SelectMany(era => new[] { era, era with { OffTime = live_off_time_rule } })
+        .SelectMany(era => new[] { era, era with { Credit = live_credit_rule } })
         .ToArray();
 
     /// <summary>
@@ -869,23 +922,24 @@ public static class Recalculation
         //    that graded it. Same computation, opposite meaning, which is why the two are separate
         //    commands.
         //
-        //    All FIVE era axes are set to the era that judged the row here, not just the typo rule:
-        //    the typo rule (109), combo restore (140), the spacebar (148), the rate windows (150) and
-        //    what an off-time press cost (199).
+        //    All SIX era axes are set to the era that judged the row here, not just the typo rule:
+        //    the typo rule (109), combo restore (140), the spacebar (148), the rate windows (150),
+        //    what an off-time press cost (199) and what a CORRECTED typo's cell was worth (210).
         //    Every one of them is a rule that moved after rows were already in the table, and leaving
         //    any of them on the live arm would re-grade the run on a ladder it was never played on
         //    and report the difference as a corrupt row.
         //
-        //    NONE of the five is a constant any more, and none of them falls back on one either. The
+        //    NONE of the six is a constant any more, and none of them falls back on one either. The
         //    TYPO axis is READ OFF THE ROW where the row can prove it (backlog 155), since a typo LEFT
         //    STANDING takes a key only the deferred rule can produce, and such a row is PINNED: the
         //    candidate list it gets from EraSearchFor holds only that arm, so the axis is never
         //    searched for it. Everything else is PROVED BY RECONSTRUCTION: the spacebar and the rate
         //    windows (backlog 156), combo restore (157), the typo rule for a row whose keys prove
         //    nothing about it (158, the case of a typo that was CORRECTED, which leaves no key and is
-        //    graded differently by the two rules), and the off-time rule (199, which leaves no key
+        //    graded differently by the two rules), the off-time rule (199, which leaves no key
         //    either: an off-time press and a press just inside the Meh window resolve as the same
-        //    `meh`). The row is re-derived under DefaultEraFor(stored)
+        //    `meh`), and the correction cap (210, which leaves no key either: a capped cell resolves
+        //    as an ordinary `ok`). The row is re-derived under DefaultEraFor(stored)
         //    first, and only if that does not come back is it re-derived under the remaining
         //    combinations until one reproduces it exactly.
         //
@@ -914,7 +968,8 @@ public static class Recalculation
             candidate.Combo,
             candidate.Space,
             candidate.Rate,
-            offTimeRule: candidate.OffTime);
+            offTimeRule: candidate.OffTime,
+            creditRule: candidate.Credit);
 
         // The era this row STARTS at, which is the table-wide default on the four keyless axes and
         // whatever the row's own keys prove on the typo axis. Always the first candidate the row is
@@ -986,19 +1041,20 @@ public static class Recalculation
 
         // 2. The same run under the rules this mode is asking about.
         //
-        //    Reproduce varies the TYPO rule alone and holds the other four axes at the stored era,
+        //    Reproduce varies the TYPO rule alone and holds the other five axes at the stored era,
         //    so every number it reports is attributable to that one axis. For a row already judged
         //    under today's typo rule this arm is the same judgement as the one above, and the row
         //    correctly reports as unmoved: there is no rule change left for it to be repriced by.
         //
-        //    "The stored era" for those four means the era the arm above ESTABLISHED for this row, on
-        //    ALL FOUR AXES, not the default (backlog 156, backlog 157 for combo restore, backlog 199
-        //    for the off-time rule). Holding
+        //    "The stored era" for those five means the era the arm above ESTABLISHED for this row, on
+        //    ALL FIVE AXES, not the default (backlog 156, backlog 157 for combo restore, backlog 199
+        //    for the off-time rule, backlog 210 for the correction cap). Holding
         //    any of them at the default for a row proved to be from a later era would vary more than
         //    one axis while claiming to vary one, and would report a row played since that era's
-        //    release as moving backwards onto a ladder it was never on. The off-time axis is why a
-        //    pre-199 row is REPRICED by a supersede sweep and not by a reproduce one: the reproduce
-        //    arm holds it where the row was judged, exactly as it holds the spacebar.
+        //    release as moving backwards onto a ladder it was never on. The off-time and credit axes
+        //    are why a pre-199 or pre-210 row is REPRICED by a supersede sweep and not by a reproduce
+        //    one: the reproduce arm holds each where the row was judged, exactly as it holds the
+        //    spacebar.
         //
         //    THE TYPO AXIS IS THE ONE THIS ARM DOES NOT TAKE FROM `era`, and that is not an oversight
         //    (backlog 158 put the axis in the search and left this line alone). This arm is the LIVE
@@ -1007,8 +1063,9 @@ public static class Recalculation
         //    a row proved or reconstructed onto the deferred arm, the row correctly reports as unmoved.
         //
         //    Supersede applies ALL of today's rules, judgement AND combo restore AND the spacebar
-        //    AND the rate windows AND the off-time rule, together (backlog 136, decided 2026-08-13;
-        //    backlog 151 adds the window pair, backlog 199 the fifth). Not because moving five axes
+        //    AND the rate windows AND the off-time rule AND the correction cap, together (backlog
+        //    136, decided 2026-08-13; backlog 151 adds the window pair, backlog 199 the fifth,
+        //    backlog 210 the sixth). Not because moving six axes
         //    at once is nicer to audit, it is worse, but because
         //    every halfway combination is one no client has ever run: a score judged with today's
         //    tiers and yesterday's combo rule could not be reproduced by replaying it anywhere,
@@ -1021,7 +1078,8 @@ public static class Recalculation
             mode == RecalcMode.Supersede ? live_combo_rule : era.Combo,
             mode == RecalcMode.Supersede ? live_space_rule : era.Space,
             mode == RecalcMode.Supersede ? live_rate_rule : era.Rate,
-            offTimeRule: mode == RecalcMode.Supersede ? live_off_time_rule : era.OffTime);
+            offTimeRule: mode == RecalcMode.Supersede ? live_off_time_rule : era.OffTime,
+            creditRule: mode == RecalcMode.Supersede ? live_credit_rule : era.Credit);
 
         var statistics = WireCounts.From(newRule.Statistics);
         var maximumStatistics = WireCounts.From(newRule.MaximumStatistics);

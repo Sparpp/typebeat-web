@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Typebeat.Web.Scoring;
 
@@ -112,8 +113,12 @@ public class ComboRestoreParityTest
             Assert.That(Int(run, "processorHighestCombo"), Is.EqualTo(6));
 
             // The typo deferred the cell's result, so the retype IS that result, earned at the
-            // resumed streak.
-            Assert.That(run.GetProperty("fixedCellJudgeType").GetString(), Is.EqualTo("Great"));
+            // resumed streak. It is announced as an Ok and not the Great its timing earned, because
+            // the cell held a wrong character before it was ever judged and backlog 210 caps such a
+            // cell at min(the retype's tier, Ok). The two rules compose without either knowing about
+            // the other: the restore is combo, the cap is the tier, and the restore still lands
+            // FIRST, which is what the 6 above measures.
+            Assert.That(run.GetProperty("fixedCellJudgeType").GetString(), Is.EqualTo("Ok"));
 
             // Exactly one break, at the keypress, and it is not un-counted: the typo stat counts the
             // KEYPRESS, and no correction can unpress it.
@@ -388,9 +393,16 @@ public class ComboRestoreParityTest
     ///
     /// <para>The restored run is worth SCORE and not only <c>max_combo</c>, which is why the restore
     /// goes before the judgement: the fixed run's combo multiset is exactly the clean run's, so it
-    /// scores the identical 1000000, where the unrestored one scored 929151. What the fix does NOT
-    /// buy back is the wrong keypress, which is still counted and still priced by pp's typo term:
-    /// the two runs' statistics differ by the <c>combo_break</c> key and by nothing else.</para>
+    /// keeps the full combo portion where the unrestored one scored 929151.</para>
+    ///
+    /// <para>What the fix does NOT buy back is the wrong keypress, still counted and still priced by
+    /// pp's typo term, and since backlog 210 the TOP TIER on the cell it spoiled: the corrected cell
+    /// is capped at Ok, so accuracy is (12·300 + 100)/3900 = 0.948718 and the total is
+    /// round(500000·0.948718·1 + 500000·0.948718^5) = 858646 against the clean run's 1000000. Until
+    /// the cap this line read the clean run's total exactly, and holding the two apart is what
+    /// backlog 210 is for. The combo portion is UNTOUCHED by the cap (the restore is combo, the cap
+    /// is the tier), which is what lets this test still measure the restore: <c>max_combo</c> is 13
+    /// under both.</para>
     /// </summary>
     [Test]
     public void AFixedTypoResumesTheStreakOnTheSubmittedAccountToo()
@@ -410,23 +422,34 @@ public class ComboRestoreParityTest
 
             // Restoring BEFORE the retype's judgement is what makes the fix worth score: every cell
             // from the fix onwards is weighted by a streak two higher, so the combo multiset is the
-            // clean run's and the total is identical.
-            Assert.That(fixedRun.GetProperty("totalScore").GetInt64(), Is.EqualTo(1_000_000));
+            // clean run's. What separates the two totals is the CAP alone (backlog 210), which is
+            // one cell's 300 coming down to 100 with the combo portion left exactly where it was.
+            Assert.That(clean.GetProperty("totalScore").GetInt64(), Is.EqualTo(1_000_000));
+            Assert.That(fixedRun.GetProperty("totalScore").GetInt64(), Is.EqualTo(858_646));
             Assert.That(fixedRun.GetProperty("totalScore").GetInt64(),
-                Is.EqualTo(clean.GetProperty("totalScore").GetInt64()));
+                Is.LessThan(clean.GetProperty("totalScore").GetInt64()));
 
-            // The rule moves combo and nothing else: the keypress is still a typo, the cell is still
-            // recovered, and the two runs agree on every other count.
+            // The combo rule moves combo and nothing else, and the credit rule moves the tier and
+            // nothing else: the keypress is still a typo, the cell is still recovered, thirteen
+            // cells are still resolved, and the only count that differs is which tier the corrected
+            // one landed in.
             var cleanStats = Dict(clean, "statistics");
             var fixedStats = Dict(fixedRun, "statistics");
 
+            Assert.That(cleanStats["great"], Is.EqualTo(13));
             Assert.That(fixedStats[mistype_key], Is.EqualTo(1));
             fixedStats.Remove(mistype_key);
-            Assert.That(fixedStats, Is.EquivalentTo(cleanStats), "thirteen cells resolved either way");
+            Assert.That(fixedStats, Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 12, ["ok"] = 1 }),
+                "thirteen cells resolved either way, one of them capped");
+            Assert.That(fixedStats.Values.Sum(), Is.EqualTo(cleanStats.Values.Sum()));
 
-            Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(1));
-            Assert.That(fixedRun.GetProperty("accuracy").GetDouble(), Is.EqualTo(clean.GetProperty("accuracy").GetDouble()));
-            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"));
+            Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(1),
+                "an Ok counts as typed exactly as a Great does, so completion is untouched");
+            Assert.That(fixedRun.GetProperty("accuracy").GetDouble(),
+                Is.EqualTo((12 * 300 + 100) / (13 * 300.0)).Within(1e-12));
+            Assert.That(fixedRun.GetProperty("accuracy").GetDouble(),
+                Is.LessThan(clean.GetProperty("accuracy").GetDouble()));
+            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"), "and so are rank and its cutoffs");
 
             // ...and the server agrees, recomputing the browser's own dictionary through the contract
             // that judges it in production: a max_combo of 13 on a thirteen-cell map is in bounds, and

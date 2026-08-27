@@ -200,7 +200,10 @@ public class AllowWrongInputParityTest
                 var run = root.GetProperty(name);
                 var stats = Dict(run, "statistics");
 
-                Assert.That(stats.GetValueOrDefault("great") + stats.GetValueOrDefault("good") + stats.GetValueOrDefault("miss"),
+                // `ok` is in the sum since backlog 210: a CORRECTED cell is capped at Ok, so the
+                // fixed run's fifteenth judgement arrives under that key rather than as a `great`.
+                // It is still exactly one result for the cell, which is what this counts.
+                Assert.That(stats.GetValueOrDefault("great") + stats.GetValueOrDefault("ok") + stats.GetValueOrDefault("good") + stats.GetValueOrDefault("miss"),
                     Is.EqualTo(15), $"{name}: the 15 cells must account for exactly 15 judgements");
                 Assert.That(Recompute(run).StatisticsValid, Is.True, name);
             }
@@ -214,11 +217,14 @@ public class AllowWrongInputParityTest
                 Assert.That(stats, Does.Not.ContainKey("meh"), name);
             }
 
-            // Erased and left empty, it is a miss; fixed, it is a Great. One result every way, never
-            // two and never none.
+            // Erased and left empty, it is a miss; fixed, it is an Ok (backlog 210 caps a corrected
+            // cell there however well the retype was timed). One result every way, never two and
+            // never none.
             Assert.That(Dict(root.GetProperty("lastCellWrongThenErased"), "statistics").GetValueOrDefault("miss"), Is.EqualTo(1));
             Assert.That(Dict(root.GetProperty("midCellWrongThenFixed"), "statistics"), Does.Not.ContainKey("miss"));
             Assert.That(Dict(root.GetProperty("midCellWrongThenFixed"), "statistics"), Does.Not.ContainKey("good"));
+            Assert.That(Dict(root.GetProperty("midCellWrongThenFixed"), "statistics").GetValueOrDefault("ok"), Is.EqualTo(1),
+                "the fixed cell is the capped one, and it is the only one");
         });
     }
 
@@ -341,22 +347,25 @@ public class AllowWrongInputParityTest
 
     /// <summary>
     /// THE point of backlog 109: backspacing and retyping recovers the cell for real. It ends green
-    /// on screen, it ends a Great in the statistics, and completion and the rank recover with it,
-    /// because the typo never spent the cell's one result. Before, the fix went green while the
+    /// on screen, it ends a JUDGED cell in the statistics, and completion and the rank recover with
+    /// it, because the typo never spent the cell's one result. Before, the fix went green while the
     /// statistics kept a miss for ever, so the play could see an A it had typed an X's worth of.
     ///
     /// <para>The two combo accounts also stop parting company over it: the HUD's live combo and the
     /// submitted one agree, where the submitted one used to lag by one. Since backlog 126 the fix
     /// buys back completion and rank, because an uncorrected typo is not a cell TYPED, and since
     /// backlog 140 it buys back the COMBO as well: correcting the cell resumes the streak the wrong
-    /// key broke, so both accounts read the full 15 and the total score is the clean run's exactly.
+    /// key broke, so both accounts read the full 15.
     /// Fixing a typo is therefore worth score and not only accuracy, which is what makes going back
     /// for it the right play under a typo stat that counts keypresses.</para>
     ///
-    /// <para>What the fix does NOT buy back is the mistake itself: the wrong keypress is still
-    /// counted under <c>combo_break</c> and still priced by pp's typo term, and no correction can
-    /// unpress it. That one key is now the ONLY trace it leaves on the submitted account
-    /// (<see cref="ComboRestoreParityTest"/> holds the rule itself).</para>
+    /// <para>What the fix does NOT buy back, and this is where backlog 210 moved the line. It used to
+    /// buy back the total score EXACTLY, so a fixed typo reached the clean run's numbers bit for bit
+    /// and the detour was free. Now the corrected cell is capped at Ok (min(the retype's tier, Ok)),
+    /// so the run keeps its streak, its completion and its X, and pays 200 of that cell's 300 in
+    /// accuracy and total score. The wrong keypress is also still counted under <c>combo_break</c>
+    /// and still priced by pp's typo term, and no correction can unpress it
+    /// (<see cref="ComboRestoreParityTest"/> holds the combo rule itself).</para>
     /// </summary>
     [Test]
     public void AFixedTypoRecoversTheCellTheJudgementAndTheRank()
@@ -369,8 +378,10 @@ public class AllowWrongInputParityTest
         {
             Assert.That(fixedRun.GetProperty("cellStates").GetString(), Does.Not.Contain("wrong"),
                 "every cell ends up correct on screen");
-            Assert.That(Dict(fixedRun, "statistics").GetValueOrDefault("great"), Is.EqualTo(15),
-                "...and the judgement agrees with the screen now");
+            Assert.That(Dict(fixedRun, "statistics").GetValueOrDefault("great"), Is.EqualTo(14),
+                "...and the judgement agrees with the screen now: every cell judged, the fixed one capped");
+            Assert.That(Dict(fixedRun, "statistics").GetValueOrDefault("ok"), Is.EqualTo(1),
+                "the corrected cell, capped at Ok by backlog 210 however well the retype was timed");
 
             Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(1).Within(1e-12));
             Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"));
@@ -380,9 +391,12 @@ public class AllowWrongInputParityTest
             Assert.That(fixedRun.GetProperty("maxCombo").GetInt32(), Is.EqualTo(15), "and so does the SUBMITTED combo");
 
             // The identical play with the typo left alone loses that cell's completion, and its rank
-            // with it, as well as the cell's judgement: the fix is worth a Great and leaving it is
-            // worth the typo tier, so completion, rank, accuracy, total score and the combo the
-            // retype earns are all strictly better for going back for it.
+            // with it, as well as the cell's judgement: the fix is worth a capped Ok (100) and
+            // leaving it is worth the typo tier (50, re-weighted), so completion, rank, accuracy,
+            // total score and the combo the retype earns are all strictly better for going back for
+            // it. Backlog 210 narrowed that margin, deliberately, and did not close it: the ordering
+            // clean 300 > corrected 100 > unfixed typo 50 > miss 0 is what the cap is chosen to
+            // produce.
             Assert.That(leftRun.GetProperty("completion").GetDouble(), Is.EqualTo(14.0 / 15.0).Within(1e-12));
             Assert.That(leftRun.GetProperty("rank").GetString(), Is.EqualTo("A"));
             Assert.That(fixedRun.GetProperty("completion").GetDouble(),
@@ -391,13 +405,16 @@ public class AllowWrongInputParityTest
             Assert.That(fixedRun.GetProperty("totalScore").GetInt64(), Is.GreaterThan(leftRun.GetProperty("totalScore").GetInt64()));
             Assert.That(fixedRun.GetProperty("maxCombo").GetInt32(), Is.GreaterThan(leftRun.GetProperty("maxCombo").GetInt32()));
 
-            // What the fix does not buy back: the keypress. It is the only difference left between
-            // this run and the clean one, which since backlog 140 is literally true of the submitted
-            // numbers as well, because the resumed streak restores the combo multiset and with it the
-            // total score. The mistype is still there, and pp still prices it.
+            // What the fix does not buy back: the keypress, which pp still prices, and since backlog
+            // 210 the top tier on the cell it spoiled. The combo multiset IS fully restored (backlog
+            // 140), so the shortfall against the clean run is the cap's alone, 200 of the capped
+            // cell's 300 in accuracy and its share of the total.
             Assert.That(Dict(fixedRun, "statistics")[mistype_key], Is.EqualTo(1));
             Assert.That(fixedRun.GetProperty("totalScore").GetInt64(),
-                Is.EqualTo(root.GetProperty("clean").GetProperty("totalScore").GetInt64()));
+                Is.LessThan(root.GetProperty("clean").GetProperty("totalScore").GetInt64()),
+                "a fixed typo no longer scores identically to a clean run");
+            Assert.That(fixedRun.GetProperty("accuracy").GetDouble(),
+                Is.EqualTo((14 * 300 + 100) / (15 * 300.0)).Within(1e-12));
         });
     }
 
@@ -475,7 +492,9 @@ public class AllowWrongInputParityTest
             Assert.That(probe.GetProperty("caretIndex").GetInt32(), Is.EqualTo(1));
 
             var stats = Dict(run, "statistics");
-            Assert.That(stats.GetValueOrDefault("great"), Is.EqualTo(15), "the fix earns the cell back");
+            Assert.That(stats.GetValueOrDefault("great"), Is.EqualTo(14), "the fix earns the cell back");
+            Assert.That(stats.GetValueOrDefault("ok"), Is.EqualTo(1),
+                "...at the capped tier, because the cell held a wrong character before it was judged (backlog 210)");
             Assert.That(stats, Does.Not.ContainKey("miss"));
             Assert.That(stats[mistype_key], Is.EqualTo(1));
         });
@@ -539,18 +558,22 @@ public class AllowWrongInputParityTest
             Assert.That(recomputed.StatisticsValid, Is.True);
 
             // Fixed instead: backspace clears the WRONG space and the corrected space earns the
-            // cell's real Great plus the streak the typo broke, so the combo multiset is the clean
-            // run's 1..15 and the whole map is typed. Only the mistype survives, which is what pp
-            // prices the mistake with.
+            // cell's own judgement plus the streak the typo broke, so the combo multiset is the clean
+            // run's 1..15 and the whole map is typed. Two traces survive: the mistype, which is what
+            // pp prices the mistake with, and the CAP on the corrected cell (backlog 210), which is
+            // what accuracy prices it with. A corrected word gap is capped like any other corrected
+            // cell, even though a space is judged on a zeroed delta: the cap is a min over the tier,
+            // and the untimed space simply arrives at the top of the ladder.
             Assert.That(Dict(fixedRun, "statistics"), Is.EquivalentTo(new Dictionary<string, int>
             {
-                ["great"] = 15, [mistype_key] = 1
+                ["great"] = 14, ["ok"] = 1, [mistype_key] = 1
             }));
             Assert.That(fixedRun.GetProperty("maxCombo").GetInt32(), Is.EqualTo(15), "the streak came back at the fix");
             Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(1));
-            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"));
+            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"),
+                "the cap costs accuracy, and completion and rank are untouched by it");
             Assert.That(fixedRun.GetProperty("totalScore").GetInt64(),
-                Is.EqualTo(root.GetProperty("clean").GetProperty("totalScore").GetInt64()));
+                Is.LessThan(root.GetProperty("clean").GetProperty("totalScore").GetInt64()));
         });
     }
 
@@ -583,10 +606,14 @@ public class AllowWrongInputParityTest
     /// since backlog 140 RESUMES the streak the wrong key broke BEFORE the retype is judged. The
     /// retype (the cell's own first and only result) therefore lands at combo 6 rather than 1, and
     /// the rest of the line runs 7..15, so the combo multiset is exactly the clean run's 1..15: the
-    /// portion is the full 12140.758980, comboProgress 1, accuracy a flat 1 because nothing missed,
-    /// and the total is 1000000. Under the pre-140 rule the same keystrokes read 881162 off a
-    /// portion of 300·(Σ(1..5)√i + Σ(1..10)√i) = 9255.183160, i.e. comboProgress 0.762323276, which
-    /// is what a restore applied AFTER the judgement would still produce.</item>
+    /// portion is the full 12140.758980 and comboProgress is 1. ACCURACY is where the fix now pays,
+    /// since backlog 210 caps a corrected cell at Ok: the retype was struck dead on target and would
+    /// have been a Great, so the cell is worth 100 of 300 and accuracy is (14·300 + 100)/4500 =
+    /// 0.955556, giving total = round(500000·0.955556·1 + 500000·0.955556^5) = 876114. Until the cap
+    /// this line read a flat accuracy of 1 and the clean run's 1000000 exactly, which is the equality
+    /// backlog 210 exists to remove. Under the pre-140 combo rule the same keystrokes read a portion
+    /// of 300·(Σ(1..5)√i + Σ(1..10)√i) = 9255.183160, i.e. comboProgress 0.762323276, which is what a
+    /// restore applied AFTER the judgement would still produce.</item>
     /// <item><c>wordGapTypedWrong</c>: the same shape as <c>midCellTypedWrong</c>, on the WORD GAP
     /// (cell 3), which used to reject the key instead (backlog 181). Greats at combo 1..3, the typo
     /// (a hand-written break, no result), greats at combo 1..11, and then the seal's typo result,
@@ -598,11 +625,15 @@ public class AllowWrongInputParityTest
     /// correctly.</item>
     /// <item><c>wordGapWrongThenFixed</c>: the fix cycle on that same gap. The restore puts the
     /// streak of 3 back BEFORE the corrected space is judged, so the combo multiset is the clean
-    /// run's 1..15 and the total is 1000000, exactly as <c>midCellWrongThenFixed</c> is.</item>
+    /// run's 1..15 and the total is 876114, exactly as <c>midCellWrongThenFixed</c> is: same combo
+    /// portion, same one capped cell. The cap reaches a corrected GAP like any other corrected cell,
+    /// even though the space itself is judged on a zeroed delta (backlog 148), because the cap is a
+    /// min over the tier and an untimed space simply arrives at the top of the ladder.</item>
     /// <item><c>spaceKeyOnLetter</c>: a space typed through into the opening cell (backlog 184) and
     /// then fixed. The break lands on an already-zero combo and the restore puts nothing back, so the
-    /// run is still 1..15 and the score is still exactly 1000000. A wrong keypress on the opening
-    /// cell costs combo nothing; it still costs pp, through the mistype count.</item>
+    /// run is still 1..15 and the combo portion is still the clean run's; the corrected opening cell
+    /// is capped, so the total is 876114 as well. A wrong keypress on the opening cell costs combo
+    /// nothing; it costs the cell's top tier, and pp through the mistype count.</item>
     /// </list>
     /// </summary>
     [Test]
@@ -617,10 +648,10 @@ public class AllowWrongInputParityTest
             ("lastCellSkipped", 14, 776_129, 0),
             ("lastCellWrongThenErased", 14, 776_129, 1),
             ("midCellTypedWrong", 9, 733_802, 1),
-            ("midCellWrongThenFixed", 15, 1_000_000, 1),
+            ("midCellWrongThenFixed", 15, 876_114, 1),
             ("wordGapTypedWrong", 11, 763_667, 1),
-            ("wordGapWrongThenFixed", 15, 1_000_000, 1),
-            ("spaceKeyOnLetter", 15, 1_000_000, 1),
+            ("wordGapWrongThenFixed", 15, 876_114, 1),
+            ("spaceKeyOnLetter", 15, 876_114, 1),
         ];
 
         Assert.Multiple(() =>

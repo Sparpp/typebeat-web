@@ -1357,6 +1357,15 @@
             typedChar: null,
             judgedDelta: null,
             firstCorrectDelta: null,
+            // TypingCell.HeldWrongBeforeJudged (backlog 210): whether a wrong character was typed
+            // into this cell at a time when it had not yet been judged, i.e. whether the cell's ONE
+            // awarded judgement is (or will be) a CORRECTION rather than a clean first attempt. The
+            // judging arms of processKey cap such a cell at 'Ok' (see awardedTier).
+            //
+            // HISTORY, unlike `state`: set once, never cleared, and it survives the backspace that
+            // erases the wrong character, which is the whole of what it is for. Only a fresh engine
+            // (the constructor's per-cell wipe, mirroring TypingEngine.reset) puts it back.
+            heldWrongBeforeJudged: false,
             // Mirrors DrawableTypeBeatCharObject.Judged, i.e. "this cell has already handed the
             // score processor its one and only result". ApplyEngineResult bails on an already-judged
             // cell (`if (Judged) return;`) and ApplySealResults goes through the same call, so a cell
@@ -1396,6 +1405,37 @@
 
     function basePoints(type) {
         return type === 'Great' ? 300 : type === 'Ok' ? 150 : type === 'Meh' ? 50 : 0;
+    }
+
+    // TypeBeatResultMapping.AwardedTier (backlog 210). The tier a correct keypress is AWARDED, given
+    // the tier the clock classified it as and whether its cell held a wrong character before it was
+    // ever judged: a CORRECTED cell resolves at min(that tier, 'Ok'), so perfect play strictly beats
+    // corrected play per cell. Before it, a word typed wrong and fixed could score bit-identically to
+    // a word typed right, because the mistype is accuracy-inert by design and the corrected cell's
+    // deferred result was graded purely on the RETYPE's timing.
+    //
+    // ONLY 'Great' MOVES, and that is the whole of the min(): of the tiers a correct press can be
+    // classified as, 'Great' is the only one ABOVE 'Ok'. 'Meh' is already below the cap, and
+    // 'Premature' / 'Lagging' are off the ladder entirely (they resolve as a 'meh' through
+    // toHitResult), so a capped cell struck off time is untouched here and that rule keeps its own
+    // answer. Written as a min over the ladder rather than as "Great becomes Ok" because the ladder
+    // is what the rule is about.
+    //
+    // APPLIED TO THE TIER AND NOT TO THE osu RESULT, exactly as the C# applies it, and both of that
+    // decision's reasons bind here too. Everything downstream follows from the one tier (the point
+    // ladder, `counts`, the result applyCellResult stores, the judgement onCharJudged announces to
+    // typebeat-player.js), so a result-level cap would show the player a Great while storing an Ok,
+    // and the inert-retype arm below announces a tier without applying any result at all, so there
+    // would be nothing there for a result-level cap to reach.
+    //
+    // UNCONDITIONAL, with no era arm, for the reason written on `restorable` and on the span rule:
+    // the browser only ever plays live, writes no replay frames and re-derives no stored row, so
+    // CorrectionCreditRule.Full (the pre-210 arm, which a stored row is re-derived under by the
+    // recalculation tool) is one it can never be in and the clause collapses to the live
+    // CorrectionCreditRule.Capped.
+    function awardedTier(type, heldWrongBeforeJudged) {
+        if (!heldWrongBeforeJudged) return type;
+        return type === 'Great' ? 'Ok' : type;
     }
 
     // Engine judgement -> osu HitResult (DrawableTypeBeatHitObject.toHitResult, i.e.
@@ -1665,6 +1705,10 @@
                     c.typedChar = null;
                     c.judgedDelta = null;
                     c.firstCorrectDelta = null;
+                    // The one place backlog 210's correction flag is ever cleared: it survives a
+                    // backspace by design, so only a whole-run rebuild puts it back (the C# clears
+                    // it in exactly the same place, TypingEngine.reset).
+                    c.heldWrongBeforeJudged = false;
                     c.judged = false;
                 }
             }
@@ -2310,6 +2354,18 @@
                     cell.typedChar = c;
                     cell.judgeType = 'WrongChar';
 
+                    // The cell is now one whose eventual judgement, if the player goes back for it,
+                    // will be a CORRECTION and not a clean first attempt, and backlog 210 prices
+                    // those differently (see awardedTier). Recorded on the cell rather than counted,
+                    // so a wrong-fix-wrong-fix cycle caps exactly once.
+                    //
+                    // Gated on the cell being UNJUDGED, which is what makes the flag mean what it
+                    // says. A cell that was already judged CLEAN and then spoiled by a wrong key on
+                    // the way back through keeps that clean judgement (a cell takes only its first
+                    // result, and the retype that follows is inert), so flagging it would demote a
+                    // judgement the player earned honestly before they ever fumbled it.
+                    if (cell.firstCorrectDelta === null) cell.heldWrongBeforeJudged = true;
+
                     const wrongCellIndex = this.caretIndex;
 
                     this.snapshotRedeemableBreak(wrongCellIndex, brokenStreak);
@@ -2457,7 +2513,11 @@
                 // below relies on the SAME guard rather than on this condition, because with
                 // allowWrongInput a cell can carry a result without ever having been correct.
                 const d = cell.firstCorrectDelta;
-                type = classify(d, w);
+                // The SAME award the first judgement took, re-derived: the stored delta through the
+                // same ladder, and through the same backlog 210 cap, because the flag it reads is
+                // set only before a cell is judged and never cleared. Announcing anything else here
+                // would show a Great on a cell whose stored result is the capped Ok.
+                type = awardedTier(classify(d, w), cell.heldWrongBeforeJudged);
                 cell.state = 'correct';
                 cell.typedChar = c;
                 cell.judgedDelta = d;
@@ -2465,7 +2525,15 @@
             } else {
                 this.totalKeypresses++;
                 this.correctKeypresses++;
-                type = classify(delta, w);
+                // The clock classifies the press, then backlog 210's CORRECTION CAP decides what it
+                // is awarded: a cell that held a wrong character before it was ever judged resolves
+                // at min(that tier, 'Ok'), so a corrected cell can never be worth what a clean one
+                // is. Applied here, above everything the tier decides, so the point ladder below,
+                // `counts`, the announced onCharJudged and the cell's osu result all follow the one
+                // decision and cannot say different things. The delta itself is untouched, so the
+                // sync tint and typebeat-player.js's live sync percent see the press the player
+                // actually made.
+                type = awardedTier(classify(delta, w), cell.heldWrongBeforeJudged);
                 const bp = basePoints(type);
                 if (bp > 0) {
                     // Multiplier reads combo BEFORE the increment; capped at COMBO_CAP => up to 2.0x.

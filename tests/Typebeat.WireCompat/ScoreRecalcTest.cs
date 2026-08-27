@@ -179,12 +179,20 @@ public class ScoreRecalcTest
     private const OffTimeRule off_time_rule = OffTimeRule.BreaksCombo;
 
     /// <summary>
+    /// The sixth axis (backlog 210), and the same story a third time: every row in the table was
+    /// played when a CORRECTED typo's cell was graded on the retype's own timing alone, so a fix
+    /// struck inside the Great window was worth a full 300. A synthetic stored row is built under
+    /// that unless a test is deliberately building a row a client running today's cap produced.
+    /// </summary>
+    private const CorrectionCreditRule correction_credit_rule = CorrectionCreditRule.Full;
+
+    /// <summary>
     /// The stored row a client of the OLDEST era would have produced for this run.
     ///
     /// <para>Every era axis is a parameter, because every one of them moved while the score table was
     /// already filling and the table therefore holds rows from both sides of each: the typo rule
-    /// (backlog 155), the spacebar and the rate windows (backlog 156), combo restore (backlog 157)
-    /// and what an off-time press cost (backlog 199).
+    /// (backlog 155), the spacebar and the rate windows (backlog 156), combo restore (backlog 157),
+    /// what an off-time press cost (backlog 199) and what a corrected typo was worth (backlog 210).
     /// A synthetic row for a later population has to be built under the rule that judged it, or it is
     /// a row no client ever produced.</para>
     /// </summary>
@@ -198,9 +206,10 @@ public class ScoreRecalcTest
         ComboRestoreRule comboRule = combo_restore_rule,
         TypoRule typoRule = TypoRule.ImmediateMiss,
         OffTimeRule offTimeRule = off_time_rule,
+        CorrectionCreditRule creditRule = correction_credit_rule,
         params Mod[] mods)
     {
-        var old = TypeBeatReplayScorer.Score(map, mods, replay, typoRule, comboRule, spaceRule, rateRule, offTimeRule: offTimeRule);
+        var old = TypeBeatReplayScorer.Score(map, mods, replay, typoRule, comboRule, spaceRule, rateRule, offTimeRule: offTimeRule, creditRule: creditRule);
 
         var statistics = ToWire(old.Statistics);
 
@@ -465,7 +474,13 @@ public class ScoreRecalcTest
 
         var result = Recalculation.Run(stored, Decoded(map, replay, new TypeBeatModFlashlight()));
 
-        var newRule = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModFlashlight() }, replay, TypoRule.Deferred, combo_restore_rule, space_timing_rule, rate_window_rule);
+        // The reproduce arm: today's TYPO rule alone, with every other axis held where the row was
+        // judged. The credit axis has to be named here as the other four are, because this fixture
+        // CORRECTS its typo and backlog 210 grades that cell differently on the two arms; leaving it
+        // to the parameter default would compare the pre-210 row against a post-210 judgement and
+        // report the difference as a multiplier fault.
+        var newRule = TypeBeatReplayScorer.Score(map, new Mod[] { new TypeBeatModFlashlight() }, replay, TypoRule.Deferred, combo_restore_rule, space_timing_rule, rate_window_rule,
+            offTimeRule: off_time_rule, creditRule: correction_credit_rule);
 
         Assert.Multiple(() =>
         {
@@ -632,7 +647,14 @@ public class ScoreRecalcTest
 
             Assert.That(superseded.Skip, Is.EqualTo(SkipReason.None), "refusing a stored row is not an answer");
             Assert.That(superseded.Moves, Is.True);
-            Assert.That(superseded.NewStatistics!["great"], Is.EqualTo(13));
+
+            // Twelve of the thirteen cells, and not thirteen: this fixture CORRECTS its typo, and
+            // backlog 210 caps a corrected cell at Ok however well the retype was timed, so the
+            // thirteenth arrives as an `ok`. The four-tier ladder is still the thing this test is
+            // about; the split is asserted so that the retired ladder's disappearance cannot be
+            // confused with the cap's arrival.
+            Assert.That(superseded.NewStatistics!["great"], Is.EqualTo(12));
+            Assert.That(superseded.NewStatistics!["ok"], Is.EqualTo(1));
             Assert.That(superseded.NewStatistics!.ContainsKey("perfect"), Is.False,
                 "no ladder the client still runs can award one");
             Assert.That(superseded.NewRank, Is.EqualTo("X"));
@@ -647,13 +669,23 @@ public class ScoreRecalcTest
 
     /// <summary>
     /// What superseding actually costs, stated as a test so nobody has to take the report's word for
-    /// it: under all of today's rules a run with a FIXED typo lands on exactly the account a clean
-    /// run lands on. Same max_combo, same total_score, same accuracy, same rank. The reproduce sweep,
-    /// which holds combo restore at the stored era, does not, and that gap is the decision the user
-    /// made on 2026-08-13.
+    /// it: under all of today's rules a run with a FIXED typo gets the STREAK its keypress broke back
+    /// (backlog 140) and still pays for the typo in ACCURACY (backlog 210). So it lands on the clean
+    /// run's max_combo, its completion and its rank, and strictly below the clean run's accuracy and
+    /// total_score.
+    ///
+    /// <para>THIS TEST USED TO PIN THE EQUALITY, and inverting it is the whole of backlog 210. Until
+    /// the cap, a superseded fixed-typo run reached the clean account BIT FOR BIT: the mistype travels
+    /// as an accuracy-inert statistic and the corrected cell was graded on the retype's own timing, so
+    /// the detour cost nothing that survived to the leaderboard. The equality was the bug, and it is
+    /// asserted here as a strict ordering in the direction it was replaced by, per cell and therefore
+    /// per run: clean 300 against a corrected cell's capped 100.</para>
+    ///
+    /// <para>The reproduce sweep holds combo restore AND the credit rule at the stored era, so it
+    /// reaches neither account, and that gap is the decision the user made on 2026-08-13.</para>
     /// </summary>
     [Test]
-    public void SupersedeMakesAFixedTypoScoreExactlyLikeACleanRun()
+    public void SupersedeGivesAFixedTypoItsStreakBackButNotACleanRunsAccuracy()
     {
         var map = Beatmap();
         var fixedTypo = FixedTypoReplay(map);
@@ -668,16 +700,25 @@ public class ScoreRecalcTest
         {
             Assert.That(supersede.Skip, Is.EqualTo(SkipReason.None));
 
+            // What the fix DOES get back, unchanged by the cap: the streak, and everything that
+            // follows from a capped cell still being a hit that counts as typed.
             Assert.That(supersede.NewMaxCombo, Is.EqualTo(clean.MaxCombo), "the fix resumes the streak its keypress broke");
-            Assert.That(supersede.NewTotalScore, Is.EqualTo(clean.TotalScore));
-            Assert.That(supersede.NewAccuracy, Is.EqualTo(clean.Accuracy).Within(1e-12));
+            Assert.That(supersede.NewCompletion, Is.EqualTo(clean.Completion).Within(1e-12));
             Assert.That(supersede.NewRank, Is.EqualTo("X"));
 
-            // The reproduce sweep holds the combo axis still, so it does NOT reach the clean
-            // account. If these two ever agree, one of the two rules stopped being expressible.
+            // ...and what it does NOT: the corrected cell is capped at Ok, so one of the run's
+            // thirteen cells is worth 100 where the clean run's is worth 300.
+            Assert.That(clean.Statistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(13), "the clean run is thirteen clean cells");
+            Assert.That(supersede.NewStatistics!["great"], Is.EqualTo(12));
+            Assert.That(supersede.NewStatistics!["ok"], Is.EqualTo(1), "the corrected cell, capped");
+            Assert.That(supersede.NewAccuracy, Is.LessThan(clean.Accuracy));
+            Assert.That(supersede.NewAccuracy, Is.EqualTo((12 * 300 + 100) / (13 * 300.0)).Within(1e-12));
+            Assert.That(supersede.NewTotalScore, Is.LessThan(clean.TotalScore));
+
+            // The reproduce sweep holds the combo axis still, so it does NOT reach the superseded
+            // account either. If these two ever agree, one of the two rules stopped being expressible.
             Assert.That(reproduce.Skip, Is.EqualTo(SkipReason.None));
             Assert.That(reproduce.NewMaxCombo, Is.LessThan(supersede.NewMaxCombo));
-            Assert.That(reproduce.NewTotalScore, Is.LessThan(supersede.NewTotalScore));
 
             // ... and the combo the fix gives back is worth pp, which is the other half of the cost.
             Assert.That(supersede.NewPp, Is.Not.Null);
@@ -1351,14 +1392,15 @@ public class ScoreRecalcTest
     }
 
     /// <summary>
-    /// The run re-derived under one point of the search space, with every one of the five era axes
+    /// The run re-derived under one point of the search space, with every one of the six era axes
     /// taken from the candidate rather than written out at the call site. Since backlog 158 the typo
-    /// rule is a member of <see cref="SearchedEra"/> like the others, and since backlog 199 so is the
-    /// off-time rule; a test that passed a literal <c>TypoRule.ImmediateMiss</c> next to
+    /// rule is a member of <see cref="SearchedEra"/> like the others, since backlog 199 so is the
+    /// off-time rule and since backlog 210 so is the correction cap; a test that passed a literal
+    /// <c>TypoRule.ImmediateMiss</c> next to
     /// <c>era.Space</c> would silently stop sweeping the axis it claims to sweep.
     /// </summary>
     private static TypeBeatReplayAccount ScoreUnder(IBeatmap map, Replay replay, SearchedEra era, params Mod[] mods)
-        => TypeBeatReplayScorer.Score(map, mods, replay, era.Typo, era.Combo, era.Space, era.Rate, offTimeRule: era.OffTime);
+        => TypeBeatReplayScorer.Score(map, mods, replay, era.Typo, era.Combo, era.Space, era.Rate, offTimeRule: era.OffTime, creditRule: era.Credit);
 
     /// <summary>Every cell on target except the SPACE, 2500 ms late: outside even the Meh window.</summary>
     private static Replay LateSpaceReplay()
@@ -1835,7 +1877,9 @@ public class ScoreRecalcTest
     /// in it is judged identically by both typo rules, so every
     /// arm that reproduces it under one reproduces it under the other. Backlog 199 doubled it a third
     /// time, to sixteen, on the axis that reaches the most rows of all: this run never strikes a
-    /// character off the ladder, so the off-time arms grade it identically too. That costs nothing
+    /// character off the ladder, so the off-time arms grade it identically too. Backlog 210 doubled
+    /// it a fourth time, to thirty-two: this run has no typo to correct, so the credit arms agree as
+    /// well. That costs nothing
     /// precisely because they agree, and this test asserts the agreement rather than asserting the
     /// pin alone.</para>
     /// </summary>
@@ -1858,21 +1902,24 @@ public class ScoreRecalcTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(reproducing, Has.Count.EqualTo(16),
-                "the rate axis is inert on a row with no rate mod, the combo AND typo axes on a run with no typo, and the off-time axis on a run with no mistimed press, so all sixteen of their arms reproduce");
+            Assert.That(reproducing, Has.Count.EqualTo(32),
+                "the rate axis is inert on a row with no rate mod, the combo AND typo axes on a run with no typo, the off-time axis on a run with no mistimed press, and the credit axis on a run with no typo to correct, so all thirty-two of their arms reproduce");
             Assert.That(reproducing.Select(x => x.era.Space), Is.All.EqualTo(SpaceTimingRule.Untimed), "the SPACE axis is the one this row can prove");
             Assert.That(reproducing.Select(x => x.account.MaxCombo).Distinct().Count(), Is.EqualTo(1), "and the reproducing arms agree, which is why the choice cannot matter");
 
-            Assert.That(reproducing.Count(x => x.era.Typo == TypoRule.ImmediateMiss), Is.EqualTo(8),
+            Assert.That(reproducing.Count(x => x.era.Typo == TypoRule.ImmediateMiss), Is.EqualTo(16),
                 "backlog 158 doubled the ambiguity rather than resolving any: a run with no typo reads the same under both rules");
-            Assert.That(reproducing.Count(x => x.era.Typo == TypoRule.Deferred), Is.EqualTo(8));
-            Assert.That(reproducing.Count(x => x.era.OffTime == OffTimeRule.BreaksCombo), Is.EqualTo(8),
+            Assert.That(reproducing.Count(x => x.era.Typo == TypoRule.Deferred), Is.EqualTo(16));
+            Assert.That(reproducing.Count(x => x.era.OffTime == OffTimeRule.BreaksCombo), Is.EqualTo(16),
                 "and backlog 199 doubled it again: a run that never strikes a character off the ladder reads the same under both off-time rules");
-            Assert.That(reproducing.Count(x => x.era.OffTime == OffTimeRule.MehHit), Is.EqualTo(8));
+            Assert.That(reproducing.Count(x => x.era.OffTime == OffTimeRule.MehHit), Is.EqualTo(16));
+            Assert.That(reproducing.Count(x => x.era.Credit == CorrectionCreditRule.Full), Is.EqualTo(16),
+                "and backlog 210 a fourth time: a run with no typo has no correction for the cap to reach, so both credit arms grade it identically");
+            Assert.That(reproducing.Count(x => x.era.Credit == CorrectionCreditRule.Capped), Is.EqualTo(16));
 
             Assert.That(result.ReproducedUnderEra, Is.EqualTo(reproducing[0].era), "the pin is the FIRST reproducing arm in the search order");
             Assert.That(result.ReproducedUnderEra,
-                Is.EqualTo(new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred, OffTimeRule.BreaksCombo)),
+                Is.EqualTo(new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred, OffTimeRule.BreaksCombo, CorrectionCreditRule.Full)),
                 "which is the combination a real client actually shipped (the 2026-08-13 release up to backlog 199), preferred over the corners no build ever offered");
         });
     }
@@ -2033,12 +2080,14 @@ public class ScoreRecalcTest
         var era = result.ReproducedUnderEra!.Value;
 
         // Today's typo rule over the era the first arm proved, which is what the second arm must be.
-        var heldStill = TypeBeatReplayScorer.Score(
-            map, Array.Empty<Mod>(), replay, TypoRule.Deferred, era.Combo, era.Space, era.Rate);
+        // Built through ScoreUnder off the proved era itself, so every axis but the typo rule is
+        // carried across by construction: this fixture CORRECTS its typo, so backlog 210's credit
+        // axis is one of the ones that has to be held still, and naming five axes by hand would
+        // silently leave the sixth on the live arm.
+        var heldStill = ScoreUnder(map, replay, era with { Typo = TypoRule.Deferred });
 
         // The same thing with the combo axis walked back to the default, which is what it must NOT be.
-        var comboWalkedBack = TypeBeatReplayScorer.Score(
-            map, Array.Empty<Mod>(), replay, TypoRule.Deferred, Recalculation.DefaultEra.Combo, era.Space, era.Rate);
+        var comboWalkedBack = ScoreUnder(map, replay, era with { Typo = TypoRule.Deferred, Combo = Recalculation.DefaultEra.Combo });
 
         Assert.Multiple(() =>
         {
@@ -2087,6 +2136,12 @@ public class ScoreRecalcTest
         // StoredFor puts it, because this run never strikes a character off the ladder and the two
         // arms therefore grade it identically, which is why the era it is pinned to below carries
         // the older arm: the search prefers it and nothing can tell the difference.
+        //
+        // The SIXTH is deliberately left there too, on the pre-210 arm (CorrectionCreditRule.Full),
+        // and that one is NOT indifferent: this run's whole point is a typo that was CORRECTED, so a
+        // client of this release graded that cell on its retype's own timing and the cap would grade
+        // it an Ok. The row is a 2026-08-13-release row, and it is the CREDIT arm of that release
+        // that judged it.
         var stored = StoredFor(
             map, replay,
             spaceRule: SpaceTimingRule.Untimed,
@@ -2094,7 +2149,7 @@ public class ScoreRecalcTest
             comboRule: ComboRestoreRule.OnFix,
             typoRule: TypoRule.Deferred);
 
-        var judgedUnder = new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred, OffTimeRule.BreaksCombo);
+        var judgedUnder = new SearchedEra(SpaceTimingRule.Untimed, RateWindowRule.ScaledByRate, ComboRestoreRule.OnFix, TypoRule.Deferred, OffTimeRule.BreaksCombo, CorrectionCreditRule.Full);
 
         var result = Recalculation.Run(stored, Decoded(map, replay));
         var plan = WritePlan.Build(new[] { result }, RecalcMode.Reproduce, new Dictionary<UnreplayableCase, UnreplayablePolicy>(), filtered: false);
@@ -2134,7 +2189,7 @@ public class ScoreRecalcTest
             Assert.That(result.Skip, Is.EqualTo(SkipReason.None));
             Assert.That(result.Reproduced, Is.True);
             Assert.That(result.EraProvedByReconstruction, Is.True);
-            Assert.That(result.ReproducedUnderEra, Is.EqualTo(judgedUnder), "and it lands in the era that judged it, on all five axes");
+            Assert.That(result.ReproducedUnderEra, Is.EqualTo(judgedUnder), "and it lands in the era that judged it, on all six axes");
             Assert.That(plan.PinnedByEraSearch.Select(r => r.Stored.ScoreId), Is.EquivalentTo(new[] { stored.ScoreId }));
 
             Assert.That(result.Moves, Is.False,
@@ -2283,13 +2338,13 @@ public class ScoreRecalcTest
         {
             Assert.That(stored.ProvablyJudgedUnderTheDeferredTypoRule, Is.True, "the fixture only means anything if the key is there");
 
-            Assert.That(Recalculation.EraSearch, Has.Count.EqualTo(32), "the whole space is five axes wide");
-            Assert.That(candidates, Has.Count.EqualTo(16), "a proved row is offered half of it");
+            Assert.That(Recalculation.EraSearch, Has.Count.EqualTo(64), "the whole space is six axes wide");
+            Assert.That(candidates, Has.Count.EqualTo(32), "a proved row is offered half of it");
             Assert.That(candidates.Select(e => e.Typo), Is.All.EqualTo(TypoRule.Deferred), "and only the arm its key proves");
 
             Assert.That(candidates.Select(e => e with { Typo = TypoRule.ImmediateMiss }),
                 Is.EquivalentTo(Recalculation.EraSearch.Where(e => e.Typo == TypoRule.ImmediateMiss)),
-                "pinning removes an axis, it does not remove a combination of the other four");
+                "pinning removes an axis, it does not remove a combination of the other five");
 
             Assert.That(candidates[0], Is.EqualTo(Recalculation.DefaultEraFor(stored)), "the row's starting point is the first thing it is offered");
             Assert.That(Recalculation.DefaultEraFor(stored), Is.Not.EqualTo(Recalculation.DefaultEra), "which is NOT the table-wide default, because the key moved it");
@@ -2312,9 +2367,12 @@ public class ScoreRecalcTest
     ///
     /// <para>FILTERING THE LIST DOES NOT REORDER IT. Backlog 158 interleaved the deferred-arm
     /// candidates into a list that used to hold only one arm's worth, and the order within each arm is
-    /// backlog 157's. Read only the deferred entries or only the older ones and you get the same eight
-    /// combinations of the other three axes in the same sequence, so neither population's label can
-    /// move because the other population's arms were added around it.</para>
+    /// backlog 157's. Read only the deferred entries or only the older ones and you get the same
+    /// combinations of the other axes in the same sequence, so neither population's label can
+    /// move because the other population's arms were added around it. Backlog 199 and backlog 210
+    /// each expanded the list again in place, which is the same property a third and fourth time: the
+    /// off-time and credit arms sit beside the combination they belong to, so filtering on the typo
+    /// axis still reads them in their own order.</para>
     /// </summary>
     [Test]
     public void TheSearchOrderStartsWhereEachRowStartsAndSurvivesBeingFiltered()
@@ -2330,7 +2388,7 @@ public class ScoreRecalcTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(Recalculation.EraSearch, Is.Unique, "thirty-two corners, no duplicates");
+            Assert.That(Recalculation.EraSearch, Is.Unique, "sixty-four corners, no duplicates");
             Assert.That(Recalculation.EraSearch[0], Is.EqualTo(Recalculation.DefaultEra));
 
             foreach (var stored in new[] { proved, unprovable })

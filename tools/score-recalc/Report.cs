@@ -54,13 +54,18 @@ public static class Report
             output.WriteLine("== SUPERSEDE: every stored number below is being REPLACED ==");
             output.WriteLine();
             output.WriteLine("judged under                 TypoRule.Deferred + ComboRestoreRule.OnFix + SpaceTimingRule.Untimed");
-            output.WriteLine("                             + RateWindowRule.ScaledByRate + OffTimeRule.MehHit (all of today's rules)");
+            output.WriteLine("                             + RateWindowRule.ScaledByRate + OffTimeRule.MehHit");
+            output.WriteLine("                             + CorrectionCreditRule.Capped (all of today's rules)");
             output.WriteLine("total_score priced with      today's mod multipliers");
             output.WriteLine();
             output.WriteLine("What that costs, deliberately, and what to look for in the numbers below:");
             output.WriteLine("  - every stored score containing a FIXED typo GAINS max_combo, total_score and pp,");
-            output.WriteLine("    because correcting a typo now resumes the streak its keypress broke. A fixed typo");
-            output.WriteLine("    ends up scoring identically to a clean play.");
+            output.WriteLine("    because correcting a typo now resumes the streak its keypress broke.");
+            output.WriteLine("  - ...and LOSES accuracy on each of those fixed cells. Backlog 210 caps a corrected cell");
+            output.WriteLine("    at Ok, so a `great` earned by a fix struck inside the Great window is re-judged as an");
+            output.WriteLine("    `ok` and a fixed typo no longer scores identically to a clean play. Nothing else about");
+            output.WriteLine("    such a row moves on this axis: max_combo, misses, mistypes, completion and rank are the");
+            output.WriteLine("    same under both arms, because a capped cell is still a hit that counts as typed.");
             output.WriteLine("  - a row stored in the backlog 133-to-147 window (a `perfect` key in its statistics)");
             output.WriteLine("    was graded on CHARACTER DISTANCE in four tiers and is re-graded on the millisecond");
             output.WriteLine("    ladder in three, so its tier counts move in both directions. Every other row was");
@@ -85,11 +90,11 @@ public static class Report
             output.WriteLine();
             output.WriteLine("judged under                 TypoRule.Deferred, every other era axis held at the era proved");
             output.WriteLine("                             for the ROW (combo restore, the spacebar, the rate windows, the");
-            output.WriteLine("                             off-time rule)");
+            output.WriteLine("                             off-time rule, the correction cap)");
             output.WriteLine("verified against             the typo rule that judged the ROW: Deferred where the row's own");
             output.WriteLine("                             statistics prove it (a `good` key), ImmediateMiss otherwise");
-            output.WriteLine("                             and the spacebar / rate windows / combo restore / off-time rule");
-            output.WriteLine("                             that judged the ROW, proved by reconstruction where the oldest");
+            output.WriteLine("                             and the spacebar / rate windows / combo restore / off-time rule /");
+            output.WriteLine("                             correction cap that judged the ROW, proved by reconstruction where the oldest");
             output.WriteLine("                             arms do not re-derive it");
             output.WriteLine("total_score priced with      the row's OWN mod multiplier, recovered not reapplied");
         }
@@ -238,7 +243,8 @@ public static class Report
     }
 
     /// <summary>
-    /// WHICH SPACEBAR, RATE-WINDOW, COMBO-RESTORE AND TYPO ERA the pass reproduced these rows under,
+    /// WHICH SPACEBAR, RATE-WINDOW, COMBO-RESTORE, TYPO, OFF-TIME AND CORRECTION-CREDIT ERA the pass
+    /// reproduced these rows under,
     /// counted per combination (backlog 156, backlog 157, backlog 158). None of the first three leaves
     /// a key in the row at all, and the typo rule leaves one only when the typo was LEFT STANDING, so
     /// for the rows in here there was nothing to read: a row its own starting point does not re-derive
@@ -257,8 +263,8 @@ public static class Report
     /// population, so the line for the all-live combination growing run over run is the expected
     /// reading, and that line staying at zero while new rows appear would mean the search is not
     /// reaching them. A COMBO-RULE OR TYPO-RULE PIN IS VISIBLE HERE RATHER THAN SILENT for the same
-    /// reason: the combination is spelled out on all five axes, so a row reconstructed onto today's
-    /// combo rule, today's typo rule or today's off-time rule says so.</para>
+    /// reason: the combination is spelled out on all six axes, so a row reconstructed onto today's
+    /// combo rule, today's typo rule, today's off-time rule or today's correction cap says so.</para>
     ///
     /// <para>Rows no combination reproduced are NOT here. They have no era, they are counted as
     /// unexplained below, and that is the property worth checking: a search that always found an
@@ -270,7 +276,7 @@ public static class Report
 
         output.WriteLine($"  of these, era proved by    {searched.Count,-6}  the arms their own keys start them at did not re-derive");
         output.WriteLine("  reconstruction                     them, so each remaining combination of the spacebar, rate-window,");
-        output.WriteLine("                                     combo-restore, typo and off-time axes was tried and the row pinned to");
+        output.WriteLine("                                     combo-restore, typo, off-time and correction-credit axes was tried and pinned to");
         output.WriteLine("                                     the one that reproduced it exactly. A row whose `good` key PROVES its typo");
         output.WriteLine("                                     era is not searched on that axis: the proof wins. No release time is");
         output.WriteLine("                                     used anywhere here, since a client updates when its player updates");
@@ -283,7 +289,7 @@ public static class Report
                                       .OrderByDescending(g => g.Count())
                                       .ThenBy(g => g.Key.ToString(), StringComparer.Ordinal))
         {
-            output.WriteLine($"      {group.Key,-125} {group.Count(),5}");
+            output.WriteLine($"      {group.Key,-160} {group.Count(),5}");
         }
     }
 
