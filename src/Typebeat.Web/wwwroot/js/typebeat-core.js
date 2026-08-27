@@ -946,6 +946,45 @@
         return { syllables: groups, cellSyllable: cellSyllable };
     }
 
+    // How many identical characters in a row make a STRETCH (backlog 209, mirrors
+    // TypingLine.STRETCH_RUN_LENGTH). Three, which is isSyllabifiable's own threshold for calling a
+    // spelling stylised, so the two answers about "hey" versus "heyyy" cannot disagree.
+    const STRETCH_RUN_LENGTH = 3;
+
+    // The STRETCH flags (backlog 209, mirrors TypingLine.buildCharTimedStretch), derived once from
+    // the cells and their group membership. ADDITIVE: it reads cellSyllable and never writes it, so
+    // no cell's group, target or span moves and every construction pin on this line (the parity
+    // fixtures included) sees exactly what it saw before.
+    //
+    // One left-to-right pass. A run extends while the next cell sits in the SAME group (a cell in no
+    // group can never extend one, so spaces, punctuation the default stream isolated and whole
+    // stylised tokens all break runs) and its character folds equal to the run's. A closed run of
+    // three or more marks all of its cells; a freestyle cell is marked whatever its neighbours are.
+    function buildCharTimedStretch(cells, cellSyllable) {
+        const flags = new Array(cells.length);
+
+        for (let i = 0; i < cells.length; i++) flags[i] = cells[i].freestyle;
+
+        let runStart = 0;
+
+        for (let i = 1; i <= cells.length; i++) {
+            const extends_ = i < cells.length
+                && cellSyllable[i] >= 0
+                && cellSyllable[i] === cellSyllable[runStart]
+                && fold(cells[i].expected) === fold(cells[runStart].expected);
+
+            if (extends_) continue;
+
+            if (cellSyllable[runStart] >= 0 && i - runStart >= STRETCH_RUN_LENGTH) {
+                for (let j = runStart; j < i; j++) flags[j] = true;
+            }
+
+            runStart = i;
+        }
+
+        return flags;
+    }
+
     // Index into line.syllables of the group that judges cell cellIndex, or -1 when the cell is in
     // no group (space cells, an unsyllabifiable token's cells, and any out-of-range index). Mirrors
     // TypingLine.SyllableIndexOf: membership is read through this and NEVER by cell range, because
@@ -953,6 +992,21 @@
     function syllableIndexOf(line, cellIndex) {
         const map = line.cellSyllable;
         return (map && cellIndex >= 0 && cellIndex < map.length) ? map[cellIndex] : -1;
+    }
+
+    // Whether cell cellIndex is a STRETCH cell (backlog 209, mirrors TypingLine.IsCharTimedStretch):
+    // one whose identity does not say WHEN inside its syllable it was meant to be pressed, so the
+    // span rule would hand it a delta of 0 for a press anywhere in the syllable. Two kinds qualify:
+    // a FREESTYLE cell, which accepts any key at all, and a cell inside a run of three or more
+    // consecutive cells of the same syllable whose characters fold equal (the "000" of "1000", the
+    // "yyyy" of a subtimed "hey|yyyy").
+    //
+    // Purely structural, and deliberately NOT a grouping change: these cells stay in their syllable,
+    // because the lyric stack lights GROUPS and an ungrouped stretch would stop being highlighted
+    // while it is sung. Only judgedDeltaFor reads it.
+    function isCharTimedStretch(line, cellIndex) {
+        const flags = line.charTimedStretch;
+        return !!(flags && cellIndex >= 0 && cellIndex < flags.length && flags[cellIndex]);
     }
 
     // Target time of typeable char j (0-based, of k in the word) under piecewise-linear syllable
@@ -1253,7 +1307,11 @@
                 // so membership is read through syllableIndexOf and never by range.
                 syllables: grouped.syllables,
                 // TypingLine.cellSyllable: per display cell, the index into syllables, or -1.
-                cellSyllable: grouped.cellSyllable
+                cellSyllable: grouped.cellSyllable,
+                // TypingLine.charTimedStretch: per display cell, whether the span rule is NARROWED
+                // back to the cell's own target for it (backlog 209). Derived from the cells and the
+                // membership map above, which it only reads, so nothing it touches moves.
+                charTimedStretch: buildCharTimedStretch(cells, grouped.cellSyllable)
             });
         }
 
@@ -2084,17 +2142,24 @@
         // that fallback is what gives a stylised word its per-character judgement: space cells,
         // lines with no groups, and every cell of an unsyllabifiable token land in the same arm.
         //
-        // No era arm here, unlike the C#. The desktop engine defaults to CLASSIC and turns the
-        // span rule on for live play, because it must also RE-DERIVE stored replays under the rule
-        // their fingers were graded on (the replay's CONFIG frame, flags bit 2). The browser only
-        // ever plays live: it has no mods payload, no replay input, it writes no replay frames (a
-        // /play submission carries the aggregate account alone, and PUT /api/v2/scores/{id}/replay
-        // is the desktop client's own upload path), and nothing re-scores a stored row through this
-        // file. So the live rule is the only rule this engine can be in, and it is unconditional.
+        // Since backlog 209 a STRETCH cell lands there too, and it is IN a group: a freestyle slot
+        // or a cell of a run of three or more identical characters inside one syllable (see
+        // isCharTimedStretch). Those cells are interchangeable to the matcher, so the span paid a
+        // whole mashed run a delta of zero seconds ahead of the vocal; they go back on their own
+        // character's clock while the rest of the line keeps the span.
+        //
+        // No era arm here, unlike the C#. The desktop engine defaults to CLASSIC on both axes and
+        // turns the span rule (CONFIG frame flags bit 2) and the stretch narrowing (bit 6) on for
+        // live play, because it must also RE-DERIVE stored replays under the rules their fingers
+        // were graded on. The browser only ever plays live: it has no mods payload, no replay input,
+        // it writes no replay frames (a /play submission carries the aggregate account alone, and
+        // PUT /api/v2/scores/{id}/replay is the desktop client's own upload path), and nothing
+        // re-scores a stored row through this file. So the live rule is the only rule this engine
+        // can be in, and both parts of it are unconditional.
         judgedDeltaFor(line, cellIndex, time) {
             const syllable = syllableIndexOf(line, cellIndex);
 
-            if (syllable >= 0) {
+            if (syllable >= 0 && !isCharTimedStretch(line, cellIndex)) {
                 const group = line.syllables[syllable];
 
                 if (time < group.startTime) return time - group.startTime;
@@ -2769,13 +2834,16 @@
         // The syllabifier and the group derivation, exported so the fidelity harnesses can hold
         // them against the game's own Syllabifier / TypingLine.Syllables word for word.
         isSyllabifiable, countSyllables, splitPoints, buildSyllables, syllableIndexOf,
+        // The stretch narrowing (backlog 209), exported for the same reason: the harnesses hold it
+        // against the game's own TypingLine.IsCharTimedStretch cell for cell.
+        buildCharTimedStretch, isCharTimedStretch,
         // SyllableSegments (backlog 181): the shared authored-vs-derived split derivation, exported
         // for the same reason, so the game's own SyllableSegments can be held against it.
         isAuthoredValid, derivedSplits, splitsFor, cellCuts, segmentOf,
         TypingEngine, computeScore, rankFromCompletion,
         windowsFor, classify, toHitResult,
         freestyleTick, freestyleGlyph,
-        constants: { CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER, SHIMMER_INTERVAL_MS, PUNCTUATION, WORD_BREAK },
+        constants: { CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER, SHIMMER_INTERVAL_MS, PUNCTUATION, WORD_BREAK, STRETCH_RUN_LENGTH },
         // the renderer/high-level mount is attached in typebeat-player.js
     };
 })(window);

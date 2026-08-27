@@ -21,14 +21,14 @@
 // feed consumes frames in list order as the clock passes them, so an out-of-order frame would be
 // applied at a time the recorded run never had, on both sides equally but for no useful reason.
 //
-// There used to be a second, a cap on REJECTED keys: the browser fails a play at 13 consecutive
+// THE SECOND IS A CAP ON REJECTED KEYS, and it is back. The browser fails a play at 13 consecutive
 // rejections (WRONG_KEY_FAIL_STREAK) while TypeBeatReplayScorer simulates no health at all and would
-// carry on, so the generator stayed clear of that streak rather than pinning a difference that is by
-// design. Backlog 184 made it moot on these fixtures: the mid-word space was the last key any of
-// them could be rejected on, and it is typed through now, so no run here can build the streak at
-// all. The cap is gone rather than left as an unreachable guard, and the reason it can go is worth
-// stating: a fixture with a FREESTYLE slot in it (the one cell that still refuses the space key)
-// would need it back.
+// carry on, so the generator stays clear of that streak rather than pinning a difference that is by
+// design. Backlog 184 had made it moot (the mid-word space was the last key any fixture could be
+// rejected on, and it is typed through now), and the note left behind said a fixture with a
+// FREESTYLE slot, the one cell that still refuses the space key, would need it back. Backlog 209
+// added exactly that fixture, so the cap is restored, in the narrowest form that reaches it: a space
+// about to be the streak's last rejection is swapped for a key the slot accepts.
 //
 // Usage: node CoreFuzzHarness.cjs <absolute path to typebeat-core.js>
 
@@ -193,7 +193,24 @@ const FIXTURES = {
                 { text: 'tonight', start_ms: 1900, end_ms: 4000, score: 1,
                   syllables: [{ text: 'to', start_ms: 1900 }, { text: 'ni', start_ms: 2600 }, { text: 'ght', start_ms: 3200 }],
                   split_chars: [2, 5] }]
-    }], 8000)
+    }], 8000),
+
+    // Backlog 209's surface: the two shapes the span rule cannot judge, on one line beside cells it
+    // still judges. "&&&&" is a FREESTYLE token, syllabifiable (only three identical LETTERS fail
+    // that gate) and so one group over [1000, 5000], every cell of which accepts any key; "aaaaa" is
+    // subtimed at 9000 and cut "aa|aaa", so its second group holds a run of THREE identical
+    // characters while the first holds a run of two that stays on the span.
+    //
+    // The two cuts DISAGREE on purpose: the derived split cuts the word at 2.5 characters in
+    // index-space while the target spread walks the five characters evenly, so cell 7 (the run's
+    // first) is timed 8200, 800 ms before its own syllable opens at 9000. That is the sharpest shape
+    // there is for the narrowing: the cell's target is not merely somewhere else inside its span, it
+    // is outside it.
+    freestyleStretch: osu([{
+        text: '&&&& aaaaa', start_ms: 1000, end_ms: 17000, freestyle: true,
+        words: [{ text: '&&&&', start_ms: 1000, end_ms: 5000, score: 1 },
+                { text: 'aaaaa', start_ms: 5000, end_ms: 17000, score: 1, syllables: [{ start_ms: 9000 }] }]
+    }], 30000)
 };
 
 function build(name) {
@@ -293,6 +310,17 @@ function generate(name, seed, spaceSkipsWord) {
             ch = cell.expected;
         }
 
+        // The rejection cap (see the header): a space is the one key a FREESTYLE slot still refuses,
+        // and the browser fails a play at WRONG_KEY_FAIL_STREAK consecutive rejections while the C#
+        // scorer simulates no health at all. Stop one short of that streak by pressing a key the slot
+        // takes instead, which also resets the count rather than merely dodging it. With the skip
+        // setting on the space never reaches the slot at all (the word skip consumes it), so the
+        // guard is scoped to the arm that can reject.
+        if (ch === ' ' && cell.freestyle && !spaceSkipsWord
+            && engine.consecutiveWrongKeys + 1 >= TB.constants.WRONG_KEY_FAIL_STREAK) {
+            ch = LETTERS[Math.floor(rnd() * LETTERS.length)];
+        }
+
         // Press at the cell's own target plus an offset, never earlier than the clock already is.
         const pressTime = Math.max(t, cell.target + OFFSETS[Math.floor(rnd() * OFFSETS.length)]);
 
@@ -345,12 +373,36 @@ function play(name, keys, spaceSkipsWord) {
     // groups but only ever pressed dead on target cannot pass for coverage. Without this the whole
     // port could silently stop being exercised (a fixture edit that ungrouped every token would
     // leave both sides agreeing on point deltas, green and meaningless).
+    //
+    // Backlog 209 splits that count in two, because a cell in a group now reaches one of TWO arms:
+    // the span, or the narrowing back to its own character target (a freestyle slot, or a cell of a
+    // run of three identical characters in one syllable). Each is counted only when the OTHER rule
+    // would have answered differently, so both counters say "this arm decided a press" rather than
+    // "this arm ran", and the sweep has to reach both.
     let spanJudgements = 0;
+    let stretchPointJudgements = 0;
     const judgedDelta = engine.judgedDeltaFor.bind(engine);
 
     engine.judgedDeltaFor = function (line, cellIndex, time) {
         const delta = judgedDelta(line, cellIndex, time);
-        if (TB.syllableIndexOf(line, cellIndex) >= 0 && delta !== time - line.cells[cellIndex].target) spanJudgements++;
+        const syllable = TB.syllableIndexOf(line, cellIndex);
+
+        if (syllable >= 0) {
+            const group = line.syllables[syllable];
+            const point = time - line.cells[cellIndex].target;
+            const span = time < group.startTime ? time - group.startTime
+                : (time > group.endTime ? time - group.endTime : 0);
+
+            // Which arm ANSWERED, read off the answer itself rather than off the predicate, and only
+            // where the two arms disagree. Counting the predicate would leave the narrowing's counter
+            // positive even if judgedDeltaFor stopped reading it, which is the one failure these
+            // counters exist to catch.
+            if (span !== point) {
+                if (delta === point) stretchPointJudgements++;
+                else if (delta === span) spanJudgements++;
+            }
+        }
+
         return delta;
     };
 
@@ -430,6 +482,7 @@ function play(name, keys, spaceSkipsWord) {
         restores: restores,
         passiveBreaks: passiveBreaks,
         spanJudgements: spanJudgements,
+        stretchPointJudgements: stretchPointJudgements,
         gapTypos: gapTypos,
         parkedGapTypos: parkedGapTypos,
         stepOvers: stepOvers,
@@ -488,7 +541,12 @@ function cellsOf(name) {
         syllables: line.syllables.map(g => ({
             startCell: g.startCell, endCellExclusive: g.endCellExclusive, startTime: g.startTime, endTime: g.endTime
         })),
-        cellSyllable: line.cellSyllable.slice()
+        cellSyllable: line.cellSyllable.slice(),
+        // The STRETCH flags (backlog 209), pinned beside the membership map for the same reason and
+        // in the same place: they are the second half of what decides which rule judges a press, and
+        // they are DERIVED from the cells and that map, so a divergence here is a divergence in the
+        // derivation rather than in the engine.
+        charTimedStretch: line.charTimedStretch.slice()
     }));
 }
 
@@ -639,12 +697,24 @@ const SCRIPTED = [
         keys: [[1000, 'b'], [1050, 'e'], [1100, 'a'], [1150, 'u'], [1200, 't'], [1250, 'i'],
                [1500, 'f'], [1600, 'u'], [1700, 'l'], [1900, ' '],
                [1950, 't'], [2100, 'o'], [2700, 'n'], [2800, 'i'], [2900, 'g'], [3300, 'h'], [3400, 't']]
+    },
+    {
+        // Backlog 209's asked-for shape, the field report's own: the freestyle section MASHED the
+        // instant it opens (four keys at 1000, where the pure span rule paid every one of them delta
+        // 0 seconds ahead of the vocal) and the stretched run mashed the same way at the top of its
+        // syllable. Every cell in between keeps the span, so one script puts both rules side by side:
+        // the markers target 1000 / 2000 / 3000 / 4000 and are judged on those, the two 'a's of the
+        // first syllable are inside [5000, 9000] and are judged 0, and the run's three cells target
+        // 8200 / 10600 / 13800 against presses at 9100 / 9200 / 9300.
+        name: 'scripted/mashedStretch', fixture: 'freestyleStretch', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'q'], [1000, 'q'], [1000, 'q'], [1000, 'q'], [5000, ' '],
+               [5000, 'a'], [6000, 'a'], [9100, 'a'], [9200, 'a'], [9300, 'a']]
     }
 ];
 
 // ---------------------------------------------------------------------------------------------
 const names = ['catDog', 'abCd', 'catDogThenHi', 'quickBrownFox', 'mixedTiers', 'syllabic',
-               'syllableWords', 'stylised', 'subtimed', 'authoredSplit'];
+               'syllableWords', 'stylised', 'subtimed', 'authoredSplit', 'freestyleStretch'];
 const cases = [];
 
 for (const scripted of SCRIPTED) {

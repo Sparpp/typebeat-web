@@ -165,9 +165,13 @@ function spaceRejected(osuText, refill, strict) {
         rejected: rejected.join('')
     };
 
-    // The slot is still fillable afterwards: the space cost combo, not the cell.
-    engine.update(2400);
-    after.refillAccepted = engine.processKey(refill, 2400);
+    // The slot is still fillable afterwards: the space cost combo, not the cell. The refill lands on
+    // the cell's OWN target, which is where the freestyle arm and the ordinary control are judged
+    // alike: since backlog 209 a freestyle slot is a STRETCH cell and so is graded on its character
+    // target, while an ordinary cell keeps its syllable's sung span, and an off-target refill would
+    // put the two arms on different rules over a difference this equality is not about.
+    engine.update(2000);
+    after.refillAccepted = engine.processKey(refill, 2000);
     after.refillState = engine.lines[0].cells[1].state;
     after.refillWrongKeys = engine.consecutiveWrongKeys;
     after.score = engine.score;
