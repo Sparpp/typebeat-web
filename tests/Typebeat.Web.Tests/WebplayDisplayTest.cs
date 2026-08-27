@@ -160,15 +160,22 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
-    /// The same rule on a real run, which is where it earns its keep. The fixture is two lines with
-    /// twelve seconds of instrumental between them, both characters of line 0 typed by 1500: the
-    /// caret rolls forward onto line 1, but a decoder-built line's window runs to the NEXT line's
-    /// start, so line 0 stays unsealed and being sung until 12000.
+    /// The same rule on a real run, which is where it earns its keep. The fixture is two lines, both
+    /// characters of line 0 typed by 1500: the caret rolls forward onto line 1, but a decoder-built
+    /// line's window runs to the NEXT line's start, so line 0 stays unsealed and being sung until
+    /// 3000.
     ///
     /// <para>At 1600 the playhead is 1.2 characters into line 0 while the caret sits on line 1, and
     /// the coordinates the sweep is drawn from must be line 0's. Line 1's own playhead reads 0 there
     /// (clamped before its start), which is precisely the stuck sweep this pins against. Once line 0
     /// seals the two are one line again and the placement is the ordinary one.</para>
+    ///
+    /// <para>Backlog 218 gave this its own fixture rather than the twelve-second instrumental one,
+    /// and that is a re-timing rather than a re-aiming: the rush bound lets a caret run at most
+    /// <c>FLETCHER_DRAG_GRACE_MS</c> ahead of a line's cue, so on a long instrumental the vocal of
+    /// the line behind is finished by the time the caret leaves it and the reading would be that
+    /// line's clamped end, which is a far weaker thing to pin. Here line 1 comes due at 1500, while
+    /// line 0 is still being sung, so every number below is the one it always was.</para>
     /// </summary>
     [Test]
     public void SungPlayheadTracksTheVocalWhileTheCaretIsParkedAhead()

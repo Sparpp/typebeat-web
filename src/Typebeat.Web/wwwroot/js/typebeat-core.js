@@ -1706,6 +1706,12 @@
     // so a dragging player may finish the line the song has already left. Deliberately the same
     // magnitude as CUE_LEAD_MS: the beat of grace given to get ready, granted at the other end of
     // the line as well. Bounded so a run always terminates.
+    //
+    // Since backlog 218 it bounds BOTH directions, and the name is kept for the replays and the
+    // mirrors that already use it. Drag holds a line open this long past its natural END
+    // (sealPermitted); rush enters a line this long before its natural START (entryPermitted, gated
+    // on boundedRush). One constant, so the two freedoms cannot drift apart: a player may run ahead
+    // of the song by exactly the margin they may fall behind it.
     const FLETCHER_DRAG_GRACE_MS = 1500;
 
     // TypingCell.IsCountable: the currency the rush cap measures in. A space spends no budget, so
@@ -1799,9 +1805,10 @@
             // playhead. Four behaviours, all confined to these two flags so the pinned path stays
             // byte-identical:
             //   RUSH FREEDOM      finishing a line moves the caret straight on to the next one
-            //                     instead of waiting for its cue (rollForwardIfFinishedEarly). The
-            //                     finished line is left unsealed and seals on its own normal
-            //                     deadline with nothing missed.
+            //                     instead of waiting for its cue (rollForwardIfFinishedEarly), and
+            //                     since backlog 218 no earlier than FLETCHER_DRAG_GRACE_MS before
+            //                     that cue (boundedRush). The finished line is left unsealed and
+            //                     seals on its own normal deadline with nothing missed.
             //   DRAG FREEDOM      a line the player is still typing is not force-sealed at its
             //                     normal deadline; the seal is deferred by FLETCHER_DRAG_GRACE_MS
             //                     so the caret is never yanked off a line mid-word (sealPermitted).
@@ -1817,21 +1824,41 @@
             // Per-char judgement windows are untouched: rushing reads as early deltas and dragging
             // as late ones, so accuracy, sync% and the judgement counts report the drift honestly.
             //
-            // BOTH TRUE UNCONDITIONALLY, the same shape every other live-only rule in this file
+            // ALL THREE TRUE UNCONDITIONALLY, the same shape every other live-only rule in this file
             // takes (the span judgement, the word-gap input model, the space discipline, the
             // stretch narrowing). Since backlog 208 this is the desktop's LIVE default for every
             // stack, and the mod named Fletcher is the one that turns it OFF and re-pins the caret
             // (acronym FC). The browser has no mods payload, so the strict FC arm is unreachable
-            // here; if /play ever grows one, FC is the mod that would clear these two.
+            // here; if /play ever grows one, FC is the mod that would clear these.
             //
             // In the C# they default FALSE, because that engine must also RE-DERIVE a stored replay
             // under the pinned era every pre-208 row was played in, and the pair travels as CONFIG
-            // frame bit 5. The browser has no era axis: it plays live only, writes no replay frames
-            // and re-scores no stored row, so the live value is the only value it can hold. The C#
-            // arm of the fuzz parity test therefore has to SET bit 5 in the frames it feeds, the
-            // same treatment bits 2, 3, 4 and 6 already get.
+            // frame bit 5 (the rush bound as bit 7). The browser has no era axis: it plays live
+            // only, writes no replay frames and re-scores no stored row, so the live value is the
+            // only value it can hold, and the pre-218 UNBOUNDED era is unreachable in it exactly as
+            // the pinned one is. The C# arm of the fuzz parity test therefore has to SET bits 5 and
+            // 7 in the frames it feeds, the same treatment bits 2, 3, 4 and 6 already get.
             this.fletcherEnabled = true;
             this.flexibleLineSnap = true;
+            // THE SYMMETRIC RUSH BOUND (backlog 218): a finished caret may enter the next line only
+            // from FLETCHER_DRAG_GRACE_MS before that line's own activationTime onward
+            // (entryPermitted), the exact mirror of the drag side (sealPermitted), which holds a
+            // line open exactly that long past its natural end. Without it RUSH was time-UNBOUNDED
+            // while DRAG never was: rollForwardIfFinishedEarly handed the caret to the next line the
+            // instant the last cell of the current one landed, however many seconds before that
+            // line's cue, and the roll is TRANSITIVE, so a fast player could walk the whole map at
+            // the top of the song with nothing but the rush cap (which costs combo and blocks
+            // nothing) in the way.
+            //
+            // A refused roll PARKS the caret past the last cell of its line, the state the
+            // line-start snap already understands: keypresses there are inert (processKey answers
+            // false on a complete line, so no judgement, no typo, no combo break and nothing in the
+            // accuracy denominator), the WPM clock does not run (update accrues only while the
+            // active line is INCOMPLETE), and snapForwardOnLineStart performs the deferred roll the
+            // moment the bound opens. The DRAG side is untouched, and neither the drag cutoff's
+            // hand-over nor the seal loop's ordinary one is refused: those are the SONG arriving, an
+            // entry that is late rather than early.
+            this.boundedRush = true;
             // The COUNTABLE-CHARACTER STREAM (the C# constructor's countableTargets /
             // countableBase / countablePrefix): the whole map read as one run of countable cells,
             // which is the currency the rush cap measures in. countableTargets holds every
@@ -1971,6 +1998,11 @@
         // is moved on. Always true with a pinned caret, and true under a flexible one for any line
         // the player is not currently on, so a finished-early line still seals exactly on its own
         // deadline.
+        //
+        // Its mirror is entryPermitted below (backlog 218): this one is how far past a line's
+        // natural END a dragging player may still be on it, that one is how far before a line's
+        // natural START a rushing player may already be on it, and both distances are the one
+        // FLETCHER_DRAG_GRACE_MS.
         sealPermitted(index, time) {
             if (!this.fletcherEnabled || this.activeLineIndex !== index) return true;
 
@@ -1984,12 +2016,49 @@
             return time >= line.endTime + line.sealGraceMs + FLETCHER_DRAG_GRACE_MS;
         }
 
+        // TypingEngine.entryPermitted. THE RUSH BOUND (see boundedRush), and the exact mirror of
+        // sealPermitted above: may a FINISHED caret move on to line `index` at `time` yet? Drag
+        // holds a line open up to FLETCHER_DRAG_GRACE_MS past its natural end (endTime +
+        // sealGraceMs); rush enters a line up to the same FLETCHER_DRAG_GRACE_MS before its natural
+        // start (activationTime). Always true under the unbounded era, which is what every run
+        // stored before backlog 218 was played under and which this file cannot reach at all.
+        //
+        // Asked ONLY of a caret moving itself: the keypress roll (rollForwardIfFinishedEarly) and
+        // the time-driven one (snapForwardOnLineStart). The hand-overs the SEAL LOOP performs, the
+        // ordinary one and the drag cutoff's, do not consult it and must not: the song has moved off
+        // the old line there, so entry is late rather than early, and refusing it would leave the
+        // player in a dead zone the flexible caret does not otherwise have. On a loader-built map
+        // that is never even a near thing, because a line's activation is clamped to its own
+        // startTime, which IS the previous line's endTime, so this bound opens at most
+        // FLETCHER_DRAG_GRACE_MS before the previous line could seal at all.
+        entryPermitted(index, time) {
+            return !this.boundedRush || time >= this.entryOpensAt(index);
+        }
+
+        // TypingEngine.entryOpensAt. The earliest instant the caret may be on line `index` by
+        // RUSHING onto it: the line's own activationTime under the unbounded era, and
+        // FLETCHER_DRAG_GRACE_MS before it under boundedRush, which is the head start a player earns
+        // for having finished the line before it. Read by both arms that move a finished caret,
+        // entryPermitted (the keypress roll) and snapForwardOnLineStart (the time-driven one).
+        entryOpensAt(index) {
+            return this.lines[index].activationTime - (this.boundedRush ? FLETCHER_DRAG_GRACE_MS : 0);
+        }
+
         // TypingEngine.snapForwardOnLineStart. THE LINE-START SNAP (backlog 208): while the caret
         // sits PAST THE LAST CHARACTER of its line, the next line STARTING takes it, which is what
         // keeps the flexible default feeling like the pinned game it replaced (finish your line and
         // the song moves you on). A line the player has not finished is never touched: dragging
         // behind is precisely the freedom the flexible caret grants, and sealPermitted above makes
         // the same distinction for the same reason.
+        //
+        // Since backlog 218 this is also the DEFERRED ROLL arm (see boundedRush), which is why the
+        // two are one method rather than two: both move a FINISHED caret onto the next line on a
+        // TIME condition, they would fire on the same frame, and a second arm could only ever move a
+        // caret the first one had already moved. The instant they fire at is entryOpensAt, the
+        // line's activation under the unbounded era and FLETCHER_DRAG_GRACE_MS before it under the
+        // bounded one, so the head start the bound grants a rushing player still exists: refusing
+        // the keypress roll and then waiting for the full activation would take with one hand what
+        // the mirror gives with the other.
         //
         // "Finished" is isLineComplete, i.e. the caret has walked off the end of the cell list.
         // That is exact rather than approximate: every caret advance runs autoSkipForward, so a
@@ -2002,14 +2071,16 @@
         // instant it is reached (a line whose cells are all non-typeable is complete at caret 0),
         // and the roll-forward this backs up does not recurse.
         snapForwardOnLineStart(time) {
-            if (!this.fletcherEnabled || !this.flexibleLineSnap || this.finished) return false;
+            // boundedRush belongs in this gate as well as flexibleLineSnap: this is the only arm
+            // that can move a caret the bound parked, and a live stack always sets both anyway.
+            if (!this.fletcherEnabled || (!this.flexibleLineSnap && !this.boundedRush) || this.finished) return false;
 
             let snapped = false;
 
             while (this.activeLineIndex >= 0
                    && this.isLineComplete(this.activeLineIndex)
                    && this.activeLineIndex + 1 < this.lines.length
-                   && time >= this.lines[this.activeLineIndex + 1].activationTime) {
+                   && time >= this.entryOpensAt(this.activeLineIndex + 1)) {
                 this.activeLineIndex++;
                 this.caretIndex = 0;
                 this.autoSkipForward();
@@ -2027,10 +2098,18 @@
         // normal deadline (with nothing missed, since it is fully typed), so nothing about the
         // song's timeline moves; only the player's position does. No-op on the last line, which
         // keeps the default "line complete, wait for the song" behaviour.
-        rollForwardIfFinishedEarly() {
+        //
+        // BOUNDED since backlog 218 (see boundedRush): "the moment a press finishes a line" is now
+        // "the moment a press finishes a line, if that next line is within FLETCHER_DRAG_GRACE_MS of
+        // starting". Refused, the caret parks past the last cell and snapForwardOnLineStart makes
+        // the move for it when the bound opens. `time` is the keypress's own time, the same value
+        // the press was judged on, so the bound is a pure function of (char, time) like everything
+        // else here and the desktop's replay of the same run reproduces it exactly.
+        rollForwardIfFinishedEarly(time) {
             if (!this.fletcherEnabled || this.finished || this.activeLineIndex < 0) return;
             if (this.caretIndex < this.lines[this.activeLineIndex].cells.length) return;
             if (this.activeLineIndex + 1 >= this.lines.length) return;
+            if (!this.entryPermitted(this.activeLineIndex + 1, time)) return;
 
             // Lines seal in order and the player never leaves a line except by finishing it or by a
             // drag cutoff (which advances nextSealIndex with them), so the next line is always
@@ -2047,6 +2126,13 @@
         // read the wait as typing time; so the clock runs only from the point the playhead reaches
         // that line's activationTime, which is exactly when the line would have gone active while
         // pinned.
+        //
+        // The OTHER parked state, a caret the rush bound has left sitting past the last cell of its
+        // own line (backlog 218, see boundedRush), needs nothing here: the caller already accrues
+        // only while the active line is INCOMPLETE, and a parked-finished caret is complete by
+        // definition. Both parked states are the same fact about the clock, that the player CANNOT
+        // type, and they must both stop it or a long instrumental would read as typing time and
+        // halve the readout.
         wpmClockRuns(previousTime) {
             return !this.fletcherEnabled || this.activeLineIndex < 0
                 || previousTime >= this.lines[this.activeLineIndex].activationTime;
@@ -2578,7 +2664,7 @@
                     // The abandoned word ran to the end of the line, so there is no word gap for
                     // the space to land on. The line is complete, exactly as it would be had the
                     // player typed that last word out, and the same end-of-line handling applies.
-                    this.rollForwardIfFinishedEarly();
+                    this.rollForwardIfFinishedEarly(time);
                     return true;
                 }
 
@@ -2610,7 +2696,7 @@
                 this.caretIndex++;
                 this.autoSkipForward();
 
-                this.rollForwardIfFinishedEarly();
+                this.rollForwardIfFinishedEarly(time);
                 return true;
             }
 
@@ -2762,7 +2848,7 @@
                     // A typo on the line's LAST cell finishes it exactly as a correct press would
                     // (the character is finished, it is simply wrong), so this path rolls the caret
                     // forward too, at the same seam the C# does it.
-                    this.rollForwardIfFinishedEarly();
+                    this.rollForwardIfFinishedEarly(time);
                     return true;
                 }
 
@@ -2968,7 +3054,7 @@
             if (this.fletcherEnabled && this.combo === 0) this.processor.breakCombo();
 
             if (this.onCharJudged) this.onCharJudged(judgedIndex, type, points);
-            this.rollForwardIfFinishedEarly();
+            this.rollForwardIfFinishedEarly(time);
             return true;
         }
 

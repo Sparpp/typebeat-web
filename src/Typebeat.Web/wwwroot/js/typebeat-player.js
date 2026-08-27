@@ -956,11 +956,20 @@
         // would have hidden the countdown from exactly the players who earned the wait. The chip
         // asks "is the song asking me for characters right now", and a parked caret is the case
         // where the answer is no while a line is active.
+        //
+        // Backlog 218 gave that question a SECOND parked state to answer, which is why the gate is
+        // two clauses now: the rush bound holds a finished caret past the last cell of its OWN line
+        // until the next one is nearly due, and there the song is still on the caret's line while
+        // nothing whatever is being asked of the player. The desktop's key handler makes the same
+        // pair, reaching its skip overlay through IsLineComplete in that state and through this
+        // predicate in the other one; a single clause here would hide the countdown for all but the
+        // last 1500 ms of every instrumental, from exactly the players who earned the wait.
         function updateGap(time) {
             const upcoming = engine.nextSealIndex;
             const hasNext = !engine.finished && !engine.failed && upcoming < beatmap.lines.length;
+            const parkedComplete = engine.activeLineIndex >= 0 && engine.isLineComplete(engine.activeLineIndex);
 
-            if (engine.songIsOnTheCaretsLine || !hasNext) {
+            if ((engine.songIsOnTheCaretsLine && !parkedComplete) || !hasNext) {
                 if (gapActive) { gapActive = false; gap.classList.remove('tb-gap-on'); }
                 return;
             }

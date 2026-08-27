@@ -223,17 +223,36 @@ function playMidWordSpaceTypo() {
 }
 
 // --- the sung row under a parked caret (backlog 217) ---
-// Two lines with twelve seconds of instrumental between them, typed FAST: both characters of line 0
-// go in by 1500, which finishes the line, so the flexible caret (the default since backlog 208)
-// rolls forward and parks at the head of line 1 while the vocal is still singing line 0. That is the
-// case the sweep got wrong: it rode the caret's row, so it sat at position 0 of a line the song had
-// not reached instead of tracking the vocal on the row behind.
+// Two lines typed FAST: both characters of line 0 go in by 1500, which finishes the line, so the
+// flexible caret (the default since backlog 208) rolls forward and parks at the head of line 1 while
+// the vocal is still singing line 0. That is the case the sweep got wrong: it rode the caret's row,
+// so it sat at position 0 of a line the song had not reached instead of tracking the vocal on the
+// row behind.
+//
+// Its own fixture rather than gapOsu since backlog 218, which is a re-timing and not a re-aiming.
+// The rush bound opens entry into a line FLETCHER_DRAG_GRACE_MS before its cue, so a caret can only
+// be ahead of the song for that 1500 ms, and on gapOsu's twelve-second instrumental the vocal of
+// line 0 is long finished by then: the reading would be the clamped end of the line rather than a
+// live position, which is a much weaker thing to pin. Line 1 here comes due at 1500, while line 0
+// is still being sung, so the observation is exactly the one it always was, at exactly the numbers
+// it always had (1.2 characters in, against a caret row reading 0).
+//   L0 "ab" [1000, 3000), sung [1000, 2000]: a = 1000, b = 1500, so it is finished at 1500 and
+//           still UNSEALED (its window runs to line 1's start) with the vocal mid-line.
+//   L1 "cd" [3000, 7000), sung [3000, 4000]: activation 3000, so entry opens at 1500.
+const rollOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":20000}\n' +
+    '{"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n' +
+    '{"text":"cd","start_ms":3000,"end_ms":4000,"words":[{"text":"cd","start_ms":3000,"end_ms":4000,"score":1}]}\n';
+
+const rollMap = build(rollOsu);
+
 function playRolledForward() {
-    const map = build(gapOsu);
+    const map = build(rollOsu);
     const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 1000);
-    engine.processKey('b', 1500);   // line 0 finished: the caret rolls on, line 0 stays UNSEALED
+    engine.processKey('b', 1500);   // line 0 finished, and 1500 is the instant entry into line 1
+                                    // opens, so the caret rolls on and line 0 stays UNSEALED
     engine.update(1600);
     return engine;
 }
@@ -241,11 +260,10 @@ function playRolledForward() {
 // The same run once line 0 has actually sealed and the song has caught up with the caret: the
 // coincident case, where the sung line is the caret's line and nothing about the old behaviour
 // moves. A decoder-built line's window runs to the NEXT line's start, so line 0 does not seal until
-// 12000 however early it was typed, which is exactly why the parked stretch above is twelve seconds
-// long rather than a frame.
+// 3000 however early it was typed, and 3500 is half a character into line 1's own vocal.
 function playRolledForwardThenSealed() {
     const engine = playRolledForward();
-    engine.update(12500);
+    engine.update(3500);
     return engine;
 }
 
@@ -326,8 +344,8 @@ const out = {
 
     // And the rule on a real run: the caret rolled forward onto line 1 before line 0 sealed, then
     // the same engine once line 0 has sealed.
-    sungParked: sungPlacement(playRolledForward(), gapMap, 1600),
-    sungSealed: sungPlacement(playRolledForwardThenSealed(), gapMap, 12500),
+    sungParked: sungPlacement(playRolledForward(), rollMap, 1600),
+    sungSealed: sungPlacement(playRolledForwardThenSealed(), rollMap, 3500),
 
     // Caret damping + blink.
     dampHalf: D.dampContinuously(0, 100, 35, 35),

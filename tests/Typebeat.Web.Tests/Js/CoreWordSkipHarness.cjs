@@ -518,6 +518,17 @@ function skipNeverReturnedTo() {
 // combo-neutral marks are load-bearing here and nowhere else: without them the submitted combo is
 // wiped a second time for a break already taken, and every judgement on the next line is weighted
 // by the wreckage.
+//
+// RE-TIMED by backlog 218's rush bound, which moved WHEN the seal lands without moving a single
+// press or anything in the submitted account. Typing the 'g' walks the caret off the end of line 0
+// at 4333, which is before entry into line 1 opens (6000 - FLETCHER_DRAG_GRACE_MS = 4500), so the
+// roll is refused and the caret PARKS on line 0. It is still sitting there when line 0's own
+// deadline arrives at 6000, and an ABANDONED cell is an untyped one (backlog 167), so the drag
+// grace protects the reclaim window and the seal is held off exactly as it is for any player still
+// on a line with cells owed. The line-start snap takes the caret to line 1 on that same frame, and
+// with the caret gone the seal is permitted from the next frame on. So the two Misses land after
+// "hi" rather than before it, and the run they must leave alone is 6 instead of 4, which is a
+// stronger reading of the same rule.
 function skipThenTheNextLine() {
     const engine = started(CAT_DOG_THEN_HI);
 
@@ -527,15 +538,21 @@ function skipThenTheNextLine() {
     engine.processKey('o', O_TARGET);
     engine.processKey('g', G_TARGET);
 
-    engine.update(6000); // line 0 seals on the two phantom cells, and line 1 opens
+    engine.update(6000); // the snap opens line 1; line 0 is still unsealed, the caret having been on it
 
-    const afterSeal = snapshot(engine);
+    const afterTheSnap = snapshot(engine);
 
     engine.processKey('h', 6000);
     engine.processKey('i', 6500);
+
+    engine.update(6501); // the caret has left line 0, so its seal lands here, on a run of 6
+
+    const afterSeal = snapshot(engine);
+
     engine.update(11000);
 
     return Object.assign(snapshot(engine), {
+        afterTheSnap: afterTheSnap,
         afterSeal: afterSeal,
         statesLineOne: engine.lines[1].cells.map(c => c.state),
         submitted: submitted(engine)

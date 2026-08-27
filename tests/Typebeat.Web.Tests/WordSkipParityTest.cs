@@ -492,21 +492,36 @@ public class WordSkipParityTest
     /// already banked and no judgement follows, so a second break there costs nothing and a browser
     /// that marked nothing would still look right. Held against the live C# as
     /// <c>ASkipOnALineThePlayCarriesOnPastAgrees</c>.</para>
+    ///
+    /// <para>RE-TIMED by backlog 218's rush bound, which moved WHEN the seal lands without moving a
+    /// single press or anything in the submitted account. The 'g' walks the caret off the end of line
+    /// 0 at 4333, before entry into line 1 opens at 4500, so the roll is refused and the caret PARKS
+    /// on line 0: it is still there when line 0's deadline arrives, and an ABANDONED cell is an
+    /// untyped one (backlog 167), so the drag grace protects the reclaim window and holds the seal
+    /// off exactly as it does for any player still on a line with cells owed. The line-start snap
+    /// takes the caret onto line 1 on that same frame, and the seal follows once the caret has left.
+    /// So the two Misses now land AFTER "hi" is typed, against a run of 6 rather than 4, which is a
+    /// stronger reading of the same rule: there is more for a spurious break to destroy.</para>
     /// </summary>
     [Test]
     public void TheSealsMissesDoNotBreakARunTheSkipAlreadyBroke()
     {
         var run = Run("skipThenTheNextLine");
+        var afterTheSnap = run.GetProperty("afterTheSnap");
         var afterSeal = run.GetProperty("afterSeal");
         var submitted = run.GetProperty("submitted");
 
         Assert.Multiple(() =>
         {
-            Assert.That(Int(afterSeal, "activeLineIndex"), Is.EqualTo(1), "the seal moved the play on to the second line");
+            Assert.That(Int(afterTheSnap, "activeLineIndex"), Is.EqualTo(1), "the snap moved the play on to the second line");
+            Assert.That(Int(afterTheSnap, "processorMisses"), Is.Zero,
+                "and line 0 is still unsealed, the rush bound having kept the caret on it through its own deadline");
+
+            Assert.That(Int(afterSeal, "activeLineIndex"), Is.EqualTo(1));
             Assert.That(Int(afterSeal, "processorMisses"), Is.EqualTo(2), "the two cells nobody came back for resolved here");
-            Assert.That(Int(afterSeal, "processorCombo"), Is.EqualTo(4),
+            Assert.That(Int(afterSeal, "processorCombo"), Is.EqualTo(6),
                 "and left the run the player rebuilt after the skip exactly where they were holding it");
-            Assert.That(Int(afterSeal, "combo"), Is.EqualTo(4), "the HUD combo agrees, having taken no break here either");
+            Assert.That(Int(afterSeal, "combo"), Is.EqualTo(6), "the HUD combo agrees, having taken no break here either");
             Assert.That(Int(afterSeal, "breaks"), Is.EqualTo(1), "one break for the whole play, at the skip");
 
             Assert.That(Strings(run, "statesLineOne"), Is.EqualTo(new[] { "correct", "correct" }));

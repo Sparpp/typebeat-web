@@ -3,9 +3,16 @@
 // opens the next one at once (RUSH FREEDOM), a line the player is still typing is not snatched at
 // its deadline (DRAG FREEDOM), a press that puts the caret too far past the playhead earns no combo
 // (the RUSH CAP), and a caret parked past the end of a FINISHED line is handed on the moment the
-// next line starts (the LINE-START SNAP). The observations are emitted as JSON on stdout so the C#
+// next line is due (the LINE-START SNAP). The observations are emitted as JSON on stdout so the C#
 // fidelity test (FlexibleLinesParityTest) can assert them against the game's golden values, which
 // come from typebeat-osu's NonVisual/FletcherEngineTest.cs.
+//
+// Since backlog 218 the rush is BOUNDED, which is the fifth thing here: entry into a line opens
+// FLETCHER_DRAG_GRACE_MS before its own cue, the exact mirror of the same constant the drag borrows
+// past a line's end, so a finished caret PARKS past the last cell of its line until the next one is
+// nearly due and the line-start snap performs the deferred roll. That moved the instant the snap
+// fires (a line's activation minus the grace, not the activation itself), which is why the parked
+// and instrumental sections below read 9000 and 12500 where they used to read a line's cue.
 //
 // This is the JS half of the guard. The cross-repo half is Typebeat.WireCompat's
 // EngineFuzzLiveParityTest, which plays the SAME rules through the game's own replay scorer; this
@@ -89,6 +96,20 @@ const PARKED_ENDS = osu([
     { text: 'cd', start_ms: 10000, end_ms: 13000, words: [word('cd', 12000, 13000)] }
 ], 30000);
 
+// THE INSTRUMENTAL-GAP SHAPE, mirroring the game's FletcherEngineTest.instrumentalGapMap, and the
+// fixture the rush bound is measured on because it is what a decoder actually builds: line windows
+// are CONTIGUOUS, so the twelve-second instrumental lives inside L0's own window rather than in a
+// hole between the lines. Unlike PARKED_ENDS below, every number here is loader-derived.
+//   L0 "ab"       [1000, 14000), sung to 2000: a = 1000, b = 1500, activation 1000.
+//   L1 "cdefghij" [14000, 18000), sung [14000, 15000]: eight chars, step 125, so c = 14000 and
+//                 j = 14875. Activation is clamped to the line's own start (14000), so the rush
+//                 bound opens at 14000 - FLETCHER_DRAG_GRACE_MS = 12500, a second and a half before
+//                 L0 could seal at all.
+const INSTRUMENTAL_GAP = osu([
+    { text: 'ab', start_ms: 1000, end_ms: 2000, words: [word('ab', 1000, 2000)] },
+    { text: 'cdefghij', start_ms: 14000, end_ms: 15000, words: [word('cdefghij', 14000, 15000)] }
+], 30000);
+
 function parked() {
     const beatmap = build(PARKED_ENDS);
 
@@ -105,6 +126,23 @@ function parked() {
     return beatmap;
 }
 
+// A HOLE AT THE HEAD of line 1's window: its vocals are seven seconds into it, so the rush bound
+// opens at 9000 while line 0 seals at 3000. The one shape where the SEAL's hand-over arrives inside
+// the refusal window, which is exactly the case the bound must not refuse (entry there is the song
+// arriving, late rather than early). Hand-built for the same reason PARKED_ENDS is: the loader makes
+// windows contiguous and clamps a line's activation to its own start, so it cannot express a hole.
+//   L0 "ab" [1000, 3000): a = 1000, b = 1500, seal grace 0, so it seals at 3000 flat and its drag
+//           cutoff is 4500.
+//   L1 "cd" [10000, 30000): c = 12000, d = 12500, activation 10500, so entry opens at 9000.
+function holed() {
+    const beatmap = build(PARKED_ENDS);
+
+    beatmap.lines[0].endTime = 3000;
+    beatmap.lines[1].endTime = 30000;
+
+    return beatmap;
+}
+
 /** Where the caret is, as the two numbers every observation below is written in. */
 function at(engine) { return { line: engine.activeLineIndex, cell: engine.caretIndex }; }
 
@@ -113,22 +151,27 @@ function at(engine) { return { line: engine.activeLineIndex, cell: engine.caretI
 const out = {};
 
 // The browser's own settings, which are the LIVE ones unconditionally: it has no mods payload, so
-// the strict pinning mod (acronym FC) is unreachable in it, and no replay input, so the pinned era
-// every pre-208 row was played in is unreachable too.
+// the strict pinning mod (acronym FC) is unreachable in it, and no replay input, so neither the
+// pinned era every pre-208 row was played in nor the UNBOUNDED rush every pre-218 row was played
+// with is reachable either.
 {
     const engine = new TB.TypingEngine(build(TWO_LINES));
 
     out.defaults = {
         fletcherEnabled: engine.fletcherEnabled,
         flexibleLineSnap: engine.flexibleLineSnap,
+        boundedRush: engine.boundedRush,
         maxCharsAhead: TB.constants.FLETCHER_MAX_CHARS_AHEAD,
         dragGraceMs: TB.constants.FLETCHER_DRAG_GRACE_MS
     };
 }
 
-// RUSH FREEDOM: typing L0 out at 2500, a second and a half before L1's own 4000 cue, puts the caret
-// on L1 at once, and a press then lands on L1's first cell. Under a pinned caret the same press is
-// inert (no line is active until 4000) and L1's 'e' would seal a miss.
+// RUSH FREEDOM INSIDE THE BOUND, which is what ordinary back-to-back play is and what backlog 218
+// had to leave exactly as it was. Typing L0 out at 2500, a second and a half before L1's own 4000
+// cue, puts the caret on L1 ON THE PRESS, because 2500 is precisely where entry into L1 opens
+// (4000 - FLETCHER_DRAG_GRACE_MS): the earliest instant the bound permits, and the press lands on
+// it. A press then lands on L1's first cell. Under a pinned caret the same press is inert (no line
+// is active until 4000) and L1's 'e' would seal a miss.
 {
     const engine = new TB.TypingEngine(build(TWO_LINES));
 
@@ -144,6 +187,9 @@ const out = {};
     const handled = engine.processKey('e', 2600);
 
     out.rushFreedom = {
+        nextLineActivation: engine.lines[1].activationTime,
+        entryOpensAt: engine.entryOpensAt(1),
+        finishedAt: 2500,
         afterFinishing: afterFinishing,
         pressHandled: handled,
         afterPress: at(engine),
@@ -151,6 +197,174 @@ const out = {};
         // The line left behind is UNSEALED and stays that way until its own deadline: rush freedom
         // moves the player, never the song.
         nextSealIndex: engine.nextSealIndex
+    };
+}
+
+// THE RUSH BOUND (backlog 218) on the shape a decoder actually builds. L0 is finished twelve and a
+// half seconds before entry into L1 opens, so the roll is REFUSED and the caret parks past L0's last
+// cell. A press in the park is inert (no cell, no judgement, no typo, no combo break and nothing in
+// the accuracy denominator), the caret has still not moved one frame short of the bound, and the
+// line-start snap performs the deferred roll at 12500 exactly. The head start is real: the player is
+// on L1 a second and a half before its cue, and the press is judged early (target 14000) exactly as
+// rushing always was.
+{
+    const engine = new TB.TypingEngine(build(INSTRUMENTAL_GAP));
+
+    let breaks = 0;
+    engine.onComboBroken = () => { breaks++; };
+
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    engine.update(1500);
+    engine.processKey('b', 1500);
+
+    const parkedAt = at(engine);
+
+    engine.update(6000);
+    const inertHandled = engine.processKey('c', 6000);
+    const inert = {
+        handled: inertHandled,
+        nextLineFirstCellState: engine.lines[1].cells[0].state,
+        combo: engine.combo,
+        comboBreaks: breaks,
+        mistypes: engine.mistypes,
+        liveAccuracy: engine.liveAccuracy
+    };
+
+    engine.update(12499);
+    const oneFrameShort = { at: at(engine), nextSealIndex: engine.nextSealIndex };
+
+    engine.update(12500);
+    const opened = { at: at(engine), nextSealIndex: engine.nextSealIndex };
+
+    const handled = engine.processKey('c', 12500);
+
+    out.rushBound = {
+        nextLineActivation: engine.lines[1].activationTime,
+        thisLineEnd: engine.lines[0].endTime,
+        entryOpensAt: engine.entryOpensAt(1),
+        parkedAt: parkedAt,
+        inertPress: inert,
+        oneFrameShort: oneFrameShort,
+        opened: opened,
+        pressHandled: handled,
+        firstCellState: engine.lines[1].cells[0].state,
+        firstCellDelta: engine.lines[1].cells[0].judgedDelta
+    };
+}
+
+// THE SYMMETRY, read off the one constant on one back-to-back fixture. L0's natural END
+// (endTime + sealGraceMs) and L1's natural START (activationTime) are both 4000 here, so the drag
+// cutoff sits at 5500 and entry into L1 opens at 2500, each exactly FLETCHER_DRAG_GRACE_MS from that
+// shared edge. The rushing script finishes L0 at 2000, 500 ms too early, and the caret parks until
+// 2500; the drag half of the same statement is the dragFreedom section above, which holds L0 to 5499
+// and force-seals it at 5500.
+{
+    const engine = new TB.TypingEngine(build(TWO_LINES));
+
+    engine.update(2000);
+    for (const c of ['a', 'b', ' ', 'c', 'd']) engine.processKey(c, 2000);
+
+    const finishedEarly = at(engine);
+
+    engine.update(2499);
+    const oneFrameShort = at(engine);
+
+    engine.update(2500);
+
+    out.boundSymmetry = {
+        naturalEnd: engine.lines[0].endTime + engine.lines[0].sealGraceMs,
+        nextLineActivation: engine.lines[1].activationTime,
+        entryOpensAt: engine.entryOpensAt(1),
+        dragCutoff: engine.lines[0].endTime + engine.lines[0].sealGraceMs + TB.constants.FLETCHER_DRAG_GRACE_MS,
+        finishedEarly: finishedEarly,
+        oneFrameShort: oneFrameShort,
+        atTheBound: at(engine)
+    };
+}
+
+// THE RUSH CAP is untouched by the bound and still bites on the far side of a permitted roll: entry
+// buys the player a line, never a licence to run away down it. At 12500 the playhead has reached two
+// countable chars ('a' and 'b') and so has the caret, so five chars of L1 keep it inside the cap and
+// the sixth is over it.
+{
+    const engine = new TB.TypingEngine(build(INSTRUMENTAL_GAP));
+
+    let breaks = 0;
+    engine.onComboBroken = () => { breaks++; };
+
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    engine.update(1500);
+    engine.processKey('b', 1500);
+    engine.update(12500); // the bound opens and the deferred roll lands the caret on L1
+
+    const rolledOnto = at(engine);
+    const playhead = engine.playheadCountablePosition(12500);
+    const leadOnArrival = engine.charsAheadOfPlayhead(12500);
+
+    for (const c of ['c', 'd', 'e', 'f', 'g']) engine.processKey(c, 12500);
+
+    const insideTheCap = { lead: engine.charsAheadOfPlayhead(12500), combo: engine.combo, comboBreaks: breaks };
+
+    engine.processKey('h', 12500);
+
+    out.rushCapAfterARoll = {
+        rolledOnto: rolledOnto,
+        playhead: playhead,
+        leadOnArrival: leadOnArrival,
+        insideTheCap: insideTheCap,
+        pastTheCap: { lead: engine.charsAheadOfPlayhead(12500), combo: engine.combo, comboBreaks: breaks }
+    };
+}
+
+// THE SEAL'S HAND-OVERS, which the bound is never asked about and must never refuse: the song has
+// moved off the old line there, so entry is LATE rather than early, and refusing it would leave the
+// player in a dead zone the flexible caret does not otherwise have. Both of them land inside the
+// refusal window on this fixture (entry opens at 9000, L0 seals at 3000 and its drag cutoff is
+// 4500), which is what makes the two observations mean anything.
+{
+    const finished = new TB.TypingEngine(holed());
+
+    finished.update(1000);
+    finished.processKey('a', 1000);
+    finished.update(1500);
+    finished.processKey('b', 1500);
+
+    const parkedByTheBound = at(finished);
+
+    finished.update(3000);
+
+    const lagging = new TB.TypingEngine(holed());
+
+    lagging.update(1000);
+    lagging.processKey('a', 1000);
+    lagging.update(4500);
+
+    const handedOver = at(lagging);
+    const laggingHandled = lagging.processKey('c', 4600);
+
+    out.sealHandOver = {
+        nextLineActivation: finished.lines[1].activationTime,
+        entryOpensAt: finished.entryOpensAt(1),
+        thisLineEnd: finished.lines[0].endTime,
+        sealGraceMs: finished.lines[0].sealGraceMs,
+        parkedByTheBound: parkedByTheBound,
+        // The ORDINARY seal: L0 is fully typed, so it seals on its own 3000 deadline and hands the
+        // finished caret on, six seconds before the bound would have opened.
+        ordinary: {
+            at: at(finished),
+            nextSealIndex: finished.nextSealIndex,
+            cellStates: finished.lines[0].cells.map(c => c.state)
+        },
+        // The DRAG CUTOFF: the same hand-over for a player who never finished, at 3000 + the grace.
+        // Also inside the refusal window, and also not refused.
+        dragCutoff: {
+            at: handedOver,
+            untypedCellState: lagging.lines[0].cells[1].state,
+            pressHandled: laggingHandled,
+            firstCellState: lagging.lines[1].cells[0].state
+        }
     };
 }
 
@@ -212,11 +426,16 @@ const out = {};
     };
 }
 
-// THE LINE-START SNAP. Typing L0 out rolls the caret straight on to the cell-less L1, where it is
-// complete on arrival and stuck: no press of the player's can ever finish it. One frame short of
-// L2's 10500 cue nothing has moved (the snap is the LINE STARTING, not the caret being idle); at
-// 10500 L2 takes it, with L1 still unsealed, which is what proves the SNAP moved the caret rather
-// than a seal.
+// THE LINE-START SNAP. Typing L0 out rolls the caret straight on to the cell-less L1 (L1's own
+// activation is its 3000 start, so entry into it opens at 1500, which is exactly when the 'b' lands:
+// the bound is deliberately not what puts the caret here), where it is complete on arrival and
+// stuck, since no press of the player's can ever finish it. One frame short of L2 coming DUE nothing
+// has moved (the snap is the next line arriving, not the caret being idle); at 9000 L2 takes it,
+// with L1 still unsealed, which is what proves the SNAP moved the caret rather than a seal.
+//
+// "Due" is entryOpensAt, which backlog 218 moved: the snap now takes a finished caret
+// FLETCHER_DRAG_GRACE_MS before the line's own activation, because that is the head start the rush
+// bound grants any finished caret and this is the arm that performs it. 10500 - 1500 = 9000.
 {
     const engine = new TB.TypingEngine(parked());
 
@@ -227,10 +446,10 @@ const out = {};
 
     const parkedOn = at(engine);
 
-    engine.update(10499);
+    engine.update(8999);
     const oneFrameShort = { at: at(engine), nextSealIndex: engine.nextSealIndex };
 
-    engine.update(10500);
+    engine.update(9000);
     const snapped = { at: at(engine), nextSealIndex: engine.nextSealIndex };
 
     const handled = engine.processKey('c', 12000);
@@ -238,6 +457,8 @@ const out = {};
     out.lineStartSnap = {
         middleLineCellCount: engine.lines[1].cells.length,
         nextLineActivation: engine.lines[2].activationTime,
+        entryOpensAt: engine.entryOpensAt(2),
+        middleLineEntryOpensAt: engine.entryOpensAt(1),
         middleLineEnd: engine.lines[1].endTime,
         parkedOn: parkedOn,
         oneFrameShort: oneFrameShort,
@@ -328,6 +549,13 @@ const out = {};
 // the browser's instrumental countdown chip now gates on. Through the gap the playhead is STILL
 // inside L0's window (line windows are contiguous, so there is no hole), which is why the plain
 // "is a line window open" question is not the one either consumer is asking.
+//
+// RE-TIMED by backlog 218 rather than re-aimed: L1's cue is 20000, so entry into it opens at 18500,
+// and until then the rush bound holds the finished caret on L0. The predicate reads TRUE for the
+// whole of that park, correctly, because the song IS on the line the caret is on, and it is the
+// bound's own arm (not the predicate) that keeps the player out of the gap. From 18500 the caret is
+// ahead of the song and the predicate is what the consumers need: the window is contiguous, so
+// songWindowOpen could never have answered it.
 {
     const engine = new TB.TypingEngine(build(GAPPED));
 
@@ -338,7 +566,7 @@ const out = {};
 
     const readings = [];
 
-    for (const t of [2000, 5000, 12000, 20000]) {
+    for (const t of [2000, 12000, 18499, 18500, 20000]) {
         engine.update(t);
         readings.push({
             time: t,
@@ -348,12 +576,16 @@ const out = {};
         });
     }
 
-    out.songOnTheCaretsLine = { readings: readings };
+    out.songOnTheCaretsLine = { entryOpensAt: engine.entryOpensAt(1), readings: readings };
 }
 
-// THE WPM CLOCK is suspended while the caret is parked ahead of the cue. A player who finishes L0
-// at 2000 and waits out an eighteen-second instrumental has not been typing for eighteen seconds,
-// so the clock runs only from the point the playhead reaches the parked line's own activation.
+// THE WPM CLOCK is suspended through BOTH parked states, which since backlog 218 is what this run
+// walks through in turn: the caret is held past the end of L0 by the rush bound from 2000 to 18500,
+// then sits at the head of L1 ahead of its 20000 cue. A player who finishes L0 at 2000 and waits out
+// an eighteen-second instrumental has not been typing for eighteen seconds either way. The first
+// park is stopped by the caller's own "the active line is INCOMPLETE" clause (a parked-finished
+// caret is complete by definition) and the second by wpmClockRuns, and the two must agree or the
+// readout halves.
 {
     const engine = new TB.TypingEngine(build(GAPPED));
 
@@ -365,7 +597,10 @@ const out = {};
     // Typing L0 took a second, which is the whole of the clock so far.
     const afterTyping = engine.activeTimeMs;
 
-    engine.update(19000); // seventeen seconds of parked instrumental
+    engine.update(12000); // ten seconds parked past the END of L0, held there by the rush bound
+    const parkedPastTheEnd = { activeTimeMs: engine.activeTimeMs, at: at(engine) };
+
+    engine.update(19000); // seventeen seconds of parked instrumental, now at the head of L1
     const parkedTime = engine.activeTimeMs;
 
     engine.update(20000); // the frame that ENDS at the cue still measures parked time
@@ -376,7 +611,9 @@ const out = {};
 
     out.wpmClock = {
         nextLineActivation: engine.lines[1].activationTime,
+        entryOpensAt: engine.entryOpensAt(1),
         activeTimeAfterTyping: afterTyping,
+        parkedPastTheEnd: parkedPastTheEnd,
         activeTimeWhileParked: parkedTime,
         activeTimeAtTheCue: atTheCue,
         activeTimeAfterTheCue: runningTime

@@ -221,6 +221,24 @@ const FIXTURES = {
     }, {
         text: 'cd', start_ms: 10000, end_ms: 13000,
         words: [{ text: 'cd', start_ms: 12000, end_ms: 13000, score: 1 }]
+    }], 30000),
+
+    // Backlog 218's RUSH BOUND fixture, mirroring the game's FletcherEngineTest.instrumentalGapMap,
+    // and unlike parkedLine above every number in it IS loader-derived: line windows are contiguous,
+    // so the twelve-second instrumental lives inside L0's own window.
+    //   L0 "ab"       [1000, 14000), sung to 2000: a = 1000, b = 1500.
+    //   L1 "cdefghij" [14000, 18000), sung [14000, 15000]: eight chars, step 125, c = 14000 through
+    //                 j = 14875. Activation is clamped to the line's own start, so entry into it
+    //                 opens at 14000 - FLETCHER_DRAG_GRACE_MS = 12500, a second and a half before L0
+    //                 could seal at all, and a player who types "ab" out on time is REFUSED and
+    //                 parked for eleven seconds. Eight cells in the second line so the rush cap has
+    //                 room to bite on the far side of the deferred roll.
+    instrumentalGap: osu([{
+        text: 'ab', start_ms: 1000, end_ms: 2000,
+        words: [{ text: 'ab', start_ms: 1000, end_ms: 2000, score: 1 }]
+    }, {
+        text: 'cdefghij', start_ms: 14000, end_ms: 15000,
+        words: [{ text: 'cdefghij', start_ms: 14000, end_ms: 15000, score: 1 }]
     }], 30000)
 };
 
@@ -523,17 +541,36 @@ function play(name, keys, spaceSkipsWord) {
     //   rushCapBreaks  THE RUSH CAP: a press that put the caret more than
     //                  FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead, and so earned no
     //                  combo however well it was timed.
+    //
+    // Backlog 218 adds a fifth on the same principle, and it is the sharpest of the set because it
+    // is the one whose ABSENCE would be invisible:
+    //
+    //   refusedRolls   THE RUSH BOUND: a press finished a line more than FLETCHER_DRAG_GRACE_MS
+    //                  before the next line's cue, so the roll was REFUSED and the caret parked past
+    //                  the last cell of the line it finished. Counted on entryPermitted, the
+    //                  engine's own predicate, and only when it answered false. The C# arm sets
+    //                  CONFIG flags bit 7, so a port that quietly lost the bound would leave both
+    //                  sides on the UNBOUNDED roll, green, and covering nothing.
     let rollForwards = 0;
     let lineSnaps = 0;
     let dragHolds = 0;
     let rushCapBreaks = 0;
+    let refusedRolls = 0;
 
     const rollForward = engine.rollForwardIfFinishedEarly.bind(engine);
 
-    engine.rollForwardIfFinishedEarly = function () {
+    engine.rollForwardIfFinishedEarly = function (time) {
         const before = engine.activeLineIndex;
-        rollForward();
+        rollForward(time);
         if (engine.activeLineIndex !== before) rollForwards++;
+    };
+
+    const entryPermitted = engine.entryPermitted.bind(engine);
+
+    engine.entryPermitted = function (index, time) {
+        const permitted = entryPermitted(index, time);
+        if (!permitted) refusedRolls++;
+        return permitted;
     };
 
     const snapForward = engine.snapForwardOnLineStart.bind(engine);
@@ -606,7 +643,8 @@ function play(name, keys, spaceSkipsWord) {
         rollForwards: rollForwards,
         lineSnaps: lineSnaps,
         dragHolds: dragHolds,
-        rushCapBreaks: rushCapBreaks
+        rushCapBreaks: rushCapBreaks,
+        refusedRolls: refusedRolls
     };
 }
 
@@ -872,6 +910,25 @@ const SCRIPTED = [
         // jumps", where the same excursion happens again at 3800 and breaks the rebuilt run: two
         // breaks with an earned streak between them is what says the cap re-arms rather than
         // latching.
+        // Backlog 218, THE RUSH BOUND, written out rather than left to a seed because it is the one
+        // shape whose absence is invisible: both arms would agree on the UNBOUNDED roll and stay
+        // green. "ab" is typed out on time at 1000 and 1500, which is eleven seconds before entry
+        // into "cdefghij" opens at 12500, so the roll is REFUSED and the caret parks past "ab"'s last
+        // cell. The two presses at 6000 and 9000 land in that park and are INERT: no cell, no
+        // judgement, no typo, no combo break and nothing in the accuracy denominator. At 12500 the
+        // line-start snap performs the deferred roll and the rest of the line is typed out from
+        // there, the first five presses inside the rush cap and the sixth over it.
+        //
+        // Under the pre-218 UNBOUNDED era the same script is a different run entirely: the caret goes
+        // to "cdefghij" on the 'b', so the 6000 and 9000 presses spoil its first two cells. The two
+        // arms therefore part on the STATISTICS, which is what makes this worth a differential sweep
+        // slot rather than only a JS pin (see ClearingTheConfigFrameBoundedRushBitReDerivesTheRoll).
+        name: 'scripted/rushBoundPark', fixture: 'instrumentalGap', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'a'], [1500, 'b'], [6000, 'c'], [9000, 'd'],
+               [12500, 'c'], [12500, 'd'], [12500, 'e'], [12500, 'f'], [12500, 'g'], [12500, 'h'],
+               [14750, 'i'], [14875, 'j']]
+    },
+    {
         name: 'scripted/rushPastTheCap', fixture: 'quickBrownFox', spaceSkipsWord: false, skipPresses: 0,
         keys: [[1000, 't'], [1000, 'h'], [1000, 'e'], [1000, ' '], [1000, 'q'], [1000, 'u'],
                [1000, 'i'], [1000, 'c'], [1000, 'k'],
@@ -884,7 +941,7 @@ const SCRIPTED = [
 // ---------------------------------------------------------------------------------------------
 const names = ['catDog', 'abCd', 'catDogThenHi', 'quickBrownFox', 'mixedTiers', 'syllabic',
                'syllableWords', 'stylised', 'subtimed', 'authoredSplit', 'freestyleStretch',
-               'parkedLine'];
+               'parkedLine', 'instrumentalGap'];
 const cases = [];
 
 for (const scripted of SCRIPTED) {

@@ -189,6 +189,21 @@ public class EngineFuzzLiveParityTest
                     Line("cd", 10000, 30000, 13000, Unit("cd", 12000, 13000)),
                 ];
 
+            // Backlog 218's RUSH BOUND fixture, the game's own FletcherEngineTest.instrumentalGapMap,
+            // and unlike "parkedLine" above every number in it IS what the browser's loader derives:
+            // line windows are contiguous, so the twelve-second instrumental lives inside line 0's own
+            // window rather than in a hole between the lines. Line 1's activation is clamped to its
+            // own 14000 start, so entry into it opens at 14000 - FLETCHER_DRAG_GRACE_MS = 12500, a
+            // second and a half before line 0 could seal at all: a player who types "ab" out on time
+            // is refused and parked for eleven seconds. Eight cells in the second line so the rush cap
+            // has room to bite on the far side of the deferred roll.
+            case "instrumentalGap":
+                return
+                [
+                    Line("ab", 1000, 14000, 2000, Unit("ab", 1000, 2000)),
+                    Line("cdefghij", 14000, 18000, 15000, Unit("cdefghij", 14000, 15000)),
+                ];
+
             default:
                 throw new ArgumentOutOfRangeException(nameof(name), name, "unknown fixture");
         }
@@ -218,31 +233,33 @@ public class EngineFuzzLiveParityTest
     #region Driving the two sides
 
     /// <summary>
-    /// The generated stream as a replay, headed by the CONFIG frame the seven judgement-relevant
+    /// The generated stream as a replay, headed by the CONFIG frame the eight judgement-relevant
     /// settings travel in: bit 0 allow-wrong-input (on, the default model and all the browser has),
     /// bit 1 space-skips-word (whichever half of the case matrix this run is), bit 2 syllable-span
     /// judgement, bit 3 wrong-input-on-word-gaps, bit 4 strict-spaces, bit 5 the FLEXIBLE LINES
-    /// default and bit 6 the char-timed stretch narrowing.
+    /// default, bit 6 the char-timed stretch narrowing and bit 7 the BOUNDED RUSH.
     ///
-    /// <para>Bits 2, 3, 4, 5 and 6 are ON here, and getting any of them wrong would quietly gut the
-    /// whole sweep rather than fail loudly in one place. <see cref="TypeBeatReplayScorer"/> follows
-    /// the CONFIG frame for all five (<c>ReplayEngineFeed.Apply</c>), and the engine's DEFAULTS are
-    /// the classic point rule, the strict word gap, the classic space rules, the PINNED caret and
-    /// the unnarrowed span, because a replay recorded before backlog 179, 181, 184, 208 or 209 must
-    /// re-derive under the rules its fingers were graded on. The browser has no era axis at all: it
-    /// only plays live, so it judges on spans, types wrong letters into word gaps, applies the space
-    /// discipline, runs the flexible caret and char-times a stretch unconditionally. A config frame
-    /// without bit 2 would put the C# arm on point deltas while the JS arm is on spans, and every
-    /// case that ever pressed inside a span would part; one without bit 3 would have the C# arm
-    /// REJECT every wrong key the script lands on a gap, holding a caret the browser moved; one
-    /// without bit 4 would have it reject every mid-word space and advance past every gap typo,
-    /// which is the same failure again; one without bit 5 would PIN the C# arm's caret to the
-    /// playhead while the browser's finishes lines early, drags past deadlines and refuses combo out
-    /// past the rush cap; one without bit 6 would pay every mashed freestyle slot and stretched run
-    /// a delta of zero the browser charges for. The first four end the same way: every keystroke
-    /// after the first such press lands on a different cell. The last parts the accounts without
-    /// moving the caret at all, which is why the sweep also counts the presses it decides (see
-    /// <see cref="TheSweepReachesTheRulesItIsMeantTo"/>).</para>
+    /// <para>Bits 2, 3, 4, 5, 6 and 7 are ON here, and getting any of them wrong would quietly gut
+    /// the whole sweep rather than fail loudly in one place. <see cref="TypeBeatReplayScorer"/>
+    /// follows the CONFIG frame for all six (<c>ReplayEngineFeed.Apply</c>), and the engine's
+    /// DEFAULTS are the classic point rule, the strict word gap, the classic space rules, the PINNED
+    /// caret, the unnarrowed span and the UNBOUNDED roll, because a replay recorded before backlog
+    /// 179, 181, 184, 208, 209 or 218 must re-derive under the rules its fingers were graded on. The
+    /// browser has no era axis at all: it only plays live, so it judges on spans, types wrong letters
+    /// into word gaps, applies the space discipline, runs the flexible caret, char-times a stretch
+    /// and bounds the rush unconditionally. A config frame without bit 2 would put the C# arm on
+    /// point deltas while the JS arm is on spans, and every case that ever pressed inside a span
+    /// would part; one without bit 3 would have the C# arm REJECT every wrong key the script lands on
+    /// a gap, holding a caret the browser moved; one without bit 4 would have it reject every
+    /// mid-word space and advance past every gap typo, which is the same failure again; one without
+    /// bit 5 would PIN the C# arm's caret to the playhead while the browser's finishes lines early,
+    /// drags past deadlines and refuses combo out past the rush cap; one without bit 7 would let the
+    /// C# arm roll onto a line the browser's bound refuses, so every press the browser makes inert in
+    /// the park lands on a cell there; one without bit 6 would pay every mashed freestyle slot and
+    /// stretched run a delta of zero the browser charges for. The first five end the same way: every
+    /// keystroke after the first such press lands on a different cell. The last parts the accounts
+    /// without moving the caret at all, which is why the sweep also counts the presses it decides
+    /// (see <see cref="TheSweepReachesTheRulesItIsMeantTo"/>).</para>
     ///
     /// <para>Bit 5 is the one that cannot be read as a single fact, which is why it is a parameter
     /// here rather than a constant: bit 5 CLEAR means a PINNED caret for a plain old replay, but an
@@ -251,11 +268,11 @@ public class EngineFuzzLiveParityTest
     /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>. The sweep passes no mods, so the frame is
     /// the whole of the answer here.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true)
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -592,7 +609,7 @@ public class EngineFuzzLiveParityTest
         int withTypos = 0, withMisses = 0, withOk = 0, withMeh = 0, perfect = 0;
         int skipPresses = 0, comboRestores = 0, backspaces = 0, passiveBreaks = 0, spanJudgements = 0, gapTypos = 0;
         int parkedGapTypos = 0, stepOvers = 0, midWordSpaceTypos = 0, stretchPointJudgements = 0;
-        int rollForwards = 0, lineSnaps = 0, dragHolds = 0, rushCapBreaks = 0;
+        int rollForwards = 0, lineSnaps = 0, dragHolds = 0, rushCapBreaks = 0, refusedRolls = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -617,6 +634,7 @@ public class EngineFuzzLiveParityTest
             lineSnaps += browserCase.GetProperty("lineSnaps").GetInt32();
             dragHolds += browserCase.GetProperty("dragHolds").GetInt32();
             rushCapBreaks += browserCase.GetProperty("rushCapBreaks").GetInt32();
+            refusedRolls += browserCase.GetProperty("refusedRolls").GetInt32();
             backspaces += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "");
         }
 
@@ -687,6 +705,18 @@ public class EngineFuzzLiveParityTest
             Assert.That(lineSnaps, Is.GreaterThan(0), "no run had a parked finished caret taken by the next line starting");
             Assert.That(dragHolds, Is.GreaterThan(0), "no run held a line open past its deadline for a player still typing it");
             Assert.That(rushCapBreaks, Is.GreaterThan(0), "no run put the caret out past the rush cap");
+
+            // Backlog 218's own rule, counted on entryPermitted, the engine's own predicate, and only
+            // where it answered FALSE: a press finished a line more than FLETCHER_DRAG_GRACE_MS
+            // before the next line's cue, so the roll was refused and the caret parked past the last
+            // cell it had. This is the sharpest of the set, because losing the bound is the one
+            // change that would leave BOTH arms agreeing (on the pre-218 unbounded roll), green, and
+            // covering nothing at all: the CONFIG frame here sets bit 7, so the C# side follows the
+            // browser onto the bound rather than deciding it independently. The generated streams do
+            // reach it on the contiguous fixtures (finishing "cat dog" on time is already 167 ms too
+            // early for "hi"), and scripted/rushBoundPark reaches it on purpose so it is not left to
+            // a seed.
+            Assert.That(refusedRolls, Is.GreaterThan(0), "no run finished a line early enough for the rush bound to refuse the roll");
         });
     }
 
@@ -923,6 +953,55 @@ public class EngineFuzzLiveParityTest
     }
 
     /// <summary>
+    /// The SIXTH era arm the browser does not have and cannot prove (backlog 218): a replay whose
+    /// CONFIG frame leaves bit 7 CLEAR re-derives with the UNBOUNDED roll, exactly as every run
+    /// stored between backlog 208 and 218 was played, while the identical keystrokes are bounded
+    /// when the bit is set.
+    ///
+    /// <para>Judgement relevant in the same strong sense bit 5 is, and sharper in one way: the two
+    /// arms disagree about WHERE THE CARET IS, and under the bound the presses an unbounded run made
+    /// are refused OUTRIGHT rather than landed somewhere else, so re-deriving an old row under the
+    /// new rule would cost it whole lines' worth of judgements. The fixture is the shape that says so
+    /// (see <c>instrumentalGap</c>): "ab" is typed out on time at 1500, eleven seconds before entry
+    /// into "cdefghij" opens at 12500. Under the STORED arm the caret goes straight on, so the 6000
+    /// and 9000 presses land on that line's first two cells (correct characters, graded Meh for how
+    /// early they are, which is what rushing always read as) and six cells are missed. Under the LIVE
+    /// arm the caret parks past "ab"'s last cell, both presses are inert, and all eight cells of the
+    /// second line are missed.</para>
+    ///
+    /// <para>It is also the guard on the reconciliation the sweep above depends on: if the scorer
+    /// stopped following the flag, every generated case would still pass (both arms bounded) while
+    /// every 208-to-218 replay silently re-scored with a caret its player never had.</para>
+    /// </summary>
+    [Test]
+    public void ClearingTheConfigFrameBoundedRushBitReDerivesTheUnboundedRoll()
+    {
+        (double time, char key)[] keys = [(1000, 'a'), (1500, 'b'), (6000, 'c'), (9000, 'd')];
+
+        var bounded = ScoreInstrumentalGap(keys, boundedRush: true);
+        var unbounded = ScoreInstrumentalGap(keys, boundedRush: false);
+
+        Assert.Multiple(() =>
+        {
+            var live = Wire(bounded.Statistics);
+            Assert.That(live.GetValueOrDefault("great"), Is.EqualTo(2), "live era: only the line the player actually reached");
+            Assert.That(live.GetValueOrDefault("meh"), Is.Zero, "live era: the two rushed presses were refused outright, so they are worth nothing at all");
+            Assert.That(live.GetValueOrDefault("miss"), Is.EqualTo(8), "live era: every cell of the second line");
+            Assert.That(bounded.Completion, Is.EqualTo(2 / 10.0).Within(1e-9), "live era: completion");
+
+            var stored = Wire(unbounded.Statistics);
+            Assert.That(stored.GetValueOrDefault("great"), Is.EqualTo(2), "stored era: the first line, typed the same way");
+            Assert.That(stored.GetValueOrDefault("meh"), Is.EqualTo(2),
+                "stored era: the roll was unbounded, so both rushed presses LANDED, graded on how early they were");
+            Assert.That(stored.GetValueOrDefault("miss"), Is.EqualTo(6), "stored era: the six cells of the second line nobody reached");
+            Assert.That(unbounded.Completion, Is.EqualTo(4 / 10.0).Within(1e-9), "stored era: completion");
+
+            Assert.That(bounded.TotalScore, Is.LessThan(unbounded.TotalScore),
+                "the bound costs this script two cells, which is exactly why an old row must keep its own bit");
+        });
+    }
+
+    /// <summary>
     /// THE ONE COMBINATION NO CONFIG BIT CAN EXPRESS, and the reason the retired "FT" mod class must
     /// not be deleted: a run stored under it was played with the caret UNPINNED and WITHOUT the
     /// line-start snap, which no frame can say for itself, because bit 5 did not exist when those
@@ -990,12 +1069,17 @@ public class EngineFuzzLiveParityTest
         });
     }
 
-    /// <summary>The scripted-key form of <see cref="Keystrokes"/>, for the era tests that need no node.</summary>
-    private static Replay Keystrokes((double time, char key)[] keys, bool flexibleLines)
+    /// <summary>
+    /// The scripted-key form of <see cref="Keystrokes"/>, for the era tests that need no node.
+    /// <paramref name="boundedRush"/> defaults CLEAR, which is what the two bit-5 tests below want:
+    /// they compare a pinned caret against the flexible one as backlog 208 shipped it, and both of
+    /// their arms are stored eras that never had the bound.
+    /// </summary>
+    private static Replay Keystrokes((double time, char key)[] keys, bool flexibleLines, bool boundedRush = false)
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: false, syllableTiming: true, wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: flexibleLines));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: false, syllableTiming: true, wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: flexibleLines, boundedRush: boundedRush));
 
         foreach (var (time, key) in keys)
             replay.Frames.Add(new TypeBeatReplayFrame(time, key));
@@ -1005,6 +1089,9 @@ public class EngineFuzzLiveParityTest
 
     private static TypeBeatReplayAccount ScoreParked((double time, char key)[] keys, bool flexibleLines)
         => TypeBeatReplayScorer.Score(Map(GranularityOf("parkedLine"), Fixture("parkedLine")), Array.Empty<Mod>(), Keystrokes(keys, flexibleLines), TypoRule.Deferred, ComboRestoreRule.OnFix);
+
+    private static TypeBeatReplayAccount ScoreInstrumentalGap((double time, char key)[] keys, bool boundedRush)
+        => TypeBeatReplayScorer.Score(Map(GranularityOf("instrumentalGap"), Fixture("instrumentalGap")), Array.Empty<Mod>(), Keystrokes(keys, flexibleLines: true, boundedRush: boundedRush), TypoRule.Deferred, ComboRestoreRule.OnFix);
 
     private static TypeBeatReplayAccount ScoreDrag((double time, char key)[] keys, Mod[] mods)
         => TypeBeatReplayScorer.Score(Map(GranularityOf("catDogThenHi"), Fixture("catDogThenHi")), mods, Keystrokes(keys, flexibleLines: false), TypoRule.Deferred, ComboRestoreRule.OnFix);
