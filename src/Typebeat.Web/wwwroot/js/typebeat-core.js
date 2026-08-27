@@ -2099,6 +2099,15 @@
             return after - this.playheadCountablePosition(time) > FLETCHER_MAX_CHARS_AHEAD;
         }
 
+        // TypingEngine.NextUnsealedLineIndex. The first line that has not sealed yet; -1 once every
+        // line has sealed. While no line is active (pre-roll, or the dead zone between a seal and
+        // the next line's cue) this is the UPCOMING line. Read-only and judgement-free: nothing in
+        // this file reads it, it exists because the line the SONG is on is no longer the line the
+        // caret is on (backlog 208), and typebeat-player.js has to put the sung sweep on the former.
+        get nextUnsealedLineIndex() {
+            return this.nextSealIndex < this.lines.length ? this.nextSealIndex : -1;
+        }
+
         // TypingEngine.SongWindowOpen. Whether the PLAYHEAD is inside a typeable line window: the
         // plain time rule on the first unsealed line, read independently of where the player's
         // caret has got to. Equal to "a line is active" with a pinned caret; under the flexible one

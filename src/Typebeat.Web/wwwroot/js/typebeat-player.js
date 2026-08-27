@@ -366,6 +366,20 @@
         return inOwnLeadIn ? activeLineIndex : activeLineIndex + 1;
     }
 
+    // Which line carries the sung sweep and the sung caret: the line the SONG is on, which is not
+    // the line the CARET is on (mirrors LyricStage.sungLineFor). With a pinned caret the engine
+    // keeps the two identical and this is exactly the old behaviour. Under the flexible caret (the
+    // default since backlog 208) they come apart, which is the point of it: finish a line early and
+    // the caret is parked at the head of the next one while the vocal is still singing the line
+    // behind, so the sweep follows the first UNSEALED line and only the typing caret follows the
+    // player. Falls back to the active line once every line has sealed.
+    function sungLineFor(fletcherEnabled, activeLineIndex, nextUnsealedLineIndex, lineCount) {
+        if (!fletcherEnabled) return activeLineIndex;
+        return nextUnsealedLineIndex >= 0 && nextUnsealedLineIndex < lineCount
+            ? nextUnsealedLineIndex
+            : activeLineIndex;
+    }
+
     // OutQuint, the easing every desktop stage animation uses.
     function outQuint(p) { return 1 - Math.pow(1 - p, 5); }
 
@@ -420,8 +434,11 @@
         const rows = [rowPrev, rowCur, rowNext];
         stack.append(rowPrev.row, rowCur.row, rowNext.row);
 
-        // Carets and the wrong-key pops live INSIDE the active row, so they inherit its scale
-        // and its position without a second coordinate space. So does the retype-selection wash
+        // Carets and the wrong-key pops live INSIDE the row they belong to, so they inherit its
+        // scale and its position without a second coordinate space. That is the active row for
+        // everything the PLAYER owns; the sung caret is moved to whichever row the VOCAL is on
+        // (updateCarets), which is the same row in the ordinary case and the row behind when the
+        // caret has been parked ahead. So does the retype-selection wash
         // (backlog 182), which is painted BEHIND the glyphs (CSS z-index, see .tb-selection) so
         // every character keeps the colour its own state gives it: the highlight says "these are
         // about to go", not "these are wrong".
@@ -735,7 +752,7 @@
 
         // --- render state ----------------------------------------------------
         let lastCurIdx = -2, wrongFlash = 0, wrongDirection = 1;
-        let caretX = 0, sungX = 0, caretSnap = true;
+        let caretX = 0, sungX = 0, caretSnap = true, sungSnap = true;
         let lastTypedAt = -1e9, lastFrameMs = null;
         let scrollPitch = 0, scrollStart = -1;
         let popEnd = [];             // per-cell audio-clock deadline for the top-tier pop
@@ -764,6 +781,7 @@
             for (const r of rows) fitRow(r, avail);
             for (const r of rows) measureRow(r);
             caretSnap = true;
+            sungSnap = true;
         }
 
         function onResize() { if (engine) relayout(); }
@@ -819,34 +837,61 @@
 
         // The sung underline: a faint full-width track under every visible line with a fill that
         // sweeps to the vocal position, plus a bright head. Every row draws its own, so a line
-        // that just sealed keeps its finished sweep and the upcoming one starts empty.
-        function updateSweeps(time) {
+        // that just sealed keeps its finished sweep and the upcoming one starts empty. The bright
+        // head is lit on the SUNG row rather than on the caret's row: with the caret parked ahead
+        // the two are different rows, and the head is the vocal's position, not the player's.
+        function updateSweeps(time, sungRow) {
             for (const r of rows) {
                 if (!r.line) continue;
                 const pos = sungPositionAt(sungPoints[r.index], time);
                 const x = xAt(r, pos);
                 r.sweepFill.style.width = x.toFixed(2) + 'px';
                 r.sweepGlow.style.transform = 'translateX(' + x.toFixed(2) + 'px)';
-                r.sweepGlow.style.opacity = (r === rowCur && x > 0.5) ? '0.9' : '0';
+                r.sweepGlow.style.opacity = (r === sungRow && x > 0.5) ? '0.9' : '0';
             }
         }
 
-        // Player caret follows the typing caret index; sung caret follows the vocal position on
-        // the same line. Both damp toward their target and snap on a line jump (Caret.MoveToTarget).
-        function updateCarets(time, elapsed, active) {
+        // Player caret follows the typing caret index on the CARET's row; sung caret follows the
+        // vocal position on the SUNG row (LyricStage.Update). Normally one row, and then this is
+        // the old behaviour; under a parked caret the sung caret moves to the row behind, which is
+        // where the vocal actually is. Both damp toward their target and snap on a line jump
+        // (Caret.MoveToTarget).
+        //
+        // The sung caret is REPARENTED into that row rather than offset within the caret's row: the
+        // rows are their own coordinate spaces (each carries its own auto-shrink scale and its own
+        // font size), and every overlay x in this file is a plain row-local offset inside the row it
+        // is drawn on. That is how the sweep on a neighbour row already works, so the fill, the head
+        // and the caret stay one object. The desktop hides the sung caret once the song is more than
+        // one line from the focused line, since it is off the visible stack; here that is the same
+        // test, expressed as "no row is showing it".
+        function updateCarets(time, elapsed, active, sungRow) {
             const lineComplete = active && engine.caretIndex >= rowCur.line.cells.length;
             const show = active && !lineComplete && !engine.finished;
+            const sungShown = show && !!sungRow;
+
+            if (sungRow && sungCaret.parentNode !== sungRow.row) {
+                sungRow.row.appendChild(sungCaret);
+                sungSnap = true;
+            }
 
             const caretTarget = active ? xAt(rowCur, engine.caretIndex) : caretX;
-            const sungTarget = active ? xAt(rowCur, sungPositionAt(sungPoints[rowCur.index], time)) : sungX;
+            const sungTarget = sungRow ? xAt(sungRow, sungPositionAt(sungPoints[sungRow.index], time)) : sungX;
             const lineHeight = rowCur.row.offsetHeight || 40;
 
             if (caretSnap) {
                 caretX = caretTarget;
-                sungX = sungTarget;
                 caretSnap = false;
             } else {
                 caretX = approach(caretX, caretTarget, CARET_DAMP_HALF_TIME, elapsed, lineHeight);
+            }
+
+            // The sung caret snaps on a row change of its own as well as on a relayout: its x is
+            // row-local, so damping it across two rows would slide it through a position that means
+            // nothing in either space.
+            if (sungSnap) {
+                sungX = sungTarget;
+                sungSnap = false;
+            } else {
                 sungX = approach(sungX, sungTarget, SUNG_DAMP_HALF_TIME, elapsed, lineHeight);
             }
 
@@ -855,7 +900,7 @@
 
             const moving = Math.abs(caretTarget - caretX) > CARET_MOVING_EPSILON;
             playerCaret.style.opacity = show ? caretAlpha(time - lastTypedAt, moving, true).toFixed(3) : '0';
-            sungCaret.style.opacity = show ? '1' : '0';
+            sungCaret.style.opacity = sungShown ? '1' : '0';
         }
 
         function approach(current, target, halfTime, elapsed, lineHeight) {
@@ -984,9 +1029,19 @@
             // change and hold a still freestyle glyph until they become current.
             paintRow(rowCur, caretIndex, shimmerTick, time);
 
+            // The row the vocal is on, resolved AFTER any rebuild above, since rowFor() reads the
+            // stack's current focus. null while nothing is active, and null when the song is more
+            // than one line away from the caret (a player who ran several lines ahead): it is off
+            // the visible stack, so nothing draws it rather than parking it at a phantom position.
+            const sungIdx = active
+                ? sungLineFor(engine.fletcherEnabled, engine.activeLineIndex, engine.nextUnsealedLineIndex, beatmap.lines.length)
+                : -1;
+            const sungRowCandidate = sungIdx >= 0 ? rowFor(sungIdx) : null;
+            const sungRow = sungRowCandidate && sungRowCandidate.line ? sungRowCandidate : null;
+
             updateScroll(time);
-            updateSweeps(time);
-            updateCarets(time, elapsed, active);
+            updateSweeps(time, sungRow);
+            updateCarets(time, elapsed, active, sungRow);
             // Repainted per frame like the caret, and for the same reason: a fit or a resize moves
             // every cell offset under it.
             paintSelection();
@@ -1224,6 +1279,7 @@
         cellGlyph,
         liveStats,
         cueTargetLine,
+        sungLineFor,
         outQuint,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,

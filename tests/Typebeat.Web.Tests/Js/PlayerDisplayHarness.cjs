@@ -222,6 +222,48 @@ function playMidWordSpaceTypo() {
     return engine;                  // left unsealed, so the untouched gap after it is still todo
 }
 
+// --- the sung row under a parked caret (backlog 217) ---
+// Two lines with twelve seconds of instrumental between them, typed FAST: both characters of line 0
+// go in by 1500, which finishes the line, so the flexible caret (the default since backlog 208)
+// rolls forward and parks at the head of line 1 while the vocal is still singing line 0. That is the
+// case the sweep got wrong: it rode the caret's row, so it sat at position 0 of a line the song had
+// not reached instead of tracking the vocal on the row behind.
+function playRolledForward() {
+    const map = build(gapOsu);
+    const engine = engineFor(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    engine.processKey('b', 1500);   // line 0 finished: the caret rolls on, line 0 stays UNSEALED
+    engine.update(1600);
+    return engine;
+}
+
+// The same run once line 0 has actually sealed and the song has caught up with the caret: the
+// coincident case, where the sung line is the caret's line and nothing about the old behaviour
+// moves. A decoder-built line's window runs to the NEXT line's start, so line 0 does not seal until
+// 12000 however early it was typed, which is exactly why the parked stretch above is twelve seconds
+// long rather than a frame.
+function playRolledForwardThenSealed() {
+    const engine = playRolledForward();
+    engine.update(12500);
+    return engine;
+}
+
+// The sung row's own index and the playhead position READ OFF IT, which is what the renderer feeds
+// xAt() for the sweep fill, the sweep head and the sung caret.
+function sungPlacement(engine, map, time) {
+    const line = D.sungLineFor(engine.fletcherEnabled, engine.activeLineIndex, engine.nextUnsealedLineIndex, map.lines.length);
+
+    return {
+        active: engine.activeLineIndex,
+        nextUnsealed: engine.nextUnsealedLineIndex,
+        sungLine: line,
+        sungPos: line >= 0 ? D.sungPositionAt(D.buildSungPoints(map.lines[line]), time) : -1,
+        // What the caret's row would have given instead, for the C# side to hold the two apart.
+        caretRowPos: D.sungPositionAt(D.buildSungPoints(map.lines[engine.activeLineIndex]), time)
+    };
+}
+
 // Class, tint and GLYPH exactly as paintRow would write them, for every cell of a line.
 function paint(engine, lineIndex) {
     return engine.lines[lineIndex].cells.map(c => ({
@@ -273,6 +315,19 @@ const out = {
     cueTargetIdle: D.cueTargetLine(gapMap.lines, -1, 0, 0),
     cueTargetOwnLeadIn: D.cueTargetLine(gapMap.lines, 1, 1, 11000),
     cueTargetNext: D.cueTargetLine(gapMap.lines, 0, 0, 1500),
+
+    // Which line carries the sung sweep, sung head and sung caret (LyricStage.sungLineFor). The
+    // rule alone, on made-up coordinates: pinned caret -> always the active line; flexible caret
+    // parked one line ahead -> the first unsealed line; everything sealed -> back to the active one.
+    sungLinePinned: D.sungLineFor(false, 1, 0, 2),
+    sungLineParked: D.sungLineFor(true, 1, 0, 2),
+    sungLineCoincident: D.sungLineFor(true, 1, 1, 2),
+    sungLineAllSealed: D.sungLineFor(true, 1, -1, 2),
+
+    // And the rule on a real run: the caret rolled forward onto line 1 before line 0 sealed, then
+    // the same engine once line 0 has sealed.
+    sungParked: sungPlacement(playRolledForward(), gapMap, 1600),
+    sungSealed: sungPlacement(playRolledForwardThenSealed(), gapMap, 12500),
 
     // Caret damping + blink.
     dampHalf: D.dampContinuously(0, 100, 35, 35),

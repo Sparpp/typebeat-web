@@ -137,6 +137,65 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
+    /// Which line carries the sung sweep, the sweep head and the sung caret (mirrors
+    /// LyricStage.sungLineFor). With a pinned caret it is always the active line and this is the
+    /// behaviour that shipped before backlog 208. Under the flexible caret, which is the DEFAULT
+    /// since it, the caret and the vocal come apart: finishing a line early parks the caret at the
+    /// head of the next one while the song is still singing the line behind, so the playhead has to
+    /// follow the first UNSEALED line or it sits at position 0 of a line the vocal has not reached.
+    /// Once everything has sealed there is no unsealed line left and it falls back to the active one.
+    /// </summary>
+    [Test]
+    public void SungPlayheadRidesTheSongsLineNotTheCarets()
+    {
+        var root = Harness();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(root, "sungLinePinned"), Is.EqualTo(1));      // pinned: the active line, always
+            Assert.That(Num(root, "sungLineParked"), Is.EqualTo(0));      // parked ahead: the line behind
+            Assert.That(Num(root, "sungLineCoincident"), Is.EqualTo(1));  // the normal case: one line, unchanged
+            Assert.That(Num(root, "sungLineAllSealed"), Is.EqualTo(1));   // nothing unsealed: back to the active line
+        });
+    }
+
+    /// <summary>
+    /// The same rule on a real run, which is where it earns its keep. The fixture is two lines with
+    /// twelve seconds of instrumental between them, both characters of line 0 typed by 1500: the
+    /// caret rolls forward onto line 1, but a decoder-built line's window runs to the NEXT line's
+    /// start, so line 0 stays unsealed and being sung until 12000.
+    ///
+    /// <para>At 1600 the playhead is 1.2 characters into line 0 while the caret sits on line 1, and
+    /// the coordinates the sweep is drawn from must be line 0's. Line 1's own playhead reads 0 there
+    /// (clamped before its start), which is precisely the stuck sweep this pins against. Once line 0
+    /// seals the two are one line again and the placement is the ordinary one.</para>
+    /// </summary>
+    [Test]
+    public void SungPlayheadTracksTheVocalWhileTheCaretIsParkedAhead()
+    {
+        var root = Harness();
+        var parked = root.GetProperty("sungParked");
+        var sealedUp = root.GetProperty("sungSealed");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(parked, "active"), Is.EqualTo(1));        // the caret rolled forward
+            Assert.That(Num(parked, "nextUnsealed"), Is.EqualTo(0));  // the song is still on line 0
+            Assert.That(Num(parked, "sungLine"), Is.EqualTo(0));
+            Assert.That(Num(parked, "sungPos"), Is.EqualTo(1.2).Within(1e-9));
+            // What riding the caret's row would have drawn: nothing, parked at the head of a line
+            // whose first character is ten seconds away.
+            Assert.That(Num(parked, "caretRowPos"), Is.EqualTo(0));
+
+            Assert.That(Num(sealedUp, "active"), Is.EqualTo(1));
+            Assert.That(Num(sealedUp, "nextUnsealed"), Is.EqualTo(1));
+            Assert.That(Num(sealedUp, "sungLine"), Is.EqualTo(1));
+            Assert.That(Num(sealedUp, "sungPos"), Is.EqualTo(Num(sealedUp, "caretRowPos")));
+            Assert.That(Num(sealedUp, "sungPos"), Is.EqualTo(1));
+        });
+    }
+
+    /// <summary>
     /// Caret motion and blink (Caret.Update): a damped approach whose half-time is exactly that,
     /// and a cosine blink that only starts one blink period after the last keystroke, never while
     /// the caret is still travelling.
