@@ -76,6 +76,38 @@ public class ModInfoTest
         Assert.That(ModInfo.Name("hr"), Is.EqualTo("Hard Rock"));
     }
 
+    /// <summary>
+    /// Fletcher's two acronyms (backlog 208 reversed the mod and moved it to a new one). The badge
+    /// has to tell them apart, because a stored row carrying "FT" was played under the OPPOSITE
+    /// rule to a row carrying "FC": FT unpinned the caret from the playhead, which is what every
+    /// play does now, and FC pins it back. Both names mirror the game's own mod classes, so the
+    /// tooltip on an old row says what that row was played under rather than what the name means
+    /// today.
+    ///
+    /// <para>Both stay on the neutral "other" badge, which is not an oversight: they are CONVERSION
+    /// mods, and the four buckets this file has (increase, reduction, automation, other) hold no
+    /// conversion colour. Categorising one as an increase and the other as a reduction would say
+    /// they sit on a difficulty axis they are deliberately off.</para>
+    /// </summary>
+    [Test]
+    public void Fletcher_KeepsTheLiveAndRetiredAcronymsApart()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ModInfo.Name("FC"), Is.EqualTo("Fletcher"));
+            Assert.That(ModInfo.Name("fc"), Is.EqualTo("Fletcher"));
+
+            Assert.That(ModInfo.Name("FT"), Is.EqualTo("Fletcher (retired)"));
+            Assert.That(ModInfo.Name("ft"), Is.EqualTo("Fletcher (retired)"));
+
+            Assert.That(ModInfo.Name("FT"), Is.Not.EqualTo(ModInfo.Name("FC")),
+                "an FT row and an FC row were played under opposite rules and must not share a tooltip");
+
+            Assert.That(ModInfo.CategoryClass("FC"), Is.EqualTo("other"));
+            Assert.That(ModInfo.CategoryClass("FT"), Is.EqualTo("other"));
+        });
+    }
+
     [Test]
     public void UnknownAcronym_StillFallsBackGracefully()
     {

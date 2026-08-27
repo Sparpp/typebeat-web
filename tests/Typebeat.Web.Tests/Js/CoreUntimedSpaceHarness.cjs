@@ -189,7 +189,12 @@ function untypedSpaceSeals() {
     const engine = started(SEALING);
     engine.processKey('a', 1000);
     engine.processKey('b', 1500);
-    engine.update(5000); // past the line's 4000 deadline and its seal grace
+    // Past the line's 4000 deadline, its (zero) seal grace AND the flexible caret's DRAG GRACE of
+    // FLETCHER_DRAG_GRACE_MS on top (backlog 208). The caret is still on this line with the gap and
+    // the 'c' and 'd' owed, so the line is NOT force-sealed at 4000 any more: it is held open for
+    // the player who is still typing it, and seals at 5500. What the seal then does is unchanged,
+    // which is the point of moving the clock rather than the expectations.
+    engine.update(5500);
     const s = snapshot(engine);
     return Object.assign(s, {
         missCount: s.states.filter(x => x === 'missed').length,

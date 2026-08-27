@@ -15,12 +15,14 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <para>
 /// Per-mod values, mirroring the calculator: Easy 0.5, No Fail 0.5, Hard Rock 1.10, Sudden Death 1.0
-/// (absent), Gatekeeper 1.0 (absent), Flashlight 1.05, Literate 1.05, Rhythmic 1.10, Fletcher 0.98,
+/// (absent), Gatekeeper 1.0 (absent), Flashlight 1.05, Literate 1.05, Rhythmic 1.10, Fletcher 1.02
+/// ("FC", the pinning mod) and the retired Fletcher 0.98 ("FT", the unpinning one),
 /// Muted 1.0 (absent), Mashing 0.1 (unranked, still priced for display parity), and the rate mods on
 /// the continuous <see cref="RateMultiplier"/> curve. The fattest RANKED stack a current client can
-/// assemble is unchanged by a 1.0x mod: DT@2.00 (1.46) x FL (1.05) x LT (1.05) x HR (1.10) =
-/// 1.770615. Rhythmic pays the same 1.10 and is mutually reachable with none of this any more (no
-/// client ships it), but a stored row carrying both would still be 1.9476765, under the cap.
+/// assemble is DT@2.00 (1.46) x FL (1.05) x LT (1.05) x HR (1.10) x FC (1.02) = 1.80602730; without
+/// Fletcher it is the 1.770615 that stack paid before, since a 1.0x mod changes nothing. Rhythmic
+/// pays the same 1.10 and is mutually reachable with none of this any more (no client ships it), but
+/// a stored row carrying it too would still be 1.986630..., under the cap.
 /// </para>
 ///
 /// <para>
@@ -139,6 +141,24 @@ public static class ModMultiplier
             // bitten twice, on Literate and on the supersede sweep. Nothing new can reach the arm,
             // because no mod the ruleset offers carries the acronym any more.
             "RH" => 1.10,
+            // Fletcher, both halves of it (backlog 208 reversed the mod and gave the new one a new
+            // acronym). "FC" is the live one: it PINS the caret to the playhead, taking back slack
+            // the default now hands out at both ends of every line, and the client prices that at
+            // 1.02x. "FT" is the RETIRED one, which unpinned the caret, and its 0.98x must not go
+            // with it: rows carrying that acronym exist, were priced at 0.98x when they were
+            // submitted, and this table is what bounds a stored row's total on every path that
+            // re-derives one. Delete the arm and every FT row's own submitted total lands 2% over
+            // the ceiling UNKNOWN_MOD_MULTIPLIER would then not even be consulted for, exactly the
+            // failure mode "RH" above records.
+            //
+            // FC is a ranked CONVERSION mod, so it needs no entry in the ranked gate: that gate is
+            // a deny list (ScoreEndpoints' always-unranked "RX"/"WU"/"WD"), and an acronym absent
+            // from it ranks. Listing it here is about the CEILING: unlisted it would be allowed
+            // UNKNOWN_MOD_MULTIPLIER (2.0x) on a play whose honest total is 1.02x its base, which
+            // is a laundering slot nearly twice as wide as the mod can justify (the same argument
+            // "HR" carries above). It also has to fit under STACK_CAP: DT@2.00 x FL x LT x HR x FC
+            // = 1.770615 x 1.02 = 1.80602730, still clear of 2.0.
+            "FC" => 1.02,
             "FT" => 0.98,
             "MU" => 1.0,
             "RX" => 0.1,

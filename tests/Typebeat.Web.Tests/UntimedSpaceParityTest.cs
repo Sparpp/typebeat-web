@@ -20,8 +20,12 @@ namespace Typebeat.Web.Tests;
 /// the KEY being one, and the three surfaces that would have opened up otherwise are pinned here:
 /// what a space pressed on a lyric character costs (since backlog 184 it is typed through as a typo
 /// rather than rejected), the consecutive-wrong-key streak, which is now pinned on the strict model
-/// that still reaches the rejection path, and (on the desktop side only, since the browser has no
-/// Fletcher mod) the rush cap.</para>
+/// that still reaches the rejection path, and the flexible caret's RUSH CAP, whose budget a space
+/// also spends nothing of. That last one used to be a desktop-only rule (it belonged to the old
+/// Fletcher mod, which the browser could not select); backlog 208 made the flexible caret the
+/// default for every play, so it is live here now and is pinned in
+/// <see cref="FlexibleLinesParityTest.PressingPastTheRushCapCostsTheComboOnceAndThenReArms"/>,
+/// beside the cap it is the exception to.</para>
 /// </summary>
 public class UntimedSpaceParityTest
 {
@@ -233,6 +237,11 @@ public class UntimedSpaceParityTest
     /// An untimed space is not a FREE space: a space cell nobody pressed is a character of the map
     /// left untyped, and seals a Miss with every other one. Backlog 148 is about spaces not being a
     /// TIMING hazard.
+    ///
+    /// <para>The harness reaches that seal at 5500 rather than at the line's 4000 deadline, because
+    /// since backlog 208 the caret is still on a line the player has not finished and the flexible
+    /// caret holds it open for <c>FLETCHER_DRAG_GRACE_MS</c> first. What the seal does when it comes
+    /// is unchanged, which is why nothing below moved.</para>
     /// </summary>
     [Test]
     public void AnUntypedSpaceCellStillSealsAsAMiss()

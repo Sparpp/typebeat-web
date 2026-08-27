@@ -1694,6 +1694,24 @@
     const COMBO_CAP = 50;
     const WRONG_KEY_FAIL_STREAK = 13;
 
+    // TypingEngine.FLETCHER_MAX_CHARS_AHEAD: how many COUNTABLE characters (typeable and not a
+    // space) the caret may sit ahead of the playhead before a keypress stops earning combo. The
+    // press still lands and still scores; it simply cannot build a combo while the caret is out
+    // past the cap. Measured on the caret position AFTER the press, so the fifth char ahead is
+    // still fine and the sixth is not.
+    const FLETCHER_MAX_CHARS_AHEAD = 5;
+
+    // TypingEngine.FLETCHER_DRAG_GRACE_MS: extra time past a line's normal hard deadline
+    // (endTime + sealGraceMs) that the engine holds the line open while the PLAYER is still on it,
+    // so a dragging player may finish the line the song has already left. Deliberately the same
+    // magnitude as CUE_LEAD_MS: the beat of grace given to get ready, granted at the other end of
+    // the line as well. Bounded so a run always terminates.
+    const FLETCHER_DRAG_GRACE_MS = 1500;
+
+    // TypingCell.IsCountable: the currency the rush cap measures in. A space spends no budget, so
+    // pressing one can never push the caret over the line by itself.
+    function isCountable(cell) { return cell.typeable && cell.expected !== ' '; }
+
     // TypingEngine.isWordGap. A WORD GAP: the typeable SPACE cell that separates two words. The one
     // boundary both word-level queries below (wordBackspaceTarget, retypeSelectionAnchor) are
     // written against, and the same test skipCurrentWord scans a word with, so "word" means one
@@ -1777,6 +1795,78 @@
             // CONFIG frame is (the desktop carries it as bit 1), because it changes how a recorded
             // space is judged.
             this.spaceSkipsWord = true;
+            // FLEXIBLE LINES (backlog 208): the player's caret is decoupled from the song's
+            // playhead. Four behaviours, all confined to these two flags so the pinned path stays
+            // byte-identical:
+            //   RUSH FREEDOM      finishing a line moves the caret straight on to the next one
+            //                     instead of waiting for its cue (rollForwardIfFinishedEarly). The
+            //                     finished line is left unsealed and seals on its own normal
+            //                     deadline with nothing missed.
+            //   DRAG FREEDOM      a line the player is still typing is not force-sealed at its
+            //                     normal deadline; the seal is deferred by FLETCHER_DRAG_GRACE_MS
+            //                     so the caret is never yanked off a line mid-word (sealPermitted).
+            //   RUSH CAP          a press that puts the caret more than FLETCHER_MAX_CHARS_AHEAD
+            //                     countable chars ahead of the playhead lands and scores as normal
+            //                     but earns no combo (rushesPastCap).
+            //   LINE-START SNAP   a caret sitting PAST the last character of its line is handed to
+            //                     the next line the moment that line starts, so a player who has
+            //                     FINISHED is still carried along by the song
+            //                     (snapForwardOnLineStart). An UNFINISHED line is never taken,
+            //                     which is the point of the freedom.
+            //
+            // Per-char judgement windows are untouched: rushing reads as early deltas and dragging
+            // as late ones, so accuracy, sync% and the judgement counts report the drift honestly.
+            //
+            // BOTH TRUE UNCONDITIONALLY, the same shape every other live-only rule in this file
+            // takes (the span judgement, the word-gap input model, the space discipline, the
+            // stretch narrowing). Since backlog 208 this is the desktop's LIVE default for every
+            // stack, and the mod named Fletcher is the one that turns it OFF and re-pins the caret
+            // (acronym FC). The browser has no mods payload, so the strict FC arm is unreachable
+            // here; if /play ever grows one, FC is the mod that would clear these two.
+            //
+            // In the C# they default FALSE, because that engine must also RE-DERIVE a stored replay
+            // under the pinned era every pre-208 row was played in, and the pair travels as CONFIG
+            // frame bit 5. The browser has no era axis: it plays live only, writes no replay frames
+            // and re-scores no stored row, so the live value is the only value it can hold. The C#
+            // arm of the fuzz parity test therefore has to SET bit 5 in the frames it feeds, the
+            // same treatment bits 2, 3, 4 and 6 already get.
+            this.fletcherEnabled = true;
+            this.flexibleLineSnap = true;
+            // The COUNTABLE-CHARACTER STREAM (the C# constructor's countableTargets /
+            // countableBase / countablePrefix): the whole map read as one run of countable cells,
+            // which is the currency the rush cap measures in. countableTargets holds every
+            // countable cell's target time sorted ascending, so the playhead's position is a binary
+            // search; countableBase[k] plus countablePrefix[k][i] says where line k cell i sits in
+            // that stream, so the caret's position is a lookup. All immutable after construction.
+            this.countableBase = new Array(this.lines.length);
+            this.countablePrefix = new Array(this.lines.length);
+
+            const countableTargets = [];
+
+            for (let k = 0; k < this.lines.length; k++) {
+                const cells = this.lines[k].cells;
+                const prefix = new Array(cells.length + 1);
+
+                this.countableBase[k] = countableTargets.length;
+                prefix[0] = 0;
+
+                for (let i = 0; i < cells.length; i++) {
+                    prefix[i + 1] = prefix[i];
+
+                    if (!isCountable(cells[i])) continue;
+
+                    prefix[i + 1]++;
+                    countableTargets.push(cells[i].target);
+                }
+
+                this.countablePrefix[k] = prefix;
+            }
+
+            // Overlapping lines can interleave their targets across a boundary, so sort rather than
+            // assume the per-line order carries. NUMERIC comparator, because the JS default sorts
+            // lexicographically and would put 10000 before 2000.
+            countableTargets.sort((a, b) => a - b);
+            this.countableTargets = countableTargets;
             // The one outstanding combo snapshot (TypingEngine.restorable, backlog 140, widened by
             // 167): { lineIndex, cellIndex, streak }, the cell a wrong keypress spoiled or a word
             // skip abandoned and the streak that break cost, or null when there is nothing to go
@@ -1789,9 +1879,11 @@
             // off-time press left the list at backlog 199: it is a hit now, it breaks nothing, and
             // only a break discards a claim, so fumbling the beat between a typo and its fix no
             // longer costs the fix its restore. It rejoins the list in the C# under
-            // OffTimeRule.BreaksCombo, the pre-199 era, which this file has no arm for. The C# has
-            // one further discard seam, Fletcher's rush cap, which has no counterpart here because
-            // it has no Fletcher (no mods payload) and therefore no rush cap branch to hang it on.
+            // OffTimeRule.BreaksCombo, the pre-199 era, which this file has no arm for. The FOURTH
+            // discard seam is the flexible caret's RUSH CAP (backlog 208), which this file gained
+            // with the flexible default: a press that puts the caret more than
+            // FLETCHER_MAX_CHARS_AHEAD past the playhead zeroes a live run, and that break is as
+            // final as the seal's.
             //
             // "That had a streak to take" is backlog 176: a break landing while the run is ALREADY
             // at zero costs nothing, so it leaves an outstanding claim alone rather than replacing
@@ -1872,6 +1964,173 @@
             return time >= line.endTime && (time >= line.endTime + line.sealGraceMs || this.noTypeableUntyped(line));
         }
 
+        // TypingEngine.sealPermitted. DRAG FREEDOM (backlog 208): a line the player is still typing
+        // must not be force-sealed out from under them at its normal deadline. The seal is deferred
+        // while the caret is on the line, up to FLETCHER_DRAG_GRACE_MS past its hard deadline; past
+        // that the line seals as usual (untyped cells become misses, one combo break) and the caret
+        // is moved on. Always true with a pinned caret, and true under a flexible one for any line
+        // the player is not currently on, so a finished-early line still seals exactly on its own
+        // deadline.
+        sealPermitted(index, time) {
+            if (!this.fletcherEnabled || this.activeLineIndex !== index) return true;
+
+            const line = this.lines[index];
+
+            // Nothing left untyped means there is no drag to protect: the line seals on its normal
+            // deadline. (This is also what lets the FINAL line, which has no next line to roll on
+            // to, finish the run on time once it is fully typed.)
+            if (this.noTypeableUntyped(line)) return true;
+
+            return time >= line.endTime + line.sealGraceMs + FLETCHER_DRAG_GRACE_MS;
+        }
+
+        // TypingEngine.snapForwardOnLineStart. THE LINE-START SNAP (backlog 208): while the caret
+        // sits PAST THE LAST CHARACTER of its line, the next line STARTING takes it, which is what
+        // keeps the flexible default feeling like the pinned game it replaced (finish your line and
+        // the song moves you on). A line the player has not finished is never touched: dragging
+        // behind is precisely the freedom the flexible caret grants, and sealPermitted above makes
+        // the same distinction for the same reason.
+        //
+        // "Finished" is isLineComplete, i.e. the caret has walked off the end of the cell list.
+        // That is exact rather than approximate: every caret advance runs autoSkipForward, so a
+        // caret at cells.length is a caret with no typeable cell left in front of it, and it is the
+        // same predicate the keypress-driven rollForwardIfFinishedEarly gates on. Cells left BEHIND
+        // the caret wrong or abandoned do not hold the line: the player is done with them, and the
+        // seal resolves them exactly as it always did.
+        //
+        // A LOOP rather than a single step, because the line it lands on can be finished the
+        // instant it is reached (a line whose cells are all non-typeable is complete at caret 0),
+        // and the roll-forward this backs up does not recurse.
+        snapForwardOnLineStart(time) {
+            if (!this.fletcherEnabled || !this.flexibleLineSnap || this.finished) return false;
+
+            let snapped = false;
+
+            while (this.activeLineIndex >= 0
+                   && this.isLineComplete(this.activeLineIndex)
+                   && this.activeLineIndex + 1 < this.lines.length
+                   && time >= this.lines[this.activeLineIndex + 1].activationTime) {
+                this.activeLineIndex++;
+                this.caretIndex = 0;
+                this.autoSkipForward();
+                snapped = true;
+            }
+
+            return snapped;
+        }
+
+        // TypingEngine.rollForwardIfFinishedEarly. RUSH FREEDOM (backlog 208): the moment a press
+        // finishes a line, the caret moves straight on to the next one instead of waiting for its
+        // activation cue. It is the KEYPRESS half of moving a finished caret on; the time-driven
+        // half, for a caret that became finished without a press of its own, is
+        // snapForwardOnLineStart above. The finished line is left UNSEALED and seals on its own
+        // normal deadline (with nothing missed, since it is fully typed), so nothing about the
+        // song's timeline moves; only the player's position does. No-op on the last line, which
+        // keeps the default "line complete, wait for the song" behaviour.
+        rollForwardIfFinishedEarly() {
+            if (!this.fletcherEnabled || this.finished || this.activeLineIndex < 0) return;
+            if (this.caretIndex < this.lines[this.activeLineIndex].cells.length) return;
+            if (this.activeLineIndex + 1 >= this.lines.length) return;
+
+            // Lines seal in order and the player never leaves a line except by finishing it or by a
+            // drag cutoff (which advances nextSealIndex with them), so the next line is always
+            // unsealed.
+            this.activeLineIndex++;
+            this.caretIndex = 0;
+            this.autoSkipForward();
+        }
+
+        // TypingEngine.wpmClockRuns. Whether the WPM/active-time clock runs for the frame ending at
+        // previousTime. Always, with a pinned caret. Under the flexible one the caret can be parked
+        // at the head of a line the song has not reached yet (rush freedom rolls it forward the
+        // instant a line is finished), and a clock that ran through a 20-second instrumental would
+        // read the wait as typing time; so the clock runs only from the point the playhead reaches
+        // that line's activationTime, which is exactly when the line would have gone active while
+        // pinned.
+        wpmClockRuns(previousTime) {
+            return !this.fletcherEnabled || this.activeLineIndex < 0
+                || previousTime >= this.lines[this.activeLineIndex].activationTime;
+        }
+
+        // TypingEngine.PlayheadCountablePosition. How many COUNTABLE characters the song has
+        // reached by `time`: the count of countable cells across the whole map whose target time is
+        // at or before it. The playhead's position in the countable stream, and the reference the
+        // rush cap is measured against. Monotonic in time and a pure function of the beatmap.
+        playheadCountablePosition(time) {
+            let lo = 0;
+            let hi = this.countableTargets.length;
+
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+
+                if (this.countableTargets[mid] <= time) lo = mid + 1;
+                else hi = mid;
+            }
+
+            return lo;
+        }
+
+        // TypingEngine.CaretCountablePosition. The player caret's position in the same countable
+        // stream: every countable cell in the lines before the active one, plus the countable cells
+        // behind the caret within it. 0 when no line is active.
+        get caretCountablePosition() {
+            if (this.activeLineIndex < 0) return 0;
+
+            const prefix = this.countablePrefix[this.activeLineIndex];
+            const at = Math.min(Math.max(this.caretIndex, 0), prefix.length - 1);
+
+            return this.countableBase[this.activeLineIndex] + prefix[at];
+        }
+
+        // TypingEngine.CharsAheadOfPlayhead. Signed countable-character drift of the caret against
+        // the playhead: positive = rushing ahead, negative = dragging behind. The quantity the rush
+        // cap bounds, and the honest read-out of what the flexible caret is about.
+        charsAheadOfPlayhead(time) {
+            return this.caretCountablePosition - this.playheadCountablePosition(time);
+        }
+
+        // TypingEngine.rushesPastCap. Would accepting `cell` at `time` leave the caret more than
+        // FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead? Measured on the caret
+        // position AFTER the press, so with a cap of 5 the fifth char ahead is still fine and the
+        // sixth is not. A non-countable cell (a space) spends no budget.
+        rushesPastCap(cell, time) {
+            const after = this.caretCountablePosition + (isCountable(cell) ? 1 : 0);
+
+            return after - this.playheadCountablePosition(time) > FLETCHER_MAX_CHARS_AHEAD;
+        }
+
+        // TypingEngine.SongWindowOpen. Whether the PLAYHEAD is inside a typeable line window: the
+        // plain time rule on the first unsealed line, read independently of where the player's
+        // caret has got to. Equal to "a line is active" with a pinned caret; under the flexible one
+        // the two diverge, because the caret can be parked on a line the song has not reached
+        // (rush) or still finishing one the song has left (drag).
+        get songWindowOpen() {
+            if (this.finished || this.nextSealIndex >= this.lines.length || this.lastUpdateTime === null) return false;
+
+            const line = this.lines[this.nextSealIndex];
+
+            return this.lastUpdateTime >= line.activationTime && this.lastUpdateTime < line.endTime + line.sealGraceMs;
+        }
+
+        // TypingEngine.SongIsOnTheCaretsLine. Whether the SONG is asking for characters on the very
+        // line the player's caret is on. songWindowOpen ALONE is not that question, and the
+        // difference is the whole of a real map's instrumental gap: a decoder-built line's window
+        // runs to the NEXT line's start (contiguous, no holes), so through a twelve-second
+        // instrumental the playhead is still inside line N's window and songWindowOpen stays true,
+        // while the player who finished line N is parked at the head of line N+1 with nothing being
+        // asked of them.
+        //
+        // On the desktop this is what lets Space reach the mid-song skip overlay from a parked
+        // caret (TypeBeatPlayfield's key handler). The BROWSER HAS NO SKIP OVERLAY at all: it
+        // cannot seek its scheduled audio source without moving the gameplay clock, so a dead
+        // stretch gets a labelled countdown chip instead (typebeat-player.js updateGap), and there
+        // is no fall-through for Space to reach. It is ported and exported anyway because that chip
+        // is exactly what the predicate now has to gate: with the caret parked on the next line,
+        // "a line is active" no longer means "the song is asking for characters".
+        get songIsOnTheCaretsLine() {
+            return this.activeLineIndex >= 0 && this.activeLineIndex === this.nextSealIndex && this.songWindowOpen;
+        }
+
         // DrawableTypeBeatCharObject.ApplyEngineResult: a cell hands the score processor its ONE
         // result and every later attempt on the same cell is dropped (`if (Judged) return;`). Every
         // processor.applyResult in this engine goes through here, so the submitted account can never
@@ -1945,18 +2204,19 @@
                 this.combo = 0;
 
                 // A real break, so it owns the streak (backlog 140). Distinct from the line-scoped
-                // drop below: the two coincide in the browser, but not in the C#, where Fletcher can
-                // leave the caret on a LATER line holding a snapshot this break has just cost it.
+                // drop below, and since backlog 208 the two come apart HERE as well as in the C#:
+                // the flexible caret can already be on a LATER line, holding a snapshot this break
+                // has just cost it.
                 this.discardRestorableStreak();
                 if (this.onComboBroken) this.onComboBroken();
             }
 
             // A sealed line's cells can never be typed again, so a snapshot left on this one is
-            // unredeemable whether or not the seal broke anything. The browser cannot reach a
-            // snapshot on a line that is not the active one (it has no Fletcher, so the caret never
-            // runs ahead of the seal), which makes this defensive here and load-bearing there;
-            // dropping it keeps the state truthful rather than relying on the caret never going
-            // back, and keeps this file the line-for-line mirror it has to be.
+            // unredeemable whether or not the seal broke anything. Load-bearing since backlog 208:
+            // the flexible caret DOES run ahead of the seal, so a run that finishes a line early
+            // and then spoils a cell on the next one is holding a claim on a line the song is still
+            // sealing behind it. Dropping it keeps the state truthful rather than relying on the
+            // caret never going back.
             if (this.restorable !== null && this.restorable.lineIndex === idx) this.restorable = null;
         }
 
@@ -2143,28 +2403,60 @@
             // the browser player offers no rate mods at all (nothing here touches playbackRate), so
             // its rate is permanently 1 and the two accumulators agree. Adding one here is the
             // first thing to do if browser play ever gains a speed mod.
-            if (this.lastUpdateTime !== null && this.activeLineIndex >= 0 && !this.finished && !this.isLineComplete(this.activeLineIndex)) {
+            //
+            // wpmClockRuns is the flexible caret's own clause (backlog 208): a caret parked at the
+            // head of a line the song has not reached yet is WAITING, not typing, so the clock does
+            // not run through the instrumental it is waiting out.
+            if (this.lastUpdateTime !== null && this.activeLineIndex >= 0 && !this.finished
+                && !this.isLineComplete(this.activeLineIndex) && this.wpmClockRuns(this.lastUpdateTime)) {
                 this.activeTimeMs += Math.max(0, time - this.lastUpdateTime);
             }
             this.lastUpdateTime = time;
 
-            // (2) seal every line whose deadline passed, in order.
-            while (this.nextSealIndex < this.lines.length && this.canSeal(this.lines[this.nextSealIndex], time)) {
-                this.sealLine(this.nextSealIndex);
+            // Whether the caret ends this update on a line it was not on when the update started.
+            // Only the DRAG CUTOFF inside the seal loop needs it: the ordinary activation arm and
+            // the snap both auto-skip where they stand, while the cutoff's auto-skip is deferred to
+            // the end exactly as the C# defers it (there it rides the single LineActivated raise).
+            // The deferral is behaviour, not tidiness: it leaves the cutoff's caret at index 0 while
+            // the snap arm below runs, so a cutoff onto a line of pure punctuation is NOT read as
+            // complete until the next update, which is when the snap may take it.
+            let pendingActivation = false;
 
-                if (this.activeLineIndex === this.nextSealIndex) {
-                    this.activeLineIndex = -1;
-                    // The caret goes back to 0 with it, exactly as TypingEngine.Update's seal loop
-                    // does it. Nothing here reads the caret while no line is active (typebeat-
-                    // player.js gates every read on `active`, and processKey / processBackspace /
-                    // autoSkipForward all bail), and the next activation sets it to 0 anyway, so
-                    // this changes no behaviour today. It is mirrored because a stale caret sitting
-                    // on a sealed line is a trap for the next reader of either file, not because
-                    // anything can currently see it.
-                    this.caretIndex = 0;
-                }
+            // (2) seal every line whose deadline passed, in order. sealPermitted is the DRAG
+            //     freedom: a line the player is still typing holds off its own seal for
+            //     FLETCHER_DRAG_GRACE_MS, so the loop stops at it rather than skipping it.
+            while (this.nextSealIndex < this.lines.length
+                   && this.canSeal(this.lines[this.nextSealIndex], time)
+                   && this.sealPermitted(this.nextSealIndex, time)) {
+                const index = this.nextSealIndex;
 
+                this.sealLine(index);
                 this.nextSealIndex++;
+
+                if (this.activeLineIndex === index) {
+                    if (this.fletcherEnabled && index + 1 < this.lines.length) {
+                        // DRAG CUTOFF: the player ran out of borrowed time mid-line. Land them on
+                        // the next line immediately rather than in a dead zone. Setting the caret
+                        // here, inside the loop, is also what stops one cutoff cascading into the
+                        // line the player just landed on: the next sealPermitted call sees them on
+                        // it and grants it its own drag grace. A cascade still happens when that
+                        // grace has ALSO expired (an idle player), which is the intended catch-up
+                        // to the song.
+                        this.activeLineIndex = index + 1;
+                        this.caretIndex = 0;
+                        pendingActivation = true;
+                    } else {
+                        this.activeLineIndex = -1;
+                        // The caret goes back to 0 with it, exactly as TypingEngine.Update's seal
+                        // loop does it. Nothing here reads the caret while no line is active
+                        // (typebeat-player.js gates every read on `active`, and processKey /
+                        // processBackspace / autoSkipForward all bail), and the next activation
+                        // sets it to 0 anyway, so this changes no behaviour today. It is mirrored
+                        // because a stale caret sitting on a sealed line is a trap for the next
+                        // reader of either file, not because anything can currently see it.
+                        this.caretIndex = 0;
+                    }
+                }
             }
 
             // (3) finish, or activate the next line inside its cue window.
@@ -2183,6 +2475,26 @@
                     this.autoSkipForward();
                 }
             }
+
+            // (4) THE LINE-START SNAP (backlog 208): the caret is sitting past the last character
+            //     of its line and the next line has just started, so hand the player onto it,
+            //     exactly as the pinned arm above would have. Placed AFTER the activation arm, as
+            //     in the C#, so a fresh activation onto an already-finished line (every cell
+            //     non-typeable) is snapped on in the same update rather than a frame later.
+            //
+            //     The C# additionally folds this, the activation above and the drag cutoff in the
+            //     seal loop into ONE LineActivated raise, so a catch-up cascade through several
+            //     stale lines relayouts the stage exactly once. This mirror raises no such event
+            //     (typebeat-player.js reads engine.activeLineIndex per frame), so there is no
+            //     announcement to deduplicate and the discipline has nothing to port: the one
+            //     activation is the one caret position each of these arms leaves behind. What DOES
+            //     port is the deferred auto-skip that rides that raise, below.
+            this.snapForwardOnLineStart(time);
+
+            // The drag cutoff's auto-skip, at the seam the C# runs it (guarded on there being a
+            // line to skip on: a cutoff that cascaded off the end of the map has already parked the
+            // caret nowhere and finished the run above).
+            if (pendingActivation && this.activeLineIndex >= 0) this.autoSkipForward();
         }
 
         // The delta a press on cell cellIndex is judged, stored and announced on (mirrors
@@ -2252,7 +2564,15 @@
             // this is unreachable under it.
             if (this.spaceSkipsWord && c === ' ' && cell.expected !== ' ') {
                 this.skipCurrentWord();
-                if (this.caretIndex >= line.cells.length) return true; // the word ran to the line end
+
+                if (this.caretIndex >= line.cells.length) {
+                    // The abandoned word ran to the end of the line, so there is no word gap for
+                    // the space to land on. The line is complete, exactly as it would be had the
+                    // player typed that last word out, and the same end-of-line handling applies.
+                    this.rollForwardIfFinishedEarly();
+                    return true;
+                }
+
                 cell = line.cells[this.caretIndex]; // the word gap, judged as an ordinary space below
             }
 
@@ -2273,15 +2593,15 @@
             //
             // Gated on the CELL STATE rather than on an era flag, exactly as the C# gates it: the
             // caret can only come to rest on a wrong cell through the park below, so this branch is
-            // unreachable for any run that never parked. The C# follows this with
-            // rollForwardIfFinishedEarly(), which has no counterpart here for the reason every other
-            // Fletcher seam has none: the browser offers no mods payload and so no Fletcher.
+            // unreachable for any run that never parked.
             if (c === ' ' && cell.expected === ' ' && cell.state === 'wrong') {
                 this.totalKeypresses++;
                 this.correctKeypresses++;
 
                 this.caretIndex++;
                 this.autoSkipForward();
+
+                this.rollForwardIfFinishedEarly();
                 return true;
             }
 
@@ -2429,6 +2749,11 @@
                     // the C# pushRollingSample() sits on the ACCEPTED path only, below the branch we
                     // are in, so logging a wrong char here would drift the browser's WPM readout
                     // away from the desktop's.
+                    //
+                    // A typo on the line's LAST cell finishes it exactly as a correct press would
+                    // (the character is finished, it is simply wrong), so this path rolls the caret
+                    // forward too, at the same seam the C# does it.
+                    this.rollForwardIfFinishedEarly();
                     return true;
                 }
 
@@ -2544,6 +2869,11 @@
                 // actually made.
                 type = awardedTier(classify(delta, w), cell.heldWrongBeforeJudged);
                 const bp = basePoints(type);
+
+                // THE RUSH CAP (backlog 208), evaluated BEFORE the caret moves: does this press put
+                // the caret more than FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead?
+                const rushedPastCap = this.fletcherEnabled && this.rushesPastCap(cell, time);
+
                 if (bp > 0) {
                     // Multiplier reads combo BEFORE the increment; capped at COMBO_CAP => up to 2.0x.
                     points = Math.round(bp * (1 + Math.min(this.combo, COMBO_CAP) / COMBO_CAP));
@@ -2559,16 +2889,36 @@
                 // 'meh' below (toHitResult), which is what makes ACCURACY the punishment and what
                 // lets the submitted combo follow the engine's with nothing mirrored by hand.
                 //
-                // So the increment is unconditional here, exactly as the C# arm is with its two era
-                // arms collapsed: this file has neither of the branches TypingEngine keeps around
-                // it. OffTimeRule.BreaksCombo is the pre-199 era, which a browser play (live only)
-                // can never be in, and Fletcher's rush cap needs a mods payload the browser has no
-                // way to receive.
+                // So the increment is unconditional on THAT axis, exactly as the C# arm is with its
+                // off-time era arm collapsed: OffTimeRule.BreaksCombo is the pre-199 era, which a
+                // browser play (live only) can never be in.
                 //
                 // A space can never reach the off-time tiers at all: an untimed space is judged on a
                 // zeroed delta and always takes the top tier (see the block above).
-                this.combo++;
-                if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+                //
+                // What DOES stand between the press and the increment is the RUSH CAP, which the
+                // browser gained with the flexible default (backlog 208). It is a combo penalty,
+                // not a block: the char lands and scores exactly as it would without it, but no
+                // combo may accumulate while the caret is out past the cap. The break therefore
+                // fires ONCE, on the press that crosses the line, and RE-ARMS the moment a press
+                // lands back inside it (combo starts building again, so the next excursion breaks
+                // it again). It reaches an off-time press too, and that is the coherent reading of
+                // both rules rather than an accident: the cap measures where the CARET is, not how
+                // well the press was timed, so a press it would refuse combo for cannot earn combo
+                // merely by also being mistimed.
+                if (rushedPastCap) {
+                    const hadCombo = this.combo > 0;
+
+                    this.combo = 0;
+
+                    if (hadCombo) {
+                        this.discardRestorableStreak();
+                        if (this.onComboBroken) this.onComboBroken();
+                    }
+                } else {
+                    this.combo++;
+                    if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+                }
 
                 cell.state = 'correct';
                 cell.typedChar = c;
@@ -2594,7 +2944,22 @@
             const judgedIndex = this.caretIndex;
             this.caretIndex++;
             this.autoSkipForward();
+
+            // TypeBeatPlayfield.onCharJudged's flexible-caret arm: the RUSH CAP breaks combo on a
+            // press that is still judged Great/Ok/Meh, so the hit result alone (which INCREMENTS
+            // osu's combo) cannot carry the break. Mirror the engine's own combo by hand, AFTER the
+            // result has been applied, exactly as the wrong-keypress path does. Written against
+            // "the combo this press left behind" (the C# judgement.ComboAfter) rather than against
+            // rushedPastCap, because it has to cover the inert-retype branch too, which the C#
+            // announces through the very same raise.
+            //
+            // Under a pinned caret this is inert, which is why the C# gates it on the flag: there
+            // every combo-zero judgement either maps to a Miss (which breaks osu's combo itself) or
+            // is a WrongChar, whose break the mistype path has already carried.
+            if (this.fletcherEnabled && this.combo === 0) this.processor.breakCombo();
+
             if (this.onCharJudged) this.onCharJudged(judgedIndex, type, points);
+            this.rollForwardIfFinishedEarly();
             return true;
         }
 
@@ -2920,7 +3285,13 @@
         TypingEngine, computeScore, rankFromCompletion,
         windowsFor, classify, toHitResult,
         freestyleTick, freestyleGlyph,
-        constants: { CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER, SHIMMER_INTERVAL_MS, PUNCTUATION, WORD_BREAK, STRETCH_RUN_LENGTH },
+        constants: {
+            CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER,
+            SHIMMER_INTERVAL_MS, PUNCTUATION, WORD_BREAK, STRETCH_RUN_LENGTH,
+            // The flexible caret's two tuning points (backlog 208), exported so the harnesses pin
+            // the same numbers the game's own FletcherEngineTest does rather than transcribing them.
+            FLETCHER_MAX_CHARS_AHEAD, FLETCHER_DRAG_GRACE_MS
+        },
         // the renderer/high-level mount is attached in typebeat-player.js
     };
 })(window);

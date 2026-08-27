@@ -903,11 +903,19 @@
         // desktop covers with osu's skip overlay. The browser cannot seek its scheduled audio
         // source without moving the gameplay clock, so it labels the wait and counts it down
         // instead; the cue bars still land on the line itself.
-        function updateGap(time, active) {
+        //
+        // Gated on songIsOnTheCaretsLine rather than on "a line is active", which is the same
+        // distinction the desktop's Space fall-through makes (TypeBeatPlayfield's key handler) and
+        // for the same reason. Since backlog 208 finishing a line parks the caret at the head of
+        // the next one, so a line stays ACTIVE straight through an instrumental and the old gate
+        // would have hidden the countdown from exactly the players who earned the wait. The chip
+        // asks "is the song asking me for characters right now", and a parked caret is the case
+        // where the answer is no while a line is active.
+        function updateGap(time) {
             const upcoming = engine.nextSealIndex;
             const hasNext = !engine.finished && !engine.failed && upcoming < beatmap.lines.length;
 
-            if (active || !hasNext) {
+            if (engine.songIsOnTheCaretsLine || !hasNext) {
                 if (gapActive) { gapActive = false; gap.classList.remove('tb-gap-on'); }
                 return;
             }
@@ -983,7 +991,7 @@
             // every cell offset under it.
             paintSelection();
             updateCue(time, active);
-            updateGap(time, active);
+            updateGap(time);
 
             const stats = liveStats(engine);
             scoreEl.textContent = fmtInt(engine.score);

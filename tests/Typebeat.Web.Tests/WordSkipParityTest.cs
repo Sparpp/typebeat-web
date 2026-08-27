@@ -188,7 +188,9 @@ public class WordSkipParityTest
     /// <summary>
     /// <c>SkippingTheLastWordOfALineCompletesTheLine</c>. The last word of a line has no gap after
     /// it, so the caret lands at the end of the line and the cells stay reclaimable until the line's
-    /// own deadline. When nobody comes back the seal resolves them, and it does so WITHOUT a second
+    /// own deadline, plus the flexible caret's <c>FLETCHER_DRAG_GRACE_MS</c> since backlog 208 (the
+    /// caret is still on the line, and an abandoned cell is a cell still owed).
+    /// When nobody comes back the seal resolves them, and it does so WITHOUT a second
     /// combo break: that break was taken at the skip, and charging it again would cost a run the
     /// player rebuilt through the rest of the line.
     /// </summary>
@@ -414,6 +416,12 @@ public class WordSkipParityTest
     /// own deadline. Without that, a skip near the end of a line would trip the EARLY seal ("nothing
     /// left to type, do not hold the next line up") and close the window in the very grace period
     /// that exists for finishing.
+    ///
+    /// <para>Since backlog 208 that window is WIDER, and by the same argument stated once more: an
+    /// abandoned cell is a cell the player is still owed, so the flexible caret's DRAG GRACE holds
+    /// the line for <c>FLETCHER_DRAG_GRACE_MS</c> beyond its hard deadline too, exactly as it does
+    /// for a player still typing cells they have not reached. Only the CLOCK moved; the seal
+    /// resolves the same cells the same way, which is why the assertions below did not.</para>
     ///
     /// <para>The fixture is the game's rebuilt around the LOADER: the C# one hands the engine a line
     /// whose word units overrun its end with no grace of its own, which neither loader produces (both

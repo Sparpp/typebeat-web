@@ -111,6 +111,12 @@ public class RateMultiplierTest
             // every row that carries the acronym.
             Assert.That(ModMultiplier.For("RH", null), Is.EqualTo(1.10));
             Assert.That(ModMultiplier.For("rh", null), Is.EqualTo(1.10));
+            // Fletcher's two acronyms (backlog 208 reversed the mod). "FC" is the live one, which
+            // PINS the caret back to the playhead and is priced above 1.0 for the slack it takes
+            // away; "FT" is the retired one, which unpinned it, and its old 0.98 still bounds every
+            // stored row that carries it.
+            Assert.That(ModMultiplier.For("FC", null), Is.EqualTo(1.02));
+            Assert.That(ModMultiplier.For("fc", null), Is.EqualTo(1.02));
             Assert.That(ModMultiplier.For("FT", null), Is.EqualTo(0.98));
             Assert.That(ModMultiplier.For("MU", null), Is.EqualTo(1.0));
             Assert.That(ModMultiplier.For("RX", null), Is.EqualTo(0.1));
@@ -195,18 +201,30 @@ public class RateMultiplierTest
     [Test]
     public void MaxForStack_PinsTheFattestRankedStack()
     {
-        // DT@2.00 (1.46) × FL (1.05) × LT (1.05) × HR (1.10) = 1.770615, the dearest stack a current
-        // client can assemble out of ranked mods. Everything else ranked is a trim (NF 0.5, FT 0.98)
-        // or neutral, and Easy is excluded by Hard Rock. Hard Rock (backlog 150) inherited this slot
-        // from Rhythmic, which paid the same 1.10 and can no longer be selected at all.
+        // DT@2.00 (1.46) × FL (1.05) × LT (1.05) × HR (1.10) × FC (1.02) = 1.80602730, the dearest
+        // stack a current client can assemble out of ranked mods. Everything else ranked is a trim
+        // (NF 0.5, and the retired FT 0.98) or neutral, and Easy is excluded by Hard Rock. Hard Rock
+        // (backlog 150) inherited this slot from Rhythmic, which paid the same 1.10 and can no
+        // longer be selected at all.
+        //
+        // Fletcher joined the product at backlog 208, which REVERSED the mod: "FC" pins the caret
+        // back to the playhead now that the unpinned one is the default, and a mod that takes slack
+        // away is priced ABOVE 1.0 (1.02) where the old "FT" that handed slack out was priced below
+        // it (0.98). So the fattest stack grew by 2% rather than being unchanged by a trim.
         //
         // THIS PRODUCT IS WHY HARD ROCK'S SCORE MULTIPLIER IS 1.10 AND NOT THE 1.25 IT IS WORTH FOR
-        // pp: at 1.25 the same stack is 2.0121, over STACK_CAP, so the ceiling would clamp an honest
-        // maximal play and store it unranked.
-        double fattest = ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null)]);
+        // pp: at 1.25 the same stack is over STACK_CAP even without Fletcher, so the ceiling would
+        // clamp an honest maximal play and store it unranked.
+        double fattest = ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FC", null)]);
 
-        Assert.That(fattest, Is.EqualTo(1.770615).Within(1e-9));
+        Assert.That(fattest, Is.EqualTo(1.80602730).Within(1e-9));
         Assert.That(fattest, Is.LessThan(ModMultiplier.STACK_CAP), "the backstop must never bite a reachable stack");
+
+        // Without Fletcher it is the 1.770615 the same four mods have always paid, so the new
+        // acronym is the whole of the difference.
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null)]),
+            Is.EqualTo(1.770615).Within(1e-9));
+
         double atThePpValue = ModMultiplier.For("DT", 2.00) * ModMultiplier.For("FL", null) * ModMultiplier.For("LT", null) * 1.25;
 
         Assert.That(atThePpValue, Is.GreaterThan(ModMultiplier.STACK_CAP),
@@ -214,13 +232,15 @@ public class RateMultiplierTest
 
         // A stored row could still carry Rhythmic alongside all of it (no client can send that pair
         // today, but the ceiling is re-derived for stored rows too), and even that stays under.
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("RH", null)]),
-            Is.EqualTo(1.9476765).Within(1e-9));
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("RH", null)]),
+        // 1.80602730 × 1.10 = 1.986630030, which is the tightest the backstop has ever been against
+        // a reachable combination: another mod above 1.008x anywhere in this product would clamp it.
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FC", null), ("RH", null)]),
+            Is.EqualTo(1.986630030).Within(1e-9));
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FC", null), ("RH", null)]),
             Is.LessThan(ModMultiplier.STACK_CAP));
 
         // Adding the neutral / trimming ranked mods cannot beat it.
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("SD", null), ("MU", null), ("GK", null)]),
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FC", null), ("SD", null), ("MU", null), ("GK", null)]),
             Is.EqualTo(fattest).Within(1e-9),
             "a 1.0x mod cannot move the ceiling, which is why adding Gatekeeper reprices nothing");
         Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FT", null)]),

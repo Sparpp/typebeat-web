@@ -87,7 +87,12 @@ function playOneKeyThenSeal() {
     const engine = engineFor(map);
     engine.update(1000);
     engine.processKey('a', 1000);
-    engine.update(5000);
+    // The line's deadline is 4000 with no seal grace, and since backlog 208 the flexible caret adds
+    // FLETCHER_DRAG_GRACE_MS on top of it whenever the player is still ON the line with cells owed,
+    // which is the whole of this scenario (one key of five). So the force-seal, and the missed
+    // paint and completion this fixture is here to show, land at 5500. playPerfect above needs no
+    // such move: a fully typed line has no drag to protect and seals on its own 4000 deadline.
+    engine.update(5500);
     return engine;
 }
 

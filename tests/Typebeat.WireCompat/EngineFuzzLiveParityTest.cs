@@ -170,6 +170,25 @@ public class EngineFuzzLiveParityTest
                         Unit("aaaaa", 5000, 17000, 1, 9000)),
                 ];
 
+            // Backlog 208's LINE-START SNAP fixture, the game's own
+            // FletcherEngineTest.parkedLineMap. THE ONE FIXTURE HERE WHOSE DEADLINES ARE NOT WHAT
+            // THE BROWSER'S LOADER DERIVES, and deliberately so: the snap can only decide anything
+            // while a FINISHED caret is parked on a line the seal has not reached and the next line
+            // has ALREADY started, which needs a line with no cells at all (L1's text is pure
+            // punctuation, which the default stream strips) AND a window that outlives the next
+            // line's cue (L1 runs to 20000; L2's first vocal is at 12000, so it activates at
+            // 10500). The loader makes windows strictly contiguous and drops a cell-less line
+            // outright, so the browser harness splices the same three lines in by hand
+            // (withParkedMiddleLine) and TheTwoLoadersAgreeOnEveryFixture holds its numbers against
+            // the TypingLine built here.
+            case "parkedLine":
+                return
+                [
+                    Line("ab", 1000, 3000, 2000, Unit("ab", 1000, 2000)),
+                    Line("...", 3000, 20000, 19000, Unit("...", 3000, 19000)),
+                    Line("cd", 10000, 30000, 13000, Unit("cd", 12000, 13000)),
+                ];
+
             default:
                 throw new ArgumentOutOfRangeException(nameof(name), name, "unknown fixture");
         }
@@ -199,35 +218,44 @@ public class EngineFuzzLiveParityTest
     #region Driving the two sides
 
     /// <summary>
-    /// The generated stream as a replay, headed by the CONFIG frame the six judgement-relevant
+    /// The generated stream as a replay, headed by the CONFIG frame the seven judgement-relevant
     /// settings travel in: bit 0 allow-wrong-input (on, the default model and all the browser has),
     /// bit 1 space-skips-word (whichever half of the case matrix this run is), bit 2 syllable-span
-    /// judgement, bit 3 wrong-input-on-word-gaps, bit 4 strict-spaces and bit 6 the char-timed
-    /// stretch narrowing.
+    /// judgement, bit 3 wrong-input-on-word-gaps, bit 4 strict-spaces, bit 5 the FLEXIBLE LINES
+    /// default and bit 6 the char-timed stretch narrowing.
     ///
-    /// <para>Bits 2, 3, 4 and 6 are ON here, and getting any of them wrong would quietly gut the
+    /// <para>Bits 2, 3, 4, 5 and 6 are ON here, and getting any of them wrong would quietly gut the
     /// whole sweep rather than fail loudly in one place. <see cref="TypeBeatReplayScorer"/> follows
-    /// the CONFIG frame for all four (<c>ReplayEngineFeed.Apply</c>), and the engine's DEFAULTS are
-    /// the classic point rule, the strict word gap, the classic space rules and the unnarrowed span,
-    /// because a replay recorded before backlog 179, 181, 184 or 209 must re-derive under the rules
-    /// its fingers were graded on. The browser has no era axis at all: it only plays live, so it
-    /// judges on spans, types wrong letters into word gaps, applies the space discipline and
-    /// char-times a stretch unconditionally. A config frame without bit 2 would put the C# arm on
-    /// point deltas while the JS arm is on spans, and every case that ever pressed inside a span
-    /// would part; one without bit 3 would have the C# arm REJECT every wrong key the script lands on
-    /// a gap, holding a caret the browser moved; one without bit 4 would have it reject every
-    /// mid-word space and advance past every gap typo, which is the same failure again; one without
-    /// bit 6 would pay every mashed freestyle slot and stretched run a delta of zero the browser
-    /// charges for. The first three end the same way: every keystroke after the first such press
-    /// lands on a different cell. The fourth parts the accounts without moving the caret at all,
-    /// which is why the sweep also counts the presses it decides (see
+    /// the CONFIG frame for all five (<c>ReplayEngineFeed.Apply</c>), and the engine's DEFAULTS are
+    /// the classic point rule, the strict word gap, the classic space rules, the PINNED caret and
+    /// the unnarrowed span, because a replay recorded before backlog 179, 181, 184, 208 or 209 must
+    /// re-derive under the rules its fingers were graded on. The browser has no era axis at all: it
+    /// only plays live, so it judges on spans, types wrong letters into word gaps, applies the space
+    /// discipline, runs the flexible caret and char-times a stretch unconditionally. A config frame
+    /// without bit 2 would put the C# arm on point deltas while the JS arm is on spans, and every
+    /// case that ever pressed inside a span would part; one without bit 3 would have the C# arm
+    /// REJECT every wrong key the script lands on a gap, holding a caret the browser moved; one
+    /// without bit 4 would have it reject every mid-word space and advance past every gap typo,
+    /// which is the same failure again; one without bit 5 would PIN the C# arm's caret to the
+    /// playhead while the browser's finishes lines early, drags past deadlines and refuses combo out
+    /// past the rush cap; one without bit 6 would pay every mashed freestyle slot and stretched run
+    /// a delta of zero the browser charges for. The first four end the same way: every keystroke
+    /// after the first such press lands on a different cell. The last parts the accounts without
+    /// moving the caret at all, which is why the sweep also counts the presses it decides (see
     /// <see cref="TheSweepReachesTheRulesItIsMeantTo"/>).</para>
+    ///
+    /// <para>Bit 5 is the one that cannot be read as a single fact, which is why it is a parameter
+    /// here rather than a constant: bit 5 CLEAR means a PINNED caret for a plain old replay, but an
+    /// unpinned caret WITHOUT the line-start snap for one carrying the retired "FT" acronym, so
+    /// <c>ReplayEngineFeed.Apply</c> takes the snap from the bit outright and the caret from
+    /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>. The sweep passes no mods, so the frame is
+    /// the whole of the answer here.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true)
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -564,6 +592,7 @@ public class EngineFuzzLiveParityTest
         int withTypos = 0, withMisses = 0, withOk = 0, withMeh = 0, perfect = 0;
         int skipPresses = 0, comboRestores = 0, backspaces = 0, passiveBreaks = 0, spanJudgements = 0, gapTypos = 0;
         int parkedGapTypos = 0, stepOvers = 0, midWordSpaceTypos = 0, stretchPointJudgements = 0;
+        int rollForwards = 0, lineSnaps = 0, dragHolds = 0, rushCapBreaks = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -584,6 +613,10 @@ public class EngineFuzzLiveParityTest
             parkedGapTypos += browserCase.GetProperty("parkedGapTypos").GetInt32();
             stepOvers += browserCase.GetProperty("stepOvers").GetInt32();
             midWordSpaceTypos += browserCase.GetProperty("midWordSpaceTypos").GetInt32();
+            rollForwards += browserCase.GetProperty("rollForwards").GetInt32();
+            lineSnaps += browserCase.GetProperty("lineSnaps").GetInt32();
+            dragHolds += browserCase.GetProperty("dragHolds").GetInt32();
+            rushCapBreaks += browserCase.GetProperty("rushCapBreaks").GetInt32();
             backspaces += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "");
         }
 
@@ -639,6 +672,21 @@ public class EngineFuzzLiveParityTest
             Assert.That(parkedGapTypos, Is.GreaterThan(0), "no run parked the caret on a gap it spoiled");
             Assert.That(stepOvers, Is.GreaterThan(0), "no run pressed the space that steps over a parked typo");
             Assert.That(midWordSpaceTypos, Is.GreaterThan(0), "no run typed a space into a lyric character");
+
+            // Backlog 208's four freedoms, one counter each and for the identical reason: both arms
+            // now run the flexible caret (the CONFIG frame here sets bit 5), so a port that quietly
+            // lost one of these would leave the two sides agreeing on the PINNED answer, green, and
+            // covering nothing. Each is measured on the engine's own seam rather than on a script.
+            //
+            // The snap's counter is the one that could not be left to the generator at all: it only
+            // fires while a FINISHED caret is parked on a line the seal has not reached and the next
+            // line has already started, which needs the overlapping-window fixture (see
+            // "parkedLine"), because on a contiguous map the seal's own hand-over always gets there
+            // first. Every other fixture would read zero forever.
+            Assert.That(rollForwards, Is.GreaterThan(0), "no run finished a line early and rolled the caret straight on");
+            Assert.That(lineSnaps, Is.GreaterThan(0), "no run had a parked finished caret taken by the next line starting");
+            Assert.That(dragHolds, Is.GreaterThan(0), "no run held a line open past its deadline for a player still typing it");
+            Assert.That(rushCapBreaks, Is.GreaterThan(0), "no run put the caret out past the rush cap");
         });
     }
 
@@ -829,6 +877,137 @@ public class EngineFuzzLiveParityTest
             Assert.That(live.TotalScore, Is.LessThan(stored.TotalScore), "live era: total score");
         });
     }
+
+    /// <summary>
+    /// The FIFTH era arm the browser does not have and cannot prove (backlog 208): a replay whose
+    /// CONFIG frame leaves bit 5 CLEAR re-derives on a caret PINNED to the playhead, exactly as
+    /// every run stored before that task was played, while the identical keystrokes run the
+    /// flexible caret when the bit is set.
+    ///
+    /// <para>Judgement relevant in the strongest sense there is, the one bits 3 and 4 share: the two
+    /// arms disagree about WHERE THE CARET IS, so a single such frame decoded under the wrong arm
+    /// lands every keystroke after it on a different cell. The fixture is the sharpest shape for it
+    /// (see <c>parkedLine</c>): under the live arm "ab" is typed out, the caret rolls straight on to
+    /// the cell-less middle line, and the SNAP hands it to "cd" at that line's 10500 cue, so the map
+    /// is typed clean. Under the stored arm the caret waits to be walked along by the seal, which
+    /// does not reach the middle line until 20000, so both presses land on a line with no cells at
+    /// all and "cd" seals with two characters nobody typed.</para>
+    ///
+    /// <para>It is also the guard on the reconciliation the sweep above depends on: if the scorer
+    /// stopped following the flag, every generated case would still pass (both arms flexible) while
+    /// every pre-208 replay silently re-scored with a caret its player never had.</para>
+    /// </summary>
+    [Test]
+    public void ClearingTheConfigFrameFlexibleLinesBitPinsTheCaret()
+    {
+        // The harness's scripted/parkedSnap case, written out here rather than read from it so this
+        // test needs no node.
+        (double time, char key)[] keys = [(1000, 'a'), (1500, 'b'), (12000, 'c'), (12500, 'd')];
+
+        var flexible = ScoreParked(keys, flexibleLines: true);
+        var pinned = ScoreParked(keys, flexibleLines: false);
+
+        Assert.Multiple(() =>
+        {
+            var live = Wire(flexible.Statistics);
+            Assert.That(live.GetValueOrDefault("great"), Is.EqualTo(4), "live era: the snap carried the caret onto the last line");
+            Assert.That(live.GetValueOrDefault("miss"), Is.Zero, "live era: nothing was left untyped");
+            Assert.That(flexible.Completion, Is.EqualTo(1).Within(1e-9), "live era: completion");
+
+            var stored = Wire(pinned.Statistics);
+            Assert.That(stored.GetValueOrDefault("great"), Is.EqualTo(2), "stored era: only the first line");
+            Assert.That(stored.GetValueOrDefault("miss"), Is.EqualTo(2), "stored era: both presses were eaten by a line with no cells");
+            Assert.That(pinned.Completion, Is.EqualTo(2 / 4.0).Within(1e-9), "stored era: completion");
+            Assert.That(pinned.TotalScore, Is.LessThan(flexible.TotalScore), "stored era: total score");
+        });
+    }
+
+    /// <summary>
+    /// THE ONE COMBINATION NO CONFIG BIT CAN EXPRESS, and the reason the retired "FT" mod class must
+    /// not be deleted: a run stored under it was played with the caret UNPINNED and WITHOUT the
+    /// line-start snap, which no frame can say for itself, because bit 5 did not exist when those
+    /// rows were recorded and so is CLEAR on every one of them. <c>ReplayEngineFeed.Apply</c>
+    /// therefore takes the snap from the bit outright and the caret from
+    /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>, which <see cref="TypeBeatReplayScorer"/>
+    /// sets off the score's own mod list.
+    ///
+    /// <para>Pinned HERE rather than only in the game's own suite because this is the path the
+    /// server-side recalc walks: it re-derives a stored row through the same scorer with the mods
+    /// read off that row, so dropping the mod class, or failing to resolve the acronym, would
+    /// re-derive every FT row on a pinned caret and report it as a corrupt score. The mod is
+    /// resolved through the ruleset rather than constructed, which is what makes that the thing
+    /// being tested.</para>
+    ///
+    /// <para>The keystrokes are the harness's <c>scripted/dragPastTheDeadline</c> case: "cat dog"
+    /// with its final 'g' pressed 500 ms past the line's 6000 deadline and well inside the drag
+    /// grace. An unpinned caret still has the line, so the press lands late on its own cell and the
+    /// map completes; a pinned one lost the line at 6000, so the 'g' is a miss and the two presses
+    /// after it are typos on "hi".</para>
+    /// </summary>
+    [Test]
+    public void TheRetiredFletcherAcronymStillReDerivesAnUnpinnedCaret()
+    {
+        var legacyFletcher = new TypeBeatRuleset().CreateAllMods().SingleOrDefault(mod => mod.Acronym == "FT");
+
+        Assert.That(legacyFletcher, Is.Not.Null, "the retired FT acronym must still resolve, or every stored FT row re-derives pinned");
+
+        (double time, char key)[] keys =
+        [
+            (1000, 'c'), (1667, 'a'), (2333, 't'), (3000, ' '), (3000, 'd'), (3667, 'o'),
+            (6500, 'g'), (7000, 'h'), (7500, 'i'),
+        ];
+
+        // Both arms leave bit 5 CLEAR, exactly as a stored row does. The ONLY difference is the mod.
+        var storedFt = ScoreDrag(keys, [legacyFletcher!]);
+        var storedPlain = ScoreDrag(keys, []);
+
+        Assert.Multiple(() =>
+        {
+            var ft = Wire(storedFt.Statistics);
+            Assert.That(ft.GetValueOrDefault("great"), Is.EqualTo(7), "FT: the drag grace kept the line, so the whole of it was typed");
+            Assert.That(ft.GetValueOrDefault("miss"), Is.Zero, "FT: nothing was snatched away");
+            Assert.That(storedFt.Completion, Is.EqualTo(1).Within(1e-9), "FT: completion");
+
+            var plain = Wire(storedPlain.Statistics);
+            Assert.That(plain.GetValueOrDefault("great"), Is.EqualTo(6), "pinned: the line went without the 'g'");
+            Assert.That(plain.GetValueOrDefault("miss"), Is.EqualTo(1), "pinned: the 'g' the boundary snatched");
+            Assert.That(plain.GetValueOrDefault(WireCounts.Key(TypeBeatResultMapping.UNFIXED_TYPO)), Is.EqualTo(2),
+                "pinned: the caret was on 'hi', so the last two presses spoiled its cells");
+            Assert.That(storedPlain.Completion, Is.EqualTo(6 / 9.0).Within(1e-9), "pinned: completion");
+
+            // And the mod does NOT bring the snap with it, which is the whole point of separating
+            // the two: an FT run re-derived with the snap would move its caret onto a line its
+            // player was still parked behind.
+            var parkedUnderFt = TypeBeatReplayScorer.Score(
+                Map(GranularityOf("parkedLine"), Fixture("parkedLine")),
+                [legacyFletcher!],
+                Keystrokes([(1000, 'a'), (1500, 'b'), (12000, 'c'), (12500, 'd')], flexibleLines: false),
+                TypoRule.Deferred,
+                ComboRestoreRule.OnFix);
+
+            Assert.That(Wire(parkedUnderFt.Statistics).GetValueOrDefault("miss"), Is.EqualTo(2),
+                "an FT run never had the snap, so its caret stays parked and the last line is never reached");
+        });
+    }
+
+    /// <summary>The scripted-key form of <see cref="Keystrokes"/>, for the era tests that need no node.</summary>
+    private static Replay Keystrokes((double time, char key)[] keys, bool flexibleLines)
+    {
+        var replay = new Replay();
+
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: false, syllableTiming: true, wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: flexibleLines));
+
+        foreach (var (time, key) in keys)
+            replay.Frames.Add(new TypeBeatReplayFrame(time, key));
+
+        return replay;
+    }
+
+    private static TypeBeatReplayAccount ScoreParked((double time, char key)[] keys, bool flexibleLines)
+        => TypeBeatReplayScorer.Score(Map(GranularityOf("parkedLine"), Fixture("parkedLine")), Array.Empty<Mod>(), Keystrokes(keys, flexibleLines), TypoRule.Deferred, ComboRestoreRule.OnFix);
+
+    private static TypeBeatReplayAccount ScoreDrag((double time, char key)[] keys, Mod[] mods)
+        => TypeBeatReplayScorer.Score(Map(GranularityOf("catDogThenHi"), Fixture("catDogThenHi")), mods, Keystrokes(keys, flexibleLines: false), TypoRule.Deferred, ComboRestoreRule.OnFix);
 
     private static TypeBeatReplayAccount ScoreStretch((double time, char key)[] keys, bool charTimedStretch)
     {

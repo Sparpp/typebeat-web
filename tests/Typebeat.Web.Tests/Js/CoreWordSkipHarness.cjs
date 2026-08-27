@@ -258,7 +258,14 @@ function skippingTheLastWordOfALine() {
 
     const afterSkip = snapshot(engine);
 
-    engine.update(4000); // the line seals
+    // The line seals. 4000 is its deadline and its seal grace is 0, but the caret is still ON the
+    // line (the abandoned word ran to its end, and this is the last line, so nothing rolled the
+    // caret forward) with two cells the player can still walk back into, so the flexible caret's
+    // DRAG GRACE holds it open for FLETCHER_DRAG_GRACE_MS more (backlog 208). That is the same
+    // reclaim window abandonedCellHoldsTheLineOpen is about, widened: an abandoned cell is untyped,
+    // so it is a cell the player is still owed and the line is not taken from them. The seal itself
+    // resolves exactly what it always resolved.
+    engine.update(5500);
 
     return {
         afterSkip: afterSkip,
@@ -440,7 +447,11 @@ function everyAbandonedCellLeavesExactlyOnce() {
 
     const beforeSeal = states(engine);
 
-    engine.update(6000);
+    // The line's deadline is 6000 with no seal grace, plus the flexible caret's
+    // FLETCHER_DRAG_GRACE_MS (backlog 208): the abandoned "og" is still owed and the caret is still
+    // on the line (it is the last one, so nothing rolled it forward), so the reclaim window runs to
+    // 7500 before the force-seal.
+    engine.update(7500);
 
     return Object.assign(snapshot(engine), {
         statesBeforeSeal: beforeSeal,
@@ -469,7 +480,11 @@ function abandonedCellHoldsTheLineOpen() {
 
     const stateOfC = engine.lines[0].cells[3].state;
 
-    engine.update(3800); // ...and the grace is still bounded
+    // ...and the grace is still BOUNDED, which is the half of the rule this case is really about: a
+    // run always terminates. The bound is now the line's 3000 deadline plus its 700 seal grace plus
+    // the flexible caret's FLETCHER_DRAG_GRACE_MS (backlog 208), because the 'd' is still owed and
+    // the caret is still on the line. 5200 is past all three.
+    engine.update(5200);
 
     return Object.assign(snapshot(engine), {
         sealGraceMs: engine.lines[0].sealGraceMs,
@@ -489,7 +504,11 @@ function skipNeverReturnedTo() {
     engine.processKey('d', 3000);
     engine.processKey('o', O_TARGET);
     engine.processKey('g', G_TARGET);
-    engine.update(6000);
+    // 6000 is the line's deadline; the abandoned "at" is still owed and this is the last line, so
+    // nothing rolled the caret off it and the flexible caret's FLETCHER_DRAG_GRACE_MS holds the
+    // reclaim window open to 7500 (backlog 208). The account the seal then writes is unchanged,
+    // which is what this case is the pin on.
+    engine.update(7500);
 
     return Object.assign(snapshot(engine), { submitted: submitted(engine) });
 }

@@ -210,11 +210,75 @@ const FIXTURES = {
         text: '&&&& aaaaa', start_ms: 1000, end_ms: 17000, freestyle: true,
         words: [{ text: '&&&&', start_ms: 1000, end_ms: 5000, score: 1 },
                 { text: 'aaaaa', start_ms: 5000, end_ms: 17000, score: 1, syllables: [{ start_ms: 9000 }] }]
+    }], 30000),
+
+    // Backlog 208's LINE-START SNAP fixture, mirroring the game's own FletcherEngineTest
+    // .parkedLineMap. See withParkedMiddleLine below for the two lines this text carries and the
+    // third one the harness has to splice in by hand.
+    parkedLine: osu([{
+        text: 'ab', start_ms: 1000, end_ms: 2000,
+        words: [{ text: 'ab', start_ms: 1000, end_ms: 2000, score: 1 }]
+    }, {
+        text: 'cd', start_ms: 10000, end_ms: 13000,
+        words: [{ text: 'cd', start_ms: 12000, end_ms: 13000, score: 1 }]
     }], 30000)
 };
 
+// THE ONE FIXTURE THAT IS NOT LOADER-DERIVED, and it has to be, because the state it reaches is one
+// the browser's own loader cannot express. The line-start snap only ever decides anything while a
+// FINISHED caret is parked on a line the SEAL has not yet reached and the next line has ALREADY
+// started, and that needs two things at once:
+//
+//   * a line with NO CELLS, so the caret is complete the instant it lands there and no press of the
+//     player's can ever finish it (which is exactly the state the keypress roll-forward cannot
+//     cover). The authored text is pure punctuation, which the default stream strips entirely; the
+//     browser's loader goes further and DROPS such a line from the map altogether, so it has to be
+//     put back here.
+//   * OVERLAPPING WINDOWS: that line's window must outlive the next line's cue. The loader makes
+//     windows strictly contiguous (a line ends where the next one starts) and a line's activation
+//     is never before its own start, so on any map it CAN build the seal loop's own hand-over
+//     already carries a finished caret across every boundary and the snap is inert.
+//
+// So both sides hand-build the same three lines: the C# fixture declares the end times outright
+// (LyricLine carries its own EndTime) and this splices them in. The loader-agreement test still
+// holds every one of these numbers against the game's TypingLine, so the hand-build is pinned
+// rather than merely asserted, and the CELLS of the two real lines are loader-derived as ever.
+//
+//   L0 "ab"  [1000, 3000):   a = 1000, b = 1500, activation 1000.
+//   L1 "..." [3000, 20000):  no cells at all, activation 3000 (a line with no typeable cell
+//                            activates at its own start).
+//   L2 "cd"  [10000, 30000): c = 12000, d = 12500, activation 12000 - CUE_LEAD_MS = 10500, which
+//                            is 9500 ms BEFORE L1's window closes.
+function withParkedMiddleLine(beatmap) {
+    beatmap.lines[0].endTime = 3000;
+
+    beatmap.lines.splice(1, 0, {
+        index: 1,
+        text: '',
+        startTime: 3000,
+        endTime: 20000,
+        singEndTime: 19000,
+        activationTime: 3000,
+        sealGraceMs: 0,
+        estimated: false,
+        cells: [],
+        syllables: [],
+        cellSyllable: [],
+        charTimedStretch: []
+    });
+
+    beatmap.lines[2].index = 2;
+    beatmap.lines[2].endTime = 30000;
+
+    beatmap.totalCells = beatmap.lines.reduce((n, l) => n + l.cells.length, 0);
+
+    return beatmap;
+}
+
 function build(name) {
-    return TB.buildBeatmap(TB.parseLyricOsu(FIXTURES[name]), false);
+    const beatmap = TB.buildBeatmap(TB.parseLyricOsu(FIXTURES[name]), false);
+
+    return name === 'parkedLine' ? withParkedMiddleLine(beatmap) : beatmap;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -444,6 +508,58 @@ function play(name, keys, spaceSkipsWord) {
         return handled;
     };
 
+    // Backlog 208 coverage, one counter per freedom the flexible caret grants, all four measured on
+    // the ENGINE's own seams rather than on the script. The C# arm of the parity test sets CONFIG
+    // flags bit 5, so both sides run the flexible caret and a port that quietly lost one of these
+    // would leave the two arms agreeing (both pinned), green, and covering nothing. That is the same
+    // failure mode the span, gap and stretch counters above exist for.
+    //
+    //   rollForwards   RUSH FREEDOM: a press finished a line and the caret went straight on to the
+    //                  next one instead of waiting for its cue.
+    //   lineSnaps      THE LINE-START SNAP: a caret parked past the end of a FINISHED line was
+    //                  handed on by the next line starting, with no press of its own.
+    //   dragHolds      DRAG FREEDOM: a line the player was still typing refused its own seal, which
+    //                  is the only thing sealPermitted answering false can mean.
+    //   rushCapBreaks  THE RUSH CAP: a press that put the caret more than
+    //                  FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead, and so earned no
+    //                  combo however well it was timed.
+    let rollForwards = 0;
+    let lineSnaps = 0;
+    let dragHolds = 0;
+    let rushCapBreaks = 0;
+
+    const rollForward = engine.rollForwardIfFinishedEarly.bind(engine);
+
+    engine.rollForwardIfFinishedEarly = function () {
+        const before = engine.activeLineIndex;
+        rollForward();
+        if (engine.activeLineIndex !== before) rollForwards++;
+    };
+
+    const snapForward = engine.snapForwardOnLineStart.bind(engine);
+
+    engine.snapForwardOnLineStart = function (time) {
+        const snapped = snapForward(time);
+        if (snapped) lineSnaps++;
+        return snapped;
+    };
+
+    const sealPermitted = engine.sealPermitted.bind(engine);
+
+    engine.sealPermitted = function (index, time) {
+        const permitted = sealPermitted(index, time);
+        if (!permitted) dragHolds++;
+        return permitted;
+    };
+
+    const rushesPastCap = engine.rushesPastCap.bind(engine);
+
+    engine.rushesPastCap = function (cell, time) {
+        const rushed = rushesPastCap(cell, time);
+        if (rushed) rushCapBreaks++;
+        return rushed;
+    };
+
     const end = endTimeFor(beatmap, keys);
     let next = 0;
 
@@ -486,7 +602,11 @@ function play(name, keys, spaceSkipsWord) {
         gapTypos: gapTypos,
         parkedGapTypos: parkedGapTypos,
         stepOvers: stepOvers,
-        midWordSpaceTypos: midWordSpaceTypos
+        midWordSpaceTypos: midWordSpaceTypos,
+        rollForwards: rollForwards,
+        lineSnaps: lineSnaps,
+        dragHolds: dragHolds,
+        rushCapBreaks: rushCapBreaks
     };
 }
 
@@ -709,12 +829,62 @@ const SCRIPTED = [
         name: 'scripted/mashedStretch', fixture: 'freestyleStretch', spaceSkipsWord: false, skipPresses: 0,
         keys: [[1000, 'q'], [1000, 'q'], [1000, 'q'], [1000, 'q'], [5000, ' '],
                [5000, 'a'], [6000, 'a'], [9100, 'a'], [9200, 'a'], [9300, 'a']]
+    },
+    {
+        // Backlog 208, THE LINE-START SNAP, on the one fixture that can reach it. "ab" is typed out,
+        // which rolls the caret straight on to the cell-less L1 and leaves it parked there with
+        // nothing sealed and L2 not yet started. At 10500 (L2's cue, 9500 ms before L1's window even
+        // closes) the snap hands the caret to L2, and "cd" is then typed on its own targets for a
+        // clean map.
+        //
+        // Without the snap the caret sits on L1 until L1's own seal at 20000 hands it over, so both
+        // presses are eaten by a complete line and L2 seals with two characters nobody typed. The
+        // two arms therefore part on the STATISTICS, not on a tier, which is what makes this case
+        // worth having in a differential sweep rather than only in a JS pin.
+        name: 'scripted/parkedSnap', fixture: 'parkedLine', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'a'], [1500, 'b'], [12000, 'c'], [12500, 'd']]
+    },
+    {
+        // Backlog 208, DRAG FREEDOM. "cat dog" runs to 6000 (where "hi" starts), and the 'g' is
+        // pressed at 6500, half a second past that deadline and well inside FLETCHER_DRAG_GRACE_MS.
+        // The line the player is still typing is not force-sealed out from under them, so the 'g'
+        // lands on its own cell (1500 ms late, which the ladder grades honestly) and the line then
+        // seals with nothing missed.
+        //
+        // Under a pinned caret the same press is a different run entirely: L0 seals at 6000 with the
+        // 'g' a miss, the caret is on "hi", and the 6500 press is a typo on its 'h'. So this case
+        // parts on where the caret was, not on what a press was worth.
+        name: 'scripted/dragPastTheDeadline', fixture: 'catDogThenHi', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 'c'], [1667, 'a'], [2333, 't'], [3000, ' '], [3000, 'd'], [3667, 'o'],
+               [6500, 'g'], [7000, 'h'], [7500, 'i']]
+    },
+    {
+        // Backlog 208, THE RUSH CAP and its RE-ARM. Nine presses at 1000, where the playhead has
+        // reached exactly one countable character: the caret is 1, 2, 3, 4 and then 5 characters
+        // ahead through 't','h','e','q','u' (the word gap spends no budget), all of which still earn
+        // combo, and the sixth countable press 'i' puts it 6 ahead, which is over
+        // FLETCHER_MAX_CHARS_AHEAD and earns none. 'c' and 'k' follow it out past the cap and take
+        // no further break, because the run is already at zero.
+        //
+        // The clock then catches up: by 3000 the playhead has passed nine countable targets and the
+        // caret is on the ninth, so "brown" is typed back INSIDE the cap and the run rebuilds, which
+        // is the re-arm. Typing 'n' finishes the line and rolls the caret straight on to "fox
+        // jumps", where the same excursion happens again at 3800 and breaks the rebuilt run: two
+        // breaks with an earned streak between them is what says the cap re-arms rather than
+        // latching.
+        name: 'scripted/rushPastTheCap', fixture: 'quickBrownFox', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 't'], [1000, 'h'], [1000, 'e'], [1000, ' '], [1000, 'q'], [1000, 'u'],
+               [1000, 'i'], [1000, 'c'], [1000, 'k'],
+               [3000, ' '], [3000, 'b'], [3000, 'r'], [3000, 'o'], [3000, 'w'], [3000, 'n'],
+               [3800, 'f'], [3800, 'o'], [3800, 'x'], [3800, ' '], [3800, 'j'], [3800, 'u'],
+               [3800, 'm'], [3800, 'p'], [3800, 's']]
     }
 ];
 
 // ---------------------------------------------------------------------------------------------
 const names = ['catDog', 'abCd', 'catDogThenHi', 'quickBrownFox', 'mixedTiers', 'syllabic',
-               'syllableWords', 'stylised', 'subtimed', 'authoredSplit', 'freestyleStretch'];
+               'syllableWords', 'stylised', 'subtimed', 'authoredSplit', 'freestyleStretch',
+               'parkedLine'];
 const cases = [];
 
 for (const scripted of SCRIPTED) {

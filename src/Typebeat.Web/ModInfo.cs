@@ -32,7 +32,13 @@ public static class ModInfo
         "LT" => "Literate",
         "GK" => "Gatekeeper",
         "RH" => "Rhythmic",
-        "FT" => "Fletcher",
+        // Backlog 208 REVERSED Fletcher and moved it to a new acronym. "FC" is the live mod, which
+        // PINS the caret to the playhead; "FT" is the retired one, which unpinned it, and the
+        // unpinned caret is now what every play does. Both names mirror the game's own
+        // (TypeBeatModFletcher.Name and TypeBeatModLegacyFletcher.Name), so a stored FT row's icon
+        // says what that row was played under rather than what the name means today.
+        "FC" => "Fletcher",
+        "FT" => "Fletcher (retired)",
         "MU" => "Muted",
         _ => acronym ?? string.Empty,
     };
