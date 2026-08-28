@@ -51,10 +51,39 @@
     const CARET_MOVING_EPSILON = 0.75;      // Caret.Update: "still moving" threshold, px
     const PERFECT_POP_MS = 140;             // LyricLineDisplay.PlayJudgementFeedback
     const ROLLING_WPM_WINDOW = 30;          // TypingEngine.rolling_wpm_window
-    // No desktop analogue: the client shows osu's skip overlay through an instrumental stretch.
-    // The browser cannot seek a scheduled AudioBufferSourceNode without changing the gameplay
-    // clock, so a long dead zone gets a labelled countdown instead of a skip.
+    // No desktop analogue: how long a dead stretch has to be before the chip is worth drawing at
+    // all. Shorter than a qualifying SKIP gap by an order of magnitude, so plenty of chips are
+    // pure countdowns with no skip behind them.
     const GAP_CHIP_MIN_MS = 1800;
+
+    // ---------------------------------------------------------------------------
+    // INSTRUMENTAL GAPS: the skip rule, as a THIRD copy.
+    // ---------------------------------------------------------------------------
+    // CROSS-REPO INVARIANT. These four constants and computeGaps() below are a byte-for-byte port
+    // of a rule that already exists twice in C#:
+    //   typebeat-osu  typebeat.Game.Rulesets.TypeBeat/Gameplay/InstrumentalGaps.cs   (the authority)
+    //   typebeat-web  src/Typebeat.Web/Packages/Lyrics/InstrumentalGaps.cs           (the server mirror)
+    // and both CLAUDE.md mirror tables name it. The constants below were read off the server mirror,
+    // not retyped from memory, and WebplayDisplayTest pins this port against that mirror's own
+    // Compute() on the same lyric fixtures.
+    //
+    // DRIFT IS NOT COSMETIC HERE. The server stores InstrumentalGaps.SkippableSeconds on
+    // beatmaps.skippable_s and PlayTimeGate SUBTRACTS it from the drain length a play has to have
+    // spent. A browser skip more generous than that allowance unranks honest plays (which is what
+    // backlog 47 was); one less generous just wastes the player's time. So this must agree.
+    //
+    // WHAT IT COMPUTES, exactly as the C# does: between two consecutive lyric lines it measures the
+    // PERCEIVED instrumental (the earlier line's singEndTime to the later line's first vocal, never
+    // the mechanical line boundaries, which are contiguous on decoder-built maps and carry no
+    // information). A stretch of at least MIN_GAP_MS qualifies. The skip period then runs from
+    // sungEnd + GAP_START_SETTLE_MS to the next line's activationTime - SKIP_LEAD_MS, and pressing
+    // skip seeks to that latter time. A qualifying stretch whose usable window is shorter than
+    // MIN_SKIP_WINDOW_MS is dropped rather than shown. There is no gap before the first line (that
+    // is the separate INTRO skip, below) and none after the last.
+    const MIN_GAP_MS = 10000;               // InstrumentalGaps.MIN_GAP_MS
+    const GAP_START_SETTLE_MS = 1000;       // InstrumentalGaps.GAP_START_SETTLE_MS
+    const MIN_SKIP_WINDOW_MS = 1000;        // InstrumentalGaps.MIN_SKIP_WINDOW_MS
+    const SKIP_LEAD_MS = 3000;              // InstrumentalGaps.SKIP_LEAD_MS
 
     // SYNC TINT floor: how far along the untyped -> hit ramp the very WORST correct keypress is
     // still painted. It cannot be 0. syncQuality() returns exactly 0 at the Meh-window edges and
@@ -444,6 +473,130 @@
     function outQuint(p) { return 1 - Math.pow(1 - p, 5); }
 
     // ---------------------------------------------------------------------------
+    // The gap rule (see the constants banner above). Pure, and exported, because the whole point
+    // of a third copy is that a test can hold it against the second one.
+    // ---------------------------------------------------------------------------
+
+    // InstrumentalGaps.FirstVocalTime: when a line's vocals begin, i.e. its first typeable cell's
+    // target, falling back to its own startTime when it has none.
+    function firstVocalTime(line) {
+        for (let i = 0; i < line.cells.length; i++) {
+            if (line.cells[i].typeable) return line.cells[i].target;
+        }
+        return line.startTime;
+    }
+
+    // InstrumentalGaps.LastTypeableTarget: the target of the line's last typeable cell, or null.
+    //
+    // The C# reconstructs this from the raw token/unit layout because the server does not decode
+    // words[].syllables; here the decoded cells are to hand, so it is a scan. The two agree wherever
+    // the value can matter: it is only ever consulted through max(singEndTime, ...), so it moves the
+    // answer at all only on weird data where a word overruns the line's reported sing end, and a
+    // subdivided word's last char still sits inside the same [unitStart, unitEnd] the flat ramp does.
+    function lastTypeableTarget(line) {
+        for (let i = line.cells.length - 1; i >= 0; i--) {
+            if (line.cells[i].typeable) return line.cells[i].target;
+        }
+        return null;
+    }
+
+    // InstrumentalGaps.Compute: the qualifying gaps of a decoded map, in order. Consecutive pairs
+    // only, qualification on the perceived stretch, then the usability filter.
+    function computeGaps(lines) {
+        const gaps = [];
+        if (!lines || lines.length < 2) return gaps;
+
+        for (let i = 0; i < lines.length - 1; i++) {
+            if (firstVocalTime(lines[i + 1]) - lines[i].singEndTime < MIN_GAP_MS) continue;
+
+            // The last moment the earlier line is genuinely being sung/typed: normally its
+            // singEndTime, but the later of that and its last typeable target, because word times
+            // can overrun the reported line end on weird data.
+            const last = lastTypeableTarget(lines[i]);
+            const sungEnd = last === null ? lines[i].singEndTime : Math.max(lines[i].singEndTime, last);
+
+            const gapStart = sungEnd + GAP_START_SETTLE_MS;
+            const activation = lines[i + 1].activationTime;
+            const skipTarget = activation - SKIP_LEAD_MS;
+
+            if (skipTarget - gapStart >= MIN_SKIP_WINDOW_MS) {
+                // `line` is the index of the line the gap runs INTO, which is how the player looks
+                // one up: the gap you are sitting in is the one before the line you are waiting for.
+                gaps.push({ line: i + 1, gapStartTime: gapStart, activationTime: activation, skipTarget: skipTarget });
+            }
+        }
+
+        return gaps;
+    }
+
+    // Total map-time ms a player may legally remove with the skip button, the quantity the server
+    // stores as beatmaps.skippable_s (in seconds) and the play-time gate spends. Exported for the
+    // parity pin rather than used at runtime.
+    function skippableMs(lines) {
+        let total = 0;
+        for (const g of computeGaps(lines)) total += g.skipTarget - g.gapStartTime;
+        return total;
+    }
+
+    // The INTRO skip, which is NOT an InstrumentalGaps gap: on the desktop it is the separate intro
+    // SkipOverlay, landing at MasterGameplayClockContainer.Skip's GameplayStartTime -
+    // MINIMUM_SKIP_TIME, i.e. (first object - 2000) - 1000. So: the first vocal less SKIP_LEAD_MS,
+    // the same 3000 the mid-song skips leave in front of a line. It is gate-free by construction:
+    // drain_length_s already starts at the first line, so this removes only run-up the play-time
+    // gate never asked for. null when there is nothing in front of the first vocal to remove.
+    function introSkipTarget(lines) {
+        if (!lines || lines.length === 0) return null;
+        const target = firstVocalTime(lines[0]) - SKIP_LEAD_MS;
+        return target > 0 ? target : null;
+    }
+
+    // The line the player is WAITING FOR, which is what both the countdown chip and the skip look
+    // up. Not simply nextSealIndex: a decoder-built line's window runs to the next line's start, so
+    // all the way through an instrumental the finished line is still unsealed and the cursor still
+    // points AT it. Three states, and they are the same three the chip's own gate distinguishes:
+    // no line active (pre-roll, or a dead zone) is the seal cursor; a caret parked COMPLETE on its
+    // own line is waiting for the one after it; a caret parked on a line it has not finished (the
+    // rush roll-forward, or ordinary play) is waiting for nothing but that line.
+    function upcomingLineIndex(activeLineIndex, activeLineComplete, nextSealIndex) {
+        if (activeLineIndex < 0) return nextSealIndex;
+        return activeLineComplete ? activeLineIndex + 1 : activeLineIndex;
+    }
+
+    // TypeBeatPlayfield's key-handler fall-through, which is what decides whether Space is a skip or
+    // a character. The desktop swallows every typeable key while a line is active and INCOMPLETE, so
+    // a skip can never eat a live keystroke; it lets the key fall through to GlobalAction.SkipCutscene
+    // when no line is active at all, and when the active line IsLineComplete with no live retype
+    // SELECTION (backlog 182: collapsing a selection re-opens the cells it covers, so the key
+    // consuming it is a typing key again even though the line reads complete).
+    //
+    // This is also the WPM-CLOCK GUARD, and that is the load-bearing half. TypingEngine accrues
+    // activeTimeMs only while the active line is incomplete (and, under the flexible caret, only
+    // from that line's activationTime or its lazy arm), so a seek performed in any state this
+    // returns true for adds nothing to the clock: exactly the desktop's behaviour, where the skip is
+    // reachable from exactly these states. A seek from anywhere else would inject the whole skipped
+    // span into the WPM the score is submitted with.
+    function skipAllowed(lineActive, lineComplete, hasSelection) {
+        if (!lineActive) return true;
+        return lineComplete && !hasSelection;
+    }
+
+    // The skip target live at `time` for a player waiting on line `upcoming`, or null. The intro
+    // before the first line; otherwise the qualifying gap that runs into that line, and only while
+    // the clock is inside its skip period. Never past a line the player has not been offered:
+    // skipTarget is SKIP_LEAD_MS BEFORE the next line's activation, so the seek lands in front of
+    // the cue rather than inside the line.
+    function skipTargetAt(gaps, introTarget, upcoming, time) {
+        if (upcoming === 0) return introTarget !== null && time < introTarget ? introTarget : null;
+
+        for (const g of gaps) {
+            if (g.line !== upcoming) continue;
+            return (time >= g.gapStartTime && time < g.skipTarget) ? g.skipTarget : null;
+        }
+
+        return null;
+    }
+
+    // ---------------------------------------------------------------------------
     // DOM helpers.
     // ---------------------------------------------------------------------------
 
@@ -465,6 +618,11 @@
         // The SONG's playhead, per line, precomputed once: independent of where the player is,
         // which is the whole point (you can see yourself rushing or dragging against it).
         const sungPoints = beatmap.lines.map(buildSungPoints);
+
+        // The skippable stretches of this map, computed once: the qualifying instrumental gaps
+        // (the mirror of what the server priced into beatmaps.skippable_s) and the intro run-up.
+        const gaps = computeGaps(beatmap.lines);
+        const introTarget = introSkipTarget(beatmap.lines);
 
         container.innerHTML = '';
         const root = el('div', 'tb-player');
@@ -508,12 +666,20 @@
         const selectionBox = el('div', 'tb-selection');
         rowCur.row.append(selectionBox, sungCaret, playerCaret, wrongLayer);
 
-        const gap = el('div', 'tb-gap');
+        // The chip is a BUTTON since backlog 230: through a qualifying gap it is the skip, and a
+        // pointer has to be able to reach it too (Space is the desktop's key, but the browser
+        // player is also played with a mouse in hand). It stays disabled, and looks exactly like
+        // the countdown it always was, whenever there is no live skip window behind it.
+        const gap = el('button', 'tb-gap');
+        gap.type = 'button';
+        gap.disabled = true;
         const gapLabel = el('span', 'tb-gap-label', '');
         const gapTrack = el('span', 'tb-gap-track');
         const gapFill = el('span', 'tb-gap-fill');
+        const gapSkip = el('span', 'tb-gap-skip', '');
         gapTrack.appendChild(gapFill);
-        gap.append(gapLabel, gapTrack);
+        gap.append(gapLabel, gapTrack, gapSkip);
+        gap.addEventListener('click', () => performSkip(skipTarget));
         stage.append(stack, gap);
 
         const progress = el('div', 'tb-progress');
@@ -540,6 +706,28 @@
 
         function cleanupAudio() {
             if (source) { try { source.stop(); } catch (e) {} try { source.disconnect(); } catch (e) {} source = null; }
+        }
+
+        // Start (or restart) the buffer at `offsetMs` into the track and rebase the clock onto it,
+        // so nowMs() jumps with the audio and everything downstream (the engine, every animation)
+        // follows one clock as it always did. A BufferSource is single-use, hence the fresh node.
+        //
+        // The 60 ms scheduling lead is the same one begin() has always taken: `when` is when the
+        // audio actually starts, and startedAt is back-dated by the offset so that at `when` the
+        // gameplay clock reads exactly offsetMs.
+        function startSourceAt(offsetMs) {
+            cleanupAudio();
+            source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            // Default playback at 10% (90% quieter); the map audio is loud on its own.
+            const gainNode = audioCtx.createGain();
+            gainNode.gain.value = 0.1;
+            source.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            const offsetSec = Math.max(0, offsetMs) / 1000;
+            const when = audioCtx.currentTime + 0.06; // small scheduling lead
+            source.start(when, offsetSec);
+            startedAt = when - offsetSec;
         }
 
         function removeStartKey() {
@@ -662,6 +850,22 @@
             }
 
             if (e.repeat) return;
+
+            // SPACE AS THE SKIP KEY, on exactly the desktop's terms (see skipAllowed): only where
+            // TypeBeatPlayfield's key handler would let the press fall through to
+            // GlobalAction.SkipCutscene, and only while a skip window is actually live. Anywhere
+            // else it falls straight into the typeable branch below and is a word-gap character,
+            // which is the ONE thing that must not change: a skip that could fire mid-line would
+            // both eat a keystroke and inject the skipped span into the WPM clock.
+            if ((e.key === ' ' || e.code === 'Space') && skipAllowedNow()) {
+                const target = pendingSkipTarget(nowMs());
+                if (target !== null) {
+                    e.preventDefault();
+                    performSkip(target);
+                    return;
+                }
+            }
+
             let ch = null;
             if (e.key === ' ' || e.code === 'Space') ch = ' ';
             else if (e.key && e.key.length === 1 && KEY_RE.test(e.key)) ch = e.key;
@@ -670,10 +874,10 @@
                 // A retype selection is consumed FIRST, so this key lands on the anchor cell: mass
                 // backspace, then the ordinary judged keypress. Space is not special here, nor is any
                 // other typeable key: "collapse, then process normally" is the whole rule. The
-                // desktop additionally has to suspend its line-complete fall-through to the skip
-                // overlay while a selection is live; the browser has no skip key to fall through to
-                // (a dead zone gets a labelled countdown, see updateGap), so there is nothing here to
-                // suspend and a typeable key is always a typing key.
+                // desktop suspends its line-complete fall-through to the skip overlay while a
+                // selection is live, and since backlog 230 so does this file: skipAllowed() takes
+                // the selection, so a key arriving over one is a typing key even on a line that
+                // reads complete, and control has already fallen through to here.
                 collapseSelection();
                 engine.processKey(ch, nowMs());
             }
@@ -818,6 +1022,8 @@
         let scrollPitch = 0, scrollStart = -1;
         let popEnd = [];             // per-cell audio-clock deadline for the top-tier pop
         let gapActive = false, gapFrom = 0, gapTo = 0;
+        // The skip the chip is currently offering (its button reads this), or null for none.
+        let skipTarget = null;
         let rolling = makeRollingWpm(ROLLING_WPM_WINDOW);
 
         // Order matters: the spans must carry their glyphs BEFORE the row is fitted and measured,
@@ -1013,9 +1219,13 @@
         }
 
         // A long instrumental stretch (and the pre-roll before the first line) is dead air the
-        // desktop covers with osu's skip overlay. The browser cannot seek its scheduled audio
-        // source without moving the gameplay clock, so it labels the wait and counts it down
-        // instead; the cue bars still land on the line itself.
+        // desktop covers with osu's skip overlay. The browser now covers it the same way: the chip
+        // labels the wait and counts it down, and inside a qualifying gap's skip window it is also
+        // the skip button (backlog 230 reversed 218's scope call, which had reasoned that "the
+        // browser cannot seek its scheduled audio source without moving the gameplay clock" was a
+        // blocker; moving the gameplay clock is what a skip IS, and a fresh BufferSource started at
+        // an offset with startedAt rebased is an exact seek, see startSourceAt). The cue bars still
+        // land on the line itself.
         //
         // Gated on songIsOnTheCaretsLine rather than on "a line is active", which is the same
         // distinction the desktop's Space fall-through makes (TypeBeatPlayfield's key handler) and
@@ -1032,13 +1242,23 @@
         // pair, reaching its skip overlay through IsLineComplete in that state and through this
         // predicate in the other one; a single clause here would hide the countdown for all but the
         // last 1500 ms of every instrumental, from exactly the players who earned the wait.
+        //
+        // THE LINE IT COUNTS DOWN TO is upcomingLineIndex, not the seal cursor. The cursor was what
+        // shipped in 218, and on a decoder-built map it is the line the player has just FINISHED for
+        // the whole length of an instrumental (line windows are contiguous, so a typed-out line does
+        // not seal until the next one starts), whose activation is by then far in the past: the
+        // chip's own "is this gap worth drawing" test therefore refused every mid-song gap and only
+        // the intro ever drew one. The two-clause gate below was already written for the mid-song
+        // case; this is the other half of it.
         function updateGap(time) {
-            const upcoming = engine.nextSealIndex;
-            const hasNext = !engine.finished && !engine.failed && upcoming < beatmap.lines.length;
-            const parkedComplete = engine.activeLineIndex >= 0 && engine.isLineComplete(engine.activeLineIndex);
+            const active = engine.activeLineIndex >= 0;
+            const parkedComplete = active && engine.isLineComplete(engine.activeLineIndex);
+            const upcoming = upcomingLineIndex(engine.activeLineIndex, parkedComplete, engine.nextSealIndex);
+            const hasNext = !engine.finished && !engine.failed && upcoming >= 0 && upcoming < beatmap.lines.length;
 
             if ((engine.songIsOnTheCaretsLine && !parkedComplete) || !hasNext) {
                 if (gapActive) { gapActive = false; gap.classList.remove('tb-gap-on'); }
+                setSkipAffordance(null);
                 return;
             }
 
@@ -1046,7 +1266,7 @@
             const vocal = line.cells.length ? line.cells[0].target : line.startTime;
 
             if (!gapActive) {
-                if (line.activationTime - time < GAP_CHIP_MIN_MS) return;
+                if (line.activationTime - time < GAP_CHIP_MIN_MS) { setSkipAffordance(null); return; }
                 gapActive = true;
                 gapFrom = time;
                 gapTo = vocal;
@@ -1059,6 +1279,63 @@
             const p = span > 0 ? Math.min(1, Math.max(0, (time - gapFrom) / span)) : 1;
             gapFill.style.width = (p * 100).toFixed(1) + '%';
             gapLabel.textContent = (upcoming === 0 ? 'intro' : 'instrumental') + ' · ' + (remain / 1000).toFixed(1) + 's';
+
+            // Live only where the key would be: a chip whose gap does not qualify, or one the
+            // player is watching from a state the desktop would still be taking characters in,
+            // stays the plain countdown it was.
+            setSkipAffordance(skipAllowedNow() ? skipTargetAt(gaps, introTarget, upcoming, time) : null);
+        }
+
+        // Whether Space is a skip right now rather than a character, on the desktop's own predicate.
+        function skipAllowedNow() {
+            const active = engine.activeLineIndex >= 0;
+            return skipAllowed(active, active && engine.isLineComplete(engine.activeLineIndex), selection !== null);
+        }
+
+        // The skip target live at `time`, or null. Kept apart from the chip so the key path and the
+        // button path answer to exactly one rule.
+        function pendingSkipTarget(time) {
+            if (!running || engine.finished || engine.failed) return null;
+
+            const active = engine.activeLineIndex >= 0;
+            const upcoming = upcomingLineIndex(
+                engine.activeLineIndex, active && engine.isLineComplete(engine.activeLineIndex), engine.nextSealIndex);
+
+            if (upcoming < 0 || upcoming >= beatmap.lines.length) return null;
+
+            return skipTargetAt(gaps, introTarget, upcoming, time);
+        }
+
+        function setSkipAffordance(target) {
+            const live = target !== null;
+            if (gap.disabled !== !live) gap.disabled = !live;
+            gap.classList.toggle('tb-gap-ready', live);
+            const label = live ? 'skip' : '';
+            if (gapSkip.textContent !== label) gapSkip.textContent = label;
+            skipTarget = target;
+        }
+
+        // Player.PerformSkipTo: a no-op if the clock is already past the target, else seek. Here the
+        // seek IS the audio restart (there is no separate gameplay clock to move), and the engine
+        // simply meets the new time on the next tick, sealing anything it passed through the normal
+        // loop. A skip target is always SKIP_LEAD_MS in front of the next line's activation, so the
+        // walk can never step over a line the player has not been offered.
+        function performSkip(target) {
+            if (!running || !audioCtx || !audioBuffer || target === null) return;
+            if (!(target > nowMs())) return;
+            if (target / 1000 >= audioBuffer.duration) return;
+
+            startSourceAt(target);
+
+            // The clock has jumped, so this frame's damping delta is meaningless and both heads
+            // belong at their new positions rather than sliding there through the gap.
+            lastFrameMs = null;
+            caretSnap = true;
+            sungSnap = true;
+            gapActive = false;
+            gap.classList.remove('tb-gap-on');
+            setSkipAffordance(null);
+            if (typeof gap.blur === 'function') gap.blur();
         }
 
         // A rejected wrong key never enters the line; the offending letter pops up beside the
@@ -1198,6 +1475,7 @@
             scrollStart = -1;
             gapActive = false;
             gap.classList.remove('tb-gap-on');
+            setSkipAffordance(null);
             stack.style.transform = 'none';
             wrongLayer.textContent = '';
             setSelection(null);
@@ -1208,16 +1486,7 @@
             if (opts.onPlayStart) { try { opts.onPlayStart(); } catch (e) { console.error(e); } }
             overlay.className = 'tb-overlay';
             overlay.innerHTML = '';
-            cleanupAudio();
-            source = audioCtx.createBufferSource();
-            source.buffer = audioBuffer;
-            // Default playback at 10% (90% quieter); the map audio is loud on its own.
-            const gainNode = audioCtx.createGain();
-            gainNode.gain.value = 0.1;
-            source.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
-            startedAt = audioCtx.currentTime + 0.06; // small scheduling lead
-            source.start(startedAt);
+            startSourceAt(0);
             running = true;
             document.addEventListener('keydown', onKeyDown, true);
             window.removeEventListener('resize', onResize);
@@ -1361,10 +1630,21 @@
         sweepFillFor,
         caretsVisible,
         outQuint,
+        // The instrumental-skip rule (a third copy of a cross-repo-pinned one), exported so
+        // WebplayDisplayTest can hold it against the server's own InstrumentalGaps.Compute.
+        firstVocalTime,
+        lastTypeableTarget,
+        computeGaps,
+        skippableMs,
+        introSkipTarget,
+        upcomingLineIndex,
+        skipAllowed,
+        skipTargetAt,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,
-            ROLLING_WPM_WINDOW, GAP_CHIP_MIN_MS, SYNC_TINT_FLOOR
+            ROLLING_WPM_WINDOW, GAP_CHIP_MIN_MS, SYNC_TINT_FLOOR,
+            MIN_GAP_MS, GAP_START_SETTLE_MS, MIN_SKIP_WINDOW_MS, SKIP_LEAD_MS
         }
     };
 })(window.TypeBeatCore);

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Typebeat.Web.Packages.Lyrics;
 
 namespace Typebeat.Web.Tests;
 
@@ -754,4 +755,274 @@ public class WebplayDisplayTest
             Assert.That(e[2], Is.EqualTo(1));
         });
     }
+
+    // =============================================================================================
+    // INSTRUMENTAL SKIP (backlog 230). Unlike everything above, this is NOT display-only: the
+    // browser's skip spends the same allowance the anti-cheat play-time gate refunds, so the JS port
+    // of the rule is a THIRD copy of something CLAUDE.md's mirror table already pins twice. These
+    // tests hold it against the SECOND copy directly, by running the server's own
+    // InstrumentalGaps.Compute over the same lyric fixtures the harness feeds the browser.
+    // =============================================================================================
+
+    /// <summary>The four constants, off the server mirror rather than off a memory of them.</summary>
+    [Test]
+    public void GapConstantsMatchTheServerMirror()
+    {
+        var c = Harness().GetProperty("gapConstants");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(c, "MIN_GAP_MS"), Is.EqualTo(InstrumentalGaps.MIN_GAP_MS));
+            Assert.That(Num(c, "GAP_START_SETTLE_MS"), Is.EqualTo(InstrumentalGaps.GAP_START_SETTLE_MS));
+            Assert.That(Num(c, "MIN_SKIP_WINDOW_MS"), Is.EqualTo(InstrumentalGaps.MIN_SKIP_WINDOW_MS));
+            Assert.That(Num(c, "SKIP_LEAD_MS"), Is.EqualTo(InstrumentalGaps.SKIP_LEAD_MS));
+        });
+    }
+
+    /// <summary>
+    /// THE PARITY PIN. Every gap fixture in InstrumentalGapsTest, computed by BOTH implementations
+    /// and compared gap for gap: the qualification threshold, the settle, the skip lead, the
+    /// usability filter, and the total allowance the server stores as beatmaps.skippable_s.
+    ///
+    /// <para>The expected side is computed, not transcribed, so this cannot go stale against the
+    /// C# and it fails the moment either side moves. The one literal here is the headline case's
+    /// own numbers (gapStart 3000 / skipTarget 9000 / 6000 removable), which are the game's, from
+    /// its own InstrumentalGapsTest, and are pinned so that a change agreed on BOTH sides of the
+    /// mirror still has to be a deliberate one.</para>
+    /// </summary>
+    [Test]
+    public void GapComputationMatchesTheServerMirrorOnEveryFixture()
+    {
+        var root = Harness();
+
+        AssertGapParity(root, "gapExactlyTen", GapFixtures.ExactlyTen);
+        AssertGapParity(root, "gapOneMsShort", GapFixtures.OneMsShort);
+        AssertGapParity(root, "gapNoUsableWindow", GapFixtures.NoUsableWindow);
+        AssertGapParity(root, "gapLongIntro", GapFixtures.LongIntro);
+        AssertGapParity(root, "gapTwoOfFour", GapFixtures.TwoOfFour);
+        AssertGapParity(root, "gapSingleLine", GapFixtures.Single);
+
+        var exactly = root.GetProperty("gapExactlyTen");
+        var gaps = exactly.GetProperty("gaps");
+        var four = root.GetProperty("gapTwoOfFour");
+
+        Assert.Multiple(() =>
+        {
+            // The game's own golden window, reached by the browser.
+            Assert.That(Num(gaps[0], "gapStartTime"), Is.EqualTo(3000));
+            Assert.That(Num(gaps[0], "activationTime"), Is.EqualTo(12000));
+            Assert.That(Num(gaps[0], "skipTarget"), Is.EqualTo(9000));
+            Assert.That(Num(gaps[0], "skippableMs"), Is.EqualTo(6000));
+
+            // And the four-line map's 82 s allowance, which is what PlayTimeGate refunds.
+            Assert.That(Num(four, "skippableMs") / 1000, Is.EqualTo(82).Within(1e-9));
+
+            // The weird-data path both implementations carry: a word overrunning its line's sing
+            // end pushes the skip period past the target, and the gap is dropped rather than shown.
+            Assert.That(Num(root.GetProperty("gapNoUsableWindow"), "lastTypeableTarget"), Is.EqualTo(9250).Within(1e-9));
+        });
+    }
+
+    /// <summary>
+    /// The INTRO skip, which is not an InstrumentalGaps gap on either side: the desktop's separate
+    /// intro SkipOverlay lands at GameplayStartTime - MINIMUM_SKIP_TIME, i.e. the first object less
+    /// 3000, and removes only run-up drain_length_s already excludes (so the gate never sees it).
+    /// A 30 s intro is therefore skippable to 27000 while contributing nothing to skippable_s.
+    /// </summary>
+    [Test]
+    public void IntroSkipLandsThreeSecondsBeforeTheFirstVocal_AndCostsNoAllowance()
+    {
+        var root = Harness();
+        var intro = root.GetProperty("gapLongIntro");
+        var window = JsHarness.Doubles(root, "introWindow").ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(intro, "firstVocalTime"), Is.EqualTo(30000));
+            Assert.That(Num(intro, "introSkipTarget"), Is.EqualTo(27000));
+            Assert.That(Num(intro, "skippableMs"), Is.Zero, "the intro is not part of the allowance");
+            Assert.That(InstrumentalGaps.SkippableSeconds(Lines(GapFixtures.LongIntro)), Is.Zero,
+                "and the server agrees, which is why the intro skip needs no refund");
+
+            // Live from the start of the map right up to (not including) its own target; -1 is the
+            // harness's stand-in for "no skip offered".
+            Assert.That(window[0], Is.EqualTo(27000));
+            Assert.That(window[1], Is.EqualTo(27000));
+            Assert.That(window[2], Is.EqualTo(-1), "at the target itself there is nothing left to skip");
+        });
+    }
+
+    /// <summary>
+    /// The skip window's edges on the headline map: live from gapStart, dead from skipTarget. Half
+    /// open at both ends the way the desktop's SkipOverlay lifetime is (visible over
+    /// [skipStartTime, fadeOutBeginTime]).
+    /// </summary>
+    [Test]
+    public void TheSkipIsOfferedOnlyInsideItsOwnWindow()
+    {
+        var window = JsHarness.Doubles(Harness(), "skipWindow").ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(window[0], Is.EqualTo(-1), "one ms before the settle, nothing is offered");
+            Assert.That(window[1], Is.EqualTo(9000), "at gapStart the skip opens");
+            Assert.That(window[2], Is.EqualTo(9000), "one ms before the target it is still live");
+            Assert.That(window[3], Is.EqualTo(-1), "at the target it closes");
+        });
+    }
+
+    /// <summary>
+    /// THE TRIGGER GATE, mirrored from TypeBeatPlayfield's key handler: a typeable key is swallowed
+    /// for TYPING whenever a line is active and incomplete, and falls through to the skip only when
+    /// no line is active, or the active line is complete with no live retype selection. That is what
+    /// keeps Space a word-gap character, and (see the next test) what keeps the WPM clock still.
+    /// </summary>
+    [Test]
+    public void SpaceReachesTheSkipOnlyWhereTheDesktopWouldFallThrough()
+    {
+        var root = Harness();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Flag(root, "skipAllowedIdle"), Is.True, "no line active");
+            Assert.That(Flag(root, "skipAllowedComplete"), Is.True, "the active line is complete");
+            Assert.That(Flag(root, "skipAllowedCompleteWithSelection"), Is.False, "a live retype selection suspends it");
+            Assert.That(Flag(root, "skipAllowedTyping"), Is.False, "a line still owed consumes the key");
+            Assert.That(Flag(root, "skipAllowedTypingWithSelection"), Is.False);
+
+            // The line the chip and the skip look up. The seal cursor alone answers 0 for a caret
+            // parked complete on line 0, which is the line the player has just FINISHED.
+            Assert.That(Num(root, "upcomingIdle"), Is.EqualTo(0));
+            Assert.That(Num(root, "upcomingParkedComplete"), Is.EqualTo(1));
+            Assert.That(Num(root, "upcomingOnItsOwnLine"), Is.EqualTo(1));
+        });
+
+        var parked = root.GetProperty("spaceParked");
+        var typing = root.GetProperty("spaceTyping");
+        var wordGap = root.GetProperty("spaceAsWordGap");
+
+        Assert.Multiple(() =>
+        {
+            // Line 0 fully typed, sitting in the twelve-second instrumental: the skip is live.
+            Assert.That(Flag(parked, "lineComplete"), Is.True);
+            Assert.That(Flag(parked, "skipAllowed"), Is.True);
+            Assert.That(Num(parked, "skipTarget"), Is.EqualTo(9000));
+
+            // One character of two typed: same clock, same map, no skip.
+            Assert.That(Flag(typing, "lineComplete"), Is.False);
+            Assert.That(Flag(typing, "skipAllowed"), Is.False);
+            Assert.That(typing.GetProperty("skipTarget").ValueKind, Is.EqualTo(JsonValueKind.Null));
+
+            // And on a line with a word gap still to type, the press IS that gap's character.
+            Assert.That(Flag(wordGap, "skipAllowed"), Is.False);
+            Assert.That(wordGap.GetProperty("gapCellExpected").GetString(), Is.EqualTo(" "));
+            Assert.That(wordGap.GetProperty("gapCellState").GetString(), Is.EqualTo("correct"));
+            Assert.That(Num(wordGap, "caretAfter"), Is.EqualTo(Num(wordGap, "caretBefore") + 1));
+        });
+    }
+
+    /// <summary>
+    /// THE WPM-CLOCK TRAP, pinned. TypingEngine accrues activeTimeMs only while the active line is
+    /// incomplete, so a skip taken from an allowed state adds nothing to the clock the submitted WPM
+    /// is computed from, and the browser stays byte-comparable with the desktop. The second arm is
+    /// the non-vacuity: the very same six seconds crossed with the line still owed DO land on the
+    /// clock, which is exactly what a skip fired from the wrong state would have injected.
+    /// </summary>
+    [Test]
+    public void ASkipFromAnAllowedStateLeavesTheWpmClockAlone()
+    {
+        var root = Harness();
+        var parked = root.GetProperty("activeTimeParked");
+        var typing = root.GetProperty("activeTimeTyping");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(parked, "moved"), Is.Zero, "a complete line's caret is not typing");
+            Assert.That(Num(parked, "after"), Is.EqualTo(Num(parked, "before")));
+
+            Assert.That(Num(typing, "moved"), Is.EqualTo(6000).Within(1e-9),
+                "the same span with the line owed is real typing time, which is why the gate matters");
+        });
+    }
+
+    // ---- gap fixture plumbing ----
+
+    /// <summary>
+    /// The lyric payloads, verbatim from <see cref="InstrumentalGapsTest"/> and from the harness's
+    /// own GAP_FIXTURES. Both sides must read the SAME text, which is what makes the comparison a
+    /// parity check rather than two independent transcriptions.
+    /// </summary>
+    private static class GapFixtures
+    {
+        public const string ExactlyTen =
+            """
+            {"version":2,"song_end_ms":40000,"granularity":"Word"}
+            {"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}
+            {"text":"cd","start_ms":12000,"end_ms":13000,"words":[{"text":"cd","start_ms":12000,"end_ms":13000,"score":1}]}
+            """;
+
+        public const string OneMsShort =
+            """
+            {"version":2,"song_end_ms":40000,"granularity":"Word"}
+            {"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}
+            {"text":"cd","start_ms":11999,"end_ms":13000,"words":[{"text":"cd","start_ms":11999,"end_ms":13000,"score":1}]}
+            """;
+
+        public const string NoUsableWindow =
+            """
+            {"version":2,"song_end_ms":40000,"granularity":"Word"}
+            {"text":"abcd","start_ms":1000,"end_ms":2000,"words":[{"text":"abcd","start_ms":1000,"end_ms":15000,"score":1}]}
+            {"text":"cd","start_ms":12000,"end_ms":13000,"words":[{"text":"cd","start_ms":12000,"end_ms":13000,"score":1}]}
+            """;
+
+        public const string LongIntro =
+            """
+            {"version":2,"song_end_ms":60000,"granularity":"Word"}
+            {"text":"ab","start_ms":30000,"end_ms":31000,"words":[{"text":"ab","start_ms":30000,"end_ms":31000,"score":1}]}
+            {"text":"cd","start_ms":32000,"end_ms":33000,"words":[{"text":"cd","start_ms":32000,"end_ms":33000,"score":1}]}
+            """;
+
+        public const string TwoOfFour =
+            """
+            {"version":2,"song_end_ms":140000,"granularity":"Word"}
+            {"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}
+            {"text":"cd","start_ms":58000,"end_ms":59000,"words":[{"text":"cd","start_ms":58000,"end_ms":59000,"score":1}]}
+            {"text":"ef","start_ms":93000,"end_ms":94000,"words":[{"text":"ef","start_ms":93000,"end_ms":94000,"score":1}]}
+            {"text":"gh","start_ms":95000,"end_ms":96000,"words":[{"text":"gh","start_ms":95000,"end_ms":96000,"score":1}]}
+            """;
+
+        public const string Single =
+            """
+            {"version":2,"song_end_ms":40000,"granularity":"Word"}
+            {"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}
+            """;
+    }
+
+    private static void AssertGapParity(JsonElement root, string key, string lyrics)
+    {
+        var observed = root.GetProperty(key);
+        var browser = observed.GetProperty("gaps");
+        var server = InstrumentalGaps.Compute(Lines(lyrics));
+
+        Assert.That(browser.GetArrayLength(), Is.EqualTo(server.Count), $"{key}: gap count");
+
+        for (int i = 0; i < server.Count; i++)
+        {
+            var b = browser[i];
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(Num(b, "gapStartTime"), Is.EqualTo(server[i].GapStartTime).Within(1e-9), $"{key}[{i}]: gapStart");
+                Assert.That(Num(b, "activationTime"), Is.EqualTo(server[i].ActivationTime).Within(1e-9), $"{key}[{i}]: activation");
+                Assert.That(Num(b, "skipTarget"), Is.EqualTo(server[i].SkipTarget).Within(1e-9), $"{key}[{i}]: skipTarget");
+                Assert.That(Num(b, "skippableMs"), Is.EqualTo(server[i].SkippableMs).Within(1e-9), $"{key}[{i}]: skippable");
+            });
+        }
+
+        Assert.That(Num(observed, "skippableMs") / 1000,
+            Is.EqualTo(InstrumentalGaps.SkippableSeconds(Lines(lyrics))).Within(1e-9), $"{key}: total allowance");
+    }
+
+    private static IReadOnlyList<LyricLine> Lines(string lyrics)
+        => LyricTiming.ParseSection(lyrics.ReplaceLineEndings("\n").Split('\n')).Lines;
 }

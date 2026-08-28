@@ -12,21 +12,35 @@ namespace Typebeat.Web.Endpoints;
 
 /// <summary>
 /// The in-browser web player's backend (additive; the bearer game-client score flow in
-/// <see cref="ScoreEndpoints"/> is untouched). Four routes:
+/// <see cref="ScoreEndpoints"/> is untouched). Five routes:
 ///
-///  - GET  /play/map/{setId}/osu    → the set's primary .osu text (anonymous, same media gate as downloads)
-///  - GET  /play/map/{setId}/audio  → the map's audio blob, range-capable (anonymous, same gate)
+///  - GET  /play/map/{setId}/diffs  → the set's live .osu difficulties (anonymous, same media gate)
+///  - GET  /play/map/{setId}/osu    → one difficulty's .osu text (anonymous, same media gate as downloads)
+///  - GET  /play/map/{setId}/audio  → that difficulty's audio blob, range-capable (anonymous, same gate)
 ///  - POST /play/token              → issue a score token (cookie session + antiforgery)
 ///  - POST /play/submit             → complete a score token (cookie session + antiforgery)
+///
+/// <para>WHICH DIFFICULTY. The two media routes take an optional <c>?diff={beatmapId}</c>; without
+/// it they serve the set's primary (lowest-id) difficulty, which is all the picker could address
+/// before backlog 230. The audio name is read out of THAT difficulty's own .osu, so two diffs
+/// pointing at different audio files each get their own.</para>
+///
+/// <para>TAMPER BOUND ON A NAMED DIFFICULTY. Once the client names a beatmap, "we serve the exact
+/// map" stops being true by construction, so every route that takes a beatmap id resolves it as
+/// <c>id = @beatmapId AND set_id = @setId AND filename IS NOT NULL AND filename LIKE '%.osu'</c>:
+/// a beatmap belonging to another set, or a dropped/blank difficulty row that no longer has a file
+/// in the current version, is not addressable at all. The token route applies the SAME predicate,
+/// so the token, the play-time gate (<c>beatmaps.skippable_s</c> is per difficulty) and the
+/// leaderboard row all key off the difficulty that was actually served.</para>
 ///
 /// The two mutating routes are the cookie-session mirror of <see cref="ScoreEndpoints"/>'s
 /// CreateToken/SubmitScore: identical recompute + tamper-bounds via <see cref="ScoringContract"/>,
 /// identical scores/user_stats side effects, but authenticated by the website session cookie
 /// (<see cref="SessionCookieAuth.SessionUser"/>) and CSRF-protected via <see cref="IAntiforgery"/>
-/// rather than a bearer token. Unlike the bearer path there is no client-sent beatmap_hash to
-/// cross-check: we serve the exact map, so score_tokens.beatmap_hash is populated from the
-/// server's stored checksum for the beatmap (the column is NOT NULL). Tamper-shaped input on the
-/// mutating routes always resolves to a 4xx, never a 500.
+/// rather than a bearer token. There is no client-sent beatmap_hash to cross-check, so
+/// score_tokens.beatmap_hash is populated from the server's stored checksum for the resolved
+/// beatmap (the column is NOT NULL). Tamper-shaped input on the mutating routes always resolves to
+/// a 4xx, never a 500.
 /// </summary>
 public static class PlayEndpoints
 {
@@ -35,6 +49,7 @@ public static class PlayEndpoints
 
     public static void Map(IEndpointRouteBuilder app)
     {
+        app.MapGet("/play/map/{setId:long}/diffs", GetDiffsAsync);
         app.MapGet("/play/map/{setId:long}/osu", GetOsuAsync);
         app.MapGet("/play/map/{setId:long}/audio", GetAudioAsync);
         app.MapPost("/play/token", CreateTokenAsync);
@@ -42,8 +57,49 @@ public static class PlayEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // GET /play/map/{setId}/osu: the primary difficulty's .osu, served as text/plain. Anonymous,
-    // same media-access gate as the download route (published set, or the owner).
+    // GET /play/map/{setId}/diffs: the set's live .osu difficulties, hardest first, which is what
+    // the picker's difficulty step renders as .diff-pill buttons. Anonymous, same media gate as the
+    // two routes below, so it can never advertise a difficulty those would refuse to serve.
+    //
+    // The star COLOUR is computed here rather than ported into JS: DifficultyColour is the one
+    // ramp the whole site tints ★ readouts with (the set page's own selector included), and a
+    // second copy in the player script would drift from it silently.
+    // ---------------------------------------------------------------------------------------------
+    private static async Task<IResult> GetDiffsAsync(long setId, HttpContext ctx, Db db)
+    {
+        await using var conn = await db.OpenAsync(ctx.RequestAborted);
+
+        if (!await CanSeeSetMediaAsync(ctx, conn, setId))
+            return Results.NotFound();
+
+        var rows = await conn.QueryAsync<DiffRow>(
+            """
+            SELECT b.id                    AS id,
+                   b.version_name          AS versionName,
+                   b.difficulty_rating     AS stars,
+                   b.wpm::double precision AS wpm
+            FROM beatmaps b
+            WHERE b.set_id = @setId AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
+            ORDER BY b.difficulty_rating DESC, b.id ASC
+            """,
+            new { setId });
+
+        return WireJson.Ok(new
+        {
+            diffs = rows.Select(d => new
+            {
+                id = d.Id,
+                version_name = d.VersionName,
+                stars = d.Stars,
+                wpm = d.Wpm,
+                colour = DifficultyColour.ForStars(d.Stars),
+            }).ToList(),
+        });
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // GET /play/map/{setId}/osu[?diff={beatmapId}]: one difficulty's .osu, served as text/plain.
+    // Anonymous, same media-access gate as the download route (published set, or the owner).
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> GetOsuAsync(long setId, HttpContext ctx, Db db, IFileStore store)
     {
@@ -52,7 +108,7 @@ public static class PlayEndpoints
         if (!await CanSeeSetMediaAsync(ctx, conn, setId))
             return Results.NotFound();
 
-        string? osuName = await ResolveOsuFilenameAsync(conn, setId);
+        string? osuName = await ResolveOsuFilenameAsync(conn, setId, RequestedDiff(ctx));
         if (osuName is null)
             return Results.NotFound();
 
@@ -64,8 +120,10 @@ public static class PlayEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // GET /play/map/{setId}/audio: the AudioFilename referenced by the primary .osu, streamed with
-    // range support (so <audio> can seek). Anonymous, same gate as /osu.
+    // GET /play/map/{setId}/audio[?diff={beatmapId}]: the AudioFilename referenced by THAT
+    // difficulty's .osu, streamed with range support (so <audio> can seek). Anonymous, same gate as
+    // /osu. Reading the name from the chosen diff is what lets two difficulties of one set point at
+    // different audio files.
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> GetAudioAsync(long setId, HttpContext ctx, Db db, IFileStore store)
     {
@@ -74,7 +132,7 @@ public static class PlayEndpoints
         if (!await CanSeeSetMediaAsync(ctx, conn, setId))
             return Results.NotFound();
 
-        string? osuName = await ResolveOsuFilenameAsync(conn, setId);
+        string? osuName = await ResolveOsuFilenameAsync(conn, setId, RequestedDiff(ctx));
         if (osuName is null)
             return Results.NotFound();
 
@@ -107,8 +165,9 @@ public static class PlayEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // POST /play/token: issue a score token for the signed-in website user. Body: { "beatmapId": <long> }.
-    // Response: { "id": <long> }.
+    // POST /play/token: issue a score token for the signed-in website user.
+    // Body: { "setId": <long>, "beatmapId": <long> } (the player sends both since backlog 230; a
+    // set-only body still resolves the set's primary difficulty). Response: { "id": <long> }.
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> CreateTokenAsync(HttpContext ctx, Db db, IAntiforgery antiforgery)
     {
@@ -142,29 +201,43 @@ public static class PlayEndpoints
 
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
-        // Resolve the playable beatmap: by SET id (the picker's path, the set's primary .osu diff)
-        // or, for back-compat, by an explicit beatmap id. The set must be published (pending/ranked).
-        var beatmap = request.SetId > 0
+        // Resolve the playable beatmap. The set must be published (pending/unranked/ranked), and the
+        // difficulty must be LIVE in the current version (filename IS NOT NULL AND LIKE '%.osu'),
+        // which is the same predicate the media routes resolve through.
+        //
+        // Two shapes, and the branch is the beatmap id rather than the set id: since backlog 230 the
+        // player names the difficulty it was served, so `beatmapId` is the normal path and the
+        // set-only body is the back-compat one (the set's primary, lowest-id difficulty).
+        //
+        // WHEN BOTH ARE SENT the beatmap must BELONG to the set. That is the tamper bound the diff
+        // picker made necessary: without it a caller could name any published beatmap on the site
+        // while claiming to play another set's map, and the token, the skip allowance and the
+        // leaderboard row would all follow the named one.
+        var beatmap = request.BeatmapId > 0
             ? await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 """
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                        b.difficulty_rating AS baseStars
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
-                WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked') AND b.filename LIKE '%.osu'
-                ORDER BY b.id
-                LIMIT 1
+                WHERE b.id = @beatmapId
+                  AND (@setId <= 0 OR b.set_id = @setId)
+                  AND bs.status IN ('pending', 'unranked', 'ranked')
+                  AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
                 """,
-                new { setId = request.SetId })
+                new { beatmapId = request.BeatmapId, setId = request.SetId })
             : await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 """
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                        b.difficulty_rating AS baseStars
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
-                WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
+                WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked')
+                  AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
+                ORDER BY b.id
+                LIMIT 1
                 """,
-                new { beatmapId = request.BeatmapId });
+                new { setId = request.SetId });
 
         if (beatmap is null)
             return WireJson.Error(status_unprocessable, "beatmap not found or not playable");
@@ -447,16 +520,36 @@ public static class PlayEndpoints
         return requester?.Id == row.OwnerId;
     }
 
-    /// <summary>The archive path of the set's primary difficulty .osu, or null if none is live.</summary>
-    private static async Task<string?> ResolveOsuFilenameAsync(NpgsqlConnection conn, long setId)
-        => await conn.ExecuteScalarAsync<string?>(
-            """
-            SELECT filename FROM beatmaps
-            WHERE set_id = @setId AND filename LIKE '%.osu'
-            ORDER BY id
-            LIMIT 1
-            """,
-            new { setId });
+    /// <summary>The <c>?diff={beatmapId}</c> a media request named, or 0 for "the set's primary".</summary>
+    private static long RequestedDiff(HttpContext ctx)
+        => long.TryParse(ctx.Request.Query["diff"], out long id) && id > 0 ? id : 0;
+
+    /// <summary>
+    /// The archive path of a difficulty's .osu, or null when there is none to serve.
+    /// <paramref name="beatmapId"/> 0 means the set's primary (lowest-id) difficulty, which is what
+    /// the set-addressed player asked for before the difficulty picker existed.
+    ///
+    /// <para>A NAMED difficulty is bound to the set being served (<c>set_id = @setId</c>) as well as
+    /// to being live: a caller cannot pull another set's .osu, or a dropped diff's stale row, through
+    /// a set whose media they are allowed to see.</para>
+    /// </summary>
+    private static async Task<string?> ResolveOsuFilenameAsync(NpgsqlConnection conn, long setId, long beatmapId = 0)
+        => beatmapId > 0
+            ? await conn.ExecuteScalarAsync<string?>(
+                """
+                SELECT filename FROM beatmaps
+                WHERE id = @beatmapId AND set_id = @setId
+                  AND filename IS NOT NULL AND filename LIKE '%.osu'
+                """,
+                new { setId, beatmapId })
+            : await conn.ExecuteScalarAsync<string?>(
+                """
+                SELECT filename FROM beatmaps
+                WHERE set_id = @setId AND filename IS NOT NULL AND filename LIKE '%.osu'
+                ORDER BY id
+                LIMIT 1
+                """,
+                new { setId });
 
     /// <summary>Resolves a filename to its blob sha256 within the set's current version manifest.</summary>
     private static async Task<byte[]?> ResolveManifestShaAsync(NpgsqlConnection conn, long setId, string filename)
@@ -581,6 +674,9 @@ public static class PlayEndpoints
     private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS, double BaseStars);
 
     private sealed record BuildRow(long Id, bool Blocked);
+
+    /// <summary>One live difficulty, as the picker's difficulty step renders it.</summary>
+    private sealed record DiffRow(long Id, string VersionName, double Stars, double? Wpm);
 
     private sealed record BestScoreRow(long Id, long TotalScore);
 

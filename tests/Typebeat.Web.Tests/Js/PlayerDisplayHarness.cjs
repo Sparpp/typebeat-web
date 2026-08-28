@@ -328,6 +328,144 @@ function paint(engine, lineIndex) {
     }));
 }
 
+// --- instrumental gaps: the SAME lyric fixtures InstrumentalGapsTest feeds the C# mirror ---
+//
+// These strings are transcribed verbatim from tests/Typebeat.Web.Tests/InstrumentalGapsTest.cs, so
+// the C# side can run Packages/Lyrics/InstrumentalGaps.Compute over them and hold the numbers below
+// against its own, rather than against a second set of hand-copied literals.
+const GAP_FIXTURES = {
+    // Perceived instrumental of exactly MIN_GAP_MS: line 0 sings 1000-2000, line 1's first vocal
+    // is at 12000. gapStart 3000, activation 12000, skipTarget 9000.
+    exactlyTen:
+        '{"version":2,"song_end_ms":40000,"granularity":"Word"}\n' +
+        '{"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n' +
+        '{"text":"cd","start_ms":12000,"end_ms":13000,"words":[{"text":"cd","start_ms":12000,"end_ms":13000,"score":1}]}\n',
+
+    // The same map with the second line pulled one millisecond earlier: does not qualify.
+    oneMsShort:
+        '{"version":2,"song_end_ms":40000,"granularity":"Word"}\n' +
+        '{"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n' +
+        '{"text":"cd","start_ms":11999,"end_ms":13000,"words":[{"text":"cd","start_ms":11999,"end_ms":13000,"score":1}]}\n',
+
+    // Qualifies on the perceived stretch, but line 0's word overruns to the boundary so its last
+    // typeable cell targets 9250 and the usable window is negative: dropped, not shown.
+    noUsableWindow:
+        '{"version":2,"song_end_ms":40000,"granularity":"Word"}\n' +
+        '{"text":"abcd","start_ms":1000,"end_ms":2000,"words":[{"text":"abcd","start_ms":1000,"end_ms":15000,"score":1}]}\n' +
+        '{"text":"cd","start_ms":12000,"end_ms":13000,"words":[{"text":"cd","start_ms":12000,"end_ms":13000,"score":1}]}\n',
+
+    // 30 s of silence before anything is sung: NOT an InstrumentalGaps gap (that is the intro skip).
+    longIntro:
+        '{"version":2,"song_end_ms":60000,"granularity":"Word"}\n' +
+        '{"text":"ab","start_ms":30000,"end_ms":31000,"words":[{"text":"ab","start_ms":30000,"end_ms":31000,"score":1}]}\n' +
+        '{"text":"cd","start_ms":32000,"end_ms":33000,"words":[{"text":"cd","start_ms":32000,"end_ms":33000,"score":1}]}\n',
+
+    // Four lines, two long instrumentals: 52 s + 30 s = 82 s of allowance, the shape the server
+    // prices into beatmaps.skippable_s. The 95000 line is 1 s behind its predecessor and opens none.
+    twoOfFour:
+        '{"version":2,"song_end_ms":140000,"granularity":"Word"}\n' +
+        '{"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n' +
+        '{"text":"cd","start_ms":58000,"end_ms":59000,"words":[{"text":"cd","start_ms":58000,"end_ms":59000,"score":1}]}\n' +
+        '{"text":"ef","start_ms":93000,"end_ms":94000,"words":[{"text":"ef","start_ms":93000,"end_ms":94000,"score":1}]}\n' +
+        '{"text":"gh","start_ms":95000,"end_ms":96000,"words":[{"text":"gh","start_ms":95000,"end_ms":96000,"score":1}]}\n',
+
+    // One line: no pair, so no gap and no allowance.
+    single:
+        '{"version":2,"song_end_ms":40000,"granularity":"Word"}\n' +
+        '{"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n'
+};
+
+function gapReport(lyrics) {
+    const map = build(OSU_HEADER + lyrics);
+    return {
+        gaps: D.computeGaps(map.lines).map(g => ({
+            line: g.line,
+            gapStartTime: g.gapStartTime,
+            activationTime: g.activationTime,
+            skipTarget: g.skipTarget,
+            skippableMs: g.skipTarget - g.gapStartTime
+        })),
+        skippableMs: D.skippableMs(map.lines),
+        introSkipTarget: D.introSkipTarget(map.lines),
+        lastTypeableTarget: D.lastTypeableTarget(map.lines[0]),
+        firstVocalTime: D.firstVocalTime(map.lines[0])
+    };
+}
+
+// --- the skip trigger, and the WPM clock it must not move ---
+//
+// gapOsu is the exactlyTen fixture: line 0 "ab" sung 1000-2000, line 1 at 12000, so the qualifying
+// gap runs [3000, 9000] and the skip lands at 9000 (line 1's activation less SKIP_LEAD_MS).
+
+// Both characters of line 0 typed, so the line is COMPLETE and the caret parks on it (entry into
+// line 1 does not open until 10500). This is the state the desktop reaches its skip overlay from.
+function playGapMapComplete() {
+    const map = build(gapOsu);
+    const engine = engineFor(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    engine.processKey('b', 1500);
+    return { engine, map };
+}
+
+// One character of two: the line is still owed, so the song is still asking for characters and a
+// typeable key (Space included) must be consumed for typing.
+function playGapMapIncomplete() {
+    const map = build(gapOsu);
+    const engine = engineFor(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    return { engine, map };
+}
+
+// The WPM-clock trap, both arms. Advance from the gap's start to its skip target, which is exactly
+// what a skip makes the engine do on its next tick, and report what activeTimeMs did.
+function activeTimeAcrossSkip(run) {
+    const { engine } = run;
+    engine.update(3000);
+    const before = engine.activeTimeMs;
+    engine.update(9000);
+    return { before: before, after: engine.activeTimeMs, moved: engine.activeTimeMs - before };
+}
+
+// What a Space press does in a given state, expressed as the two facts the key handler branches on
+// and the cell it would land in.
+function spaceInState(run, time) {
+    const { engine, map } = run;
+    const active = engine.activeLineIndex >= 0;
+    const complete = active && engine.isLineComplete(engine.activeLineIndex);
+    const upcoming = D.upcomingLineIndex(engine.activeLineIndex, complete, engine.nextSealIndex);
+    const allowed = D.skipAllowed(active, complete, false);
+    return {
+        active: active,
+        lineComplete: complete,
+        upcomingLine: upcoming,
+        skipAllowed: allowed,
+        skipTarget: allowed ? D.skipTargetAt(D.computeGaps(map.lines), D.introSkipTarget(map.lines), upcoming, time) : null
+    };
+}
+
+// A Space pressed on the word gap of the "ab cd" line, with the line still incomplete: the cell it
+// lands in must be the gap, judged, and no skip may be offered.
+function spaceIsAWordGapCharacter() {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    engine.processKey('b', 1500);
+    const active = engine.activeLineIndex >= 0;
+    const complete = active && engine.isLineComplete(engine.activeLineIndex);
+    const before = engine.caretIndex;
+    engine.processKey(' ', 2000);
+    return {
+        skipAllowed: D.skipAllowed(active, complete, false),
+        caretBefore: before,
+        caretAfter: engine.caretIndex,
+        gapCellState: engine.lines[0].cells[2].state,
+        gapCellExpected: engine.lines[0].cells[2].expected
+    };
+}
+
 // --- rolling WPM ring ---
 function ring(pushes) {
     const r = D.makeRollingWpm(D.constants.ROLLING_WPM_WINDOW);
@@ -459,7 +597,62 @@ const out = {
     perfectScore: (() => { const s = TB.computeScore(perfect); return { rank: s.rank, completion: s.completion, totalScore: s.totalScore }; })(),
 
     // Easing used by the line-change scroll.
-    outQuint: [0, 0.5, 1].map(D.outQuint)
+    outQuint: [0, 0.5, 1].map(D.outQuint),
+
+    // ---- the instrumental-skip rule (backlog 230), a THIRD copy of a cross-repo-pinned one ----
+    gapConstants: {
+        MIN_GAP_MS: D.constants.MIN_GAP_MS,
+        GAP_START_SETTLE_MS: D.constants.GAP_START_SETTLE_MS,
+        MIN_SKIP_WINDOW_MS: D.constants.MIN_SKIP_WINDOW_MS,
+        SKIP_LEAD_MS: D.constants.SKIP_LEAD_MS
+    },
+    gapExactlyTen: gapReport(GAP_FIXTURES.exactlyTen),
+    gapOneMsShort: gapReport(GAP_FIXTURES.oneMsShort),
+    gapNoUsableWindow: gapReport(GAP_FIXTURES.noUsableWindow),
+    gapLongIntro: gapReport(GAP_FIXTURES.longIntro),
+    gapTwoOfFour: gapReport(GAP_FIXTURES.twoOfFour),
+    gapSingleLine: gapReport(GAP_FIXTURES.single),
+
+    // Which line the chip and the skip look up. Not the seal cursor: a caret parked COMPLETE on a
+    // line is waiting for the NEXT one, which is the whole of a real map's instrumental.
+    upcomingIdle: D.upcomingLineIndex(-1, false, 0),
+    upcomingParkedComplete: D.upcomingLineIndex(0, true, 0),
+    upcomingOnItsOwnLine: D.upcomingLineIndex(1, false, 0),
+
+    // TypeBeatPlayfield's fall-through, the predicate that decides skip-or-character.
+    skipAllowedIdle: D.skipAllowed(false, false, false),
+    skipAllowedComplete: D.skipAllowed(true, true, false),
+    skipAllowedCompleteWithSelection: D.skipAllowed(true, true, true),
+    skipAllowedTyping: D.skipAllowed(true, false, false),
+    skipAllowedTypingWithSelection: D.skipAllowed(true, false, true),
+
+    // The window itself, sampled around its two edges on the exactlyTen map (gap [3000, 9000)).
+    // -1 stands for "no skip offered" so the array stays all-numeric for the C# reader.
+    skipWindow: (() => {
+        const map = build(gapOsu);
+        const gaps = D.computeGaps(map.lines);
+        const intro = D.introSkipTarget(map.lines);
+        return [2999, 3000, 8999, 9000].map(t => { const v = D.skipTargetAt(gaps, intro, 1, t); return v === null ? -1 : v; });
+    })(),
+
+    // The intro, which is the desktop's separate intro SkipOverlay: first vocal less SKIP_LEAD_MS.
+    introWindow: (() => {
+        const map = build(OSU_HEADER + GAP_FIXTURES.longIntro);
+        const gaps = D.computeGaps(map.lines);
+        const intro = D.introSkipTarget(map.lines);
+        return [0, 26999, 27000].map(t => { const v = D.skipTargetAt(gaps, intro, 0, t); return v === null ? -1 : v; });
+    })(),
+
+    // Real runs: the state a skip may fire from, the state it may not, and the word-gap press.
+    spaceParked: spaceInState(playGapMapComplete(), 3000),
+    spaceTyping: spaceInState(playGapMapIncomplete(), 3000),
+    spaceAsWordGap: spaceIsAWordGapCharacter(),
+
+    // THE WPM-CLOCK PIN. Crossing the gap with the line COMPLETE (the only state a skip is offered
+    // in) must not move activeTimeMs at all; crossing it with the line still owed does, which is
+    // exactly the divergence the gating exists to prevent.
+    activeTimeParked: activeTimeAcrossSkip(playGapMapComplete()),
+    activeTimeTyping: activeTimeAcrossSkip(playGapMapIncomplete())
 };
 
 process.stdout.write(JSON.stringify(out));

@@ -116,12 +116,14 @@ public class ListingPageTest
         {
             await conn.OpenAsync();
             // Match the listing's visibility: published AND not owned by a restricted mapper
-            // (RestrictedOwnerTest seeds a delisted ranked set into the same database).
+            // (RestrictedOwnerTest seeds a delisted ranked set into the same database). All THREE
+            // published statuses, which is what IndexModel's "any" predicate says; the list read
+            // 'pending', 'ranked' while no seeded set was 'unranked', and PublicSiteSeed now has one.
             totalPublic = await conn.ExecuteScalarAsync<int>(
                 """
                 SELECT count(*) FROM beatmapsets s
                 JOIN users u ON u.id = s.owner_id
-                WHERE s.status IN ('pending', 'ranked') AND NOT u.restricted
+                WHERE s.status IN ('pending', 'unranked', 'ranked') AND NOT u.restricted
                 """);
         }
 

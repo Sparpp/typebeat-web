@@ -107,6 +107,7 @@ WireCompat is where that is provable, because it is the only project that compil
 | `src/Typebeat.Web/Packages/Lyrics/LyricDifficulty.cs` | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricDifficulty.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/LyricWpmCurve.cs` | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricWpmCurve.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/InstrumentalGaps.cs` | `typebeat.Game.Rulesets.TypeBeat/Gameplay/InstrumentalGaps.cs` |
+| `src/Typebeat.Web/wwwroot/js/typebeat-player.js` (`computeGaps` + its four constants) | the same `InstrumentalGaps.cs`, via the row above |
 | `src/Typebeat.Web/wwwroot/js/typebeat-core.js` | the C# `TypingEngine` / `TypeBeatScoreProcessor` |
 
 - **`typebeat-core.js` is a hand-written JS reimplementation of the C# engine** and must stay
@@ -131,7 +132,12 @@ WireCompat is where that is provable, because it is the only project that compil
   keeping the two readouts equal. It stores, so a change needs a `LyricPace.VERSION` bump too.
 - **`InstrumentalGaps` must stay in lockstep** with the game copy (`MIN_GAP_MS` 10000 and the
   perceived-gap/skip-window rules): the play-time anti-cheat gate subtracts the skip allowance it
-  computes, so drift either re-unranks honest skip users or lets impossibly fast plays rank.
+  computes, so drift either re-unranks honest skip users or lets impossibly fast plays rank. Since
+  backlog 230 the rule exists a THIRD time, as `computeGaps` in `typebeat-player.js`, because the
+  browser player has a real skip button now and it must spend exactly the allowance the gate
+  refunds. `WebplayDisplayTest` pins the JS copy against the C# one by running BOTH over the same
+  lyric fixtures, so a one-sided edit fails there rather than in production; the JS constants carry
+  the name of the C# field they mirror, and are read off it rather than retyped.
 
 There is a tool for pp changes: `tools/pp.py` in the parent superrepo (`show` / `check` / `set`),
 which propagates a constant across both mirrors, `docs/pp.md` and the test expectations. Prefer it

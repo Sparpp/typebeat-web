@@ -2660,9 +2660,9 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 }
 
 /* ---- instrumental / intro gap ----
-   The desktop covers dead air with osu's skip overlay. The browser cannot seek its scheduled
-   audio source without moving the gameplay clock, so a long gap gets a labelled countdown
-   instead; the cue-in bars still land on the line itself. */
+   A countdown through dead air, and (since backlog 230) the SKIP the desktop covers the same
+   stretch with: inside a qualifying gap's skip window the chip is a live button, otherwise it is
+   the plain labelled countdown it has always been. The cue-in bars still land on the line itself. */
 .tb-gap {
     /* Always laid out, only toggled visible: the stack is vertically centred, so a chip that
        came and went with display:none would nudge the lyrics every time a gap opened. */
@@ -2673,10 +2673,33 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     font-size: var(--text-sm);
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
+    /* It is a <button> so the skip is reachable by pointer as well as by Space; the resets keep
+       it looking exactly like the chip it was while it has nothing to do. */
+    appearance: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-full);
+    background: none;
+    font-family: inherit;
+    padding: 3px 10px;
 }
+.tb-gap:disabled { cursor: default; }
 .tb-gap-on { visibility: visible; }
+.tb-gap-ready { color: var(--text); border-color: var(--line); cursor: pointer; }
+.tb-gap-ready:hover { border-color: var(--violet); }
+.tb-gap-skip { font-weight: 700; color: var(--violet); }
+.tb-gap:disabled .tb-gap-skip { display: none; }
 .tb-gap-track { width: 120px; height: 3px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
 .tb-gap-fill { display: block; height: 100%; width: 0; background: var(--tb-sung); }
+
+/* ---- the /play difficulty step ----
+   One in-stage screen between picking a card and the start gate, reusing the set page's
+   .diff-pill component (here as buttons rather than links, since choosing does not navigate). */
+.tb-diffstep { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-6) var(--space-4); }
+.tb-diffstep-title { font-family: var(--font-display); font-size: var(--text-lg); color: var(--text); }
+.tb-diffstep-sub { font-size: var(--text-sm); color: var(--text-muted); }
+.tb-diffstep-list { justify-content: center; margin-bottom: 0; }
+.tb-diff { appearance: none; font-family: inherit; cursor: pointer; }
+.tb-diff .diff-pill__wpm { color: var(--text-muted); font-size: var(--text-xs); }
 
 .tb-progress { height: 4px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
 .tb-progress-fill { height: 100%; width: 0; background: var(--violet-deep); border-radius: inherit; }

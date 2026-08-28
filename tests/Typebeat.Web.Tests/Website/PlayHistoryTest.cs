@@ -242,6 +242,114 @@ public class PlayHistoryTest
         });
     }
 
+    // ---- the difficulty the token keys off, and the status it is stored under (backlog 230) ----
+
+    /// <summary>
+    /// The token, and therefore the score row, keys off the difficulty the player CHOSE, not the
+    /// set's primary one. "Twin Peaks Typing" exists for this: its lowest-id difficulty is the easy
+    /// one, so a set-addressed token would have boarded a run of "twin hard" on "twin easy" (and
+    /// gated it against the wrong drain/skippable pair, which is per beatmap).
+    /// </summary>
+    [Test]
+    public async Task BrowserToken_BoardsTheChosenDifficulty_NotTheSetsPrimaryOne()
+    {
+        var (client, _) = WebsiteFixture.CreateBrowser();
+        await WebsiteFixture.LoginAndVerifyAsync(client, player_username, player_password);
+
+        string csrf = await browserCsrfAsync(client);
+        long tokenId = await browserTokenAsync(client, csrf, PublicSiteSeed.MultiDiffSetId, PublicSiteSeed.MultiDiffHardId);
+        await backdateTokenAsync(tokenId, 300);
+        var submitted = await browserSubmitAsync(client, csrf, tokenId);
+
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        long storedBeatmapId = await conn.ExecuteScalarAsync<long>(
+            "SELECT s.beatmap_id FROM scores s JOIN score_tokens t ON t.score_id = s.id WHERE t.id = @tokenId",
+            new { tokenId });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(storedBeatmapId, Is.EqualTo(PublicSiteSeed.MultiDiffHardId));
+            Assert.That(storedBeatmapId, Is.Not.EqualTo(PublicSiteSeed.MultiDiffEasyId), "the primary (lowest-id) difficulty");
+            // The ranked control for the unranked case below: same play, same path, a ranked set.
+            Assert.That((bool)submitted["ranked"]!, Is.True);
+        });
+    }
+
+    /// <summary>
+    /// (b)'s server half, asserted rather than assumed: a browser play of an UNRANKED (published,
+    /// never rankable) set is recorded and stored <c>ranked = false</c>. Paired with the ranked
+    /// control above, which is the same submission over the same wall-clock with only the set's
+    /// status different, so this cannot pass for the trivial reason that a fast play never ranks.
+    /// </summary>
+    [Test]
+    public async Task BrowserSubmission_OnAnUnrankedSet_IsRecordedButStoredUnranked()
+    {
+        var (client, _) = WebsiteFixture.CreateBrowser();
+        await WebsiteFixture.LoginAndVerifyAsync(client, player_username, player_password);
+
+        var before = await snapshotAsync(playerId);
+
+        string csrf = await browserCsrfAsync(client);
+        long tokenId = await browserTokenAsync(client, csrf, PublicSiteSeed.UnrankedSetId, beatmapId: 0);
+        await backdateTokenAsync(tokenId, 300);
+        var submitted = await browserSubmitAsync(client, csrf, tokenId);
+
+        var after = await snapshotAsync(playerId);
+
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        var stored = await conn.QuerySingleAsync<(bool Ranked, bool Passed, double Pp)>(
+            """
+            SELECT s.ranked, s.passed, s.pp::double precision
+            FROM scores s JOIN score_tokens t ON t.score_id = s.id
+            WHERE t.id = @tokenId
+            """,
+            new { tokenId });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(stored.Ranked, Is.False, "an unranked set's play has no leaderboard to reach");
+            Assert.That(stored.Passed, Is.True, "it is still a real, recorded play");
+            Assert.That(stored.Pp, Is.Zero, "and it is worth no pp");
+            Assert.That((bool)submitted["ranked"]!, Is.False, "which is what the player is told");
+            Assert.That(after.PlayCount, Is.EqualTo(before.PlayCount + 1), "it still counts as a play");
+            Assert.That(after.ThisMonth, Is.EqualTo(before.ThisMonth + 1));
+        });
+    }
+
+    /// <summary>
+    /// THE NEGATIVE PIN on the token's tamper bound. Once the client names a beatmap, the server
+    /// must refuse one that does not belong to the set it is claiming to play, and one that is not a
+    /// live .osu difficulty at all. Drop the <c>b.set_id = @setId</c> clause from CreateTokenAsync
+    /// and the first of these mints a token on another set's map.
+    /// </summary>
+    [Test]
+    public async Task BrowserToken_RefusesABeatmapFromAnotherSet_OrADroppedDifficulty()
+    {
+        var (client, _) = WebsiteFixture.CreateBrowser();
+        await WebsiteFixture.LoginAndVerifyAsync(client, player_username, player_password);
+
+        string csrf = await browserCsrfAsync(client);
+
+        using var foreign = await browserTokenResponseAsync(
+            client, csrf, PublicSiteSeed.MultiDiffSetId, PublicSiteSeed.LeaderboardBeatmapId);
+        using var dropped = await browserTokenResponseAsync(
+            client, csrf, PublicSiteSeed.MultiDiffSetId, PublicSiteSeed.MultiDiffDroppedId);
+        using var unknown = await browserTokenResponseAsync(
+            client, csrf, PublicSiteSeed.MultiDiffSetId, 987_654_321);
+        using var legitimate = await browserTokenResponseAsync(
+            client, csrf, PublicSiteSeed.MultiDiffSetId, PublicSiteSeed.MultiDiffEasyId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(foreign.StatusCode, Is.EqualTo(HttpStatusCode.UnprocessableEntity), "another set's difficulty");
+            Assert.That(dropped.StatusCode, Is.EqualTo(HttpStatusCode.UnprocessableEntity), "a dropped (filename NULL) difficulty");
+            Assert.That(unknown.StatusCode, Is.EqualTo(HttpStatusCode.UnprocessableEntity), "not a difficulty at all");
+            Assert.That(legitimate.StatusCode, Is.EqualTo(HttpStatusCode.OK), "the control: a live difficulty of that set");
+        });
+    }
+
     // ---- helpers ----
 
     private static DateTime firstOfThisMonth()
@@ -354,40 +462,71 @@ public class PlayHistoryTest
     /// <summary>The in-browser player's session + antiforgery submission (Endpoints/PlayEndpoints.cs).</summary>
     private static async Task submitViaBrowserAsync(HttpClient client)
     {
+        string csrf = await browserCsrfAsync(client);
+        long tokenId = await browserTokenAsync(client, csrf, PublicSiteSeed.CoveredSetId, beatmapId: 0);
+        await browserSubmitAsync(client, csrf, tokenId);
+    }
+
+    private static async Task<string> browserCsrfAsync(HttpClient client)
+    {
         string page = await (await client.GetAsync("/play")).Content.ReadAsStringAsync();
 
         var csrfMatch = Regex.Match(page, "csrf:\\s*\"([^\"]+)\"");
         Assert.That(csrfMatch.Success, Is.True, "the /play page must publish an antiforgery token");
-        string csrf = csrfMatch.Groups[1].Value;
+        return csrfMatch.Groups[1].Value;
+    }
 
-        long tokenId;
+    /// <summary>POST /play/token with the body the player sends: both ids, so the server can bind
+    /// the named difficulty to the set. Returns the response, un-asserted, so negative cases can
+    /// read the status too.</summary>
+    private static async Task<HttpResponseMessage> browserTokenResponseAsync(HttpClient client, string csrf, long setId, long beatmapId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/play/token");
+        request.Headers.Add("X-CSRF-TOKEN", csrf);
+        request.Content = new StringContent(
+            JsonConvert.SerializeObject(new { setId, beatmapId }), Encoding.UTF8, "application/json");
 
-        using (var request = new HttpRequestMessage(HttpMethod.Post, "/play/token"))
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<long> browserTokenAsync(HttpClient client, string csrf, long setId, long beatmapId)
+    {
+        using var response = await browserTokenResponseAsync(client, csrf, setId, beatmapId);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "play token");
+        return (long)JObject.Parse(await response.Content.ReadAsStringAsync())["id"]!;
+    }
+
+    private static async Task<JObject> browserSubmitAsync(HttpClient client, string csrf, long tokenId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/play/submit");
+        request.Headers.Add("X-CSRF-TOKEN", csrf);
+        request.Content = new StringContent(JsonConvert.SerializeObject(new
         {
-            request.Headers.Add("X-CSRF-TOKEN", csrf);
-            request.Content = new StringContent(
-                JsonConvert.SerializeObject(new { setId = PublicSiteSeed.CoveredSetId }), Encoding.UTF8, "application/json");
+            token = tokenId,
+            passed = true,
+            totalScore = 100_000,
+            maxCombo = 10,
+            statistics = new Dictionary<string, int> { ["great"] = 10 },
+            maximumStatistics = new Dictionary<string, int> { ["great"] = 10 },
+        }), Encoding.UTF8, "application/json");
 
-            using var response = await client.SendAsync(request);
-            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "play token");
-            tokenId = (long)JObject.Parse(await response.Content.ReadAsStringAsync())["id"]!;
-        }
+        using var response = await client.SendAsync(request);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "play submit");
+        return JObject.Parse(await response.Content.ReadAsStringAsync());
+    }
 
-        using (var request = new HttpRequestMessage(HttpMethod.Post, "/play/submit"))
-        {
-            request.Headers.Add("X-CSRF-TOKEN", csrf);
-            request.Content = new StringContent(JsonConvert.SerializeObject(new
-            {
-                token = tokenId,
-                passed = true,
-                totalScore = 100_000,
-                maxCombo = 10,
-                statistics = new Dictionary<string, int> { ["great"] = 10 },
-                maximumStatistics = new Dictionary<string, int> { ["great"] = 10 },
-            }), Encoding.UTF8, "application/json");
+    /// <summary>
+    /// Backdate a token's wall-clock anchor so the play-time gate sees a play of that length, the
+    /// same manoeuvre SkipGateTest makes for the bearer path. Without it every browser submission
+    /// here is unranked for the trivial reason that it took no time, which would make the
+    /// status-driven pin below vacuous.
+    /// </summary>
+    private static async Task backdateTokenAsync(long tokenId, double seconds)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
 
-            using var response = await client.SendAsync(request);
-            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "play submit");
-        }
+        await conn.ExecuteAsync(
+            "UPDATE score_tokens SET created_at = now() - make_interval(secs => @seconds) WHERE id = @tokenId",
+            new { tokenId, seconds });
     }
 }

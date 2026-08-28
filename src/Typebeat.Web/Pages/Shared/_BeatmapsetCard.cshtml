@@ -75,9 +75,13 @@
         }
         @if (playMode)
         {
-            @* Play mode (the /play picker): launch the in-browser player instead of downloading. *@
+            @* Play mode (the /play picker): launch the in-browser player instead of downloading.
+               data-status is what makes the post-submit copy honest on a non-ranked map: the
+               player has to be able to say "this map is not ranked" rather than guessing. The
+               visitor sees the same fact up in .bset-card__meta, where the status pill already
+               renders on every card, play mode included. *@
             <button type="button" class="rail-btn tb-play" data-set-id="@Model.Id"
-                    data-title="@displayTitle" data-artist="@displayArtist"
+                    data-title="@displayTitle" data-artist="@displayArtist" data-status="@Model.Status"
                     title="Play in browser" aria-label="Play in browser">&#9654;</button>
         }
         else if (Model.HasPackage)
@@ -92,8 +96,8 @@
     </div>
     @if (showWebplay)
     {
-        @* Ranked + playable only: one tall rail spanning the favourite and download rows,
-           deep-linking the browser player straight onto this set. Non-playable cards render
+        @* Published + playable (CanWebplay): one tall rail spanning the favourite and download
+           rows, deep-linking the browser player straight onto this set. Non-playable cards render
            nothing here, so they keep exactly today's two-column geometry. *@
         <a class="bset-card__play" href="/play?set=@Model.Id"
            title="Play in browser" aria-label="Play @displayTitle in browser">

@@ -22,7 +22,7 @@
 <div id="tb-picker" class="play-picker">
     @if (Model.Maps.Count == 0)
     {
-        <div class="play-empty">No ranked maps yet, check back soon.</div>
+        <div class="play-empty">No playable maps yet, check back soon.</div>
     }
     else
     {
@@ -45,7 +45,9 @@
         signedIn: @(user is not null ? "true" : "false"),
         username: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(user?.Username ?? "")),
         csrf: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CsrfToken)),
-        // ?set={id} deep link (the beatmapset card's play rail): load this map immediately.
+        // ?set={id}[&diff={beatmapId}] deep link (the beatmapset card's play rail): load this map
+        // immediately. diffId 0 means "not named, or named something this set does not have", and
+        // the player then opens on its difficulty step exactly as a card click does.
         autoPlay: @Html.Raw(auto is null
             ? "null"
             : System.Text.Json.JsonSerializer.Serialize(new
@@ -53,6 +55,8 @@
                   setId = auto.Id,
                   title = auto.DisplayTitle(preferOriginal),
                   artist = auto.DisplayArtist(preferOriginal),
+                  status = auto.Status,
+                  diffId = Model.AutoPlayDiffId,
               }))
     };
 </script>

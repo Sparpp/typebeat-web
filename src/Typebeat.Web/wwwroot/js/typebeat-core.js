@@ -2284,12 +2284,11 @@
         // asked of them.
         //
         // On the desktop this is what lets Space reach the mid-song skip overlay from a parked
-        // caret (TypeBeatPlayfield's key handler). The BROWSER HAS NO SKIP OVERLAY at all: it
-        // cannot seek its scheduled audio source without moving the gameplay clock, so a dead
-        // stretch gets a labelled countdown chip instead (typebeat-player.js updateGap), and there
-        // is no fall-through for Space to reach. It is ported and exported anyway because that chip
-        // is exactly what the predicate now has to gate: with the caret parked on the next line,
-        // "a line is active" no longer means "the song is asking for characters".
+        // caret (TypeBeatPlayfield's key handler). Since backlog 230 the browser has a real skip
+        // too (typebeat-player.js: a fresh BufferSource started at an offset seeks exactly), and
+        // this predicate gates the same two things there: the countdown chip that labels a dead
+        // stretch, and the chip's own skip button. With the caret parked on the next line, "a line
+        // is active" no longer means "the song is asking for characters".
         get songIsOnTheCaretsLine() {
             return this.activeLineIndex >= 0 && this.activeLineIndex === this.nextSealIndex && this.songWindowOpen;
         }

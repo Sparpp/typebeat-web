@@ -46,13 +46,21 @@ public sealed record BeatmapsetCardModel(
     public string PillClass => BeatmapsetDisplay.PillClass(Status);
 
     /// <summary>
-    /// Can this set be played in the browser right now? Ranked only (browser scores land on the
-    /// live leaderboards, so an unranked map has nothing to play for), and only when the two
-    /// things /play/map/{id}/* need are present: an assembled package and a live .osu difficulty.
-    /// These are exactly the conditions the /play picker filters on, so the card's play rail can
-    /// never link a map the player would fail to load.
+    /// Can this set be played in the browser right now? Every PUBLISHED set can
+    /// (<see cref="Endpoints.BeatmapsetEndpoints.IsPublished"/>: pending, unranked or ranked),
+    /// provided the two things /play/map/{id}/* need are present: an assembled package and a live
+    /// .osu difficulty. These are exactly the conditions the /play picker filters on, so the card's
+    /// play rail can never link a map the player would fail to load.
+    ///
+    /// <para>Ranked-ONLY until backlog 230, on the argument that an unranked map "has nothing to
+    /// play for". It has: /play/submit already re-reads the set's status at submit time and stores
+    /// <c>ranked = false</c> for anything not ranked, the play still counts toward play history and
+    /// the profile's play count, and pending/unranked sets are world-readable everywhere else on
+    /// the site (their package, cover and preview all serve anonymously). This is also what makes
+    /// "play every song" scale past the picker's own LIMIT 60: the rail is on every listing card,
+    /// so /beatmapsets with its search and paging becomes the way to reach the long tail.</para>
     /// </summary>
-    public bool CanWebplay => Status == "ranked" && HasPackage && HasPlayableDiff;
+    public bool CanWebplay => Endpoints.BeatmapsetEndpoints.IsPublished(Status) && HasPackage && HasPlayableDiff;
 
     /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
     public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);

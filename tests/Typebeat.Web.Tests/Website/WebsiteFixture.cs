@@ -47,6 +47,14 @@ public class WebsiteFixture
     public static HttpClient Client { get; private set; } = null!;
 
     /// <summary>
+    /// The running host's own service provider. Seeds use it to reach the app's singletons rather
+    /// than reconstructing them: <see cref="Typebeat.Web.Storage.IFileStore"/> in particular, so a
+    /// fixture can put real blobs exactly where the media routes go looking for them (its root is
+    /// configuration-derived, so a second instance built in the test would not reliably agree).
+    /// </summary>
+    public static IServiceProvider Services => factory!.Services;
+
+    /// <summary>
     /// The capturing email sender the host uses in place of the real one; tests read the emitted
     /// verification code from it.
     /// </summary>

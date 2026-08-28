@@ -1,6 +1,10 @@
+using System.Security.Cryptography;
+using System.Text;
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Typebeat.Web.Packages;
+using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Tests.Website;
 
@@ -65,6 +69,38 @@ public static class PublicSiteSeed
     /// backfills. Its pages must hide the Download actions ("available in-game only").
     /// </summary>
     public static long PackagelessId { get; private set; }
+
+    /// <summary>"Off The Record", the one seeded 'unranked' set (published, never rankable). The
+    /// third published status, so the webplay rail and the /play picker can be shown to admit all
+    /// three rather than just the two that happened to be seeded.</summary>
+    public static long UnrankedSetId { get; private set; }
+
+    /// <summary>
+    /// A second difficulty of <see cref="UnrankedSetId"/> whose archive filename deliberately
+    /// COLLIDES with "Twin Peaks Typing"'s hard difficulty ("hard.osu"). It is what makes the media
+    /// routes' set-membership bound testable: without it, naming this beatmap under Twin Peaks would
+    /// resolve a filename that really is in Twin Peaks' manifest and serve that difficulty's bytes.
+    /// </summary>
+    public static long UnrankedCollidingDiffId { get; private set; }
+
+    /// <summary>"Twin Peaks Typing": the only seeded set with more than one difficulty, and the
+    /// only one whose .osu and audio are really stored, so the /play media routes can be driven end
+    /// to end per difficulty. Its two diffs point at DIFFERENT audio files on purpose.</summary>
+    public static long MultiDiffSetId { get; private set; }
+
+    /// <summary>"twin easy", the lower-rated difficulty of <see cref="MultiDiffSetId"/>
+    /// (easy.osu, audio easy.mp3). Lowest id, so it is also the set's primary.</summary>
+    public static long MultiDiffEasyId { get; private set; }
+
+    /// <summary>"twin hard", the higher-rated difficulty (hard.osu, audio hard.mp3).</summary>
+    public static long MultiDiffHardId { get; private set; }
+
+    /// <summary>A dropped difficulty of <see cref="MultiDiffSetId"/>: a beatmaps row kept for the
+    /// scores FK with filename NULL, which nothing on the /play path may resolve.</summary>
+    public static long MultiDiffDroppedId { get; private set; }
+
+    public const string MultiDiffEasyAudio = "easy.mp3";
+    public const string MultiDiffHardAudio = "hard.mp3";
 
     // Two fixed-fingerprint sets for the typed search-operator tests. Both tagged "operatorset"
     // so a test can scope free text to just this pair, then narrow with an operator. Fixed past
@@ -208,6 +244,37 @@ public static class PublicSiteSeed
             await InsertBeatmapAsync(conn, PackagelessId,
                 totalLengthS: 100, stars: 2.5, wpm: 60, wordCount: 90, charCount: 420);
 
+            // The third published status. Everything else about it matches "Waiting Room": a live
+            // difficulty and (via the bulk insert below) a package, so only the status differs.
+            UnrankedSetId = await InsertSetAsync(conn,
+                title: "Off The Record", artist: "The Unrankable",
+                submittedOffset: TimeSpan.FromMinutes(-18), status: "unranked");
+
+            await InsertBeatmapAsync(conn, UnrankedSetId,
+                totalLengthS: 70, stars: 3.1, wpm: 90, wordCount: 110, charCount: 520);
+
+            UnrankedCollidingDiffId = await InsertBeatmapAsync(conn, UnrankedSetId,
+                totalLengthS: 70, stars: 5.2, wpm: 140, wordCount: 160, charCount: 780,
+                versionName: "off the record hard", filename: "hard.osu");
+
+            // Two live difficulties plus one dropped row, with REAL stored files (below), so the
+            // per-difficulty media routes have something to serve and something to refuse.
+            MultiDiffSetId = await InsertSetAsync(conn,
+                title: "Twin Peaks Typing", artist: "The Two Ways",
+                submittedOffset: TimeSpan.FromMinutes(-15));
+
+            MultiDiffEasyId = await InsertBeatmapAsync(conn, MultiDiffSetId,
+                totalLengthS: 100, stars: 2.0, wpm: 60, wordCount: 90, charCount: 420,
+                versionName: "twin easy", filename: "easy.osu");
+
+            MultiDiffHardId = await InsertBeatmapAsync(conn, MultiDiffSetId,
+                totalLengthS: 100, stars: 6.0, wpm: 180, wordCount: 260, charCount: 1300,
+                versionName: "twin hard", filename: "hard.osu");
+
+            MultiDiffDroppedId = await InsertBeatmapAsync(conn, MultiDiffSetId,
+                totalLengthS: 100, stars: 4.0, wpm: 120, wordCount: 150, charCount: 700,
+                versionName: "twin dropped", filename: null);
+
             OpAlphaId = await InsertSetAtAsync(conn,
                 title: "Operator Alpha Synthwave", artist: "Synth Operator",
                 tags: "operatorset", submittedAt: new DateTime(2024, 3, 15, 0, 0, 0, DateTimeKind.Utc));
@@ -235,6 +302,8 @@ public static class PublicSiteSeed
                 WHERE owner_id = @mapperId AND id <> @packagelessId
                 """,
                 new { mapperId = MapperId, packagelessId = PackagelessId });
+
+            await StoreTwinPeaksFilesAsync(conn);
 
             // Same expression the upload write path uses (and migration 002's backfill).
             await conn.ExecuteAsync(
@@ -299,7 +368,8 @@ public static class PublicSiteSeed
     /// </summary>
     private static async Task<long> InsertBeatmapAsync(NpgsqlConnection conn, long setId,
         double totalLengthS, double stars, double wpm, int wordCount, int charCount,
-        string lyrics = "", double? peakWpm = null, double? peakCpm = null, float[]? wpmCurve = null)
+        string lyrics = "", double? peakWpm = null, double? peakCpm = null, float[]? wpmCurve = null,
+        string versionName = "type!beat", string? filename = "map.osu")
         => await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmaps
@@ -307,17 +377,66 @@ public static class PublicSiteSeed
                  difficulty_rating, filename, word_count, char_count, wpm, lyrics,
                  peak_wpm, peak_cpm, wpm_curve)
             VALUES
-                (@setId, 'type!beat', @checksum, @totalLengthS, @drainLengthS,
-                 @stars, 'map.osu', @wordCount, @charCount, @wpm, @lyrics,
+                (@setId, @versionName, @checksum, @totalLengthS, @drainLengthS,
+                 @stars, @filename, @wordCount, @charCount, @wpm, @lyrics,
                  @peakWpm, @peakCpm, @wpmCurve)
             RETURNING id
             """,
             new
             {
-                setId, checksum = Guid.NewGuid().ToString("N"), totalLengthS,
-                drainLengthS = totalLengthS * 0.9, stars, wordCount, charCount, wpm, lyrics,
+                setId, versionName, checksum = Guid.NewGuid().ToString("N"), totalLengthS,
+                drainLengthS = totalLengthS * 0.9, stars, filename, wordCount, charCount, wpm, lyrics,
                 peakWpm, peakCpm, wpmCurve,
             });
+
+    /// <summary>
+    /// Puts REAL bytes behind "Twin Peaks Typing": one .osu per live difficulty, each naming its
+    /// own AudioFilename, plus the two audio blobs those names resolve to. Everything else in this
+    /// seed stops at the beatmaps row, which is enough for pages but not for the /play media routes,
+    /// which walk beatmaps.filename -> version_files -> the blob store the way a real upload wrote it.
+    /// </summary>
+    private static async Task StoreTwinPeaksFilesAsync(NpgsqlConnection conn)
+    {
+        long versionId = await conn.ExecuteScalarAsync<long>(
+            "SELECT id FROM set_versions WHERE set_id = @setId ORDER BY version_no DESC LIMIT 1",
+            new { setId = MultiDiffSetId });
+
+        await StoreFileAsync(conn, versionId, "easy.osu",
+            Encoding.UTF8.GetBytes(SyntheticPackage.OsuText(
+                title: "Twin Peaks Typing", artist: "The Two Ways", version: "twin easy",
+                audioFilename: MultiDiffEasyAudio, background: null, beatmapId: 2001)));
+
+        await StoreFileAsync(conn, versionId, "hard.osu",
+            Encoding.UTF8.GetBytes(SyntheticPackage.OsuText(
+                title: "Twin Peaks Typing", artist: "The Two Ways", version: "twin hard",
+                audioFilename: MultiDiffHardAudio, background: null, beatmapId: 2002)));
+
+        // Not decodable audio, and deliberately so: these routes stream bytes, they never parse
+        // them, and the two blobs only have to be DIFFERENT for a test to tell which one it got.
+        await StoreFileAsync(conn, versionId, MultiDiffEasyAudio, Encoding.UTF8.GetBytes("easy-audio-bytes"));
+        await StoreFileAsync(conn, versionId, MultiDiffHardAudio, Encoding.UTF8.GetBytes("hard-audio-bytes"));
+    }
+
+    private static async Task StoreFileAsync(NpgsqlConnection conn, long versionId, string filename, byte[] content)
+    {
+        byte[] sha = SHA256.HashData(content);
+
+        await conn.ExecuteAsync(
+            "INSERT INTO files (sha256, size) VALUES (@sha, @size) ON CONFLICT (sha256) DO NOTHING",
+            new { sha, size = (long)content.Length });
+
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO version_files (version_id, sha256, filename)
+            VALUES (@versionId, @sha, @filename)
+            ON CONFLICT (version_id, filename) DO NOTHING
+            """,
+            new { versionId, sha, filename });
+
+        var store = WebsiteFixture.Services.GetRequiredService<IFileStore>();
+        using var stream = new MemoryStream(content);
+        await store.WriteBlobIfAbsentAsync(sha, stream);
+    }
 
     private static async Task InsertScoreAsync(NpgsqlConnection conn, long userId, long beatmapId,
         long totalScore, double accuracy, int maxCombo, string rank, bool ranked = true)
