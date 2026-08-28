@@ -19,7 +19,7 @@ Per play:
 pp = C · SR_eff^2.00
        · max(0, 1 − miss^1.2/notes)^10                   # cleanliness
        · max(0, 1 − typos^1.2/(notes+typos))^4           # typos
-       · acc^1.80                                        # accuracy (timing quality)
+       · acc^1.80 · 1/(1 + e^(−(acc − 0.80)/0.025))      # accuracy (timing quality)
        · (ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50   # combo
        · modMult                                         # NOT for DT/HT; rate lives in SR_eff only
        · rateMult                                        # 1.0 except base-rate HT (see the Half Time amendment)
@@ -36,8 +36,9 @@ Factor by factor, in descending priority:
   `miss + good`, i.e. a cell nobody finished PLUS one finished with the wrong character and never
   corrected; before it, `miss` alone. The raw COUNT carries a power, not the ratio, since the
   backlog-97 amendment, and that power has been the declared constant `count_power` since the
-  backlog-101 one. It stands at 1.6. That makes this a steep curve and a CLAMPED one: the base
-  `1 - miss^1.6/notes` reaches zero at `miss = notes^(1/1.6)`, i.e. 49 misses on a 500-note map, and
+  backlog-101 one. It stands at 1.2 (v8 took it to 1.6 and the backlog-137 amendment, v13, put it
+  back). That makes this a steep curve and a CLAMPED one: the base
+  `1 - miss^1.2/notes` reaches zero at `miss = notes^(1/1.2)`, i.e. 178 misses on a 500-note map, and
   `max(0, ...)` holds it there rather than letting it go negative. Past that point a play earns
   exactly nothing from any factor, and well before it the term is already negligible. A give-up run
   (e.g. 900+ misses) collapses to exactly 0.
@@ -48,23 +49,32 @@ Factor by factor, in descending priority:
   be priced ONCE. Still the cheaper of the two failures
   (4 against 10), because a stumble you recover from is not the same failure as never typing the
   cell at all, and because the count sits in its denominator too, which pushes its cliff out to the
-  positive root of `m^1.6 - m - notes = 0` (52 typos at 500 notes) rather than to
-  `notes^(1/1.6)`. The two terms therefore price DISJOINT populations of events, which they did not
+  positive root of `m^1.2 - m - notes = 0` (249 typos at 500 notes) rather than to
+  `notes^(1/1.2)` (178). The two terms therefore price DISJOINT populations of events, which they did not
   before 213: an uncorrected typo used to be charged to this term through its keypress while
   completion already charged the cell as a miss.
 * **`count_power`** is where a rebalance of the two penalties is made, rather than the exponents 10
   and 4: it alone decides at what count each term reaches its cliff, and how that cliff scales with
   map size. The backlog-101 amendment records the two arguments that were used to set it, at 1.2;
-  v8 retuned it to 1.6, so both cliffs now sit lower than the counts stated there.
+  v8 retuned it to 1.6 without an amendment of its own and v13 restored the 1.2, so the counts that
+  amendment states are the live ones again.
 * **Length**: NOT A FACTOR HERE, since the backlog-152 amendment. pp carried the standard osu log
   bonus `max(0.1, 1 + 0.50·log10(notes/100))` through v15; length is now priced by the STAR RATING
   instead, as an additive `0.12·max(0, log10(cells/100))` bonus inside `LyricDifficulty`, so pp sees
   a long map only through `SR_eff` (i.e. as `((SR + bonus)/SR)^2.00`, a few percent where the old
   term paid up to 1.70x). Two length terms would double count, so pp keeps none. `notes` itself is
   still load-bearing: both penalty terms, the combo ratio and FL all read it.
-* **acc^1.80**: deliberately **gentle**, unlike osu. In type!beat real accuracies live at
-  55–93%, not 97–100%, so an osu-style steep curve (acc^6+) would crush everything and make
-  accuracy dominate. Keep the exponent around 1–2.
+* **acc^1.80 · 1/(1 + e^(−(acc − 0.80)/0.025))**: an exponent that is deliberately **gentle**,
+  unlike osu, multiplied by a **soft knee** since the backlog-227 amendment. In type!beat real
+  accuracies live at 55–93%, not 97–100%, so an osu-style steep curve (acc^6+) would crush
+  everything and make accuracy dominate: keep the exponent around 1–2 and price the BOTTOM of the
+  range with the knee instead, which is a separate dial and does not touch the top. `acc_knee`
+  (0.80) is where that cliff falls and `acc_knee_width` (0.025) how sharply, each retunable without
+  the other or the exponent moving. The knee costs 0.25% at 95% accuracy, 1.8% at 90% and 11% at
+  85%, HALVES an 80% play exactly, and multiplies 75% by 0.12 and 70% by 0.02. It is exactly 0.5 at
+  `acc = acc_knee` whatever the width, strictly increasing so it can never reorder two plays, and
+  finite over the whole of `[0, 1]` with no clamp. A width of 0 or less means there is no knee at
+  all (the factor is exactly 1.0), which is what every mirror before v19 computes.
 * **(ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50**: near enough **linear** in the combo ratio
   down to about 0.7. The exponent is steep, but the log base is concave and very nearly cancels
   it over the range real plays live in (backlog 131), so a broken combo costs roughly its face
@@ -588,11 +598,12 @@ fractional exponent on a negative base is non-real.
 
 ## Amendment (2026-08-08): the count power drops from 2 to 1.2 (backlog 101)
 
-> **Numbers superseded by v8**, which retuned `count_power` from the 1.2 this amendment settled on
-> to the 1.6 in force. The shape is unchanged and the two arguments below still apply, but every
-> figure in this section is a figure at 1.2: at 1.6 the cleanliness cliff is 49 misses on a
-> 500-note map rather than 178, and the mistyping cliff 52 rather than 249. v8 carries no amendment
-> of its own; see the note in the backlog-112 amendment below.
+> **Numbers superseded by v8 and RESTORED by v13**, which is why they read as live again. v8
+> retuned `count_power` from the 1.2 this amendment settled on to 1.6, where the cleanliness cliff
+> is 49 misses on a 500-note map rather than 178 and the mistyping cliff 52 rather than 249; the
+> backlog-137 amendment (v13) put it back to 1.2 with the argument below quoted as its reason. The
+> shape was unchanged throughout, so every figure in this section is a figure at the value in force.
+> v8 carries no amendment of its own; see the note in the backlog-112 amendment below.
 
 Backlog 97 gave both penalties the shape they still have, max(0, 1 - count^p/denominator) raised
 to its own exponent, with p written out longhand as a square. That shape was right and the
@@ -1020,6 +1031,10 @@ on a negative base is non-real.
 
 ## Amendment (2026-08-27): an uncorrected typo is a MISS (backlog 213)
 
+> Not superseded: v19 leaves both count derivations below exactly as they are. What it adds is a
+> SECOND factor on the ACCURACY term (a soft knee at 80%), so every pp figure in this section is a
+> figure priced without it.
+
 > No constant moves and neither does the SHAPE. What moves is the DERIVATION of two of the three
 > counts the formula takes from a play's `statistics`, so the 2026-08-14 amendment above is not
 > superseded and every number it states is still in force.
@@ -1098,3 +1113,74 @@ that already exist and the fold changes no stored value but `pp` and `pp_version
 `accuracy`, `total_score`, `completion` and `rank` do NOT move: the accuracy re-weight applies to
 what a client computes and to what the contract recomputes at SUBMIT time, and nothing recomputes a
 settled row's accuracy.
+
+## Amendment (2026-08-28): the accuracy term gains a SOFT KNEE at 80% (backlog 227)
+
+Accuracies here live at 55 to 93 (see the definitions above) and solid plays at 85 to 98, so a
+play at 80% and below has been a viable way to earn pp while the difference between 90% and 95%
+has been worth almost nothing. Raising `accuracy_exponent` cannot fix the first without breaking
+the second, because an exponent is a single dial over the WHOLE range: steep enough to price 80%
+out, it taxes the plays it is not aimed at too, and a 95% play that keeps 0.912 of the timing
+term at 1.80 keeps only 0.774 at 5. So accuracy gains a SECOND factor instead, and the exponent
+stays exactly where it was, still doing the ordering work above the knee.
+
+The new factor is a SOFT KNEE, a logistic in the accuracy: `1/(1 + exp(-(acc -
+acc_knee)/acc_knee_width))`, with `acc_knee = 0.80` saying WHERE the cliff falls and
+`acc_knee_width = 0.025` saying HOW SHARPLY. Two dials, each retunable without touching the
+other or the exponent, which is the whole reason this is a factor rather than a bend of the one
+that was already there.
+
+| acc | knee | what the knee costs the play |
+|------|--------|--------|
+| 0.95 | `0.997527` | 0.25% |
+| 0.90 | `0.982014` | 1.8% |
+| 0.85 | `0.880797` | 11% |
+| 0.80 | `0.500000` | exactly half |
+| 0.75 | `0.119203` | 88% |
+| 0.70 | `0.017986` | 98% |
+
+Three properties hold whatever the two constants are set to, which is what makes them safe to
+retune later. THE KNEE IS EXACTLY 0.5 AT `acc == acc_knee`, since the argument to the
+exponential is then exactly 0 and `1/(1 + exp(0))` is `1/2`: a play sitting on the knee is
+priced identically across any retune of the width, exactly as a full combo is across any retune
+of `combo_log_shape`. IT IS STRICTLY INCREASING in the accuracy, and so is `acc^1.80`, so their
+product is too: the knee can RESPREAD the accuracy axis but never permute it, and no pair of
+plays changes order because of it. And IT IS FINITE AND SMOOTH over the whole of `[0, 1]` with
+no clamp needed, since accuracy is clamped into that interval before the term sees it: at a
+width of 0.025 the argument to `exp` runs between -8 and +32, nowhere near the ~709 at which it
+overflows, and the factor between 1.3e-14 and 0.9997.
+
+A WIDTH OF ZERO OR LESS MEANS THERE IS NO KNEE and the factor is exactly 1.0, i.e. the v18
+timing term. That is a real branch in both mirrors rather than a limit of the logistic, which is
+where it differs from `combo_log_shape`'s 0: `log(1 + k*r)/log(1 + k)` tends to the plain ratio
+as k tends to 0, but a width tending to 0 gives a STEP function, and `0/0` at the knee itself is
+NaN. The branch is what makes "no knee" the same arithmetic in the mirrors, in a mirror one
+generation behind, and in `tools/pp.py`, which reads an absent declaration as exactly that.
+
+Validated against the live pool before shipping, which is what the two starting points were
+chosen against: the deflation is TARGETED rather than global (it lands on the plays at and below
+the knee, where the intent is), the top of the boards does not move, and `C` is therefore NOT
+re-anchored with this change. Scope is pp alone: grades, ranks, the accuracy display and the
+ranked gate are all untouched, so a 78% play still ranks and still shows its grade, it simply
+prices at roughly a tenth of what it did.
+
+```
+BEFORE:  max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − typos^1.2/(notes + typos))^4
+         ·  acc^1.80
+
+AFTER:   max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − typos^1.2/(notes + typos))^4
+         ·  acc^1.80 · 1/(1 + e^(−(acc − 0.80)/0.025))
+```
+
+SR, the global scale, combo, the mod multipliers, the Half Time mirror multiplier, eligibility
+and the aggregation are all untouched. The typo count still sits on both sides of its own
+fraction, for the reason the backlog-89 amendment gives: keypresses are unbounded, and a
+fractional exponent on a negative base is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, typo=80` | `0.008341` | `0.008341` | +0% |
+| `notes=500, miss=10, typo=20` | `0.542001` | `0.542001` | +0% |
+
+**`VERSION` bumps to 19.** Every stored row the change values differently is repriced by
+`PpBackfill` at the next boot, reading only columns; no migration is needed.

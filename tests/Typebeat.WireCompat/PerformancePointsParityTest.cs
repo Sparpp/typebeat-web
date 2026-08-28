@@ -109,7 +109,11 @@ public class PerformancePointsParityTest
     {
         double[] stars = [0.5, 1.0, 2.75, 4.0, 6.3, 9.99];
         int[] noteCounts = [1, 5, 47, 100, 500, 2137];
-        double[] accuracies = [0.0, 0.42, 0.6931, 0.9, 1.0];
+        // 0.78 / 0.80 / 0.82 straddle the accuracy knee backlog 227 put at acc_knee: the term is a
+        // logistic there, so a mirror that has the knee and one that does not agree to within a
+        // percent at 0.9 and disagree by a factor of two at 0.80. This is the seam that catches a
+        // knee landed in only one of the two repos.
+        double[] accuracies = [0.0, 0.42, 0.6931, 0.78, 0.80, 0.82, 0.9, 1.0];
 
         int compared = 0;
 
