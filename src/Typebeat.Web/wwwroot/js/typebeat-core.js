@@ -1761,6 +1761,24 @@
             this.errorCount = 0;
             this.consecutiveWrongKeys = 0;
             this.activeTimeMs = 0;
+            // THE LAZY CLOCK ARM (backlog 222), mirroring TypingEngine.wpmClockArmedLine /
+            // wpmClockArmedAt: the line the WPM clock has been armed on AHEAD OF ITS CUE, and the
+            // instant it was armed at, which is the time of the first press the player put on that
+            // line while the song had not reached it yet. -1 / 0 when nothing is armed, which is
+            // every ordinary in-sync frame. See clockRunsFrom for what it buys.
+            //
+            // Read only through clockRunsFrom, which validates the arm against the CURRENT
+            // activeLineIndex rather than clearing it at each of the sites that can move the caret.
+            // An arm left behind on a line the caret has left is simply not this line's arm, and a
+            // line is only ever entered once (the caret advances, or goes to -1 and comes back on a
+            // LATER line, never on an earlier one), so a stale arm can never be mistaken for a live
+            // one.
+            //
+            // A pure function of (keypress times, beatmap): no wall clock and no frame cadence, so
+            // it cannot make the browser's account depend on the display rate the desktop's replay
+            // of the same run would not have had.
+            this.wpmClockArmedLine = -1;
+            this.wpmClockArmedAt = 0;
             this.lastUpdateTime = null;
             this.finished = false;
             this.failed = false;
@@ -2119,23 +2137,73 @@
             this.autoSkipForward();
         }
 
-        // TypingEngine.wpmClockRuns. Whether the WPM/active-time clock runs for the frame ending at
-        // previousTime. Always, with a pinned caret. Under the flexible one the caret can be parked
-        // at the head of a line the song has not reached yet (rush freedom rolls it forward the
-        // instant a line is finished), and a clock that ran through a 20-second instrumental would
-        // read the wait as typing time; so the clock runs only from the point the playhead reaches
-        // that line's activationTime, which is exactly when the line would have gone active while
-        // pinned.
+        // TypingEngine.clockRunsFrom. The instant from which the WPM/active-time clock runs across
+        // the frame that STARTED at previousTime, or null when it does not run over that frame at
+        // all. Normally that instant is previousTime itself, i.e. the whole frame counts; the one
+        // case that returns something later is the lazy arm below.
         //
-        // The OTHER parked state, a caret the rush bound has left sitting past the last cell of its
-        // own line (backlog 218, see boundedRush), needs nothing here: the caller already accrues
-        // only while the active line is INCOMPLETE, and a parked-finished caret is complete by
-        // definition. Both parked states are the same fact about the clock, that the player CANNOT
-        // type, and they must both stop it or a long instrumental would read as typing time and
-        // halve the readout.
-        wpmClockRuns(previousTime) {
-            return !this.fletcherEnabled || this.activeLineIndex < 0
-                || previousTime >= this.lines[this.activeLineIndex].activationTime;
+        // The whole frame, always, with a pinned caret. Under the flexible one the caret can be
+        // sitting on a line the song has not reached yet, and a clock that ran through a 20-second
+        // instrumental would read the wait as typing time; so being there is not by itself enough,
+        // and the clock runs from that line's activationTime, which is exactly when the line would
+        // have gone active while pinned.
+        //
+        // THE TWO PARKED STATES ARE NOT THE SAME FACT (backlog 222 correcting backlog 218, whose
+        // note here said they were, and that claim is what hid the defect below). A caret the rush
+        // bound left sitting past the last cell of its OWN line still needs nothing from this
+        // method: the caller accrues only while the active line is INCOMPLETE, that caret's line is
+        // complete by definition, and there is genuinely nothing the player can type. But a caret
+        // that rollForwardIfFinishedEarly or snapForwardOnLineStart has moved on to the NEXT line
+        // sits there from entryOpensAt, which is FLETCHER_DRAG_GRACE_MS BEFORE that line's
+        // activation, and processKey has no time gate of its own: the player really can type there,
+        // up to 1500 ms per line. Every character they land is counted by countCorrectCells for the
+        // rest of the run, so counting them against a stopped clock walked liveWpm (and the HUD's
+        // rolling readout in typebeat-player.js, which stamps its samples in this same currency)
+        // upward for free.
+        //
+        // THE LAZY ARM. So the clock arms on the FIRST press the player puts on such a line
+        // (armWpmClockAheadOfTheCue) and runs from that press's own time onward. Not from
+        // entryOpensAt: that would hand the whole head start back as typing time for a player who is
+        // sitting there NOT typing, which is the dilution the activationTime gate exists to prevent.
+        // And nothing is back-dated: the arming press is credited no elapsed time at all, exactly
+        // like a press made at activationTime + 0 on the ordinary path. Once the playhead reaches
+        // the line, the activationTime branch above answers first and the arm is never consulted
+        // again.
+        clockRunsFrom(previousTime) {
+            if (!this.fletcherEnabled || this.activeLineIndex < 0) return previousTime;
+
+            if (previousTime >= this.lines[this.activeLineIndex].activationTime) return previousTime;
+
+            // Ahead of the cue: the clock runs only from an arm, and only from an arm belonging to
+            // the line the caret is on now (see wpmClockArmedLine for why that check is the reset).
+            if (this.wpmClockArmedLine === this.activeLineIndex) {
+                return Math.max(previousTime, this.wpmClockArmedAt);
+            }
+
+            return null;
+        }
+
+        // TypingEngine.armWpmClockAheadOfTheCue. Arm the WPM clock on the active line when the press
+        // at `time` is the first one the player has put on it AHEAD OF ITS CUE (see clockRunsFrom).
+        // No-op on every ordinary press, i.e. one made at or after the line's activationTime, where
+        // the clock is already running.
+        //
+        // Called from processKey once the press is known not to be inert, so every press that can
+        // resolve or spoil a cell arms the clock, a wrong key included: what the arm records is that
+        // the player is TYPING here, not what the keystroke turned out to be worth. A press the
+        // caret-parked guard refuses outright never reaches it, which is right, since that press
+        // does nothing at all.
+        armWpmClockAheadOfTheCue(time) {
+            if (!this.fletcherEnabled || this.activeLineIndex < 0) return;
+
+            if (time >= this.lines[this.activeLineIndex].activationTime) return;
+
+            // Only the FIRST press arms. A later one must not push the arm forward, or the time
+            // between the two presses (the player typing) would be swallowed.
+            if (this.wpmClockArmedLine === this.activeLineIndex) return;
+
+            this.wpmClockArmedLine = this.activeLineIndex;
+            this.wpmClockArmedAt = time;
         }
 
         // TypingEngine.PlayheadCountablePosition. How many COUNTABLE characters the song has
@@ -2499,12 +2567,25 @@
             // its rate is permanently 1 and the two accumulators agree. Adding one here is the
             // first thing to do if browser play ever gains a speed mod.
             //
-            // wpmClockRuns is the flexible caret's own clause (backlog 208): a caret parked at the
+            // clockRunsFrom is the flexible caret's own clause (backlog 208): a caret parked at the
             // head of a line the song has not reached yet is WAITING, not typing, so the clock does
-            // not run through the instrumental it is waiting out.
+            // not run through the instrumental it is waiting out. Since backlog 222 it answers WHERE
+            // in the frame the clock starts rather than whether it ran at all, because such a caret
+            // can also be TYPING: the frame the pre-cue lazy arm falls inside credits only the
+            // stretch after the arm, and null is the no-accrual answer.
+            //
+            // KNOWN AND LEFT ALONE, exactly as in the C#: the predicate is evaluated on the CURRENT
+            // activeLineIndex but with the PREVIOUS frame's time, so on a frame the caret rolled
+            // forward inside, the part of it spent typing on the OLD line is tested against the NEW
+            // line's cue and dropped. That is at most one frame of real typing time per line
+            // transition (and only when a keypress-driven roll lands BETWEEN two frames), and
+            // splitting the interval would need the old line index and the transition instant
+            // carried as extra state, which is more machinery than the milliseconds are worth.
             if (this.lastUpdateTime !== null && this.activeLineIndex >= 0 && !this.finished
-                && !this.isLineComplete(this.activeLineIndex) && this.wpmClockRuns(this.lastUpdateTime)) {
-                this.activeTimeMs += Math.max(0, time - this.lastUpdateTime);
+                && !this.isLineComplete(this.activeLineIndex)) {
+                const from = this.clockRunsFrom(this.lastUpdateTime);
+
+                if (from !== null) this.activeTimeMs += Math.max(0, time - from);
             }
             this.lastUpdateTime = time;
 
@@ -2637,6 +2718,14 @@
             const line = this.lines[this.activeLineIndex];
             this.autoSkipForward();
             if (this.caretIndex >= line.cells.length) return false; // line fully typed
+
+            // The press is going to do something, so the player is typing on this line; if the song
+            // has not reached it yet, that is the instant the WPM clock starts counting (backlog
+            // 222, see clockRunsFrom). Placed here, above every branch below, so it is one site and
+            // no path can quietly skip it, and attributed to the line the press LANDS on: a press
+            // that finishes this line and rolls the caret onward has typed here, not there.
+            this.armWpmClockAheadOfTheCue(time);
+
             let cell = line.cells[this.caretIndex];
 
             // Mashing mod: any key is the right key; judge it as the caret cell's expected char.

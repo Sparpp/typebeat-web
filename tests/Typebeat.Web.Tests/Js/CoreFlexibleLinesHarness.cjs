@@ -584,7 +584,7 @@ const out = {};
 // then sits at the head of L1 ahead of its 20000 cue. A player who finishes L0 at 2000 and waits out
 // an eighteen-second instrumental has not been typing for eighteen seconds either way. The first
 // park is stopped by the caller's own "the active line is INCOMPLETE" clause (a parked-finished
-// caret is complete by definition) and the second by wpmClockRuns, and the two must agree or the
+// caret is complete by definition) and the second by clockRunsFrom, and the two must agree or the
 // readout halves.
 {
     const engine = new TB.TypingEngine(build(GAPPED));
@@ -617,6 +617,158 @@ const out = {};
         activeTimeWhileParked: parkedTime,
         activeTimeAtTheCue: atTheCue,
         activeTimeAfterTheCue: runningTime
+    };
+}
+
+// THE LAZY CLOCK ARM (backlog 222), and the hole the section above leaves: it parks and WAITS, and
+// the state that was broken is parking and TYPING. A caret rolled on to the next line sits there
+// from FLETCHER_DRAG_GRACE_MS before its cue and processKey has no time gate, so the player really
+// can type there; every character they land counts in the WPM numerator for the rest of the run.
+// Counting them while the clock stayed stopped walked the readout upward for free, once per line.
+//
+// So the clock ARMS LAZILY on the first press made on such a line and runs from that press's own
+// time. The first two scripts are the game's own pins (FletcherEngineTest's
+// ActiveTimeRunsFromTheFirstPressMadeAheadOfTheCue and its idle companion) on the same numbers; the
+// other two are properties of the arm the game's fixtures cannot see (see each one).
+//
+// EMITTED WITH THEIR SCRIPTS, unlike every other section here, because the cross-repo arm
+// (Typebeat.WireCompat.WpmClockArmLiveParityTest) replays THESE steps through the game's own
+// TypingEngine and compares the readings step for step. One copy of the keystrokes, two engines.
+{
+    // Two maps, and the difference between them is only how many cells L1 has.
+    //
+    // twoLine is the game's twoLineMap: L0 "ab cd" with a = 1000, b = 1500, ' ' = 2000, c = 2000,
+    // d = 2500, and L1 "ef" activating at its own 4000 start, so entry into L1 opens at
+    // 4000 - FLETCHER_DRAG_GRACE_MS = 2500, which is exactly where 'd' finishes L0: the roll happens
+    // on that press and the caret is on L1 a full 1500 ms early.
+    //
+    // longTail is the same map with L1 widened to "efgh" (sung over the same second, so the four
+    // cells step 250: e = 4000, f = 4250, g = 4500, h = 4750). Its only purpose is that L1 is still
+    // INCOMPLETE after two presses, which is what makes "only the first press arms" observable at
+    // all: on a two-cell line the second press completes it and the caller stops accruing, so a
+    // second press that wrongly re-armed would leave no trace.
+    const CLOCK_ARM_MAPS = {
+        twoLine: TWO_LINES,
+        longTail: osu([
+            { text: 'ab cd', start_ms: 1000, end_ms: 3000, words: [word('ab', 1000, 2000), word('cd', 2000, 3000)] },
+            { text: 'efgh', start_ms: 4000, end_ms: 5000, words: [word('efgh', 4000, 5000)] }
+        ], 12000)
+    };
+
+    const finishLineZero = [
+        { op: 'update', t: 1000 }, { op: 'key', c: 'a', t: 1000 },
+        { op: 'update', t: 1500 }, { op: 'key', c: 'b', t: 1500 },
+        { op: 'update', t: 2000 }, { op: 'key', c: ' ', t: 2000 }, { op: 'key', c: 'c', t: 2000 },
+        { op: 'update', t: 2500 }, { op: 'key', c: 'd', t: 2500 },
+    ];
+
+    const scripts = {
+        // TYPING through the head start. The press at 2600 arms the clock and is itself credited no
+        // elapsed time; the frame to 2700 credits exactly the 100 ms since the arm.
+        typed: {
+            map: 'twoLine',
+            steps: [
+                ...finishLineZero,
+                { op: 'update', t: 2600 }, { op: 'key', c: 'e', t: 2600 },
+                { op: 'update', t: 2700 }, { op: 'key', c: 'f', t: 2700 },
+            ]
+        },
+        // The IDLE companion: the same head start, no press made on it, so nothing is credited for
+        // it. The clock picks up on the ordinary rule at L1's own 4000 cue.
+        idle: {
+            map: 'twoLine',
+            steps: [
+                ...finishLineZero,
+                { op: 'update', t: 2600 }, { op: 'update', t: 3000 }, { op: 'update', t: 3500 },
+                { op: 'update', t: 4000 }, { op: 'update', t: 4500 },
+            ]
+        },
+        // A press stamped AHEAD of the frame that follows it, which the browser can produce on its
+        // own (a keypress reads the audio clock where the render loop carries the last frame's
+        // stamp). The clock must credit zero for that frame rather than negative time, and must
+        // still run from the press onward.
+        aheadOfTheFrame: {
+            map: 'twoLine',
+            steps: [
+                ...finishLineZero,
+                { op: 'update', t: 2600 }, { op: 'key', c: 'e', t: 2900 },
+                { op: 'update', t: 2700 }, { op: 'update', t: 3000 },
+            ]
+        },
+        // ONLY THE FIRST PRESS ARMS. Two presses land ahead of the cue before the next frame, and
+        // the frame that follows must credit from the FIRST of them (2700 - 2600 = 100). An arm that
+        // moved with each press would credit 2700 - 2650 = 50 and swallow the 50 ms the player spent
+        // typing between them, which is the same "characters counted over uncounted time" defect one
+        // press smaller.
+        secondPressKeepsTheFirstArm: {
+            map: 'longTail',
+            steps: [
+                ...finishLineZero,
+                { op: 'update', t: 2600 }, { op: 'key', c: 'e', t: 2600 }, { op: 'key', c: 'f', t: 2650 },
+                { op: 'update', t: 2700 }, { op: 'key', c: 'g', t: 2700 },
+            ]
+        },
+    };
+
+    const runs = {};
+
+    for (const name of Object.keys(scripts)) {
+        const engine = new TB.TypingEngine(build(CLOCK_ARM_MAPS[scripts[name].map]));
+        const readings = [];
+
+        let breaks = 0;
+        engine.onComboBroken = () => { breaks++; };
+
+        for (const step of scripts[name].steps) {
+            let handled = null;
+
+            if (step.op === 'update') engine.update(step.t);
+            else handled = engine.processKey(step.c, step.t);
+
+            readings.push({
+                op: step.op,
+                t: step.t,
+                c: step.c === undefined ? null : step.c,
+                handled: handled,
+                at: at(engine),
+                activeTimeMs: engine.activeTimeMs,
+                wpm: engine.liveWpm
+            });
+        }
+
+        runs[name] = {
+            map: scripts[name].map,
+            script: scripts[name].steps,
+            readings: readings,
+            combo: engine.combo,
+            maxCombo: engine.maxCombo,
+            comboBreaks: breaks,
+            mistypes: engine.mistypes
+        };
+    }
+
+    const fixtures = {};
+
+    for (const name of Object.keys(CLOCK_ARM_MAPS)) {
+        const fixture = new TB.TypingEngine(build(CLOCK_ARM_MAPS[name]));
+
+        fixtures[name] = {
+            entryOpensAt: fixture.entryOpensAt(1),
+            lines: fixture.lines.map(l => ({
+                activationTime: l.activationTime,
+                endTime: l.endTime,
+                sealGraceMs: l.sealGraceMs,
+                cells: l.cells.map(c => ({ expected: c.expected, target: c.target }))
+            }))
+        };
+    }
+
+    out.wpmClockArm = {
+        // Pinned before the readings are, so a fixture that drifted cannot be read as an engine
+        // divergence by the cross-repo arm.
+        dragGraceMs: TB.constants.FLETCHER_DRAG_GRACE_MS,
+        fixtures: fixtures,
+        runs: runs
     };
 }
 

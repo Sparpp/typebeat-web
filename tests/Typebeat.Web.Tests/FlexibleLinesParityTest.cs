@@ -530,9 +530,12 @@ public class FlexibleLinesParityTest
     /// <para>Two clauses stop it, and they must agree or the readout depends on which park the
     /// player happens to be in. The bound's park is stopped by the caller's own "the active line is
     /// INCOMPLETE" condition, since a parked-finished caret is complete by definition and nothing new
-    /// implements that; the ahead-of-cue park is stopped by <c>wpmClockRuns</c>, which runs the clock
+    /// implements that; the ahead-of-cue park is stopped by <c>clockRunsFrom</c>, which runs the clock
     /// only from the point the playhead reaches the parked line's own activation, exactly when that
     /// line would have gone active under a pinned caret.</para>
+    ///
+    /// <para>WAITING is the whole of what this pins, and the state next to it, sitting ahead of the
+    /// cue and TYPING, is <see cref="TheWpmClockArmsOnTheFirstPressMadeAheadOfTheCue"/>.</para>
     ///
     /// <para>Measured on the frame boundaries, because that is where the rule lives: the frame that
     /// ENDS at the cue was still a parked frame and accrues nothing, and the one after it is real
@@ -558,4 +561,253 @@ public class FlexibleLinesParityTest
             Assert.That(clock.GetProperty("activeTimeAfterTheCue").GetDouble(), Is.EqualTo(2000), "and the frame after it is typing time again");
         });
     }
+
+    #region The lazy clock arm (backlog 222)
+
+    /// <summary>
+    /// One reading out of a <c>wpmClockArm</c> run, addressed by the step that produced it rather
+    /// than by its index, so inserting a step into the harness's script fails loudly here instead of
+    /// silently re-aiming an assertion at its neighbour. <paramref name="c"/> separates the two
+    /// presses that share a timestamp.
+    /// </summary>
+    private static JsonElement Reading(string run, string op, double t, string? c = null)
+    {
+        var readings = Section("wpmClockArm").GetProperty("runs").GetProperty(run).GetProperty("readings");
+
+        foreach (var reading in readings.EnumerateArray())
+        {
+            if (reading.GetProperty("op").GetString() != op || reading.GetProperty("t").GetDouble() != t)
+                continue;
+
+            if (c != null && reading.GetProperty("c").GetString() != c)
+                continue;
+
+            return reading;
+        }
+
+        throw new AssertionException($"wpmClockArm.{run} has no {op} at {t}{(c == null ? "" : $" ('{c}')")}");
+    }
+
+    private static double ActiveTime(string run, string op, double t, string? c = null)
+        => Reading(run, op, t, c).GetProperty("activeTimeMs").GetDouble();
+
+    private static double Wpm(string run, string op, double t, string? c = null)
+        => Reading(run, op, t, c).GetProperty("wpm").GetDouble();
+
+    /// <summary>
+    /// THE FIXTURES the runs below are played on, pinned before their readings are so a map that
+    /// drifted cannot be read as an engine divergence. <c>twoLine</c> is the game's own
+    /// <c>twoLineMap</c>: "ab cd" then "ef", with line 1 activating at its own 4000 start, so entry
+    /// into it opens at 4000 - <c>FLETCHER_DRAG_GRACE_MS</c> = 2500, which is exactly where the 'd'
+    /// that finishes line 0 lands. The caret is therefore on line 1 a full 1500 ms before the song
+    /// reaches it, which is the state the whole of this region is about.
+    ///
+    /// <para><c>longTail</c> is that map with line 1 widened to four cells and nothing else changed,
+    /// so its entry still opens at 2500. It exists only so that line stays INCOMPLETE after two
+    /// presses (see <see cref="OnlyTheFirstPressAheadOfTheCueArmsTheClock"/>).</para>
+    /// </summary>
+    [Test]
+    public void TheClockArmFixturesAreTheGamesTwoLineMap()
+    {
+        var section = Section("wpmClockArm");
+        var twoLine = section.GetProperty("fixtures").GetProperty("twoLine");
+        var longTail = section.GetProperty("fixtures").GetProperty("longTail");
+        var lines = twoLine.GetProperty("lines");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(section.GetProperty("dragGraceMs").GetDouble(), Is.EqualTo(1500));
+            Assert.That(twoLine.GetProperty("entryOpensAt").GetDouble(), Is.EqualTo(2500), "line 1's cue less the grace");
+            Assert.That(lines.GetArrayLength(), Is.EqualTo(2));
+
+            Assert.That(lines[0].GetProperty("activationTime").GetDouble(), Is.EqualTo(1000));
+            Assert.That(lines[0].GetProperty("endTime").GetDouble(), Is.EqualTo(4000), "contiguous windows: line 0 runs to line 1's start");
+            Assert.That(lines[0].GetProperty("sealGraceMs").GetDouble(), Is.EqualTo(0), "so line 0's hard deadline is 4000 flat");
+            Assert.That(Targets(lines[0]), Is.EqualTo(new[] { 1000.0, 1500, 2000, 2000, 2500 }), "a b ' ' c d");
+
+            Assert.That(lines[1].GetProperty("activationTime").GetDouble(), Is.EqualTo(4000), "clamped to the line's own start");
+            Assert.That(Targets(lines[1]), Is.EqualTo(new[] { 4000.0, 4500 }), "e f");
+
+            // The wide-tailed twin: the same head start, four cells to spend it on.
+            Assert.That(longTail.GetProperty("entryOpensAt").GetDouble(), Is.EqualTo(2500), "widening line 1 must not move the bound");
+            Assert.That(Targets(longTail.GetProperty("lines")[0]), Is.EqualTo(Targets(lines[0])), "line 0 is untouched");
+            Assert.That(Targets(longTail.GetProperty("lines")[1]), Is.EqualTo(new[] { 4000.0, 4250, 4500, 4750 }), "e f g h, the same second in four steps");
+        });
+
+        static double[] Targets(JsonElement line)
+            => line.GetProperty("cells").EnumerateArray().Select(c => c.GetProperty("target").GetDouble()).ToArray();
+    }
+
+    /// <summary>
+    /// THE HOLE <see cref="TheWpmClockDoesNotRunWhileTheCaretWaitsAheadOfTheCue"/> LEAVES (backlog
+    /// 222): it parks and WAITS, and the state that was broken is parking and TYPING. A caret rolled
+    /// on to the next line sits there from <c>FLETCHER_DRAG_GRACE_MS</c> before its cue and
+    /// <c>processKey</c> has no time gate of its own, so the player really can type there; every
+    /// character they land counts in the WPM numerator (<c>countCorrectCells</c>) for the rest of the
+    /// run. Counting them while the clock stayed stopped walked the browser's readout upward for
+    /// free, once per line, exactly as it did on the desktop.
+    ///
+    /// <para>So the clock ARMS LAZILY on the first press made on such a line and runs from that
+    /// press's own time. Two things it deliberately is not: it does not back-date (the arming press
+    /// is credited nothing, exactly like a press at the cue + 0), and it does not arm at
+    /// <c>entryOpensAt</c>, which would hand the whole head start back as typing time to a player who
+    /// never used it (see <see cref="AHeadStartThePlayerDoesNotTypeIsStillCreditedNothing"/>).</para>
+    ///
+    /// <para>The golden values are the game's own
+    /// <c>FletcherEngineTest.ActiveTimeRunsFromTheFirstPressMadeAheadOfTheCue</c>, on the same
+    /// fixture and the same script, so the two suites pin one trace. The cross-repo half, which
+    /// replays this harness's emitted script through the game's real engine instead of trusting the
+    /// transcription, is <c>Typebeat.WireCompat.WpmClockArmLiveParityTest</c>.</para>
+    /// </summary>
+    [Test]
+    public void TheWpmClockArmsOnTheFirstPressMadeAheadOfTheCue()
+    {
+        var run = Section("wpmClockArm").GetProperty("runs").GetProperty("typed");
+
+        Assert.Multiple(() =>
+        {
+            // Line 0 was clocked in full: 500 + 500 + 500 = 1500 ms for 5 correct cells (the space
+            // counts), so (5/5)/(1500/60000) = 40. The caret is now on line 1, 1500 ms early.
+            Assert.That(At(Reading("typed", "key", 2500, "d").GetProperty("at")), Is.EqualTo((1, 0)));
+            Assert.That(ActiveTime("typed", "key", 2500, "d"), Is.EqualTo(1500));
+            Assert.That(Wpm("typed", "key", 2500, "d"), Is.EqualTo(40).Within(1e-9));
+
+            // The frame across the head start credits nothing yet: the player has not typed on line 1.
+            Assert.That(ActiveTime("typed", "update", 2600), Is.EqualTo(1500), "no press, no arm, no accrual");
+            Assert.That(Wpm("typed", "update", 2600), Is.EqualTo(40).Within(1e-9));
+
+            // THE ARMING PRESS, judged early against its 4000 target (rushing frees the position,
+            // never the clock) but landed correct, so it enters the numerator at once. It credits
+            // itself NO elapsed time, so this reads (6/5)/(1500/60000) = 48, up from 40 on the
+            // strength of the character alone. That step is honest for one press; what follows is
+            // the part that used to be free.
+            Assert.That(Reading("typed", "key", 2600, "e").GetProperty("handled").GetBoolean(), Is.True);
+            Assert.That(ActiveTime("typed", "key", 2600, "e"), Is.EqualTo(1500), "the arm does not back-date");
+            Assert.That(Wpm("typed", "key", 2600, "e"), Is.EqualTo(48).Within(1e-9));
+
+            // 100 ms of real typing time, and the clock now counts it: 1500 + 100 = 1600 ms, so the
+            // six cells read (6/5)/(1600/60000) = 45. The arm is at the PRESS (2600), not at entry
+            // (2500): arming at entry would have made this 1700 ms.
+            Assert.That(ActiveTime("typed", "update", 2700), Is.EqualTo(1600), "the frame spanning the arm credits only 2700 - 2600");
+            Assert.That(Wpm("typed", "update", 2700), Is.EqualTo(45).Within(1e-9));
+
+            // 7 correct cells over 1600 ms => 52.5. With the clock frozen this frame credited nothing
+            // and the readout climbed to (7/5)/(1500/60000) = 56 instead.
+            double frozenClockWpm = (7 / 5.0) / (1500 / 60000.0);
+
+            Assert.That(ActiveTime("typed", "key", 2700, "f"), Is.EqualTo(1600));
+            Assert.That(Wpm("typed", "key", 2700, "f"), Is.EqualTo(52.5).Within(1e-9));
+            Assert.That(frozenClockWpm, Is.EqualTo(56).Within(1e-9), "what a stopped clock reported for the same seven characters");
+
+            // Nothing in the run was refused or capped, so the readout is the only thing under test.
+            Assert.That(run.GetProperty("maxCombo").GetInt32(), Is.EqualTo(7));
+            Assert.That(run.GetProperty("comboBreaks").GetInt32(), Is.Zero);
+            Assert.That(run.GetProperty("mistypes").GetInt32(), Is.Zero);
+        });
+    }
+
+    /// <summary>
+    /// The NON-VACUITY companion, on the same fixture and the same script minus the presses: a player
+    /// handed the head start who does NOT use it is credited nothing for it, which is the rule the
+    /// activation gate exists for and the reason the arm is lazy rather than automatic at
+    /// <c>entryOpensAt</c>. The lazy arm buys the typing player their time without paying the idle
+    /// one for waiting.
+    ///
+    /// <para>Green both before and after backlog 222, deliberately: it is the half of the statement
+    /// the fix must not have broken, and it is what a revert of <c>clockRunsFrom</c> leaves standing
+    /// while the pin above goes red.</para>
+    /// </summary>
+    [Test]
+    public void AHeadStartThePlayerDoesNotTypeIsStillCreditedNothing()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(At(Reading("idle", "key", 2500, "d").GetProperty("at")), Is.EqualTo((1, 0)));
+            Assert.That(ActiveTime("idle", "key", 2500, "d"), Is.EqualTo(1500), "1500 ms, 5 cells");
+
+            // The whole 1500 ms head start, on line 1, with no press made on it.
+            foreach (double t in new[] { 2600.0, 3000, 3500, 4000 })
+            {
+                Assert.That(ActiveTime("idle", "update", t), Is.EqualTo(1500), $"{t}: waiting is not typing");
+                Assert.That(Wpm("idle", "update", t), Is.EqualTo(40).Within(1e-9), $"{t}: so the readout does not move");
+            }
+
+            // From the cue the clock runs on the ordinary rule, unarmed: 1500 + 500 = 2000 ms, so
+            // the same 5 cells now read (5/5)/(2000/60000) = 30.
+            Assert.That(ActiveTime("idle", "update", 4500), Is.EqualTo(2000));
+            Assert.That(Wpm("idle", "update", 4500), Is.EqualTo(30).Within(1e-9));
+        });
+    }
+
+    /// <summary>
+    /// ONLY THE FIRST PRESS ARMS, and the arm never moves forward with a later one: the time between
+    /// two presses is the player TYPING, and swallowing it is the same defect the arm was added to
+    /// close, one press smaller. Two presses land ahead of the cue before the next frame, so the
+    /// frame after them credits 2700 - 2600 = 100 rather than 2700 - 2650 = 50.
+    ///
+    /// <para>On the <c>longTail</c> fixture, because the property is INVISIBLE on the two-cell line
+    /// the other runs use: the second press completes that line and the caller stops accruing
+    /// (<c>isLineComplete</c>), so a second arm would leave no trace to assert on. The game's own
+    /// fixtures have the same shape, so this is a browser-side pin with no transcribed twin.</para>
+    /// </summary>
+    [Test]
+    public void OnlyTheFirstPressAheadOfTheCueArmsTheClock()
+    {
+        const string run = "secondPressKeepsTheFirstArm";
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(At(Reading(run, "key", 2500, "d").GetProperty("at")), Is.EqualTo((1, 0)), "the roll put the caret on line 1 at 2500");
+            Assert.That(ActiveTime(run, "update", 2600), Is.EqualTo(1500), "and the head start has credited nothing yet");
+
+            // Both presses land before the next frame, so neither is credited any elapsed time and
+            // the readout steps on the characters alone: 6 cells => 48, then 7 => 56.
+            Assert.That(ActiveTime(run, "key", 2600, "e"), Is.EqualTo(1500));
+            Assert.That(ActiveTime(run, "key", 2650, "f"), Is.EqualTo(1500));
+            Assert.That(Wpm(run, "key", 2650, "f"), Is.EqualTo(56).Within(1e-9));
+
+            // THE PIN: measured from the FIRST press. An arm that moved with the second would make
+            // this 1550 and read (7/5)/(1550/60000) = 54.19 instead of 52.5.
+            Assert.That(ActiveTime(run, "update", 2700), Is.EqualTo(1600), "the 50 ms between the two presses is typing time and must be kept");
+            Assert.That(Wpm(run, "update", 2700), Is.EqualTo(52.5).Within(1e-9));
+
+            // And the run stays clean, so no cap or refusal is doing the work.
+            var summary = Section("wpmClockArm").GetProperty("runs").GetProperty(run);
+            Assert.That(summary.GetProperty("maxCombo").GetInt32(), Is.EqualTo(8));
+            Assert.That(summary.GetProperty("comboBreaks").GetInt32(), Is.Zero);
+        });
+    }
+
+    /// <summary>
+    /// A press stamped AHEAD of the frame that follows it, which the browser can produce on its own:
+    /// a keypress reads the audio clock at the event while the render loop is still carrying the
+    /// previous frame's stamp, so <c>update</c> can arrive with a time BEFORE the arm. The clock must
+    /// credit zero for that frame rather than negative time, and must still run from the press
+    /// onward: that is the whole of the <c>Math.max(0, time - from)</c> at the accrual site, which
+    /// replaced a <c>Math.max(0, time - lastUpdateTime)</c> that could not see the arm at all.
+    ///
+    /// <para>Not reachable in the C# suite's own scripts, where every press is stamped on a frame,
+    /// which is why it is pinned here rather than transcribed from the game.</para>
+    /// </summary>
+    [Test]
+    public void APressStampedAheadOfTheNextFrameCreditsZeroRatherThanNegativeTime()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ActiveTime("aheadOfTheFrame", "update", 2600), Is.EqualTo(1500));
+
+            // The press arms at 2900, three hundred milliseconds ahead of the frame loop.
+            Assert.That(Reading("aheadOfTheFrame", "key", 2900, "e").GetProperty("handled").GetBoolean(), Is.True);
+            Assert.That(ActiveTime("aheadOfTheFrame", "key", 2900, "e"), Is.EqualTo(1500));
+
+            // The frame BEHIND the arm: 2700 - 2900 is negative, and the clock takes zero from it.
+            Assert.That(ActiveTime("aheadOfTheFrame", "update", 2700), Is.EqualTo(1500), "a frame before the arm can never run the clock backwards");
+
+            // And the next one runs from the arm, not from the frame before it: 3000 - 2900 = 100.
+            Assert.That(ActiveTime("aheadOfTheFrame", "update", 3000), Is.EqualTo(1600), "100 ms, measured from the press");
+            Assert.That(Wpm("aheadOfTheFrame", "update", 3000), Is.EqualTo(45).Within(1e-9));
+        });
+    }
+
+    #endregion
 }
