@@ -144,6 +144,10 @@ public class WebplayDisplayTest
     /// head of the next one while the song is still singing the line behind, so the playhead has to
     /// follow the first UNSEALED line or it sits at position 0 of a line the vocal has not reached.
     /// Once everything has sealed there is no unsealed line left and it falls back to the active one.
+    ///
+    /// <para>Every arm here reads at 1600, inside the first unsealed line's own window, which is
+    /// where backlog 223's walk provably does not run: these are the four answers exactly as they
+    /// were before it.</para>
     /// </summary>
     [Test]
     public void SungPlayheadRidesTheSongsLineNotTheCarets()
@@ -156,6 +160,68 @@ public class WebplayDisplayTest
             Assert.That(Num(root, "sungLineParked"), Is.EqualTo(0));      // parked ahead: the line behind
             Assert.That(Num(root, "sungLineCoincident"), Is.EqualTo(1));  // the normal case: one line, unchanged
             Assert.That(Num(root, "sungLineAllSealed"), Is.EqualTo(1));   // nothing unsealed: back to the active line
+        });
+    }
+
+    /// <summary>
+    /// Backlog 223: the seal cursor alone cannot say where the vocals are. Drag protection
+    /// (TypingEngine.sealPermitted) deliberately holds the caret's own line unsealed while the player
+    /// is still typing it, and the seal loop hands the caret on whenever it seals the caret's line,
+    /// so the cursor is structurally never AHEAD of the caret and the row the song had moved to was
+    /// unreachable. So the sung line is read from the CLOCK: start at the cursor and walk off every
+    /// line the playhead has already left, stepping on endTime + sealGraceMs.
+    ///
+    /// <para>That instant is the upper bound of TypingEngine.songWindowOpen and the deadline canSeal
+    /// uses, which is what makes the walk conservative: inside the first unsealed line's window it
+    /// does not run at all. The fixture's line 0 closes at 3000 (its window runs to line 1's start,
+    /// with no seal grace), so 2999 is still line 0 and 3000 has already left it, and the walk stops
+    /// at the last line rather than running off the end of the map.</para>
+    /// </summary>
+    [Test]
+    public void SungPlayheadWalksOffEveryLineTheSongHasLeft()
+    {
+        var root = Harness();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(root, "sungLineJustInside"), Is.EqualTo(0));       // 2999: still inside line 0's window
+            Assert.That(Num(root, "sungLineAtWindowClose"), Is.EqualTo(1));    // 3000: the step is >=, so it fires here
+            Assert.That(Num(root, "sungLineWalked"), Is.EqualTo(1));           // 3200: past it, cursor still pinned at 0
+            Assert.That(Num(root, "sungLineWalkStopsAtLast"), Is.EqualTo(1));  // the last line has nowhere to step
+        });
+    }
+
+    /// <summary>
+    /// The two heads answer to different facts, which is the other half of backlog 223 (mirrors the
+    /// setCaretsVisible call in LyricStage.Update).
+    ///
+    /// <para>The TYPING caret hides the moment its line is complete: there is nothing left to type
+    /// on it, and that absence IS the "you are done, wait for the song" signal. The MAP PLAYHEAD is
+    /// not the player's and must not take that term, because the vocals go on being sung under a
+    /// finished caret: since backlog 218 a refused roll parks a complete caret until entry into the
+    /// next line opens, which blanked the playhead for seconds at a time while the sweep beneath it
+    /// kept moving. It hides only for its own reasons, the run being over and its row being off the
+    /// visible stack.</para>
+    /// </summary>
+    [Test]
+    public void TheTypingCaretAndTheMapPlayheadHideForDifferentReasons()
+    {
+        var root = Harness();
+
+        void Heads(string key, bool player, bool sung)
+        {
+            var e = root.GetProperty(key);
+            Assert.That(Flag(e, "player"), Is.EqualTo(player), $"{key}.player");
+            Assert.That(Flag(e, "sung"), Is.EqualTo(sung), $"{key}.sung");
+        }
+
+        Assert.Multiple(() =>
+        {
+            Heads("caretsTyping", true, true);          // mid-line: both
+            Heads("caretsLineComplete", false, true);   // nothing left to type, but the song plays on
+            Heads("caretsFinished", false, false);      // the run is over
+            Heads("caretsOffStack", true, false);       // the song is not on a visible row
+            Heads("caretsIdle", false, false);          // no active line at all
         });
     }
 
@@ -199,6 +265,70 @@ public class WebplayDisplayTest
             Assert.That(Num(sealedUp, "sungLine"), Is.EqualTo(1));
             Assert.That(Num(sealedUp, "sungPos"), Is.EqualTo(Num(sealedUp, "caretRowPos")));
             Assert.That(Num(sealedUp, "sungPos"), Is.EqualTo(1));
+
+            // Exactly one row carries a fill, and it is the sung one (LyricStage.setSungSweep).
+            Assert.That(JsHarness.Doubles(parked, "sweepFills"), Is.EqualTo(new[] { 1.2, 0d }).Within(1e-9));
+            Assert.That(JsHarness.Doubles(sealedUp, "sweepFills"), Is.EqualTo(new[] { 0d, 1d }).Within(1e-9));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 223, the DRAG case: the mirror of the parked one above, and the one the seal cursor
+    /// could not express. One character of line 0's two goes in, so drag protection holds line 0
+    /// unsealed (and the caret on it) to FLETCHER_DRAG_GRACE_MS past its 3000 deadline, i.e. 4500.
+    /// At 3200 the seal cursor is still pinned at 0 while the vocal has been on line 1 for 200 ms.
+    ///
+    /// <para>The playhead has to be on line 1: reading the cursor stranded it at line 0's tail, its
+    /// position clamped to the end of a line the song had finished (caretRowPos 2, the frozen 100%
+    /// sweep this pins against), while the row actually being sung got no head and no sweep. And the
+    /// row the player is still reading must be zeroed rather than left claiming the vocals are on
+    /// it, which is the one-row rule doing work that used to be invisible.</para>
+    /// </summary>
+    [Test]
+    public void SungPlayheadMovesOnToTheSungRowWhileTheCaretDragsBehind()
+    {
+        var root = Harness();
+        var dragging = root.GetProperty("sungDragging");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(dragging, "active"), Is.EqualTo(0));        // the caret is still on line 0
+            Assert.That(Num(dragging, "nextUnsealed"), Is.EqualTo(0));  // and so is the drag-deferred seal cursor
+            Assert.That(Num(dragging, "sungLine"), Is.EqualTo(1));      // but the song has moved on
+            Assert.That(Num(dragging, "sungPos"), Is.EqualTo(0.4).Within(1e-9));
+            // What riding the seal cursor gave instead: line 0's clamped end, a dead full sweep.
+            Assert.That(Num(dragging, "caretRowPos"), Is.EqualTo(2));
+            Assert.That(JsHarness.Doubles(dragging, "sweepFills"), Is.EqualTo(new[] { 0d, 0.4 }).Within(1e-9));
+            // Both heads are drawn: the player still owes characters on line 0, and the song is one
+            // row away, which is on the stack.
+            Assert.That(Flag(dragging.GetProperty("shown"), "player"), Is.True);
+            Assert.That(Flag(dragging.GetProperty("shown"), "sung"), Is.True);
+        });
+    }
+
+    /// <summary>
+    /// Backlog 223, the PARK case: both characters of line 0 are in by 1100, but backlog 218's rush
+    /// bound refuses the roll until entry into line 1 opens (its 3000 activation less
+    /// FLETCHER_DRAG_GRACE_MS, so 1500). The caret sits complete at the end of a line the vocal is
+    /// still singing, and the playhead used to go dark for the whole park because both heads shared
+    /// one boolean: the typing caret hides, which is right, and the map playhead stays lit over a
+    /// sweep that is visibly still moving (0.4 of the way through the line at 1200).
+    /// </summary>
+    [Test]
+    public void MapPlayheadStaysLitWhileTheRushBoundParksACompleteCaret()
+    {
+        var root = Harness();
+        var park = root.GetProperty("sungParkedComplete");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(park, "active"), Is.EqualTo(0));
+            Assert.That(Flag(park, "lineComplete"), Is.True);        // nothing left to type
+            Assert.That(Num(park, "sungLine"), Is.EqualTo(0));       // and the song is still on that line
+            Assert.That(Num(park, "sungPos"), Is.EqualTo(0.4).Within(1e-9));
+
+            Assert.That(Flag(park.GetProperty("shown"), "player"), Is.False);
+            Assert.That(Flag(park.GetProperty("shown"), "sung"), Is.True);
         });
     }
 

@@ -267,18 +267,55 @@ function playRolledForwardThenSealed() {
     return engine;
 }
 
+// A DRAGGING player, which is the case backlog 223 is about: only 'a' of line 0 goes in, so drag
+// protection holds line 0 unsealed (and the caret on it) up to FLETCHER_DRAG_GRACE_MS past its own
+// deadline, i.e. to 4500. At 3200 the vocal has been on line 1 for 200 ms while the seal cursor is
+// still pinned at 0, which is the row the cursor alone could never report.
+function playDraggingBehind() {
+    const map = build(rollOsu);
+    const engine = engineFor(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);   // one character of two, so the line stays owed and drag-deferred
+    engine.update(3200);
+    return engine;
+}
+
+// A caret PARKED COMPLETE, the case backlog 218 turned from a blink into seconds: both characters
+// of line 0 are in by 1100, but entry into line 1 does not open until its activation (3000) less
+// FLETCHER_DRAG_GRACE_MS, i.e. 1500, so the roll is refused and the caret sits at the end of a
+// finished line with the vocal still singing it.
+function playParkedComplete() {
+    const map = build(rollOsu);
+    const engine = engineFor(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    engine.processKey('b', 1100);   // line 0 complete, but 1100 is 400 ms before entry opens
+    engine.update(1200);
+    return engine;
+}
+
 // The sung row's own index and the playhead position READ OFF IT, which is what the renderer feeds
-// xAt() for the sweep fill, the sweep head and the sung caret.
+// xAt() for the sweep fill, the sweep head and the sung caret, plus the two visibility flags and the
+// per-row sweep fills the same frame would write.
 function sungPlacement(engine, map, time) {
-    const line = D.sungLineFor(engine.fletcherEnabled, engine.activeLineIndex, engine.nextUnsealedLineIndex, map.lines.length);
+    const active = engine.activeLineIndex;
+    const line = D.sungLineFor(engine.fletcherEnabled, active, engine.nextUnsealedLineIndex, map.lines, time);
+    // The renderer's own gate on the sung head: rowFor() returns a row only for the focused line and
+    // its two neighbours, so a song further off than that is not on the visible stack at all.
+    const onStack = line >= 0 && Math.abs(line - active) <= 1;
+    const lineComplete = active >= 0 && engine.isLineComplete(active);
 
     return {
-        active: engine.activeLineIndex,
+        active: active,
         nextUnsealed: engine.nextUnsealedLineIndex,
         sungLine: line,
         sungPos: line >= 0 ? D.sungPositionAt(D.buildSungPoints(map.lines[line]), time) : -1,
         // What the caret's row would have given instead, for the C# side to hold the two apart.
-        caretRowPos: D.sungPositionAt(D.buildSungPoints(map.lines[engine.activeLineIndex]), time)
+        caretRowPos: D.sungPositionAt(D.buildSungPoints(map.lines[active]), time),
+        lineComplete: lineComplete,
+        shown: D.caretsVisible(active >= 0, lineComplete, engine.finished, onStack),
+        // One fill per line, as updateSweeps would write them: only the sung row carries one.
+        sweepFills: map.lines.map((l, i) => D.sweepFillFor(i, line, D.buildSungPoints(l), time))
     };
 }
 
@@ -335,17 +372,40 @@ const out = {
     cueTargetNext: D.cueTargetLine(gapMap.lines, 0, 0, 1500),
 
     // Which line carries the sung sweep, sung head and sung caret (LyricStage.sungLineFor). The
-    // rule alone, on made-up coordinates: pinned caret -> always the active line; flexible caret
-    // parked one line ahead -> the first unsealed line; everything sealed -> back to the active one.
-    sungLinePinned: D.sungLineFor(false, 1, 0, 2),
-    sungLineParked: D.sungLineFor(true, 1, 0, 2),
-    sungLineCoincident: D.sungLineFor(true, 1, 1, 2),
-    sungLineAllSealed: D.sungLineFor(true, 1, -1, 2),
+    // rule alone, on the two-line roll map with made-up cursor coordinates. At 1600 the playhead is
+    // inside line 0's window (which runs to 3000), so the walk cannot run and these are the four
+    // answers that shipped before backlog 223: pinned caret -> always the active line; flexible
+    // caret parked one line ahead -> the first unsealed line; everything sealed -> the active one.
+    sungLinePinned: D.sungLineFor(false, 1, 0, rollMap.lines, 1600),
+    sungLineParked: D.sungLineFor(true, 1, 0, rollMap.lines, 1600),
+    sungLineCoincident: D.sungLineFor(true, 1, 1, rollMap.lines, 1600),
+    sungLineAllSealed: D.sungLineFor(true, 1, -1, rollMap.lines, 1600),
+
+    // The walk itself (backlog 223), on the same coordinates. Line 0 closes at endTime + sealGraceMs
+    // = 3000 + 0, and the step is >=: one millisecond earlier it is still the sung line, and at the
+    // instant itself the song has left it, however far behind the drag-deferred seal cursor is. The
+    // walk never runs off the end: the last line has no successor to step on to.
+    sungLineJustInside: D.sungLineFor(true, 0, 0, rollMap.lines, 2999),
+    sungLineAtWindowClose: D.sungLineFor(true, 0, 0, rollMap.lines, 3000),
+    sungLineWalked: D.sungLineFor(true, 0, 0, rollMap.lines, 3200),
+    sungLineWalkStopsAtLast: D.sungLineFor(true, 1, 1, rollMap.lines, 99999),
+
+    // Both heads' visibility, the rule alone (LyricStage's setCaretsVisible call). Exactly one flag
+    // moved in 223, caretsLineComplete's sung half: a complete line still hides the TYPING caret and
+    // no longer hides the playhead.
+    caretsTyping: D.caretsVisible(true, false, false, true),
+    caretsLineComplete: D.caretsVisible(true, true, false, true),
+    caretsFinished: D.caretsVisible(true, true, true, true),
+    caretsOffStack: D.caretsVisible(true, false, false, false),
+    caretsIdle: D.caretsVisible(false, false, false, true),
 
     // And the rule on a real run: the caret rolled forward onto line 1 before line 0 sealed, then
-    // the same engine once line 0 has sealed.
+    // the same engine once line 0 has sealed, then the two cases 223 is about (dragging behind the
+    // song, and parked complete on the line still being sung).
     sungParked: sungPlacement(playRolledForward(), rollMap, 1600),
     sungSealed: sungPlacement(playRolledForwardThenSealed(), rollMap, 3500),
+    sungDragging: sungPlacement(playDraggingBehind(), rollMap, 3200),
+    sungParkedComplete: sungPlacement(playParkedComplete(), rollMap, 1200),
 
     // Caret damping + blink.
     dampHalf: D.dampContinuously(0, 100, 35, 35),

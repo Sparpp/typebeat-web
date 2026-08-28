@@ -371,13 +371,73 @@
     // keeps the two identical and this is exactly the old behaviour. Under the flexible caret (the
     // default since backlog 208) they come apart, which is the point of it: finish a line early and
     // the caret is parked at the head of the next one while the vocal is still singing the line
-    // behind, so the sweep follows the first UNSEALED line and only the typing caret follows the
-    // player. Falls back to the active line once every line has sealed.
-    function sungLineFor(fletcherEnabled, activeLineIndex, nextUnsealedLineIndex, lineCount) {
+    // behind, so only the typing caret follows the player. Falls back to the active line once every
+    // line has sealed.
+    //
+    // The rule, exactly (backlog 223): the index the seal cursor WOULD have if drag protection did
+    // not defer the seal. It starts at the cursor (nextUnsealedLineIndex) and walks off every line
+    // the playhead has already left, stepping on endTime + sealGraceMs. That instant is the upper
+    // bound of TypingEngine.songWindowOpen and the deadline canSeal uses, so while the playhead is
+    // inside the first unsealed line's window the loop does not run at all and the answer is the
+    // cursor's, byte for byte what shipped before. It also cannot fire on an ordinary hand-over: a
+    // line with nothing left untyped seals on its own endTime and is never drag-deferred, so the
+    // cursor has already moved before this could.
+    //
+    // Reading the cursor alone (what this did before 223) can never report the row the song has
+    // moved to, because drag protection (TypingEngine.sealPermitted) deliberately holds the caret's
+    // own line unsealed while the player is still typing it, and the seal loop hands the caret on
+    // whenever it seals the caret's line: so the cursor is never AHEAD of the caret, and a dragging
+    // player's playhead stranded at the tail of the row they were still typing while the row
+    // actually being sung got no head, no sweep and no caret. The walk is pure presentation, a read
+    // of line times against the gameplay clock; it writes no engine state and must never be turned
+    // into one, since which line may still be typed is judgement-bearing.
+    //
+    // A multi-step walk is reachable, hence a while rather than an if: the seal loop stops at the
+    // first line it may not seal, so while the head of the queue is drag-deferred (up to
+    // FLETCHER_DRAG_GRACE_MS past its own deadline) the windows of short lines behind it can close
+    // too. It never steps on to the next line's startTime: line windows overlap by design, and the
+    // one that is still open is the one being sung.
+    function sungLineFor(fletcherEnabled, activeLineIndex, nextUnsealedLineIndex, lines, nowMs) {
         if (!fletcherEnabled) return activeLineIndex;
-        return nextUnsealedLineIndex >= 0 && nextUnsealedLineIndex < lineCount
-            ? nextUnsealedLineIndex
-            : activeLineIndex;
+
+        let songLine = nextUnsealedLineIndex;
+        if (songLine < 0 || songLine >= lines.length) return activeLineIndex;
+
+        while (songLine + 1 < lines.length && nowMs >= songWindowClosesAt(lines[songLine])) songLine++;
+
+        return songLine;
+    }
+
+    // The instant the playhead leaves `line`: its hard deadline plus whatever grace its overrunning
+    // vocals were given, the same sum TypingEngine.songWindowOpen ends on.
+    function songWindowClosesAt(line) { return line.endTime + line.sealGraceMs; }
+
+    // How much of a row's underline is filled: the vocal position on the row the SONG is on, and
+    // nothing at all on any other row (mirrors LyricStage.setSungSweep, which feeds one display and
+    // zeroes the one leaving the role). Exactly one row ever shows a fill, which used to be true
+    // here by accident: the row only stopped being the sung row once the song had left it, so its
+    // own time-derived fill was clamped 100% full and scrolling away. Since 223 the row moves off a
+    // DRAGGING player's line while they are still reading it, and a full fill sitting there would
+    // claim the vocals are still on it.
+    function sweepFillFor(rowLineIndex, sungLineIndex, points, time) {
+        return rowLineIndex === sungLineIndex ? sungPositionAt(points, time) : 0;
+    }
+
+    // Whether each head is drawn (mirrors LyricStage.Update's setCaretsVisible call). The two answer
+    // to different facts, and backlog 223 is where they stopped sharing one boolean.
+    //
+    // The TYPING caret hides the moment its line is complete: there is nothing left to type on it,
+    // and that absence IS the "you are done, wait for the song" signal. Deliberate and unchanged.
+    //
+    // The MAP PLAYHEAD is not the player's, so it must not take that term. The vocals go on being
+    // sung under a finished caret, and since backlog 218 a refused roll PARKS a complete caret for
+    // as long as entryOpensAt(next) is away, which blanked the playhead for seconds at a time while
+    // the sweep beneath it kept moving. It hides only for its own reasons: the run is over, or its
+    // row is off the visible stack (the desktop's |sungLine - active| <= 1 and its CaretStyle.None,
+    // both of which arrive here as "no row is showing it").
+    function caretsVisible(active, lineComplete, finished, hasSungRow) {
+        const running = active && !finished;
+        return { player: running && !lineComplete, sung: running && hasSungRow };
     }
 
     // OutQuint, the easing every desktop stage animation uses.
@@ -437,9 +497,9 @@
         // Carets and the wrong-key pops live INSIDE the row they belong to, so they inherit its
         // scale and its position without a second coordinate space. That is the active row for
         // everything the PLAYER owns; the sung caret is moved to whichever row the VOCAL is on
-        // (updateCarets), which is the same row in the ordinary case and the row behind when the
-        // caret has been parked ahead. So does the retype-selection wash
-        // (backlog 182), which is painted BEHIND the glyphs (CSS z-index, see .tb-selection) so
+        // (updateCarets), which is the same row in the ordinary case, the row behind when the caret
+        // has been parked ahead, and the row ahead when it is dragging. So does the retype-selection
+        // wash (backlog 182), which is painted BEHIND the glyphs (CSS z-index, see .tb-selection) so
         // every character keeps the colour its own state gives it: the highlight says "these are
         // about to go", not "these are wrong".
         const playerCaret = el('div', 'tb-caret tb-caret-player');
@@ -753,6 +813,7 @@
         // --- render state ----------------------------------------------------
         let lastCurIdx = -2, wrongFlash = 0, wrongDirection = 1;
         let caretX = 0, sungX = 0, caretSnap = true, sungSnap = true;
+        let sweptLine = -1;          // the line whose row carries the underline fill; -1 = none yet
         let lastTypedAt = -1e9, lastFrameMs = null;
         let scrollPitch = 0, scrollStart = -1;
         let popEnd = [];             // per-cell audio-clock deadline for the top-tier pop
@@ -835,15 +896,23 @@
             bar.style.opacity = state.shown ? state.alpha.toFixed(3) : '0';
         }
 
-        // The sung underline: a faint full-width track under every visible line with a fill that
-        // sweeps to the vocal position, plus a bright head. Every row draws its own, so a line
-        // that just sealed keeps its finished sweep and the upcoming one starts empty. The bright
-        // head is lit on the SUNG row rather than on the caret's row: with the caret parked ahead
-        // the two are different rows, and the head is the vocal's position, not the player's.
+        // The sung underline: a faint full-width track under every visible line, a fill that sweeps
+        // to the vocal position, and a bright head. Both the fill and the head belong to the SUNG
+        // row rather than the caret's row: with the caret parked ahead, or dragging behind, the two
+        // are different rows, and this is the vocal's position, not the player's.
+        //
+        // sweptLine is the desktop's field of the same name: it holds the last line that carried a
+        // fill, so while nothing is being sung (pre-roll, or the dead zone between a seal and the
+        // next line's cue) the row the song last left keeps its finished sweep, exactly as the
+        // desktop's per-display fill does when Update takes its no-active-line branch. Tracked by
+        // LINE index rather than by row, because the three rows are recycled: keying on the row
+        // would leave a stale fill on the element the next line was just built into.
         function updateSweeps(time, sungRow) {
+            if (sungRow) sweptLine = sungRow.index;
+
             for (const r of rows) {
                 if (!r.line) continue;
-                const pos = sungPositionAt(sungPoints[r.index], time);
+                const pos = sweepFillFor(r.index, sweptLine, sungPoints[r.index], time);
                 const x = xAt(r, pos);
                 r.sweepFill.style.width = x.toFixed(2) + 'px';
                 r.sweepGlow.style.transform = 'translateX(' + x.toFixed(2) + 'px)';
@@ -866,8 +935,7 @@
         // test, expressed as "no row is showing it".
         function updateCarets(time, elapsed, active, sungRow) {
             const lineComplete = active && engine.caretIndex >= rowCur.line.cells.length;
-            const show = active && !lineComplete && !engine.finished;
-            const sungShown = show && !!sungRow;
+            const shown = caretsVisible(active, lineComplete, engine.finished, !!sungRow);
 
             if (sungRow && sungCaret.parentNode !== sungRow.row) {
                 sungRow.row.appendChild(sungCaret);
@@ -899,8 +967,8 @@
             sungCaret.style.transform = 'translateX(' + sungX.toFixed(2) + 'px)';
 
             const moving = Math.abs(caretTarget - caretX) > CARET_MOVING_EPSILON;
-            playerCaret.style.opacity = show ? caretAlpha(time - lastTypedAt, moving, true).toFixed(3) : '0';
-            sungCaret.style.opacity = sungShown ? '1' : '0';
+            playerCaret.style.opacity = shown.player ? caretAlpha(time - lastTypedAt, moving, true).toFixed(3) : '0';
+            sungCaret.style.opacity = shown.sung ? '1' : '0';
         }
 
         function approach(current, target, halfTime, elapsed, lineHeight) {
@@ -1040,10 +1108,11 @@
 
             // The row the vocal is on, resolved AFTER any rebuild above, since rowFor() reads the
             // stack's current focus. null while nothing is active, and null when the song is more
-            // than one line away from the caret (a player who ran several lines ahead): it is off
-            // the visible stack, so nothing draws it rather than parking it at a phantom position.
+            // than one line away from the caret (a player who ran several lines ahead, or who fell
+            // that far behind): it is off the visible stack, so nothing draws it rather than
+            // parking it at a phantom position.
             const sungIdx = active
-                ? sungLineFor(engine.fletcherEnabled, engine.activeLineIndex, engine.nextUnsealedLineIndex, beatmap.lines.length)
+                ? sungLineFor(engine.fletcherEnabled, engine.activeLineIndex, engine.nextUnsealedLineIndex, beatmap.lines, time)
                 : -1;
             const sungRowCandidate = sungIdx >= 0 ? rowFor(sungIdx) : null;
             const sungRow = sungRowCandidate && sungRowCandidate.line ? sungRowCandidate : null;
@@ -1289,6 +1358,8 @@
         liveStats,
         cueTargetLine,
         sungLineFor,
+        sweepFillFor,
+        caretsVisible,
         outQuint,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
