@@ -27,6 +27,9 @@ public class BssSubmissionFlowTest
     private long setId;
     private long[] beatmapIds = null!;
 
+    // The second set, published straight to 'unranked' by Order(12) and served by Order(13).
+    private long unrankedSetId;
+
     private byte[] easyOsu = null!;
     private byte[] hardOsu = null!;
     private byte[] audio = null!;
@@ -467,7 +470,7 @@ public class BssSubmissionFlowTest
         Assert.That(create.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
         var body = JObject.Parse(await create.Content.ReadAsStringAsync());
-        long unrankedSetId = (long)body["beatmapset_id"]!;
+        unrankedSetId = (long)body["beatmapset_id"]!;
         long diffId = body["beatmap_ids"]!.Select(t => (long)t).First();
 
         await using var conn = await BssFixture.OpenDbAsync();
@@ -518,6 +521,84 @@ public class BssSubmissionFlowTest
 
         Assert.That(conn.ExecuteScalar<string>("SELECT status FROM beatmapsets WHERE id = @unrankedSetId", new { unrankedSetId }),
             Is.EqualTo("unranked"));
+    }
+
+    /// <summary>
+    /// 'unranked' is a PUBLISHED status, so its package, covers and preview are world-readable
+    /// exactly like 'pending' and 'ranked'. Anonymous is the load-bearing part of every case here:
+    /// the gate used to fall through to an owner-only branch, which passed for the uploader and
+    /// 404'd the website's download button and the client's /api/v2 fetch for everyone else.
+    /// The second half pins the security boundary the same predicate carries.
+    /// </summary>
+    [Test]
+    [Order(13)]
+    public async Task UnrankedSet_ServesPackageAndMediaAnonymously_ButStaysOwnerOnlyWhenUnpublished()
+    {
+        Assert.That(unrankedSetId, Is.GreaterThan(0), "Order(12) publishes the unranked set this case reads.");
+
+        using (var download = await BssFixture.Client.GetAsync($"/beatmapsets/{unrankedSetId}/download"))
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(download.StatusCode, Is.EqualTo(HttpStatusCode.OK), "the website download button on an unranked set");
+                Assert.That(download.Content.Headers.ContentDisposition?.ToString(), Does.Contain(".typb"));
+            });
+        }
+
+        // The game client (DownloadBeatmapSetRequest) builds the /api/v2 alias, same handler, same gate.
+        using (var viaClientRoute = await BssFixture.Client.GetAsync($"/api/v2/beatmapsets/{unrankedSetId}/download"))
+            Assert.That(viaClientRoute.StatusCode, Is.EqualTo(HttpStatusCode.OK), "the in-game download of an unranked set");
+
+        // Covers and previews run through the same status check, so the listing card art and the
+        // preview button on an unranked set have to work for a signed-out visitor too.
+        using (var cover = await BssFixture.Client.GetAsync($"/covers/{unrankedSetId}/1/card.jpg"))
+            Assert.That(cover.StatusCode, Is.EqualTo(HttpStatusCode.OK), "an unranked set's cover");
+
+        // The browser player's media gate is a third copy of the same status check. The listing
+        // only offers webplay on ranked sets today, but the route is reachable by URL, so the
+        // copy is testable rather than merely latent.
+        using (var webplayOsu = await BssFixture.Client.GetAsync($"/play/map/{unrankedSetId}/osu"))
+            Assert.That(webplayOsu.StatusCode, Is.EqualTo(HttpStatusCode.OK), "an unranked set's /play .osu");
+
+        await using var conn = await BssFixture.OpenDbAsync();
+
+        // preview_key is written only when a clip really generated, so a null here means ffmpeg
+        // was absent, not that the gate refused. Asserting past it would be flaky, not stricter.
+        string? previewKey = await conn.ExecuteScalarAsync<string?>(
+            "SELECT preview_key FROM beatmapsets WHERE id = @unrankedSetId", new { unrankedSetId });
+
+        if (previewKey is not null)
+        {
+            using var preview = await BssFixture.Client.GetAsync($"/previews/{unrankedSetId}.mp3");
+            Assert.That(preview.StatusCode, Is.EqualTo(HttpStatusCode.OK), "an unranked set's preview clip");
+        }
+
+        // The boundary, on the SAME set and the SAME stored package, with only the status column
+        // moved: 'hidden' is an unpublished shell and 'removed' is a takedown, and both must keep
+        // 404ing for everyone but the owner. This is what stops a later widening of the published
+        // list (say to "not hidden") from quietly re-serving a DMCA'd set's bytes and artwork.
+        foreach (string unpublished in new[] { "hidden", "removed" })
+        {
+            await conn.ExecuteAsync(
+                "UPDATE beatmapsets SET status = @unpublished WHERE id = @unrankedSetId",
+                new { unpublished, unrankedSetId });
+
+            using (var download = await BssFixture.Client.GetAsync($"/beatmapsets/{unrankedSetId}/download"))
+                Assert.That(download.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), $"anonymous download of a '{unpublished}' set");
+
+            using (var cover = await BssFixture.Client.GetAsync($"/covers/{unrankedSetId}/1/card.jpg"))
+                Assert.That(cover.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), $"anonymous cover of a '{unpublished}' set");
+
+            using (var webplayOsu = await BssFixture.Client.GetAsync($"/play/map/{unrankedSetId}/osu"))
+                Assert.That(webplayOsu.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), $"anonymous /play .osu of a '{unpublished}' set");
+
+            // Owner-only, not gone: the uploader still reaches their own withheld set.
+            using (var owned = await SendAsync(HttpMethod.Get, $"/beatmapsets/{unrankedSetId}/download", bearer))
+                Assert.That(owned.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"the owner still downloads their own '{unpublished}' set");
+        }
+
+        await conn.ExecuteAsync(
+            "UPDATE beatmapsets SET status = 'unranked' WHERE id = @unrankedSetId", new { unrankedSetId });
     }
 
     // ---------------------------------------------------------------------------------------------

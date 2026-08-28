@@ -207,7 +207,7 @@ public static class MediaEndpoints
             new { setId });
 
         if (row is null || row.PackageKey is null
-            || (row.Status is not ("pending" or "ranked") && requester?.Id != row.OwnerId))
+            || (!BeatmapsetEndpoints.IsPublished(row.Status) && requester?.Id != row.OwnerId))
             return Results.NotFound();
 
         var package = await store.OpenObjectReadAsync(row.PackageKey, ctx.RequestAborted);
@@ -254,7 +254,7 @@ public static class MediaEndpoints
         return range.Ranges.Any(r => r.From == 0);
     }
 
-    /// <summary>Published sets ('pending'/'ranked') are world-readable; hidden/removed media only for the owner.</summary>
+    /// <summary>Published sets (BeatmapsetEndpoints.IsPublished) are world-readable; hidden/removed media only for the owner.</summary>
     private static async Task<bool> canSeeSetMediaAsync(HttpContext ctx, Db db, long setId)
     {
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
@@ -266,7 +266,7 @@ public static class MediaEndpoints
         if (set is not { } row)
             return false;
 
-        if (row.Status is "pending" or "ranked")
+        if (BeatmapsetEndpoints.IsPublished(row.Status))
             return true;
 
         var requester = ctx.SessionUser() ?? await ctx.ResolveBearerAsync();

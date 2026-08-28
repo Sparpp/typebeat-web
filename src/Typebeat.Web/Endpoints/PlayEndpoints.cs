@@ -430,7 +430,7 @@ public static class PlayEndpoints
 
     // ---- media helpers ----
 
-    /// <summary>Published sets ('pending'/'ranked') are world-readable; hidden/removed media only for the owner.</summary>
+    /// <summary>Published sets (BeatmapsetEndpoints.IsPublished) are world-readable; hidden/removed media only for the owner.</summary>
     private static async Task<bool> CanSeeSetMediaAsync(HttpContext ctx, NpgsqlConnection conn, long setId)
     {
         var set = await conn.QuerySingleOrDefaultAsync<(long OwnerId, string Status)?>(
@@ -440,7 +440,7 @@ public static class PlayEndpoints
         if (set is not { } row)
             return false;
 
-        if (row.Status is "pending" or "ranked")
+        if (BeatmapsetEndpoints.IsPublished(row.Status))
             return true;
 
         var requester = ctx.SessionUser() ?? await ctx.ResolveBearerAsync();

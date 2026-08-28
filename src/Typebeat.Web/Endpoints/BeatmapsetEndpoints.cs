@@ -19,6 +19,8 @@ namespace Typebeat.Web.Endpoints;
 /// 'ranked' → "ranked" (reviewer-approved: leaderboards live, MatchesOnlineVersion satisfied),
 /// 'pending' → "pending" (published upload awaiting review; browsable, no leaderboards,
 /// the client's LeaderboardManager blocks non-ranked-family statuses natively),
+/// 'unranked' → "unranked" (published, browsable and downloadable; the creator opted out of
+/// ranking in the wizard, so it never earns leaderboard rows),
 /// 'hidden' → "wip" (owner-only pre-publish state, preselects WIP in the wizard),
 /// 'removed' → "graveyard" (owner-only; submission to it is blocked with a 422 in BSS).
 /// </summary>
@@ -68,7 +70,7 @@ public static class BeatmapsetEndpoints
             """,
             new { setId });
 
-        if (set is null || (set.Status is not ("ranked" or "pending" or "unranked") && requester?.Id != set.OwnerId))
+        if (set is null || (!IsPublished(set.Status) && requester?.Id != set.OwnerId))
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");
 
         // Live difficulties only: filename IS NOT NULL ⇔ part of the current version (the
@@ -152,6 +154,23 @@ public static class BeatmapsetEndpoints
 
         return WireJson.Ok(new { beatmapset_ids = ids });
     }
+
+    /// <summary>
+    /// True for the three PUBLISHED beatmapset statuses: 'pending' (awaiting review), 'unranked'
+    /// (creator opted out of ranking) and 'ranked'. Those are world-readable: browsable, and their
+    /// package, covers and preview stream to anyone, signed in or not.
+    ///
+    /// This is a SECURITY BOUNDARY, so it is an explicit allow-list of three and never a "not
+    /// hidden" test. 'hidden' is an unpublished shell (nobody's business but the owner's) and
+    /// 'removed' is a takedown, whose bytes must keep 404ing for everyone but the owner: the
+    /// runbook in deploy/README.md and the bounded one-day cover TTL both depend on it. A new
+    /// status must be added here deliberately, after deciding it is publishable.
+    ///
+    /// It exists because the same list was hand-copied into four gates and migration 012's
+    /// 'unranked' reached only two of them, which owner-locked every unranked set's download,
+    /// cover and preview.
+    /// </summary>
+    public static bool IsPublished(string dbStatus) => dbStatus is "pending" or "unranked" or "ranked";
 
     /// <summary>DB status → the wire string the client's BeatmapOnlineStatus binds by name.</summary>
     public static string StatusString(string dbStatus) => dbStatus switch
