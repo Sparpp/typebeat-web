@@ -25,8 +25,26 @@ public static class ScoreEndpoints
     private const int status_unprocessable = StatusCodes.Status422UnprocessableEntity;
 
     /// <summary>Mods that are unranked at ANY configuration (mirror the client's Mod.Ranked=false):
-    /// Mashing (Relax "RX") and the time-ramp Wind Up / Wind Down ("WU"/"WD").</summary>
-    private static readonly HashSet<string> always_unranked_mod_acronyms = new(StringComparer.OrdinalIgnoreCase) { "RX", "WU", "WD" };
+    /// Mashing (Relax "RX"), the time-ramp Wind Up / Wind Down ("WU"/"WD"), Conductor ("CT") and
+    /// Dyslexia ("DX").
+    ///
+    /// <para>
+    /// The two newest members have to be listed because this gate is a DENY LIST and
+    /// <see cref="ModConfigRanked"/> treats an acronym it does not know as RANKED: a mod the client
+    /// ships and the server has never heard of would otherwise store ranked and land on the shared
+    /// boards. CONDUCTOR is unranked because the song meets the player (the playback rate chases
+    /// their typing, so the judgement it earns is intentionally generous and no two plays are even
+    /// on the same map in time). DYSLEXIA is unranked because the input model is relaxed: the
+    /// letters of a word may be typed in any order, so a keystroke is matched against a set rather
+    /// than against the one character the caret is on.
+    /// </para>
+    ///
+    /// <para>
+    /// Recite ("RE") is deliberately ABSENT: it hides untyped text and is a difficulty INCREASE
+    /// that ranks, the same shape as Fletcher ("FC"). It needs nothing here, only a price in
+    /// <see cref="Scoring.ModMultiplier"/>.
+    /// </para></summary>
+    private static readonly HashSet<string> always_unranked_mod_acronyms = new(StringComparer.OrdinalIgnoreCase) { "RX", "WU", "WD", "CT", "DX" };
 
     /// <summary>
     /// Whether a single submitted mod is ranked at its submitted configuration; the server-side

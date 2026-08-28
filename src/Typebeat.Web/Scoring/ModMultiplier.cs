@@ -15,14 +15,23 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <para>
 /// Per-mod values, mirroring the calculator: Easy 0.5, No Fail 0.5, Hard Rock 1.10, Sudden Death 1.0
-/// (absent), Gatekeeper 1.0 (absent), Flashlight 1.05, Literate 1.05, Rhythmic 1.10, Fletcher 1.02
-/// ("FC", the pinning mod) and the retired Fletcher 0.98 ("FT", the unpinning one),
-/// Muted 1.0 (absent), Mashing 0.1 (unranked, still priced for display parity), and the rate mods on
+/// (absent), Gatekeeper 1.0 (absent), Flashlight 1.05, Literate 1.05, Recite 1.01, Rhythmic 1.10,
+/// Fletcher 1.02 ("FC", the pinning mod) and the retired Fletcher 0.98 ("FT", the unpinning one),
+/// Muted 1.0 (absent), Conductor 1.0 and Dyslexia 1.0 (both unranked, both 1.0x in the calculator),
+/// Mashing 0.1 (unranked, still priced for display parity), and the rate mods on
 /// the continuous <see cref="RateMultiplier"/> curve. The fattest RANKED stack a current client can
-/// assemble is DT@2.00 (1.46) x FL (1.05) x LT (1.05) x HR (1.10) x FC (1.02) = 1.80602730; without
-/// Fletcher it is the 1.770615 that stack paid before, since a 1.0x mod changes nothing. Rhythmic
-/// pays the same 1.10 and is mutually reachable with none of this any more (no client ships it), but
-/// a stored row carrying it too would still be 1.986630..., under the cap.
+/// assemble is DT@2.00 (1.46) x FL (1.05) x LT (1.05) x HR (1.10) x FC (1.02) x RE (1.01) =
+/// 1.824087573; without Recite it is 1.80602730 and without Fletcher too the 1.770615 that stack
+/// paid before, since a 1.0x mod changes nothing.
+/// </para>
+///
+/// <para>
+/// RHYTHMIC IS THE ONE COMBINATION THAT NOW EXCEEDS THE CAP, and it is unreachable rather than a
+/// problem: RH pays 1.10 and 1.824087573 x 1.10 = 2.006496..., just over <see cref="STACK_CAP"/>.
+/// No row can carry both, because backlog 147 removed Rhythmic from the client long before Recite
+/// (backlog 229) existed, so no client ever offered the pair. The pre-Recite six (RH alongside the
+/// 1.80602730 stack) is still 1.986630..., under the cap, and is still pinned by a test. If a mod
+/// above 1.0 is ever added to the reachable set, check this product before the arm, not after.
 /// </para>
 ///
 /// <para>
@@ -70,7 +79,7 @@ public static class ModMultiplier
 
     /// <summary>
     /// Absolute backstop on a whole stack, whatever it contains. No stack the client can actually
-    /// assemble comes near it (the fattest ranked one is 1.60965, pinned by a test), so this only
+    /// assemble comes near it (the fattest ranked one is 1.824087573, pinned by a test), so this only
     /// ever bites tamper-shaped input such as DT and NC submitted together, which the client makes
     /// mutually exclusive. Raise it only if a genuinely reachable stack ever exceeds it.
     /// </summary>
@@ -129,6 +138,16 @@ public static class ModMultiplier
             // must match the game calculator's value.
             "FL" => 1.05,
             "LT" => 1.05,
+            // Recite (backlog 229): hides every character until it is typed. 1.01, and the value is
+            // the game calculator's own (TypeBeatScoreMultiplierCalculator prices Recite at 1.01
+            // deliberately below Flashlight's 1.05, which hides strictly less, because the handicap
+            // is memory rather than reflexes and a rehearsed run must not be paid a premium it never
+            // earned). Listing it TIGHTENS the ceiling exactly as "HR" and "FC" do: unlisted it
+            // would be allowed UNKNOWN_MOD_MULTIPLIER (2.0x) on a play whose honest total is 1.01x
+            // its base, a laundering slot nearly twice as wide as the mod can justify. Recite is a
+            // RANKED mod, so the ranked gate needs nothing for it (that gate is the deny list in
+            // ScoreEndpoints, and an acronym absent from it ranks); this is only the price.
+            "RE" => 1.01,
             // Rhythmic (backlog 135): the millisecond judgement ladder, which was the tighter one
             // on any map slower than 10 characters per second.
             //
@@ -161,6 +180,18 @@ public static class ModMultiplier
             "FC" => 1.02,
             "FT" => 0.98,
             "MU" => 1.0,
+            // Conductor (backlog 226) and Dyslexia (backlog 231), both priced at exactly the 1.0
+            // their game-side multiplier is. Conductor is not a ModRateAdjust and never touches the
+            // score multiplier or the window scale (it steers the TRACK, chasing the player's pace),
+            // and Dyslexia is simply unlisted in the game's calculator, which is 1.0x by
+            // construction. Both are ALWAYS UNRANKED (they are in ScoreEndpoints' deny list), so a
+            // ceiling here can never rescue or ruin a board placement; it is anti-laundering only,
+            // and 1.0 is the honest bound. Left unlisted they would each be allowed
+            // UNKNOWN_MOD_MULTIPLIER (2.0x), i.e. an unranked play could still be stored at double
+            // the total it earned, which is the profile total and the play history lying rather than
+            // a leaderboard doing it. Listing them can only ever tighten.
+            "CT" => 1.0,
+            "DX" => 1.0,
             "RX" => 0.1,
             // Rate ramps: the endpoints are not persisted, so price them at the most any ramp could
             // pay. 0.8·For(min) + 0.2·For(max) <= For(max) <= For(2.00), the curve being monotonic.

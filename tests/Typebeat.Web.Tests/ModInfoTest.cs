@@ -108,6 +108,66 @@ public class ModInfoTest
         });
     }
 
+    /// <summary>
+    /// Recite (backlog 229), which hides every character until it is typed. Ranked and typed
+    /// ModType.DifficultyIncrease by the game, modelled on Flashlight, so it badges red beside it
+    /// rather than falling through to "other".
+    /// </summary>
+    [Test]
+    public void Recite_RendersAsRankedDifficultyIncreaseBadge()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ModInfo.CategoryClass("RE"), Is.EqualTo("increase"));
+            Assert.That(ModInfo.Name("RE"), Is.EqualTo("Recite"));
+
+            Assert.That(ModInfo.CategoryClass("re"), Is.EqualTo("increase"));
+            Assert.That(ModInfo.Name("re"), Is.EqualTo("Recite"));
+
+            Assert.That(ModInfo.CategoryClass("RE"), Is.EqualTo(ModInfo.CategoryClass("FL")),
+                "the mod it is modelled on badges the same way");
+        });
+    }
+
+    /// <summary>
+    /// Conductor (backlog 226) and Dyslexia (backlog 231), the two unranked newcomers. Both are
+    /// NAMED, because an unnamed acronym renders as the bare acronym and a leaderboard row would say
+    /// "CT" with no tooltip at all.
+    ///
+    /// <para>Both stay on the neutral "other" badge, and that is a decision rather than an
+    /// oversight. Conductor is ModType.Fun, the category Wind Up, Wind Down and Muted are in, none
+    /// of which this table has ever coloured: a rate the player steers is not a difficulty
+    /// adjustment in either direction. Dyslexia is ModType.Conversion, the bucket the four colours
+    /// here do not cover (the Fletcher pair above records the same reasoning), and it is not
+    /// "automation" either: Mashing earns violet by making every key the right key, while Dyslexia
+    /// still makes the player type every character of the word.</para>
+    /// </summary>
+    [Test]
+    public void ConductorAndDyslexia_AreNamed_AndKeepTheNeutralBadge()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ModInfo.Name("CT"), Is.EqualTo("Conductor"));
+            Assert.That(ModInfo.Name("ct"), Is.EqualTo("Conductor"));
+            Assert.That(ModInfo.Name("DX"), Is.EqualTo("Dyslexia"));
+            Assert.That(ModInfo.Name("dx"), Is.EqualTo("Dyslexia"));
+
+            Assert.That(ModInfo.CategoryClass("CT"), Is.EqualTo("other"));
+            Assert.That(ModInfo.CategoryClass("ct"), Is.EqualTo("other"));
+            Assert.That(ModInfo.CategoryClass("DX"), Is.EqualTo("other"));
+            Assert.That(ModInfo.CategoryClass("dx"), Is.EqualTo("other"));
+
+            // Conductor sits with the ramps it shares a mod type with, not with the rate mods it
+            // shares a knob with.
+            Assert.That(ModInfo.CategoryClass("CT"), Is.EqualTo(ModInfo.CategoryClass("WU")));
+            Assert.That(ModInfo.CategoryClass("CT"), Is.Not.EqualTo(ModInfo.CategoryClass("DT")));
+
+            // Dyslexia is not Mashing: it relaxes which cell a key lands in, it does not play the
+            // map for the player.
+            Assert.That(ModInfo.CategoryClass("DX"), Is.Not.EqualTo(ModInfo.CategoryClass("RX")));
+        });
+    }
+
     [Test]
     public void UnknownAcronym_StillFallsBackGracefully()
     {

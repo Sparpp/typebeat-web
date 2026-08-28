@@ -133,6 +133,42 @@ public class VariableRateScoreTest
         Assert.That((bool)submitted["ranked"]!, Is.False, "Mashing is unranked at every configuration");
     }
 
+    /// <summary>
+    /// The ranked gate is a DENY LIST, so a mod the server has not been told about is stored RANKED
+    /// and reaches the shared boards. Conductor (backlog 226, the song follows the player) and
+    /// Dyslexia (backlog 231, a word's letters typed in any order) are unranked in the client and
+    /// must be unranked here; Recite (backlog 229, hides untyped text) is a ranked difficulty
+    /// increase and must NOT be caught by the same list, exactly as Fletcher is not.
+    ///
+    /// <para>Every total below is inside its own mod ceiling (CT and DX price at 1.0, RE at 1.01),
+    /// so the flag under test is the deny list and not the clamp: an out-of-bounds total would store
+    /// unranked whatever the acronym, which would make the CT and DX assertions pass for the wrong
+    /// reason.</para>
+    /// </summary>
+    [Test]
+    public async Task ConductorAndDyslexiaAreUnranked_WhileReciteRanks()
+    {
+        var conductor = await SubmitAsync(total: clean_base, mods: [Mod("CT")]);
+        var dyslexia = await SubmitAsync(total: clean_base, mods: [Mod("DX")]);
+        var recite = await SubmitAsync(total: (long)Math.Round(clean_base * 1.01), mods: [Mod("RE")]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((bool)conductor["ranked"]!, Is.False, "Conductor is unranked at every configuration");
+            Assert.That((bool)dyslexia["ranked"]!, Is.False, "Dyslexia is unranked at every configuration");
+
+            // Not clamped: the stored totals are the ones submitted, so the rows are unranked
+            // because of the acronym and nothing else.
+            Assert.That((long)conductor["total_score"]!, Is.EqualTo(clean_base));
+            Assert.That((long)dyslexia["total_score"]!, Is.EqualTo(clean_base));
+
+            Assert.That((bool)recite["ranked"]!, Is.True, "Recite is a ranked difficulty increase");
+            Assert.That(recite["position"]!.Type, Is.Not.EqualTo(JTokenType.Null), "a ranked score gets a position");
+            Assert.That((long)recite["total_score"]!, Is.EqualTo((long)Math.Round(clean_base * 1.01)),
+                "1.01x is priced, so the honest total is in bounds");
+        });
+    }
+
     // ---- what gets stored ----
 
     [Test]
