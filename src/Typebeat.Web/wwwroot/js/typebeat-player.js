@@ -830,13 +830,16 @@
             }
 
             if (wordGesture) {
-                // CTRL+A: offer the run back to the earliest unfixed typo for retyping (backlog 184
-                // widened it from the nearest one, so one press offers every mistake). preventDefault
-                // because the browser's own Ctrl+A selects the whole page. Gated on the same flag the
-                // erase is, and for the same reason: with no wrong character able to land there would
-                // never be a typo to select.
+                // CTRL+A: offer the run back to the earliest unfixed mistake for retyping (backlog
+                // 184 widened it from the nearest one, so one press offers every mistake).
+                // preventDefault because the browser's own Ctrl+A selects the whole page. NOT gated
+                // on allowWrongInput, unlike the erase above: that used to be true here too, but
+                // backlog 244 is where it stopped being the same question, since a word skip is
+                // orthogonal to the input model and can leave abandoned cells behind under
+                // Gatekeeper even with no typo possible. Behaviourally inert in the browser today
+                // (allowWrongInput is hardcoded true, the browser having no mods payload), but kept
+                // dropped to mirror the desktop honestly.
                 e.preventDefault();
-                if (!engine.allowWrongInput) return;
 
                 const anchor = engine.retypeSelectionAnchor;
 

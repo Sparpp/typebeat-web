@@ -3436,22 +3436,25 @@
 
         // TypingEngine.RetypeSelectionAnchor. Where a CTRL+A (backlog 182, "select back to the
         // mistake I have to retype") should put the start of its selection: the first cell of the run
-        // holding the EARLIEST unfixed typo behind the caret, or -1 when there is no typo behind the
-        // caret at all (the gesture is then a no-op). The selection itself is the half-open range
-        // [this, caretIndex), and it is pure UI state: nothing in the engine knows it exists.
-        // Consuming it is composed, like the gesture above, out of ordinary processBackspace calls
-        // back to this index plus at most one processKey (see typebeat-player.js).
+        // holding the EARLIEST unfixed mistake behind the caret, or -1 when there is none at all (the
+        // gesture is then a no-op). The selection itself is the half-open range [this, caretIndex),
+        // and it is pure UI state: nothing in the engine knows it exists. Consuming it is composed,
+        // like the gesture above, out of ordinary processBackspace calls back to this index plus at
+        // most one processKey (see typebeat-player.js).
         //
-        // A typo is a cell in the 'wrong' state: a wrong character typed through and not yet
-        // backspaced away. The scan takes the EARLIEST one on the line, so the selection covers every
-        // unfixed typo behind the caret rather than only the most recent (backlog 184). The gesture
-        // is "fix my mistakes", and it is one keystroke: offering the shortest retype would leave a
-        // player with two spoiled words pressing it, retyping, pressing it again, and having no way
-        // to see from the caret how many rounds are left. Retyping the cells in between costs
-        // nothing, since a correct cell re-typed is scoring-inert.
+        // An unfixed mistake is a cell in the 'wrong' state OR the 'abandoned' state (backlog 244): a
+        // wrong character typed through and not yet backspaced away, or a cell a word skip gave up on
+        // and nobody has come back for. Both are scanned in one pass, taking the EARLIEST cell in
+        // EITHER state, so the selection covers every unfixed mistake behind the caret rather than
+        // only the most recent (backlog 184) and a still-open typo wins over a later abandoned word,
+        // or the reverse, purely on which one sits earlier on the line. The gesture is "fix what's
+        // behind me", and it is one keystroke: offering the shortest retype would leave a player with
+        // two spoiled words pressing it, retyping, pressing it again, and having no way to see from
+        // the caret how many rounds are left. Retyping the cells in between costs nothing, since a
+        // correct cell re-typed is scoring-inert.
         //
-        // WHICH run the typo's cell opens has two cases, and they are the same rule stated twice: the
-        // selection starts at the first cell the player must retype to fix the typo. For an ordinary
+        // WHICH run the mistake's cell opens has two cases, and they are the same rule stated twice:
+        // the selection starts at the first cell the player must retype to fix it. For an ordinary
         // lyric character that is its WORD's first cell (walk back to the gap before it). For a WORD
         // GAP holding a typo (possible since backlog 181, and unconditional here: the browser is
         // always on the live arm of that rule) the gap IS the cell to retype and it belongs to no
@@ -3467,17 +3470,19 @@
 
             const cells = this.lines[this.activeLineIndex].cells;
             const limit = Math.min(this.caretIndex, cells.length);
-            let typo = -1;
+            let mistake = -1;
 
             for (let i = 0; i < limit; i++) {
-                if (cells[i].state === 'wrong') { typo = i; break; }
+                // The two unfixed states, taken in one pass so the earliest of EITHER kind wins
+                // (backlog 244 added the abandoned one).
+                if (cells[i].state === 'wrong' || cells[i].state === 'abandoned') { mistake = i; break; }
             }
 
-            if (typo < 0) return -1;
+            if (mistake < 0) return -1;
 
-            if (isWordGap(cells[typo])) return typo;
+            if (isWordGap(cells[mistake])) return mistake;
 
-            let anchor = typo;
+            let anchor = mistake;
 
             while (anchor > 0 && !isWordGap(cells[anchor - 1])) anchor--;
 

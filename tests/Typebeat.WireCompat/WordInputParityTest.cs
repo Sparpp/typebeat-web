@@ -253,6 +253,19 @@ public class WordInputParityTest
             Steps = [Key('a', a_t), Key('b', b_t), Key('x', gap1_t), Key('c', c_t), Churn(), CtrlA()],
         },
 
+        // Backlog 244's guard direction, the reverse of "aSelectionCollapsesThroughAbandonedCells"
+        // below (where the typo and the abandoned cell share one word): an unfixed typo in an
+        // EARLIER word still outranks a word skip's abandoned cells in a LATER one, purely because
+        // the scan takes the earliest mistake on the line regardless of which of the two states it
+        // is in.
+        new Scenario
+        {
+            Name = "anEarlierTypoOutranksALaterAbandonedWord",
+            Osu = AbCdEf(),
+            SpaceSkipsWord = true,
+            Steps = [Key('x', a_t), Key('b', b_t), Key(' ', gap1_t), Key(' ', 2200), Churn(), CtrlA()],
+        },
+
         // A LINE-COMPLETE caret, and the composed consume from there: the selection reaches back over
         // the last word, collapses, and the letter lands on the anchor cell.
         new Scenario
@@ -833,6 +846,10 @@ public class WordInputParityTest
 
             Assert.That(probes["aGapTypoAnchorsOnTheGapItself"][^2].States[2], Is.EqualTo("wrong"), "a wrong letter landed on the word gap");
             Assert.That(probes["aGapTypoAnchorsOnTheGapItself"][^1].SelectionStart, Is.EqualTo(2), "the gap itself, so \"ab\" is left alone");
+
+            Assert.That(probes["anEarlierTypoOutranksALaterAbandonedWord"][^2].States[0], Is.EqualTo("wrong"), "the typo in \"ab\"");
+            Assert.That(probes["anEarlierTypoOutranksALaterAbandonedWord"][^2].States[3], Is.EqualTo("abandoned"), "the later word skip's abandoned \"c\"");
+            Assert.That(probes["anEarlierTypoOutranksALaterAbandonedWord"][^1].SelectionStart, Is.Zero, "the earlier typo's word wins, not the later abandoned one");
 
             Assert.That(probes["aLineCompleteCaretStillAnchorsAndConsumes"][^4].CaretIndex, Is.EqualTo(8), "line complete");
             Assert.That(probes["aLineCompleteCaretStillAnchorsAndConsumes"][^3].SelectionStart, Is.EqualTo(6), "the head of \"ef\"");
