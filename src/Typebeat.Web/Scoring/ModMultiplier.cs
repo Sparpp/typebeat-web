@@ -15,19 +15,23 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <para>
 /// Per-mod values, mirroring the calculator: Easy 0.5, No Fail 0.5, Hard Rock 1.10, Sudden Death 1.0
-/// (absent), Gatekeeper 1.0 (absent), Flashlight 1.05, Literate 1.05, Recite 1.01, Rhythmic 1.10,
+/// (absent), Gatekeeper 1.0 (absent), Flashlight 1.05, Literate 1.05, Recite 1.07, Rhythmic 1.10,
 /// Fletcher 1.02 ("FC", the pinning mod) and the retired Fletcher 0.98 ("FT", the unpinning one),
 /// Muted 1.0 (absent), Conductor 1.0 and Dyslexia 1.0 (both unranked, both 1.0x in the calculator),
 /// Mashing 0.1 (unranked, still priced for display parity), and the rate mods on
-/// the continuous <see cref="RateMultiplier"/> curve. The fattest RANKED stack a current client can
-/// assemble is DT@2.00 (1.46) x FL (1.05) x LT (1.05) x HR (1.10) x FC (1.02) x RE (1.01) =
-/// 1.824087573; without Recite it is 1.80602730 and without Fletcher too the 1.770615 that stack
-/// paid before, since a 1.0x mod changes nothing.
+/// the continuous <see cref="RateMultiplier"/> curve. The fattest RANKED stack this table has to
+/// bound is DT@2.00 (1.46) x FL (1.05) x LT (1.05) x HR (1.10) x FC (1.02) x RE (1.07) =
+/// 1.932449211; without Recite it is 1.80602730 and without Fletcher too the 1.770615 that stack
+/// paid before, since a 1.0x mod changes nothing. Backlog 239 made Flashlight and Recite mutually
+/// exclusive in the client, so no live client can assemble this exact six any more, but a row
+/// stored before that change still can, and this table bounds whatever acronym set a STORED row
+/// carries (the "RH" and "FT" arms below explain why), so the pair stays in the product rather
+/// than being dropped.
 /// </para>
 ///
 /// <para>
 /// RHYTHMIC IS THE ONE COMBINATION THAT NOW EXCEEDS THE CAP, and it is unreachable rather than a
-/// problem: RH pays 1.10 and 1.824087573 x 1.10 = 2.006496..., just over <see cref="STACK_CAP"/>.
+/// problem: RH pays 1.10 and 1.932449211 x 1.10 = 2.125694..., just over <see cref="STACK_CAP"/>.
 /// No row can carry both, because backlog 147 removed Rhythmic from the client long before Recite
 /// (backlog 229) existed, so no client ever offered the pair. The pre-Recite six (RH alongside the
 /// 1.80602730 stack) is still 1.986630..., under the cap, and is still pinned by a test. If a mod
@@ -79,7 +83,7 @@ public static class ModMultiplier
 
     /// <summary>
     /// Absolute backstop on a whole stack, whatever it contains. No stack the client can actually
-    /// assemble comes near it (the fattest ranked one is 1.824087573, pinned by a test), so this only
+    /// assemble comes near it (the fattest ranked one is 1.932449211, pinned by a test), so this only
     /// ever bites tamper-shaped input such as DT and NC submitted together, which the client makes
     /// mutually exclusive. Raise it only if a genuinely reachable stack ever exceeds it.
     /// </summary>
@@ -138,16 +142,19 @@ public static class ModMultiplier
             // must match the game calculator's value.
             "FL" => 1.05,
             "LT" => 1.05,
-            // Recite (backlog 229): hides every character until it is typed. 1.01, and the value is
-            // the game calculator's own (TypeBeatScoreMultiplierCalculator prices Recite at 1.01
-            // deliberately below Flashlight's 1.05, which hides strictly less, because the handicap
-            // is memory rather than reflexes and a rehearsed run must not be paid a premium it never
-            // earned). Listing it TIGHTENS the ceiling exactly as "HR" and "FC" do: unlisted it
-            // would be allowed UNKNOWN_MOD_MULTIPLIER (2.0x) on a play whose honest total is 1.01x
-            // its base, a laundering slot nearly twice as wide as the mod can justify. Recite is a
-            // RANKED mod, so the ranked gate needs nothing for it (that gate is the deny list in
-            // ScoreEndpoints, and an acronym absent from it ranks); this is only the price.
-            "RE" => 1.01,
+            // Recite (backlog 229): hides every character until it is typed. 1.07 (backlog 240
+            // buffed it up from 1.01), and the value is the game calculator's own
+            // (TypeBeatScoreMultiplierCalculator prices Recite at 1.07). It used to sit deliberately
+            // below Flashlight's 1.05 on the theory that memory should not out-earn reflexes, but
+            // backlog 239 made the two mutually exclusive in the client, so they never compete on
+            // the same play any more, and the buff prices Recite on its own difficulty instead of
+            // relative to a mod it can no longer be stacked against. Listing it TIGHTENS the ceiling
+            // exactly as "HR" and "FC" do: unlisted it would be allowed UNKNOWN_MOD_MULTIPLIER (2.0x)
+            // on a play whose honest total is 1.07x its base, a laundering slot nearly twice as wide
+            // as the mod can justify. Recite is a RANKED mod, so the ranked gate needs nothing for it
+            // (that gate is the deny list in ScoreEndpoints, and an acronym absent from it ranks);
+            // this is only the price.
+            "RE" => 1.07,
             // Rhythmic (backlog 135): the millisecond judgement ladder, which was the tighter one
             // on any map slower than 10 characters per second.
             //

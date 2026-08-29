@@ -119,10 +119,11 @@ public class RateMultiplierTest
             Assert.That(ModMultiplier.For("fc", null), Is.EqualTo(1.02));
             Assert.That(ModMultiplier.For("FT", null), Is.EqualTo(0.98));
             Assert.That(ModMultiplier.For("MU", null), Is.EqualTo(1.0));
-            // Recite (backlog 229): 1.01, the game calculator's own arm, deliberately below the
-            // 1.05 Flashlight pays even though Recite hides strictly more.
-            Assert.That(ModMultiplier.For("RE", null), Is.EqualTo(1.01));
-            Assert.That(ModMultiplier.For("re", null), Is.EqualTo(1.01));
+            // Recite (backlog 229, buffed to 1.07 by backlog 240): the game calculator's own arm.
+            // It used to sit below the 1.05 Flashlight pays; backlog 239 made the two mutually
+            // exclusive in the client, so that comparison no longer applies to any reachable stack.
+            Assert.That(ModMultiplier.For("RE", null), Is.EqualTo(1.07));
+            Assert.That(ModMultiplier.For("re", null), Is.EqualTo(1.07));
             // Conductor (backlog 226) and Dyslexia (backlog 231): exactly 1.0, matching their
             // game-side multiplier. Conductor is not a ModRateAdjust and never touches the score
             // multiplier, and Dyslexia is unlisted in the calculator, which is 1.0x by construction.
@@ -215,13 +216,15 @@ public class RateMultiplierTest
     [Test]
     public void MaxForStack_PinsTheFattestRankedStack()
     {
-        // DT@2.00 (1.46) × FL (1.05) × LT (1.05) × HR (1.10) × FC (1.02) × RE (1.01) = 1.824087573,
-        // the dearest stack a current client can assemble out of ranked mods. Everything else ranked
-        // is a trim (NF 0.5, and the retired FT 0.98) or neutral, and Easy is excluded by Hard Rock.
-        // Hard Rock (backlog 150) inherited this slot from Rhythmic, which paid the same 1.10 and can
-        // no longer be selected at all. Recite (backlog 229) joined at 1.01: it is a ranked
-        // difficulty increase, so unlike Conductor and Dyslexia (unranked, and 1.0x anyway) it does
-        // fatten this product.
+        // DT@2.00 (1.46) × FL (1.05) × LT (1.05) × HR (1.10) × FC (1.02) × RE (1.07) = 1.932449211,
+        // the fattest ranked stack this table has to bound. Backlog 239 made Flashlight and Recite
+        // mutually exclusive in the client, so no live client can assemble this exact six any more,
+        // but a row stored before that change still can, and the ceiling is re-derived for stored
+        // rows too. Everything else ranked is a trim (NF 0.5, and the retired FT 0.98) or neutral,
+        // and Easy is excluded by Hard Rock. Hard Rock (backlog 150) inherited this slot from
+        // Rhythmic, which paid the same 1.10 and can no longer be selected at all. Recite (backlog
+        // 229, buffed to 1.07 by backlog 240) is a ranked difficulty increase, so unlike Conductor
+        // and Dyslexia (unranked, and 1.0x anyway) it does fatten this product.
         //
         // Fletcher joined the product at backlog 208, which REVERSED the mod: "FC" pins the caret
         // back to the playhead now that the unpinned one is the default, and a mod that takes slack
@@ -233,7 +236,7 @@ public class RateMultiplierTest
         // clamp an honest maximal play and store it unranked.
         double fattest = ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FC", null), ("RE", null)]);
 
-        Assert.That(fattest, Is.EqualTo(1.824087573).Within(1e-9));
+        Assert.That(fattest, Is.EqualTo(1.932449211).Within(1e-9));
         Assert.That(fattest, Is.LessThan(ModMultiplier.STACK_CAP), "the backstop must never bite a reachable stack");
 
         // Without Recite it is the 1.80602730 the five before it paid, and without Fletcher too the
@@ -257,11 +260,12 @@ public class RateMultiplierTest
         Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FC", null), ("RH", null)]),
             Is.LessThan(ModMultiplier.STACK_CAP));
 
-        // AND RECITE IS THE MOD THAT TIPS THAT HYPOTHETICAL OVER: the old headroom was 1.008x, so
-        // 1.986630030 × 1.01 = 2.006496... is clamped to the cap. This is not a live problem and
-        // must not be read as one: backlog 147 removed Rhythmic from the client years before Recite
-        // (backlog 229) shipped, so no client ever offered the pair and no row can carry it. It is
-        // pinned so the next mod above 1.0 is weighed against the product rather than the acronym.
+        // AND RECITE IS THE MOD THAT TIPS THAT HYPOTHETICAL OVER: 1.986630030 × 1.07 = 2.125694...
+        // is clamped to the cap, well past it now that backlog 240 buffed Recite from 1.01 to 1.07.
+        // This is not a live problem and must not be read as one: backlog 147 removed Rhythmic from
+        // the client years before Recite (backlog 229) shipped, so no client ever offered the pair
+        // and no row can carry it. It is pinned so the next mod above 1.0 is weighed against the
+        // product rather than the acronym.
         Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FC", null), ("RE", null), ("RH", null)]),
             Is.EqualTo(ModMultiplier.STACK_CAP),
             "the RH + RE stack is unreachable, and the backstop is what would catch it");
@@ -312,7 +316,7 @@ public class RateMultiplierTest
     /// <see cref="ModMultiplier.UNKNOWN_MOD_MULTIPLIER"/> (a 2.0x ceiling) and none of them can
     /// justify anything like that.
     ///
-    /// <para>RECITE is the ranked one: its honest total is 1.01x its base, so an unlisted RE would
+    /// <para>RECITE is the ranked one: its honest total is 1.07x its base, so an unlisted RE would
     /// leave a laundering slot nearly twice as wide as the mod earns, the same argument Hard Rock
     /// and Fletcher carry above. CONDUCTOR and DYSLEXIA are always unranked (the deny list in
     /// ScoreEndpoints), so their ceiling can never decide a board placement; it decides what an
@@ -329,11 +333,11 @@ public class RateMultiplierTest
             Assert.That(ModMultiplier.For("CT", null), Is.LessThan(ModMultiplier.UNKNOWN_MOD_MULTIPLIER));
             Assert.That(ModMultiplier.For("DX", null), Is.LessThan(ModMultiplier.UNKNOWN_MOD_MULTIPLIER));
 
-            // A 1,000,000-base play may submit 1,010,000 with Recite and 1,000,000 with either of
+            // A 1,000,000-base play may submit 1,070,000 with Recite and 1,000,000 with either of
             // the unranked pair; the unknown-mod allowance would have let 2,000,000 through in all
             // three cases.
             Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("RE", null)])),
-                Is.EqualTo(1_010_001));
+                Is.EqualTo(1_070_001));
             Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("CT", null)])),
                 Is.EqualTo(1_000_001));
             Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("DX", null)])),

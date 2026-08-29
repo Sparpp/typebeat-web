@@ -140,7 +140,7 @@ public class VariableRateScoreTest
     /// must be unranked here; Recite (backlog 229, hides untyped text) is a ranked difficulty
     /// increase and must NOT be caught by the same list, exactly as Fletcher is not.
     ///
-    /// <para>Every total below is inside its own mod ceiling (CT and DX price at 1.0, RE at 1.01),
+    /// <para>Every total below is inside its own mod ceiling (CT and DX price at 1.0, RE at 1.07),
     /// so the flag under test is the deny list and not the clamp: an out-of-bounds total would store
     /// unranked whatever the acronym, which would make the CT and DX assertions pass for the wrong
     /// reason.</para>
@@ -150,7 +150,7 @@ public class VariableRateScoreTest
     {
         var conductor = await SubmitAsync(total: clean_base, mods: [Mod("CT")]);
         var dyslexia = await SubmitAsync(total: clean_base, mods: [Mod("DX")]);
-        var recite = await SubmitAsync(total: (long)Math.Round(clean_base * 1.01), mods: [Mod("RE")]);
+        var recite = await SubmitAsync(total: (long)Math.Round(clean_base * 1.07), mods: [Mod("RE")]);
 
         Assert.Multiple(() =>
         {
@@ -164,8 +164,8 @@ public class VariableRateScoreTest
 
             Assert.That((bool)recite["ranked"]!, Is.True, "Recite is a ranked difficulty increase");
             Assert.That(recite["position"]!.Type, Is.Not.EqualTo(JTokenType.Null), "a ranked score gets a position");
-            Assert.That((long)recite["total_score"]!, Is.EqualTo((long)Math.Round(clean_base * 1.01)),
-                "1.01x is priced, so the honest total is in bounds");
+            Assert.That((long)recite["total_score"]!, Is.EqualTo((long)Math.Round(clean_base * 1.07)),
+                "1.07x is priced, so the honest total is in bounds");
         });
     }
 
