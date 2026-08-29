@@ -19,6 +19,10 @@ namespace Typebeat.Web.Pages;
 /// <param name="HasPlayableDiff">The set has a live .osu difficulty, i.e. exactly what
 /// /play/map/{id}/osu resolves. Combined with the status and the package in
 /// <see cref="CanWebplay"/> it decides whether the card offers the browser-play rail.</param>
+/// <param name="HasVideo">beatmapsets.has_video, written at ingest from any difficulty's
+/// [Events] Video line. Video files dominate a package's size, so this is what turns the card's
+/// download button into the two-option "with video" / "audio only" expand
+/// (<see cref="OffersDownloadChoice"/>); every other set downloads on the first click.</param>
 public sealed record BeatmapsetCardModel(
     long Id,
     string Title,
@@ -39,11 +43,21 @@ public sealed record BeatmapsetCardModel(
     bool IsFavourited,
     bool HasPackage,
     bool Explicit,
-    bool HasPlayableDiff)
+    bool HasPlayableDiff,
+    bool HasVideo)
 {
     public string StatusLabel => BeatmapsetDisplay.StatusLabel(Status);
 
     public string PillClass => BeatmapsetDisplay.PillClass(Status);
+
+    /// <summary>
+    /// Does the download button expand into the two-option panel instead of downloading straight
+    /// away? Only for a set that has both a package to serve and a video worth leaving out of it.
+    /// The server still decides whether an audio-only package is really servable (a map imported
+    /// from an mp4 alone has no separate audio file), which the panel learns from
+    /// /beatmapsets/{id}/download-sizes when it opens.
+    /// </summary>
+    public bool OffersDownloadChoice => HasPackage && HasVideo;
 
     /// <summary>
     /// Can this set be played in the browser right now? Every PUBLISHED set can
@@ -127,7 +141,8 @@ public static class BeatmapsetCardSql
                s.explicit         AS Explicit,
                -- Same predicate as PlayEndpoints.ResolveOsuFilenameAsync: if this is false the
                -- browser player has nothing to load, so the card must not offer webplay.
-               EXISTS (SELECT 1 FROM beatmaps b2 WHERE b2.set_id = s.id AND b2.filename LIKE '%.osu') AS HasPlayableDiff
+               EXISTS (SELECT 1 FROM beatmaps b2 WHERE b2.set_id = s.id AND b2.filename LIKE '%.osu') AS HasPlayableDiff,
+               s.has_video        AS HasVideo
         FROM beatmapsets s
         JOIN users u ON u.id = s.owner_id
         LEFT JOIN LATERAL (

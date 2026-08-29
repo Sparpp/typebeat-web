@@ -1,4 +1,6 @@
+using System.IO.Compression;
 using Dapper;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Primitives;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
@@ -24,6 +26,9 @@ namespace Typebeat.Web.Endpoints;
 ///    "{artist} - {title}.typb" filename, logs to beatmapset_downloads (user_id NULL when
 ///    anonymous) and bumps the denormalized counter, once per LOGICAL download (ranged
 ///    continuations/resumes are not re-counted). Anonymous allowed (spec iron rule 9).
+///    <c>?noVideo=1</c> serves the same package with the video files left out (AudioOnlyPackage).
+///  - GET /beatmapsets/{id}/download-sizes: the approximate byte totals of those two variants,
+///    for the card's two-option download panel. Same visibility gate.
 ///  - GET /img/default-cover.jpg: the self-hosted fallback the beatmap DTOs reference when a
 ///    set has no generated covers. Generated in-process (neon violet→magenta gradient, the
 ///    design system's --grad-primary) so no binary asset lives in the repo; cached lazily.
@@ -53,11 +58,19 @@ public static class MediaEndpoints
         app.MapGet("/previews/{setId:long}.mp3", GetPreviewAsync);
         app.MapGet("/beatmapsets/{setId:long}/download", DownloadAsync);
 
+        // The card's download panel asks for these once, the first time it is opened.
+        app.MapGet("/beatmapsets/{setId:long}/download-sizes", DownloadSizesAsync);
+
         // The game client (DownloadBeatmapSetRequest, used by the in-client "update" button) builds
         // its download URL under the /api/v2 namespace, so alias the same handler there. Without
         // this the client 404s and shows "Beatmap download failed!". DownloadAsync allows anonymous
         // and accepts an optional Bearer, so it serves the client unchanged; /api/v2/* is already a
         // wire route (bare 404s, no styled error page). The website's non-api route above is untouched.
+        //
+        // This alias is also where the ?noVideo=1 flag arrives from the GAME: the client's
+        // DownloadBeatmapSetRequest has always appended it when the player has "prefer downloads
+        // without video" on, and the server used to drop it. Honouring it here makes that in-client
+        // setting work with no game-side change.
         app.MapGet("/api/v2/beatmapsets/{setId:long}/download", DownloadAsync);
 
         // Profile avatar/banner: version-stamped keys (avatars/{id}/{v}.jpg, user-covers/{id}/{v}.jpg)
@@ -185,6 +198,20 @@ public static class MediaEndpoints
         return Results.Stream(stream, "application/octet-stream", enableRangeProcessing: true);
     }
 
+    /// <summary>
+    /// Streams the latest assembled package. <c>?noVideo=1</c> streams the AUDIO-ONLY variant of
+    /// the same package: every entry except the video files, filtered live (see
+    /// <see cref="StreamAudioOnlyAsync"/>), never a second stored object.
+    ///
+    /// <para>The spelling is the game client's: DownloadBeatmapSetRequest has always appended
+    /// exactly <c>?noVideo=1</c> to the /api/v2 alias when the player's "prefer downloads without
+    /// video" setting is on, and the server dropped it. So implementing this flag is also a live
+    /// behaviour change for the in-client download and update buttons of every player who has that
+    /// setting on, not only for the website card.</para>
+    ///
+    /// <para>The visibility gate and the counter bump both sit ABOVE the variant branch: the two
+    /// options are one download route with one gate, and neither can become a path around it.</para>
+    /// </summary>
     private static async Task<IResult> DownloadAsync(long setId, HttpContext ctx, Db db, IFileStore store)
     {
         var requester = ctx.SessionUser() ?? await ctx.ResolveBearerAsync();
@@ -215,11 +242,20 @@ public static class MediaEndpoints
         if (package == null)
             return Results.NotFound();
 
-        // One logical download = one log row + one counter bump. Range processing is enabled
-        // below, so a download manager's 8-way segmented fetch or a browser resume issues many
-        // GETs for ONE download; only the request that covers the start of the file counts
-        // (no Range header, or a range starting at byte 0); continuations and resumes don't.
-        if (countsAsDownload(ctx))
+        bool noVideo = wantsNoVideo(ctx);
+
+        // One logical download = one log row + one counter bump, for BOTH options.
+        //
+        // On the full arm range processing is enabled below, so a download manager's 8-way
+        // segmented fetch or a browser resume issues many GETs for ONE download; only the request
+        // that covers the start of the file counts (no Range header, or a range starting at byte
+        // 0); continuations and resumes don't.
+        //
+        // The audio-only arm carries no ranges at all (a live-filtered zip has no length and cannot
+        // seek, and its full-package fallback is served the same way so the two answers stay
+        // protocol-identical), so every request on it is a whole download and always counts. Two
+        // different routes to the same counter, deliberately: do not "simplify" this to one.
+        if (noVideo || countsAsDownload(ctx))
         {
             await conn.ExecuteAsync(
                 """
@@ -232,7 +268,181 @@ public static class MediaEndpoints
         // .typb = the game's native package extension (registered by the client installer).
         string filename = SanitizeFilename($"{row.Artist} - {row.Title}.typb");
 
+        if (noVideo)
+            return await StreamAudioOnlyAsync(package, row, filename, ctx);
+
         return Results.Stream(package, "application/octet-stream", fileDownloadName: filename, enableRangeProcessing: true);
+    }
+
+    /// <summary>
+    /// The audio-only arm: re-streams the stored package minus its video entries, straight from the
+    /// store's (seekable) stream into the response body. Nothing is re-stored, so nothing has to
+    /// join the package pruning, and the .osu entries are copied byte for byte, which is what keeps
+    /// <c>beatmaps.checksum_md5</c>, and therefore every leaderboard on this set, intact.
+    ///
+    /// <para>No range processing here: a live-filtered zip has no Content-Length and cannot seek
+    /// backwards, so a Range header on this arm is simply ignored and the whole variant is returned
+    /// with a 200 (which is also why <see cref="DownloadAsync"/> counts every request on it). The
+    /// visible cost is no progress percentage and no resume for the small download; the big one
+    /// keeps both.</para>
+    ///
+    /// <para>Every way out leads back to the FULL package rather than to an error, because the game
+    /// client sets this flag from a preference and a preference must never break a download: a
+    /// package whose audio file IS its video file (see the guard in <see cref="AudioOnlyPackage"/>),
+    /// a package with no video to leave out (the client sends the flag on every download when the
+    /// setting is on, and most sets have no video), and a stored object that cannot be read as a zip
+    /// (corrupt, or a stream a future non-local store hands back forward-only). All of them are
+    /// served rangeless like the filtered variant, so one noVideo request is one counted download
+    /// whichever body it gets.</para>
+    /// </summary>
+    private static async Task<IResult> StreamAudioOnlyAsync(Stream package, DownloadRow row, string fullFilename, HttpContext ctx)
+    {
+        // Reading the archive's central directory needs to seek, which the local store's FileStream
+        // does. Anything else gets the package it would have got before this variant existed.
+        if (!package.CanSeek)
+            return Results.Stream(package, "application/octet-stream", fileDownloadName: fullFilename);
+
+        ZipArchive? source = null;
+
+        try
+        {
+            source = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
+
+            var plan = await AudioOnlyPackage.PlanAsync(source, ctx.RequestAborted);
+
+            if (!plan.Available)
+            {
+                source.Dispose();
+                source = null;
+                package.Position = 0;
+
+                return Results.Stream(package, "application/octet-stream", fileDownloadName: fullFilename);
+            }
+
+            string filename = SanitizeFilename($"{row.Artist} - {row.Title} [no video].typb");
+
+            // ZipArchive writes the entry headers, the data descriptors and the whole central
+            // directory with SYNCHRONOUS Write calls on the stream it was handed (only the entry
+            // BODIES go through the async copy below), and the response body refuses synchronous
+            // writes by default. This one response opts in rather than buffering the variant into
+            // memory or onto disk first, which is what "filter it live" means.
+            var bodyControl = ctx.Features.Get<IHttpBodyControlFeature>();
+
+            if (bodyControl != null)
+                bodyControl.AllowSynchronousIO = true;
+
+            var archive = source;
+            source = null; // ownership moves to the streaming callback below.
+
+            return Results.Stream(async output =>
+            {
+                await using (package)
+                using (archive)
+                using (var filtered = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+                {
+                    foreach (var entry in archive.Entries)
+                    {
+                        if (plan.Omits(entry.FullName))
+                            continue;
+
+                        var copy = filtered.CreateEntry(entry.FullName, CompressionLevel.Optimal);
+
+                        await using var input = entry.Open();
+                        await using var target = copy.Open();
+                        await input.CopyToAsync(target, ctx.RequestAborted);
+                    }
+                }
+            }, "application/octet-stream", fileDownloadName: filename);
+        }
+        catch (InvalidDataException)
+        {
+            // Not a readable zip. Nothing to filter, but the stored bytes are still what the full
+            // download would hand over, so hand those over rather than failing this one request.
+            source?.Dispose();
+            source = null;
+            package.Position = 0;
+
+            return Results.Stream(package, "application/octet-stream", fileDownloadName: fullFilename);
+        }
+        finally
+        {
+            source?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Reads the audio-only flag. Deliberately not a bound <c>bool</c> parameter: the game client
+    /// sends <c>?noVideo=1</c>, and "1" does not parse as a bool, so a bound parameter would 400
+    /// every in-client download from a player who prefers no video.
+    /// </summary>
+    private static bool wantsNoVideo(HttpContext ctx)
+    {
+        string? value = ctx.Request.Query["noVideo"];
+
+        return value == "1"
+               || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// GET /beatmapsets/{setId}/download-sizes: what the card's two-option download panel labels
+    /// its choices with, fetched once when the panel is first opened (nothing stores a package
+    /// size, and a per-card subquery on a full listing grid would pay for a number most visitors
+    /// never look at).
+    ///
+    /// <para><c>{ full, audioOnly, audioOnlyAvailable }</c>. The byte totals are the manifest's
+    /// UNCOMPRESSED sizes (files.size), so they are approximate and the UI must say so: mp3 and mp4
+    /// entries, which dominate, barely compress, while the .osu and .txt entries are overstated.
+    /// <c>audioOnlyAvailable</c> is false when the set has no video entry at all, and when the
+    /// mp4-as-audio guard withdraws the variant, which is exactly when the card must not offer the
+    /// choice.</para>
+    ///
+    /// <para>Same visibility gate as the download itself, so an unpublished set does not leak the
+    /// existence or the size of its package to a non-owner.</para>
+    /// </summary>
+    private static async Task<IResult> DownloadSizesAsync(long setId, HttpContext ctx, Db db, IFileStore store, PackageIngest ingest)
+    {
+        if (!await canSeeSetMediaAsync(ctx, db, setId))
+            return Results.NotFound();
+
+        var manifest = await ingest.GetLatestVersionFilesAsync(setId, ctx.RequestAborted);
+
+        if (manifest.Count == 0)
+            return Results.NotFound();
+
+        long full = manifest.Sum(f => f.Size);
+        var plan = AudioOnlyPlan.Unavailable;
+
+        try
+        {
+            var difficulties = new List<(string, byte[])>();
+
+            foreach (var file in manifest.Where(f => AudioOnlyPackage.IsDifficulty(f.Filename)))
+            {
+                await using var blob = await store.OpenBlobReadAsync(file.Sha256, ctx.RequestAborted);
+                using var buffer = new MemoryStream();
+                await blob.CopyToAsync(buffer, ctx.RequestAborted);
+                difficulties.Add((file.Filename, buffer.ToArray()));
+            }
+
+            plan = AudioOnlyPackage.Plan(difficulties);
+        }
+        catch (FileNotFoundException)
+        {
+            // A manifest row whose blob is missing: we cannot say what the video is, so we do not
+            // offer the variant. The download route makes the same call from the package itself.
+        }
+
+        long audioOnly = manifest.Where(f => !plan.Omits(f.Filename)).Sum(f => f.Size);
+
+        return Results.Json(new
+        {
+            full,
+            audioOnly,
+            // "There is a smaller package to choose": a set whose difficulties name no video at all
+            // has nothing to leave out, so the choice would be two identical downloads.
+            audioOnlyAvailable = plan.Available && audioOnly < full,
+        });
     }
 
     /// <summary>

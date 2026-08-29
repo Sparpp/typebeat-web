@@ -11,6 +11,11 @@
     // The webplay rail is a deep link INTO /play, so it would be circular on the picker itself
     // (there the whole rail already launches the player in place, without a navigation).
     bool showWebplay = Model.CanWebplay && !playMode;
+    // Sets with a video get the two-option download instead of a plain link: the video is most of
+    // the package's bytes, so "audio only" is the difference between a quick download and a long
+    // one. Never in play mode, where the rail is the player's launch button and there is no
+    // download control at all.
+    bool showDownloadChoice = Model.OffersDownloadChoice && !playMode;
 }
 <article class="bset-card" data-set-id="@Model.Id">
     <div class="bset-card__media">
@@ -84,6 +89,15 @@
                     data-title="@displayTitle" data-artist="@displayArtist" data-status="@Model.Status"
                     title="Play in browser" aria-label="Play in browser">&#9654;</button>
         }
+        else if (showDownloadChoice)
+        {
+            @* Has video: the click opens the panel below instead of starting a download. The panel
+               is the only thing that links the two packages, so with JS off this button does
+               nothing; that is why the NO-video card below keeps its plain <a> verbatim, and it is
+               also why the panel's first option is the same href the plain arm has. *@
+            <button type="button" class="rail-btn" data-dl-toggle aria-expanded="false"
+                    title="Download" aria-label="Download">&#8595;</button>
+        }
         else if (Model.HasPackage)
         {
             <a class="rail-btn" href="/beatmapsets/@Model.Id/download" title="Download" aria-label="Download">&#8595;</a>
@@ -104,5 +118,25 @@
             <span class="bset-card__play-glyph" aria-hidden="true">&#9654;</span>
             <span class="bset-card__play-label">play</span>
         </a>
+    }
+    @if (showDownloadChoice)
+    {
+        @* The two-option panel: a card-covering overlay (a child of .bset-card, which is
+           position:relative + overflow:hidden, so it can never bleed past the tile) that grows out
+           of a hairline on the card's horizontal midline. Closed it is visibility:hidden, so its
+           links are out of the tab order until it opens. The sizes are fetched once, on first
+           open, from data-dl-sizes; the text below is what shows until then (and forever, if the
+           fetch fails or JS never runs). *@
+        <div class="bset-card__dl" data-dl-panel data-dl-sizes="/beatmapsets/@Model.Id/download-sizes"
+             role="group" aria-label="Download @displayTitle">
+            <a class="bset-card__dl-option" href="/beatmapsets/@Model.Id/download">
+                <span class="bset-card__dl-name">with video</span>
+                <span class="bset-card__dl-size" data-dl-size-full>full package</span>
+            </a>
+            <a class="bset-card__dl-option" href="/beatmapsets/@Model.Id/download?noVideo=1">
+                <span class="bset-card__dl-name">audio only, no video</span>
+                <span class="bset-card__dl-size" data-dl-size-audio>smaller download</span>
+            </a>
+        </div>
     }
 </article>

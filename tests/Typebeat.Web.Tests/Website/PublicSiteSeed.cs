@@ -102,6 +102,28 @@ public static class PublicSiteSeed
     public const string MultiDiffEasyAudio = "easy.mp3";
     public const string MultiDiffHardAudio = "hard.mp3";
 
+    /// <summary>
+    /// "Video Clip Anthem": the one seeded set with has_video true and a real video entry in its
+    /// manifest (an .osu naming <see cref="VideoClipFile"/> in [Events], the clip itself, and a
+    /// separate audio file). Everything about the card's two-option download and the
+    /// download-sizes endpoint keys on it; every other seeded set is has_video false, which is what
+    /// makes "no video, no expand" testable against a neighbour rather than against nothing.
+    /// </summary>
+    public static long VideoSetId { get; private set; }
+
+    /// <summary>
+    /// "Mp4 Single Anthem": the pre-234 shape, a map whose AudioFilename IS its VideoFilename
+    /// (imported from an mp4 alone, with no standalone mp3 to fall back on). An audio-only package
+    /// of it would be silent, so the server withdraws the variant for it.
+    /// </summary>
+    public static long Mp4AsAudioSetId { get; private set; }
+
+    public const string VideoClipFile = "clip.mp4";
+    public const string VideoSetAudio = "audio.mp3";
+
+    /// <summary>The one file of <see cref="Mp4AsAudioSetId"/>, its audio AND its video.</summary>
+    public const string Mp4AsAudioFile = "song.mp4";
+
     // Two fixed-fingerprint sets for the typed search-operator tests. Both tagged "operatorset"
     // so a test can scope free text to just this pair, then narrow with an operator. Fixed past
     // submit dates make the date: assertions deterministic.
@@ -275,6 +297,23 @@ public static class PublicSiteSeed
                 totalLengthS: 100, stars: 4.0, wpm: 120, wordCount: 150, charCount: 700,
                 versionName: "twin dropped", filename: null);
 
+            // The two video fixtures (their manifests are stored below).
+            VideoSetId = await InsertSetAsync(conn,
+                title: "Video Clip Anthem", artist: "The Cinematics",
+                submittedOffset: TimeSpan.FromMinutes(-12), hasVideo: true);
+
+            // A live difficulty as well, so this set reaches the /play picker: that is where the
+            // card renders in PLAY mode, and the download expand must not appear there.
+            await InsertBeatmapAsync(conn, VideoSetId,
+                totalLengthS: 105, stars: 4.4, wpm: 115, wordCount: 140, charCount: 680,
+                versionName: "cinematic", filename: "video.osu");
+
+            // No difficulty row for this one: it exists for the mp4-as-audio guard, which is read
+            // off the manifest, and it has nothing to say to the picker.
+            Mp4AsAudioSetId = await InsertSetAsync(conn,
+                title: "Mp4 Single Anthem", artist: "The Undivided",
+                submittedOffset: TimeSpan.FromMinutes(-11), hasVideo: true);
+
             OpAlphaId = await InsertSetAtAsync(conn,
                 title: "Operator Alpha Synthwave", artist: "Synth Operator",
                 tags: "operatorset", submittedAt: new DateTime(2024, 3, 15, 0, 0, 0, DateTimeKind.Utc));
@@ -304,6 +343,7 @@ public static class PublicSiteSeed
                 new { mapperId = MapperId, packagelessId = PackagelessId });
 
             await StoreTwinPeaksFilesAsync(conn);
+            await StoreVideoFilesAsync(conn);
 
             // Same expression the upload write path uses (and migration 002's backfill).
             await conn.ExecuteAsync(
@@ -329,20 +369,21 @@ public static class PublicSiteSeed
     private static async Task<long> InsertSetAsync(NpgsqlConnection conn,
         string title, string artist, TimeSpan submittedOffset,
         string status = "ranked", string tags = "", string source = "", string description = "",
-        int playCount = 0, int favouriteCount = 0, double? bpm = null, bool isExplicit = false)
+        int playCount = 0, int favouriteCount = 0, double? bpm = null, bool isExplicit = false,
+        bool hasVideo = false)
         => await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmapsets
-                (owner_id, title, artist, source, tags, description, status, bpm, explicit,
+                (owner_id, title, artist, source, tags, description, status, bpm, explicit, has_video,
                  play_count, favourite_count, submitted_at, updated_at)
             VALUES
-                (@ownerId, @title, @artist, @source, @tags, @description, @status, @bpm, @isExplicit,
+                (@ownerId, @title, @artist, @source, @tags, @description, @status, @bpm, @isExplicit, @hasVideo,
                  @playCount, @favouriteCount, now() + @submittedOffset, now() + @submittedOffset)
             RETURNING id
             """,
             new
             {
-                ownerId = MapperId, title, artist, source, tags, description, status, bpm, isExplicit,
+                ownerId = MapperId, title, artist, source, tags, description, status, bpm, isExplicit, hasVideo,
                 playCount, favouriteCount, submittedOffset,
             });
 
@@ -397,9 +438,7 @@ public static class PublicSiteSeed
     /// </summary>
     private static async Task StoreTwinPeaksFilesAsync(NpgsqlConnection conn)
     {
-        long versionId = await conn.ExecuteScalarAsync<long>(
-            "SELECT id FROM set_versions WHERE set_id = @setId ORDER BY version_no DESC LIMIT 1",
-            new { setId = MultiDiffSetId });
+        long versionId = await LatestVersionIdAsync(conn, MultiDiffSetId);
 
         await StoreFileAsync(conn, versionId, "easy.osu",
             Encoding.UTF8.GetBytes(SyntheticPackage.OsuText(
@@ -416,6 +455,45 @@ public static class PublicSiteSeed
         await StoreFileAsync(conn, versionId, MultiDiffEasyAudio, Encoding.UTF8.GetBytes("easy-audio-bytes"));
         await StoreFileAsync(conn, versionId, MultiDiffHardAudio, Encoding.UTF8.GetBytes("hard-audio-bytes"));
     }
+
+    /// <summary>
+    /// The manifests behind the two video fixtures, which is what /beatmapsets/{id}/download-sizes
+    /// reads (version_files joined to files, plus the .osu blobs it parses to find out which entry
+    /// is the video). The clip is deliberately much the biggest entry, so an audio-only total that
+    /// failed to drop it would not merely be wrong, it would be indistinguishable from the full one.
+    /// </summary>
+    private static async Task StoreVideoFilesAsync(NpgsqlConnection conn)
+    {
+        long videoVersionId = await LatestVersionIdAsync(conn, VideoSetId);
+
+        await StoreFileAsync(conn, videoVersionId, "video.osu",
+            Encoding.UTF8.GetBytes(SyntheticPackage.OsuText(
+                title: "Video Clip Anthem", artist: "The Cinematics", version: "cinematic",
+                audioFilename: VideoSetAudio, background: null, video: VideoClipFile, beatmapId: 3001)));
+
+        await StoreFileAsync(conn, videoVersionId, VideoSetAudio, Encoding.UTF8.GetBytes(new string('a', 2048)));
+        await StoreFileAsync(conn, videoVersionId, VideoClipFile, Encoding.UTF8.GetBytes(new string('v', 65536)));
+
+        // An .mp4 that NO difficulty names as its video. The audio-only variant keeps it, which is
+        // the difference between reading the .osu's [Events] Video line and guessing from the
+        // extension, and it is why the size labels are not a per-extension sum either.
+        await StoreFileAsync(conn, videoVersionId, "bonus.mp4", Encoding.UTF8.GetBytes(new string('b', 512)));
+
+        // The pre-234 shape: ONE media file, named as both the audio and the video.
+        long mp4VersionId = await LatestVersionIdAsync(conn, Mp4AsAudioSetId);
+
+        await StoreFileAsync(conn, mp4VersionId, "single.osu",
+            Encoding.UTF8.GetBytes(SyntheticPackage.OsuText(
+                title: "Mp4 Single Anthem", artist: "The Undivided", version: "single",
+                audioFilename: Mp4AsAudioFile, background: null, video: Mp4AsAudioFile, beatmapId: 3002)));
+
+        await StoreFileAsync(conn, mp4VersionId, Mp4AsAudioFile, Encoding.UTF8.GetBytes(new string('m', 32768)));
+    }
+
+    private static async Task<long> LatestVersionIdAsync(NpgsqlConnection conn, long setId)
+        => await conn.ExecuteScalarAsync<long>(
+            "SELECT id FROM set_versions WHERE set_id = @setId ORDER BY version_no DESC LIMIT 1",
+            new { setId });
 
     private static async Task StoreFileAsync(NpgsqlConnection conn, long versionId, string filename, byte[] content)
     {

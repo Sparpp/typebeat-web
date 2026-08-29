@@ -801,7 +801,10 @@ img { max-width: 100%; }
     .card-grid { grid-template-columns: 1fr; }
 }
 
+/* position: relative is for the download panel (.bset-card__dl), which covers exactly this box.
+   overflow: hidden then clips the panel to the tile at every stage of its animation. */
 .bset-card {
+    position: relative;
     display: flex;
     min-height: 104px;
     background: var(--surface);
@@ -988,6 +991,79 @@ img { max-width: 100%; }
     .bset-card__play { width: 44px; }
 
     .bset-card__play-label { display: none; }
+}
+
+/* ---- Card download panel: "with video" / "audio only" (cards whose set has a video) ---- */
+
+/* The panel covers the whole tile, and opens out of a 1px grey rule on the tile's horizontal
+   midline: closed it IS that rule (height 1px, centred by the translate, painted in var(--line),
+   the same grey as every other line on the card), open it is the full card box in the card's own
+   surface colour. Growing `height` from a hairline rather than scaling a full-size box is what
+   keeps the closed state exactly one pixel tall whatever the card measures, and it keeps the two
+   option labels from being squashed on the way (overflow: hidden reveals them instead).
+   Closed is visibility: hidden, so the two links leave the tab order; the delayed visibility
+   transition lets the collapse animation finish before they go. */
+.bset-card__dl {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    transform: translateY(-50%);
+    z-index: 3;
+    display: flex;
+    overflow: hidden;
+    background: var(--line);
+    opacity: 0;
+    visibility: hidden;
+    transition: height 170ms ease, background-color 170ms ease, opacity 110ms ease, visibility 0s linear 170ms;
+}
+
+.bset-card__dl.is-open {
+    height: 100%;
+    background: var(--surface);
+    opacity: 1;
+    visibility: visible;
+    transition: height 170ms ease, background-color 170ms ease, opacity 110ms ease, visibility 0s;
+}
+
+.bset-card__dl-option {
+    flex: 1 1 50%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: var(--space-2);
+    text-align: center;
+    color: var(--text);
+    text-decoration: none;
+}
+
+.bset-card__dl-option + .bset-card__dl-option { border-left: 1px solid var(--line); }
+
+.bset-card__dl-option:hover,
+.bset-card__dl-option:focus-visible {
+    background: var(--surface-2);
+    color: var(--violet-bright);
+    text-decoration: none;
+}
+
+.bset-card__dl-name {
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+}
+
+.bset-card__dl-size {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+/* The panel is an affordance, not information: with motion reduced it just appears. */
+@media (prefers-reduced-motion: reduce) {
+    .bset-card__dl,
+    .bset-card__dl.is-open { transition: none; }
 }
 
 /* ---- Preview play button (progress ring via conic-gradient + --progress) ---- */

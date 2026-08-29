@@ -30,6 +30,11 @@ public class BssSubmissionFlowTest
     // The second set, published straight to 'unranked' by Order(12) and served by Order(13).
     private long unrankedSetId;
 
+    // The video-bearing set uploaded by Order(14), which the audio-only cases read.
+    private const string video_file = "clip.mp4";
+    private long videoSetId;
+    private byte[] videoOsu = null!;
+
     private byte[] easyOsu = null!;
     private byte[] hardOsu = null!;
     private byte[] audio = null!;
@@ -549,6 +554,10 @@ public class BssSubmissionFlowTest
         using (var viaClientRoute = await BssFixture.Client.GetAsync($"/api/v2/beatmapsets/{unrankedSetId}/download"))
             Assert.That(viaClientRoute.StatusCode, Is.EqualTo(HttpStatusCode.OK), "the in-game download of an unranked set");
 
+        // ...and the same alias with the flag the client appends for a player who prefers no video.
+        using (var noVideo = await BssFixture.Client.GetAsync($"/api/v2/beatmapsets/{unrankedSetId}/download?noVideo=1"))
+            Assert.That(noVideo.StatusCode, Is.EqualTo(HttpStatusCode.OK), "the in-game audio-only download of an unranked set");
+
         // Covers and previews run through the same status check, so the listing card art and the
         // preview button on an unranked set have to work for a signed-out visitor too.
         using (var cover = await BssFixture.Client.GetAsync($"/covers/{unrankedSetId}/1/card.jpg"))
@@ -586,6 +595,17 @@ public class BssSubmissionFlowTest
             using (var download = await BssFixture.Client.GetAsync($"/beatmapsets/{unrankedSetId}/download"))
                 Assert.That(download.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), $"anonymous download of a '{unpublished}' set");
 
+            // The audio-only flag is a variant of this route, not a fourth path around its gate:
+            // both spellings of it 404 exactly like the full download does.
+            using (var noVideo = await BssFixture.Client.GetAsync($"/beatmapsets/{unrankedSetId}/download?noVideo=1"))
+                Assert.That(noVideo.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), $"anonymous audio-only download of a '{unpublished}' set");
+
+            using (var apiNoVideo = await BssFixture.Client.GetAsync($"/api/v2/beatmapsets/{unrankedSetId}/download?noVideo=1"))
+                Assert.That(apiNoVideo.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), $"in-game audio-only download of a '{unpublished}' set");
+
+            using (var sizes = await BssFixture.Client.GetAsync($"/beatmapsets/{unrankedSetId}/download-sizes"))
+                Assert.That(sizes.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), $"anonymous sizes of a '{unpublished}' set");
+
             using (var cover = await BssFixture.Client.GetAsync($"/covers/{unrankedSetId}/1/card.jpg"))
                 Assert.That(cover.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), $"anonymous cover of a '{unpublished}' set");
 
@@ -601,9 +621,259 @@ public class BssSubmissionFlowTest
             "UPDATE beatmapsets SET status = 'unranked' WHERE id = @unrankedSetId", new { unrankedSetId });
     }
 
+    /// <summary>
+    /// The audio-only download variant (?noVideo=1), and THE invariant that makes it safe: the
+    /// video FILE is left out of the archive and nothing else changes, so every .osu entry is
+    /// byte-identical to the full package's. beatmaps.checksum_md5 is the MD5 of those bytes and is
+    /// the beatmap's leaderboard identity, so a variant that rewrote the .osu (stripping the
+    /// [Events] Video line, say) would mint a different beatmap and orphan every score on it. The
+    /// dangling Video line is asserted deliberately: it is what the identity costs, and the game
+    /// tolerates it.
+    /// </summary>
+    [Test]
+    [Order(14)]
+    public async Task AudioOnlyDownload_OmitsTheVideoFile_AndKeepsEveryOsuByteIdentical()
+    {
+        long diffId;
+        (videoSetId, diffId) = await CreateOneDiffSetAsync();
+
+        videoOsu = SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+            title: "Cinema Nights", artist: "Synth Rider", creator: username, version: "cinematic",
+            beatmapId: diffId, beatmapSetId: videoSetId, video: video_file));
+
+        // Much the biggest entry, as a real video is: an audio-only package that failed to drop it
+        // would be indistinguishable from the full one by size alone.
+        byte[] clip = new byte[96 * 1024];
+        for (int i = 0; i < clip.Length; i++)
+            clip[i] = (byte)(i % 251);
+
+        byte[] zipBytes;
+        using (var zip = SyntheticPackage.Zip(
+                   ("cinematic.osu", videoOsu), ("audio.mp3", MakeWav(seconds: 1)),
+                   ("bg.jpg", SyntheticPackage.TinyPng()), (video_file, clip),
+                   // A second .mp4 that NO difficulty calls its video. It is why the filter reads
+                   // the .osu's [Events] Video line rather than the file extension: a mapper's own
+                   // extra files are not the map's video and must survive the variant.
+                   ("bonus.mp4", SyntheticPackage.Utf8("liner notes reel"))))
+            zipBytes = zip.ToArray();
+
+        using (var upload = await SendAsync(HttpMethod.Put, $"/bss/beatmapsets/{videoSetId}", bearer, PackageBody(zipBytes)))
+            Assert.That(upload.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+
+        await using var conn = await BssFixture.OpenDbAsync();
+
+        Assert.That(await conn.ExecuteScalarAsync<bool>(
+                "SELECT has_video FROM beatmapsets WHERE id = @videoSetId", new { videoSetId }),
+            Is.True, "the [Events] Video line is what makes this a video set");
+
+        var full = await FetchPackageAsync($"/beatmapsets/{videoSetId}/download");
+        var audioOnly = await FetchPackageAsync($"/beatmapsets/{videoSetId}/download?noVideo=1");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(full.Parsed.Files.Select(f => f.Filename),
+                Is.EquivalentTo(new[] { "cinematic.osu", "audio.mp3", "bg.jpg", video_file, "bonus.mp4" }));
+
+            // Exactly one entry fewer, and it is the one the .osu's [Events] Video line names.
+            // "bonus.mp4" stays: it is an .mp4, but it is not this map's video, and an extension
+            // filter (which would also be a silent copy of the game's SupportedExtensions list)
+            // would have thrown it away.
+            Assert.That(audioOnly.Parsed.Files.Select(f => f.Filename),
+                Is.EquivalentTo(new[] { "cinematic.osu", "audio.mp3", "bg.jpg", "bonus.mp4" }));
+
+            // THE identity invariant, stated three ways: same MD5s as the full package, the same
+            // MD5 the uploader's own bytes have, and the same MD5 the leaderboard is keyed on.
+            Assert.That(audioOnly.Parsed.Difficulties.Select(d => d.ChecksumMd5),
+                Is.EqualTo(full.Parsed.Difficulties.Select(d => d.ChecksumMd5)).AsCollection);
+            Assert.That(audioOnly.Parsed.Difficulties.Single().ChecksumMd5,
+                Is.EqualTo(Convert.ToHexStringLower(MD5.HashData(videoOsu))));
+
+            // The map still REFERENCES the video it no longer carries. Rewriting that line is
+            // exactly what would break the line above.
+            Assert.That(audioOnly.Parsed.Difficulties.Single().VideoFilename, Is.EqualTo(video_file));
+
+            Assert.That(audioOnly.Disposition, Does.Contain("[no video].typb"));
+            Assert.That(full.Disposition, Does.Contain("Synth Rider - Cinema Nights.typb"));
+        });
+
+        Assert.That(await conn.ExecuteScalarAsync<int>(
+                "SELECT download_count FROM beatmapsets WHERE id = @videoSetId", new { videoSetId }),
+            Is.EqualTo(2), "both options are downloads of this set and both count");
+    }
+
+    /// <summary>
+    /// The pre-234 guard. A map imported from an mp4 alone names the same file as its audio AND its
+    /// video, so an "audio-only" package of it would be a SILENT map. The variant is withdrawn for
+    /// such a set: the request falls back to the full package rather than 404ing, because the game
+    /// client sends ?noVideo=1 from a saved preference and a preference must never break a download.
+    /// </summary>
+    [Test]
+    [Order(15)]
+    public async Task NoVideoRequest_OnAnMp4AsAudioMap_FallsBackToTheFullPackage()
+    {
+        var (setId, diffId) = await CreateOneDiffSetAsync();
+
+        const string only_file = "song.mp4";
+
+        var osu = SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+            title: "One File Only", artist: "Synth Rider", creator: username, version: "single",
+            beatmapId: diffId, beatmapSetId: setId,
+            audioFilename: only_file, background: null, video: only_file));
+
+        byte[] zipBytes;
+        using (var zip = SyntheticPackage.Zip(("single.osu", osu), (only_file, SyntheticPackage.Utf8(new string('m', 4096)))))
+            zipBytes = zip.ToArray();
+
+        using (var upload = await SendAsync(HttpMethod.Put, $"/bss/beatmapsets/{setId}", bearer, PackageBody(zipBytes)))
+            Assert.That(upload.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+
+        var served = await FetchPackageAsync($"/beatmapsets/{setId}/download?noVideo=1");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(served.Parsed.Files.Select(f => f.Filename),
+                Is.EquivalentTo(new[] { "single.osu", only_file }),
+                "dropping the only media file would have shipped a silent map");
+            Assert.That(served.Disposition, Does.Not.Contain("[no video]"),
+                "the full package it really is must not be labelled as the variant");
+        });
+
+        // ...and the card is told not to offer the choice in the first place.
+        using var sizes = await BssFixture.Client.GetAsync($"/beatmapsets/{setId}/download-sizes");
+        var body = JObject.Parse(await sizes.Content.ReadAsStringAsync());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sizes.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That((bool)body["audioOnlyAvailable"]!, Is.False);
+            Assert.That((long)body["audioOnly"]!, Is.EqualTo((long)body["full"]!));
+        });
+    }
+
+    /// <summary>
+    /// The audio-only arm is filtered live, so it has no Content-Length and cannot seek: range
+    /// processing is off there. A Range header on it is therefore ignored (200, the whole variant),
+    /// which is also why every request on this arm counts, where
+    /// <see cref="RangedContinuations_DoNotInflateTheDownloadCount"/> counts only the one that
+    /// covers the start of the file. Two arms, two reasons, one counter.
+    /// </summary>
+    [Test]
+    [Order(16)]
+    public async Task AudioOnlyDownload_IgnoresRanges_AndCountsEveryRequest()
+    {
+        Assert.That(videoSetId, Is.GreaterThan(0), "Order(14) uploads the video set this case reads.");
+
+        int before = await VideoSetDownloadCountAsync();
+
+        using (var request = new HttpRequestMessage(HttpMethod.Get, $"/beatmapsets/{videoSetId}/download?noVideo=1"))
+        {
+            request.Headers.Range = new RangeHeaderValue(100, null);
+
+            using var response = await BssFixture.Client.SendAsync(request);
+
+            using var payload = new MemoryStream(await response.Content.ReadAsByteArrayAsync());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "not 206: this arm has no ranges to satisfy");
+                Assert.That(BeatmapPackageParser.Parse(payload).Files, Has.Count.EqualTo(4),
+                    "a mid-file range must not truncate the variant into an unreadable zip");
+            });
+        }
+
+        Assert.That(await VideoSetDownloadCountAsync(), Is.EqualTo(before + 1),
+            "one request = one logical download on the arm that cannot be resumed");
+
+        async Task<int> VideoSetDownloadCountAsync()
+        {
+            await using var conn = await BssFixture.OpenDbAsync();
+            return await conn.ExecuteScalarAsync<int>(
+                "SELECT download_count FROM beatmapsets WHERE id = @videoSetId", new { videoSetId });
+        }
+    }
+
+    /// <summary>
+    /// The sizes the card's two options are labelled with: approximate (files.size is the
+    /// UNCOMPRESSED entry size; nothing stores a package's real byte count), and split by exactly
+    /// the same .osu-derived rule the download uses, so the label can never promise a saving the
+    /// download does not make.
+    /// </summary>
+    [Test]
+    [Order(17)]
+    public async Task DownloadSizes_SplitTheManifestByTheSameVideoRule()
+    {
+        Assert.That(videoSetId, Is.GreaterThan(0), "Order(14) uploads the video set this case reads.");
+
+        using var response = await BssFixture.Client.GetAsync($"/beatmapsets/{videoSetId}/download-sizes");
+        var body = JObject.Parse(await response.Content.ReadAsStringAsync());
+
+        await using var conn = await BssFixture.OpenDbAsync();
+
+        long manifestTotal = await conn.ExecuteScalarAsync<long>(
+            """
+            SELECT sum(f.size)
+            FROM set_versions sv
+            JOIN version_files vf ON vf.version_id = sv.id
+            JOIN files f ON f.sha256 = vf.sha256
+            WHERE sv.set_id = @videoSetId
+              AND sv.version_no = (SELECT MAX(version_no) FROM set_versions WHERE set_id = @videoSetId)
+            """,
+            new { videoSetId });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That((bool)body["audioOnlyAvailable"]!, Is.True);
+            Assert.That((long)body["full"]!, Is.EqualTo(manifestTotal));
+            Assert.That((long)body["full"]! - (long)body["audioOnly"]!, Is.EqualTo(96 * 1024),
+                "the saving is exactly the video entry");
+        });
+
+        // The same gate as the download: an unpublished set does not leak its package size either.
+        await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'hidden' WHERE id = @videoSetId", new { videoSetId });
+
+        using (var hidden = await BssFixture.Client.GetAsync($"/beatmapsets/{videoSetId}/download-sizes"))
+            Assert.That(hidden.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), "anonymous sizes of a hidden set");
+
+        using (var owned = await SendAsync(HttpMethod.Get, $"/beatmapsets/{videoSetId}/download-sizes", bearer))
+            Assert.That(owned.StatusCode, Is.EqualTo(HttpStatusCode.OK), "the owner still sees their own");
+
+        await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'pending' WHERE id = @videoSetId", new { videoSetId });
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Helpers.
     // ---------------------------------------------------------------------------------------------
+
+    /// <summary>Allocates a fresh one-difficulty set through the real BSS create call.</summary>
+    private async Task<(long SetId, long DiffId)> CreateOneDiffSetAsync()
+    {
+        using var create = await SendAsync(HttpMethod.Put, "/bss/beatmapsets", bearer, JsonBody(new
+        {
+            beatmapset_id = (long?)null,
+            beatmaps_to_create = 1,
+            beatmaps_to_keep = Array.Empty<long>(),
+            target = "Pending",
+            notify_on_discussion_replies = false,
+        }));
+
+        Assert.That(create.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var body = JObject.Parse(await create.Content.ReadAsStringAsync());
+
+        return ((long)body["beatmapset_id"]!, body["beatmap_ids"]!.Select(t => (long)t).First());
+    }
+
+    /// <summary>Downloads a package and reparses it, the only way to assert on what really shipped.</summary>
+    private static async Task<(ParsedPackage Parsed, string Disposition)> FetchPackageAsync(string url)
+    {
+        using var response = await BssFixture.Client.GetAsync(url);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), url);
+
+        using var payload = new MemoryStream(await response.Content.ReadAsByteArrayAsync());
+
+        return (BeatmapPackageParser.Parse(payload), response.Content.Headers.ContentDisposition?.ToString() ?? string.Empty);
+    }
 
     internal static async Task<HttpResponseMessage> SendAsync(HttpMethod method, string url, string bearer, HttpContent? content = null)
     {
