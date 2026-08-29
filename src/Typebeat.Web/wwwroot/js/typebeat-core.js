@@ -1748,6 +1748,28 @@
             this.activeLineIndex = -1;
             this.caretIndex = 0;
             this.nextSealIndex = 0;
+            // TypingEngine.lineAbandoned. Which lines the player WALKED OUT OF with a line skip
+            // (processEnter), i.e. parked the caret past the last cell of while typeable cells were
+            // still untyped. Read by exactly one thing, sealPermitted, which grants an abandoned
+            // line the same drag grace a caret still sitting on it would have.
+            //
+            // WHY IT HAS TO BE REMEMBERED. Without it an Enter skip would move that line's seal
+            // EARLIER (by up to FLETCHER_DRAG_GRACE_MS) than the identical run that simply stopped
+            // typing there, because the deferral in sealPermitted keys on the caret and the caret
+            // has moved on. The seal is where the abandoned cells become misses and where the
+            // line's one combo break is taken, so an earlier seal would re-price every keypress
+            // made on the NEXT line in between at a combo the player had not actually lost yet.
+            // Holding the grace is what makes the skip PURE CARET MOVEMENT, and is therefore why
+            // the desktop half carries no era bit for it: nothing judged changes value or timing.
+            //
+            // An array rather than a single index because a fast player can abandon line N and be
+            // on line N+1 (and abandon that too) before N has sealed, and losing N's grace to N+1
+            // is the very defect this exists to prevent. Entries are never cleared on seal, since
+            // sealPermitted is only ever asked about nextSealIndex and that only moves forward. The
+            // C# clears the array in TypingEngine.reset alongside lineSealed; this mirror has no
+            // reset (no backwards seek and no replay rebuild), so allocating it here, where the
+            // constructor already clears every cell's play state, is the same guarantee.
+            this.lineAbandoned = new Array(this.lines.length).fill(false);
             // The engine's OWN live combo/score (TypingEngine.Combo / Score): what the HUD shows.
             // The submitted numbers do not come from here; they come from the score processor
             // mirror below, which the engine drives at exactly the points TypeBeatPlayfield drives
@@ -2021,8 +2043,13 @@
         // natural END a dragging player may still be on it, that one is how far before a line's
         // natural START a rushing player may already be on it, and both distances are the one
         // FLETCHER_DRAG_GRACE_MS.
+        //
+        // A line the player ABANDONED with a line skip keeps the grace after the caret has left it
+        // (see lineAbandoned): the skip is caret movement only, so the line it walked out of has to
+        // reach its misses and its one combo break at the very instant it would have with the
+        // player still sitting there doing nothing.
         sealPermitted(index, time) {
-            if (!this.fletcherEnabled || this.activeLineIndex !== index) return true;
+            if (!this.fletcherEnabled || (this.activeLineIndex !== index && !this.lineAbandoned[index])) return true;
 
             const line = this.lines[index];
 
@@ -2709,6 +2736,69 @@
             }
 
             return time - line.cells[cellIndex].target;
+        }
+
+        // TypingEngine.ProcessEnter. LINE SKIP (backlog 241): give up the rest of the active line
+        // and move on. Deterministic in (input, time) exactly like processKey, and returns whether
+        // it did anything, so the caller swallows the key only for an effective press.
+        //
+        // IT IS CARET MOVEMENT AND NOTHING ELSE. The caret parks past the line's last cell, which
+        // is the SAME parked state a boundedRush-refused roll leaves behind (see
+        // rollForwardIfFinishedEarly), and from there the machinery that already exists carries the
+        // player onward: the roll below hands them the next line at once when its entry window is
+        // open, and snapForwardOnLineStart performs the deferred hand over when it opens later. The
+        // cells left behind are NOT judged here. They stay untyped and become misses in the seal
+        // loop, all at once, with the line's one combo break, at the line's own deadline: precisely
+        // what would have happened to a player who stopped typing and sat there. So no judged
+        // quantity changes value or timing against the un-skipped run, and the abandoned line's
+        // drag grace is held for it by lineAbandoned, which is the one piece of state that claim
+        // depends on.
+        //
+        // Deliberately NOT the word skip's shape (skipCurrentWord): that one puts cells into the
+        // phantom state, takes an immediate combo break and snapshots a redeemable claim, all of
+        // which move the account at press time. A line skip gives up more and costs nothing extra
+        // for it, because the player pays the same misses either way, just without having to sit
+        // through them.
+        //
+        // NO-OP when there is nothing to skip: no active line, the run finished, or the caret
+        // already past the last cell (a line typed out, or one already skipped). In particular
+        // Enter on a COMPLETE line does NOT perform the roll the next keypress would: the two
+        // time-driven arms already own that caret, so a second way in could only duplicate them.
+        //
+        // The WPM clock needs nothing here and is deliberately NOT armed: an Enter is not typing.
+        // Accrual stops by itself the moment the caret parks (update accrues only while the active
+        // line is INCOMPLETE, and a parked caret's line reads complete), and on the line the player
+        // lands on clockRunsFrom answers exactly as it does after a refused rush: stopped until the
+        // first press there arms it, because a stale arm belongs to a line index the caret has
+        // left.
+        //
+        // The guard is the C# one verbatim, with no `failed` arm even though processKey has one:
+        // that flag is this file's own (the desktop fails a masher outside the engine), and a skip
+        // moves nothing judged, so refusing it there would buy nothing and would be a rule the C#
+        // does not have.
+        processEnter(time) {
+            if (this.finished || this.activeLineIndex < 0) return false;
+
+            const line = this.lines[this.activeLineIndex];
+
+            // Hop auto-skip cells before measuring, exactly as processKey does, so "the caret is at
+            // the end" is asked of the same frontier a keypress would see.
+            this.autoSkipForward();
+
+            if (this.caretIndex >= line.cells.length) return false; // parked already, or fully typed
+
+            // Only a line with something still untyped is ABANDONED. A caret walked to the end over
+            // nothing but wrong cells owes no misses, so the seal has no drag to protect and the
+            // flag would only hold the line open for cells that are already resolved.
+            if (!this.noTypeableUntyped(line)) this.lineAbandoned[this.activeLineIndex] = true;
+
+            this.caretIndex = line.cells.length;
+
+            // The same call the last character of a line makes, so an Enter inside the next line's
+            // entry window rolls on at once and one outside it parks, with no second rule.
+            this.rollForwardIfFinishedEarly(time);
+
+            return true;
         }
 
         processKey(c, time) {

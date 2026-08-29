@@ -849,6 +849,33 @@
                 return;
             }
 
+            // ENTER GIVES UP THE REST OF THE LINE (backlog 241), the desktop's
+            // TypeBeatAction.SkipLine on its default key. One engine call, which parks the caret
+            // past the last cell and lets the roll or the snap carry it onward; the cells left
+            // behind are judged by the seal at the line's own deadline, exactly as they would be
+            // for a player who just stopped typing.
+            //
+            // Placed above the repeat guard because the desktop's gesture branches sit above its
+            // own (holding the key repeats there too), and left of the typeable branch below, which
+            // never saw Enter anyway: e.key is 'Enter', five characters, so the length-one test
+            // rejected it and the press did nothing at all.
+            //
+            // A live retype SELECTION is deliberately NOT collapsed first: collapsing erases back
+            // to the anchor, and a player abandoning the line is not asking to unmake the
+            // characters they got right. Moving the caret makes it stale and the render loop drops
+            // it. Nothing is gated on allowWrongInput either, unlike the two erasing gestures: a
+            // skip writes nothing into a cell.
+            //
+            // Only an EFFECTIVE press is swallowed, which is the desktop's swallow rule: on a caret
+            // already parked (or a line typed out) the engine no-ops and the key is left to the
+            // browser exactly as it was before. Nothing else on this page is listening for Enter
+            // during play; the pre-play start gate is its own capturing listener and is removed
+            // when play begins.
+            if (e.key === 'Enter') {
+                if (engine.processEnter(nowMs())) e.preventDefault();
+                return;
+            }
+
             if (e.repeat) return;
 
             // SPACE AS THE SKIP KEY, on exactly the desktop's terms (see skipAllowed): only where

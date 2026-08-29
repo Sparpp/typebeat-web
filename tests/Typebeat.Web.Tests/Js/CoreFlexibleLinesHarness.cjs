@@ -772,4 +772,150 @@ const out = {};
     };
 }
 
+// THE LINE SKIP (backlog 241): Enter gives up the rest of the active line and moves the player on.
+// It is CARET MOVEMENT AND NOTHING ELSE, and that claim is the whole of what this section exists to
+// hold, because it is what lets the skip exist without an era bit on the desktop: the cells left
+// behind stay untyped and are judged by the SEAL, at the abandoned line's own deadline, with that
+// line's one combo break, exactly as they would be for a player who simply stopped typing and sat
+// there.
+//
+// The state that claim rests on is lineAbandoned: sealPermitted defers a line's seal by
+// FLETCHER_DRAG_GRACE_MS while the player is still on it, and a skip moves the caret off, so without
+// the flag the abandoned line would seal up to 1500 ms EARLY. That is not a cosmetic difference. The
+// seal is where the misses land and where the combo break is taken, so an early seal re-prices every
+// keypress the player makes on the NEXT line in between at a combo they had not actually lost yet,
+// and the browser would then submit a different score for the same fingers than the desktop does.
+//
+// EMITTED WITH ITS SCRIPT, like the clock-arm section above and for the same reason: the cross-repo
+// arm (Typebeat.WireCompat.LineSkipLiveParityTest) replays these very steps through the game's own
+// TypingEngine, feeding ProcessEnter for the third op this section introduces, and compares the
+// readings step for step. One copy of the keystrokes, two engines.
+{
+    // Three contiguous lines, all loader-built (no hand splicing), chosen so that both halves of the
+    // skip are reachable on ONE map and the abandoned lines' seals are 1500 ms apart from where they
+    // would land without the grace.
+    //   L0 "ab cd" [1000, 4000), grace 0: a = 1000, b = 1500, ' ' = 2000, c = 2000, d = 2500.
+    //   L1 "ef"    [4000, 8000), grace 0: e = 4000, f = 4500. Activation 4000, so entry opens 2500.
+    //   L2 "gh"    [8000, 12000), grace 0: g = 8000, h = 8500. Activation 8000, entry opens 6500.
+    //
+    // So an Enter at 2500 is INSIDE line 1's entry window (the hand-over happens on the press) and
+    // an Enter at 5600 is OUTSIDE line 2's (the caret parks and the snap performs the hand-over at
+    // 6500), which are the two arms ProcessEnter delegates to and the two the script has to reach.
+    // L0's untyped tail would seal at 4000 flat with the caret gone and does not seal until 5500
+    // with the grace held, and L1's at 8000 against 9500: both windows contain a keypress on the
+    // NEXT line, which is precisely where an early seal would show up as a different combo.
+    const LINE_SKIP = osu([
+        { text: 'ab cd', start_ms: 1000, end_ms: 3000, words: [word('ab', 1000, 2000), word('cd', 2000, 3000)] },
+        { text: 'ef', start_ms: 4000, end_ms: 5000, words: [word('ef', 4000, 5000)] },
+        { text: 'gh', start_ms: 8000, end_ms: 9000, words: [word('gh', 8000, 9000)] }
+    ], 20000);
+
+    const steps = [
+        // Two characters of L0, then walk out of it with three cells (' ', c, d) still untyped.
+        { op: 'update', t: 1000 }, { op: 'key', c: 'a', t: 1000 },
+        { op: 'update', t: 1500 }, { op: 'key', c: 'b', t: 1500 },
+
+        // THE SKIP INSIDE THE ENTRY WINDOW. 2500 is exactly where entry into L1 opens, so the park
+        // and the roll happen on the one press and the caret is on L1 straight away, a full 1500 ms
+        // before its cue: the same hand-over the 'd' that FINISHES L0 would have got.
+        { op: 'update', t: 2500 }, { op: 'enter', t: 2500 },
+
+        // A press on the line the player landed on, made while the line they abandoned has not
+        // sealed. Its combo is the reading the grace is worth: L0's hard deadline is 4000, and with
+        // the grace held nothing has broken yet, so this is the third of an unbroken run. Seal L0
+        // early and it is the first of a fresh one.
+        { op: 'update', t: 4000 }, { op: 'key', c: 'e', t: 4000 },
+
+        // 5500 = L0's deadline plus the drag grace: the abandoned line seals HERE, three cells
+        // missed and one combo break, which is the instant it would have sealed for a player still
+        // sitting on it doing nothing.
+        { op: 'update', t: 5500 },
+
+        // THE SKIP OUTSIDE THE ENTRY WINDOW. L1 is walked out of with 'f' untyped at 5600, and entry
+        // into L2 does not open until 6500, so the roll is refused and the caret PARKS past L1's
+        // last cell.
+        { op: 'update', t: 5600 }, { op: 'enter', t: 5600 },
+
+        // An Enter on a caret that is already parked is INERT: nothing left to give up, so the
+        // engine reports it did nothing (which is what tells the input layer not to swallow the key)
+        // and no second line is abandoned by the same press.
+        { op: 'update', t: 5700 }, { op: 'enter', t: 5700 },
+
+        // One frame short of the bound, then the frame that opens it: the deferred hand-over is the
+        // ordinary line-start snap, with no rule of its own for a caret the skip parked.
+        { op: 'update', t: 6499 },
+        { op: 'update', t: 6500 },
+
+        // Typing on the line after the skip, again inside the abandoned line's held grace (L1 seals
+        // at 9500, not at its 8000 deadline).
+        { op: 'update', t: 8000 }, { op: 'key', c: 'g', t: 8000 },
+        { op: 'update', t: 8500 }, { op: 'key', c: 'h', t: 8500 },
+
+        // L1's seal, held to its own deadline plus the grace exactly as L0's was.
+        { op: 'update', t: 9500 },
+
+        // An Enter on a line the player TYPED OUT is inert for the same reason the parked one is:
+        // the caret is past the last cell, and the two time-driven arms already own it.
+        { op: 'update', t: 9600 }, { op: 'enter', t: 9600 },
+
+        // The last line's own deadline: the run finishes with exactly the four cells the two skips
+        // gave up missed, and nothing else.
+        { op: 'update', t: 12000 },
+    ];
+
+    const engine = new TB.TypingEngine(build(LINE_SKIP));
+
+    let breaks = 0;
+    engine.onComboBroken = () => { breaks++; };
+
+    const readings = [];
+
+    for (const step of steps) {
+        let handled = null;
+
+        if (step.op === 'update') engine.update(step.t);
+        else if (step.op === 'enter') handled = engine.processEnter(step.t);
+        else handled = engine.processKey(step.c, step.t);
+
+        readings.push({
+            op: step.op,
+            t: step.t,
+            c: step.c === undefined ? null : step.c,
+            handled: handled,
+            at: at(engine),
+            // The SEAL is what this section is about, so every reading carries where it has got to
+            // and what it has resolved: a grace lost by a line the caret walked out of moves both,
+            // and moves them before it moves any cell state.
+            nextUnsealedLineIndex: engine.nextUnsealedLineIndex,
+            states: engine.lines.map(l => l.cells.map(c => c.state)),
+            combo: engine.combo,
+            maxCombo: engine.maxCombo,
+            comboBreaks: breaks,
+            mistypes: engine.mistypes,
+            finished: engine.finished
+        });
+    }
+
+    const fixture = new TB.TypingEngine(build(LINE_SKIP));
+
+    out.lineSkip = {
+        // Pinned before the readings are, so a fixture that drifted cannot be read as an engine
+        // divergence by the cross-repo arm.
+        dragGraceMs: TB.constants.FLETCHER_DRAG_GRACE_MS,
+        entryOpensAt: [fixture.entryOpensAt(1), fixture.entryOpensAt(2)],
+        lines: fixture.lines.map(l => ({
+            activationTime: l.activationTime,
+            endTime: l.endTime,
+            sealGraceMs: l.sealGraceMs,
+            cells: l.cells.map(c => ({ expected: c.expected, target: c.target }))
+        })),
+        script: steps,
+        readings: readings,
+        combo: engine.combo,
+        maxCombo: engine.maxCombo,
+        comboBreaks: breaks,
+        mistypes: engine.mistypes
+    };
+}
+
 process.stdout.write(JSON.stringify(out));
