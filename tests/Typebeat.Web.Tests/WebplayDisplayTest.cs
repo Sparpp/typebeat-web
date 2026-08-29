@@ -64,6 +64,37 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
+    /// backlog 245: a mapper dragging the blue sung-end flag past the last word's own end must not
+    /// stretch the caret's pace through the last character. Fixture: "ab cd", words "ab" [1000,2000]
+    /// and "cd" [2000,3200] (own end 3200), but the line's declared sung end dragged to 6000. Before
+    /// the fix the polyline's final anchor was max(singEndTime, lastTime) = max(6000, 2600) = 6000,
+    /// a 3400ms crawl across 'd' alone. The fix closes on the last word's own end instead:
+    /// max(lastUnitEnd = 3200, lastTime = 2600) = 3200, matching every other word's own-bound close.
+    /// </summary>
+    [Test]
+    public void SungPlayheadClosesOnTheLastWordsOwnEndNotADraggedSungEnd()
+    {
+        var root = Harness();
+
+        Assert.Multiple(() =>
+        {
+            // The dragged flag is still the line's own singEndTime (unaffected: this is presentation
+            // only, no wire or scoring surface moves), but the polyline no longer reads it directly.
+            Assert.That(Num(root, "draggedLineSingEnd"), Is.EqualTo(6000));
+            Assert.That(Num(root, "draggedLastUnitEnd"), Is.EqualTo(3200));
+
+            Assert.That(JsHarness.Doubles(root, "draggedSungPointTimes"),
+                Is.EqualTo(new[] { 1000d, 1000d, 1500d, 2000d, 2000d, 2600d, 3200d }));
+            Assert.That(JsHarness.Doubles(root, "draggedSungPointIndices"),
+                Is.EqualTo(new[] { 0d, 0d, 1d, 2d, 3d, 4d, 5d }));
+
+            // Sampled at d's own target (4), halfway across d -> the last word's own end (4.5), at
+            // that end (5, clamped), and long after (5, still clamped): never at 6000.
+            Assert.That(JsHarness.Doubles(root, "draggedSungAt"), Is.EqualTo(new[] { 4d, 4.5d, 5d, 5d }));
+        });
+    }
+
+    /// <summary>
     /// Golden samples lifted verbatim from typebeat-osu's TypingEngineTest: clamped before the
     /// line, halfway through a segment, a ZERO-LENGTH segment the position must jump across, the
     /// final segment into sing end, and clamped after it.

@@ -127,8 +127,23 @@
         return current + (target - current) * (1 - Math.pow(0.5, elapsedMs / halfTime));
     }
 
+    // The last WORD's own close: the anchor the final sung-polyline segment closes on (mirrors the
+    // fix to TypingLine.FromLyricLine / TypingLine.cs:343, which captures the last token's own unit
+    // end instead of the line's singEndTime). typebeat-player.js is handed the already-built line,
+    // not its units, so this is read off the line's own syllable groups (buildSyllables, in
+    // typebeat-core.js) instead: the LAST group of a line always closes on its own token's unit end
+    // ("last group of the token closes on the WORD's end"), and every non-empty last token gets a
+    // group unless it is a stylised triple-letter run (isSyllabifiable), so this recovers the true
+    // value for real content. Falls back to singEndTime only when the line produced no groups at
+    // all, mirroring the game's Units.Count == 0 fallback for a line with no word timing.
+    function lastUnitEndOf(line) {
+        return line.syllables.length > 0
+            ? line.syllables[line.syllables.length - 1].endTime
+            : line.singEndTime;
+    }
+
     // The sung-position polyline for one line (mirrors TypingLine's sungPoints constructor):
-    // (startTime, 0), each cell's (target, cellIndex), (singEndTime, cellCount), with times
+    // (startTime, 0), each cell's (target, cellIndex), (last word's own end, cellCount), with times
     // clamped monotonic non-decreasing. Every cell of the DEFAULT stream is typeable (normalize
     // strips anything outside the typeable surface and the supported marks, and the derivation then
     // removes the marks), so every cell contributes a point, exactly as the C# does for its
@@ -141,7 +156,11 @@
             points.push({ t: t, i: i });
             last = t;
         }
-        points.push({ t: Math.max(line.singEndTime, last), i: line.cells.length });
+        // Close on the last word's own end, not the line's declared sung end: an editor drag of the
+        // sung-end flag must not stretch or compress the caret's pace through the final character.
+        // Kept as a max() against `last` (not lastUnitEndOf alone), because the game proved that
+        // guard reachable with overlapping units on inverted or malformed data.
+        points.push({ t: Math.max(lastUnitEndOf(line), last), i: line.cells.length });
         return points;
     }
 
@@ -1643,6 +1662,7 @@
     // instead of only by eye.
     Core.display = {
         dampContinuously,
+        lastUnitEndOf,
         buildSungPoints,
         sungPositionAt,
         cueBar,

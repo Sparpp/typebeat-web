@@ -47,6 +47,18 @@ const abcdOsu = OSU_HEADER +
     '{"text":"ab","start_ms":1000,"end_ms":2000,"score":1},' +
     '{"text":"cd","start_ms":2000,"end_ms":3000,"score":1}]}\n';
 
+// backlog 245: the same shape as abcdOsu, but the mapper dragged the blue sung-end flag PAST the
+// last word's own end (words unchanged: "ab" [1000,2000], "cd" [2000,3200]; end_ms 6000 instead of
+// 3200). Cell targets: a = 1000, b = 1500, ' ' = 2000, c = 2000, d = 2600. Before the fix the sung
+// polyline's final anchor was max(singEndTime, lastTime) = max(6000, 2600) = 6000, so the caret
+// crawled across the single last character 'd' for 3400ms. The fix closes on the last word's own
+// end instead: max(lastUnitEnd = 3200, lastTime = 2600) = 3200.
+const draggedOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":20000}\n' +
+    '{"text":"ab cd","start_ms":1000,"end_ms":6000,"words":[' +
+    '{"text":"ab","start_ms":1000,"end_ms":2000,"score":1},' +
+    '{"text":"cd","start_ms":2000,"end_ms":3200,"score":1}]}\n';
+
 // Two lines with a long instrumental stretch between them, for the cue-target and gap logic:
 // line 0 sings [1000, 2000], line 1 does not start until 12000.
 const gapOsu = OSU_HEADER +
@@ -67,9 +79,12 @@ function engineFor(map) {
 }
 
 const abcd = build(abcdOsu);
+const dragged = build(draggedOsu);
 const gapMap = build(gapOsu);
 const line0 = abcd.lines[0];
 const points = D.buildSungPoints(line0);
+const draggedLine0 = dragged.lines[0];
+const draggedPoints = D.buildSungPoints(draggedLine0);
 
 // --- a perfect run and a one-key run, for the live HUD readouts ---
 function playPerfect() {
@@ -493,6 +508,15 @@ const out = {
     sungPointTimes: points.map(p => p.t),
     sungPointIndices: points.map(p => p.i),
     sungAt: [500, 1250, 2000, 2750, 9999].map(t => D.sungPositionAt(points, t)),
+
+    // backlog 245: the sung-end flag dragged past the last word's own end must not move the sweep's
+    // pace through the last character. lastUnitEnd is read straight off the line (not recomputed),
+    // and the final anchor must land there, not on the dragged singEndTime.
+    draggedLineSingEnd: draggedLine0.singEndTime,
+    draggedLastUnitEnd: D.lastUnitEndOf(draggedLine0),
+    draggedSungPointTimes: draggedPoints.map(p => p.t),
+    draggedSungPointIndices: draggedPoints.map(p => p.i),
+    draggedSungAt: [2600, 2900, 3200, 9999].map(t => D.sungPositionAt(draggedPoints, t)),
 
     // Cue-in bars: depleting over the final CUE_LEAD_MS, brightening as they land.
     cueLeadMs: D.constants.CUE_LEAD_MS,
