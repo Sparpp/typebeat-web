@@ -268,8 +268,9 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
     /// <summary>
     /// The only two review transitions are pending → ranked and ranked → pending; hidden and
     /// removed sets are untouchable from here (takedowns stay an admin-SQL lever). 404 for
-    /// non-reviewers; the same nothing-to-see answer the buttons' absence gives them (the
-    /// site's custom cookie auth has no ASP.NET authentication scheme for Forbid()).
+    /// non-reviewers, and for a reviewer acting on their OWN set; the same nothing-to-see answer
+    /// the buttons' absence gives them (the site's custom cookie auth has no ASP.NET
+    /// authentication scheme for Forbid()).
     /// </summary>
     private async Task<IActionResult> transitionAsync(long id, string from, string to)
     {
@@ -277,6 +278,17 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
             return NotFound();
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        // Review is someone else's judgement: a map_reviewer may not rank or unrank a set they
+        // own. The exemption is by ROLE and not by name, so an administrator (who can already
+        // reach every other moderation lever) may still flip their own set.
+        // This lookup doubles as the existence check the changed == 0 branch below used to run
+        // as a second query: owner_id is NOT NULL, so a null here means there is no such set.
+        long? ownerId = await conn.ExecuteScalarAsync<long?>(
+            "SELECT owner_id FROM beatmapsets WHERE id = @id", new { id });
+
+        if (ownerId is null || (ownerId == CurrentUser.Id && !CurrentUser.IsAdmin))
+            return NotFound();
 
         int changed = await conn.ExecuteAsync(
             "UPDATE beatmapsets SET status = @to, updated_at = now() WHERE id = @id AND status = @from",
@@ -305,17 +317,8 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
             }
         }
 
-        if (changed == 0)
-        {
-            // Wrong-state POSTs (double-submit, stale tab) are benign: land back on the page,
-            // which shows the current state. Only a nonexistent set is a real 404.
-            bool exists = await conn.ExecuteScalarAsync<bool>(
-                "SELECT EXISTS (SELECT 1 FROM beatmapsets WHERE id = @id)", new { id });
-
-            if (!exists)
-                return NotFound();
-        }
-
+        // Wrong-state POSTs (double-submit, stale tab) are benign: land back on the page, which
+        // shows the current state. A nonexistent set is a real 404, already answered above.
         return Redirect($"/beatmapsets/{id}");
     }
 

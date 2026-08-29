@@ -24,9 +24,17 @@ public class RankedApprovalTest
     private const string reviewer_name = "map reviewer";
     private const string reviewer_password = "reviewpass-123456";
 
+    // A reviewer and an admin who each OWN the set they are pointed at, for the no-self-rank rule.
+    private const string owner_reviewer_name = "self reviewer";
+    private const string owner_admin_name = "self admin";
+    private const string owner_password = "ownerpass-123456";
+
     private static long setId;
     private static long beatmapId;
     private static string checksum = null!;
+
+    private static long ownerReviewerSetId;
+    private static long ownerAdminSetId;
 
     private static long typistId;
     private static string typistBearer = null!;
@@ -81,6 +89,47 @@ public class RankedApprovalTest
             RETURNING id
             """,
             new { setId, checksum });
+
+        // Self-rank fixtures: one map_reviewer and one admin, each owning their own pending set.
+        ownerReviewerSetId = await seedOwnedPendingSetAsync(conn, owner_reviewer_name,
+            "self.reviewer@example.com", "Own Map", mapReviewer: true, isAdmin: false);
+
+        ownerAdminSetId = await seedOwnedPendingSetAsync(conn, owner_admin_name,
+            "self.admin@example.com", "Own Admin Map", mapReviewer: false, isAdmin: true);
+    }
+
+    /// <summary>
+    /// Creates a user with the given role flags plus a pending set they own (and one difficulty,
+    /// so the set page renders like any other), returning the set id.
+    /// </summary>
+    private static async Task<long> seedOwnedPendingSetAsync(
+        NpgsqlConnection conn, string username, string email, string title, bool mapReviewer, bool isAdmin)
+    {
+        long userId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO users (username, email, password_hash, country_code, map_reviewer, is_admin)
+            VALUES (@username, @email, @hash, 'US', @mapReviewer, @isAdmin)
+            RETURNING id
+            """,
+            new { username, email, hash = new PasswordService().Hash(owner_password), mapReviewer, isAdmin });
+
+        long id = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist, status, submitted_at, updated_at)
+            VALUES (@userId, @title, 'The Self Ranker', 'pending',
+                    now() - interval '5 days', now() - interval '5 days')
+            RETURNING id
+            """,
+            new { userId, title });
+
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating, filename)
+            VALUES (@id, 'type!beat', @checksum, 60, 0, 2.0, 'map.osu')
+            """,
+            new { id, checksum = Guid.NewGuid().ToString("N") });
+
+        return id;
     }
 
     [OneTimeTearDown]
@@ -293,6 +342,85 @@ public class RankedApprovalTest
         });
     }
 
+    [Test]
+    public async Task RankPost_ReviewerOnTheirOwnSet_Is404_AndChangesNothing()
+    {
+        // A map_reviewer, but the set is theirs: review is someone else's judgement, so the
+        // handler answers exactly as it does for a non-reviewer.
+        using var client = await SignedInBrowserAsync(owner_reviewer_name, owner_password);
+        using var response = await PostHandlerAsync(client, "Rank", ownerReviewerSetId);
+
+        string? status = await StatusAsync(ownerReviewerSetId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(status, Is.EqualTo("pending"), "the refused self-rank must not have flipped anything");
+        });
+    }
+
+    [Test]
+    public async Task RankPost_AdminOnTheirOwnSet_IsAllowed()
+    {
+        // The exemption is by ROLE, not by name: an administrator may rank their own set.
+        using var client = await SignedInBrowserAsync(owner_admin_name, owner_password);
+        using var response = await PostHandlerAsync(client, "Rank", ownerAdminSetId);
+
+        string? status = await StatusAsync(ownerAdminSetId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(status, Is.EqualTo("ranked"));
+        });
+    }
+
+    [Test]
+    public async Task SetPage_HidesReviewControls_OnAReviewersOwnSet()
+    {
+        using var client = await SignedInBrowserAsync(owner_reviewer_name, owner_password);
+
+        // Their own set: no strip at all, because the POST behind it would 404.
+        using var own = await client.GetAsync($"/beatmapsets/{ownerReviewerSetId}");
+        string ownHtml = await own.Content.ReadAsStringAsync();
+
+        // Someone else's pending set: the same reviewer sees the controls as before.
+        using var other = await client.GetAsync($"/beatmapsets/{PublicSiteSeed.PendingId}");
+        string otherHtml = await other.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(own.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(ownHtml, Does.Not.Contain("map review"));
+            Assert.That(ownHtml, Does.Not.Contain(">Rank this map</button>"));
+
+            Assert.That(otherHtml, Does.Contain("map review"));
+            Assert.That(otherHtml, Does.Contain(">Rank this map</button>"));
+        });
+    }
+
+    [Test]
+    public async Task RoleGrantMigration_Applied_AndNoOpsForAbsentUsernames()
+    {
+        // 032 grants map_reviewer/is_admin to three PRODUCTION accounts. None of them exists on
+        // a freshly migrated test database, which is the no-op arm: the migration must still
+        // apply cleanly (the fixture's host would have failed to boot otherwise) and must not
+        // conjure rows.
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        bool applied = await conn.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '032_reviewer_grants.sql')");
+
+        int matched = await conn.ExecuteScalarAsync<int>(
+            "SELECT count(*)::int FROM users WHERE username IN ('Noe', 'Drexion', 'spuro')");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(applied, Is.True, "migration 032 must be recorded as applied");
+            Assert.That(matched, Is.EqualTo(0), "the granted usernames exist only in production");
+        });
+    }
+
     // ---- helpers ----
 
     private static async Task<HttpClient> SignedInBrowserAsync(string username, string password)
@@ -306,22 +434,27 @@ public class RankedApprovalTest
     }
 
     /// <summary>POSTs the Rank/Unrank page handler with a fresh antiforgery token.</summary>
-    private static async Task<HttpResponseMessage> PostHandlerAsync(HttpClient client, string handler)
-    {
-        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, $"/beatmapsets/{setId}");
+    private static Task<HttpResponseMessage> PostHandlerAsync(HttpClient client, string handler)
+        => PostHandlerAsync(client, handler, setId);
 
-        return await client.PostAsync($"/beatmapsets/{setId}?handler={handler}",
+    private static async Task<HttpResponseMessage> PostHandlerAsync(HttpClient client, string handler, long id)
+    {
+        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, $"/beatmapsets/{id}");
+
+        return await client.PostAsync($"/beatmapsets/{id}?handler={handler}",
             new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["__RequestVerificationToken"] = token,
             }));
     }
 
-    private static async Task<string?> StatusAsync()
+    private static Task<string?> StatusAsync() => StatusAsync(setId);
+
+    private static async Task<string?> StatusAsync(long id)
     {
         await using var conn = await dataSource.OpenConnectionAsync();
         return await conn.ExecuteScalarAsync<string>(
-            "SELECT status FROM beatmapsets WHERE id = @setId", new { setId });
+            "SELECT status FROM beatmapsets WHERE id = @id", new { id });
     }
 
     /// <summary>

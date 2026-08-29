@@ -7,6 +7,12 @@
     bool preferOriginal = Model.CurrentUser?.PreferOriginalMetadata ?? false;
     string displayTitle = Model.Set.DisplayTitle(preferOriginal);
     string displayArtist = Model.Set.DisplayArtist(preferOriginal);
+
+    // The handler refuses a reviewer's own set (OnPostRank/OnPostUnrank 404 it, admins exempt),
+    // so the strip must not offer a button that cannot work. The guard is the boundary; this is
+    // just honesty about it.
+    bool canReview = Model.CurrentUser?.CanReviewMaps == true
+                     && (Model.CurrentUser.IsAdmin || Model.CurrentUser.Id != Model.Set.OwnerId);
 }
 <section class="set-header @(Model.Set.CoverUrl is null ? "set-header--nocover" : "")" style="@coverStyle">
     <div class="set-header__scrim">
@@ -63,7 +69,7 @@
                             aria-label="Play preview"></button>
                 }
             </div>
-            @if (Model.CurrentUser?.CanReviewMaps == true && Model.Set.Status is "pending" or "ranked")
+            @if (canReview && Model.Set.Status is "pending" or "ranked")
             {
                 @* Reviewer-only strip, deliberately set apart from the player actions above. *@
                 <div class="review-controls">
