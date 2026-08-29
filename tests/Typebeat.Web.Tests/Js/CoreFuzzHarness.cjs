@@ -441,11 +441,22 @@ function play(name, keys, spaceSkipsWord) {
     // ZERO while a claim is still outstanding, which is the one case that rule decides and the one
     // the browser used to get wrong. Counted by wrapping the engine's single snapshot write site, so
     // it counts what the engine actually reached rather than what a script looks like it reaches.
+    //
+    // Backlog 243 splits a SECOND counter off the same wrapper: a redeemable break landing on a
+    // streak the outstanding claim's OWN press credited, which is the arm 176 alone got wrong. It
+    // is counted only where the two rules disagree (a streak of more than zero, spared anyway),
+    // so it says "the credit decided this break" rather than "the credit was looked at", and a
+    // sweep that stopped reaching the shape cannot pass for coverage.
     let passiveBreaks = 0;
+    let ownCreditBreaks = 0;
     const snapshotBreak = engine.snapshotRedeemableBreak.bind(engine);
 
     engine.snapshotRedeemableBreak = function (cellIndex, brokenStreak) {
-        if (brokenStreak <= 0 && engine.restorable !== null) passiveBreaks++;
+        const claim = engine.restorable;
+
+        if (brokenStreak <= 0 && claim !== null) passiveBreaks++;
+        else if (claim !== null && brokenStreak <= claim.ownPressCredit) ownCreditBreaks++;
+
         snapshotBreak(cellIndex, brokenStreak);
     };
 
@@ -634,6 +645,7 @@ function play(name, keys, spaceSkipsWord) {
         mistypes: engine.mistypes,
         restores: restores,
         passiveBreaks: passiveBreaks,
+        ownCreditBreaks: ownCreditBreaks,
         spanJudgements: spanJudgements,
         stretchPointJudgements: stretchPointJudgements,
         gapTypos: gapTypos,
@@ -825,11 +837,59 @@ const SCRIPTED = [
         // takes that space back; the wrong letter then lands on the SAME gap and is typed through;
         // and a second backspace pair walks out of it and back into the abandoned run, which is
         // reclaimed and typed out. Every seam backlog 176 arbitrates is in here at once.
+        //
+        // Backlog 243 MOVED THIS CASE'S ANSWER, and it was pinning the bug: the skip's own space is
+        // judged on the gap and rebuilds the run to 1, so the wrong letter after it was breaking a
+        // streak of 1, clearing 176's zero test and overwriting the six-deep claim on the 'i' with
+        // a worthless one on the gap. Both engines agreed on that, which is exactly why a parity
+        // case could hold it. The 1 belongs to the break's own press, so the typo is passive now,
+        // the claim on the 'i' survives, and the retype at the end restores the 6.
         name: 'scripted/gapTypoAfterWordSkip', fixture: 'quickBrownFox', spaceSkipsWord: true, skipPresses: 1,
         keys: [[1000, 't'], [1200, 'h'], [1400, 'e'], [1600, ' '], [1600, 'q'], [1840, 'u'],
                [2080, ' '], [2200, BS], [2300, 'z'], [2350, BS], [2400, BS],
                [2450, 'u'], [2500, 'i'], [2560, 'c'], [2600, 'k'], [2800, ' '], [2800, 'b'],
                [3040, 'r'], [3280, 'o'], [3520, 'w'], [3760, 'n'],
+               [5000, 'f'], [5267, 'o'], [5533, 'x'], [5800, ' '], [5800, 'j'], [6040, 'u'],
+               [6280, 'm'], [6520, 'p'], [6760, 's']]
+    },
+    {
+        // Backlog 243's own replay, without the backspace the case above puts between the skip and
+        // the typo. "the qu" is a run of 6, the space at 2080 gives up on "ick" and claims the 'i'
+        // (cell 6) with that 6, and the SAME press is then judged on the word gap and rebuilds the
+        // run to 1. The two wrong letters that follow land on the 'b' and the 'r' of "brown": the
+        // first breaks a run of nothing but the skip's own space, so it is passive and spends the
+        // credit, and the second breaks a run of zero, so 176 spares it as it always did. Four
+        // backspaces then walk out of both typos, back over the typed gap and into the abandoned
+        // run (reclaiming "ick" and erasing the 'u'), and the retyped 'i' restores the 6.
+        //
+        // The shape a real submitted play lost about 430 combo to, and the one the generator cannot
+        // roll: it needs a skip, a typo on the very next press, and a walk all the way back.
+        name: 'scripted/typoRightAfterAWordSkip', fixture: 'quickBrownFox', spaceSkipsWord: true, skipPresses: 1,
+        keys: [[1000, 't'], [1200, 'h'], [1400, 'e'], [1600, ' '], [1600, 'q'], [1840, 'u'],
+               [2080, ' '], [2120, 'z'], [2160, 'x'],
+               [2200, BS], [2240, BS], [2280, BS], [2320, BS],
+               [2360, 'u'], [2400, 'i'], [2440, 'c'], [2560, 'k'], [2800, ' '], [2800, 'b'],
+               [3040, 'r'], [3280, 'o'], [3520, 'w'], [3760, 'n'],
+               [5000, 'f'], [5267, 'o'], [5533, 'x'], [5800, ' '], [5800, 'j'], [6040, 'u'],
+               [6280, 'm'], [6520, 'p'], [6760, 's']]
+    },
+    {
+        // The other half of backlog 243, the SPEND. Same skip, same first typo spared by the
+        // credit, but then a real character (the 'r' of "brown", struck at 2900 where its own word
+        // is being sung) puts the run back to 1 on the player's own fingers. That 1 is not the
+        // claim's, because the credit was spent by the typo that went past it, so the second typo
+        // TAKES the claim exactly as it did before 243: walking all the way back and typing "ick"
+        // out restores nothing, and it is the late 'o' that redeems the streak of 1 instead.
+        //
+        // Without the spend the credit would still be standing here and the second typo would be
+        // spared too, which is a different account on both engines: this case is what stops the
+        // fix from turning into "a skip makes every later break passive".
+        name: 'scripted/skipCreditSpentByTheFirstTypo', fixture: 'quickBrownFox', spaceSkipsWord: true, skipPresses: 1,
+        keys: [[1000, 't'], [1200, 'h'], [1400, 'e'], [1600, ' '], [1600, 'q'], [1840, 'u'],
+               [2080, ' '], [2400, 'z'], [2900, 'r'], [3000, 'z'],
+               [3100, BS], [3140, BS], [3180, BS], [3220, BS], [3260, BS],
+               [3300, 'u'], [3340, 'i'], [3380, 'c'], [3420, 'k'], [3460, ' '], [3500, 'b'],
+               [3540, 'r'], [3580, 'o'], [3620, 'w'], [3760, 'n'],
                [5000, 'f'], [5267, 'o'], [5533, 'x'], [5800, ' '], [5800, 'j'], [6040, 'u'],
                [6280, 'm'], [6520, 'p'], [6760, 's']]
     },

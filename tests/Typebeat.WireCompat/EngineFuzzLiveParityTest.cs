@@ -610,6 +610,7 @@ public class EngineFuzzLiveParityTest
         int skipPresses = 0, comboRestores = 0, backspaces = 0, passiveBreaks = 0, spanJudgements = 0, gapTypos = 0;
         int parkedGapTypos = 0, stepOvers = 0, midWordSpaceTypos = 0, stretchPointJudgements = 0;
         int rollForwards = 0, lineSnaps = 0, dragHolds = 0, rushCapBreaks = 0, refusedRolls = 0;
+        int ownCreditBreaks = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -624,6 +625,7 @@ public class EngineFuzzLiveParityTest
             skipPresses += browserCase.GetProperty("skipPresses").GetInt32();
             comboRestores += browserCase.GetProperty("restores").GetInt32();
             passiveBreaks += browserCase.GetProperty("passiveBreaks").GetInt32();
+            ownCreditBreaks += browserCase.GetProperty("ownCreditBreaks").GetInt32();
             spanJudgements += browserCase.GetProperty("spanJudgements").GetInt32();
             stretchPointJudgements += browserCase.GetProperty("stretchPointJudgements").GetInt32();
             gapTypos += browserCase.GetProperty("gapTypos").GetInt32();
@@ -655,6 +657,14 @@ public class EngineFuzzLiveParityTest
             // full shape (they reach the break, but not the walk back into the older cell that makes
             // the two rules differ), and a sweep that never reaches it cannot pin it.
             Assert.That(passiveBreaks, Is.GreaterThan(0), "no run took a redeemable break that had no streak to claim with");
+
+            // Backlog 243's refinement of that rule, counted only where the two DISAGREE: a break
+            // standing on a real streak of 1 that was credited by the claim's own press (the space
+            // that skipped the word, judged on the gap it landed on) and is spared anyway. Under 176
+            // alone that break took the claim, so this counter going to zero means the sweep stopped
+            // reaching the shape a real play lost 430 combo to, and both arms would agree on the old
+            // answer with nothing failing.
+            Assert.That(ownCreditBreaks, Is.GreaterThan(0), "no run broke on nothing but the combo a word skip's own space credited");
 
             // Backlog 179's own rule: a press the SPAN decided rather than the point. Counted only
             // when the cell was in a group AND the span answer differed from the point answer, so a

@@ -1935,7 +1935,8 @@
             countableTargets.sort((a, b) => a - b);
             this.countableTargets = countableTargets;
             // The one outstanding combo snapshot (TypingEngine.restorable, backlog 140, widened by
-            // 167): { lineIndex, cellIndex, streak }, the cell a wrong keypress spoiled or a word
+            // 167 and again by 243): { lineIndex, cellIndex, streak, ownPressCredit }, the cell a
+            // wrong keypress spoiled or a word
             // skip abandoned and the streak that break cost, or null when there is nothing to go
             // back for. Set by that keypress or skip (through snapshotRedeemableBreak, the one
             // write site the two share), redeemed by typing that same cell correctly, and discarded
@@ -1956,6 +1957,17 @@
             // at zero costs nothing, so it leaves an outstanding claim alone rather than replacing
             // it with an empty one, and correcting the older cell still resumes the run (see
             // snapshotRedeemableBreak).
+            //
+            // `ownPressCredit` is backlog 243: how much of the CURRENT run was credited by the
+            // claim's OWN press rather than typed after it. It is 1 for a claim a word skip took,
+            // because the skipping space is judged on the word gap it lands on and rebuilds the run
+            // to exactly 1 (creditTheClaimsOwnPress), and 0 for every other claim and for a skip
+            // whose space credited nothing. A break standing on no more than that is passive the
+            // same way a break landing at zero is, and SPENDS the credit when it does, so anything
+            // the player really types afterwards arms the next break normally. There is no
+            // SkipSpaceCreditRule here, for the reason the two rules above have no arm either: the
+            // pre-243 era exists in the C# only to re-derive a stored row, and a live play is
+            // permanently on NotAStreakOfItsOwn.
             //
             // There is no ComboRestoreRule here, and that is a statement about /play rather than a
             // simplification: the enum exists in the C# so that RE-DERIVING a score stored before
@@ -2433,14 +2445,51 @@
         // redeeming it restores nothing, which is what resumeStreakIfThisRedeemsTheBreak has always
         // done with a zero.
         //
-        // The C# reads two era switches here that this file has no counterpart to, for the reason
+        // "A streak to own" excludes the streak the OUTSTANDING claim's own press credited (backlog
+        // 243). One press can do both: a space struck inside a word abandons the rest of it and is
+        // then judged on the word gap it lands on, which puts the combo back to 1. A break on that
+        // very gap therefore broke a run of 1 rather than of 0, and under 176 alone that was enough
+        // to overwrite a claim hundreds deep with a worthless one. The 1 was not progress, it was
+        // the break's own press, so a break taking no more than the claim's own credit is passive
+        // exactly as a zero-streak break is, and SPENDS that credit on the way past: whatever the
+        // player rebuilds after this break is measured from zero, so the next break arms normally.
+        // A correct character after the skipping space puts the run at 2 and the next break takes
+        // the claim as it always did.
+        //
+        // The C# reads three era switches here that this file has no counterpart to, for the reason
         // set out on `restorable`: ComboRestoreRule, which decides whether any snapshot is taken at
-        // all, and ComboClaimRule, which decides the condition below. The browser only ever plays
-        // live, so both are pinned to their live arms and the condition stands unguarded.
+        // all, ComboClaimRule, which decides the condition below, and SkipSpaceCreditRule, which
+        // decides whether the ceiling is the claim's credit or a flat zero. The browser only ever
+        // plays live, so all three are pinned to their live arms, the ceiling is just the credit,
+        // and the condition stands unguarded.
         snapshotRedeemableBreak(cellIndex, brokenStreak) {
-            if (brokenStreak <= 0 && this.restorable !== null) return;
+            const claim = this.restorable;
 
-            this.restorable = { lineIndex: this.activeLineIndex, cellIndex: cellIndex, streak: brokenStreak };
+            if (claim !== null && brokenStreak <= claim.ownPressCredit) {
+                // Passive: the claim stands where it is, with the credit this break just spent
+                // taken off it.
+                this.restorable = {
+                    lineIndex: claim.lineIndex, cellIndex: claim.cellIndex, streak: claim.streak, ownPressCredit: 0
+                };
+                return;
+            }
+
+            this.restorable = { lineIndex: this.activeLineIndex, cellIndex: cellIndex, streak: brokenStreak, ownPressCredit: 0 };
+        }
+
+        // TypingEngine.creditTheClaimsOwnPress. The press that just took (or passively kept) the
+        // outstanding claim has itself credited one combo: record that on the claim, so a break
+        // landing before the player has typed anything else takes nothing and leaves the claim alone
+        // (backlog 243, see snapshotRedeemableBreak).
+        //
+        // Called from the one arm such a press can reach: a word skip's space, falling through to be
+        // judged on the word gap the skip parked the caret on. Keyed on the press having ACTUALLY
+        // credited combo rather than on the skip having happened, so a skip whose space earned
+        // nothing (an inert retype of an already judged gap, the rush cap refusing a caret out past
+        // its bound, or a word abandoned all the way to the end of a line, where there is no gap for
+        // the space to land on at all) records no credit and behaves exactly as backlog 176 left it.
+        creditTheClaimsOwnPress() {
+            if (this.restorable !== null) this.restorable.ownPressCredit = 1;
         }
 
         // TypingEngine.resumeStreakIfThisRedeemsTheBreak. Redeem the outstanding snapshot if the
@@ -2453,6 +2502,10 @@
         // keypress that spoiled the cell (backlog 140), and the word skip that abandoned it
         // (backlog 167). In both cases the cell is the one the player has to come back to, so typing
         // it is what says they came back.
+        //
+        // Backlog 243's ownPressCredit is not read here, and the C# does not read it either: it
+        // widened a positional destructure and discarded the new member. The credit only ever
+        // decides who OWNS the claim, never what redeeming it is worth.
         resumeStreakIfThisRedeemsTheBreak(cellIndex) {
             const claim = this.restorable;
 
@@ -2498,6 +2551,13 @@
         // later resumes the run through the same backlog 140 machinery a corrected typo redeems.
         // That replaces the outright discard the skip used to do: a skip is a break the player can
         // walk back into, which is exactly what a typo's break is.
+        //
+        // Returns whether a redeemable claim is outstanding when it hands the press back, which is
+        // what tells processKey that the combo the SAME press is about to earn on the word gap
+        // belongs to the break rather than to the player (backlog 243, see
+        // creditTheClaimsOwnPress). True for the claim this skip took AND for an older one it
+        // passively left alone, because the argument is about the press and not about which break
+        // wrote the claim.
         skipCurrentWord() {
             const cells = this.lines[this.activeLineIndex].cells;
 
@@ -2545,7 +2605,7 @@
 
             this.caretIndex = end;
 
-            if (abandoned.length === 0) return;
+            if (abandoned.length === 0) return false;
 
             // AT MOST ONE combo break for the whole word, the rule sealLine's misses follow.
             const brokenStreak = this.combo;
@@ -2581,6 +2641,8 @@
             // drift the browser's WPM readout away from the desktop's. The cells repaint from state.
             // engine `counts` is left alone too: it is the scored-only dict, and the C# records
             // nothing for an abandoned cell either (its Miss is counted at the seal).
+
+            return this.restorable !== null;
         }
 
         update(time) {
@@ -2817,6 +2879,12 @@
 
             let cell = line.cells[this.caretIndex];
 
+            // Backlog 243: set when this press is a skip that left a claim outstanding, so the combo
+            // the SAME press goes on to earn on the word gap is recorded as the claim's OWN credit
+            // rather than as a run the player built after the break. Read once, at the one arm that
+            // increments the combo.
+            let skipLeftAClaimOutstanding = false;
+
             // Mashing mod: any key is the right key; judge it as the caret cell's expected char.
             // A FREESTYLE cell is exempt: it already accepts any key, and rewriting c here would
             // stamp the authoring marker over the char the player actually pressed (the one thing
@@ -2836,7 +2904,7 @@
             // rewrite on purpose: mashing has already turned the press into the expected char, so
             // this is unreachable under it.
             if (this.spaceSkipsWord && c === ' ' && cell.expected !== ' ') {
-                this.skipCurrentWord();
+                skipLeftAClaimOutstanding = this.skipCurrentWord();
 
                 if (this.caretIndex >= line.cells.length) {
                     // The abandoned word ran to the end of the line, so there is no word gap for
@@ -3191,6 +3259,12 @@
                 } else {
                     this.combo++;
                     if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+
+                    // The one press that can credit combo it also broke (backlog 243): the space
+                    // that skipped the word, now being judged on the gap the skip parked the caret
+                    // on. The combo is real and stands, but it belongs to the break, so the claim
+                    // remembers it and the next break has to beat it to take the claim away.
+                    if (skipLeftAClaimOutstanding) this.creditTheClaimsOwnPress();
                 }
 
                 cell.state = 'correct';
