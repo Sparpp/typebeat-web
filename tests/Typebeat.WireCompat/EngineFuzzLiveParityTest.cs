@@ -233,33 +233,37 @@ public class EngineFuzzLiveParityTest
     #region Driving the two sides
 
     /// <summary>
-    /// The generated stream as a replay, headed by the CONFIG frame the eight judgement-relevant
+    /// The generated stream as a replay, headed by the CONFIG frame the nine judgement-relevant
     /// settings travel in: bit 0 allow-wrong-input (on, the default model and all the browser has),
     /// bit 1 space-skips-word (whichever half of the case matrix this run is), bit 2 syllable-span
     /// judgement, bit 3 wrong-input-on-word-gaps, bit 4 strict-spaces, bit 5 the FLEXIBLE LINES
-    /// default, bit 6 the char-timed stretch narrowing and bit 7 the BOUNDED RUSH.
+    /// default, bit 6 the char-timed stretch narrowing, bit 7 the BOUNDED RUSH and bit 8 the
+    /// FIRST-CHAR hybrid.
     ///
-    /// <para>Bits 2, 3, 4, 5, 6 and 7 are ON here, and getting any of them wrong would quietly gut
-    /// the whole sweep rather than fail loudly in one place. <see cref="TypeBeatReplayScorer"/>
-    /// follows the CONFIG frame for all six (<c>ReplayEngineFeed.Apply</c>), and the engine's
+    /// <para>Bits 2, 3, 4, 5, 6, 7 and 8 are ON here, and getting any of them wrong would quietly
+    /// gut the whole sweep rather than fail loudly in one place. <see cref="TypeBeatReplayScorer"/>
+    /// follows the CONFIG frame for all seven (<c>ReplayEngineFeed.Apply</c>), and the engine's
     /// DEFAULTS are the classic point rule, the strict word gap, the classic space rules, the PINNED
-    /// caret, the unnarrowed span and the UNBOUNDED roll, because a replay recorded before backlog
-    /// 179, 181, 184, 208, 209 or 218 must re-derive under the rules its fingers were graded on. The
-    /// browser has no era axis at all: it only plays live, so it judges on spans, types wrong letters
-    /// into word gaps, applies the space discipline, runs the flexible caret, char-times a stretch
-    /// and bounds the rush unconditionally. A config frame without bit 2 would put the C# arm on
-    /// point deltas while the JS arm is on spans, and every case that ever pressed inside a span
-    /// would part; one without bit 3 would have the C# arm REJECT every wrong key the script lands on
-    /// a gap, holding a caret the browser moved; one without bit 4 would have it reject every
-    /// mid-word space and advance past every gap typo, which is the same failure again; one without
-    /// bit 5 would PIN the C# arm's caret to the playhead while the browser's finishes lines early,
-    /// drags past deadlines and refuses combo out past the rush cap; one without bit 7 would let the
-    /// C# arm roll onto a line the browser's bound refuses, so every press the browser makes inert in
-    /// the park lands on a cell there; one without bit 6 would pay every mashed freestyle slot and
-    /// stretched run a delta of zero the browser charges for. The first five end the same way: every
-    /// keystroke after the first such press lands on a different cell. The last parts the accounts
-    /// without moving the caret at all, which is why the sweep also counts the presses it decides
-    /// (see <see cref="TheSweepReachesTheRulesItIsMeantTo"/>).</para>
+    /// caret, the unnarrowed span, the UNBOUNDED roll and the span-wide first character, because a
+    /// replay recorded before backlog 179, 181, 184, 208, 209, 218 or 247 must re-derive under the
+    /// rules its fingers were graded on. The browser has no era axis at all: it only plays live, so
+    /// it judges on spans, types wrong letters into word gaps, applies the space discipline, runs the
+    /// flexible caret, char-times a stretch, bounds the rush and opens a syllable on its start time
+    /// unconditionally. A config frame without bit 2 would put the C# arm on point deltas while the
+    /// JS arm is on spans, and every case that ever pressed inside a span would part; one without
+    /// bit 3 would have the C# arm REJECT every wrong key the script lands on a gap, holding a caret
+    /// the browser moved; one without bit 4 would have it reject every mid-word space and advance
+    /// past every gap typo, which is the same failure again; one without bit 5 would PIN the C# arm's
+    /// caret to the playhead while the browser's finishes lines early, drags past deadlines and
+    /// refuses combo out past the rush cap; one without bit 7 would let the C# arm roll onto a line
+    /// the browser's bound refuses, so every press the browser makes inert in the park lands on a
+    /// cell there; one without bit 6 would pay every mashed freestyle slot and stretched run a delta
+    /// of zero the browser charges for; one without bit 8 would pay every syllable's OPENING press a
+    /// delta of zero anywhere inside the span while the browser charges it for how late into the
+    /// syllable it landed. The first five end the same way: every keystroke after the first such
+    /// press lands on a different cell. The last two part the accounts without moving the caret at
+    /// all, which is why the sweep also counts the presses each of them decides (see
+    /// <see cref="TheSweepReachesTheRulesItIsMeantTo"/>).</para>
     ///
     /// <para>Bit 5 is the one that cannot be read as a single fact, which is why it is a parameter
     /// here rather than a constant: bit 5 CLEAR means a PINNED caret for a plain old replay, but an
@@ -268,11 +272,11 @@ public class EngineFuzzLiveParityTest
     /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>. The sweep passes no mods, so the frame is
     /// the whole of the answer here.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true)
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -608,7 +612,7 @@ public class EngineFuzzLiveParityTest
 
         int withTypos = 0, withMisses = 0, withOk = 0, withMeh = 0, perfect = 0;
         int skipPresses = 0, comboRestores = 0, backspaces = 0, passiveBreaks = 0, spanJudgements = 0, gapTypos = 0;
-        int parkedGapTypos = 0, stepOvers = 0, midWordSpaceTypos = 0, stretchPointJudgements = 0;
+        int parkedGapTypos = 0, stepOvers = 0, midWordSpaceTypos = 0, stretchPointJudgements = 0, firstCharJudgements = 0;
         int rollForwards = 0, lineSnaps = 0, dragHolds = 0, rushCapBreaks = 0, refusedRolls = 0;
         int ownCreditBreaks = 0;
 
@@ -628,6 +632,7 @@ public class EngineFuzzLiveParityTest
             ownCreditBreaks += browserCase.GetProperty("ownCreditBreaks").GetInt32();
             spanJudgements += browserCase.GetProperty("spanJudgements").GetInt32();
             stretchPointJudgements += browserCase.GetProperty("stretchPointJudgements").GetInt32();
+            firstCharJudgements += browserCase.GetProperty("firstCharJudgements").GetInt32();
             gapTypos += browserCase.GetProperty("gapTypos").GetInt32();
             parkedGapTypos += browserCase.GetProperty("parkedGapTypos").GetInt32();
             stepOvers += browserCase.GetProperty("stepOvers").GetInt32();
@@ -682,6 +687,16 @@ public class EngineFuzzLiveParityTest
             // them would leave the other uncovered while every case still passed.
             Assert.That(stretchPointJudgements, Is.GreaterThan(0), "no run judged a press on a stretch cell's own character target");
 
+            // Backlog 247's own rule, the THIRD arm of that seam and counted on the same principle:
+            // a press on the cell that OPENS a syllable, paid the distance from the span's start
+            // where the span would have paid it something else. Only a press that landed LATE into
+            // its syllable can be counted, because the early side of the two rules is the same
+            // number, so this says the sweep reached the half of the rule 247 actually moved. Like
+            // the stretch counter it cannot be replaced by the arms disagreeing: both engines set
+            // the bit, so a port that lost the hybrid would leave them agreeing on the span answer,
+            // green, and covering nothing.
+            Assert.That(firstCharJudgements, Is.GreaterThan(0), "no run judged a press on the start of the syllable it opened");
+
             // Backlog 181's own rule: a wrong letter landing IN a word gap. Counted on the CELLS
             // (a gap that became Wrong), which is exactly the set of presses whose outcome differs
             // from the strict rule, because the strict arm rejects them and writes nothing. Same
@@ -733,7 +748,10 @@ public class EngineFuzzLiveParityTest
     /// <summary>
     /// The ERA arm, which the browser does not have and therefore cannot prove: a replay whose
     /// CONFIG frame leaves bit 2 CLEAR re-derives under the classic POINT rule, and the identical
-    /// keystrokes re-derive as spans when it is set.
+    /// keystrokes re-derive as spans when it is set. Backlog 247 makes it three arms rather than
+    /// two, because bit 8 sits inside bit 2: with both set the syllable's OPENING character is paid
+    /// the distance from the span's start, which is the live rule since 247 and the one the browser
+    /// runs, while a row stored between 179 and 247 keeps the span-wide zero.
     ///
     /// <para>Everything else in this fixture asserts the two clients AGREE; this one asserts the
     /// stored era still parts them, which is what keeps a pre-179 score reproducing the judgement
@@ -759,10 +777,11 @@ public class EngineFuzzLiveParityTest
 
         var spans = ScoreWithEra(keys, syllableTiming: true);
         var classic = ScoreWithEra(keys, syllableTiming: false);
+        var hybrid = ScoreWithEra(keys, syllableTiming: true, firstCharTiming: true);
 
         Assert.Multiple(() =>
         {
-            // Under the live rule every press sits inside its syllable's span, so every one of them
+            // Under the 179 rule every press sits inside its syllable's span, so every one of them
             // is delta 0 and the map is typed clean.
             Assert.That(Wire(spans.Statistics), Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 25 }), "syllable era: statistics");
             Assert.That(spans.Rank.ToString(), Is.EqualTo("X"), "syllable era: rank");
@@ -772,6 +791,26 @@ public class EngineFuzzLiveParityTest
             Assert.That(Wire(classic.Statistics).GetValueOrDefault("great"), Is.LessThan(25), "classic era: some presses must fall out of Great");
             Assert.That(classic.TotalScore, Is.LessThan(spans.TotalScore), "classic era: total score");
             Assert.That(classic.Accuracy, Is.LessThan(spans.Accuracy), "classic era: accuracy");
+
+            // Under the LIVE rule (both bits) the twenty presses that open nothing keep their zero,
+            // and the five that open a syllable are paid how late into it they landed: 'c' at 1000
+            // and 'l' at 5000 open [1000, 2400] and [5000, 5750] dead on their starts, 't' at 2500
+            // opens [2400, 2857.14] 100 late and 'p' at 6600 opens [6500, 7250] 100 late, all four
+            // still Great on the Line ladder ([-250, 400] and [-600, 1000] for Ok). What moves is the
+            // rest: 'n' at 3900 opens the "night" span at 2857.14, which is 1042.86 late and off the
+            // ladder, and the 't' at 6400 and the 'p' at 7900 open [5750, 6500] and [7250, 8000] 650
+            // late, which is Ok. So 22 Greats, 2 Oks and the Meh backlog 199 grades an off-ladder hit.
+            Assert.That(Wire(hybrid.Statistics), Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 22, ["ok"] = 2, ["meh"] = 1 }), "hybrid era: statistics");
+
+            // Nothing about the run changes but what the presses were WORTH: the caret lands on the
+            // same cells and the map is still typed clean, so the hybrid sits strictly between the
+            // two older eras rather than replacing either.
+            Assert.That(hybrid.Completion, Is.EqualTo(spans.Completion), "hybrid era: the play completes exactly as the span era does");
+            Assert.That(hybrid.MaxCombo, Is.EqualTo(spans.MaxCombo), "hybrid era: max combo");
+            Assert.That(hybrid.Accuracy, Is.LessThan(spans.Accuracy), "hybrid era: accuracy is under the span era's");
+            Assert.That(hybrid.Accuracy, Is.GreaterThan(classic.Accuracy), "hybrid era: accuracy is over the classic era's");
+            Assert.That(hybrid.TotalScore, Is.LessThan(spans.TotalScore), "hybrid era: total score is under the span era's");
+            Assert.That(hybrid.TotalScore, Is.GreaterThan(classic.TotalScore), "hybrid era: total score is over the classic era's");
         });
     }
 
@@ -1139,10 +1178,10 @@ public class EngineFuzzLiveParityTest
         return TypeBeatReplayScorer.Score(Map(GranularityOf("abCd"), Fixture("abCd")), Array.Empty<Mod>(), replay, TypoRule.Deferred, ComboRestoreRule.OnFix);
     }
 
-    private static TypeBeatReplayAccount ScoreWithEra((double time, char key)[] keys, bool syllableTiming)
+    private static TypeBeatReplayAccount ScoreWithEra((double time, char key)[] keys, bool syllableTiming, bool firstCharTiming = false)
     {
         var replay = new Replay();
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: false, syllableTiming: syllableTiming));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: false, syllableTiming: syllableTiming, firstCharTiming: firstCharTiming));
 
         foreach (var (time, key) in keys)
             replay.Frames.Add(new TypeBeatReplayFrame(time, key));

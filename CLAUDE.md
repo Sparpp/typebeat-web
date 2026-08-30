@@ -118,7 +118,10 @@ WireCompat is where that is provable, because it is the only project that compil
   browser has no era axis (it only plays live, writes no replay frames, and `/play/submit` carries
   the aggregate account alone), so it judges on spans unconditionally, which is why
   `EngineFuzzLiveParityTest` has to set **flags bit 2** in the CONFIG frames it feeds the C# arm:
-  `TypeBeatReplayScorer` follows the frame and defaults to the classic point rule.
+  `TypeBeatReplayScorer` follows the frame and defaults to the classic point rule. Since backlog 247
+  that is true of **bit 8** too (the syllable's OPENING cell is judged from the span's START, not paid
+  0 anywhere inside it), and the JS pins whose scripts press an opening cell late therefore differ
+  from the game fixtures they mirror, whose engines leave that era off.
 - **`docs/pp.md` is the canonical pp spec**: every constant in `PerformancePoints.cs` is pinned there
   and must not drift from it. `PerformancePoints.VERSION` is shared with the game copy, stamps
   `scores.pp_version`, and drives `Packages/PpBackfill.cs`'s reprice-at-boot sweep, so bumping it is

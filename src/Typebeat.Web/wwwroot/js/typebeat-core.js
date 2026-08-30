@@ -2777,19 +2777,31 @@
         // whole mashed run a delta of zero seconds ahead of the vocal; they go back on their own
         // character's clock while the rest of the line keeps the span.
         //
-        // No era arm here, unlike the C#. The desktop engine defaults to CLASSIC on both axes and
-        // turns the span rule (CONFIG frame flags bit 2) and the stretch narrowing (bit 6) on for
-        // live play, because it must also RE-DERIVE stored replays under the rules their fingers
-        // were graded on. The browser only ever plays live: it has no mods payload, no replay input,
-        // it writes no replay frames (a /play submission carries the aggregate account alone, and
-        // PUT /api/v2/scores/{id}/replay is the desktop client's own upload path), and nothing
-        // re-scores a stored row through this file. So the live rule is the only rule this engine
-        // can be in, and both parts of it are unconditional.
+        // Since backlog 247 the group's FIRST cell narrows again, and it is the one cell the span
+        // never really described: it is judged on the signed distance from the span's START, so
+        // pacing a syllable out beats bursting it at the window's edge. The early side is
+        // byte-identical to the span rule (a press before the start already answered that distance),
+        // only the late side tightens, and the stretch exclusion above still wins, so a stretch cell
+        // that opens a group stays on its own character target.
+        //
+        // No era arm here, unlike the C#. The desktop engine defaults to CLASSIC on all three axes
+        // and turns the span rule (CONFIG frame flags bit 2), the stretch narrowing (bit 6) and the
+        // first-character hybrid (bit 8) on for live play, because it must also RE-DERIVE stored
+        // replays under the rules their fingers were graded on. The browser only ever plays live: it
+        // has no mods payload, no replay input, it writes no replay frames (a /play submission
+        // carries the aggregate account alone, and PUT /api/v2/scores/{id}/replay is the desktop
+        // client's own upload path), and nothing re-scores a stored row through this file. So the
+        // live rule is the only rule this engine can be in, and all three parts of it are
+        // unconditional.
         judgedDeltaFor(line, cellIndex, time) {
             const syllable = syllableIndexOf(line, cellIndex);
 
             if (syllable >= 0 && !isCharTimedStretch(line, cellIndex)) {
                 const group = line.syllables[syllable];
+
+                // The precedence is the C#'s: the stretch exclusion above, then the group's opening
+                // cell, then the span's own edges.
+                if (cellIndex === group.startCell) return time - group.startTime;
 
                 if (time < group.startTime) return time - group.startTime;
                 if (time > group.endTime) return time - group.endTime;

@@ -88,6 +88,7 @@ public class LineSkipLiveParityTest
     {
         SyllableTiming = true,
         CharTimedStretch = true,
+        FirstCharTiming = true,
         WrongInputOnWordGaps = true,
         StrictSpaces = true,
         SpaceSkipsWord = true,

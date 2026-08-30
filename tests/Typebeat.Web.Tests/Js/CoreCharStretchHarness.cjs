@@ -169,13 +169,16 @@ const out = {
     // A freestyle slot played ON its own target is still a Great: the fix prices the mash, it does
     // not make the section unplayable.
     spamOnTarget: play(FREESTYLE_SPAM, [1000, 3000, 5000, 7000, 9000, 11000].map(t => [t, 'q'])),
-    // A LONE character keeps the whole span: the '1' pressed 11 seconds past its own target is still
-    // inside its syllable, so it is delta 0.
+    // A LONE character is never char-timed. The '1' pressed 11 seconds past its own target is still
+    // inside its syllable, but it also OPENS that syllable, so since backlog 247 it is judged on the
+    // distance from the span's start (11000) rather than paid the whole span's 0.
     loneCharLate: play(DIGIT_RUN, [[12000, '1']]),
-    // A doubled letter is an ordinary spelling: every press deep inside the span, all delta 0.
+    // A doubled letter is an ordinary spelling: the two 'o's are deep inside the span and paid 0,
+    // while the 'g' that opens the syllable is judged from the span's start (backlog 247).
     doubledLate: play(DOUBLED_CHAR, [[12000, 'g'], [12000, 'o'], [12000, 'o']]),
-    // The subtimed "hey|yyyy": the first syllable is span-judged whole (including the 'y' the split
-    // left out of the run), the four-long run in the second is not.
+    // The subtimed "hey|yyyy": the first syllable is span-judged behind its opening 'h' (including
+    // the 'y' the split left out of the run), the four-long run in the second is char-timed, and its
+    // first cell is both an opener and a stretch, where the stretch arm wins.
     subtimedRun: play(SUBTIMED_STRETCH, [[4900, 'h'], [4900, 'e'], [4900, 'y'],
                                          [5100, 'y'], [5100, 'y'], [5100, 'y'], [5100, 'y']])
 };

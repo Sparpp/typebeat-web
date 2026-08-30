@@ -16,11 +16,16 @@
 // THE PRESS TIMES ARE THE BROWSER'S, NOT THE C# FIXTURE'S, exactly as CoreComboRestoreHarness
 // records: that fixture drives a bare TypingEngine judged on each cell's own point target, while the
 // browser only ever plays live and judges a cell against its SYLLABLE's sung span. This line's spans
-// are cells 0-2 over [1000, 2500] and cells 3-7 over [2500, 5000], so a press ANYWHERE inside a
-// cell's span is a delta of 0 and the ladder can only be walked from the span's edge. Every offset
-// below is therefore measured from 5000, the end of cell 3's span, which is what makes 5200 a Great,
-// 5700 an Ok, 6500 a Meh and 7500 off the ladder on the Line windows (Great [-250, 400],
-// Ok [-600, 1000], Meh [-1200, 2000]).
+// are cells 0-2 over [1000, 2500] and cells 3-7 over [2500, 5000], so the ladder can only be walked
+// from the anchor the live rule gives the cell every case here spoils and fixes, cell 3.
+//
+// THAT ANCHOR IS THE SPAN'S START SINCE BACKLOG 247, and it used to be the span's end. Cell 3 OPENS
+// the second group, and the first cell of a group is now judged on the signed distance from
+// StartTime rather than paid 0 anywhere inside the span, so the offsets below run from 2500 where
+// they used to run from 5000. Every number this file emits is unchanged by the move, because an
+// offset past the anchor is the same delta either way: 2700 is a Great, 3200 an Ok, 4000 a Meh and
+// 5000 off the ladder on the Line windows (Great [-250, 400], Ok [-600, 1000], Meh [-1200, 2000]),
+// exactly as 5200 / 5700 / 6500 / 7500 were against the old edge.
 //
 // There is only ONE arm here, the capped one. The C# pins each shape twice, once under
 // CorrectionCreditRule.Capped and once under Full (the rule every row stored before backlog 210 was
@@ -47,7 +52,8 @@ const TB = global.window.TypeBeatCore;
 // exactly 1000 + 500i. Line granularity, matching the C# fixture's TimingGranularity.Line.
 // ---------------------------------------------------------------------------------------------
 const WORD = 'abcdefgh';
-const SPAN_END = 5000;   // the end of cell 3's sung span, and the edge every offset below is off
+const SPAN_START = 2500; // the start of cell 3's sung span, the anchor its OPENING cell is judged
+                         // on since backlog 247, and the edge every offset below is off
 const SONG_END = 20000;
 
 const WORD_OSU =
@@ -65,8 +71,8 @@ const WRONG_KEY = 'z'; // not in "abcdefgh", so it is reliably wrong on every ce
 
 function target(cellIndex) { return 1000 + 500 * cellIndex; }
 
-/** The moment a press on cell 3 lands `offsetMs` past the end of its sung span. */
-function pastSpan(offsetMs) { return SPAN_END + offsetMs; }
+/** The moment a press on cell 3 lands `offsetMs` past the start of the span it opens. */
+function pastAnchor(offsetMs) { return SPAN_START + offsetMs; }
 
 function started() {
     const beatmap = TB.buildBeatmap(TB.parseLyricOsu(WORD_OSU), false);
@@ -110,12 +116,12 @@ function lastAnnounced(engine) { return engine.announced[engine.announced.length
 function ladder(offsetMs) {
     const clean = started();
     typeCorrectly(clean, 0, 3);
-    clean.processKey(WORD[3], pastSpan(offsetMs));
+    clean.processKey(WORD[3], pastAnchor(offsetMs));
 
     const corrected = started();
     typeCorrectly(corrected, 0, 3);
     typo(corrected, 3);
-    fix(corrected, 3, pastSpan(offsetMs));
+    fix(corrected, 3, pastAnchor(offsetMs));
 
     return {
         offsetMs: offsetMs,
@@ -136,7 +142,7 @@ function announcedIsStored() {
 
     typeCorrectly(engine, 0, 3);
     typo(engine, 3);
-    fix(engine, 3, SPAN_END);
+    fix(engine, 3, SPAN_START);
 
     return {
         announced: lastAnnounced(engine),
@@ -155,13 +161,13 @@ function repeatedCyclesCapOnce() {
 
     typeCorrectly(engine, 0, 3);
     typo(engine, 3);
-    fix(engine, 3, SPAN_END);
+    fix(engine, 3, SPAN_START);
 
     const announcedAfterFirstFix = lastAnnounced(engine);
 
     engine.processBackspace();
     typo(engine, 3);
-    fix(engine, 3, SPAN_END);
+    fix(engine, 3, SPAN_START);
 
     return {
         announcedAfterFirstFix: announcedAfterFirstFix,
@@ -180,7 +186,7 @@ function twoWrongCharactersOnOneCell() {
     typo(engine, 3);
     engine.processBackspace();
     typo(engine, 3);
-    fix(engine, 3, SPAN_END);
+    fix(engine, 3, SPAN_START);
 
     return { announced: lastAnnounced(engine), counts: engine.counts, mistypes: engine.mistypes };
 }
@@ -197,7 +203,7 @@ function cleanBeforeWrongKeepsItsCleanJudgement() {
 
     engine.processBackspace();
     typo(engine, 3);
-    fix(engine, 3, SPAN_END);
+    fix(engine, 3, SPAN_START);
 
     return {
         announcedWhenClean: announcedWhenClean,
@@ -215,7 +221,7 @@ function comboRestoreIsUntouched() {
     typeCorrectly(engine, 0, 3);
     typo(engine, 3);
     typeCorrectly(engine, 4, 6);
-    fix(engine, 3, SPAN_END);
+    fix(engine, 3, SPAN_START);
 
     return {
         restored: engine.restored,
@@ -244,7 +250,7 @@ function account(kind) {
     if (kind !== 'clean') {
         typo(engine, 3);
 
-        if (kind === 'fixed') fix(engine, 3, SPAN_END);
+        if (kind === 'fixed') fix(engine, 3, SPAN_START);
     }
 
     // The clean run has not touched cell 3 yet; the other two have moved past it (the typo advanced

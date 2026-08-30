@@ -134,34 +134,44 @@ function playOneLatePress() {
 // between the two runs, and the two syncs must come out identical. Counted IN at its zeroed delta
 // the loose run would read 100 * (4*5/6 + 1) / 5, i.e. a free lift toward the grade thresholds.
 //
-// "200 ms late" is 200 ms past the SYLLABLE SPAN each character belongs to (backlog 179), which is
-// why both letters of a word share a press time: "ab" is sung over [1000, 2000] and "cd" over
-// [2000, 3000], so 2200 is +200 for BOTH of a and b, and 3200 is +200 for both of c and d.
+// "200 ms late" is 200 ms past the anchor the live rule gives each character. For a cell in the
+// middle of a syllable that is the SPAN's late edge (backlog 179): "ab" is sung over [1000, 2000]
+// and "cd" over [2000, 3000], so 2200 is +200 for 'b' and 3200 is +200 for 'd'. For the cell that
+// OPENS a syllable it is the span's START (backlog 247), so 'a' is +200 at 1200 and 'c' at 2200.
+// All four are therefore the same 200 ms late, which is what keeps the mean this scenario reports a
+// single number.
 function playWithSpaceAt(spaceTime) {
     const map = build(abcdOsu);
     const engine = engineFor(map);
     engine.update(1000);
-    engine.processKey('a', 2200);
+    engine.processKey('a', 1200);
     engine.processKey('b', 2200);
     engine.processKey(' ', spaceTime);
-    engine.processKey('c', 3200);
+    engine.processKey('c', 2200);
     engine.processKey('d', 3200);
     return engine;
 }
 
 // --- the sync tint (LyricLineDisplay.CorrectCharColour, re-expressed in the site's tokens) ---
-// A run that lands one cell of each kind the ramp has to tell apart: dead on target (full hit
-// colour), half quality (mid ramp), and a press so late it is Lagging, which is still a CORRECT
-// cell but must keep .tb-c-off's flat warn tint instead of joining the ramp.
+// A run that lands one cell of each kind the ramp has to tell apart: dead on the anchor (full hit
+// colour), high quality, half quality (mid ramp), and a press so late it is Lagging, which is still
+// a CORRECT cell but must keep .tb-c-off's flat warn tint instead of joining the ramp.
+//
+// Which cell carries which quality follows the live anchors: a cell that OPENS a syllable is judged
+// from its span's START (backlog 247) and the rest of the group from the span's late edge
+// (backlog 179), so the quality a press buys depends on which of the two it is measured against.
+// The word gap is pressed at the same instant as the lyric cell beside it, which is what makes the
+// space's zeroed delta visible as a difference in paint.
 function playMixedTiming() {
     const map = build(abcdOsu);
     const engine = engineFor(map);
     engine.update(1000);
-    engine.processKey('a', 1000);   // inside the "ab" span [1000, 2000], delta 0     -> q 1
+    engine.processKey('a', 1000);   // 'a' OPENS the "ab" span [1000, 2000], and lands on its start -> q 1
+    engine.update(2100);
+    engine.processKey('b', 2100);   // a non-opening cell, +100 past that span's end       -> q 0.9167
     engine.update(2600);
-    engine.processKey('b', 2600);   // +600 past that span's end, delta +600  -> q 0.5 (Ok-late window 1200)
-    engine.processKey(' ', 3100);   // the word gap: untimed, judged on a zeroed delta whenever it lands
-    engine.processKey('c', 3100);   // +100 past the "cd" span [2000, 3000], delta +100
+    engine.processKey(' ', 2600);   // the word gap: untimed, judged on a zeroed delta whenever it lands
+    engine.processKey('c', 2600);   // 'c' OPENS the "cd" span [2000, 3000], +600 from its start -> q 0.5
     engine.update(3800);
     engine.processKey('d', 4300);   // +1300 past that span's end -> past the Ok edge, Lagging
     return engine;

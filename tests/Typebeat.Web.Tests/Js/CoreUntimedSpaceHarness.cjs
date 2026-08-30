@@ -117,12 +117,14 @@ function lyricCharPressedJustAsLate() {
     engine.processKey('b', 1500);
     engine.processKey(' ', 7000);   // exempt
     const comboAfterSpace = engine.combo;
-    // Delta 4100 on a lyric char: Lagging, no points, and since backlog 199 no break either (the
-    // press is a hit that pays accuracy). 4100 and not the 5100 the game's own fixture pins, because
-    // that fixture drives a BARE engine (classic era, judged on 'c''s own 2000 target) while the
-    // browser only ever plays live and judges the span of the syllable "cd", which is sung over
-    // [2000, 3000]. Live desktop play measures the same 4100. Nothing the case is about moves with
-    // it: the press is just as late, still Lagging, still worth nothing.
+    // Delta 5100 on a lyric char: Lagging, no points, and since backlog 199 no break either (the
+    // press is a hit that pays accuracy). It is the same 5100 the game's own fixture pins, and for a
+    // different reason: that fixture drives a BARE engine (classic era, judged on 'c''s own 2000
+    // target), while the browser only ever plays live, where 'c' OPENS the syllable "cd" and is
+    // judged from that span's START (backlog 247), which on this line is that same 2000. Between
+    // backlog 179 and 247 the browser measured 4100 here, off the span's late edge. Live desktop
+    // play measures the 5100 with it. Nothing the case is about moves either way: the press is just
+    // as late, still Lagging, still worth nothing.
     engine.processKey('c', 7100);
     return Object.assign(snapshot(engine), { comboAfterSpace: comboAfterSpace });
 }

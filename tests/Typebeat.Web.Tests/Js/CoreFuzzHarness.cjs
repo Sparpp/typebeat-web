@@ -472,8 +472,20 @@ function play(name, keys, spaceSkipsWord) {
     // run of three identical characters in one syllable). Each is counted only when the OTHER rule
     // would have answered differently, so both counters say "this arm decided a press" rather than
     // "this arm ran", and the sweep has to reach both.
+    //
+    // Backlog 247 adds a THIRD arm and a third counter: the cell that OPENS a group is judged on the
+    // distance from the span's start. It needs its own attribution rather than a slot in the pair
+    // above, because on a derived fixture an opening cell's own target IS the span's start, so its
+    // answer coincides with the POINT answer and would otherwise be miscounted as a stretch
+    // narrowing. So the arm that owns the press is decided first (the engine's own precedence: the
+    // stretch exclusion, then the opening cell, then the span), and each counter then fires only
+    // where its arm's answer differs from the arm that would otherwise have applied. For the opener
+    // that is the span, which it matches on the early side by construction, so the counter only ever
+    // sees a press that landed LATE into the syllable it opened, which is exactly the set backlog
+    // 247 moved.
     let spanJudgements = 0;
     let stretchPointJudgements = 0;
+    let firstCharJudgements = 0;
     const judgedDelta = engine.judgedDeltaFor.bind(engine);
 
     engine.judgedDeltaFor = function (line, cellIndex, time) {
@@ -485,12 +497,16 @@ function play(name, keys, spaceSkipsWord) {
             const point = time - line.cells[cellIndex].target;
             const span = time < group.startTime ? time - group.startTime
                 : (time > group.endTime ? time - group.endTime : 0);
+            const firstChar = time - group.startTime;
 
             // Which arm ANSWERED, read off the answer itself rather than off the predicate, and only
-            // where the two arms disagree. Counting the predicate would leave the narrowing's counter
-            // positive even if judgedDeltaFor stopped reading it, which is the one failure these
-            // counters exist to catch.
-            if (span !== point) {
+            // where the arms disagree. Counting the predicate would leave a counter positive even if
+            // judgedDeltaFor stopped reading it, which is the one failure these counters exist to
+            // catch.
+            if (cellIndex === group.startCell && !TB.isCharTimedStretch(line, cellIndex)) {
+                if (delta === firstChar && firstChar !== span) firstCharJudgements++;
+            }
+            else if (span !== point) {
                 if (delta === point) stretchPointJudgements++;
                 else if (delta === span) spanJudgements++;
             }
@@ -648,6 +664,7 @@ function play(name, keys, spaceSkipsWord) {
         ownCreditBreaks: ownCreditBreaks,
         spanJudgements: spanJudgements,
         stretchPointJudgements: stretchPointJudgements,
+        firstCharJudgements: firstCharJudgements,
         gapTypos: gapTypos,
         parkedGapTypos: parkedGapTypos,
         stepOvers: stepOvers,
@@ -901,6 +918,25 @@ const SCRIPTED = [
         name: 'scripted/subtimedSpans', fixture: 'subtimed', spaceSkipsWord: false, skipPresses: 0,
         keys: [[1000, 'c'], [1600, 'a'], [1650, 'k'], [2300, 'e'], [2400, ' '],
                [2400, 't'], [2700, 'o'], [2900, 'n'], [3200, 'i'], [3400, 'g'], [3900, 'h'], [3950, 't']]
+    },
+    {
+        // Backlog 247's asked-for shape, on the same subtimed map and for the sharpest reason: its
+        // span edges are the mapper's boundary times, so a group's OPENING cell is one whose own
+        // character target need not be the span start at all. Every press here is the LAST character
+        // its syllable will take, struck 10 ms before that syllable's window closes, and each is the
+        // cell that OPENS the next one: 'c' at 1690 opens [1000, 1700], 'k' at 2390 opens
+        // [1700, 2400], 't' at 2790 opens [2400, 2800], 'n' at 3290 opens [2800, 3300] and 'g' at
+        // 3990 opens [3300, 4000].
+        //
+        // Under the pure span rule every one of them is delta 0 and the map is typed clean. Under the
+        // hybrid they are paid 690, 690, 390, 490 and 690 respectively, which on the Line ladder
+        // (Great [-250, 400], Ok [-600, 1000]) is four Oks and one Great, so the two engines part on
+        // the STATISTICS and not only on a total. The presses in between ('a', 'e', 'o', 'i', 'h' and
+        // the trailing 't') are non-opening cells sitting inside their spans, so they stay at 0 under
+        // both rules and the case isolates the opening cell.
+        name: 'scripted/firstCharLateInSpan', fixture: 'subtimed', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1690, 'c'], [1695, 'a'], [2390, 'k'], [2395, 'e'], [2400, ' '],
+               [2790, 't'], [2795, 'o'], [3290, 'n'], [3295, 'i'], [3990, 'g'], [3995, 'h'], [3999, 't']]
     },
     {
         // Backlog 181: every press deep inside the span the AUTHORED cut gives its cell, which for

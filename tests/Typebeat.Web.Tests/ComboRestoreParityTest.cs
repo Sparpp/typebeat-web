@@ -348,9 +348,13 @@ public class ComboRestoreParityTest
     ///
     /// <para>The press TIMES are the browser's rather than the C# fixture's, exactly as
     /// <see cref="UntimedSpaceParityTest.ALyricCharacterPressedJustAsLateIsStillLagging"/> records
-    /// for its 4100: the game's fixture drives a bare engine judged on each cell's own point target,
-    /// while the browser only ever plays live and judges a cell against its SYLLABLE's sung span.
-    /// The tiers, their order and the rule under test are the same.</para>
+    /// for its 5100: the game's fixture drives a bare engine judged on each cell's own point target,
+    /// while the browser only ever plays live and judges a cell against its SYLLABLE's sung span,
+    /// and since backlog 247 against that span's START where the cell OPENS the group. The two
+    /// presses also sit one cell later than the C# fixture's, because the opening cell's anchor is
+    /// the only one early enough to let an off-ladder press be followed IN TIME by an on-ladder one
+    /// (see the harness note). The tiers, their order and the rule under test are the same; the
+    /// streak the typo breaks is 2 rather than 1.</para>
     /// </summary>
     [Test]
     public void AnOffTimePressBetweenATypoAndItsFixKeepsTheClaim()
@@ -364,13 +368,13 @@ public class ComboRestoreParityTest
             Assert.That(run.GetProperty("offTimeJudgeType").GetString(), Is.EqualTo("Lagging"));
             Assert.That(run.GetProperty("followUpJudgeType").GetString(), Is.EqualTo("Meh"));
 
-            Assert.That(Int(run, "comboBeforeTypo"), Is.EqualTo(1));
+            Assert.That(Int(run, "comboBeforeTypo"), Is.EqualTo(2));
             Assert.That(Int(run, "comboBeforeFix"), Is.EqualTo(2), "both presses after the typo extended the run, the off-time one included");
 
-            Assert.That(Ints(run, "restored"), Is.EqualTo(new[] { 1 }), "the mistimed press took nothing away");
-            Assert.That(Int(run, "combo"), Is.EqualTo(4), "1 restored + the 2 earned since + the fix itself");
-            Assert.That(Int(run, "maxCombo"), Is.EqualTo(4));
-            Assert.That(Int(run, "processorHighestCombo"), Is.EqualTo(4));
+            Assert.That(Ints(run, "restored"), Is.EqualTo(new[] { 2 }), "the mistimed press took nothing away");
+            Assert.That(Int(run, "combo"), Is.EqualTo(5), "2 restored + the 2 earned since + the fix itself");
+            Assert.That(Int(run, "maxCombo"), Is.EqualTo(5));
+            Assert.That(Int(run, "processorHighestCombo"), Is.EqualTo(5));
 
             // One break and one mistyped keypress, both the typo's: the off-time press is neither.
             Assert.That(Int(run, "breaks"), Is.EqualTo(1));

@@ -91,6 +91,7 @@ public class WpmClockArmLiveParityTest
     {
         SyllableTiming = true,
         CharTimedStretch = true,
+        FirstCharTiming = true,
         WrongInputOnWordGaps = true,
         StrictSpaces = true,
         SpaceSkipsWord = true,

@@ -12,13 +12,20 @@ namespace Typebeat.Web.Tests;
 /// seconds ahead of the vocal. The fix reverts exactly those cells to their own character targets
 /// while the rest of the line keeps the span.
 ///
-/// <para>Golden values mirror typebeat-osu's NonVisual/CharTimedStretchTest.cs, fixture for fixture
-/// and delta for delta. The desktop engine carries the narrowing as an ERA (the replay CONFIG
-/// frame's flags bit 6) because it must re-derive stored replays under the rule their fingers were
-/// graded on; the browser only ever plays live, so it applies the narrowing unconditionally, exactly
-/// as it applies the span rule itself. The deltas asserted here are therefore the game's LIVE arm.
-/// Every one of them would be 0 under the pure span rule, which is what makes them the contrast as
-/// well as the pin.</para>
+/// <para>Golden values mirror typebeat-osu's NonVisual/CharTimedStretchTest.cs, fixture for fixture.
+/// The desktop engine carries the narrowing as an ERA (the replay CONFIG frame's flags bit 6)
+/// because it must re-derive stored replays under the rule their fingers were graded on; the browser
+/// only ever plays live, so it applies the narrowing unconditionally, exactly as it applies the span
+/// rule itself. The deltas asserted here are therefore the game's LIVE arm, and every one of the
+/// narrowed ones would be 0 under the pure span rule, which is what makes them the contrast as well
+/// as the pin.</para>
+///
+/// <para>Since backlog 247 the live arm carries a second narrowing the game's fixtures do not (their
+/// engines leave FirstCharTiming at its stored-replay default): the cell that OPENS a syllable is
+/// judged on the distance from that span's START rather than paid 0 anywhere inside it. So where a
+/// case below presses an opening cell late, the delta is that distance and not the game copy's zero.
+/// The stretch arm keeps precedence over it, which <see cref="ASubtimedStretchIsCharTimedAndItsOwnSyllableIsNot"/>
+/// pins on the one cell that is both.</para>
 ///
 /// <para>A Node harness (Js/CoreCharStretchHarness.cjs) drives the actual shipped JS and emits its
 /// observations; this asserts them. Assert.Ignore when node is absent.</para>
@@ -191,29 +198,50 @@ public class CharTimedStretchParityTest
     }
 
     /// <summary>
-    /// The cells the narrowing must NOT touch, both of them pressed 11 seconds past their own targets
-    /// and still deep inside their syllable's span: a lone character, and a doubled letter.
+    /// The cells the narrowing must NOT touch, all of them pressed 11 seconds past their own targets:
+    /// a lone character, and a doubled letter. Neither is char-timed, so neither is graded on its own
+    /// target.
+    ///
+    /// <para>What they ARE graded on is now two rules rather than one, which is why the deltas below
+    /// are not all zero. A cell in the middle of a syllable keeps the whole span and is paid 0
+    /// wherever inside it the press lands (both 'o's of "goo"); the cell that OPENS the syllable is
+    /// judged on the distance from the span's START since backlog 247, so pressing it 11 seconds late
+    /// costs exactly that. The game's own fixture pins 0 for those openers because it drives a bare
+    /// engine, whose FirstCharTiming defaults OFF for stored replays; the browser only ever plays
+    /// live. That the narrowing did not touch them is what the stretch flags above say, and what
+    /// <see cref="AStretchedRunLosesTheSpanWhileItsNeighbourKeepsIt"/> shows on a press the two rules
+    /// answer differently.</para>
     /// </summary>
     [Test]
-    public void ALoneCharacterAndADoubledOneKeepTheWholeSpan()
+    public void ALoneCharacterAndADoubledOneAreNotCharTimed()
     {
         var root = Harness();
 
         Assert.Multiple(() =>
         {
-            Assert.That(Deltas(root.GetProperty("loneCharLate"))[0], Is.EqualTo(0));
-            Assert.That(Types(root.GetProperty("loneCharLate"))[0], Is.EqualTo("Great"));
+            // The lone '1' of "1000" opens its group, so 11 seconds late is 11 seconds late.
+            Assert.That(Deltas(root.GetProperty("loneCharLate"))[0], Is.EqualTo(11000));
+            Assert.That(Types(root.GetProperty("loneCharLate"))[0], Is.EqualTo("Lagging"));
 
-            Assert.That(Deltas(root.GetProperty("doubledLate")), Is.EqualTo(new double?[] { 0, 0, 0 }));
-            Assert.That(Types(root.GetProperty("doubledLate")), Is.EqualTo(new[] { "Great", "Great", "Great" }));
+            // "goo": the same for the 'g' that opens it, while the doubled letters behind it are the
+            // whole-span zeros, 11 seconds past their own 5000 and 9000 targets.
+            Assert.That(Deltas(root.GetProperty("doubledLate")), Is.EqualTo(new double?[] { 11000, 0, 0 }));
+            Assert.That(Types(root.GetProperty("doubledLate")), Is.EqualTo(new[] { "Lagging", "Great", "Great" }));
         });
     }
 
     /// <summary>
-    /// The subtimed "hey|yyyy" played through: "hey" pressed at 4900 is three different characters
-    /// all inside [1000, 5000] and all delta 0, the third of them a 'y' the split left out of the
-    /// run; the run's four cells mashed at 5100 are graded on their own targets (5000, 7000, 9000,
-    /// 11000), so only the first of them is on time.
+    /// The subtimed "hey|yyyy" played through: "hey" pressed at 4900 is the 'h' that OPENS
+    /// [1000, 5000], paid the 3900 it is late by (backlog 247), then two characters deep inside that
+    /// span and paid 0, the second of them a 'y' the split left out of the run; the run's four cells
+    /// mashed at 5100 are graded on their own targets (5000, 7000, 9000, 11000), so only the first of
+    /// them is on time.
+    ///
+    /// <para>That first one is the PRECEDENCE, and it is the browser's copy of the game's
+    /// <c>AStretchCellOpeningAGroupKeepsItsPointTargetUnderTheHybrid</c>: cell 3 opens the second
+    /// group AND is a stretch cell, and the stretch arm wins, so it is judged the 100 it is off its
+    /// own 5000 target rather than the 100 it would be off the span start (the two coincide here) or
+    /// the 0 the whole span would have paid it.</para>
     /// </summary>
     [Test]
     public void ASubtimedStretchIsCharTimedAndItsOwnSyllableIsNot()
@@ -222,8 +250,8 @@ public class CharTimedStretchParityTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(Deltas(run), Is.EqualTo(new double?[] { 0, 0, 0, 100, -1900, -3900, -5900 }));
-            Assert.That(Types(run), Is.EqualTo(new[] { "Great", "Great", "Great", "Great", "Premature", "Premature", "Premature" }));
+            Assert.That(Deltas(run), Is.EqualTo(new double?[] { 3900, 0, 0, 100, -1900, -3900, -5900 }));
+            Assert.That(Types(run), Is.EqualTo(new[] { "Lagging", "Great", "Great", "Great", "Premature", "Premature", "Premature" }));
         });
     }
 }

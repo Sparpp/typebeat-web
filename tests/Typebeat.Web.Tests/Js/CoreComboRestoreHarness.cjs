@@ -281,30 +281,37 @@ function sameCellFumbledTwice() {
 // against a second run.
 //
 // THE PRESS TIMES ARE THE BROWSER'S, NOT THE C# FIXTURE'S, for the reason CoreUntimedSpaceHarness
-// records for its 4100: that fixture drives a bare TypingEngine judged on each cell's own point
+// records for its 5100: that fixture drives a bare TypingEngine judged on each cell's own point
 // target, while the browser only ever plays live and judges a cell against its SYLLABLE's sung
 // span. This line's spans are cells 0-2 over [1000, 2500] and cells 3-7 over [2500, 5000], so the
-// off-time press is cell 2 struck at 4600 (2100 past its span, off the Line ladder whose MehLate is
-// 2000) and the ordinary press after it is cell 3 struck at 6700 (1700 past its span, still on it,
-// so an honest Meh). Same shape as the C# case, same tiers in the same order, and chronological.
+// off-time press is cell 3 struck at 4600 (cell 3 OPENS the second group, so since backlog 247 it is
+// judged from that group's START: 2100 late, off the Line ladder whose MehLate is 2000) and the
+// ordinary press after it is cell 4 struck at 6700 (a non-opening cell, so it keeps the whole span
+// and is 1700 past its end, still on the ladder, an honest Meh). Same shape as the C# case, same
+// tiers in the same order, and chronological.
+//
+// The two presses sit one cell later than the C# fixture's for that reason alone: the hybrid gives
+// an OPENING cell the only anchor early enough for an off-ladder press to be followed, in time, by
+// an on-ladder one. Everything the case is about is unmoved, and the streak the typo breaks is 2
+// rather than 1.
 function offTimePressBetweenATypoAndItsFix() {
     const engine = started();
 
-    typeCorrectly(engine, 0, 1);
+    typeCorrectly(engine, 0, 2);
     const comboBeforeTypo = engine.combo;
 
-    typo(engine, 1);            // snapshots the run of 1 against cell 1
+    typo(engine, 2);            // snapshots the run of 2 against cell 2
 
-    engine.processKey(WORD[2], 4600);   // off the ladder: a hit worth nothing since backlog 199
-    engine.processKey(WORD[3], 6700);   // still on it: an ordinary Meh
+    engine.processKey(WORD[3], 4600);   // off the ladder: a hit worth nothing since backlog 199
+    engine.processKey(WORD[4], 6700);   // still on it: an ordinary Meh
     const comboBeforeFix = engine.combo;
 
-    // Read BEFORE the fix, which backspaces over both cells on its way to cell 1 and clears the
+    // Read BEFORE the fix, which backspaces over both cells on its way to cell 2 and clears the
     // judgement each is displaying (their awarded judgements stand, in firstCorrectDelta).
-    const offTimeJudgeType = engine.lines[0].cells[2].judgeType;
-    const followUpJudgeType = engine.lines[0].cells[3].judgeType;
+    const offTimeJudgeType = engine.lines[0].cells[3].judgeType;
+    const followUpJudgeType = engine.lines[0].cells[4].judgeType;
 
-    fix(engine, 1);
+    fix(engine, 2);
 
     return Object.assign(snapshot(engine), {
         comboBeforeTypo: comboBeforeTypo,
