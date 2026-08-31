@@ -7,13 +7,16 @@ namespace Typebeat.Web.Tests;
 /// Fidelity guard for the /play PRESENTATION layer (wwwroot/js/typebeat-player.js). The browser
 /// player reproduces the desktop client's gameplay stage in HTML/CSS/JS: the damped, idle-blinking
 /// player caret, the sung playhead that sweeps with the vocals independently of the player, the two
-/// depleting cue-in bars, and the rolling WPM / sync HUD readouts.
+/// depleting cue-in bars, and the rolling WPM HUD readout. Backlog 251 removed the browser's sync
+/// HUD readout and its per-cell tint (the desktop metric they mirrored is off by default too, and
+/// the results grade never read either), so the sync-specific goldens that used to live here are
+/// gone with it.
 ///
 /// <para>None of it can move a score, so this is not a scoring guard; it is the guard that browser
 /// play keeps FEELING like the client. Every formula below is a port of a specific desktop source
 /// (TypingLine.SungPositionAt, LyricStage.updateCueBar / updateApproachCue, Caret.Update,
-/// TypingEngine.LiveRollingWpm / LiveSyncPercent, Judgement.SyncQuality), and the golden values are
-/// mirrored from typebeat-osu's own fixtures, so a silent drift trips here rather than in play.</para>
+/// TypingEngine.LiveRollingWpm), and the golden values are mirrored from typebeat-osu's own
+/// fixtures, so a silent drift trips here rather than in play.</para>
 ///
 /// <para>A Node harness (Js/PlayerDisplayHarness.cjs) drives the actual shipped scripts and emits
 /// its observations; this asserts them. Assert.Ignore when node is absent.</para>
@@ -413,32 +416,15 @@ public class WebplayDisplayTest
         });
     }
 
-    /// <summary>Judgement.SyncQuality: 1 on target, linear to 0 at the Ok window edges, clamped.</summary>
-    [Test]
-    public void SyncQualityDecaysToTheOkWindowEdges()
-    {
-        var root = Harness();
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(Num(root, "syncOnTarget"), Is.EqualTo(1));
-            Assert.That(Num(root, "syncHalfLate"), Is.EqualTo(0.5).Within(1e-12));
-            Assert.That(Num(root, "syncAtLateEdge"), Is.EqualTo(0));
-            Assert.That(Num(root, "syncPastLateEdge"), Is.EqualTo(0)); // clamped, never negative
-            Assert.That(Num(root, "syncAtEarlyEdge"), Is.EqualTo(0));
-        });
-    }
+    // SyncQualityDecaysToTheOkWindowEdges (Judgement.SyncQuality) removed by backlog 251: the
+    // browser's sync readout it fed is gone, and syncQuality/syncTintFill/SYNC_TINT_FLOOR no longer
+    // exist in typebeat-player.js to test.
 
     /// <summary>
-    /// The live HUD readouts over real engine runs. Sync counts every TIMED cell a SEALED line
-    /// resolved, including the ones that were never typed (q = 0), which is what makes it a timing
-    /// measure rather than a hit count.
-    ///
-    /// <para>The two denominators are different on purpose, and backlog 148 moved only one of them.
-    /// COMPLETION is every character of the map the player owes, word gaps included. SYNC is a
-    /// timing mean, and a space is no longer timed (the engine judges it on a zeroed delta), so it
-    /// is out of both halves of that mean: see
-    /// <see cref="TheUntimedSpaceIsNeutralInTheLiveSyncReadout"/>.</para>
+    /// The live HUD readouts over real engine runs. COMPLETION is every character of the map the
+    /// player owes (word gaps included), and what the results rank keys off. Backlog 251 removed
+    /// the browser's SYNC readout (a timing mean over resolved TIMED cells) along with its per-cell
+    /// tint; this test used to pin both, and now pins completion alone.
     /// </summary>
     [Test]
     public void LiveHudReadoutsTrackTheRun()
@@ -451,150 +437,47 @@ public class WebplayDisplayTest
         Assert.Multiple(() =>
         {
             Assert.That(Num(perfect, "completion"), Is.EqualTo(1));
-            Assert.That(Num(perfect, "sync"), Is.EqualTo(100));
 
-            // One of FIVE cells typed (completion counts the word gap), and the sync mean is over
-            // the FOUR timed ones: 'a' at q = 1 and three sealed misses at q = 0.
+            // One of FIVE cells typed (completion counts the word gap).
             Assert.That(Num(partial, "completion"), Is.EqualTo(0.2).Within(1e-12));
-            Assert.That(Num(partial, "sync"), Is.EqualTo(25).Within(1e-12));
 
-            // Two presses, one on target and one at half quality: both count as typed, sync 75%.
+            // Two presses, one on target and one off-time but still correct: both count as typed.
             Assert.That(Num(late, "completion"), Is.EqualTo(1));
-            Assert.That(Num(late, "sync"), Is.EqualTo(75).Within(1e-12));
         });
     }
 
-    /// <summary>
-    /// Backlog 148 in the browser's HUD, mirroring TypingEngine.LiveSyncPercent: a space is out of
-    /// the sync mean entirely, so how well it was timed cannot move the readout. Asserted as an
-    /// equality between two runs that differ only in when the space was pressed, because that
-    /// equality IS the claim, plus the absolute value so a change to both sides still trips it.
-    /// </summary>
-    [Test]
-    public void TheUntimedSpaceIsNeutralInTheLiveSyncReadout()
-    {
-        var root = Harness();
-        var loose = root.GetProperty("looseSpaceStats");
-        var tight = root.GetProperty("tightSpaceStats");
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(Num(loose, "sync"), Is.EqualTo(Num(tight, "sync")).Within(1e-12));
-
-            // Four lyric chars 200 ms past the anchor the live rule gives each of them (a syllable's
-            // opening cell from its span's start, the rest from the span's late edge) at tier Word
-            // (Meh-late 1200), so q = 5/6 each, over the four TIMED cells. Counted in at its zeroed
-            // delta the space would lift this to 86.67.
-            Assert.That(Num(loose, "sync"), Is.EqualTo(500.0 / 6).Within(1e-12));
-
-            // ...and the space is still a character the player owes, so completion is untouched.
-            Assert.That(Num(loose, "completion"), Is.EqualTo(1));
-            Assert.That(Num(tight, "completion"), Is.EqualTo(1));
-        });
-    }
+    // TheUntimedSpaceIsNeutralInTheLiveSyncReadout removed by backlog 251: it existed entirely to
+    // pin backlog 148's sync-mean exemption for the word gap, and that mean (and the readout it fed)
+    // is gone from the browser now. judgedDelta is still zeroed for a space in typebeat-core.js (see
+    // its own comments there), but nothing here reads it back for a display readout any more.
 
     private static string Cls(JsonElement paint, int i) => paint[i].GetProperty("cls").GetString()!;
 
     private static string Glyph(JsonElement paint, int i) => paint[i].GetProperty("glyph").GetString()!;
 
-    private static string? Fill(JsonElement paint, int i)
-    {
-        var e = paint[i].GetProperty("fill");
-        return e.ValueKind == JsonValueKind.Null ? null : e.GetString();
-    }
+    // SyncTintRampIsFlooredMonotonicAndExactAtItsEnds removed by backlog 251: the ramp it pinned
+    // (LyricLineDisplay.CorrectCharColour, re-expressed here) no longer exists, and neither do
+    // syncTintFill or SYNC_TINT_FLOOR in typebeat-player.js.
+
+    // CorrectCharsAreFilledByHowInSyncTheKeypressWas removed by backlog 251 for the same reason: it
+    // pinned exact ramp percentages (95.83%, 75.00%, ...) that cellFill() no longer produces because
+    // cellFill() no longer exists. The class assertions it also carried ('a' and 'b' both tb-c-hit)
+    // are not lost: OffTimeMissedAndBackspacedCellsKeepTheirOwnClass below still exercises this
+    // same mixedPaint fixture for its own (non-sync) class checks.
 
     /// <summary>
-    /// The sync tint ramp (LyricLineDisplay.CorrectCharColour, re-expressed in the site's own
-    /// tokens): a correct char is filled by how in sync the keypress was, so the trail behind the
-    /// caret reads as brightness.
-    ///
-    /// <para>The FLOOR is the load-bearing part. SyncQuality returns exactly 0 at the Ok-window
-    /// edges and stays there beyond them while the cell is still Correct, so an unfloored ramp
-    /// would paint a character the player DID type in precisely the untyped colour (0%), which is
-    /// a legibility regression rather than feedback. The top of the ramp is a contract in the
-    /// other direction: quality 1 must give 100%, which mixes to var(--violet) itself, so nothing
-    /// about a perfectly timed line changed when the ramp landed.</para>
-    /// </summary>
-    [Test]
-    public void SyncTintRampIsFlooredMonotonicAndExactAtItsEnds()
-    {
-        var root = Harness();
-        var curve = JsHarness.Doubles(root, "rampCurve");
-
-        Assert.Multiple(() =>
-        {
-            // The browser floor is NOT the desktop's 0.35: that ramp is walked in linear light,
-            // this one in oklab, so the number was ported by outcome (see SYNC_TINT_FLOOR).
-            Assert.That(Num(root, "syncTintFloor"), Is.EqualTo(0.5));
-
-            Assert.That(JsHarness.Strings(root, "rampAt"),
-                Is.EqualTo(new[] { "50.00%", "62.50%", "75.00%", "87.50%", "100%" }));
-
-            // Quality 0 lands on the floor, and the floor is emphatically not the untyped end.
-            Assert.That(curve[0], Is.EqualTo(50));
-            Assert.That(curve[0], Is.GreaterThan(0));
-            // Quality 1 lands exactly on the full hit colour.
-            Assert.That(curve[^1], Is.EqualTo(100));
-
-            // Brightness rises with quality, everywhere, never flat and never backwards.
-            for (int i = 1; i < curve.Length; i++)
-                Assert.That(curve[i], Is.GreaterThan(curve[i - 1]), $"ramp went backwards at {i}");
-
-            // Out-of-range and NaN clamp to the ends rather than escaping the ramp.
-            Assert.That(JsHarness.Strings(root, "rampClamped"),
-                Is.EqualTo(new[] { "50.00%", "100%", "50.00%" }));
-        });
-    }
-
-    /// <summary>
-    /// The ramp on a real run: dead on target is the full hit colour, a press at half quality is
-    /// half way up from the floor, and every cell in between is somewhere on the ramp.
-    /// </summary>
-    [Test]
-    public void CorrectCharsAreFilledByHowInSyncTheKeypressWas()
-    {
-        var paint = Harness().GetProperty("mixedPaint");
-
-        Assert.Multiple(() =>
-        {
-            // 'a' on the start of the syllable it OPENS: quality 1, so the colour .tb-c-hit shipped
-            // before the ramp existed.
-            Assert.That(Cls(paint, 0), Is.EqualTo("tb-c tb-c-hit"));
-            Assert.That(Fill(paint, 0), Is.EqualTo("100%"));
-
-            // 'b' at +100ms against a 1200ms Ok-late window: high quality, but distinctly not the
-            // full colour. The +100 is measured from the late edge of the SYLLABLE "ab" is sung
-            // over, not from 'b''s own target (backlog 179), because that is the delta the engine
-            // judges and stores, and 'b' does not open its group.
-            Assert.That(Cls(paint, 1), Is.EqualTo("tb-c tb-c-hit"));
-            Assert.That(Fill(paint, 1), Is.EqualTo("95.83%"));
-
-            // Cell 2 is the word GAP, pressed at the same instant as 'c' beside it, which is +600
-            // from the start of the syllable 'c' OPENS (backlog 247). Since backlog 148 a space is
-            // judged on a zeroed delta, so it stores quality 1 and paints at the full hit colour
-            // rather than at 'c''s 75%. Invisible in practice (a space renders as a gap), but the
-            // desktop's LyricLineDisplay reads back the same zeroed delta, so the mirror has to agree
-            // here too. A space is also in NO syllable group, so neither rule reaches it.
-            Assert.That(Fill(paint, 2), Is.EqualTo("100%"));
-
-            // +600ms from the anchor: quality 0.5, so half of the ramp above the 50% floor, i.e.
-            // 75%. This is the assertion that makes the tint continuous rather than the two-bucket
-            // approximation /play shipped before.
-            Assert.That(Fill(paint, 3), Is.EqualTo("75.00%"));
-        });
-    }
-
-    /// <summary>
-    /// Everything the ramp deliberately does NOT touch.
+    /// Everything OFF-TIME, MISSED and BACKSPACED cells have in common: none of them carry the
+    /// correct-cell class, each for its own reason.
     ///
     /// <para>An OFF-TIME press (Premature/Lagging) still lands the cell Correct, but the browser
-    /// gives it .tb-c-off's flat warn tint: a browser-only affordance the desktop does not have,
-    /// and folding it into the ramp would throw it away. MISSED and UNTYPED cells have no
-    /// keypress to be in sync with, and a BACKSPACE clears the judged delta, so the tint has to
-    /// come off with it rather than leaving the glyph holding brightness it no longer owns.</para>
+    /// gives it .tb-c-off's flat warn tint: a browser-only affordance the desktop does not have.
+    /// MISSED and UNTYPED cells have no keypress at all, and a BACKSPACE clears the judged delta,
+    /// so the class has to come off with it rather than leaving the glyph in whatever state it had
+    /// earned. (Before backlog 251 removed the sync tint, this test also pinned that each of these
+    /// took no ramp fill; there is no ramp left to take one from.)</para>
     /// </summary>
     [Test]
-    public void OffTimeMissedAndBackspacedCellsTakeNoSyncTint()
+    public void OffTimeMissedAndBackspacedCellsKeepTheirOwnClass()
     {
         var root = Harness();
         var mixed = root.GetProperty("mixedPaint");
@@ -605,16 +488,12 @@ public class WebplayDisplayTest
         {
             // 'd' at +1300ms past its syllable's span, beyond the 1200ms Ok edge: correct, but off-time.
             Assert.That(Cls(mixed, 4), Is.EqualTo("tb-c tb-c-off"));
-            Assert.That(Fill(mixed, 4), Is.Null);
 
             Assert.That(Cls(sealedPaint, 0), Is.EqualTo("tb-c tb-c-hit"));
-            Assert.That(Fill(sealedPaint, 0), Is.EqualTo("100%"));
             Assert.That(Cls(sealedPaint, 1), Is.EqualTo("tb-c tb-c-miss"));
-            Assert.That(Fill(sealedPaint, 1), Is.Null);
 
-            // Typed, then backspaced: back to untyped, and the fill goes with it.
+            // Typed, then backspaced: back to untyped.
             Assert.That(Cls(backspaced, 0), Is.EqualTo("tb-c tb-c-todo"));
-            Assert.That(Fill(backspaced, 0), Is.Null);
         });
     }
 
@@ -643,7 +522,6 @@ public class WebplayDisplayTest
             // 185's dimming lane, carried only by a gap (see TheDimmingIsKeyedOnTheGapNotTheKey).
             Assert.That(Cls(typo, 2), Is.EqualTo("tb-c tb-c-wrong tb-c-wrong-gap"));
             Assert.That(Glyph(typo, 2), Is.EqualTo("x"));
-            Assert.That(Fill(typo, 2), Is.Null, "a wrong cell is not on the sync ramp");
 
             // Nothing else moved: the letters either side are ordinary hits still showing their own
             // characters, which is what says the typo did not shift the line.
@@ -701,54 +579,40 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
-    /// FREESTYLE cells are excluded from the ramp, matching the desktop exclusion and for the same
-    /// reason: their colour is an IDENTITY signal ("this slot was free") that has to keep saying so
-    /// for the rest of the play, not a state signal. The cell below is typed DEAD ON TARGET, so the
-    /// only thing that can keep it off the ramp is the exclusion itself.
+    /// FREESTYLE cells keep their own identity colour rather than the ordinary hit class's,
+    /// matching the desktop exclusion and for the same reason: their colour is an IDENTITY signal
+    /// ("this slot was free") that has to keep saying so for the rest of the play, not a state
+    /// signal. (Before backlog 251 removed the sync tint, this test also pinned that the freestyle
+    /// cell took no ramp fill while the ordinary cell beside it did; there is no ramp left.)
     /// </summary>
     [Test]
-    public void FreestyleCellsAreExcludedFromTheSyncTint()
+    public void FreestyleCellsKeepTheirOwnIdentityColour()
     {
         var paint = Harness().GetProperty("freestylePaint");
 
         Assert.Multiple(() =>
         {
-            // The ordinary cell next to it, typed identically, does take the ramp.
             Assert.That(Cls(paint, 0), Is.EqualTo("tb-c tb-c-hit"));
-            Assert.That(Fill(paint, 0), Is.EqualTo("100%"));
-
             Assert.That(Cls(paint, 1), Is.EqualTo("tb-c tb-c-hit tb-c-free"));
-            Assert.That(Fill(paint, 1), Is.Null);
         });
     }
 
     /// <summary>
-    /// The other half of the ramp lives in CSS, and the split is deliberate: JS writes only the
-    /// position (--tb-sync-fill), the mix is done against the site's own design TOKENS so neither
-    /// endpoint is duplicated as a literal that could drift from the theme.
-    ///
-    /// <para>This is not a port of the desktop's colours. /play re-skins gameplay onto the site
-    /// palette, so the desktop's grey-to-off-white literals must never appear here; and the
-    /// cascade order is load-bearing, because .tb-c-free has to keep beating the ramp at equal
-    /// specificity.</para>
+    /// The site's own tokens, not the desktop's colour literals: /play re-skins gameplay onto the
+    /// site palette, so the desktop's grey-to-off-white UntypedChar/TypedChar literals must never
+    /// appear here. Before backlog 251 removed the sync tint, this test also pinned the color-mix()
+    /// rule that read the ramp position and the cascade order that let .tb-c-free beat it; both are
+    /// gone along with the ramp, leaving the flat colours it mixed between.
     /// </summary>
     [Test]
-    public void SyncTintMixesTheSiteTokensAndLosesToFreestyle()
+    public void HitAndOffColoursAreTheSiteTokensNotTheDesktopLiterals()
     {
         string css = File.ReadAllText(Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "css", "site.css"));
 
-        int mix = css.IndexOf("color-mix(in oklab, var(--violet) var(--tb-sync-fill, 100%), var(--text-muted))", StringComparison.Ordinal);
-        int free = css.IndexOf(".tb-c-free, .tb-line-cur .tb-c-free", StringComparison.Ordinal);
-
         Assert.Multiple(() =>
         {
-            Assert.That(mix, Is.GreaterThan(-1), "the .tb-c-hit ramp must mix the todo and hit TOKENS, not literals");
-            // A browser without color-mix() must still get the flat accent, never the inherited grey.
             Assert.That(css, Does.Contain(".tb-c-hit  { color: var(--violet); }"));
-            // The off-time bucket stays a flat, distinct warn tint: it is outside the ramp.
             Assert.That(css, Does.Contain(".tb-c-off  { color: var(--warn); }"));
-
-            Assert.That(free, Is.GreaterThan(mix), "the freestyle colour must still win over the ramp by cascade order");
 
             // The desktop's UntypedChar / TypedChar. Copying them across would collide with
             // meanings this palette has already assigned.

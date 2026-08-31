@@ -111,13 +111,15 @@ function playOneKeyThenSeal() {
     return engine;
 }
 
-// A late press, to prove sync is a real timing measure and not just a hit count.
+// A late-but-correct press. Before backlog 251 removed the browser's sync readout this was the
+// scenario that proved sync a real timing measure and not just a hit count; completion does not
+// distinguish it from a dead-on-target press (both count as typed), which is the assertion that
+// survives it in LiveHudReadoutsTrackTheRun.
 //
 // Every press time here is measured from the SYLLABLE SPAN the cell belongs to, not from the cell's
 // own target (backlog 179): 'a' and 'b' are the two characters of the word "ab", which is sung over
 // [1000, 2000], so a press anywhere in that window is delta 0 and a press at 2600 is +600 past the
-// span's late edge. Tier Word puts the Meh-late window at 2000 * 0.6 = 1200, so that is exactly
-// half quality, which is the number this scenario exists to produce.
+// span's late edge.
 function playOneLatePress() {
     const map = build(abcdOsu);
     const engine = engineFor(map);
@@ -128,57 +130,28 @@ function playOneLatePress() {
     return engine;
 }
 
-// Backlog 148: the word gap is UNTIMED, so it is out of BOTH halves of the sync mean and its own
-// timing cannot move the readout. Every LYRIC character is pressed 200 ms late here (tier Word, so
-// the Meh-late window is 2000 * 0.6 = 1200 and q = 1 - 200/1200 = 5/6 apiece); only the space moves
-// between the two runs, and the two syncs must come out identical. Counted IN at its zeroed delta
-// the loose run would read 100 * (4*5/6 + 1) / 5, i.e. a free lift toward the grade thresholds.
-//
-// "200 ms late" is 200 ms past the anchor the live rule gives each character. For a cell in the
-// middle of a syllable that is the SPAN's late edge (backlog 179): "ab" is sung over [1000, 2000]
-// and "cd" over [2000, 3000], so 2200 is +200 for 'b' and 3200 is +200 for 'd'. For the cell that
-// OPENS a syllable it is the span's START (backlog 247), so 'a' is +200 at 1200 and 'c' at 2200.
-// All four are therefore the same 200 ms late, which is what keeps the mean this scenario reports a
-// single number.
-function playWithSpaceAt(spaceTime) {
-    const map = build(abcdOsu);
-    const engine = engineFor(map);
-    engine.update(1000);
-    engine.processKey('a', 1200);
-    engine.processKey('b', 2200);
-    engine.processKey(' ', spaceTime);
-    engine.processKey('c', 2200);
-    engine.processKey('d', 3200);
-    return engine;
-}
-
-// --- the sync tint (LyricLineDisplay.CorrectCharColour, re-expressed in the site's tokens) ---
-// A run that lands one cell of each kind the ramp has to tell apart: dead on the anchor (full hit
-// colour), high quality, half quality (mid ramp), and a press so late it is Lagging, which is still
-// a CORRECT cell but must keep .tb-c-off's flat warn tint instead of joining the ramp.
-//
-// Which cell carries which quality follows the live anchors: a cell that OPENS a syllable is judged
-// from its span's START (backlog 247) and the rest of the group from the span's late edge
-// (backlog 179), so the quality a press buys depends on which of the two it is measured against.
-// The word gap is pressed at the same instant as the lyric cell beside it, which is what makes the
-// space's zeroed delta visible as a difference in paint.
+// --- cell classes on a mixed run ---
+// A run that lands one cell of each kind the class rules have to tell apart: dead on the anchor,
+// off but still typeable through the caret, the untimed word gap, and a press so late it is
+// Lagging, which is still a CORRECT cell but keeps .tb-c-off's flat warn tint rather than
+// .tb-c-hit's.
 function playMixedTiming() {
     const map = build(abcdOsu);
     const engine = engineFor(map);
     engine.update(1000);
-    engine.processKey('a', 1000);   // 'a' OPENS the "ab" span [1000, 2000], and lands on its start -> q 1
+    engine.processKey('a', 1000);   // 'a' OPENS the "ab" span [1000, 2000], and lands on its start
     engine.update(2100);
-    engine.processKey('b', 2100);   // a non-opening cell, +100 past that span's end       -> q 0.9167
+    engine.processKey('b', 2100);   // a non-opening cell, +100 past that span's end, still Ok
     engine.update(2600);
     engine.processKey(' ', 2600);   // the word gap: untimed, judged on a zeroed delta whenever it lands
-    engine.processKey('c', 2600);   // 'c' OPENS the "cd" span [2000, 3000], +600 from its start -> q 0.5
+    engine.processKey('c', 2600);   // 'c' OPENS the "cd" span [2000, 3000], +600 from its start
     engine.update(3800);
     engine.processKey('d', 4300);   // +1300 past that span's end -> past the Ok edge, Lagging
     return engine;
 }
 
-// Backspace over a correct cell: the engine clears its judged delta, so the tint must come off
-// with it and the glyph go back to untyped rather than keeping the brightness it had earned.
+// Backspace over a correct cell: the engine clears its judged delta and the class must go back to
+// untyped rather than staying on whatever state it had earned.
 function playThenBackspace() {
     const map = build(abcdOsu);
     const engine = engineFor(map);
@@ -188,8 +161,8 @@ function playThenBackspace() {
     return engine;
 }
 
-// A freestyle cell ('&' authors a slot any key fills), typed dead on target so the ONLY reason it
-// could miss the ramp is the deliberate exclusion.
+// A freestyle cell ('&' authors a slot any key fills), typed dead on target so its class comes
+// only from the freestyle exclusion, not from how it was timed.
 const freestyleOsu = OSU_HEADER +
     '{"granularity":"word","version":2,"song_end_ms":20000}\n' +
     '{"text":"a&b","start_ms":1000,"end_ms":4000,"freestyle":true,' +
@@ -344,11 +317,12 @@ function sungPlacement(engine, map, time) {
     };
 }
 
-// Class, tint and GLYPH exactly as paintRow would write them, for every cell of a line.
+// Class and GLYPH exactly as paintRow would write them, for every cell of a line. Backlog 251
+// removed the per-cell sync tint (cellFill / --tb-sync-fill) this used to also report; a correct
+// cell now takes .tb-c-hit's flat colour straight from CSS, so there is nothing left to sample.
 function paint(engine, lineIndex) {
     return engine.lines[lineIndex].cells.map(c => ({
         cls: D.cellClass(c, false, false),
-        fill: D.cellFill(c),
         glyph: D.cellGlyph(c)
     }));
 }
@@ -502,8 +476,6 @@ const perfect = playPerfect();
 const partial = playOneKeyThenSeal();
 const late = playOneLatePress();
 
-const wordWindows = TB.windowsFor('Word');
-
 const out = {
     // The line the sung playhead sweeps across, straight off the decoder.
     cellTargets: line0.cells.map(c => c.target),
@@ -597,20 +569,9 @@ const out = {
     rollingWrapped: ring(40),
     rollingZeroSpan: (() => { const r = D.makeRollingWpm(30); r.push(500); r.push(500); return r.value(-1); })(),
 
-    // Sync quality at the window edges.
-    syncOnTarget: D.syncQuality(0, wordWindows),
-    syncHalfLate: D.syncQuality(wordWindows.ml / 2, wordWindows),
-    syncAtLateEdge: D.syncQuality(wordWindows.ml, wordWindows),
-    syncPastLateEdge: D.syncQuality(wordWindows.ml * 2, wordWindows),
-    syncAtEarlyEdge: D.syncQuality(-wordWindows.me, wordWindows),
-
-    // Sync tint: the ramp itself, then the classes/fills paintRow would write on real runs.
-    syncTintFloor: D.constants.SYNC_TINT_FLOOR,
-    rampAt: [0, 0.25, 0.5, 0.75, 1].map(D.syncTintFill),
-    // Same, as bare numbers, so the C# side can assert the ramp never goes backwards.
-    rampCurve: Array.from({ length: 21 }, (_, i) => parseFloat(D.syncTintFill(i / 20))),
-    rampClamped: [-1, 2, NaN].map(D.syncTintFill),
-
+    // Backlog 251 removed the browser's sync quality readout and its tint ramp (syncQuality,
+    // syncTintFill, SYNC_TINT_FLOOR are gone from typebeat-player.js), so there is nothing left to
+    // sample here; the classes/glyphs paintRow would still write on real runs are below.
     mixedPaint: paint(playMixedTiming(), 0),
     sealedPaint: paint(playOneKeyThenSeal(), 0),
     backspacedPaint: paint(playThenBackspace(), 0),
@@ -623,8 +584,6 @@ const out = {
     perfectStats: D.liveStats(perfect),
     partialStats: D.liveStats(partial),
     lateStats: D.liveStats(late),
-    looseSpaceStats: D.liveStats(playWithSpaceAt(7000)),
-    tightSpaceStats: D.liveStats(playWithSpaceAt(2000)),
 
     // The display layer must not have moved the score: the same run through the untouched
     // scorer still reads a clean X.

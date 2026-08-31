@@ -3153,10 +3153,12 @@
             // zero-point tiers, which since backlog 199 cost accuracy rather than the run.
             //
             // A ZEROED DELTA rather than a forced judgement type, again as in the C#, so every
-            // reader agrees with the judgement: classify(0) is 'Great', the inert retype
-            // re-classifies the stored firstCorrectDelta, and typebeat-player.js reads judgedDelta
-            // back for the sync tint and its live sync percent (the browser's mirror of
-            // LiveSyncPercent), which would otherwise still dock a space for its timing.
+            // reader agrees with the judgement: classify(0) is 'Great', and the inert retype
+            // re-classifies the stored firstCorrectDelta consistently. (Before backlog 251 removed
+            // the browser's sync tint and live sync readout, typebeat-player.js also read this
+            // zeroed delta back for both, which would otherwise still have docked a space for its
+            // timing; the delta itself is unchanged, kept for WireCompat parity with the C#, only
+            // that display consumer is gone.)
             //
             // Scoped to the CELL and not to the KEY: a space that lands on a lyric character never
             // reaches here, it was consumed by the word skip (which has already given the abandoned
@@ -3172,12 +3174,15 @@
             // The C# half of backlog 148 has one more clause with nothing to mirror here: it keeps
             // the exempt space OUT of its SyncTimeline, the offset-analysis series a play's results
             // screen is drawn from. This core has no such series (nothing here records per-press
-            // samples), so there is no omission to fix, only an asymmetry to expect. The other
-            // consumer of the zeroed delta IS mirrored: typebeat-player.js reads judgedDelta back
-            // for the cell tint and for its live sync percent, and that readout excludes space cells
-            // from both halves of its mean the way LiveSyncPercent does. A cell left WRONG is out
-            // of that mean too, on both sides and in every state: the readout filters on the CELL
-            // (typeable and not a space), never on what happened to it.
+            // samples), so there is no omission to fix, only an asymmetry to expect. Before backlog
+            // 251, the other consumer of the zeroed delta WAS mirrored: typebeat-player.js read
+            // judgedDelta back for the cell tint and its live sync percent, excluding space cells
+            // from both halves of that mean the way LiveSyncPercent does (and a cell left WRONG was
+            // out of it too, on both sides and in every state, since that readout filtered on the
+            // CELL, typeable and not a space, never on what happened to it). That readout and tint
+            // are gone from the browser now (the desktop metric they mirrored is off by default
+            // too), but the zeroing stays: it is engine data, kept for WireCompat parity with the
+            // C#, not for a display consumer here.
 
             // COMBO RESTORE (backlog 140, widened to the word skip by backlog 167), before anything
             // about this press is judged: if this is the cell a wrong keypress spoiled or a skip
@@ -3217,9 +3222,10 @@
                 // at min(that tier, 'Ok'), so a corrected cell can never be worth what a clean one
                 // is. Applied here, above everything the tier decides, so the point ladder below,
                 // `counts`, the announced onCharJudged and the cell's osu result all follow the one
-                // decision and cannot say different things. The delta itself is untouched, so the
-                // sync tint and typebeat-player.js's live sync percent see the press the player
-                // actually made.
+                // decision and cannot say different things. The delta itself is untouched: it
+                // stays the press the player actually made, for accuracy and WireCompat parity
+                // with the C# engine (before backlog 251, this was also what the browser's sync
+                // tint and live sync percent saw; that display is gone, the delta is not).
                 type = awardedTier(classify(delta, w), cell.heldWrongBeforeJudged);
                 const bp = basePoints(type);
 

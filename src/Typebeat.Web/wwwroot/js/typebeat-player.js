@@ -17,8 +17,10 @@
  * client's gameplay presentation (typebeat.Game.Rulesets.TypeBeat.UI: LyricStage, Caret,
  * LyricLineDisplay, TypeBeatHudOverlay) into HTML/CSS/JS: the damped+blinking player caret,
  * the sung sweep and sung caret driven by the line's per-char target times, the two depleting
- * cue-in bars, the 3-line dim ladder and the eased scroll on line change, the rolling WPM /
- * sync readouts, and the per-cell judgement feedback.
+ * cue-in bars, the 3-line dim ladder and the eased scroll on line change, the rolling WPM
+ * readout, and the per-cell judgement feedback. Backlog 251 removed the sync readout and its
+ * per-cell tint: the desktop metric they mirrored is off by default too, and the browser has no
+ * settings UI to gate it behind, so it mirrors the default by dropping it entirely.
  *
  * It is DISPLAY ONLY. typebeat-core.js (the hand-written mirror of the C# TypingEngine and
  * scorer) is not touched by any of it: nothing here calls back into judgement, and every
@@ -84,37 +86,6 @@
     const GAP_START_SETTLE_MS = 1000;       // InstrumentalGaps.GAP_START_SETTLE_MS
     const MIN_SKIP_WINDOW_MS = 1000;        // InstrumentalGaps.MIN_SKIP_WINDOW_MS
     const SKIP_LEAD_MS = 3000;              // InstrumentalGaps.SKIP_LEAD_MS
-
-    // SYNC TINT floor: how far along the untyped -> hit ramp the very WORST correct keypress is
-    // still painted. It cannot be 0. syncQuality() returns exactly 0 at the Meh-window edges and
-    // stays there beyond them, while the cell is still CellState.Correct, so an unfloored ramp
-    // would paint a character the player did type in precisely the untyped colour, making it
-    // indistinguishable from one they have not reached yet. That is a legibility regression, not
-    // feedback. (Same argument as LyricLineDisplay.SYNC_TINT_FLOOR on the desktop.)
-    //
-    // The desktop's 0.35 is NOT transferable as a literal. It walks its ramp in LINEAR light
-    // (osu-framework's Interpolation.ValueAt), which is a different curve from the oklab mix the
-    // CSS below performs, so the same t lands somewhere else. Ported by OUTCOME instead: the
-    // desktop's floor sits 47.3% of the way along its own untyped -> typed range measured in
-    // oklab (dE 0.164 of a 0.346 total), and oklab is perceptually uniform, so the browser
-    // reproduces that position at 0.473, rounded up to a round 0.5.
-    //
-    // What that buys, all figures in oklab dE / WCAG contrast against the tokens composited over
-    // --bg (untyped .tb-c-todo = #898a89, Missed .tb-c-miss = #434446, hit .tb-c-hit = #c9f24d):
-    //
-    //   floor colour       #a9bf75   dE 0.169 vs untyped (desktop's own floor: dE 0.164)
-    //                                1.71:1 vs untyped, 4.83:1 vs Missed
-    //                                oklab chroma 0.101 vs untyped's 0.003
-    //   ramp headroom      floor -> full hit, dE 0.160 (desktop's headroom: dE 0.182)
-    //
-    // so the worst correct char is separated from an untyped one by slightly MORE than the
-    // desktop's shipped floor manages, along an extra axis the desktop's achromatic grey ->
-    // off-white ramp cannot use at all (hue), and the ramp keeps essentially the desktop's
-    // dynamic range for the actual signal. See the report note on why the untyped-vs-Missed step
-    // is not usable as the yardstick here: in the browser that step is dE 0.247, which is 75% of
-    // the whole untyped -> hit range and larger than the range's own WCAG ceiling (2.68:1 at
-    // quality 1, against 2.83:1 for untyped-vs-Missed), so no point on this ramp can clear it.
-    const SYNC_TINT_FLOOR = 0.5;
 
     // ---------------------------------------------------------------------------
     // Pure display math. No DOM, no engine mutation; exported on Core.display purely so the
@@ -239,33 +210,17 @@
         };
     }
 
-    /// Judgement.SyncQuality: 1 on target, decaying to 0 at the Meh window edges.
-    function syncQuality(delta, w) {
-        const q = 1 - (delta < 0 ? -delta / w.me : delta / w.ml);
-        return q < 0 ? 0 : (q > 1 ? 1 : q);
-    }
-
-    // One pass over the map for both live readouts:
-    //   completion: hits / cells seen so far (how "typed %" reads mid-play, and what rank keys off)
-    //   sync:       mean sync quality x100 over resolved TIMED cells (mirrors
-    //               TypingEngine.LiveSyncPercent); a cell in a SEALED line that never landed correct
-    //               resolves at q = 0.
+    // completion: hits / cells seen so far (how "typed %" reads mid-play, and what rank keys off).
     //
-    // The two denominators are deliberately different, and only the SYNC one changed in backlog 148.
-    // Completion is every character of the map the player owes, word gaps included, so a space still
-    // counts there and an unpressed one still misses. Sync is a timing mean, and a space is no
-    // longer timed: it is judged on a zeroed delta (see typebeat-core.js), so counting it would add
-    // a full quality of 1 that no press earned, lifting this readout and the grade computed from it.
-    // Out of BOTH halves of the mean, so a space neither helps nor hurts.
-    //
-    // `typeable` is part of the same filter, mirroring the C#'s `if (!cell.IsTypeable) continue;`.
-    // It was missing here before, so auto-skipped punctuation in a sealed line was resolving at
-    // q = 0 in the browser and not on the desktop.
+    // Backlog 251 removed the browser's sync HUD readout and its per-cell tint (the desktop's own
+    // metric is off by default too, and the results grade never read either). This still folds
+    // sealed misses into `seen` the same way it always has; only the sync half of the old two-stat
+    // pass is gone. judgedDelta itself is untouched (see typebeat-core.js): it stays engine data
+    // for WireCompat parity, this function just no longer reads it back for a display readout.
     function liveStats(engine) {
-        let hit = 0, seen = 0, syncSum = 0, resolved = 0;
+        let hit = 0, seen = 0;
         const lines = engine.lines;
         for (let li = 0; li < lines.length; li++) {
-            const sealed = li < engine.nextSealIndex;
             const cells = lines[li].cells;
             for (let ci = 0; ci < cells.length; ci++) {
                 const c = cells[ci];
@@ -273,67 +228,12 @@
                     (c.judgeType === 'Great' || c.judgeType === 'Ok' || c.judgeType === 'Meh');
                 if (scored) { hit++; seen++; }
                 else if (c.state === 'correct' || c.state === 'missed') seen++;
-
-                const timed = c.typeable && c.expected !== ' ';
-                if (timed && c.state === 'correct' && c.judgedDelta !== null) {
-                    syncSum += syncQuality(c.judgedDelta, Core.windowsFor(c.tier));
-                    resolved++;
-                } else if (timed && sealed) {
-                    resolved++;
-                }
             }
         }
-        return {
-            completion: seen > 0 ? hit / seen : 1,
-            sync: resolved === 0 ? 100 : 100 * syncSum / resolved
-        };
+        return { completion: seen > 0 ? hit / seen : 1 };
     }
 
-    /// Where on the untyped -> hit ramp a CORRECT character is painted, given the sync quality of
-    /// the keypress that scored it (already in [0, 1], asymmetric early/late, per-cell granularity
-    /// widening included): quality compressed onto [SYNC_TINT_FLOOR, 1]. Mirrors the SHAPE of the
-    /// desktop's LyricLineDisplay.CorrectCharColour, not its colours: the browser re-skins gameplay
-    /// onto the site's own tokens, so the endpoints stay .tb-c-todo and .tb-c-hit and the mix is
-    /// left to CSS color-mix() rather than being duplicated here as literals that could drift.
-    ///
-    /// Deliberately driven by the SAME quality liveStats() sums into the HUD's sync readout, so the
-    /// trail is a live preview of the number the play is graded on rather than a second opinion.
-    /// Returned as the CSS percentage the .tb-c-hit mix consumes. Exactness at the top of the ramp
-    /// is a contract: quality 1 gives '100%', which mixes to var(--violet) itself, so a perfectly
-    /// timed line looks exactly as it did before this ramp existed. Out-of-range and NaN clamp.
-    function syncTintFill(quality) {
-        const q = !(quality > 0) ? 0 : (quality > 1 ? 1 : quality);
-        if (q >= 1) return '100%';
-        return ((SYNC_TINT_FLOOR + (1 - SYNC_TINT_FLOOR) * q) * 100).toFixed(2) + '%';
-    }
-
-    /// The --tb-sync-fill a cell's span should carry, or null for "no ramp, clear the property"
-    /// (which falls the CSS back to its 100% default, i.e. the flat hit colour).
-    ///
-    /// Three exclusions, all deliberate:
-    ///
-    /// FREESTYLE cells take no ramp, matching the desktop exclusion and for the same reason: their
-    /// colour is an IDENTITY signal ("this slot was free") that has to keep saying so for the rest
-    /// of the play, not a state signal. .tb-c-free wins over .tb-c-hit by cascade order anyway, so
-    /// this is belt and braces, but it keeps the intent legible at the call site.
-    ///
-    /// OFF-TIME cells (Premature/Lagging) keep .tb-c-off's flat warn tint. The ramp lives strictly
-    /// INSIDE the .tb-c-hit bucket. The desktop has no warn tint and ramps those cells too; the
-    /// browser's split is a deliberate browser-only affordance (see cellClass) and folding it into
-    /// the ramp would throw it away.
-    ///
-    /// A correct cell with NO judged delta cannot arise from the engine, but if one ever did it
-    /// falls back to the flat hit colour rather than to the dull floor, as the desktop does.
-    function cellFill(cell) {
-        if (cell.freestyle || cell.state !== 'correct' || cell.judgedDelta === null) return null;
-        const jt = cell.judgeType;
-        if (jt !== 'Great' && jt !== 'Ok' && jt !== 'Meh') return null;
-        return syncTintFill(syncQuality(cell.judgedDelta, Core.windowsFor(cell.tier)));
-    }
-
-    /// The class list for a cell's span. Pure (state in, string out), and paired with cellFill():
-    /// a cell's fill can only move on a frame its class moves too, since both are functions of the
-    /// same state and the delta is written before the cell first repaints.
+    /// The class list for a cell's span. Pure (state in, string out).
     function cellClass(cell, isCaret, popping) {
         let cls = 'tb-c';
         if (cell.state === 'correct') {
@@ -653,8 +553,7 @@
         const hudCombo = el('div', 'tb-hud-stat', '<span class="tb-hud-val" id="tb-combo">0</span><span class="tb-hud-lbl">combo</span>');
         const hudAcc = el('div', 'tb-hud-stat', '<span class="tb-hud-val" id="tb-acc">100%</span><span class="tb-hud-lbl">typed</span>');
         const hudWpm = el('div', 'tb-hud-stat', '<span class="tb-hud-val" id="tb-wpm">0</span><span class="tb-hud-lbl">wpm</span>');
-        const hudSync = el('div', 'tb-hud-stat tb-hud-sync', '<span class="tb-hud-val" id="tb-sync">100.0%</span><span class="tb-hud-lbl">sync</span>');
-        hud.append(hudScore, hudCombo, hudAcc, hudWpm, hudSync);
+        hud.append(hudScore, hudCombo, hudAcc, hudWpm);
 
         const health = el('div', 'tb-health');
         const healthFill = el('div', 'tb-health-fill');
@@ -714,7 +613,6 @@
         const comboEl = root.querySelector('#tb-combo');
         const accEl = root.querySelector('#tb-acc');
         const wpmEl = root.querySelector('#tb-wpm');
-        const syncEl = root.querySelector('#tb-sync');
 
         // --- audio + engine state -------------------------------------------
         let audioCtx = null, audioBuffer = null, source = null;
@@ -952,9 +850,7 @@
             row.append(sweep, cellsBox, cue);
             return {
                 row, cellsBox, sweep, sweepFill, sweepGlow, cue, cueWord, cueBoundary,
-                // fills[i] is the --tb-sync-fill last WRITTEN to spans[i] (null = property absent),
-                // so paintRow can skip the style write on every frame that did not move it.
-                spans: [], fills: [], offsets: [0], line: null, index: -1, scale: 1
+                spans: [], offsets: [0], line: null, index: -1, scale: 1
             };
         }
 
@@ -964,7 +860,6 @@
             rowObj.index = line ? index : -1;
             rowObj.cellsBox.textContent = '';
             rowObj.spans = [];
-            rowObj.fills = [];
             rowObj.offsets = [0];
             rowObj.scale = 1;
             rowObj.row.style.transform = 'none';
@@ -975,7 +870,6 @@
             for (let i = 0; i < line.cells.length; i++) {
                 const span = el('span');
                 rowObj.spans.push(span);
-                rowObj.fills.push(null);
                 frag.appendChild(span);
             }
             rowObj.cellsBox.appendChild(frag);
@@ -989,14 +883,11 @@
             return ch === ' ' ? ' ' : ch;
         }
 
-        // Repaint a row in place: only the spans whose class, sync tint or glyph actually changed
-        // are written, so a settled line costs nothing and the shimmer only touches its own cells.
-        //
-        // The sync tint is NOT recomputed into the DOM every frame. cellFill() is a couple of
-        // multiplies off state the engine already holds, but the write is guarded by the row's own
-        // last-written value: a cell's fill can only move when its state or judged delta moves,
-        // both of which happen once, on the frame the key lands (or on a backspace), so a line the
-        // player has finished typing writes nothing at all for the rest of its time on screen.
+        // Repaint a row in place: only the spans whose class or glyph actually changed are written,
+        // so a settled line costs nothing and the shimmer only touches its own cells. Backlog 251
+        // removed the per-cell sync tint this used to guard the same way (--tb-sync-fill): a
+        // correct cell now takes .tb-c-hit's flat colour straight from CSS, so there is no longer a
+        // fill to compute or write here at all.
         function paintRow(rowObj, caretIndex, shimmerTick, time) {
             const line = rowObj.line;
             if (!line) return;
@@ -1006,12 +897,6 @@
                 const popping = popEnd[i] > time && rowObj === rowCur;
                 const cls = cellClass(cell, i === caretIndex, popping);
                 if (span.className !== cls) span.className = cls;
-                const fill = cellFill(cell);
-                if (rowObj.fills[i] !== fill) {
-                    rowObj.fills[i] = fill;
-                    if (fill === null) span.style.removeProperty('--tb-sync-fill');
-                    else span.style.setProperty('--tb-sync-fill', fill);
-                }
                 const txt = cellText(cell, shimmerTick, i);
                 if (span.textContent !== txt) span.textContent = txt;
             }
@@ -1460,7 +1345,6 @@
             comboEl.textContent = engine.combo + 'x';
             accEl.textContent = Math.round(stats.completion * 100) + '%';
             wpmEl.textContent = Math.round(rolling.value(engine.liveWpm));
-            syncEl.textContent = stats.sync.toFixed(1) + '%';
 
             healthFill.style.width = (engine.health * 100) + '%';
             healthFill.classList.toggle('tb-health-danger', engine.consecutiveWrongKeys >= 8);
@@ -1669,9 +1553,6 @@
         caretAlpha,
         rollingWpmValue,
         makeRollingWpm,
-        syncQuality,
-        syncTintFill,
-        cellFill,
         cellClass,
         cellGlyph,
         liveStats,
@@ -1693,7 +1574,7 @@
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,
-            ROLLING_WPM_WINDOW, GAP_CHIP_MIN_MS, SYNC_TINT_FLOOR,
+            ROLLING_WPM_WINDOW, GAP_CHIP_MIN_MS,
             MIN_GAP_MS, GAP_START_SETTLE_MS, MIN_SKIP_WINDOW_MS, SKIP_LEAD_MS
         }
     };
