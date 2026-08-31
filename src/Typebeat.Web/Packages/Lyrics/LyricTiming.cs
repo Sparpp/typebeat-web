@@ -66,7 +66,14 @@ public static class LyricTiming
     /// unparseable JSON lines are skipped, an object without "text" is the header, the rest go
     /// through <see cref="TryParseRawLine"/>.
     /// </summary>
-    public static (Header Header, IReadOnlyList<LyricLine> Lines) ParseSection(IEnumerable<string> sectionLines)
+    /// <param name="stripBackingVocals">
+    /// Passed straight to <see cref="TryParseRawLine"/>; see the seam described there. The caller
+    /// that knows is <c>BeatmapPackageParser</c>, which reads the file's FORMAT VERSION off its
+    /// magic line and passes <c>version &lt; LiteralBracketsFromVersion</c>, exactly as the game's
+    /// decoder does. Defaults to false (the map-format contract, brackets are literal), so a caller
+    /// holding a [Lyrics] section with no file around it gets the CURRENT reading.
+    /// </param>
+    public static (Header Header, IReadOnlyList<LyricLine> Lines) ParseSection(IEnumerable<string> sectionLines, bool stripBackingVocals = false)
     {
         var header = new Header();
         var raw = new List<RawLine>();
@@ -92,7 +99,7 @@ public static class LyricTiming
                     continue;
                 }
 
-                if (TryParseRawLine(root, out var rawLine))
+                if (TryParseRawLine(root, out var rawLine, stripBackingVocals))
                     raw.Add(rawLine);
             }
             catch (JsonException)
@@ -106,10 +113,21 @@ public static class LyricTiming
 
     /// <summary>
     /// One timing.json "lines[]" element -> <see cref="RawLine"/>. False for non-objects, missing
-    /// text/start_ms, and lines whose text normalizes to empty (whole-line backing vocals).
-    /// (TimingJsonLoader.TryParseRawLine, TimingJsonLoader.cs:114-185.)
+    /// text/start_ms, and lines whose text gives the player no cell at all (whole-line backing
+    /// vocals among them). (TimingJsonLoader.TryParseRawLine, TimingJsonLoader.cs:114-185.)
     /// </summary>
-    public static bool TryParseRawLine(JsonElement lineElement, out RawLine rawLine)
+    /// <param name="stripBackingVocals">
+    /// THE SEAM backlog 255 cut, mirrored from the game's flag of the same name: the difference
+    /// between reading an IMPORT and reading a STORED MAP. It defaults to false, the map-format
+    /// contract, so a '(' in a saved [Lyrics] line is a literal lyric mark and survives the parse
+    /// like any other punctuation. The server only ever reads stored maps, so its one true caller
+    /// is the FORMAT VERSION GATE: <c>BeatmapPackageParser</c> passes true for a file below
+    /// <c>BeatmapPackageParser.LiteralBracketsFromVersion</c>, where a bracket is a backing vocal
+    /// by construction and is stripped exactly as it always was. There a whole bracketed line still
+    /// yields no cell and is dropped, and a partial strip still changes the token count so the
+    /// words[] pairing in <see cref="BuildLines"/> falls back to interpolation for that line.
+    /// </param>
+    public static bool TryParseRawLine(JsonElement lineElement, out RawLine rawLine, bool stripBackingVocals = false)
     {
         rawLine = default;
 
@@ -130,7 +148,10 @@ public static class LyricTiming
         bool freestyle = lineElement.TryGetProperty("freestyle", out JsonElement freestyleElement)
                          && freestyleElement.ValueKind == JsonValueKind.True;
 
-        string normalized = Typeability.Normalize(Typeability.StripBackingVocals(textElement.GetString() ?? string.Empty), keepFreestyleMarkers: freestyle);
+        string raw = textElement.GetString() ?? string.Empty;
+
+        string normalized = Typeability.Normalize(stripBackingVocals ? Typeability.StripBackingVocals(raw) : raw,
+            keepFreestyleMarkers: freestyle);
 
         // A line with nothing to TYPE is dropped, and the previous line extends over its span.
         // Tested on the DEFAULT stream, not on the normalized text, because a line that is nothing

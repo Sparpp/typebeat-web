@@ -128,7 +128,9 @@ public class ServerFixture
     private static async Task seedAsync()
     {
         // The tiny fixture file. Its content need not be a decodable beatmap; test (g) only
-        // computes MD5 over these exact bytes and compares to the checksum stored below.
+        // computes MD5 over these exact bytes and compares to the checksum stored below. It stays
+        // on the v1 magic line deliberately: nothing parses it, and an already-installed map is
+        // exactly what a stored blob looks like.
         const string osuFile =
             "type!beat file format v1\n\n[General]\nAudioFilename: audio.mp3\n\n[Metadata]\nTitle:Wire Compat\nArtist:Harness\n";
         OsuFileBytes = Encoding.UTF8.GetBytes(osuFile);

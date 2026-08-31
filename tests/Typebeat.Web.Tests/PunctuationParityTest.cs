@@ -96,6 +96,125 @@ public class PunctuationParityTest
         });
     }
 
+    /// <summary>
+    /// The two marks backlog 255 added ('_' and '~') behave exactly like the twenty before them,
+    /// which is what keeps the widening free for every stored per-map figure.
+    /// </summary>
+    [Test]
+    public void TheMarksAddedByBacklog255AreDeletedFromTheDefaultStreamLikeAnyOther()
+    {
+        Assert.Multiple(() =>
+        {
+            foreach (char c in "_~")
+            {
+                Assert.That(Typeability.IsPunctuation(c), Is.True, $"'{c}' is supported now");
+                Assert.That(Typeability.IsTypeable(c), Is.False, $"'{c}' is not a plain typeable char");
+                Assert.That(Typeability.IsCell(c), Is.False, $"'{c}' is not a cell");
+                Assert.That(Typeability.DefaultChar(c), Is.Null, $"'{c}' is deleted without Literate");
+            }
+
+            // Normalize KEEPS them now, where it used to strip them outright.
+            const string authored = "well_known ~vibe~ _x_";
+            Assert.That(Typeability.Normalize(authored), Is.EqualTo(authored));
+
+            // The DEFAULT stream, which every stored stat is measured on, still drops them, so a
+            // mark wedged inside a word derives exactly what it derived before it was supported.
+            Assert.That(Typeability.ToDefaultStream("well_known"), Is.EqualTo("wellknown"));
+            Assert.That(Typeability.ToDefaultStream("~vibe~ now"), Is.EqualTo("vibe now"));
+
+            // A mark standing as its OWN token is the one shape that does not, and it behaves
+            // exactly as an original mark always has (see LyricPace.VERSION, which is deliberately
+            // not bumped for it, exactly as at backlog 202).
+            Assert.That(Typeability.ToDefaultStream("ride _ or"), Is.EqualTo("ride  or"));
+            Assert.That(Typeability.ToDefaultStream("ride , or"), Is.EqualTo("ride  or"));
+        });
+    }
+
+    /// <summary>
+    /// Brackets are LITERAL lyric marks in a stored map (backlog 255), and the FORMAT VERSION on
+    /// the magic line is what says so. The browser is served the same stored .osu blob the desktop
+    /// decoder reads, so it has to read that version the same way or a v2 map's cells differ
+    /// between the two clients on the same leaderboards.
+    /// </summary>
+    [Test]
+    public void TheFormatVersionGateIsReadIdenticallyOnBothSides()
+    {
+        var root = Harness();
+
+        string[] magicLines = Strings(root, "magicLines");
+        int[] jsVersions = root.GetProperty("parsedVersions").EnumerateArray().Select(e => e.GetInt32()).ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(root.GetProperty("formatMagic").GetString(), Is.EqualTo(BeatmapPackageParser.OsuMagic));
+            Assert.That(root.GetProperty("fallbackFormatVersion").GetInt32(), Is.EqualTo(BeatmapPackageParser.FallbackFormatVersion));
+            Assert.That(root.GetProperty("literalBracketsFromVersion").GetInt32(), Is.EqualTo(BeatmapPackageParser.LiteralBracketsFromVersion));
+
+            for (int i = 0; i < magicLines.Length; i++)
+            {
+                Assert.That(jsVersions[i], Is.EqualTo(BeatmapPackageParser.ParseFormatVersion(magicLines[i])),
+                    $"parseFormatVersion(\"{magicLines[i]}\")");
+            }
+
+            // The unreadable ones fall back to the ORIGINAL format, the direction that cannot
+            // invent lyric content for a map that never had it.
+            Assert.That(BeatmapPackageParser.ParseFormatVersion("type!beat file format v"), Is.EqualTo(1));
+            Assert.That(BeatmapPackageParser.ParseFormatVersion("osu file format v14"), Is.EqualTo(1));
+            Assert.That(BeatmapPackageParser.ParseFormatVersion("type!beat file format v2 (edited)"), Is.EqualTo(2));
+            Assert.That(BeatmapPackageParser.ParseFormatVersion("type!beat file format v17"), Is.EqualTo(17));
+        });
+    }
+
+    /// <summary>
+    /// The same bracket bytes, read either side of the gate: the browser's decode of a v1 file
+    /// still strips (and still drops a whole-line backing vocal), its decode of a v2 file keeps the
+    /// brackets, and the SERVER's parse of the identical file agrees with it line for line.
+    /// </summary>
+    [Test]
+    public void TheSameBracketBytesDecodeBothWaysAndTheServerAgrees()
+    {
+        var root = Harness();
+        var v1 = root.GetProperty("bracketV1");
+        var v2 = root.GetProperty("bracketV2");
+
+        const string lyrics =
+            """
+            {"version":2,"song_end_ms":20000}
+            {"text":"hey (oh yeah) now","start_ms":1000,"end_ms":4000}
+            {"text":"(ooh aah)","start_ms":5000,"end_ms":6000}
+            """;
+
+        var serverV1 = BeatmapPackageParser.ParseDifficulty("map.osu",
+            SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: lyrics, formatVersion: BeatmapPackageParser.FallbackFormatVersion)));
+        var serverV2 = BeatmapPackageParser.ParseDifficulty("map.osu",
+            SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: lyrics, formatVersion: BeatmapPackageParser.LiteralBracketsFromVersion)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(v1.GetProperty("formatVersion").GetInt32(), Is.EqualTo(1));
+            Assert.That(v2.GetProperty("formatVersion").GetInt32(), Is.EqualTo(2));
+
+            // v1: the strip runs. "hey (oh yeah) now" loses its span, and the whole-line backing
+            // vocal yields no cell at all and is dropped so the previous line extends over it.
+            string[] v1Texts = Strings(v1, "texts");
+            Assert.That(v1Texts, Is.EqualTo(new[] { "hey now" }), "the browser's v1 decode");
+            Assert.That(serverV1.Lines.Select(l => l.RawText), Is.EqualTo(v1Texts), "the server's v1 parse agrees");
+            Assert.That(Strings(v1, "streams"), Is.EqualTo(new[] { "hey now" }));
+
+            // v2: the brackets are ordinary punctuation. Both lines survive, the stored text keeps
+            // them, and the DEFAULT stream deletes them like any other mark.
+            string[] v2Texts = Strings(v2, "texts");
+            Assert.That(v2Texts, Is.EqualTo(new[] { "hey (oh yeah) now", "(ooh aah)" }), "the browser's v2 decode");
+            Assert.That(serverV2.Lines.Select(l => l.RawText), Is.EqualTo(v2Texts), "the server's v2 parse agrees");
+            Assert.That(Strings(v2, "streams"), Is.EqualTo(new[] { "hey oh yeah now", "ooh aah" }));
+
+            // And the stats move with the text, which is the whole point of gating on the version:
+            // a v1 row is what it always was, a v2 row counts what the player really types.
+            Assert.That(serverV1.Pace.WordCount, Is.EqualTo(2));
+            Assert.That(serverV2.Pace.WordCount, Is.EqualTo(6));
+        });
+    }
+
     [Test]
     public void DerivationMatchesTheServersOwnTypeability()
     {
@@ -103,6 +222,8 @@ public class PunctuationParityTest
 
         string[] samples = Strings(root, "samples");
         string[] jsNormalized = Strings(root, "normalized");
+        string[] jsStripped = Strings(root, "stripped");
+        string[] jsStrippedThenNormalized = Strings(root, "strippedThenNormalized");
         string[] jsDefault = Strings(root, "defaultStream");
         string[] jsNormalizedThenDefault = Strings(root, "normalizedThenDefault");
 
@@ -114,16 +235,26 @@ public class PunctuationParityTest
             {
                 string s = samples[i];
 
-                // The JS normalize() folds backing vocals in (stripBackingVocals is called inside
-                // it), so the C# side has to be composed the same way to compare.
-                Assert.That(jsNormalized[i], Is.EqualTo(Typeability.Normalize(Typeability.StripBackingVocals(s))),
+                // Composed identically on both sides now: backlog 255 took the stripBackingVocals
+                // call out of the JS normalize(), so this is a plain function-to-function compare
+                // rather than the JS shape being reproduced by hand over here.
+                Assert.That(jsNormalized[i], Is.EqualTo(Typeability.Normalize(s)),
                     $"normalize(\"{s}\")");
+
+                Assert.That(jsStripped[i], Is.EqualTo(Typeability.StripBackingVocals(s)),
+                    $"stripBackingVocals(\"{s}\")");
+
+                // The other side of the format version gate: the pre-v2 composition, which is the
+                // only place the strip still runs.
+                Assert.That(jsStrippedThenNormalized[i],
+                    Is.EqualTo(Typeability.Normalize(Typeability.StripBackingVocals(s))),
+                    $"normalize(stripBackingVocals(\"{s}\"))");
 
                 Assert.That(jsDefault[i], Is.EqualTo(Typeability.ToDefaultStream(s)),
                     $"toDefaultStream(\"{s}\")");
 
                 Assert.That(jsNormalizedThenDefault[i],
-                    Is.EqualTo(Typeability.ToDefaultStream(Typeability.Normalize(Typeability.StripBackingVocals(s)))),
+                    Is.EqualTo(Typeability.ToDefaultStream(Typeability.Normalize(s))),
                     $"the real pipeline on \"{s}\"");
             }
         });

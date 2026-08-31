@@ -163,6 +163,20 @@ public static class LyricPace
     /// TOKEN re-derives one cell longer here. That was deferred to whatever bump came next for its
     /// own reasons, and this is that bump.</para>
     ///
+    /// <para>BACKLOG 255 MADE BRACKETS LITERAL AND ADDED TWO MORE MARKS (underscore and tilde),
+    /// AND DELIBERATELY DID NOT BUMP THIS EITHER. Two changes, and neither can move a stored row.
+    /// The brackets are gated on the file's FORMAT VERSION
+    /// (<c>BeatmapPackageParser.LiteralBracketsFromVersion</c>): every map stored before that
+    /// change carries a v1 magic line, so it re-parses with the backing-vocal strip exactly as it
+    /// always did, and only a v2 file (which nothing has uploaded yet) keeps a literal bracket. The
+    /// two new marks are the backlog 202 case again, verbatim: both are deleted from the DEFAULT
+    /// stream by <see cref="Typeability.DefaultChar"/> like every non-hyphen mark, so one wedged
+    /// inside a word ("well_known") derives exactly what it derived while it was stripped outright,
+    /// and only one STANDING AS ITS OWN TOKEN ("ride _ or") would re-derive one cell longer. As at
+    /// 202, that can reach a stored row only through this sweep, so leaving VERSION alone is what
+    /// keeps every existing beatmap row byte-identical, and the next bump taken for its own reasons
+    /// will drag the re-derive along just as v16 dragged 202's.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now

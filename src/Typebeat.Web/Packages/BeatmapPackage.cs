@@ -13,7 +13,7 @@ public sealed record PackageFileEntry(byte[] Sha256, long Size, string Filename)
     public string Sha256Hex => Convert.ToHexStringLower(Sha256);
 }
 
-/// <summary>A parsed .osu difficulty ("type!beat file format v1": classic .osu text + [Lyrics]).</summary>
+/// <summary>A parsed .osu difficulty ("type!beat file format": classic .osu text + [Lyrics]).</summary>
 public sealed class ParsedDifficulty
 {
     /// <summary>Archive path of the .osu file (normalized to forward slashes).</summary>

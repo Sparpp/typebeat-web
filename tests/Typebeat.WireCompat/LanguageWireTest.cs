@@ -110,7 +110,8 @@ public class LanguageWireTest
     }
 
     /// <summary>
-    /// A minimal "type!beat file format v1" difficulty, shaped like the game's writer
+    /// A minimal "type!beat file format" difficulty, shaped like the game's writer, so it carries
+    /// the version that writer stamps today (LyricOsuFormat.FORMAT_VERSION, backlog 255)
     /// (LyricOsuFormat.GenerateOsu): the Language line sits in [Metadata] after Tags, and is
     /// omitted entirely when <paramref name="language"/> is null.
     /// </summary>
@@ -118,7 +119,7 @@ public class LanguageWireTest
     {
         var sb = new StringBuilder();
 
-        sb.Append("type!beat file format v1\n\n");
+        sb.Append($"{BeatmapPackageParser.OsuMagic}{BeatmapPackageParser.LiteralBracketsFromVersion}\n\n");
         sb.Append("[General]\nAudioFilename: audio.mp3\nAudioLeadIn: 0\nPreviewTime: -1\n\n");
         sb.Append("[Metadata]\n");
         sb.Append("Title:Neon Nights\nTitleUnicode:Neon Nights\n");

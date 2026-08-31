@@ -39,9 +39,13 @@ const SAMPLES = [
     'a“b”c„d″e', // every double-quote variant
     'a–b—c―d−e', // every dash variant
     'Héllo,  wörld!',     // diacritics
-    'a,b.c\'d-e?f!g;h:i(j)k[l]m"n$o%p^q*r<s>t/u', // every supported mark, once each
+    'a,b.c\'d-e?f!g;h:i(j)k[l]m"n$o%p^q*r<s>t/u_v~w', // every supported mark, once each
     '100% of my $$ <so> 2*3 up/down x^2',         // the marks added by backlog 202, in prose
-    'a#b@c_d&e~f',                                // unsupported chars
+    'well_known ~vibe~ _x_',                      // the marks added by backlog 255, in prose
+    'a#b@c&d`e',                                  // chars still outside the set
+    'hello (oh yeah) now',                        // a bracketed span: LITERAL in a v2 map
+    'go [aah] on (ooh',                           // square brackets and an UNCLOSED opener
+    '(all backing)',                              // a whole-line backing vocal
     'a - b',
     'a-b',
     'a--b',
@@ -55,13 +59,20 @@ const SAMPLES = [
     '...',
 ];
 
-const OSU_HEADER =
-    '[General]\n' +
-    'AudioFilename: a.mp3\n' +
-    '[Metadata]\n' +
-    'Title: t\n' +
-    'Artist: a\n' +
-    '[Lyrics]\n';
+// The magic line matters since backlog 255: it carries the FORMAT VERSION that decides whether a
+// bracket in [Lyrics] is a literal lyric mark (v2 and up) or a backing vocal to strip (v1, and any
+// file with no readable version). Every fixture here states one explicitly.
+function osuHeader(formatVersion) {
+    return TB.constants.FORMAT_MAGIC + formatVersion + '\n\n' +
+        '[General]\n' +
+        'AudioFilename: a.mp3\n' +
+        '[Metadata]\n' +
+        'Title: t\n' +
+        'Artist: a\n' +
+        '[Lyrics]\n';
+}
+
+const OSU_HEADER = osuHeader(TB.constants.LITERAL_BRACKETS_FROM_VERSION);
 
 // The normative example as the .osu the browser /play path actually consumes: one line
 // "The bad-cat sat." over three words, matching the fixture in the game's LiteratePunctuationTest.
@@ -71,6 +82,39 @@ const NORMATIVE_OSU = OSU_HEADER +
     '{"text":"The","start_ms":1000,"end_ms":2000,"score":1},' +
     '{"text":"bad-cat","start_ms":2000,"end_ms":4000,"score":1},' +
     '{"text":"sat.","start_ms":4000,"end_ms":6000,"score":1}]}\n';
+
+// The bracket fixture, emitted at whichever format version the caller names so the SAME [Lyrics]
+// bytes can be read both ways. One line carrying a bracketed span, and one that is nothing but a
+// bracketed span (which the v1 reading drops entirely and the v2 reading keeps as a real line).
+const BRACKET_LYRICS =
+    '{"version":2,"song_end_ms":20000}\n' +
+    '{"text":"hey (oh yeah) now","start_ms":1000,"end_ms":4000}\n' +
+    '{"text":"(ooh aah)","start_ms":5000,"end_ms":6000}\n';
+
+function bracketOsu(formatVersion) { return osuHeader(formatVersion) + BRACKET_LYRICS; }
+
+// Magic lines the C# side runs through its own ParseFormatVersion; the pairs are asserted there
+// rather than hardcoded twice. Covers a version above the gate, a missing number, trailing junk
+// after the digits, a foreign magic and the empty line.
+const MAGIC_LINES = [
+    'type!beat file format v1',
+    'type!beat file format v2',
+    'type!beat file format v17',
+    'type!beat file format v',
+    'type!beat file format v2 (edited)',
+    'osu file format v14',
+    ''
+];
+
+// What the bracket fixture decodes to at a given version: the stored lines and their cell streams.
+function bracketShape(formatVersion) {
+    const beatmap = TB.buildBeatmap(TB.parseLyricOsu(bracketOsu(formatVersion)), false);
+    return {
+        formatVersion: TB.parseLyricOsu(bracketOsu(formatVersion)).formatVersion,
+        texts: beatmap.lines.map(l => l.text),
+        streams: beatmap.lines.map(l => l.cells.map(c => c.expected).join(''))
+    };
+}
 
 function shape(beatmap) {
     const line = beatmap.lines[0];
@@ -121,15 +165,29 @@ const out = {
     // under Literate.
     marksAreNotTypeable: TB.constants.PUNCTUATION.split('').every(c => !TB.isTypeable(c) && !TB.isCell(c)),
     marksAreRecognised: TB.constants.PUNCTUATION.split('').every(c => TB.isPunctuation(c)),
-    // Chars still outside the set after backlog 202 widened it ('&' is the freestyle marker, which
-    // is deliberately not punctuation on either side).
-    unsupportedAreNot: '&_`#@+=|~\\'.split('').every(c => !TB.isPunctuation(c)),
+    // Chars still outside the set after backlog 255 widened it again ('&' is the freestyle marker,
+    // which is deliberately not punctuation on either side).
+    unsupportedAreNot: '&`#@+=|\\'.split('').every(c => !TB.isPunctuation(c)),
 
     samples: SAMPLES,
     normalized: SAMPLES.map(s => TB.normalize(s)),
+    // The IMPORT / pre-v2 composition, which is the only thing that still strips backing vocals.
+    // Kept alongside the plain one so both sides of the format version gate are pinned.
+    strippedThenNormalized: SAMPLES.map(s => TB.normalize(TB.stripBackingVocals(s))),
+    stripped: SAMPLES.map(s => TB.stripBackingVocals(s)),
     defaultStream: SAMPLES.map(s => TB.toDefaultStream(s)),
     // The derivation applied to what normalize produced: the real pipeline order.
     normalizedThenDefault: SAMPLES.map(s => TB.toDefaultStream(TB.normalize(s))),
+
+    // The format version gate (backlog 255). The magic lines are read exactly as the C# decoder
+    // reads them, and the SAME bracket bytes decode two ways either side of the boundary.
+    formatMagic: TB.constants.FORMAT_MAGIC,
+    fallbackFormatVersion: TB.constants.FALLBACK_FORMAT_VERSION,
+    literalBracketsFromVersion: TB.constants.LITERAL_BRACKETS_FROM_VERSION,
+    magicLines: MAGIC_LINES,
+    parsedVersions: MAGIC_LINES.map(l => TB.parseFormatVersion(l)),
+    bracketV1: bracketShape(1),
+    bracketV2: bracketShape(2),
 
     // Flattening, both branches, on the normative fixture.
     plainShape: shape(TB.buildBeatmap(TB.parseLyricOsu(NORMATIVE_OSU), false)),

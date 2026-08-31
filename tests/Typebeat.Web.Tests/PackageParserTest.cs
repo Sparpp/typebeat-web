@@ -198,6 +198,111 @@ public class PackageParserTest
         Assert.Throws<PackageValidationException>(() => BeatmapPackageParser.Parse(zip));
     }
 
+    /// <summary>
+    /// THE FORMAT VERSION GATE (backlog 255). The magic line is a prefix, so every version routes
+    /// through the same parse; the number on it decides one thing, whether a bracket in a stored
+    /// [Lyrics] line is a backing vocal to strip or a literal lyric mark to keep. An unversioned or
+    /// unreadable line falls back to v1, the direction that cannot invent lyric content.
+    /// </summary>
+    [Test]
+    public void ParseFormatVersion_ReadsTheDigitsAfterTheMagicAndFallsBackToV1()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(BeatmapPackageParser.ParseFormatVersion("type!beat file format v1"), Is.EqualTo(1));
+            Assert.That(BeatmapPackageParser.ParseFormatVersion("type!beat file format v2"), Is.EqualTo(2));
+            Assert.That(BeatmapPackageParser.ParseFormatVersion("type!beat file format v17"), Is.EqualTo(17));
+
+            // Only the digits immediately after the prefix are taken, so trailing junk is ignored
+            // rather than fatal.
+            Assert.That(BeatmapPackageParser.ParseFormatVersion("type!beat file format v2 (edited)"), Is.EqualTo(2));
+
+            Assert.That(BeatmapPackageParser.ParseFormatVersion("type!beat file format v"), Is.EqualTo(BeatmapPackageParser.FallbackFormatVersion));
+            Assert.That(BeatmapPackageParser.ParseFormatVersion("osu file format v14"), Is.EqualTo(BeatmapPackageParser.FallbackFormatVersion));
+            Assert.That(BeatmapPackageParser.ParseFormatVersion(""), Is.EqualTo(BeatmapPackageParser.FallbackFormatVersion));
+
+            Assert.That(BeatmapPackageParser.FallbackFormatVersion, Is.EqualTo(1));
+            Assert.That(BeatmapPackageParser.LiteralBracketsFromVersion, Is.EqualTo(2));
+        });
+    }
+
+    /// <summary>
+    /// A v1 file's brackets are backing vocals and are stripped exactly as they always were: an
+    /// already-installed map re-parses byte-identically, which is the whole reason the gate is on
+    /// the version rather than on the calendar.
+    /// </summary>
+    [Test]
+    public void Parse_V1File_StillStripsBackingVocals()
+    {
+        var diff = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(
+            SyntheticPackage.OsuText(lyrics: BracketLyrics, formatVersion: BeatmapPackageParser.FallbackFormatVersion)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(diff.Lines.Select(l => l.RawText), Is.EqualTo(new[] { "hey now" }),
+                "the span goes, and the whole-line backing vocal takes the line with it");
+            Assert.That(diff.Pace.WordCount, Is.EqualTo(2));
+            Assert.That(diff.Pace.TypeableCellCount, Is.EqualTo(7), "\"hey now\", spaces included");
+        });
+    }
+
+    /// <summary>
+    /// A v2 file, which is what the game's writer stamps now, keeps its brackets in the stored
+    /// lyric and counts the cells the player really types through them.
+    /// </summary>
+    [Test]
+    public void Parse_V2File_KeepsLiteralBrackets()
+    {
+        var diff = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(
+            SyntheticPackage.OsuText(lyrics: BracketLyrics, formatVersion: BeatmapPackageParser.LiteralBracketsFromVersion)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(diff.Lines.Select(l => l.RawText), Is.EqualTo(new[] { "hey (oh yeah) now", "(ooh aah)" }));
+            Assert.That(diff.LyricsText, Does.Contain("(oh yeah)"), "the haystack keeps the author's form");
+
+            // The marks themselves are never cells; what they no longer do is delete the words
+            // between them.
+            Assert.That(diff.Pace.WordCount, Is.EqualTo(6));
+            Assert.That(diff.Pace.TypeableCellCount, Is.EqualTo(22), "\"hey oh yeah now\" + \"ooh aah\", spaces included");
+        });
+    }
+
+    /// <summary>
+    /// The underscore and the tilde joined the supported marks in backlog 255, so a stored line
+    /// keeps them while the DEFAULT stream every stat is measured on still deletes them.
+    /// </summary>
+    [Test]
+    public void Parse_UnderscoreAndTilde_SurviveIntoTheStoredLyric()
+    {
+        const string lyrics =
+            """
+            {"version":2,"song_end_ms":20000}
+            {"text":"well_known ~vibe~","start_ms":1000,"end_ms":4000}
+            """;
+
+        var diff = BeatmapPackageParser.ParseDifficulty("map.osu",
+            SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: lyrics)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(diff.Lines[0].RawText, Is.EqualTo("well_known ~vibe~"));
+            Assert.That(diff.Pace.WordCount, Is.EqualTo(2));
+            Assert.That(diff.Pace.TypeableCellCount, Is.EqualTo(14), "\"wellknown vibe\", the space included");
+        });
+    }
+
+    /// <summary>
+    /// One bracketed span inside a line, and one line that is nothing but a bracketed span: the two
+    /// shapes the version gate has to separate.
+    /// </summary>
+    private const string BracketLyrics =
+        """
+        {"version":2,"song_end_ms":20000}
+        {"text":"hey (oh yeah) now","start_ms":1000,"end_ms":4000}
+        {"text":"(ooh aah)","start_ms":5000,"end_ms":6000}
+        """;
+
     [Test]
     public void Parse_TraversalFilename_Throws422able()
     {

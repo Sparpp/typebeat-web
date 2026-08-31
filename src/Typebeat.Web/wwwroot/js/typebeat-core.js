@@ -38,10 +38,16 @@
 
     function isFreestyle(ch) { return ch === FREESTYLE_MARKER; }
 
-    // The punctuation type!beat supports inside an authored lyric line, defined ONCE here (mirrors
-    // Typeability.PUNCTUATION): comma, period, apostrophe, hyphen, question mark, exclamation mark,
-    // semicolon, colon, round brackets, square brackets, straight double quote, dollar sign,
-    // percent sign, caret, asterisk, angle brackets, forward slash.
+    // The punctuation type!beat supports inside an authored lyric line, defined ONCE here, twenty-two
+    // marks (mirrors Typeability.PUNCTUATION): comma, period, apostrophe, hyphen, question mark,
+    // exclamation mark, semicolon, colon, round brackets, square brackets, straight double quote,
+    // (added by backlog 202) dollar sign, percent sign, caret, asterisk, angle brackets, forward
+    // slash, and (added by backlog 255) underscore and tilde.
+    //
+    // The round and square brackets are ORDINARY marks here since backlog 255: the strip that used
+    // to run inside normalize() now runs only where the file being read is OLDER than the format
+    // version that made brackets literal (see LITERAL_BRACKETS_FROM_VERSION and buildBeatmap), so a
+    // v2 map's line carries a literal '(' exactly as it carries a comma.
     //
     // A map stores the AUTHOR'S form: punctuated and case-sensitive. What the player types (and
     // sees) is derived from it: verbatim under the desktop client's LITERATE mod, and through
@@ -51,7 +57,7 @@
     // Widening this set cannot move a stored per-map stat: every mark but WORD_BREAK is deleted by
     // defaultChar, so a char that used to be dropped by normalize as unsupported is now kept in the
     // author's line and dropped one step later, leaving the DEFAULT stream byte-identical.
-    const PUNCTUATION = ",.'-?!;:()[]\"$%^*<>/";
+    const PUNCTUATION = ",.'-?!;:()[]\"$%^*<>/_~";
 
     // The one supported mark that reads as a WORD BREAK rather than as decoration: without
     // Literate, "bad-cat" is typed "bad cat", not "badcat" (mirrors Typeability.WORD_BREAK).
@@ -71,6 +77,11 @@
     // Remove bracketed backing-vocal spans, "(...)" and "[...]", with a shared depth
     // counter across both bracket types; an UNCLOSED bracket strips to end-of-string
     // (mirrors Typeability.StripBackingVocals; regexes diverged on unclosed/nested spans).
+    //
+    // Called from buildBeatmap, NOT from normalize, since backlog 255: it applies only to a map
+    // whose format version predates literal brackets, exactly as the desktop decoder applies it
+    // (LyricBeatmapDecoder's version gate feeding TimingJsonLoader.TryParseRawLine). Keeping it out
+    // of normalize is also what makes normalize a char-for-char mirror of Typeability.Normalize.
     function stripBackingVocals(raw) {
         if (!raw) return '';
         let out = '', depth = 0;
@@ -103,10 +114,14 @@
     // like any other unsupported char. The only caller that opts in is the decoder of a line
     // the map explicitly flagged ("freestyle": true), so an ampersand that merely occurs in a
     // song's lyrics ("R&B") still disappears exactly as it always has.
+    //
+    // It does NOT strip backing vocals any more (backlog 255). That call used to be folded in here,
+    // which was a structural divergence from the C#; it now sits at the one call site that knows
+    // the map's format version (buildBeatmap), so this function is the plain mirror of
+    // Typeability.Normalize and a literal bracket in a v2 map survives to the cells.
     function normalize(s, keepFreestyleMarkers = false) {
         if (s == null) return '';
-        s = stripBackingVocals(s);
-        s = s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+        s = String(s).normalize('NFD').replace(/[̀-ͯ]/g, '');
         // The variant sets are the C# switch verbatim (U+2018 U+2019 U+201A U+2032 /
         // U+201C U+201D U+201E U+2033 / U+2013 U+2014 U+2015 U+2212). They were allowed to drift
         // while an unmapped variant was dropped as untypeable on both sides either way; now that
@@ -205,16 +220,49 @@
     // ---------------------------------------------------------------------------
     // Parse the ".osu"-derived type!beat lyric text.
     // ---------------------------------------------------------------------------
+
+    // The magic first line, up to but not including the version number, and the two versions that
+    // matter (mirrors LyricBeatmapDecoder.MAGIC / FALLBACK_FORMAT_VERSION /
+    // LITERAL_BRACKETS_FROM_VERSION, and the server's BeatmapPackageParser copies of them).
+    const FORMAT_MAGIC = 'type!beat file format v';
+
+    // A file with no readable number is read as the ORIGINAL format, so an unversioned or
+    // unparseable magic line falls back to the historical reading (brackets stripped) rather than
+    // the current one: the direction that cannot invent lyric content for a map that never had it.
+    const FALLBACK_FORMAT_VERSION = 1;
+
+    // The first format version whose [Lyrics] brackets are LITERAL lyric marks rather than
+    // backing-vocal spans to strip (backlog 255). Below it the parse strips, at or above it it
+    // preserves. No v1 write path could store a literal bracket, so a '(' in a v1 file IS a backing
+    // vocal by construction and the version decides with no ambiguity.
+    const LITERAL_BRACKETS_FROM_VERSION = 2;
+
+    // The version number off the magic line, or FALLBACK_FORMAT_VERSION when there is none to read.
+    // Only the digits immediately after the prefix are taken, so anything else on the line is
+    // ignored rather than fatal (mirrors LyricBeatmapDecoder.ParseFormatVersion).
+    function parseFormatVersion(magicLine) {
+        if (!magicLine || magicLine.indexOf(FORMAT_MAGIC) !== 0) return FALLBACK_FORMAT_VERSION;
+        let end = FORMAT_MAGIC.length;
+        while (end < magicLine.length && magicLine[end] >= '0' && magicLine[end] <= '9') end++;
+        if (end === FORMAT_MAGIC.length) return FALLBACK_FORMAT_VERSION;
+        const version = parseInt(magicLine.slice(FORMAT_MAGIC.length, end), 10);
+        return isFinite(version) ? version : FALLBACK_FORMAT_VERSION;
+    }
+
     function parseLyricOsu(text) {
         if (text && text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip BOM
         const rows = String(text).split(/\r?\n/);
         const general = {}, metadata = {};
         const lyricObjs = [];
         let section = '';
+        // The magic line is the first non-empty row, exactly as the server's parser locates it; a
+        // file that does not carry one keeps the fallback version.
+        let formatVersion = null;
 
         for (const raw of rows) {
             const t = raw.trim();
             if (t.length === 0) continue;
+            if (formatVersion === null) formatVersion = parseFormatVersion(raw.replace(/^\s+/, ''));
             if (t[0] === '[' && t[t.length - 1] === ']') { section = t.slice(1, -1); continue; }
 
             if (section === 'General' || section === 'Metadata') {
@@ -248,6 +296,7 @@
             creator: metadata['Creator'] || '',
             beatmapId: parseInt(metadata['BeatmapID'] || '0', 10) || 0,
             beatmapSetId: parseInt(metadata['BeatmapSetID'] || '0', 10) || 0,
+            formatVersion: formatVersion === null ? FALLBACK_FORMAT_VERSION : formatVersion,
             header,
             lineObjs
         };
@@ -1181,8 +1230,18 @@
         const header = parsed.header || {};
         const songEndMs = isFinite(header.song_end_ms) ? header.song_end_ms : null;
 
-        // 1) Raw lines: strip backing vocals + normalize; DROP empty-normalized lines (whole-line
-        //    backing vocals) so the previous line extends over their span (mirrors TryParseRawLine).
+        // THE VERSION GATE (backlog 255), the same one the desktop decoder applies and the same one
+        // the server's BeatmapPackageParser applies to the identical bytes: from v2 on a bracket in
+        // a stored [Lyrics] line is a literal lyric mark and stays, and below it (or with no
+        // readable magic line) it is a backing vocal and is stripped exactly as it always was.
+        // /play is served the STORED .osu blob, so this file is the browser's decoder and has to
+        // read a bracket the same way desktop does or the two score different cells.
+        const formatVersion = isFinite(parsed.formatVersion) ? parsed.formatVersion : FALLBACK_FORMAT_VERSION;
+        const stripsBackingVocals = formatVersion < LITERAL_BRACKETS_FROM_VERSION;
+
+        // 1) Raw lines: normalize (stripping backing vocals first only on a pre-v2 file); DROP
+        //    lines with nothing to type so the previous line extends over their span (mirrors
+        //    TryParseRawLine).
         const raw = [];
         for (const o of parsed.lineObjs) {
             if (o == null || typeof o.text !== 'string') continue;
@@ -1193,7 +1252,7 @@
             // every map produced before this feature, and every line whose lyrics genuinely contain
             // "&", decodes unchanged.
             const freestyle = o.freestyle === true;
-            const normalized = normalize(o.text, freestyle);
+            const normalized = normalize(stripsBackingVocals ? stripBackingVocals(o.text) : o.text, freestyle);
             // A line with nothing to TYPE is dropped, and the previous line extends over its span.
             // Tested on the DEFAULT stream, not on the normalized text, because a line that is
             // nothing but punctuation ("...") now normalizes non-empty yet still gives the player no
@@ -3641,8 +3700,11 @@
     global.TypeBeatCore = {
         // low-level
         isTypeable, isFreestyle, isCell, isPunctuation, normalize,
+        // Exported since backlog 255 took it out of normalize: it is the pre-v2 half of the format
+        // version gate, and the fidelity harness holds it against the C# copy on its own.
+        stripBackingVocals,
         defaultChar, projectDefault, toDefaultStream,
-        parseLyricOsu, buildBeatmap, syllableCharTarget,
+        parseLyricOsu, parseFormatVersion, buildBeatmap, syllableCharTarget,
         // The syllabifier and the group derivation, exported so the fidelity harnesses can hold
         // them against the game's own Syllabifier / TypingLine.Syllables word for word.
         isSyllabifiable, countSyllables, splitPoints, buildSyllables, syllableIndexOf,
@@ -3658,6 +3720,9 @@
         constants: {
             CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER,
             SHIMMER_INTERVAL_MS, PUNCTUATION, WORD_BREAK, STRETCH_RUN_LENGTH,
+            // The format version gate (backlog 255), exported so the harnesses pin the same numbers
+            // the C# decoder carries rather than transcribing them.
+            FORMAT_MAGIC, FALLBACK_FORMAT_VERSION, LITERAL_BRACKETS_FROM_VERSION,
             // The flexible caret's two tuning points (backlog 208), exported so the harnesses pin
             // the same numbers the game's own FletcherEngineTest does rather than transcribing them.
             FLETCHER_MAX_CHARS_AHEAD, FLETCHER_DRAG_GRACE_MS

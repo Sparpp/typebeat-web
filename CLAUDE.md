@@ -122,6 +122,15 @@ WireCompat is where that is provable, because it is the only project that compil
   that is true of **bit 8** too (the syllable's OPENING cell is judged from the span's START, not paid
   0 anywhere inside it), and the JS pins whose scripts press an opening cell late therefore differ
   from the game fixtures they mirror, whose engines leave that era off.
+- **The .osu FORMAT VERSION GATE exists three times** since backlog 255, and all three read the
+  magic line the same way (digits after `type!beat file format v`, fallback 1): the game's
+  `LyricBeatmapDecoder.ParseFormatVersion`, `BeatmapPackageParser.ParseFormatVersion` here, and
+  `parseFormatVersion` in `typebeat-core.js`. It decides one thing, whether a bracket in a stored
+  `[Lyrics]` line is a backing vocal to strip (v1, and anything unversioned) or a literal lyric
+  mark to keep (v2 and up, what the game's writer stamps now). `/play` is served the same stored
+  .osu blob desktop decodes, so a one-sided edit gives the two clients different cells on the same
+  leaderboards. `PunctuationParityTest` pins the JS copy against the C# one over the same fixture
+  at both versions.
 - **`docs/pp.md` is the canonical pp spec**: every constant in `PerformancePoints.cs` is pinned there
   and must not drift from it. `PerformancePoints.VERSION` is shared with the game copy, stamps
   `scores.pp_version`, and drives `Packages/PpBackfill.cs`'s reprice-at-boot sweep, so bumping it is

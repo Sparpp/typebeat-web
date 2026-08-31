@@ -362,8 +362,31 @@ public class LyricPaceTest
     }
 
     [Test]
-    public void ParseSection_BackingVocalOnlyLines_AreDropped()
+    public void ParseSection_BackingVocalOnlyLines_AreDropped_WhenStripping()
     {
+        // The PRE-V2 read of a stored map (BeatmapPackageParser passes this for a file below
+        // LiteralBracketsFromVersion): a bracket is a backing vocal, so a whole bracketed line
+        // yields nothing to type and is dropped, and the previous line extends over its span.
+        var (_, lines) = LyricTiming.ParseSection(
+        [
+            """{"version":2}""",
+            """{"text":"(ooh aah)","start_ms":0,"end_ms":500}""",
+            """{"text":"real line","start_ms":1000,"end_ms":2000}""",
+        ], stripBackingVocals: true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines, Has.Count.EqualTo(1));
+            Assert.That(lines[0].RawText, Is.EqualTo("real line"));
+        });
+    }
+
+    [Test]
+    public void ParseSection_BracketedLines_SurviveByDefault()
+    {
+        // The map-format contract since backlog 255, and the default: a bracket in a stored
+        // [Lyrics] line is a literal lyric mark, so the line is kept with its brackets and the
+        // previous line no longer swallows its span.
         var (_, lines) = LyricTiming.ParseSection(
         [
             """{"version":2}""",
@@ -373,8 +396,11 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(lines, Has.Count.EqualTo(1));
-            Assert.That(lines[0].RawText, Is.EqualTo("real line"));
+            Assert.That(lines.Select(l => l.RawText), Is.EqualTo(new[] { "(ooh aah)", "real line" }));
+
+            // Kept in the AUTHOR'S form, deleted from the stream the player actually types.
+            Assert.That(Typeability.ToDefaultStream(lines[0].RawText), Is.EqualTo("ooh aah"));
+            Assert.That(lines[0].EndTime, Is.EqualTo(1000), "the next line's start is still the hard seal");
         });
     }
 
@@ -424,8 +450,15 @@ public class LyricPaceTest
             // (they used to vanish here), while chars still outside the set vanish outright.
             Assert.That(Typeability.Normalize("a*b/c"), Is.EqualTo("a*b/c"));
             Assert.That(Typeability.Normalize("50% of $9 x^2 <hey>"), Is.EqualTo("50% of $9 x^2 <hey>"));
-            Assert.That(Typeability.Normalize("a#b@c_d~e"), Is.EqualTo("abcde"));
+            // '_' and '~' joined the set in backlog 255, so they survive here now; what is left
+            // outside it still vanishes outright.
+            Assert.That(Typeability.Normalize("a#b@c_d~e"), Is.EqualTo("abc_d~e"));
+            Assert.That(Typeability.Normalize("a#b@c`d"), Is.EqualTo("abcd"));
 
+            // Brackets are supported marks too, and Normalize has never been the thing that
+            // removed a backing vocal: that is StripBackingVocals, which still exists and is still
+            // exactly what the pre-v2 read of a stored map composes in front of it.
+            Assert.That(Typeability.Normalize("hey (oh) now"), Is.EqualTo("hey (oh) now"));
             Assert.That(Typeability.StripBackingVocals("go (ooh) now [aah]"), Is.EqualTo("go  now "));
             Assert.That(Typeability.Normalize(Typeability.StripBackingVocals("(all backing)")), Is.Empty);
         });

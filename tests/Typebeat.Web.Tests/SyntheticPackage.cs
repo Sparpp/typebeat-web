@@ -2,17 +2,29 @@ using System.IO.Compression;
 using System.Text;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using Typebeat.Web.Packages;
 
 namespace Typebeat.Web.Tests;
 
 /// <summary>
-/// Builders for synthetic "type!beat file format v1" beatmap packages, modeled line-for-line on
+/// Builders for synthetic "type!beat file format" beatmap packages, modeled line-for-line on
 /// the game's writer (typebeat-osu typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricOsuFormat.cs:69-135)
 /// plus the BeatmapID/BeatmapSetID lines the submission flow injects (LegacyBeatmapEncoder.cs:147-148
 /// shape; LyricOsuFormat itself does not emit ids yet).
+///
+/// <para>The magic line carries <see cref="CurrentFormatVersion"/> by default, because that is what
+/// the game's writer stamps now (LyricOsuFormat.FORMAT_VERSION) and therefore what an upload looks
+/// like today. A test that wants the LEGACY reading of a bracket passes
+/// <c>formatVersion: BeatmapPackageParser.FallbackFormatVersion</c>.</para>
 /// </summary>
 public static class SyntheticPackage
 {
+    /// <summary>
+    /// The format version <see cref="OsuText"/> stamps unless told otherwise: what the game's
+    /// writer emits today, so the default fixture is a CURRENT upload and its brackets are literal.
+    /// </summary>
+    public const int CurrentFormatVersion = BeatmapPackageParser.LiteralBracketsFromVersion;
+
     /// <summary>
     /// The [Lyrics] payload of the game's own pace regression test
     /// (LyricPaceStatisticsTest.ComputesBoundaryWindowPace): "ab cd", 2 words, 5 typeable cells,
@@ -43,11 +55,12 @@ public static class SyntheticPackage
         double previewTime = -1,
         string? background = "bg.jpg",
         string? video = null,
-        string lyrics = PaceRegressionLyrics)
+        string lyrics = PaceRegressionLyrics,
+        int formatVersion = CurrentFormatVersion)
     {
         var sb = new StringBuilder();
 
-        sb.Append("type!beat file format v1\n");
+        sb.Append($"{BeatmapPackageParser.OsuMagic}{formatVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)}\n");
         sb.Append('\n');
         sb.Append("[General]\n");
         sb.Append($"AudioFilename: {audioFilename}\n");

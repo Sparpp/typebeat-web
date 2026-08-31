@@ -12,18 +12,70 @@ namespace Typebeat.Web.Packages;
 /// typebeat.Game/Database/BeatmapExporter.cs) into content-addressed
 /// <see cref="PackageFileEntry"/>s plus a <see cref="ParsedDifficulty"/> per .osu.
 ///
-/// The .osu dialect is the "type!beat file format v1" written by LyricOsuFormat.GenerateOsu
+/// The .osu dialect is the "type!beat file format" written by LyricOsuFormat.GenerateOsu
 /// (typebeat-osu typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricOsuFormat.cs:69-135): classic
 /// .osu sections plus a [Lyrics] section of compact JSON objects. Section parsing here is the
 /// minimal server-side subset, only the keys the database stores.
+///
+/// This is the server's LyricBeatmapDecoder, so it also owns that decoder's FORMAT VERSION gate
+/// (see <see cref="ParseFormatVersion"/>): the number on the magic line decides whether a bracket
+/// in a stored [Lyrics] line is a backing vocal to strip or a literal lyric mark to keep.
 ///
 /// Structural problems (bad zip, undecodable .osu, hostile entry names) throw
 /// <see cref="PackageValidationException"/>; semantic invariants live in <see cref="PackageValidator"/>.
 /// </summary>
 public static class BeatmapPackageParser
 {
-    /// <summary>First line of every difficulty file (LyricBeatmapDecoder.MAGIC).</summary>
+    /// <summary>
+    /// First line of every difficulty file, up to but not including the version number
+    /// (LyricBeatmapDecoder.MAGIC). Matched as a PREFIX, so every version of the format is
+    /// accepted here and the number after it is read by <see cref="ParseFormatVersion"/>.
+    /// </summary>
     public const string OsuMagic = "type!beat file format v";
+
+    /// <summary>
+    /// The version a file with no readable number is treated as (LyricBeatmapDecoder
+    /// .FALLBACK_FORMAT_VERSION). It is the ORIGINAL format, so an unparseable magic line falls
+    /// back to the historical reading (brackets stripped) rather than to the current one, which is
+    /// the direction that cannot invent lyric content for a map that never had it.
+    /// </summary>
+    public const int FallbackFormatVersion = 1;
+
+    /// <summary>
+    /// The first format version whose [Lyrics] brackets are LITERAL lyric marks rather than
+    /// backing-vocal spans to strip, backlog 255 (LyricBeatmapDecoder.LITERAL_BRACKETS_FROM_VERSION,
+    /// and the version LyricOsuFormat.FORMAT_VERSION now stamps). Below it the parse strips, at or
+    /// above it the parse preserves.
+    ///
+    /// <para>The version is a sound discriminator rather than a guess: no write path that produced
+    /// a v1 file could store a literal bracket, because every one of them ran
+    /// <see cref="Lyrics.Typeability.StripBackingVocals"/> before the text was written, so a '('
+    /// in a v1 file IS a backing vocal by construction. Every map stored before backlog 255 is v1,
+    /// so every existing row re-parses byte-identically.</para>
+    /// </summary>
+    public const int LiteralBracketsFromVersion = 2;
+
+    /// <summary>
+    /// The version number off the magic line, or <see cref="FallbackFormatVersion"/> when there is
+    /// none to read. Only the digits immediately after <see cref="OsuMagic"/> are taken, so
+    /// trailing whitespace or anything else on the line is ignored rather than fatal.
+    /// (LyricBeatmapDecoder.ParseFormatVersion, mirrored char for char.)
+    /// </summary>
+    public static int ParseFormatVersion(string magicLine)
+    {
+        if (string.IsNullOrEmpty(magicLine) || !magicLine.StartsWith(OsuMagic, StringComparison.Ordinal))
+            return FallbackFormatVersion;
+
+        int end = OsuMagic.Length;
+
+        while (end < magicLine.Length && char.IsAsciiDigit(magicLine[end]))
+            end++;
+
+        return int.TryParse(magicLine.AsSpan(OsuMagic.Length, end - OsuMagic.Length), NumberStyles.None,
+            CultureInfo.InvariantCulture, out int version)
+            ? version
+            : FallbackFormatVersion;
+    }
 
     /// <summary>osu-server-beatmap-submission caps archive path names at 500 (beatmapset_version_file).</summary>
     public const int MaxFilenameLength = 500;
@@ -147,6 +199,12 @@ public static class BeatmapPackageParser
         if (first == lines.Length || !lines[first].TrimStart().StartsWith(OsuMagic, StringComparison.Ordinal))
             throw new PackageValidationException($"\"{filename}\" is not a type!beat beatmap (missing \"{OsuMagic}\" header).");
 
+        // THE VERSION GATE (backlog 255), read off the magic line exactly as the game's decoder
+        // reads it. From v2 on a bracket in a stored [Lyrics] line is a literal lyric mark and
+        // stays; a v1 file predates that and its brackets are backing vocals, stripped as they
+        // always were.
+        int formatVersion = ParseFormatVersion(lines[first].TrimStart());
+
         string audioFilename = string.Empty;
         double previewTime = -1;
         string title = string.Empty, titleUnicode = string.Empty;
@@ -252,7 +310,8 @@ public static class BeatmapPackageParser
             }
         }
 
-        var (_, parsedLines) = LyricTiming.ParseSection(lyricLines);
+        var (_, parsedLines) = LyricTiming.ParseSection(lyricLines,
+            stripBackingVocals: formatVersion < LiteralBracketsFromVersion);
 
         return new ParsedDifficulty
         {

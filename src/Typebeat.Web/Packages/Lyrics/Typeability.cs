@@ -35,10 +35,17 @@ public static class Typeability
     public static bool IsFreestyle(char c) => c == FREESTYLE_MARKER;
 
     /// <summary>
-    /// The punctuation type!beat supports inside an authored lyric line, defined ONCE here:
-    /// comma, period, apostrophe, hyphen, question mark, exclamation mark, semicolon, colon,
-    /// round brackets, square brackets, straight double quote, dollar sign, percent sign, caret,
-    /// asterisk, angle brackets, forward slash.
+    /// The punctuation type!beat supports inside an authored lyric line, defined ONCE here,
+    /// twenty-two marks: comma, period, apostrophe, hyphen, question mark, exclamation mark,
+    /// semicolon, colon, round brackets, square brackets, straight double quote, (added by backlog
+    /// 202) dollar sign, percent sign, caret, asterisk, angle brackets, forward slash, and (added
+    /// by backlog 255) underscore and tilde.
+    ///
+    /// <para>The round and square brackets are ORDINARY marks here (backlog 255): the strip that
+    /// used to delete bracketed backing-vocal spans before this ran now applies only to a file
+    /// being INGESTED, and to the [Lyrics] of a map whose format version predates the change (see
+    /// <see cref="StripBackingVocals"/> and <c>BeatmapPackageParser.ParseFormatVersion</c>), so a
+    /// v2 map's stored line carries a literal '(' exactly as it carries a comma.</para>
     ///
     /// <para>A map stores the AUTHOR'S form: punctuated and case-sensitive. What the player types
     /// (and sees) is derived from it: verbatim under the client's LITERATE mod, and through
@@ -48,9 +55,13 @@ public static class Typeability
     /// <see cref="WORD_BREAK"/> is deleted by <see cref="DefaultChar"/>, so a char that used to be
     /// dropped by <see cref="Normalize"/> as unsupported is now kept in the author's line and
     /// dropped one step later, leaving the DEFAULT stream (which every stat is measured on)
-    /// byte-identical.</para>
+    /// byte-identical. The one shape that is not identical is a newly supported mark standing as
+    /// its OWN token, which keeps both authored spaces instead of collapsing them; that reaches a
+    /// stored row only through the <see cref="LyricPace"/> sweep, and <c>LyricPace.VERSION</c> is
+    /// deliberately not bumped for it (see the note there, which already carries backlog 202's
+    /// identical case).</para>
     /// </summary>
-    public const string PUNCTUATION = ",.'-?!;:()[]\"$%^*<>/";
+    public const string PUNCTUATION = ",.'-?!;:()[]\"$%^*<>/_~";
 
     /// <summary>
     /// The one supported mark that reads as a WORD BREAK rather than as decoration: without
@@ -73,6 +84,21 @@ public static class Typeability
     /// Removes bracketed backing-vocal spans, "(...)" and "[...]", the player never types.
     /// Unclosed brackets strip to end of string. Call BEFORE <see cref="Normalize"/>.
     /// (LyricBeatmap.cs:53-81.)
+    ///
+    /// <para>V1-MAP-ONLY since backlog 255, which is this side's reading of the game's
+    /// IMPORT-ONLY. Owner decision: a bracket is a literal lyric mark in the EDITOR and in the MAP
+    /// FORMAT, and only the ingest of a foreign lyrics file still reads "(oh oh)" as a backing
+    /// vocal to throw away. The game keeps the two surviving callers on the import side of that
+    /// seam (LrcParser, TimingJsonLoader.TryParse and the .osu writer's own sweep in
+    /// LyricMapImporter.StripBackingVocalLines), so an imported map is bracket-free before it is
+    /// ever stored and nothing an upload carries needs stripping.</para>
+    ///
+    /// <para>The server never sees an import, only a STORED map, so its one caller is the FORMAT
+    /// VERSION GATE in <c>BeatmapPackageParser</c>: a file below
+    /// <c>BeatmapPackageParser.LiteralBracketsFromVersion</c> is stripped here exactly as it always
+    /// was (no v1 write path could store a literal bracket, so a '(' in a v1 file IS a backing
+    /// vocal by construction), and a v2 file keeps its brackets. Every map stored before backlog
+    /// 255 is v1, so not one existing row parses differently.</para>
     /// </summary>
     public static string StripBackingVocals(string raw)
     {

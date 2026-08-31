@@ -1,6 +1,6 @@
 // typebeat-web seed tool.
 //
-// Takes a lyriclab-produced .osz (a zip of one or more "type!beat file format v1" .osu files
+// Takes a lyriclab-produced .osz (a zip of one or more "type!beat file format" .osu files
 // plus audio and an optional background), registers the set + its beatmaps in the typebeat-web
 // database, injects the assigned online IDs into each .osu's [Metadata] section, hashes the
 // FINAL injected bytes, and writes a finalized .osz. Importing that .osz in the game client
