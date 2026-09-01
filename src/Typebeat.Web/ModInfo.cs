@@ -47,14 +47,20 @@ public static class ModInfo
         "FC" => "Fletcher",
         "FT" => "Fletcher (retired)",
         "MU" => "Muted",
-        // The mods of backlog 226 / 229 / 231. Names mirror the game's own (TypeBeatModConductor,
-        // TypeBeatModRecite, TypeBeatModDyslexia), so a badge reads as the mod select does.
-        "CT" => "Conductor",
+        // RE and DX are two of the trio from backlog 226 / 229 / 231. Names mirror the game's own
+        // (TypeBeatModRecite, TypeBeatModDyslexia), so a badge reads as the mod select does. The
+        // trio's third member, Conductor, is no longer a current mod: see the retirement note below.
         "RE" => "Recite",
         "DX" => "Dyslexia",
-        // Backlog 256. Mirrors the game's TypeBeatModPuppeteer: a clock-slaving follower where the
-        // song strictly follows the typing and timing judgement is forgiven outright.
-        "PT" => "Puppeteer",
+        // Backlog 256 introduced Puppeteer, a clock-slaving follower where the song strictly follows
+        // the typing and timing judgement is forgiven outright. Backlog 257 retired the older
+        // rate-follower mod of backlog 226 / 229 / 231 and moved the "Conductor" name onto Puppeteer,
+        // on the FT "Fletcher (retired)" precedent above: "PT" is the live mod (still
+        // TypeBeatModPuppeteer, still acronym "PT", now labelled Conductor), "CT" is the retired one
+        // (TypeBeatModConductor, keeps its class name and acronym so a stored CT row's icon says what
+        // that row was played under rather than what the name means today).
+        "PT" => "Conductor",
+        "CT" => "Conductor (retired)",
         _ => acronym ?? string.Empty,
     };
 }

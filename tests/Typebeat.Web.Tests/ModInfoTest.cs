@@ -130,15 +130,16 @@ public class ModInfoTest
     }
 
     /// <summary>
-    /// Conductor (backlog 226), Dyslexia (backlog 231) and Puppeteer (backlog 256), the unranked
-    /// newcomers. All are NAMED, because an unnamed acronym renders as the bare acronym and a
-    /// leaderboard row would say "CT" with no tooltip at all.
+    /// Dyslexia (backlog 231) and Puppeteer (backlog 256), the unranked follower/conversion pair
+    /// still current, plus the older Conductor rate-follower (backlog 226) that backlog 257 retired
+    /// and moved off its own name. All are NAMED, because an unnamed acronym renders as the bare
+    /// acronym and a leaderboard row would say "CT" with no tooltip at all.
     ///
     /// <para>All three stay on the neutral "other" badge, and that is a decision rather than an
-    /// oversight. Conductor and Puppeteer are both ModType.Fun, the category Wind Up, Wind Down and
-    /// Muted are in, none of which this table has ever coloured: a rate the player steers is not a
-    /// difficulty adjustment in either direction, and Puppeteer takes that a step further by
-    /// forgiving timing judgement outright rather than merely steering it. Dyslexia is
+    /// oversight. The retired Conductor and Puppeteer are both ModType.Fun, the category Wind Up,
+    /// Wind Down and Muted are in, none of which this table has ever coloured: a rate the player
+    /// steers is not a difficulty adjustment in either direction, and Puppeteer takes that a step
+    /// further by forgiving timing judgement outright rather than merely steering it. Dyslexia is
     /// ModType.Conversion, the bucket the four colours here do not cover (the Fletcher pair above
     /// records the same reasoning), and it is not "automation" either: Mashing earns violet by
     /// making every key the right key, while Dyslexia still makes the player type every character of
@@ -149,12 +150,19 @@ public class ModInfoTest
     {
         Assert.Multiple(() =>
         {
-            Assert.That(ModInfo.Name("CT"), Is.EqualTo("Conductor"));
-            Assert.That(ModInfo.Name("ct"), Is.EqualTo("Conductor"));
+            // Backlog 257: "PT" (still TypeBeatModPuppeteer) is now the live mod named Conductor,
+            // and "CT" (still TypeBeatModConductor) is the retired one, on the FT "Fletcher
+            // (retired)" precedent above.
+            Assert.That(ModInfo.Name("PT"), Is.EqualTo("Conductor"));
+            Assert.That(ModInfo.Name("pt"), Is.EqualTo("Conductor"));
+            Assert.That(ModInfo.Name("CT"), Is.EqualTo("Conductor (retired)"));
+            Assert.That(ModInfo.Name("ct"), Is.EqualTo("Conductor (retired)"));
+
+            Assert.That(ModInfo.Name("CT"), Is.Not.EqualTo(ModInfo.Name("PT")),
+                "a CT row and a PT row were played under opposite rules and must not share a tooltip");
+
             Assert.That(ModInfo.Name("DX"), Is.EqualTo("Dyslexia"));
             Assert.That(ModInfo.Name("dx"), Is.EqualTo("Dyslexia"));
-            Assert.That(ModInfo.Name("PT"), Is.EqualTo("Puppeteer"));
-            Assert.That(ModInfo.Name("pt"), Is.EqualTo("Puppeteer"));
 
             Assert.That(ModInfo.CategoryClass("CT"), Is.EqualTo("other"));
             Assert.That(ModInfo.CategoryClass("ct"), Is.EqualTo("other"));
@@ -163,8 +171,8 @@ public class ModInfoTest
             Assert.That(ModInfo.CategoryClass("PT"), Is.EqualTo("other"));
             Assert.That(ModInfo.CategoryClass("pt"), Is.EqualTo("other"));
 
-            // Conductor and Puppeteer sit with the ramps they share a mod type with, not with the
-            // rate mods they share a knob with.
+            // The retired Conductor and Puppeteer sit with the ramps they share a mod type with, not
+            // with the rate mods they share a knob with.
             Assert.That(ModInfo.CategoryClass("CT"), Is.EqualTo(ModInfo.CategoryClass("WU")));
             Assert.That(ModInfo.CategoryClass("CT"), Is.Not.EqualTo(ModInfo.CategoryClass("DT")));
             Assert.That(ModInfo.CategoryClass("PT"), Is.EqualTo(ModInfo.CategoryClass("WU")));
