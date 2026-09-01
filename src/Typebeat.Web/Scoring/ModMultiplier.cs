@@ -187,18 +187,22 @@ public static class ModMultiplier
             "FC" => 1.02,
             "FT" => 0.98,
             "MU" => 1.0,
-            // Conductor (backlog 226) and Dyslexia (backlog 231), both priced at exactly the 1.0
-            // their game-side multiplier is. Conductor is not a ModRateAdjust and never touches the
-            // score multiplier or the window scale (it steers the TRACK, chasing the player's pace),
-            // and Dyslexia is simply unlisted in the game's calculator, which is 1.0x by
-            // construction. Both are ALWAYS UNRANKED (they are in ScoreEndpoints' deny list), so a
-            // ceiling here can never rescue or ruin a board placement; it is anti-laundering only,
-            // and 1.0 is the honest bound. Left unlisted they would each be allowed
-            // UNKNOWN_MOD_MULTIPLIER (2.0x), i.e. an unranked play could still be stored at double
-            // the total it earned, which is the profile total and the play history lying rather than
-            // a leaderboard doing it. Listing them can only ever tighten.
+            // Conductor (backlog 226), Dyslexia (backlog 231) and Puppeteer (backlog 256), all
+            // priced at exactly the 1.0 their game-side multiplier is. Conductor is not a
+            // ModRateAdjust and never touches the score multiplier or the window scale (it steers
+            // the TRACK, chasing the player's pace), Dyslexia is simply unlisted in the game's
+            // calculator, which is 1.0x by construction, and Puppeteer is the same shape as
+            // Conductor only stricter (the track strictly follows the typing and timing judgement
+            // is forgiven outright), so it is likewise unlisted there. All three are ALWAYS UNRANKED
+            // (they are in ScoreEndpoints' deny list), so a ceiling here can never rescue or ruin a
+            // board placement; it is anti-laundering only, and 1.0 is the honest bound. Left
+            // unlisted they would each be allowed UNKNOWN_MOD_MULTIPLIER (2.0x), i.e. an unranked
+            // play could still be stored at double the total it earned, which is the profile total
+            // and the play history lying rather than a leaderboard doing it. Listing them can only
+            // ever tighten.
             "CT" => 1.0,
             "DX" => 1.0,
+            "PT" => 1.0,
             "RX" => 0.1,
             // Rate ramps: the endpoints are not persisted, so price them at the most any ramp could
             // pay. 0.8·For(min) + 0.2·For(max) <= For(max) <= For(2.00), the curve being monotonic.

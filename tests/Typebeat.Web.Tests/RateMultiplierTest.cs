@@ -124,16 +124,22 @@ public class RateMultiplierTest
             // exclusive in the client, so that comparison no longer applies to any reachable stack.
             Assert.That(ModMultiplier.For("RE", null), Is.EqualTo(1.07));
             Assert.That(ModMultiplier.For("re", null), Is.EqualTo(1.07));
-            // Conductor (backlog 226) and Dyslexia (backlog 231): exactly 1.0, matching their
-            // game-side multiplier. Conductor is not a ModRateAdjust and never touches the score
-            // multiplier, and Dyslexia is unlisted in the calculator, which is 1.0x by construction.
+            // Conductor (backlog 226), Dyslexia (backlog 231) and Puppeteer (backlog 256): exactly
+            // 1.0, matching their game-side multiplier. Conductor is not a ModRateAdjust and never
+            // touches the score multiplier, Dyslexia is unlisted in the calculator, which is 1.0x by
+            // construction, and Puppeteer (the strict-following mod whose timing is forgiven) is
+            // likewise unlisted there.
             Assert.That(ModMultiplier.For("CT", null), Is.EqualTo(1.0));
             Assert.That(ModMultiplier.For("ct", null), Is.EqualTo(1.0));
             Assert.That(ModMultiplier.For("DX", null), Is.EqualTo(1.0));
             Assert.That(ModMultiplier.For("dx", null), Is.EqualTo(1.0));
+            Assert.That(ModMultiplier.For("PT", null), Is.EqualTo(1.0));
+            Assert.That(ModMultiplier.For("pt", null), Is.EqualTo(1.0));
             // Conductor rides the rate but is NOT a rate mod on the wire: it stores no
-            // speed_change, and a submitted one must not price it up the curve.
+            // speed_change, and a submitted one must not price it up the curve. Puppeteer is the
+            // same shape, and gets the same check.
             Assert.That(ModMultiplier.For("CT", 2.00), Is.EqualTo(1.0));
+            Assert.That(ModMultiplier.For("PT", 2.00), Is.EqualTo(1.0));
             Assert.That(ModMultiplier.For("RX", null), Is.EqualTo(0.1));
 
             // Rate mods ride the curve; no rate submitted means the client default.
@@ -270,14 +276,14 @@ public class RateMultiplierTest
             Is.EqualTo(ModMultiplier.STACK_CAP),
             "the RH + RE stack is unreachable, and the backstop is what would catch it");
 
-        // Adding the neutral / trimming ranked mods cannot beat it, and neither can the two unranked
+        // Adding the neutral / trimming ranked mods cannot beat it, and neither can the three unranked
         // 1.0x newcomers (which no ranked row can carry anyway, since the deny list unranks them).
         Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FC", null), ("RE", null), ("SD", null), ("MU", null), ("GK", null)]),
             Is.EqualTo(fattest).Within(1e-9),
             "a 1.0x mod cannot move the ceiling, which is why adding Gatekeeper reprices nothing");
-        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FC", null), ("RE", null), ("CT", null), ("DX", null)]),
+        Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FC", null), ("RE", null), ("CT", null), ("DX", null), ("PT", null)]),
             Is.EqualTo(fattest).Within(1e-9),
-            "Conductor and Dyslexia are priced at exactly 1.0, so they fatten nothing");
+            "Conductor, Dyslexia and Puppeteer are priced at exactly 1.0, so they fatten nothing");
         Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("FT", null)]),
             Is.LessThan(fattest));
         Assert.That(ModMultiplier.MaxForStack([("DT", 2.00), ("FL", null), ("LT", null), ("HR", null), ("NF", null)]),
@@ -311,20 +317,20 @@ public class RateMultiplierTest
     }
 
     /// <summary>
-    /// The three mods of backlog 226 / 229 / 231 all have to be priced here, and all three tighten
+    /// The mods of backlog 226 / 229 / 231 / 256 all have to be priced here, and all four tighten
     /// rather than loosen, because an unlisted acronym is allowed
     /// <see cref="ModMultiplier.UNKNOWN_MOD_MULTIPLIER"/> (a 2.0x ceiling) and none of them can
     /// justify anything like that.
     ///
     /// <para>RECITE is the ranked one: its honest total is 1.07x its base, so an unlisted RE would
     /// leave a laundering slot nearly twice as wide as the mod earns, the same argument Hard Rock
-    /// and Fletcher carry above. CONDUCTOR and DYSLEXIA are always unranked (the deny list in
-    /// ScoreEndpoints), so their ceiling can never decide a board placement; it decides what an
-    /// unranked row is allowed to claim on a profile total and in play history, and 1.0 is the
-    /// honest bound because both are 1.0x in the game's calculator.</para>
+    /// and Fletcher carry above. CONDUCTOR, DYSLEXIA and PUPPETEER are always unranked (the deny
+    /// list in ScoreEndpoints), so their ceiling can never decide a board placement; it decides what
+    /// an unranked row is allowed to claim on a profile total and in play history, and 1.0 is the
+    /// honest bound because all three are 1.0x in the game's calculator.</para>
     /// </summary>
     [Test]
-    public void ModMultiplier_TightensTheCeilingForTheThreeNewMods()
+    public void ModMultiplier_TightensTheCeilingForTheFourNewMods()
     {
         Assert.Multiple(() =>
         {
@@ -332,23 +338,27 @@ public class RateMultiplierTest
                 "listing Recite must tighten the ceiling, never loosen it");
             Assert.That(ModMultiplier.For("CT", null), Is.LessThan(ModMultiplier.UNKNOWN_MOD_MULTIPLIER));
             Assert.That(ModMultiplier.For("DX", null), Is.LessThan(ModMultiplier.UNKNOWN_MOD_MULTIPLIER));
+            Assert.That(ModMultiplier.For("PT", null), Is.LessThan(ModMultiplier.UNKNOWN_MOD_MULTIPLIER));
 
-            // A 1,000,000-base play may submit 1,070,000 with Recite and 1,000,000 with either of
-            // the unranked pair; the unknown-mod allowance would have let 2,000,000 through in all
-            // three cases.
+            // A 1,000,000-base play may submit 1,070,000 with Recite and 1,000,000 with any of the
+            // unranked trio; the unknown-mod allowance would have let 2,000,000 through in all four
+            // cases.
             Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("RE", null)])),
                 Is.EqualTo(1_070_001));
             Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("CT", null)])),
                 Is.EqualTo(1_000_001));
             Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("DX", null)])),
                 Is.EqualTo(1_000_001));
+            Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("PT", null)])),
+                Is.EqualTo(1_000_001));
             Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.UNKNOWN_MOD_MULTIPLIER),
                 Is.EqualTo(2_000_001));
 
-            // Conductor bends the playback rate, and none of that reaches the price: a Conductor
-            // play is bounded exactly like the no-mod play it scores as.
+            // Conductor and Puppeteer both bend the playback rate, and none of that reaches the
+            // price: either play is bounded exactly like the no-mod play it scores as.
             Assert.That(ModMultiplier.MaxForStack([("CT", null)]), Is.EqualTo(ModMultiplier.MaxForStack([])));
             Assert.That(ModMultiplier.MaxForStack([("DX", null)]), Is.EqualTo(ModMultiplier.MaxForStack([])));
+            Assert.That(ModMultiplier.MaxForStack([("PT", null)]), Is.EqualTo(ModMultiplier.MaxForStack([])));
         });
     }
 

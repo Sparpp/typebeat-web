@@ -12,12 +12,12 @@ public static class ModInfo
     public static string CategoryClass(string? acronym) => (acronym ?? string.Empty).ToUpperInvariant() switch
     {
         // Recite ("RE") joins the increase list because the game types it ModType.DifficultyIncrease,
-        // beside the Flashlight it is modelled on. Conductor ("CT") and Dyslexia ("DX") deliberately
-        // do NOT get an arm: CT is a ModType.Fun rate follower and sits with the Wind Up / Wind Down
-        // ramps, which this table has always left on the neutral badge, and DX is ModType.Conversion,
-        // which is the bucket the four colours here do not have (see the Fletcher note below). There
-        // is no assist family to put DX in: Mashing is "automation" because it plays the map for you,
-        // and Dyslexia does not.
+        // beside the Flashlight it is modelled on. Conductor ("CT"), Dyslexia ("DX") and Puppeteer
+        // ("PT") deliberately do NOT get an arm: CT and PT are both ModType.Fun rate followers and
+        // sit with the Wind Up / Wind Down ramps, which this table has always left on the neutral
+        // badge, and DX is ModType.Conversion, which is the bucket the four colours here do not have
+        // (see the Fletcher note below). There is no assist family to put DX in: Mashing is
+        // "automation" because it plays the map for you, and Dyslexia does not.
         "DT" or "NC" or "FL" or "SD" or "LT" or "GK" or "RH" or "HR" or "RE" => "increase",
         "HT" or "NF" or "EZ" => "reduction",
         "RX" => "automation",
@@ -47,11 +47,14 @@ public static class ModInfo
         "FC" => "Fletcher",
         "FT" => "Fletcher (retired)",
         "MU" => "Muted",
-        // The three mods of backlog 226 / 229 / 231. Names mirror the game's own (TypeBeatModConductor,
+        // The mods of backlog 226 / 229 / 231. Names mirror the game's own (TypeBeatModConductor,
         // TypeBeatModRecite, TypeBeatModDyslexia), so a badge reads as the mod select does.
         "CT" => "Conductor",
         "RE" => "Recite",
         "DX" => "Dyslexia",
+        // Backlog 256. Mirrors the game's TypeBeatModPuppeteer: a clock-slaving follower where the
+        // song strictly follows the typing and timing judgement is forgiven outright.
+        "PT" => "Puppeteer",
         _ => acronym ?? string.Empty,
     };
 }
