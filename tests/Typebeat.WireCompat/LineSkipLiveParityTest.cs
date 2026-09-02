@@ -96,6 +96,7 @@ public class LineSkipLiveParityTest
         FlexibleLineSnap = true,
         BoundedRush = true,
         BackDatedSealBreak = true,
+        LosslessSkipReclaim = true,
     };
 
     /// <summary>The cell states as the JS mirror spells them (its own vocabulary, one for one).</summary>

@@ -266,6 +266,32 @@ public class WordInputParityTest
             Steps = [Key('x', a_t), Key('b', b_t), Key(' ', gap1_t), Key(' ', 2200), Churn(), CtrlA()],
         },
 
+        // BACKLOG 260's input-layer half: a word given up WHOLE anchors on the gap in FRONT of it,
+        // not on its own head. The collapse is a run of ordinary backspaces, and one of those steps
+        // TRANSPARENTLY over abandoned cells to erase the nearest cell the player typed, so it cannot
+        // stop on the head of a word nobody touched: anchored there, the erase ran on to the gap and
+        // ended up BEHIND its own selection, where the first letter of the retype landed on an
+        // already-judged gap as a manufactured typo. One keystroke of correction making a mistake of
+        // its own.
+        //
+        // The whole gesture is composed here rather than stopping at the anchor, because the anchor
+        // is only wrong in the sense that its own collapse disagrees with it: the load-bearing
+        // reading is the caret AFTER the erases being the anchor the player was shown, and the line
+        // then typing out with no mistype at all.
+        new Scenario
+        {
+            Name = "aWhollyAbandonedWordAnchorsOnTheGapBeforeIt",
+            Osu = AbCdEf(),
+            SpaceSkipsWord = true,
+            Steps =
+            [
+                Key('a', a_t), Key('b', b_t), Key(' ', gap1_t),
+                Key(' ', 2100), // the space at the HEAD of "cd": the whole word goes, untouched
+                Churn(), CtrlA(),
+                Key(' ', gap1_t), Key('c', c_t), Key('d', d_t), Key(' ', gap2_t), Key('e', e_t), Key('f', f_t),
+            ],
+        },
+
         // A LINE-COMPLETE caret, and the composed consume from there: the selection reaches back over
         // the last word, collapses, and the letter lands on the anchor cell.
         new Scenario
@@ -512,6 +538,7 @@ public class WordInputParityTest
             StrictSpaces = true,
             SpaceSkipsWord = scenario.SpaceSkipsWord,
             BackDatedSealBreak = true,
+            LosslessSkipReclaim = true,
         };
 
         engine.Update(scenario.StartTime);
@@ -851,6 +878,20 @@ public class WordInputParityTest
             Assert.That(probes["anEarlierTypoOutranksALaterAbandonedWord"][^2].States[0], Is.EqualTo("wrong"), "the typo in \"ab\"");
             Assert.That(probes["anEarlierTypoOutranksALaterAbandonedWord"][^2].States[3], Is.EqualTo("abandoned"), "the later word skip's abandoned \"c\"");
             Assert.That(probes["anEarlierTypoOutranksALaterAbandonedWord"][^1].SelectionStart, Is.Zero, "the earlier typo's word wins, not the later abandoned one");
+
+            // Backlog 260: the anchor is widened to a cell the collapse can actually land on.
+            var whollyAbandoned = probes["aWhollyAbandonedWordAnchorsOnTheGapBeforeIt"];
+            Assert.That(whollyAbandoned[4].States.Skip(3).Take(2), Is.All.EqualTo("abandoned"), "the space gave up the whole of \"cd\"");
+            Assert.That(whollyAbandoned[4].CaretIndex, Is.EqualTo(6), "and the space was judged on the gap after it");
+            Assert.That(whollyAbandoned[4].RetypeSelectionAnchor, Is.EqualTo(2),
+                "the gap in FRONT of the word, not its own head: nobody typed the head, so no backspace can stop there");
+            Assert.That(whollyAbandoned[6].SelectionStart, Is.EqualTo(2), "so that is what Ctrl+A offered");
+            Assert.That(whollyAbandoned[6].SelectionEnd, Is.EqualTo(6));
+            Assert.That(whollyAbandoned[7].Erases, Is.EqualTo(2), "the gap the skip landed on, then ONE press over both abandoned cells onto the gap in front of them");
+            Assert.That(whollyAbandoned[7].CaretIndex, Is.EqualTo(3), "the collapse landed on the anchor and the space then typed there");
+            Assert.That(whollyAbandoned[7].States[2], Is.EqualTo("correct"), "on the gap, not behind it");
+            Assert.That(whollyAbandoned[^1].States, Is.All.EqualTo("correct"), "and the line typed out clean");
+            Assert.That(whollyAbandoned[^1].Mistypes, Is.Zero, "the correction manufactured no mistake of its own");
 
             Assert.That(probes["aLineCompleteCaretStillAnchorsAndConsumes"][^4].CaretIndex, Is.EqualTo(8), "line complete");
             Assert.That(probes["aLineCompleteCaretStillAnchorsAndConsumes"][^3].SelectionStart, Is.EqualTo(6), "the head of \"ef\"");

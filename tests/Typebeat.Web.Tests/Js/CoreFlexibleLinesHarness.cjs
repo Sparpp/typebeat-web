@@ -1121,4 +1121,217 @@ const out = {};
     };
 }
 
+// THE LOSSLESS SKIP RECLAIM (backlog 260). ONE LAW: a word given up by accident and then typed out
+// in full costs the run NOTHING. A player finished a map with all 920 of its cells typed, 0 misses
+// and a max combo of 919, and the increment missing was the WORD GAP the skipping space was itself
+// judged on. It was being dropped three different ways, all of them present in this file:
+//
+//   A  the RUSH CAP charged the space for the word it abandoned. skipCurrentWord walks the caret
+//      past the whole word BEFORE the same press is judged on the gap it parked on, and the cap
+//      measures the caret POSITIONALLY, so the abandoned tail was spent out of a budget the player
+//      never touched. Over the cap the gap earned no combo, and silently: the skip's own break had
+//      already zeroed the run, so nothing was announced and no claim discarded, while the gap still
+//      resolved correct, which makes every later retype of it inert.
+//
+//   B  the PASSIVE CLAIM arm (backlog 243) dropped the run it stood on. Its call site has already
+//      run breakRun, so a passive break that keeps the older claim and discards its own brokenStreak
+//      throws those increments away with nothing left to redeem them. It FOLDS them in instead.
+//
+//   C  the CTRL+A ANCHOR was one cell short of its own collapse. A word given up WHOLE has no typed
+//      cell for the mass backspace to stop on, so the erase ran through to the gap in FRONT of the
+//      word and ended up behind the anchor the player was shown. That half is pinned by the gesture
+//      harness (CoreWordInputHarness.cjs) rather than here, but the collapse is composed into these
+//      scripts as the plain backspaces it is made of, so the caret it lands on is a reading below.
+//
+// This section belongs beside the seal one because A is only REACHABLE under the flexible caret: the
+// rush cap does not exist without it, and a caret pinned to the playhead can never be twelve
+// countable characters ahead of it.
+//
+// EMITTED WITH THEIR SCRIPTS, like the three sections above: the cross-repo arm
+// (Typebeat.WireCompat.LosslessSkipReclaimLiveParityTest) replays these steps through the game's own
+// TypingEngine with LosslessSkipReclaim set, and the same keystrokes through TypeBeatReplayScorer
+// for the SUBMITTED account.
+{
+    // THE REPORTED SHAPE'S FIXTURE: a short word, a LONG one, and two short ones, dense enough that
+    // the long word alone is far more than FLETCHER_MAX_CHARS_AHEAD. Nineteen cells, sixteen of them
+    // countable (the three gaps are not):
+    //   0:a = 1000, 1:b = 1100, 2:' ' = 1200, 3:c = 1200 .. 12:l = 2100, 13:' ' = 2200,
+    //   14:m = 2200, 15:n = 2300, 16:' ' = 2400, 17:o = 2400, 18:p = 2500.
+    // The loader gives the line a window of [1000, 5600) with no seal grace, so nothing seals until
+    // well past the last keystroke.
+    const LONG_WORD = osu([
+        {
+            text: 'ab cdefghijkl mn op', start_ms: 1000, end_ms: 2600,
+            words: [word('ab', 1000, 1200), word('cdefghijkl', 1200, 2200), word('mn', 2200, 2400), word('op', 2400, 2600)]
+        }
+    ], 60000);
+
+    const cellsOf = engine => engine.lines[0].cells;
+
+    /** Type cells [from, to) in order, each dead on its own target. */
+    function typeSteps(engine, from, to) {
+        const steps = [];
+
+        for (let i = from; i < to; i++) steps.push({ op: 'key', c: cellsOf(engine)[i].expected, t: cellsOf(engine)[i].target });
+
+        return steps;
+    }
+
+    const reference = new TB.TypingEngine(build(LONG_WORD));
+    const cellCount = cellsOf(reference).length;
+
+    // The CLEAN RUN, which is the number both corrected runs have to reach: nineteen cells, nineteen
+    // increments, nothing given up at all.
+    const cleanSteps = [{ op: 'update', t: 1000 }, ...typeSteps(reference, 0, cellCount), { op: 'update', t: 6000 }];
+
+    const scenarios = {
+        // DEFECT A, end to end and through the real gesture composition. "ab" and its gap are typed
+        // on target (a run of 3, and the caret is one countable char BEHIND the playhead, so the
+        // player is not rushing at all), then a space lands at the head of the ten-character word.
+        //
+        // The skip walks the caret to the gap at 13, twelve countable characters along, and the SAME
+        // press is then judged there: measured at the caret it moved to, that is 12 - 3 = 9 past a
+        // cap of 5 and the gap earns nothing. Measured where the press was actually made it is
+        // 2 - 3 = -1, and the gap is credited like any other.
+        //
+        // The Ctrl+A collapse then follows as the two plain backspaces it is composed of (the erase
+        // steps transparently over the abandoned cells and stops on the gap it can land on, which is
+        // the anchor the widened query now offers), and the line is typed out. Live, the run ends on
+        // exactly the clean run's max combo; under the old rule it ends one short, which is the
+        // 919 of 920 the player reported.
+        headOfWordSkip: {
+            steps: [
+                { op: 'update', t: 1000 },
+                ...typeSteps(reference, 0, 3),
+
+                // The accidental space, at the head of "cdefghijkl".
+                { op: 'key', c: ' ', t: 1200 },
+
+                // The collapse, back to the gap in front of the word that was given up whole.
+                { op: 'backspace', t: 1200 },
+                { op: 'backspace', t: 1200 },
+
+                ...typeSteps(reference, 2, cellCount),
+                { op: 'update', t: 6000 },
+            ]
+        },
+
+        // DEFECT B, on the shape that reaches it: a DOUBLE SPACE. The first space skips
+        // "cdefghijkl" and credits the gap at 13, which is the claim's OWN press (backlog 243), so
+        // the second space breaks a run of exactly 1 and is PASSIVE: it keeps the deeper claim. The
+        // run it spent was that gap increment, and the cells that earned it are resolved, so
+        // dropping it loses it for good. Folded into the claim instead, the redemption is 4 rather
+        // than 3 and the corrected run reaches the clean run's 19.
+        //
+        // Both spaces land at 1600 rather than at 1200 so that defect A is not what this scenario
+        // measures: by 1600 the playhead has passed seven countable characters, so the second space
+        // is measured at 12 - 7 = 5, exactly ON the cap and inside it. At 1200 it would be refused by
+        // the cap on its own merits (the caret really is out past the bound before that press) and
+        // the fold would have nothing to fold.
+        doubleSpace: {
+            steps: [
+                { op: 'update', t: 1000 },
+                ...typeSteps(reference, 0, 3),
+
+                { op: 'update', t: 1600 },
+                { op: 'key', c: ' ', t: 1600 }, // gives up "cdefghijkl", credits the gap at 13
+                { op: 'key', c: ' ', t: 1600 }, // gives up "mn", breaks that one increment passively
+
+                { op: 'backspace', t: 1600 },
+                { op: 'backspace', t: 1600 },
+                { op: 'backspace', t: 1600 },
+
+                ...typeSteps(reference, 2, cellCount),
+                { op: 'update', t: 6000 },
+            ]
+        },
+
+        // THE REFERENCE both of the above are read against, so "the skip cost the corrected run
+        // nothing" is a comparison rather than a literal.
+        cleanRun: { steps: cleanSteps },
+    };
+
+    const runs = {};
+
+    for (const name of Object.keys(scenarios)) {
+        const engine = new TB.TypingEngine(build(LONG_WORD));
+        const readings = [];
+
+        let breaks = 0;
+        let restored = [];
+        engine.onComboBroken = () => { breaks++; };
+        engine.onComboRestored = (n) => { restored.push(n); };
+
+        for (const step of scenarios[name].steps) {
+            let handled = null;
+
+            if (step.op === 'update') engine.update(step.t);
+            else if (step.op === 'backspace') handled = engine.processBackspace();
+            else handled = engine.processKey(step.c, step.t);
+
+            readings.push({
+                op: step.op,
+                t: step.t,
+                c: step.c === undefined ? null : step.c,
+                handled: handled,
+                at: at(engine),
+                states: engine.lines.map(l => l.cells.map(c => c.state)),
+                combo: engine.combo,
+                maxCombo: engine.maxCombo,
+                comboBreaks: breaks,
+                comboRestores: restored.slice(),
+                mistypes: engine.mistypes,
+                finished: engine.finished,
+                // The CARET'S LEAD, which is the quantity defect A was measuring in the wrong place.
+                charsAheadOfPlayhead: engine.charsAheadOfPlayhead(step.t),
+                // The widened Ctrl+A answer (defect C): read on every step so the anchor the player
+                // is offered and the caret their own collapse lands on can be compared to each other
+                // as well as across the two clients.
+                retypeSelectionAnchor: engine.retypeSelectionAnchor,
+                // The ledger, one { line, cell } per unit of combo. runPositions.length === combo is
+                // the invariant the fold has to preserve: streak and positions move together.
+                runPositions: engine.runPositions.map(p => ({ line: p.line, cell: p.cell })),
+                processorCombo: engine.processor.combo,
+                processorHighestCombo: engine.processor.highestCombo
+            });
+        }
+
+        const score = TB.computeScore(engine);
+
+        runs[name] = {
+            script: scenarios[name].steps,
+            readings: readings,
+            combo: engine.combo,
+            maxCombo: engine.maxCombo,
+            comboBreaks: breaks,
+            comboRestores: restored,
+            mistypes: engine.mistypes,
+            submitted: {
+                maxCombo: score.maxCombo,
+                totalScore: score.totalScore,
+                accuracy: score.accuracy,
+                completion: score.completion,
+                rank: score.rank,
+                statistics: score.statistics,
+                maximumStatistics: score.maximumStatistics
+            }
+        };
+    }
+
+    out.losslessSkipReclaim = {
+        // Pinned before the readings are, so a fixture that drifted cannot be read as an engine
+        // divergence by the cross-repo arm.
+        maxCharsAhead: TB.constants.FLETCHER_MAX_CHARS_AHEAD,
+        fixture: {
+            lines: reference.lines.map(l => ({
+                activationTime: l.activationTime,
+                endTime: l.endTime,
+                sealGraceMs: l.sealGraceMs,
+                cells: l.cells.map(c => ({ expected: c.expected, target: c.target }))
+            }))
+        },
+        runs: runs
+    };
+}
+
 process.stdout.write(JSON.stringify(out));

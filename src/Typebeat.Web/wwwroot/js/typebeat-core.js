@@ -2376,10 +2376,18 @@
         // stream: every countable cell in the lines before the active one, plus the countable cells
         // behind the caret within it. 0 when no line is active.
         get caretCountablePosition() {
+            return this.countablePositionAt(this.caretIndex);
+        }
+
+        // TypingEngine.countablePositionAt. caretCountablePosition for an ARBITRARY caret index on
+        // the active line. Split out for backlog 260, where the rush cap has to measure a skipping
+        // space against the caret as it stood BEFORE the skip moved it: the property above is
+        // exactly this at the live caret.
+        countablePositionAt(index) {
             if (this.activeLineIndex < 0) return 0;
 
             const prefix = this.countablePrefix[this.activeLineIndex];
-            const at = Math.min(Math.max(this.caretIndex, 0), prefix.length - 1);
+            const at = Math.min(Math.max(index, 0), prefix.length - 1);
 
             return this.countableBase[this.activeLineIndex] + prefix[at];
         }
@@ -2395,8 +2403,13 @@
         // FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead? Measured on the caret
         // position AFTER the press, so with a cap of 5 the fifth char ahead is still fine and the
         // sixth is not. A non-countable cell (a space) spends no budget.
-        rushesPastCap(cell, time) {
-            const after = this.caretCountablePosition + (isCountable(cell) ? 1 : 0);
+        //
+        // `caretIndexForCap` is normally the live caret, and is the caret as it stood BEFORE a word
+        // skip for the one press that can be judged past a caret it moved itself (backlog 260).
+        // Without it the abandoned tail was spent out of the player's budget by the very press that
+        // gave it up, which is the one way the sentence above about a space could be false.
+        rushesPastCap(cell, time, caretIndexForCap) {
+            const after = this.countablePositionAt(caretIndexForCap) + (isCountable(cell) ? 1 : 0);
 
             return after - this.playheadCountablePosition(time) > FLETCHER_MAX_CHARS_AHEAD;
         }
@@ -2662,11 +2675,24 @@
 
             if (claim !== null && brokenStreak <= claim.ownPressCredit) {
                 // Passive: the claim stands where it is, with the credit this break just spent
-                // taken off it. It keeps its OWN positions, exactly as it keeps its own streak:
-                // this break was passive, so it took nothing and records nothing.
+                // taken off it.
+                //
+                // BACKLOG 260: it took nothing the player earned, but it still SPENT a run, so that
+                // run FOLDS INTO the claim it left standing rather than being dropped. The call site
+                // has already run breakRun, so anything the claim does not take is gone for good,
+                // and the cells that earned it are resolved, so no retype can earn it back. Streak
+                // and positions move together (positions.length === streak is the ledger's
+                // invariant, see runPositions), and the broken ones append in run order because the
+                // claim's own increments were earned before them. A NEW array either way: the broken
+                // list is the old runPositions reference and must never be pushed onto.
+                const positions = brokenStreak > 0 ? claim.positions.concat(brokenPositions) : claim.positions;
+
                 this.restorable = {
-                    lineIndex: claim.lineIndex, cellIndex: claim.cellIndex, streak: claim.streak, ownPressCredit: 0,
-                    positions: claim.positions
+                    lineIndex: claim.lineIndex, cellIndex: claim.cellIndex, streak: claim.streak + brokenStreak,
+                    // The credit is still zeroed: the exemption is worth exactly one break (backlog
+                    // 243), and folding the run in does not re-arm it.
+                    ownPressCredit: 0,
+                    positions: positions
                 };
                 return;
             }
@@ -2685,9 +2711,12 @@
         // Called from the one arm such a press can reach: a word skip's space, falling through to be
         // judged on the word gap the skip parked the caret on. Keyed on the press having ACTUALLY
         // credited combo rather than on the skip having happened, so a skip whose space earned
-        // nothing (an inert retype of an already judged gap, the rush cap refusing a caret out past
-        // its bound, or a word abandoned all the way to the end of a line, where there is no gap for
-        // the space to land on at all) records no credit and behaves exactly as backlog 176 left it.
+        // nothing (an inert retype of an already judged gap, the rush cap refusing a caret that was
+        // ALREADY out past its bound before the skip, or a word abandoned all the way to the end of
+        // a line, where there is no gap for the space to land on at all) records no credit and
+        // behaves exactly as backlog 176 left it. The word this press gave up no longer counts
+        // against that bound (backlog 260), which is why the cap refusing here is now a statement
+        // about the player's own lead.
         creditTheClaimsOwnPress() {
             if (this.restorable !== null) this.restorable.ownPressCredit = 1;
         }
@@ -3104,6 +3133,11 @@
             // increments the combo.
             let skipLeftAClaimOutstanding = false;
 
+            // Backlog 260: the caret as it stood BEFORE a word skip moved it, which is what the rush
+            // cap measures this press against. Negative when this press skipped nothing, which is
+            // every press but one and leaves the cap exactly where it was.
+            let caretBeforeSkip = -1;
+
             // Mashing mod: any key is the right key; judge it as the caret cell's expected char.
             // A FREESTYLE cell is exempt: it already accepts any key, and rewriting c here would
             // stamp the authoring marker over the char the player actually pressed (the one thing
@@ -3123,6 +3157,7 @@
             // rewrite on purpose: mashing has already turned the press into the expected char, so
             // this is unreachable under it.
             if (this.spaceSkipsWord && c === ' ' && cell.expected !== ' ') {
+                caretBeforeSkip = this.caretIndex;
                 skipLeftAClaimOutstanding = this.skipCurrentWord();
 
                 if (this.caretIndex >= line.cells.length) {
@@ -3439,7 +3474,14 @@
 
                 // THE RUSH CAP (backlog 208), evaluated BEFORE the caret moves: does this press put
                 // the caret more than FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead?
-                const rushedPastCap = this.fletcherEnabled && this.rushesPastCap(cell, time);
+                //
+                // "Before the caret moves" is true of every press but one, and that one is the whole
+                // of backlog 260: a space that skipped a word is judged on the gap AFTER the skip has
+                // already walked the caret over the abandoned tail, so the measurement has to be
+                // taken at the caret the press started from or the player is charged for characters
+                // they gave up rather than typed.
+                const caretForCap = caretBeforeSkip >= 0 ? caretBeforeSkip : this.caretIndex;
+                const rushedPastCap = this.fletcherEnabled && this.rushesPastCap(cell, time, caretForCap);
 
                 if (bp > 0) {
                     // Multiplier reads combo BEFORE the increment; capped at COMBO_CAP => up to 2.0x.
@@ -3713,6 +3755,28 @@
             let anchor = mistake;
 
             while (anchor > 0 && !isWordGap(cells[anchor - 1])) anchor--;
+
+            // ...and then back to a cell the mass backspace can actually LAND on (backlog 260). The
+            // collapse is a run of ordinary processBackspace calls, and one of those steps
+            // TRANSPARENTLY over abandoned and auto-skipped cells to erase the nearest cell the
+            // player typed: it cannot stop on a cell nobody typed. So when the whole word was given
+            // up (a space struck at its head), the word's own first cell is not a stopping place, the
+            // run carries on to the gap in front of it, and a selection anchored on the word head was
+            // one cell short of where its own collapse ends up. The caret then sat BEHIND the anchor
+            // on a gap that had already been judged, and the next letter of the retype landed on it
+            // as a fresh typo: one keystroke of correction manufacturing a mistake of its own.
+            //
+            // Widening the SELECTION rather than bounding the backspace keeps this in the input
+            // layer with no era of its own, and costs the player one keystroke and nothing else: a
+            // gap that was already judged retypes inert (see firstCorrectDelta), so no count, no
+            // score and no combo moves, and the highlight now shows exactly the run the collapse
+            // will clear.
+            //
+            // The same walk the backspace makes, so the two cannot disagree: over the transparent
+            // states only, stopping at the line's head. A word gap is never in either state
+            // (skipCurrentWord scans strictly between the gaps), so this steps back at most out of
+            // the abandoned word and onto the gap before it.
+            while (anchor > 0 && (cells[anchor].state === 'abandoned' || cells[anchor].state === 'autoskip')) anchor--;
 
             return anchor;
         }

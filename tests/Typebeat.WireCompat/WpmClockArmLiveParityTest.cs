@@ -99,6 +99,7 @@ public class WpmClockArmLiveParityTest
         FlexibleLineSnap = true,
         BoundedRush = true,
         BackDatedSealBreak = true,
+        LosslessSkipReclaim = true,
     };
 
     #endregion

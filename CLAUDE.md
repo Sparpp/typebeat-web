@@ -126,7 +126,17 @@ WireCompat is where that is provable, because it is the only project that compil
   run earned past them survives instead of being wiped), which is also why every parity test that
   builds a bare `TypingEngine` for the live arm has to set `BackDatedSealBreak = true`:
   `SealComboBreakLiveParityTest` is the pin, and it is the only one whose scripts reach the shape
-  (the generated sweep never rolls a seal a rebuilt run outlives).
+  (the generated sweep never rolls a seal a rebuilt run outlives). Since backlog 260 **bit 11**
+  joins them (an accidental word skip that is then typed out in full costs the run NOTHING: the
+  rush cap measures a skipping space at the caret it started from rather than the one the skip
+  moved it to, and a passive claim break folds its own spent run into the claim it leaves
+  standing), so every such parity fixture also sets `LosslessSkipReclaim = true`.
+  `LosslessSkipReclaimLiveParityTest` is the pin. Its third defect, the Ctrl+A anchor being widened
+  past a wholly abandoned word so the mass backspace cannot overshoot its own selection, carries no
+  era at all (it is input layer) and is pinned in `WordInputParityTest`, which is where the whole
+  gesture composition lives. A harness that SPIES on an engine method must forward every argument
+  (`CoreFuzzHarness.cjs` wraps `rushesPastCap`): a dropped one reads out of the prefix table as NaN
+  and silently answers "no rush" for the entire sweep.
 - **The .osu FORMAT VERSION GATE exists three times** since backlog 255, and all three read the
   magic line the same way (digits after `type!beat file format v`, fallback 1): the game's
   `LyricBeatmapDecoder.ParseFormatVersion`, `BeatmapPackageParser.ParseFormatVersion` here, and

@@ -622,8 +622,12 @@ function play(name, keys, spaceSkipsWord) {
 
     const rushesPastCap = engine.rushesPastCap.bind(engine);
 
-    engine.rushesPastCap = function (cell, time) {
-        const rushed = rushesPastCap(cell, time);
+    // EVERY argument forwarded, not just the two this counter reads: backlog 260 gave the cap a third
+    // one (the caret as it stood BEFORE a word skip moved it), and a spy that dropped it would hand
+    // the real method an undefined index, which reads out of the prefix table as NaN and silently
+    // answers "no rush" for the whole sweep.
+    engine.rushesPastCap = function (...args) {
+        const rushed = rushesPastCap(...args);
         if (rushed) rushCapBreaks++;
         return rushed;
     };
