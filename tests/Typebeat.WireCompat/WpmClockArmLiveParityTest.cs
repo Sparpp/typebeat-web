@@ -98,6 +98,7 @@ public class WpmClockArmLiveParityTest
         FletcherEnabled = true,
         FlexibleLineSnap = true,
         BoundedRush = true,
+        BackDatedSealBreak = true,
     };
 
     #endregion

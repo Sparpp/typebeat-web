@@ -121,7 +121,12 @@ WireCompat is where that is provable, because it is the only project that compil
   `TypeBeatReplayScorer` follows the frame and defaults to the classic point rule. Since backlog 247
   that is true of **bit 8** too (the syllable's OPENING cell is judged from the span's START, not paid
   0 anywhere inside it), and the JS pins whose scripts press an opening cell late therefore differ
-  from the game fixtures they mirror, whose engines leave that era off.
+  from the game fixtures they mirror, whose engines leave that era off. Since backlog 259 it is true
+  of **bit 10** as well (a sealed line's combo break is BACK-DATED to the cells it misses, so the
+  run earned past them survives instead of being wiped), which is also why every parity test that
+  builds a bare `TypingEngine` for the live arm has to set `BackDatedSealBreak = true`:
+  `SealComboBreakLiveParityTest` is the pin, and it is the only one whose scripts reach the shape
+  (the generated sweep never rolls a seal a rebuilt run outlives).
 - **The .osu FORMAT VERSION GATE exists three times** since backlog 255, and all three read the
   magic line the same way (digits after `type!beat file format v`, fallback 1): the game's
   `LyricBeatmapDecoder.ParseFormatVersion`, `BeatmapPackageParser.ParseFormatVersion` here, and

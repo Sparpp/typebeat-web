@@ -1599,7 +1599,11 @@
     //      The typo's result is a HIT, so it would extend the run the player rebuilt after the
     //      keypress that broke it; it is applied COMBO-NEUTRAL instead
     //      (TypeBeatPlayfield.onLineSealed -> TypeBeatScoreProcessor.MarkComboNeutral, which is
-    //      markComboNeutral and the branch in applyResult below). It is a hit for accuracy and for
+    //      markComboNeutral and the branch in applyResult below). Since backlog 259 EVERY seal
+    //      result is marked, the misses included, and the seal's one combo break is mirrored by
+    //      hand at the same seam instead (breakComboTo), because that break is BACK-DATED to the
+    //      cells the line missed and a Miss result would land it on the run the player holds now.
+    //      It is a hit for accuracy and for
     //      the note count, and NOT for completion (see computeScore), which is backlog 126: a cell
     //      typed wrong is not a cell typed, and it costs rank exactly as a miss does.
     //   6. TypeBeatPlayfield.onWordAbandoned -> scoreProcessor.Combo.Value = 0, and
@@ -1673,8 +1677,11 @@
             //
             // TWO results are ever marked, and they move combo in OPPOSITE directions (backlog
             // 167): the unfixed typo's 'good', a hit that must not extend the run, and the SEAL
-            // MISS of a cell a word skip abandoned and nobody came back for, a break that must not
-            // be taken a second time.
+            // MISS of a cell nobody came back for, a break that must not be taken a second time.
+            // Backlog 259 widened the second one from the cells a word skip ABANDONED to EVERY
+            // miss a line seals with: the seal's one break is back-dated to the cells it misses
+            // and mirrored by hand at the same seam (breakComboTo below), so no Miss result may
+            // carry it a second time and wipe a run the player built past those cells.
             const neutral = this.comboNeutral.has(cell);
 
             if (!neutral) {
@@ -1705,11 +1712,12 @@
         }
 
         // TypeBeatScoreProcessor.MarkComboNeutral: the result about to be applied to this cell must
-        // leave combo alone, because the cell's break was taken by hand at the keypress that spoiled
-        // it or at the word skip that abandoned it. Marked at the seam that APPLIES it (the seal),
-        // never at the keypress or the skip, which is what keeps a CORRECTED typo and a RECLAIMED
-        // skip working: the retype resolves the cell with an ordinary combo-increasing hit that
-        // never consults this set.
+        // leave combo alone, because the cell's break was taken by hand elsewhere: at the keypress
+        // that spoiled it, at the word skip that abandoned it, or, since backlog 259, at the seal
+        // itself (breakComboTo above, which takes the whole seal's one back-dated break). Marked at
+        // the seam that APPLIES it (the seal), never at the keypress or the skip, which is what
+        // keeps a CORRECTED typo and a RECLAIMED skip working: the retype resolves the cell with an
+        // ordinary combo-increasing hit that never consults this set.
         markComboNeutral(cell) {
             this.comboNeutral.add(cell);
         }
@@ -1720,6 +1728,27 @@
         // Combo), which is exactly why a break mirrored here cannot inflate max_combo.
         breakCombo() {
             this.combo = 0;
+        }
+
+        // TypeBeatPlayfield.onLineSealed's hand-mirrored seal break (backlog 259):
+        // `scoreProcessor.Combo.Value = Math.Min(scoreProcessor.Combo.Value, SurvivingCombo)`.
+        //
+        // The seal's one break used to ride on the Miss results its cells took, which is exactly
+        // the place a back-dated break must not land: a Miss carries a break to the combo it
+        // FINDS, and the whole point of back-dating is that the break belongs to an earlier one.
+        // So every seal miss is applied combo-neutral now (see markComboNeutral) and the break is
+        // written here by hand instead, from the run the engine is left holding.
+        //
+        // A MIN, not an assignment: this is a BREAK, so it may only ever take combo away. The two
+        // accounts hold increments for the very same cells, so the two values agree; the floor is
+        // there because a break that CREDITED combo would be a defect in whichever account
+        // happened to be behind, not a rule anyone wants.
+        //
+        // highestCombo is deliberately untouched, exactly as it is by breakCombo above: it
+        // records a run the player really did hold, and a break dated in the past is not a claim
+        // that the run never happened.
+        breakComboTo(surviving) {
+            if (surviving < this.combo) this.combo = surviving;
         }
 
         // TypeBeatScoreProcessor.RestoreCombo (backlog 140): put back the streak a corrected typo's
@@ -1836,6 +1865,22 @@
             // they are separate accounts with separate rules and only one of them is submitted.
             this.combo = 0;
             this.maxCombo = 0;
+            // TypingEngine.runPositions (backlog 259): WHERE each increment of the current run was
+            // earned, one { line, cell } per unit of `combo`, in the order they were credited. The
+            // ledger the back-dated seal break needs and the only thing that can answer "how much
+            // of this run was earned past the cells this line is about to miss": combo is a single
+            // integer, and a break that keeps part of a run has to know which part.
+            //
+            // `runPositions.length === combo` is the invariant, and it holds by construction
+            // because the four ways combo moves all move this with it: an increment appends
+            // (creditCombo), a break clears (breakRun, which hands the list to a redeemable break's
+            // snapshot), a restore puts the snapshot's own entries back where they were earned, and
+            // the back-dated seal drops exactly the entries it destroys (backDateBreakTo).
+            //
+            // Bounded by the map: a run is at most one increment per cell, since a cell judged
+            // correct once is inert on every retype, so nothing here grows with the length of the
+            // play.
+            this.runPositions = [];
             this.score = 0;
             this.totalKeypresses = 0;
             this.correctKeypresses = 0;
@@ -1994,8 +2039,8 @@
             countableTargets.sort((a, b) => a - b);
             this.countableTargets = countableTargets;
             // The one outstanding combo snapshot (TypingEngine.restorable, backlog 140, widened by
-            // 167 and again by 243): { lineIndex, cellIndex, streak, ownPressCredit }, the cell a
-            // wrong keypress spoiled or a word
+            // 167, again by 243 and again by 259): { lineIndex, cellIndex, streak, ownPressCredit,
+            // positions }, the cell a wrong keypress spoiled or a word
             // skip abandoned and the streak that break cost, or null when there is nothing to go
             // back for. Set by that keypress or skip (through snapshotRedeemableBreak, the one
             // write site the two share), redeemed by typing that same cell correctly, and discarded
@@ -2016,6 +2061,11 @@
             // at zero costs nothing, so it leaves an outstanding claim alone rather than replacing
             // it with an empty one, and correcting the older cell still resumes the run (see
             // snapshotRedeemableBreak).
+            //
+            // `positions` is backlog 259: the run this break took, cell for cell (see
+            // runPositions), so redeeming the claim puts back not just HOW MUCH combo the break
+            // cost but WHERE it was earned. Its length is always the `streak` beside it, and a
+            // later seal on an earlier line back-dates against those very entries.
             //
             // `ownPressCredit` is backlog 243: how much of the CURRENT run was credited by the
             // claim's OWN press rather than typed after it. It is 1 for a claim a word skip took,
@@ -2410,7 +2460,21 @@
             // alongside it for LineSealResult.MissedCells, which this mirror raises no event for.
             let unforeseen = 0;
 
-            for (const c of line.cells) {
+            // The LAST of them, in cell order: the position this line's break is back-dated to
+            // (backlog 259, see runPositions). Meaningless while unforeseen is 0, which is exactly
+            // when nothing reads it.
+            let lastUnforeseenCell = -1;
+
+            // PASS ONE, the C#'s own seal loop (TypingEngine.Update): resolve the STATES and count,
+            // and nothing else. The results are a second pass now, because the seal's one combo
+            // break has to be taken between the two (backlog 259): back-dated, that break is
+            // mirrored into the submitted account by hand, and it must land before any of this
+            // seal's results are weighted by the combo it leaves. The C# gets that ordering from
+            // its event shape (the break is taken in the seal loop, the results arrive later in
+            // TypeBeatPlayfield.onLineSealed); this file has to write it out.
+            for (let i = 0; i < line.cells.length; i++) {
+                const c = line.cells[i];
+
                 // The engine's own miss count (TypingEngine.Update's seal loop), which drives the
                 // HUD combo below and nothing that is submitted. A cell the line ran out of time on,
                 // and ONLY that (backlog 124, reversing the predicate backlog 109 widened): a cell
@@ -2423,54 +2487,72 @@
                 // player skipped its word and never reclaimed it, so it turned out to be a character
                 // they never typed. It counts and resolves exactly as an untyped cell does, and the
                 // ONE thing it does not do is break combo, for precisely the reason a still-wrong
-                // cell does not: that break was taken at the skip.
+                // cell does not: that break was taken at the skip. It is excluded from the
+                // back-dating pivot for the same reason: the break it is entitled to was taken then.
                 const phantom = c.state === 'abandoned';
 
                 if (c.typeable && (c.state === 'untyped' || phantom)) {
                     c.state = 'missed';
                     c.judgeType = 'Miss';
-                    if (!phantom) unforeseen++;
-                }
 
-                // DrawableTypeBeatHitObject.ApplySealResults: EVERY still-unjudged nested char
-                // drawable of the line takes its result at seal time, in cell order, and the loop
-                // skips cells that already carry one. `judged` is deliberately not the state test
-                // above: the two come apart for a cell typed correctly and then BACKSPACED, which is
-                // 'untyped' again and so is counted a miss for display, while its drawable keeps the
-                // Great it already took.
-                //
-                // The result is a MISS for a cell nobody typed and a 'good' (the uncorrected-typo
-                // key, TypeBeatResultMapping.UNFIXED_TYPO) for one left holding a wrong character,
-                // and the typo is marked COMBO-NEUTRAL immediately before it is applied, exactly as
-                // TypeBeatPlayfield.onLineSealed does it.
-                if (c.typeable && !c.judged) {
-                    if (c.state === 'wrong') {
-                        this.processor.markComboNeutral(c);
-                        this.applyCellResult(c, 'good');
-                    } else {
-                        // TypeBeatPlayfield.onAbandonSealed, which the C# raises immediately BEFORE
-                        // the seal results land, for exactly the reason this line sits immediately
-                        // before the call below: the ledger has to be written before the result
-                        // consults it. A cell a word skip gave up already paid its break at the
-                        // skip, so the Miss it is about to take must leave combo where it finds it,
-                        // or it would wipe a run the player rebuilt through the rest of the line
-                        // while the engine's own combo kept it.
-                        if (phantom) this.processor.markComboNeutral(c);
-                        this.applyCellResult(c, 'miss');
+                    if (!phantom) {
+                        unforeseen++;
+                        lastUnforeseenCell = i;
                     }
                 }
             }
+
             if (unforeseen > 0) {
-                this.combo = 0;
+                // AT MOST ONE combo break per sealed line, no matter how many cells were missed, and
+                // BACK-DATED to the last of them (backlog 259, TypingEngine.BackDatedSealBreak): the
+                // break belongs to the cells the line ran out of time on, so it destroys the run as
+                // it stood AT the last of them and leaves every increment earned strictly past it
+                // standing. A line's misses only exist at its SEAL, which under the flexible caret
+                // lands up to FLETCHER_DRAG_GRACE_MS after the song left the line, by which time the
+                // player is on the next line rebuilding, so the wipe was taking a second break for a
+                // fumble that had already cost one.
+                //
+                // UNCONDITIONAL here, where the C# reads the era flag its replays carry: the browser
+                // only ever plays live (see `restorable`), and the live client sets the flag for
+                // every mod stack, because when a break lands is not a window, an input model or a
+                // caret and no mod has an opinion about it.
+                const surviving = this.backDateBreakTo(idx, lastUnforeseenCell);
 
                 // A real break, so it owns the streak (backlog 140). Distinct from the line-scoped
                 // drop below, and since backlog 208 the two come apart HERE as well as in the C#:
                 // the flexible caret can already be on a LATER line, holding a snapshot this break
                 // has just cost it.
+                //
+                // Unconditional even when part of the run survived: a claim's streak was earned
+                // EARLIER than the run this break cuts back, so redeeming it later could only put
+                // back combo the break was entitled to take.
                 this.discardRestorableStreak();
+
+                // TypeBeatPlayfield.onLineSealed's hand-mirrored break, BEFORE the results below so
+                // that every one of them, the seal's own unfixed typos included, is weighted by the
+                // combo the break left. The Miss results no longer carry this break at all (they are
+                // all combo-neutral now), which is what stops it landing a second time on a run the
+                // player built past the missed cells.
+                this.processor.breakComboTo(surviving);
+
                 if (this.onComboBroken) this.onComboBroken();
             }
 
+            // PASS TWO. DrawableTypeBeatHitObject.ApplySealResults: EVERY still-unjudged nested char
+            // drawable of the line takes its result at seal time, in cell order, and the loop skips
+            // cells that already carry one. `judged` is deliberately not the state test above: the
+            // two come apart for a cell typed correctly and then BACKSPACED, which is 'untyped'
+            // again and so is counted a miss for display, while its drawable keeps the Great it
+            // already took.
+            //
+            // The result is a MISS for a cell nobody typed and a 'good' (the uncorrected-typo key,
+            // TypeBeatResultMapping.UNFIXED_TYPO) for one left holding a wrong character, and BOTH
+            // are marked COMBO-NEUTRAL immediately before they are applied, exactly as
+            // TypeBeatPlayfield.onLineSealed does it. Every seal miss since backlog 259, where only
+            // the typos and the word skip's abandoned cells were marked before: the seal's break has
+            // moved off the results and onto the hand-mirror above, and a Miss carries a break to
+            // exactly one place, the combo it FINDS when it lands, which is the run the player holds
+            // NOW rather than the one the back-dated break was entitled to cut.
             // A sealed line's cells can never be typed again, so a snapshot left on this one is
             // unredeemable whether or not the seal broke anything. Load-bearing since backlog 208:
             // the flexible caret DOES run ahead of the seal, so a run that finishes a line early
@@ -2478,6 +2560,13 @@
             // sealing behind it. Dropping it keeps the state truthful rather than relying on the
             // caret never going back.
             if (this.restorable !== null && this.restorable.lineIndex === idx) this.restorable = null;
+
+            for (const c of line.cells) {
+                if (!c.typeable || c.judged) continue;
+
+                this.processor.markComboNeutral(c);
+                this.applyCellResult(c, c.state === 'wrong' ? 'good' : 'miss');
+            }
         }
 
         // TypingEngine.discardRestorableStreak. A combo break that is nobody's fixable typo just
@@ -2488,6 +2577,48 @@
         // either kind that cost a streak of its own takes the claim there, so it needs no case here.
         discardRestorableStreak() {
             this.restorable = null;
+        }
+
+        // TypingEngine.creditCombo. Credit one combo increment, earned on the cell the press LANDED
+        // on (not on the caret, which is not the same thing under the C#'s AnyOrderWithinWord; the
+        // browser has no Dyslexia mod, so here the two coincide and the landed cell is still what is
+        // recorded, because that is what the ledger means). The one place `combo` grows by a
+        // keypress, so runPositions cannot fall behind it.
+        creditCombo(cellIndex) {
+            this.combo++;
+            if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+            this.runPositions.push({ line: this.activeLineIndex, cell: cellIndex });
+        }
+
+        // TypingEngine.breakRun. Zero the run and hand back the positions that composed it: a
+        // REDEEMABLE break puts them on its snapshot (snapshotRedeemableBreak) so a redemption can
+        // restore them, and every other break simply drops them. The one place a break empties the
+        // ledger, which is what keeps runPositions.length === combo true through all of them.
+        breakRun() {
+            const broken = this.runPositions;
+
+            this.runPositions = [];
+            this.combo = 0;
+
+            return broken;
+        }
+
+        // TypingEngine.backDateBreakTo (backlog 259). A break dated at (lineIndex, cellIndex) rather
+        // than at now: every increment earned AT OR BEFORE that cell is destroyed and every
+        // increment earned strictly past it survives, in place. Returns the surviving run, which is
+        // also `combo`'s new value.
+        //
+        // maxCombo is deliberately not touched: it records a run the player really did hold, and
+        // this break is dated in the past, not a claim that the run never happened.
+        backDateBreakTo(lineIndex, cellIndex) {
+            const survivors = this.runPositions.filter(
+                p => p.line > lineIndex || (p.line === lineIndex && p.cell > cellIndex)
+            );
+
+            this.runPositions = survivors;
+            this.combo = survivors.length;
+
+            return survivors.length;
         }
 
         // TypingEngine.snapshotRedeemableBreak. Take the snapshot for a REDEEMABLE break (a wrong
@@ -2521,19 +2652,29 @@
         // decides whether the ceiling is the claim's credit or a flat zero. The browser only ever
         // plays live, so all three are pinned to their live arms, the ceiling is just the credit,
         // and the condition stands unguarded.
-        snapshotRedeemableBreak(cellIndex, brokenStreak) {
+        // `brokenPositions` is the run this break just took, cell for cell (breakRun, see
+        // runPositions), so a redemption puts back not just HOW MUCH combo the break cost but WHERE
+        // it was earned. Without it a restored streak would have to be dated at the cell that
+        // redeemed it, and a later seal on an earlier line would then keep increments its misses are
+        // entitled to destroy. Its length is always the `streak` beside it.
+        snapshotRedeemableBreak(cellIndex, brokenStreak, brokenPositions) {
             const claim = this.restorable;
 
             if (claim !== null && brokenStreak <= claim.ownPressCredit) {
                 // Passive: the claim stands where it is, with the credit this break just spent
-                // taken off it.
+                // taken off it. It keeps its OWN positions, exactly as it keeps its own streak:
+                // this break was passive, so it took nothing and records nothing.
                 this.restorable = {
-                    lineIndex: claim.lineIndex, cellIndex: claim.cellIndex, streak: claim.streak, ownPressCredit: 0
+                    lineIndex: claim.lineIndex, cellIndex: claim.cellIndex, streak: claim.streak, ownPressCredit: 0,
+                    positions: claim.positions
                 };
                 return;
             }
 
-            this.restorable = { lineIndex: this.activeLineIndex, cellIndex: cellIndex, streak: brokenStreak, ownPressCredit: 0 };
+            this.restorable = {
+                lineIndex: this.activeLineIndex, cellIndex: cellIndex, streak: brokenStreak, ownPressCredit: 0,
+                positions: brokenPositions
+            };
         }
 
         // TypingEngine.creditTheClaimsOwnPress. The press that just took (or passively kept) the
@@ -2579,6 +2720,13 @@
 
             this.combo += claim.streak;
             if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+
+            // The restored increments go back WHERE THEY WERE EARNED, at the head of the run, not at
+            // the cell that redeemed them (backlog 259): a later seal on an earlier line back-dates
+            // against those positions, and dating them here would let a break's misses keep combo
+            // they are entitled to destroy. claim.positions.length is always claim.streak, so the
+            // ledger comes back exactly as long as the run it is now describing.
+            this.runPositions.unshift(...claim.positions);
 
             // TypeBeatPlayfield.onComboRestored: the submitted account is moved by hand here, at the
             // same seam and for the same reason the break is (osu's combo is maintained
@@ -2669,7 +2817,7 @@
             // AT MOST ONE combo break for the whole word, the rule sealLine's misses follow.
             const brokenStreak = this.combo;
 
-            this.combo = 0;
+            const brokenPositions = this.breakRun();
 
             // Snapshotted against the FIRST abandoned cell, so re-typing that cell resumes the run.
             // A skip discards an older cell's claim the way any other intervening break would, but
@@ -2681,7 +2829,7 @@
             // false, because under the pre-167 rule the abandoned cells are gone and there is
             // nothing to come back to. That arm has no counterpart here: the browser has no
             // WordSkipRule, so a skip in this file is permanently reclaimable.
-            this.snapshotRedeemableBreak(abandoned[0], brokenStreak);
+            this.snapshotRedeemableBreak(abandoned[0], brokenStreak, brokenPositions);
 
             if (this.onComboBroken) this.onComboBroken();
 
@@ -3088,7 +3236,8 @@
                     // broke a streak of its own (backlog 176, see snapshotRedeemableBreak).
                     const brokenStreak = this.combo;
 
-                    this.combo = 0;
+                    const brokenPositions = this.breakRun();
+
                     this.counts.WrongChar = (this.counts.WrongChar || 0) + 1;
 
                     cell.state = 'wrong';
@@ -3109,7 +3258,7 @@
 
                     const wrongCellIndex = this.caretIndex;
 
-                    this.snapshotRedeemableBreak(wrongCellIndex, brokenStreak);
+                    this.snapshotRedeemableBreak(wrongCellIndex, brokenStreak, brokenPositions);
 
                     // PARK on a spoiled word gap (backlog 184), instead of moving on: the space is
                     // still owed, so the player pays it (which steps over the typo, see the branch
@@ -3176,7 +3325,7 @@
                 this.totalKeypresses++;
                 this.errorCount++;
                 this.consecutiveWrongKeys++;
-                this.combo = 0;
+                this.breakRun();
                 // Nothing was written into a cell, so there is nothing to go back and correct: this
                 // break is final, and it ends any older cell's claim on the streak (backlog 140).
                 this.discardRestorableStreak();
@@ -3327,15 +3476,17 @@
                 if (rushedPastCap) {
                     const hadCombo = this.combo > 0;
 
-                    this.combo = 0;
+                    this.breakRun();
 
                     if (hadCombo) {
                         this.discardRestorableStreak();
                         if (this.onComboBroken) this.onComboBroken();
                     }
                 } else {
-                    this.combo++;
-                    if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+                    // The cell the press LANDED on, which is where this increment is recorded in the
+                    // ledger (creditCombo): the caret has not moved yet (it rolls on below), and a
+                    // word skip has already re-pointed it at the gap the space is judged on.
+                    this.creditCombo(this.caretIndex);
 
                     // The one press that can credit combo it also broke (backlog 243): the space
                     // that skipped the word, now being judged on the gap the skip parked the caret

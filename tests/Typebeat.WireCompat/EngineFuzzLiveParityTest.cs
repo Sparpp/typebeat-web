@@ -265,6 +265,14 @@ public class EngineFuzzLiveParityTest
     /// all, which is why the sweep also counts the presses each of them decides (see
     /// <see cref="TheSweepReachesTheRulesItIsMeantTo"/>).</para>
     ///
+    /// <para>Since backlog 259 the frames also set BIT 10, the back-dated seal break: a line sealing
+    /// on cells nobody typed destroys only the run earned up to the last of them and leaves what the
+    /// player built past it standing. The browser takes that rule unconditionally, being live-only,
+    /// and the C# defaults it OFF so that every stored replay re-derives the whole-run wipe it was
+    /// submitted under. Without the bit here the two arms would part at the first seal a flexible
+    /// caret ran ahead of, on combo and therefore on every combo-weighted portion after it, with no
+    /// keystroke moving at all.</para>
+    ///
     /// <para>Bit 5 is the one that cannot be read as a single fact, which is why it is a parameter
     /// here rather than a constant: bit 5 CLEAR means a PINNED caret for a plain old replay, but an
     /// unpinned caret WITHOUT the line-start snap for one carrying the retired "FT" acronym, so
@@ -272,11 +280,11 @@ public class EngineFuzzLiveParityTest
     /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>. The sweep passes no mods, so the frame is
     /// the whole of the answer here.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true)
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming, backDatedSealBreak: backDatedSealBreak));
 
         foreach (var key in keys.EnumerateArray())
         {

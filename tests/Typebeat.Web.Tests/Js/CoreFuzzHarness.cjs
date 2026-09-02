@@ -451,13 +451,17 @@ function play(name, keys, spaceSkipsWord) {
     let ownCreditBreaks = 0;
     const snapshotBreak = engine.snapshotRedeemableBreak.bind(engine);
 
-    engine.snapshotRedeemableBreak = function (cellIndex, brokenStreak) {
+    // The trailing arguments are forwarded rather than named, because this wrapper counts and
+    // decides nothing about them: backlog 259 appended the broken run's POSITIONS to the call, and a
+    // wrapper that spelled out only the two it reads would silently drop the ledger the redemption
+    // needs and leave every restore with no positions to put back.
+    engine.snapshotRedeemableBreak = function (cellIndex, brokenStreak, ...rest) {
         const claim = engine.restorable;
 
         if (brokenStreak <= 0 && claim !== null) passiveBreaks++;
         else if (claim !== null && brokenStreak <= claim.ownPressCredit) ownCreditBreaks++;
 
-        snapshotBreak(cellIndex, brokenStreak);
+        snapshotBreak(cellIndex, brokenStreak, ...rest);
     };
 
     // Backlog 179 coverage: presses the SPAN rule actually decided, counted by wrapping the one

@@ -918,4 +918,207 @@ const out = {};
     };
 }
 
+// THE BACK-DATED SEAL BREAK (backlog 259). A line's misses only exist at its SEAL, and under the
+// flexible caret that seal lands up to FLETCHER_DRAG_GRACE_MS after the song left the line, by which
+// time the player is on the next line and rebuilding. The one break the seal takes therefore used to
+// land on the run they hold NOW. It is dated at the cells it is about to miss instead: the break
+// destroys only what was earned AT OR BEFORE the line's LAST unforeseen missed cell in (line, cell)
+// order, and every increment earned strictly past it survives.
+//
+// This section belongs here rather than beside the other seal fixtures because the rule is only
+// REACHABLE under the flexible caret: with the caret pinned to the playhead there is no way to have
+// earned combo past a cell the line went on to miss, so the two arms agree cell for cell. Both
+// scripts leave a line early with Enter (the only thing in the browser that walks out of a line
+// without finishing it) and then type on the next one inside the abandoned line's held drag grace.
+//
+// EMITTED WITH THEIR SCRIPTS, like the two sections above: the cross-repo arm
+// (Typebeat.WireCompat.SealComboBreakLiveParityTest) replays these steps through the game's own
+// TypingEngine with BackDatedSealBreak set, and the same keystrokes through TypeBeatReplayScorer for
+// the SUBMITTED account, which is the half the engine readings cannot see (the seal's break moved
+// off the Miss results and onto a hand-mirror, so a browser that marked the misses neutral without
+// writing the break, or wrote it after the results, would still show the right engine combo).
+{
+    // Scenario one's map is the line-skip map's shape, spelled out again because that one is
+    // block-scoped to its own section: three contiguous lines, every grace 0.
+    //   L0 "ab cd" [1000, 4000): a = 1000, b = 1500, ' ' = 2000, c = 2000, d = 2500.
+    //   L1 "ef"    [4000, 8000): e = 4000, f = 4500. Entry opens at 2500.
+    //   L2 "gh"    [8000, 12000): g = 8000, h = 8500. Entry opens at 6500.
+    const TYPO_THEN_NEXT_LINE = osu([
+        { text: 'ab cd', start_ms: 1000, end_ms: 3000, words: [word('ab', 1000, 2000), word('cd', 2000, 3000)] },
+        { text: 'ef', start_ms: 4000, end_ms: 5000, words: [word('ef', 4000, 5000)] },
+        { text: 'gh', start_ms: 8000, end_ms: 9000, words: [word('gh', 8000, 9000)] }
+    ], 20000);
+
+    // Scenario two's is its own: a first line short enough that ONE cell is left behind, and a
+    // second long enough to rebuild a run bigger than the one the break destroys.
+    //   L0 "abc"   [0, 5500), grace 0: a = 0, b = 1000, c = 2000. Drag grace runs to 7000.
+    //   L1 "defgh" [5500, 12500), grace 0: d = 5500, e = 6300, f = 7100, g = 7900, h = 8700.
+    const TRAILING_CELLS = osu([
+        { text: 'abc', start_ms: 0, end_ms: 3000, words: [word('abc', 0, 3000)] },
+        { text: 'defgh', start_ms: 5500, end_ms: 9500, words: [word('defgh', 5500, 9500)] }
+    ], 40000);
+
+    const scenarios = {
+        // THE PLAYER'S REPORT, exactly: "when the HP drain from the previous line kicks in, it
+        // breaks my current combo, even tho my combo already broke from those misses at the time."
+        //
+        // A typo takes its break at the KEYPRESS. Backspaced away, the cell it leaves behind is
+        // EMPTY, so it becomes a miss at the seal a whole line later and the seal took a SECOND
+        // break for the same fumble. Back-dated, everything at or before that cell was already gone,
+        // so the seal destroys nothing at all and the run rebuilt on L1 stands: a net zero, which is
+        // what the report asks for. The old rule left the player on a combo of 0 at 5500 and a
+        // max_combo of 2; this one leaves them on 2 and takes the run to 4.
+        theReport: {
+            map: TYPO_THEN_NEXT_LINE,
+            steps: [
+                { op: 'update', t: 1000 }, { op: 'key', c: 'a', t: 1000 },
+
+                // The typo, on 'b'. It breaks the run of 1 at the keypress and snapshots the claim
+                // against cell 1; the caret advances onto the word gap.
+                { op: 'key', c: 'x', t: 1500 },
+
+                // Erased to EMPTY rather than corrected: the cell goes back to untyped with nothing
+                // in it, which is the state that makes it a MISS at the seal rather than an unfixed
+                // typo. This is the whole shape of the report.
+                { op: 'backspace', t: 1600 },
+
+                // Out of the line with four cells still untyped, at the instant entry into L1 opens.
+                { op: 'update', t: 2500 }, { op: 'enter', t: 2500 },
+
+                // The rebuilt run, made entirely inside L0's held drag grace (L0's deadline is 4000
+                // and it does not seal until 5500).
+                { op: 'update', t: 4000 }, { op: 'key', c: 'e', t: 4000 },
+                { op: 'update', t: 4500 }, { op: 'key', c: 'f', t: 4500 },
+
+                // L0's seal. Four unforeseen misses, one combo break, and NOTHING destroyed: every
+                // increment standing was earned on L1, strictly past the last of them.
+                { op: 'update', t: 5500 },
+
+                // The run carries on from where the seal left it rather than from zero.
+                { op: 'update', t: 8000 }, { op: 'key', c: 'g', t: 8000 },
+                { op: 'update', t: 8500 }, { op: 'key', c: 'h', t: 8500 },
+                { op: 'update', t: 9500 },
+                { op: 'update', t: 12000 },
+            ]
+        },
+
+        // NEVER-TOUCHED TRAILING CELLS, and the case the report's is a degenerate corner of: the
+        // break has something real to destroy AND something real to spare. Two cells are earned on
+        // L0 before the player walks out of it leaving 'c' behind, and two more on L1 before the
+        // seal lands. The break is dated at (0, 2), so the L0 pair DIES and the L1 pair SURVIVES:
+        // combo drops 4 to 2 rather than 4 to 0, and the three presses after it take the run to 5
+        // where the wipe would have stopped at 4.
+        trailingCellsNeverTouched: {
+            map: TRAILING_CELLS,
+            steps: [
+                { op: 'update', t: 0 }, { op: 'key', c: 'a', t: 0 },
+                { op: 'update', t: 1000 }, { op: 'key', c: 'b', t: 1000 },
+
+                // 2000 is well before entry into L1 opens (5500 - 1500 = 4000), so this Enter parks
+                // the caret past L0's last cell and the line-start snap collects it later. 'c' is
+                // never touched by anything.
+                { op: 'update', t: 2000 }, { op: 'enter', t: 2000 },
+
+                { op: 'update', t: 5500 }, { op: 'key', c: 'd', t: 5500 },
+                { op: 'update', t: 6300 }, { op: 'key', c: 'e', t: 6300 },
+
+                // L0's seal, at its 5500 deadline plus the drag grace it is holding for the caret
+                // that walked out of it.
+                { op: 'update', t: 7100 }, { op: 'key', c: 'f', t: 7100 },
+
+                { op: 'update', t: 7900 }, { op: 'key', c: 'g', t: 7900 },
+                { op: 'update', t: 8700 }, { op: 'key', c: 'h', t: 8700 },
+                { op: 'update', t: 40000 },
+            ]
+        },
+    };
+
+    const runs = {};
+
+    for (const name of Object.keys(scenarios)) {
+        const engine = new TB.TypingEngine(build(scenarios[name].map));
+        const readings = [];
+
+        let breaks = 0;
+        engine.onComboBroken = () => { breaks++; };
+
+        for (const step of scenarios[name].steps) {
+            let handled = null;
+
+            if (step.op === 'update') engine.update(step.t);
+            else if (step.op === 'enter') handled = engine.processEnter(step.t);
+            else if (step.op === 'backspace') handled = engine.processBackspace();
+            else handled = engine.processKey(step.c, step.t);
+
+            readings.push({
+                op: step.op,
+                t: step.t,
+                c: step.c === undefined ? null : step.c,
+                handled: handled,
+                at: at(engine),
+                nextUnsealedLineIndex: engine.nextUnsealedLineIndex,
+                states: engine.lines.map(l => l.cells.map(c => c.state)),
+                combo: engine.combo,
+                maxCombo: engine.maxCombo,
+                comboBreaks: breaks,
+                mistypes: engine.mistypes,
+                finished: engine.finished,
+                // The LEDGER itself, one { line, cell } per unit of combo. Emitted because it is the
+                // only thing that says WHY a survival was the size it was, and because the invariant
+                // runPositions.length === combo is the whole of what keeps the rule honest: the C#
+                // arm cannot read its own private list, so it asserts the length against its Combo.
+                runPositions: engine.runPositions.map(p => ({ line: p.line, cell: p.cell })),
+                // The SUBMITTED account's combo, which is a separate ledger kept equal by mirroring
+                // every move. It is where the seal's hand-mirrored break lands, and the reading that
+                // a browser marking the misses neutral without writing that break would fail.
+                processorCombo: engine.processor.combo,
+                processorHighestCombo: engine.processor.highestCombo
+            });
+        }
+
+        const score = TB.computeScore(engine);
+
+        runs[name] = {
+            script: scenarios[name].steps,
+            readings: readings,
+            combo: engine.combo,
+            maxCombo: engine.maxCombo,
+            comboBreaks: breaks,
+            mistypes: engine.mistypes,
+            submitted: {
+                maxCombo: score.maxCombo,
+                totalScore: score.totalScore,
+                accuracy: score.accuracy,
+                completion: score.completion,
+                rank: score.rank,
+                statistics: score.statistics,
+                maximumStatistics: score.maximumStatistics
+            }
+        };
+    }
+
+    const fixtures = {};
+
+    for (const name of Object.keys(scenarios)) {
+        const fixture = new TB.TypingEngine(build(scenarios[name].map));
+
+        fixtures[name] = {
+            lines: fixture.lines.map(l => ({
+                activationTime: l.activationTime,
+                endTime: l.endTime,
+                sealGraceMs: l.sealGraceMs,
+                cells: l.cells.map(c => ({ expected: c.expected, target: c.target }))
+            }))
+        };
+    }
+
+    out.sealComboBreak = {
+        // Pinned before the readings are, so a fixture that drifted cannot be read as an engine
+        // divergence by the cross-repo arm.
+        dragGraceMs: TB.constants.FLETCHER_DRAG_GRACE_MS,
+        fixtures: fixtures,
+        runs: runs
+    };
+}
+
 process.stdout.write(JSON.stringify(out));

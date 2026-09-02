@@ -511,6 +511,7 @@ public class WordInputParityTest
             WrongInputOnWordGaps = true,
             StrictSpaces = true,
             SpaceSkipsWord = scenario.SpaceSkipsWord,
+            BackDatedSealBreak = true,
         };
 
         engine.Update(scenario.StartTime);
