@@ -15,57 +15,48 @@ using Typebeat.Tools.ScoreRecalc;
 namespace Typebeat.WireCompat;
 
 /// <summary>
-/// The cross-repo pin on the LOSSLESS SKIP RECLAIM (backlog 260): a word given up by accident and
-/// then typed out in full costs the run NOTHING.
+/// The cross-repo pin on the DISPLACED CLAIM FOLD (backlog 262): a break that takes the claim off an
+/// older break folds that claim into its own rather than discarding it, so TWO accidents, both fully
+/// corrected, cost the run NOTHING.
 ///
-/// <para>A player finished a map with every one of its 920 cells typed, 0 misses, and a max combo of
-/// 919. The increment missing was the WORD GAP the skipping space was itself judged on, and it was
-/// being dropped three different ways, all of them present identically in <c>typebeat-core.js</c>:
+/// <para>The report is score 13383. The player was 477 combo deep and clean when they typo'd the first
+/// letter of a word, noticed nothing and typed the second letter correctly (a run of 1 they really
+/// earned, so the next break was NOT passive under backlog 243), then typo'd the word gap after it.
+/// That second break stood on a streak of its own, so it took the claim, and the overwrite arm of
+/// <c>snapshotRedeemableBreak</c> threw the 477 away. Three backspaces and a perfect retype restored
+/// 1, and the play finished with 0 misses, 100% completion and a max combo of 477 out of 894, which
+/// breaks the law backlogs 243 and 260 wrote for the word skip.</para>
 ///
-/// <list type="bullet">
-/// <item><b>The rush cap charged the space for the word it abandoned.</b> The skip walks the caret
-/// past the whole word BEFORE the same press is judged on the gap it parked on, and the cap measures
-/// the caret POSITIONALLY, so an abandoned tail plus any lead over
-/// <see cref="TypingEngine.FLETCHER_MAX_CHARS_AHEAD"/> refused that press its combo, silently: the
-/// skip's own break had already zeroed the run, so nothing was announced and no claim discarded, and
-/// the gap still resolved Correct, which makes every later retype of it inert.</item>
-/// <item><b>The passive claim arm dropped the run it stood on.</b> A break taking no more than the
-/// claim's own credit (backlog 243) keeps the older claim, but its call site has already run the
-/// break, so its own spent run was gone with nothing left to redeem it. It is FOLDED into the claim
-/// instead, streak and positions together.</item>
-/// <item><b>The Ctrl+A anchor was one cell short of its own collapse.</b> That half carries no era
-/// and is pinned by <see cref="WordInputParityTest"/>, where the whole gesture composition lives;
-/// here the collapse appears as the plain backspaces it is made of, so the caret it lands on is
-/// compared like any other reading.</item>
-/// </list></para>
+/// <para>Under the rule the displacing break's claim is <c>displacedStreak + brokenStreak</c> against
+/// its OWN cell, with the displaced positions in front of its own in run order, so the NEWEST of the
+/// broken cells redeems the whole chain and does so transitively. <c>typebeat-core.js</c> mirrors it
+/// UNCONDITIONALLY, because the browser has no era axis: it only ever plays live.</para>
 ///
-/// <para>The two clients submit to the SAME leaderboards, so this is not cosmetic: both of the first
-/// two move <c>max_combo</c> and every combo portion after the skip. A browser still dropping the
-/// increment would score the identical performance lower than the desktop.</para>
+/// <para>The two clients submit to the SAME leaderboards, so this is not cosmetic: the fold moves
+/// <c>max_combo</c> and the combo weight of every judgement after the redemption. A browser still
+/// discarding the displaced claim would score the identical performance lower than the desktop.</para>
 ///
-/// <para>TWO ARMS, the shape <see cref="SealComboBreakLiveParityTest"/> established. The ENGINE's own
-/// run is compared step for step, and the SUBMITTED account goes through
-/// <see cref="TypeBeatReplayScorer"/>, which is the headless assembly of the seams
-/// <c>TypeBeatPlayfield</c> wires up in a live play. ONE COPY OF THE KEYSTROKES: the scripts and the
-/// browser's readings of them come out of <c>CoreFlexibleLinesHarness.cjs</c>'s
-/// <c>losslessSkipReclaim</c> section, which is where they belong because the rush-cap half is only
-/// REACHABLE under the flexible caret (a caret pinned to the playhead can never be twelve countable
-/// characters ahead of it).</para>
+/// <para>TWO ARMS, the shape <see cref="SealComboBreakLiveParityTest"/> established and
+/// <see cref="LosslessSkipReclaimLiveParityTest"/> repeated. The ENGINE's own run is compared step for
+/// step, and the SUBMITTED account goes through <see cref="TypeBeatReplayScorer"/>, which is the
+/// headless assembly of the seams <c>TypeBeatPlayfield</c> wires up in a live play. ONE COPY OF THE
+/// KEYSTROKES: the scripts and the browser's readings of them come out of
+/// <c>CoreFlexibleLinesHarness.cjs</c>'s <c>displacedClaimFold</c> section.</para>
 /// </summary>
 [TestFixture]
-public class LosslessSkipReclaimLiveParityTest
+public class DisplacedClaimFoldLiveParityTest
 {
     private static readonly Lazy<JsonElement> harness = new Lazy<JsonElement>(() => NodeHarness.Run("CoreFlexibleLinesHarness.cjs"));
 
-    private static JsonElement Section() => harness.Value.GetProperty("losslessSkipReclaim");
+    private static JsonElement Section() => harness.Value.GetProperty("displacedClaimFold");
 
     private static JsonElement Run(string scenario) => Section().GetProperty("runs").GetProperty(scenario);
 
     /// <summary>The two corrected runs, plus the clean run they are read against.</summary>
-    private static readonly string[] scenarios = ["headOfWordSkip", "doubleSpace", "cleanRun"];
+    private static readonly string[] scenarios = ["reportedShape", "threeBreakChain", "cleanRun"];
 
-    /// <summary>The two that give a word up, which are the ones the era arm has an opinion about.</summary>
-    private static readonly string[] corrected = ["headOfWordSkip", "doubleSpace"];
+    /// <summary>The two that break twice or more, which are the ones the era arm has an opinion about.</summary>
+    private static readonly string[] corrected = ["reportedShape", "threeBreakChain"];
 
     #region The fixture, declared in the game's own terms
 
@@ -73,29 +64,28 @@ public class LosslessSkipReclaimLiveParityTest
         => new TimedUnit { Text = text, StartTime = start, EndTime = end };
 
     /// <summary>
-    /// THE REPORTED SHAPE'S FIXTURE, in the game's terms and with the window the browser's loader
-    /// derived: a short word, a LONG one, and two short ones, dense enough that the long word alone
-    /// is far more than <see cref="TypingEngine.FLETCHER_MAX_CHARS_AHEAD"/>.
+    /// THE REPORTED SHAPE'S FIXTURE, the game's own <c>reportMap</c> in the window the browser's
+    /// loader derives: a run of cells, then a two-letter word with a gap after it, which is the
+    /// "... go to ..." the report broke on.
     ///
-    /// <para>"ab cdefghijkl mn op" on [1000, 5600), sung to 2600. Cells (index: char = target) are
-    /// 0:a = 1000, 1:b = 1100, 2:' ' = 1200, 3:c = 1200 .. 12:l = 2100, 13:' ' = 2200, 14:m = 2200,
-    /// 15:n = 2300, 16:' ' = 2400, 17:o = 2400, 18:p = 2500. Nineteen cells, sixteen of them
-    /// countable (the three gaps are not), and no seal grace, so nothing seals mid-script.</para>
+    /// <para>"abcde fg hi" on [1000, 4900), sung to 1900. Eleven cells (index: char = target) are
+    /// 0:a = 1000, 1:b = 1100, 2:c = 1200, 3:d = 1300, 4:e = 1400, 5:' ' = 1500, 6:f = 1500,
+    /// 7:g = 1600, 8:' ' = 1700, 9:h = 1700, 10:i = 1800. No seal grace, so nothing seals mid
+    /// script.</para>
     /// </summary>
     private static LyricLine[] Lines() =>
     [
         new LyricLine
         {
-            RawText = "ab cdefghijkl mn op",
+            RawText = "abcde fg hi",
             StartTime = 1000,
-            EndTime = 5600,
-            SingEndTime = 2600,
+            EndTime = 4900,
+            SingEndTime = 1900,
             Units =
             [
-                Unit("ab", 1000, 1200),
-                Unit("cdefghijkl", 1200, 2200),
-                Unit("mn", 2200, 2400),
-                Unit("op", 2400, 2600),
+                Unit("abcde", 1000, 1500),
+                Unit("fg", 1500, 1700),
+                Unit("hi", 1700, 1900),
             ],
         },
     ];
@@ -138,11 +128,11 @@ public class LosslessSkipReclaimLiveParityTest
     /// A started engine under every LIVE rule, which is the only arm the browser can be compared
     /// against: it has no mods payload, writes no replay frames and re-derives no stored row, so the
     /// era flags the C# defaults OFF for replay decoding have to be set by hand.
-    /// <see cref="TypingEngine.LosslessSkipReclaim"/> is the one this file is about, and it is the
+    /// <see cref="TypingEngine.FoldsDisplacedClaim"/> is the one this file is about, and it is the
     /// reason a bare engine is not the live client: it defaults false so that every stored replay
-    /// re-derives the dropped increment its player was submitted under.
+    /// re-derives with the displaced claim discarded, which is the max combo its player was given.
     /// </summary>
-    private static TypingEngine LiveEngine(bool losslessSkipReclaim = true) => new TypingEngine(Map())
+    private static TypingEngine LiveEngine(bool foldsDisplacedClaim = true) => new TypingEngine(Map())
     {
         SyllableTiming = true,
         CharTimedStretch = true,
@@ -154,24 +144,23 @@ public class LosslessSkipReclaimLiveParityTest
         FlexibleLineSnap = true,
         BoundedRush = true,
         BackDatedSealBreak = true,
-        LosslessSkipReclaim = losslessSkipReclaim,
-        FoldsDisplacedClaim = true,
+        LosslessSkipReclaim = true,
+        FoldsDisplacedClaim = foldsDisplacedClaim,
     };
 
     /// <summary>
-    /// The script as a replay, headed by the CONFIG frame the era bits travel in. Bit 11 is this
+    /// The script as a replay, headed by the CONFIG frame the era bits travel in. Bit 12 is this
     /// file's subject and is a parameter rather than a constant, because clearing it is how
     /// <see cref="TheseScriptsReallySeparateTheTwoEras"/> proves the fixtures are about the rule at
-    /// all. Bit 1 (space-skips-word) is SET, unlike in <see cref="SealComboBreakLiveParityTest"/>:
-    /// the whole subject here is a space struck inside a word.
+    /// all.
     /// </summary>
-    private static Replay Replay(bool losslessSkipReclaim, string scenario)
+    private static Replay Replay(bool foldsDisplacedClaim, string scenario)
     {
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
-            firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: true));
+            firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: foldsDisplacedClaim));
 
         foreach (var step in Run(scenario).GetProperty("script").EnumerateArray())
         {
@@ -198,8 +187,8 @@ public class LosslessSkipReclaimLiveParityTest
         return replay;
     }
 
-    private static TypeBeatReplayAccount Play(string scenario, bool losslessSkipReclaim = true)
-        => TypeBeatReplayScorer.Score(Playable(), Array.Empty<Mod>(), Replay(losslessSkipReclaim, scenario), TypoRule.Deferred, ComboRestoreRule.OnFix);
+    private static TypeBeatReplayAccount Play(string scenario, bool foldsDisplacedClaim = true)
+        => TypeBeatReplayScorer.Score(Playable(), Array.Empty<Mod>(), Replay(foldsDisplacedClaim, scenario), TypoRule.Deferred, ComboRestoreRule.OnFix);
 
     /// <summary>The cell states as the JS mirror spells them (its own vocabulary, one for one).</summary>
     private static string StateName(CellState state) => state switch
@@ -217,7 +206,7 @@ public class LosslessSkipReclaimLiveParityTest
     /// The game's counts as the wire spells them, minus the LINE containers' <c>ignore_hit</c>: the
     /// line object is scoring-inert, so <c>typebeat-core.js</c> does not model it and the server's
     /// <c>ScoringContract</c> ignores it when it recomputes. Identical to
-    /// <see cref="WordSkipLiveParityTest"/>'s filter, and for the same reason.
+    /// <see cref="LosslessSkipReclaimLiveParityTest"/>'s filter, and for the same reason.
     /// </summary>
     private static Dictionary<string, int> Wire(IReadOnlyDictionary<HitResult, int> counts)
         => WireCounts.From(counts.Where(entry => entry.Key != TypeBeatResultMapping.LINE_RESULT).ToDictionary(entry => entry.Key, entry => entry.Value));
@@ -232,21 +221,22 @@ public class LosslessSkipReclaimLiveParityTest
         return result;
     }
 
+    private static int[] Restores(string scenario)
+        => Run(scenario).GetProperty("comboRestores").EnumerateArray().Select(x => x.GetInt32()).ToArray();
+
     #endregion
 
     /// <summary>
     /// THE FIXTURE BEFORE THE ACCOUNTS, the discipline every guard in this project follows: both
     /// sides build their cells through their own loader (the browser's <c>buildBeatmap</c>, the
     /// game's <c>TypingLine.FromLyricLine</c>), so a fixture that drifted would show up below as an
-    /// engine divergence and be blamed on the skip.
+    /// engine divergence and be blamed on the fold.
     /// </summary>
     [Test]
     public void TheTwoLoadersAgreeOnTheFixture()
     {
         Assert.Multiple(() =>
         {
-            Assert.That(Section().GetProperty("maxCharsAhead").GetInt32(), Is.EqualTo(TypingEngine.FLETCHER_MAX_CHARS_AHEAD));
-
             var engine = LiveEngine();
             var lines = Section().GetProperty("fixture").GetProperty("lines");
 
@@ -275,21 +265,18 @@ public class LosslessSkipReclaimLiveParityTest
 
     /// <summary>
     /// Each script replayed through the game's engine and compared to the browser's readings step for
-    /// step: where the caret is, how far ahead of the playhead it sits, what Ctrl+A would offer, every
-    /// cell's state, and the whole combo account.
+    /// step: where the caret is, how far ahead of the playhead it sits, every cell's state, and the
+    /// whole combo account.
     ///
-    /// <para>The readings that matter are the ones on the skipping space. Its <c>combo</c> must be 1
-    /// (the gap credited) rather than 0, and its <c>charsAheadOfPlayhead</c> must be 9 (the caret
-    /// really IS out past the cap after the skip, which is what makes the fix a statement about WHERE
-    /// the measurement is taken rather than about the cap being loose). Then, on the step the
-    /// collapse ends, the caret must equal the anchor the step before it offered: a browser whose
-    /// anchor was one cell short lands behind its own selection and manufactures a typo on the next
-    /// keystroke.</para>
+    /// <para>The reading that matters is the one on the space that redeems the chain. Its
+    /// <c>combo</c> must be 9 on the reported shape, which is exactly the nine cells a CLEAN run holds
+    /// on that gap, rather than the 3 the discarded claim leaves.</para>
     ///
     /// <para><c>runPositions</c> is asserted by LENGTH rather than by content, because the C# list is
     /// private: what is worth pinning is the invariant the fold rests on,
     /// <c>runPositions.length == combo</c>, which is what makes the folded streak and the folded
-    /// positions provably the same size.</para>
+    /// positions provably the same size, and therefore what makes a later back-dated seal able to take
+    /// the right increments back.</para>
     /// </summary>
     [Test]
     public void TheGameEngineMakesTheSameRunOfEveryScript()
@@ -340,7 +327,6 @@ public class LosslessSkipReclaimLiveParityTest
                     Assert.That(engine.ActiveLineIndex, Is.EqualTo(at.GetProperty("line").GetInt32()), $"{where}: active line");
                     Assert.That(engine.CaretIndex, Is.EqualTo(at.GetProperty("cell").GetInt32()), $"{where}: caret");
                     Assert.That(engine.CharsAheadOfPlayhead(t), Is.EqualTo(reading.GetProperty("charsAheadOfPlayhead").GetInt32()), $"{where}: the caret's lead");
-                    Assert.That(engine.RetypeSelectionAnchor, Is.EqualTo(reading.GetProperty("retypeSelectionAnchor").GetInt32()), $"{where}: the Ctrl+A anchor");
                     Assert.That(engine.Combo, Is.EqualTo(reading.GetProperty("combo").GetInt32()), $"{where}: combo");
                     Assert.That(engine.MaxCombo, Is.EqualTo(reading.GetProperty("maxCombo").GetInt32()), $"{where}: max combo");
                     Assert.That(breaks, Is.EqualTo(reading.GetProperty("comboBreaks").GetInt32()), $"{where}: combo breaks");
@@ -370,9 +356,9 @@ public class LosslessSkipReclaimLiveParityTest
     /// <summary>
     /// The other account: the SUBMITTED one, browser against the game's own scorer, field for field
     /// with no tolerance on the doubles. This is the arm the engine readings cannot stand in for: the
-    /// increments the skip drops are combo, and combo weights every judgement portion after it, so a
-    /// browser that agreed on the engine's combo and mirrored it late into the processor would still
-    /// land a different total on the shared leaderboards.
+    /// increments the fold puts back are combo, and combo weights every judgement portion after the
+    /// redemption, so a browser that agreed on the engine's combo and mirrored it late into the
+    /// processor would still land a different total on the shared leaderboards.
     /// </summary>
     [Test]
     public void TheSubmittedAccountsAgree()
@@ -397,49 +383,64 @@ public class LosslessSkipReclaimLiveParityTest
     }
 
     /// <summary>
-    /// THE LAW ITSELF, stated as a comparison rather than as a literal: an accidental skip, fully
-    /// corrected, costs the run NOTHING, so both corrected scripts must reach the CLEAN run's max
-    /// combo with the same tier counts and no misses. Read off both clients, because the whole point
-    /// of the change is that neither of them may be one short.
+    /// THE LAW ITSELF, stated as a comparison rather than as a literal: accidents fully corrected cost
+    /// the run NOTHING, so both corrected scripts must reach the CLEAN run's max combo. Read off both
+    /// clients, because the whole point of the change is that neither of them may be short.
+    ///
+    /// <para>The reported shape's redemption is the number the report is about: ONE restore worth 7,
+    /// the six the first break took plus the one the second did, where the discarding arm restores the
+    /// 1 the player was given. The chain's is one restore worth 4, which is 2 + 1 + 1 through three
+    /// breaks.</para>
     /// </summary>
     [Test]
-    public void BothCorrectedRunsReachTheCleanRunsMaxCombo()
+    public void BothCorrectedRunsReachTheCleanRunsCombo()
     {
         var clean = Play("cleanRun");
 
         Assert.Multiple(() =>
         {
-            Assert.That(clean.MaxCombo, Is.EqualTo(19), "nineteen cells, nineteen increments");
-            Assert.That(Run("cleanRun").GetProperty("submitted").GetProperty("maxCombo").GetInt32(), Is.EqualTo(19));
+            Assert.That(clean.MaxCombo, Is.EqualTo(11), "eleven cells, eleven increments");
+            Assert.That(Run("cleanRun").GetProperty("submitted").GetProperty("maxCombo").GetInt32(), Is.EqualTo(11));
 
             foreach (string scenario in corrected)
             {
                 var game = Play(scenario);
 
-                Assert.That(game.MaxCombo, Is.EqualTo(clean.MaxCombo), $"{scenario}: the skip cost the corrected run nothing at all");
-                Assert.That(Run(scenario).GetProperty("maxCombo").GetInt32(), Is.EqualTo(19), $"{scenario}: and the browser agrees");
-
-                // Everything the rule does not reach: the same cells, the same tiers, no misses, and
-                // no mistype, because nothing was ever typed wrong.
-                Assert.That(Wire(game.Statistics), Is.EquivalentTo(Wire(clean.Statistics)), $"{scenario}: the same judgements as the clean run");
-                Assert.That(game.Accuracy, Is.EqualTo(1.0), $"{scenario}: accuracy");
+                Assert.That(game.MaxCombo, Is.EqualTo(clean.MaxCombo), $"{scenario}: the accidents cost the corrected run nothing at all");
+                Assert.That(Run(scenario).GetProperty("maxCombo").GetInt32(), Is.EqualTo(11), $"{scenario}: and the browser agrees");
+                Assert.That(Run(scenario).GetProperty("combo").GetInt32(), Is.EqualTo(11), $"{scenario}: the run is still standing at the end");
                 Assert.That(game.Completion, Is.EqualTo(1.0), $"{scenario}: completion");
-                Assert.That(Run(scenario).GetProperty("mistypes").GetInt32(), Is.Zero, $"{scenario}: nothing was typed wrong");
+                Assert.That(Wire(game.Statistics).GetValueOrDefault("miss"), Is.Zero, $"{scenario}: every cell was typed in the end");
             }
+
+            // THE REPORT'S OWN NUMBER: one redemption worth the whole chain, and the run standing at
+            // the clean run's nine on the gap that redeemed it.
+            Assert.That(Restores("reportedShape"), Is.EqualTo(new[] { 7 }), "the run of 6 the first break took, plus the 1 the second one did");
+            Assert.That(Restores("threeBreakChain"), Is.EqualTo(new[] { 4 }), "one redemption, worth 2 + 1 + 1");
+
+            var readings = Run("reportedShape").GetProperty("readings");
+            int redemption = RedemptionStep("reportedShape");
+
+            Assert.That(readings[redemption].GetProperty("combo").GetInt32(), Is.EqualTo(9),
+                "the nine cells a clean run holds on that gap");
         });
     }
 
     /// <summary>
-    /// NON-VACUITY, and the only assertion here that does not compare the two clients: the same
-    /// replays re-derived with CONFIG bit 11 CLEAR, which is what every stored score was played
-    /// under. If the browser's numbers matched THAT too, the tests above would be pinning a rule
-    /// neither script reaches.
+    /// NON-VACUITY, and the only assertions here that do not compare the two clients: the same replays
+    /// re-derived with CONFIG bit 12 CLEAR, which is what every stored score was played under. If the
+    /// browser's numbers matched THAT too, the tests above would be pinning a rule neither script
+    /// reaches.
     ///
-    /// <para>Both corrected scripts must part from the classic arm, and part in the direction the
-    /// rule promises: the reclaimed run is never shorter and never worth less, because the rule can
-    /// only ever put back increments the old one dropped. It moves nothing else, which is why the
-    /// judgements, the accuracy and the completion are asserted EQUAL across the two arms, and why
-    /// the clean run (which gives up nothing) is bit-identical under both.</para>
+    /// <para>Both corrected scripts must part from the classic arm, and part in the direction the rule
+    /// promises: the folded run is never shorter and never worth less, because the rule can only ever
+    /// put back increments the old one dropped. It moves nothing else, which is why the judgements,
+    /// the accuracy and the completion are asserted EQUAL across the two arms, and why the clean run
+    /// (which breaks nothing) is bit-identical under both.</para>
+    ///
+    /// <para>The literals are the report in miniature: the reported shape's stored arm redeems 1 and
+    /// tops out at 6, the run the FIRST break was holding and never reached again, against the live
+    /// arm's 11.</para>
     /// </summary>
     [Test]
     public void TheseScriptsReallySeparateTheTwoEras()
@@ -449,96 +450,99 @@ public class LosslessSkipReclaimLiveParityTest
             foreach (string scenario in corrected)
             {
                 var live = Play(scenario);
-                var stored = Play(scenario, losslessSkipReclaim: false);
+                var stored = Play(scenario, foldsDisplacedClaim: false);
 
-                Assert.That(stored.MaxCombo, Is.LessThan(live.MaxCombo), $"{scenario}: the dropped increment should cost max_combo");
+                Assert.That(stored.MaxCombo, Is.LessThan(live.MaxCombo), $"{scenario}: the discarded claim should cost max_combo");
                 Assert.That(stored.TotalScore, Is.LessThan(live.TotalScore), $"{scenario}: and total_score");
                 Assert.That(live.Statistics, Is.EquivalentTo(stored.Statistics), $"{scenario}: the era must move no judgement");
                 Assert.That(live.Accuracy, Is.EqualTo(stored.Accuracy), $"{scenario}: the era must move no accuracy");
                 Assert.That(live.Completion, Is.EqualTo(stored.Completion), $"{scenario}: the era must move no completion");
             }
 
-            var cleanLive = Play("cleanRun");
-            var cleanStored = Play("cleanRun", losslessSkipReclaim: false);
+            Assert.That(Play("reportedShape", foldsDisplacedClaim: false).MaxCombo, Is.EqualTo(6),
+                "the reported shape's stored arm tops out at the run the first break was holding");
+            Assert.That(Play("threeBreakChain", foldsDisplacedClaim: false).MaxCombo, Is.EqualTo(8),
+                "the chain's stored arm ends three lower, which is the two claims it dropped");
 
-            Assert.That(cleanStored.MaxCombo, Is.EqualTo(cleanLive.MaxCombo), "a run that gives up nothing re-derives identically");
+            var cleanLive = Play("cleanRun");
+            var cleanStored = Play("cleanRun", foldsDisplacedClaim: false);
+
+            Assert.That(cleanStored.MaxCombo, Is.EqualTo(cleanLive.MaxCombo), "a run that breaks nothing re-derives identically");
             Assert.That(cleanStored.TotalScore, Is.EqualTo(cleanLive.TotalScore));
         });
     }
 
     /// <summary>
     /// And the other half of non-vacuity, read off the BROWSER's own run rather than off either
-    /// engine, because a comparison of two clients that both did nothing interesting passes. Each
-    /// defect has one thing that has to be true of these scripts, or the tests above are not about
-    /// the rule:
+    /// engine, because a comparison of two clients that both did nothing interesting passes. The
+    /// scripts have to reach the shape the rule is about, which is a DISPLACING break: one that owns a
+    /// streak of its own (so it is not passive under backlog 243) landing while a claim is already
+    /// outstanding.
     ///
     /// <list type="bullet">
-    /// <item>DEFECT A: the skipping space really is judged at a caret far out past the cap, and still
-    /// earns its gap. Nine countable characters ahead of the playhead, against a cap of five.</item>
-    /// <item>DEFECT B: the second space really takes a PASSIVE break (one that keeps the deeper claim
-    /// rather than replacing it), which is only visible as the redemption being bigger than the run
-    /// the first break took: 4 rather than 3.</item>
-    /// <item>DEFECT C: the collapse lands EXACTLY on the anchor the gesture offered, rather than one
-    /// cell behind it, and the retype that follows makes no mistype.</item>
+    /// <item>The reported shape breaks TWICE with exactly one earned character between, so the second
+    /// break stands on a streak of 1 that is progress rather than its own press, and there is exactly
+    /// ONE redemption for the two of them.</item>
+    /// <item>The chain breaks THREE times the same way, and still redeems once: that is what
+    /// "transitively" means, and a fold that only reached one level deep would show up here as two
+    /// restores or as a smaller one.</item>
+    /// <item>Neither script ever rushes. The rush cap is a different rule with a different remedy, and
+    /// a script that tripped it would be measuring that one instead, so every lead reading is at or
+    /// below zero.</item>
     /// </list>
     /// </summary>
     [Test]
-    public void TheScriptsReallyReachAllThreeDefects()
+    public void TheScriptsReallyReachADisplacingBreak()
     {
         Assert.Multiple(() =>
         {
+            Assert.That(Run("reportedShape").GetProperty("comboBreaks").GetInt32(), Is.EqualTo(2), "two accidents");
+            Assert.That(Run("threeBreakChain").GetProperty("comboBreaks").GetInt32(), Is.EqualTo(3), "three accidents");
+            Assert.That(Run("cleanRun").GetProperty("comboBreaks").GetInt32(), Is.Zero, "and the reference breaks nothing");
+
             foreach (string scenario in corrected)
             {
                 var readings = Run(scenario).GetProperty("readings");
-                var script = Run(scenario).GetProperty("script");
 
-                int lastSkip = -1;
-                int lastBackspace = -1;
+                Assert.That(Restores(scenario), Has.Length.EqualTo(1), $"{scenario}: one redemption for the whole chain");
+                Assert.That(Restores(scenario)[0], Is.GreaterThan(1),
+                    $"{scenario}: the redemption is worth more than the break that took the claim, which is the fold");
 
-                for (int i = 0; i < script.GetArrayLength(); i++)
+                // The break that DISPLACES: the last combo break in the script must land while the
+                // combo stands at more than zero (a streak of its own) with a claim already
+                // outstanding, which is exactly the arm backlog 262 rewrote. Read as "the step before
+                // the last break had combo > 0", since a passive break stands on nothing.
+                int lastBreak = -1;
+
+                for (int i = 1; i < readings.GetArrayLength(); i++)
                 {
-                    string op = script[i].GetProperty("op").GetString()!;
-
-                    if (op == "backspace") lastBackspace = i;
-
-                    // A space press that MOVED the caret more than one cell is a skip.
-                    if (op == "key" && script[i].GetProperty("c").GetString() == " " && i > 0
-                        && readings[i].GetProperty("at").GetProperty("cell").GetInt32() > readings[i - 1].GetProperty("at").GetProperty("cell").GetInt32() + 1)
-                    {
-                        lastSkip = i;
-                    }
+                    if (readings[i].GetProperty("comboBreaks").GetInt32() > readings[i - 1].GetProperty("comboBreaks").GetInt32())
+                        lastBreak = i;
                 }
 
-                Assert.That(lastSkip, Is.GreaterThan(0), $"{scenario}: no space in this script gave a word up");
-                Assert.That(lastBackspace, Is.GreaterThan(lastSkip), $"{scenario}: the collapse should follow the skip");
+                Assert.That(lastBreak, Is.GreaterThan(1), $"{scenario}: no break in this script at all");
+                Assert.That(readings[lastBreak - 1].GetProperty("combo").GetInt32(), Is.GreaterThan(0),
+                    $"{scenario}: the displacing break has to own a streak, or backlog 243 makes it passive and this is a different rule");
 
-                // DEFECT C: the anchor offered before the collapse, and the caret it landed on.
-                int anchor = readings[lastSkip].GetProperty("retypeSelectionAnchor").GetInt32();
-
-                Assert.That(anchor, Is.EqualTo(2), $"{scenario}: the gap in FRONT of the wholly abandoned word");
-                Assert.That(readings[lastBackspace].GetProperty("at").GetProperty("cell").GetInt32(), Is.EqualTo(anchor),
-                    $"{scenario}: the collapse ended behind its own selection, so the next letter is a manufactured typo");
+                foreach (var reading in readings.EnumerateArray())
+                {
+                    Assert.That(reading.GetProperty("charsAheadOfPlayhead").GetInt32(), Is.LessThanOrEqualTo(0),
+                        $"{scenario}: these scripts must never rush, or they are measuring the cap rather than the fold");
+                }
             }
-
-            // DEFECT A, on the script written for it: the caret really IS out past the cap when the
-            // skipping space is judged, and the gap is credited anyway.
-            var headOfWord = Run("headOfWordSkip").GetProperty("readings");
-            var skipStep = headOfWord[4];
-
-            Assert.That(skipStep.GetProperty("charsAheadOfPlayhead").GetInt32(), Is.EqualTo(9),
-                "the caret is nine countable chars past the playhead after the skip, four over the cap");
-            Assert.That(Section().GetProperty("maxCharsAhead").GetInt32(), Is.EqualTo(5), "against a cap of five");
-            Assert.That(skipStep.GetProperty("combo").GetInt32(), Is.EqualTo(1), "and the gap is credited: the word given up is not the player's budget");
-            Assert.That(headOfWord[3].GetProperty("charsAheadOfPlayhead").GetInt32(), Is.EqualTo(-1),
-                "measured where the press was MADE, the player was not rushing at all");
-
-            // DEFECT B, on the script written for it: the redemption is bigger than the run the first
-            // break took, which is exactly the increment the passive break folded in.
-            Assert.That(Run("doubleSpace").GetProperty("comboBreaks").GetInt32(), Is.EqualTo(2), "two spaces, two breaks");
-            Assert.That(Run("doubleSpace").GetProperty("comboRestores").EnumerateArray().Select(x => x.GetInt32()).ToArray(),
-                Is.EqualTo(new[] { 4 }), "the deeper claim swallowed the run the passive break spent");
-            Assert.That(Run("headOfWordSkip").GetProperty("comboRestores").EnumerateArray().Select(x => x.GetInt32()).ToArray(),
-                Is.EqualTo(new[] { 3 }), "with one space there is nothing to fold, so the claim stands at what the break took");
         });
+    }
+
+    /// <summary>The index of the step whose reading first shows a restore, which is the redemption.</summary>
+    private static int RedemptionStep(string scenario)
+    {
+        var readings = Run(scenario).GetProperty("readings");
+
+        for (int i = 0; i < readings.GetArrayLength(); i++)
+        {
+            if (readings[i].GetProperty("comboRestores").GetArrayLength() > 0) return i;
+        }
+
+        throw new InvalidOperationException($"{scenario} never redeemed its claim");
     }
 }

@@ -100,6 +100,7 @@ public class WpmClockArmLiveParityTest
         BoundedRush = true,
         BackDatedSealBreak = true,
         LosslessSkipReclaim = true,
+        FoldsDisplacedClaim = true,
     };
 
     #endregion

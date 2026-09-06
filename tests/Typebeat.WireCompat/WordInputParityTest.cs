@@ -539,6 +539,7 @@ public class WordInputParityTest
             SpaceSkipsWord = scenario.SpaceSkipsWord,
             BackDatedSealBreak = true,
             LosslessSkipReclaim = true,
+            FoldsDisplacedClaim = true,
         };
 
         engine.Update(scenario.StartTime);

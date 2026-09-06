@@ -2039,7 +2039,8 @@
             countableTargets.sort((a, b) => a - b);
             this.countableTargets = countableTargets;
             // The one outstanding combo snapshot (TypingEngine.restorable, backlog 140, widened by
-            // 167, again by 243 and again by 259): { lineIndex, cellIndex, streak, ownPressCredit,
+            // 167, again by 243, again by 259 and folded rather than replaced since 262):
+            // { lineIndex, cellIndex, streak, ownPressCredit,
             // positions }, the cell a wrong keypress spoiled or a word
             // skip abandoned and the streak that break cost, or null when there is nothing to go
             // back for. Set by that keypress or skip (through snapshotRedeemableBreak, the one
@@ -2688,6 +2689,13 @@
         // A correct character after the skipping space puts the run at 2 and the next break takes
         // the claim as it always did.
         //
+        // A break that DOES own its streak takes the claim, and since backlog 262 it takes the
+        // DISPLACED claim's streak with it rather than dropping it: the older break's increments are
+        // just as unreachable as a passive break's, and a player who corrects both accidents in full
+        // is entitled to both. The chain is then redeemed at the NEWEST of the broken cells, and the
+        // seal's back-dated break (backlog 259) is what still takes back anything the line never
+        // really earned. See the arm itself, below.
+        //
         // The C# reads three era switches here that this file has no counterpart to, for the reason
         // set out on `restorable`: ComboRestoreRule, which decides whether any snapshot is taken at
         // all, ComboClaimRule, which decides the condition below, and SkipSpaceCreditRule, which
@@ -2722,6 +2730,38 @@
                     // 243), and folding the run in does not re-arm it.
                     ownPressCredit: 0,
                     positions: positions
+                };
+                return;
+            }
+
+            // BACKLOG 262: this break OWNS the streak it broke, so it takes the claim, but the claim
+            // it displaces is not therefore worthless: the increments behind it were earned and the
+            // cells that earned them are resolved, so discarding it loses them for good even though
+            // the player can still go back and correct both accidents. The displaced claim FOLDS into
+            // this one instead, which makes the NEWEST of the broken cells the one that redeems the
+            // whole chain, and chains transitively through a third break and a fourth. Positions go in
+            // front of this break's own, oldest first, because a redemption puts them back at the head
+            // of the ledger (resumeStreakIfThisRedeemsTheBreak); the count still equals the streak;
+            // and the credit still starts at zero, so backlog 243's one-break exemption is neither
+            // granted nor extended by folding.
+            //
+            // A NEW array, for the reason the passive arm gives: the broken list is the old
+            // runPositions reference and must never be pushed onto.
+            //
+            // The C# gates this on TypingEngine.FoldsDisplacedClaim (CONFIG frame bit 12) so that
+            // every stored replay re-derives with the displaced claim discarded, which is the
+            // max_combo its player was given. This file has no such arm, for the reason set out on
+            // `restorable`: the browser only ever plays live, so the rule stands unguarded.
+            //
+            // What keeps it honest is backlog 259's back-dated seal break: the fold restores
+            // increments earned before the older break without that break's own cell having been
+            // fixed, but the restored positions go back WHERE THEY WERE EARNED, so a line sealing on
+            // cells nobody typed still destroys every increment at or before its last unforeseen miss.
+            if (claim !== null && claim.streak > 0) {
+                this.restorable = {
+                    lineIndex: this.activeLineIndex, cellIndex: cellIndex, streak: claim.streak + brokenStreak,
+                    ownPressCredit: 0,
+                    positions: claim.positions.concat(brokenPositions)
                 };
                 return;
             }

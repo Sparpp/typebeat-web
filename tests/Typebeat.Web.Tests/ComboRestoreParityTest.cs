@@ -129,15 +129,24 @@ public class ComboRestoreParityTest
 
     /// <summary>
     /// The bound on the rule
-    /// (<c>ComboRestoreTest.AnInterveningBreakOwnsTheStreakSoTheOlderFixRestoresNothing</c>). An
-    /// intervening break OWNS the streak: the run the player was on when they typed the first wrong
-    /// character has been lost to something else since, and going back to fix the older cell cannot
-    /// un-lose it. Only the newest wrong cell holds a claim, so fixing them in the order they
-    /// happened restores nothing for the first and everything for the second.
+    /// (<c>ComboRestoreTest.AnInterveningBreakOwnsTheStreakSoTheOlderFixRestoresNothing</c>), and
+    /// since backlog 262 the bound only on WHICH CELL redeems. An intervening break with a streak of
+    /// its own OWNS the claim, so going back to fix the older cell restores nothing: the claim is on
+    /// the newer cell.
     ///
-    /// <para>Exactly one snapshot is ever outstanding, which is what makes "a second wrong key
-    /// discards the first cell's claim" fall out of the same rule as every other break rather than
-    /// needing a case of its own.</para>
+    /// <para>Exactly one snapshot is ever outstanding, which is what makes "a second wrong key takes
+    /// the first cell's claim" fall out of the same rule as every other break rather than needing a
+    /// case of its own. What that claim is WORTH is the axis backlog 262 added: the displaced one is
+    /// FOLDED IN rather than dropped, because the older break's streak of 3 was earned, its cells are
+    /// resolved and inert on every retype, and discarding it lost it for good even though the player
+    /// came back and typed everything out. So the redemption is 5 and the fully corrected run ends on
+    /// 7, exactly the seven cells 0 to 6 a clean run holds at the same point.</para>
+    ///
+    /// <para>The game pins the pre-262 arm beside this one
+    /// (<c>ComboRestoreTest.ThePre262RuleDropsTheDisplacedClaim</c>, the same keystrokes three lower).
+    /// This file has no arm for it: <c>typebeat-core.js</c> mirrors the fold unconditionally because
+    /// the browser only ever plays live, and the cross-repo separation of the two eras is
+    /// <c>Typebeat.WireCompat.DisplacedClaimFoldLiveParityTest</c>'s job.</para>
     /// </summary>
     [Test]
     public void AnInterveningBreakOwnsTheStreakSoTheOlderFixRestoresNothing()
@@ -148,17 +157,18 @@ public class ComboRestoreParityTest
         {
             Assert.That(Int(run, "comboAfterSecondTypo"), Is.Zero);
 
-            Assert.That(Ints(run, "restoredAfterOlderFix"), Is.Empty, "cell 3's streak died with the second wrong key");
+            Assert.That(Ints(run, "restoredAfterOlderFix"), Is.Empty, "cell 3's claim was taken by the second wrong key");
             Assert.That(Int(run, "comboAfterOlderFix"), Is.EqualTo(1), "the fix earns its own cell and nothing more");
 
-            // Cell 6 is the one still holding a claim, and it is redeemed normally.
-            Assert.That(Ints(run, "restored"), Is.EqualTo(new[] { 2 }), "the newer cell's snapshot survived");
-            Assert.That(Int(run, "combo"), Is.EqualTo(4), "2 restored + the 1 the older fix earned + this fix");
-            Assert.That(Int(run, "processorCombo"), Is.EqualTo(4));
-            Assert.That(Int(run, "processorHighestCombo"), Is.EqualTo(4));
+            // Cell 6 is the one holding the claim, and it is redeemed normally.
+            Assert.That(Ints(run, "restored"), Is.EqualTo(new[] { 5 }), "the newer cell's claim, carrying the older one folded into it");
+            Assert.That(Int(run, "combo"), Is.EqualTo(7), "5 restored + the 1 the older fix earned + this fix");
+            Assert.That(Int(run, "maxCombo"), Is.EqualTo(7), "which is the seven cells a clean run holds here, and no more");
+            Assert.That(Int(run, "processorCombo"), Is.EqualTo(7));
+            Assert.That(Int(run, "processorHighestCombo"), Is.EqualTo(7));
 
             Assert.That(Int(run, "breaks"), Is.EqualTo(2));
-            Assert.That(Int(run, "mistypes"), Is.EqualTo(2));
+            Assert.That(Int(run, "mistypes"), Is.EqualTo(2), "the two wrong keypresses are still spent");
         });
     }
 

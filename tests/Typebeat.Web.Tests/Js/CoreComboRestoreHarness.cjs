@@ -138,16 +138,26 @@ function fixResumesTheStreak() {
     });
 }
 
-// ComboRestoreTest.AnInterveningBreakOwnsTheStreakSoTheOlderFixRestoresNothing. Only the NEWEST
-// wrong cell holds a claim, so fixing them in the order they happened restores nothing for the
-// first and everything for the second.
+// ComboRestoreTest.AnInterveningBreakOwnsTheStreakSoTheOlderFixRestoresNothing. Two wrong keys with
+// a run REBUILT between them, so the second break really does cost something of its own and really
+// does take the claim. Only the NEWEST wrong cell holds one, so fixing them in the order they
+// happened restores nothing for the first and everything for the second.
+//
+// Since backlog 262 that is the bound only on WHICH CELL redeems. What the claim is WORTH carries
+// the displaced one FOLDED IN, so the redemption is 5 rather than 2 and the fully corrected run
+// reaches 7, which is exactly the seven cells 0 to 6 a clean run holds at the same point: the older
+// break's streak of 3 was earned, its cells are resolved and inert on every retype, and discarding
+// it lost it for good even though the player came back and typed everything out. The game pins the
+// pre-262 arm beside this one (ComboRestoreTest.ThePre262RuleDropsTheDisplacedClaim); this file has
+// no arm for it, because the browser only ever plays live (see typebeat-core.js's
+// snapshotRedeemableBreak).
 function interveningBreak() {
     const engine = started();
 
     typeCorrectly(engine, 0, 3);
     typo(engine, 3);            // snapshots 3
     typeCorrectly(engine, 4, 6);
-    typo(engine, 6);            // the intervening break: snapshots 2, and drops cell 3's claim
+    typo(engine, 6);            // the displacing break: a streak of 2 of its own, with cell 3's claim folded in
 
     const comboAfterSecondTypo = engine.combo;
 

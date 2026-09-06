@@ -1432,4 +1432,209 @@ const out = {};
     };
 }
 
+// THE DISPLACED CLAIM FOLD (backlog 262). THE SAME LAW the two sections above wrote for the word
+// skip, applied to the shape neither of them could see: TWO accidents, both fully corrected, cost the
+// run NOTHING.
+//
+// The report is score 13383. The player was 477 combo deep and clean when they typo'd the first
+// letter of a word, noticed nothing and typed its second letter correctly (a run of 1 they really
+// earned, so the next break was NOT passive under backlog 243), then typo'd the word gap after it.
+// That second break stood on a streak of its own, so it took the claim, and the overwrite arm of
+// snapshotRedeemableBreak threw the 477 away. Three backspaces and a perfect retype restored 1. The
+// play finished with 0 misses, 100% completion and a max combo of 477 out of 894.
+//
+// The rule: a break that takes the claim off an older one FOLDS that claim into its own
+// (displacedStreak + brokenStreak against its OWN cell, the displaced positions in front of its own
+// in run order), so the NEWEST of the broken cells redeems the whole chain, transitively.
+//
+// This section sits beside the two above because it shares their cross-repo shape rather than because
+// it needs the flexible caret: the fold has nothing to do with the rush cap, and the scripts below are
+// written so the caret never leads the playhead at all (every lead reading is zero or negative). What
+// it does need is one harness the WireCompat arm can read all four sections out of.
+//
+// EMITTED WITH THEIR SCRIPTS: Typebeat.WireCompat.DisplacedClaimFoldLiveParityTest replays these
+// steps through the game's own TypingEngine with FoldsDisplacedClaim set, and the same keystrokes
+// through TypeBeatReplayScorer for the SUBMITTED account.
+{
+    // THE REPORTED SHAPE'S FIXTURE, the game's own reportMap: a run of cells, then a two-letter word
+    // with a gap after it, which is the "... go to ..." the report broke on. Eleven cells:
+    //   0:a = 1000, 1:b = 1100, 2:c = 1200, 3:d = 1300, 4:e = 1400, 5:' ' = 1500, 6:f = 1500,
+    //   7:g = 1600, 8:' ' = 1700, 9:h = 1700, 10:i = 1800.
+    // The loader gives the line a window of [1000, 4900) with no seal grace, so nothing seals until
+    // long after the last keystroke.
+    const REPORT = osu([
+        {
+            text: 'abcde fg hi', start_ms: 1000, end_ms: 1900,
+            words: [word('abcde', 1000, 1500), word('fg', 1500, 1700), word('hi', 1700, 1900)]
+        }
+    ], 60000);
+
+    const reference = new TB.TypingEngine(build(REPORT));
+    const refCells = reference.lines[0].cells;
+    const cellCount = refCells.length;
+
+    /**
+     * Press cell `i` correctly. Dead on its own target by default, and at `t` when the correction
+     * has already carried the clock past it: the times a script emits must never go BACKWARDS,
+     * because the replay arm feeds them to TypeBeatReplayScorer as frames. A retype landing late is
+     * an off-time press, which since backlog 199 is a HIT that extends the run like any other (it is
+     * paid 'meh', and awardedTier drops a Great to an Ok where the cell was held wrong), so the
+     * clamp moves tiers and never combo, which is the only quantity these scripts are about.
+     */
+    function key(i, t) { return { op: 'key', c: refCells[i].expected, t: t === undefined ? refCells[i].target : t }; }
+
+    /** Type cells [from, to) in order, each at `t` or dead on its own target. */
+    function typeSteps(from, to, t) {
+        const steps = [];
+
+        for (let i = from; i < to; i++) steps.push(key(i, t));
+
+        return steps;
+    }
+
+    const scenarios = {
+        // THE REPORT, keystroke for keystroke. Six cells clean (the report's 477), a wrong letter on
+        // the head of "fg", its second letter typed correctly (the run is 1, and it is progress the
+        // player really made, so the next break is NOT passive), a wrong letter on the word gap, then
+        // three backspaces and the letter, letter, space retyped.
+        //
+        // Under the fold the retyped head is the cell's FIRST correct press and earns 1 fresh, the
+        // second letter is an inert retype (it was judged before the backspace took it), and the space
+        // redeems the WHOLE CHAIN: the run stands at 9 on that gap, which is exactly the nine cells a
+        // clean run holds there, and typing on to the end reaches the clean run's 11. Under the arm
+        // every stored replay is in, the same fingers redeem 1 and end six lower.
+        reportedShape: {
+            steps: [
+                { op: 'update', t: 1000 },
+                ...typeSteps(0, 6),
+
+                { op: 'key', c: 'z', t: refCells[6].target }, // the typo on the head of "fg"
+                key(7),                                       // its second letter, correct: a run of 1
+                { op: 'key', c: 'z', t: refCells[8].target }, // the typo on the word gap: the DISPLACING break
+
+                { op: 'backspace', t: refCells[8].target },
+                { op: 'backspace', t: refCells[8].target },
+                { op: 'backspace', t: refCells[8].target },
+
+                ...typeSteps(6, 9, refCells[8].target),
+                ...typeSteps(9, cellCount),
+                { op: 'update', t: 6000 },
+            ]
+        },
+
+        // THE CHAIN, which is what "transitively" means: three breaks with one correct character
+        // between each pair, so every one of them owns a streak and takes the claim. The second folds
+        // the first's, the third folds that pair, and the ONE redemption on the third cell puts back
+        // all of it (a restore of 4: two from the first break, one from the second, one from the
+        // third). The stored arm ends three lower, which is exactly the two streaks the chain dropped.
+        threeBreakChain: {
+            steps: [
+                { op: 'update', t: 1000 },
+                ...typeSteps(0, 2),
+
+                { op: 'key', c: 'z', t: refCells[2].target }, // break 1: claims cell 2 for a streak of 2
+                key(3),                                       // a run of 1 the player earned
+                { op: 'key', c: 'z', t: refCells[4].target }, // break 2: owns that 1, folds break 1 in
+                key(5),                                       // the word gap, a run of 1 again
+                { op: 'key', c: 'z', t: refCells[6].target }, // break 3: owns that 1, folds the pair in
+
+                { op: 'backspace', t: refCells[6].target },
+                { op: 'backspace', t: refCells[6].target },
+                { op: 'backspace', t: refCells[6].target },
+                { op: 'backspace', t: refCells[6].target },
+                { op: 'backspace', t: refCells[6].target },
+
+                ...typeSteps(2, 7, refCells[6].target),
+                ...typeSteps(7, cellCount),
+                { op: 'update', t: 6000 },
+            ]
+        },
+
+        // THE REFERENCE both are read against, so "the accidents cost the run nothing" is a comparison
+        // rather than a literal.
+        cleanRun: {
+            steps: [{ op: 'update', t: 1000 }, ...typeSteps(0, cellCount), { op: 'update', t: 6000 }]
+        },
+    };
+
+    const runs = {};
+
+    for (const name of Object.keys(scenarios)) {
+        const engine = new TB.TypingEngine(build(REPORT));
+        const readings = [];
+
+        let breaks = 0;
+        let restored = [];
+        engine.onComboBroken = () => { breaks++; };
+        engine.onComboRestored = (n) => { restored.push(n); };
+
+        for (const step of scenarios[name].steps) {
+            let handled = null;
+
+            if (step.op === 'update') engine.update(step.t);
+            else if (step.op === 'backspace') handled = engine.processBackspace();
+            else handled = engine.processKey(step.c, step.t);
+
+            readings.push({
+                op: step.op,
+                t: step.t,
+                c: step.c === undefined ? null : step.c,
+                handled: handled,
+                at: at(engine),
+                states: engine.lines.map(l => l.cells.map(c => c.state)),
+                combo: engine.combo,
+                maxCombo: engine.maxCombo,
+                comboBreaks: breaks,
+                comboRestores: restored.slice(),
+                mistypes: engine.mistypes,
+                finished: engine.finished,
+                // Read on every step so the WireCompat arm can prove the scripts never rush: the fold
+                // is not about the cap, and a script that tripped it would be measuring the wrong rule.
+                charsAheadOfPlayhead: engine.charsAheadOfPlayhead(step.t),
+                // The ledger, one { line, cell } per unit of combo. runPositions.length === combo is
+                // the invariant the fold has to preserve: the displaced streak and the displaced
+                // positions move together, or a later seal back-dates against a ledger that lies.
+                runPositions: engine.runPositions.map(p => ({ line: p.line, cell: p.cell })),
+                processorCombo: engine.processor.combo,
+                processorHighestCombo: engine.processor.highestCombo
+            });
+        }
+
+        const score = TB.computeScore(engine);
+
+        runs[name] = {
+            script: scenarios[name].steps,
+            readings: readings,
+            combo: engine.combo,
+            maxCombo: engine.maxCombo,
+            comboBreaks: breaks,
+            comboRestores: restored,
+            mistypes: engine.mistypes,
+            submitted: {
+                maxCombo: score.maxCombo,
+                totalScore: score.totalScore,
+                accuracy: score.accuracy,
+                completion: score.completion,
+                rank: score.rank,
+                statistics: score.statistics,
+                maximumStatistics: score.maximumStatistics
+            }
+        };
+    }
+
+    out.displacedClaimFold = {
+        // Pinned before the readings are, so a fixture that drifted cannot be read as an engine
+        // divergence by the cross-repo arm.
+        fixture: {
+            lines: reference.lines.map(l => ({
+                activationTime: l.activationTime,
+                endTime: l.endTime,
+                sealGraceMs: l.sealGraceMs,
+                cells: l.cells.map(c => ({ expected: c.expected, target: c.target }))
+            }))
+        },
+        runs: runs
+    };
+}
+
 process.stdout.write(JSON.stringify(out));

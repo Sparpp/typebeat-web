@@ -134,7 +134,13 @@ WireCompat is where that is provable, because it is the only project that compil
   `LosslessSkipReclaimLiveParityTest` is the pin. Its third defect, the Ctrl+A anchor being widened
   past a wholly abandoned word so the mass backspace cannot overshoot its own selection, carries no
   era at all (it is input layer) and is pinned in `WordInputParityTest`, which is where the whole
-  gesture composition lives. A harness that SPIES on an engine method must forward every argument
+  gesture composition lives. Since backlog 262 **bit 12** joins them (a break that takes the claim
+  off an older break FOLDS that claim into its own instead of discarding it, so two accidents both
+  fully corrected cost the run nothing and the newest of the broken cells redeems the whole chain,
+  transitively), so every such parity fixture also sets `FoldsDisplacedClaim = true`.
+  `DisplacedClaimFoldLiveParityTest` is the pin, and unlike bits 10 and 11 the generated sweep DOES
+  roll this shape, so `EngineFuzzLiveParityTest` needs the bit as well. A harness that SPIES on an
+  engine method must forward every argument
   (`CoreFuzzHarness.cjs` wraps `rushesPastCap`): a dropped one reads out of the prefix table as NaN
   and silently answers "no rush" for the entire sweep.
 - **The .osu FORMAT VERSION GATE exists three times** since backlog 255, and all three read the
