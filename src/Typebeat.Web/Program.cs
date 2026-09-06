@@ -277,6 +277,10 @@ AlignEndpoints.Map(app);
 // TYPEBEAT_BUDDY_KEY is configured, so a deploy that has not opted in exposes nothing.
 BuddyEndpoints.Map(app);
 
+// Operational readouts for the same bot (disk occupancy), behind the same TYPEBEAT_BUDDY_KEY gate
+// and likewise 404 when it is unset. Added after the 2026-09-04 disk-full outage.
+OpsEndpoints.Map(app);
+
 // The in-browser web player's backend (score tokens/submission + map/audio serving). Additive;
 // cookie-session authed, mirrors the bearer score flow in ScoreEndpoints.
 PlayEndpoints.Map(app);

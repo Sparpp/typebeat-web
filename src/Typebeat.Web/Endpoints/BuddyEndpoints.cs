@@ -104,8 +104,13 @@ public static class BuddyEndpoints
         });
     }
 
-    /// <summary>Shared key check for every endpoint here. Returns false with the response to send.</summary>
-    private static bool Authorised(HttpContext ctx, IConfiguration config, out IResult? failure)
+    /// <summary>
+    /// Shared key check for every endpoint here, and for the operational readouts in
+    /// <see cref="OpsEndpoints"/>, which are gated by the same key and the same consumer. Returns
+    /// false with the response to send. Public so there is exactly ONE implementation of the gate
+    /// (and of the constant-time comparison under it) rather than a copy per endpoint module.
+    /// </summary>
+    public static bool Authorised(HttpContext ctx, IConfiguration config, out IResult? failure)
     {
         string? expected = config["TYPEBEAT_BUDDY_KEY"];
 

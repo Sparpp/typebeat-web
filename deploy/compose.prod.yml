@@ -2,10 +2,21 @@
 #   cd /opt/typebeat-web && docker compose -f deploy/compose.prod.yml up -d --build
 # Caddy terminates TLS for typebeat.mingda.sh and reverse-proxies to the app; the app talks to
 # Postgres over the private compose network. Only Caddy publishes ports to the host.
+#
+# EVERY service caps its json-file log (10m x 3 = 30 MB worst case each). Docker's default is an
+# UNBOUNDED json-file, and on 2026-09-04 caddy's had grown to 352 MB as part of filling the box's
+# 75 GB disk (see deploy/README.md, "Disk"). A cap here only applies to a container CREATED after
+# it: compose recreates a service when its definition changes, so watch that caddy and postgres
+# actually get recreated once, since CI never recreates postgres.
 services:
   caddy:
     image: caddy:2
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "80:80"
       - "443:443"
@@ -28,6 +39,11 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       # Kestrel listens plain HTTP inside the network; Caddy does TLS.
       ASPNETCORE_URLS: "http://0.0.0.0:8080"
@@ -80,6 +96,11 @@ services:
       context: .
       dockerfile: deploy/aligner/Dockerfile
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - appdata:/data
     mem_limit: 5g
@@ -88,6 +109,11 @@ services:
   postgres:
     image: postgres:16
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_USER: typebeat
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

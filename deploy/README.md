@@ -211,10 +211,112 @@ must mount `/data`), run `crontab -e` as root and add exactly:
 Verify with `crontab -l`, and after the first scheduled night check
 `/var/log/typebeat-backup.log` for `backup ok:` lines.
 
+## Disk
+
+The box has ONE 75 GB disk and everything shares it: Postgres, the `/data` uploads volume, the
+docker images and their build cache, and the logs. On 2026-09-04 it reached 100 percent, Postgres
+went unhealthy and refused connections, every page 500'd, and nothing anywhere said "disk". The
+clean-up was entirely manual. This section is what fills it, what is capped automatically now, and
+the parts that still need you.
+
+**What actually filled it, and what holds each one down now:**
+
+| What | On 2026-09-04 | Held down by |
+|---|---|---|
+| `/data/downloads/releases/*.nupkg` (Velopack update feed) | 44 GB | the ship path prunes after every upload |
+| docker build cache | 7 GB | `docker builder prune -f`, last step of every CI deploy |
+| container json logs (caddy's alone) | 352 MB | `logging:` caps in `compose.prod.yml`, 10m x 3 per service |
+| systemd journal | 488 MB | a ONE-TIME manual cap, below |
+
+Uploaded beatmap packages are not on that list and never were: `PackageIngest` already keeps only
+the latest 2 assembled packages per set (see Backups above). That prune is per SET and about
+re-submissions; the release prune below is per CHANNEL and about client builds. They are unrelated,
+and neither covers the other.
+
+### Release retention (automatic, in the ship path)
+
+`ship-client.ps1` runs `Invoke-ReleasePrune` on the box after it uploads, so `/data/downloads/releases`
+can no longer grow without bound (every ship used to add a full package of roughly 200 MB plus a
+delta, on three channels, forever). What it keeps, in order of authority:
+
+1. every file advertised by a live feed (`releases.win.json`, `releases.linux.json`,
+   `releases.osx.json`), because deleting one breaks an update already in flight. A channel whose
+   feed cannot be fetched is skipped entirely.
+2. every manifest (`RELEASES`, `releases.*.json`, `assets.*.json`). Only `*.nupkg` is ever deleted.
+3. the packages of the **3 newest versions per channel** (win/linux/osx).
+4. anything it cannot classify, kept and printed so you can look.
+
+3 is a judgement call from the recovery, not a derived number. Nothing breaks for a client older
+than the window: Velopack falls back to the newest Full package when no delta chain reaches it, and
+the newest Full is always feed-referenced by rule 1. `-DryRun` prints the exact delete list and
+stops, which is the way to sanity-check it after changing `Keep`.
+
+### Container logs (automatic, but NOT retroactive)
+
+Every service in `compose.prod.yml` declares `logging: driver json-file` with `max-size 10m` and
+`max-file 3`, so the worst case is 30 MB per container instead of docker's default of unbounded.
+
+**A log cap only applies to a container CREATED after it.** Compose recreates a service when its
+definition changes, so:
+
+- `app` and `aligner` pick it up on the next deploy (CI does `up -d` on both).
+- `caddy` picks it up on the next deploy too (CI does `up -d caddy`).
+- **`postgres` does not: CI never touches it.** Recreate it once, by hand, when you are willing to
+  take a few seconds of downtime:
+  ```
+  cd /opt/typebeat-web && docker compose -f deploy/compose.prod.yml up -d postgres
+  ```
+  Check it took with `docker inspect --format '{{.HostConfig.LogConfig}}' typebeat-web-postgres-1`.
+
+An existing oversized log file is not truncated by any of this. Delete or truncate it once (find it
+with `du -sh /var/lib/docker/containers/*/*-json.log`), or just recreate the container.
+
+### Journal (one manual step, once)
+
+The systemd journal is not managed by anything in this repo and had grown to 488 MB. Cap it on the
+box:
+
+```
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=100M\n' > /etc/systemd/journald.conf.d/size.conf
+systemctl restart systemd-journald
+journalctl --vacuum-size=100M
+```
+
+Do **not** add that file to the repo. Nothing in the deploy consumes `/etc/systemd/*`: the CI tar
+lands in `/opt/typebeat-web` only, so a copy kept here would drift silently and mislead the next
+reader into thinking it is deployed.
+
+### Alerting
+
+`GET /api/v2/ops/disk` (see `src/Typebeat.Web/Endpoints/OpsEndpoints.cs`) reports
+`{ totalBytes, freeBytes, usedPercent }` for the filesystem holding `TYPEBEAT_FILE_ROOT`. That
+volume is a directory on the host filesystem, so the numbers are the host disk's, the same ones
+`df -h /` shows. It is gated by `TYPEBEAT_BUDDY_KEY` exactly like the bot's score feed (404 when the
+key is unset, 401 on a wrong key), and it is a dumb readout: no threshold, no state.
+
+The Discord bot polls it and posts when usage crosses 80 percent, edge-triggered on its side so a
+full disk does not spam the channel every poll. Its keys (`BUDDY_DISK_CHANNEL_ID` and its
+threshold/interval siblings) go in the bot's own `.env` next to `BUDDY_API_KEY`, which must equal
+this box's `TYPEBEAT_BUDDY_KEY`. The `discord-buddybot` README is the authority on the exact key
+names and defaults; nothing on this box needs configuring for the alert beyond that shared key.
+
+Quick manual check, from anywhere:
+
+```
+curl -sS -H "X-Buddy-Key: $TYPEBEAT_BUDDY_KEY" https://typebeat.mingda.sh/api/v2/ops/disk
+```
+
 ## Monitoring
 
 - Uptime: UptimeRobot keyword monitor on `https://typebeat.mingda.sh/health` (keyword `ok`,
   5-min interval). Public status page: <https://stats.uptimerobot.com/E7XRJ7vfer>.
+- **Failure signature: if EVERYTHING 500s and Postgres looks unhealthy, check `df -h` first.** A
+  full disk presents as a database fault, not a disk fault: Postgres logs
+  `57P03 the database system is in recovery mode` (or refuses to start at all), the app's every
+  query fails, and the site returns 500 on all pages while `/health` also goes red. The database is
+  the victim, not the cause. Free space, then restart Postgres, then read the Disk section above
+  for what to stop it recurring.
 
 ## Enabling the game-download CTA
 

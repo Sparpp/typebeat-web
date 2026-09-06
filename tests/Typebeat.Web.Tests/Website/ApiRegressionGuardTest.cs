@@ -93,6 +93,23 @@ public class ApiRegressionGuardTest
     }
 
     [Test]
+    public async Task OpsDisk_WithNoBuddyKeyConfigured_IsInvisible()
+    {
+        // The ops readout (backlog 268) is gated exactly like the bot's score feed: with
+        // TYPEBEAT_BUDDY_KEY unset, as it is on this host, it must 404 with no body, so an
+        // un-opted-in deployment does not even advertise that the endpoint exists. A wrong key
+        // 401s, but only once a key is configured, which this host deliberately never does.
+        using var response = await WebsiteFixture.Client.GetAsync("/api/v2/ops/disk");
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(body, Is.Empty);
+        });
+    }
+
+    [Test]
     public async Task RegistrationPost_WrongUserAgent_StillExact403Envelope()
     {
         // POST /users is the game client's registration wire route; only GET/HEAD /users/* is
