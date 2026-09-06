@@ -157,8 +157,12 @@ stored `ranked = false` and therefore earn no pp.
   converts nothing, so the cells, their target times and the map's pace are all identical and no
   rating input can see it. Its score multiplier is osu's 0.5x for a difficulty reduction, the same
   value No Fail carries; the pp value is separate and was decided at 0.75 on 2026-08-13.
-* **HR** (Hard Rock): flat × 1.25, the exact mirror of Easy on the same lever. The mod HALVES every
-  judgement window, so each character is half as forgiving to land. Flat for the same reason Easy is:
+* **HR** (Hard Rock): flat × 1.25, the exact mirror of Easy on the same lever. Since backlog 264 the
+  mod no longer halves the judgement windows for a live play: it now judges under the classic
+  per-character point-target rule at the same 1.0x windows as an unmodded play. A stored replay from
+  before that change still resolves under the halved ladder, carried by the replay's own CONFIG
+  frame (the era travels with the row, so no new axis is needed to recalc it). Flat for the same
+  reason Easy is:
   it converts nothing, so no rating input can see it. Deliberately not the reciprocal of Easy's 0.75
   (1.333...): the window scales mirror each other, the prices need not. Its score multiplier is a
   separate 1.10x, chosen so the fattest reachable ranked stack (DT@2.00 × FL × LT × HR = 1.770615)

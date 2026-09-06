@@ -1443,13 +1443,16 @@
     const TIER_SCALE = { Line: 1.0, Word: 0.6, Syllable: 0.45 };
 
     // The C# carries one more factor here since backlog 149: TypingEngine.WindowScale, a
-    // multiplicative scale a mod may put on every window. Easy doubles them, Hard Rock halves them,
-    // and since backlog 150 a rate mod multiplies the clock rate in as well, so the real-time
-    // tolerance is the same at every speed. None of it is mirrored, because /play has no mods
-    // payload at all (see the scoreMultiplier note where the total is computed) and no rate control
-    // either (see the update() note about clockRate), so the browser's scale is permanently 1 and
-    // the C# at 1 is bit-identical to this. The day browser play gains a mods payload or a rate,
-    // this is where the scale has to arrive.
+    // multiplicative scale a mod may put on every window. Easy still doubles them live. Hard Rock
+    // no longer does, since backlog 264 removed the live halving; it now only halves a STORED
+    // replay's windows, and only when that replay's CONFIG frame lacks bit 13
+    // (flag_unhalved_hard_rock_windows), which is how the era travels with the replay itself
+    // instead of needing a recalc axis. Since backlog 150 a rate mod multiplies the clock rate in
+    // as well, so the real-time tolerance is the same at every speed. None of it is mirrored,
+    // because /play has no mods payload at all (see the scoreMultiplier note where the total is
+    // computed) and no rate control either (see the update() note about clockRate), so the
+    // browser's scale is permanently 1 and the C# at 1 is bit-identical to this. The day browser
+    // play gains a mods payload or a rate, this is where the scale has to arrive.
     function windowsFor(tier) {
         const s = TIER_SCALE[tier] != null ? TIER_SCALE[tier] : 1.0;
         return { ge: BASE_WINDOWS.ge * s, gl: BASE_WINDOWS.gl * s, oe: BASE_WINDOWS.oe * s, ol: BASE_WINDOWS.ol * s, me: BASE_WINDOWS.me * s, ml: BASE_WINDOWS.ml * s };

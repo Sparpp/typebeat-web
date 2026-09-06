@@ -1031,13 +1031,18 @@ public static class Recalculation
         //    row no combination reproduces keeps THIS arm's mismatch and reports as unexplained, which
         //    is what stops the search from being a way of always finding an answer.
         //
-        //    THE EASY AND HARD ROCK WINDOW SCALES ARE NOT AN ERA AXIS and deliberately have no switch,
-        //    even though stored rows carrying Hard Rock now exist, which retires the premise
-        //    TypeBeatReplayScorer.createEngine states for them. The conclusion survives on a different
-        //    footing: those two mods have only ever had ONE behaviour, so a row carrying either was
+        //    THE EASY AND HARD ROCK WINDOW SCALES ARE STILL NOT AN ERA AXIS HERE, even though the HR
+        //    scale itself did get retuned: backlog 264 dropped the live halving, so a NEW Hard Rock
+        //    play now judges at 1.0x windows. That change needed no switch in this tool because it
+        //    does not live here. It lives on the replay's own CONFIG frame (bit 13,
+        //    flag_unhalved_hard_rock_windows): a stored row already carries which ladder it was
+        //    played under, so TypeBeatReplayScorer.createEngine reads the scale off the row instead
+        //    of off a table this search would have to maintain. Easy's half of the argument is
+        //    unchanged: that mod has only ever had ONE behaviour, so a row carrying it was
         //    necessarily played with that scaling and applying it unconditionally reproduces the row.
         //    Such a row fails the default on the SPACE axis like any other, and the search fixes it
-        //    there. This would need revisiting only if an EZ or HR window scale were ever retuned.
+        //    there. This would need revisiting only if Easy's window scale were ever retuned, or if
+        //    Hard Rock's stopped being recoverable from the replay's own CONFIG frame.
         TypeBeatReplayAccount ScoreUnder(SearchedEra candidate) => TypeBeatReplayScorer.Score(
             playable,
             mods,
