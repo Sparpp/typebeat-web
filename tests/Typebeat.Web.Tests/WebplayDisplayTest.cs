@@ -152,6 +152,73 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
+    /// THE PUSH WARNING (backlog 263), the mirror of the cue-in bars above and a port of
+    /// <c>LyricStage.updatePushWarning</c>. A player lagging behind on a line the song has already
+    /// left keeps it only until the drag cutoff, where the engine force-seals it and lands the caret
+    /// on the next line, and that used to arrive with no notice at all. It is now counted down by the
+    /// very same depleting bar, at full opacity, hung off the END of the line the player is ON rather
+    /// than the start of the line they are about to gain, and painted in the error red rather than
+    /// the sung blue, because it is the opposite message: a line about to be taken.
+    ///
+    /// <para>The bar's own shape is already pinned above, so what is pinned here is the WINDOW, which
+    /// is the thing a drift would silently move. The bar covers the final <c>CUE_LEAD_MS</c> before
+    /// <c>TypingEngine.dragCutoffAt</c>, and the cutoff is the line's deadline plus its seal grace
+    /// plus <c>FLETCHER_DRAG_GRACE_MS</c>; the two constants are both 1500, so the first frame drawn
+    /// is the line's own deadline exactly, the instant the seal becomes permitted but for drag
+    /// protection. The whole of the borrowed time is what the player watches drain.</para>
+    ///
+    /// <para>And it is silent wherever the engine says no push is coming: once the push has landed
+    /// (here the run's end), and on a line typed out with time to spare, where the readout goes null
+    /// mid-window and the bar with it.</para>
+    /// </summary>
+    [Test]
+    public void PushWarningCountsDownTheDragCutoffFromTheEndOfTheLine()
+    {
+        var push = Harness().GetProperty("pushWarning");
+        var samples = push.GetProperty("samples");
+
+        double cutoff = Num(push, "lineEnd") + Num(push, "lineSealGraceMs") + 1500;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cutoff, Is.EqualTo(5500), "4000 + 0 + FLETCHER_DRAG_GRACE_MS");
+
+            foreach (var sample in samples.EnumerateArray())
+            {
+                Assert.That(Num(sample, "cutoff"), Is.EqualTo(cutoff), "the bar counts down the engine's own deadline, never one of its own");
+                Assert.That(sample.GetProperty("line").GetInt32(), Is.Zero, "and hangs off the line the player is on, not the upcoming one");
+            }
+
+            // One millisecond before the window opens: the cutoff is known, but nothing is drawn.
+            Assert.That(Flag(samples[0].GetProperty("bar"), "shown"), Is.False);
+
+            // The line's own deadline, which is where the window opens because CUE_LEAD_MS and
+            // FLETCHER_DRAG_GRACE_MS are the same 1500.
+            var opening = samples[1].GetProperty("bar");
+            Assert.That(Flag(opening, "shown"), Is.True);
+            Assert.That(Num(opening, "width"), Is.EqualTo(140), "full width, the same CUE_BAR_MAX_PX a cue starts at");
+            Assert.That(Num(opening, "alpha"), Is.EqualTo(0.5).Within(1e-12));
+
+            // Halfway through the borrowed time, and one frame from the end of it: the width depletes
+            // while the alpha ramps 0.50 -> 0.85, which is the cue's own solid ramp.
+            var half = samples[2].GetProperty("bar");
+            Assert.That(Num(half, "width"), Is.EqualTo(70));
+            Assert.That(Num(half, "alpha"), Is.EqualTo(0.675).Within(1e-12));
+
+            var last = samples[3].GetProperty("bar");
+            Assert.That(Num(last, "width"), Is.LessThan(0.1));
+            Assert.That(Num(last, "alpha"), Is.EqualTo(0.85).Within(0.001));
+
+            // Silent wherever the engine says no push is coming.
+            Assert.That(push.GetProperty("afterTheCutoff").GetProperty("cutoff").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(push.GetProperty("afterTheCutoff").GetProperty("line").GetInt32(), Is.EqualTo(-1));
+            Assert.That(push.GetProperty("typedOut").GetProperty("cutoff").ValueKind, Is.EqualTo(JsonValueKind.Null),
+                "typing the last cell out calls the push off where the player stands");
+            Assert.That(push.GetProperty("typedOut").GetProperty("bar").ValueKind, Is.EqualTo(JsonValueKind.Null));
+        });
+    }
+
+    /// <summary>
     /// Which line the cue belongs to (mirrors LyricStage.updateApproachCue). A line activates at
     /// the very moment its cue window opens, so in a continuous map the still-active PREVIOUS line
     /// carries the cue for the next one; but after an instrumental gap a line self-activates with

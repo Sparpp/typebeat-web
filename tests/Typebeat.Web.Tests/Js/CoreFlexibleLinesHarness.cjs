@@ -426,6 +426,104 @@ const out = {};
     };
 }
 
+// THE PUSH WARNING READOUT (backlog 263): TypingEngine.dragCutoffAt, the display-only readout
+// typebeat-player.js draws its red "you are about to be pushed to the next line" bar from. It has no
+// say in anything, so what it has to be is EQUAL to the deadline sealPermitted already compares
+// against and SILENT wherever no push is coming. The four arms below are the browser half of the
+// game's own pins (NonVisual/FletcherEngineTest.cs, region "The push warning readout").
+{
+    const fixture = new TB.TypingEngine(build(TWO_LINES));
+    const gapFixture = new TB.TypingEngine(build(GAPPED));
+
+    // (1) SILENT WHERE NO PUSH CAN HAPPEN. A PINNED caret is snatched at the boundary rather than
+    // pushed, so there is no borrowed time to count down; and nothing is warned about before a line
+    // is active at all. The browser never reaches the pinned arm on its own (fletcherEnabled is
+    // unconditionally true here), so it is asked for explicitly: the condition is part of the mirror.
+    const pinned = new TB.TypingEngine(build(TWO_LINES));
+    pinned.fletcherEnabled = false;
+    const pinnedBeforeAnything = pinned.dragCutoffAt;
+    pinned.update(1000);
+    pinned.processKey('a', 1000);
+    pinned.update(3999);
+
+    const flexibleIdle = new TB.TypingEngine(build(TWO_LINES));
+
+    // (2) THE CUTOFF ITSELF, then the caret carried through it. The value is a property of the LINE,
+    // not of how far past it the clock has got, so it does not move as the song leaves the line; it
+    // is the PLAYER (typebeat-player.js) that only draws the final CUE_LEAD_MS of it.
+    const dragging = new TB.TypingEngine(build(TWO_LINES));
+    dragging.update(1000);
+    dragging.processKey('a', 1000);
+    const afterFirstPress = dragging.dragCutoffAt;
+    dragging.update(4000);
+    const atTheDeadline = dragging.dragCutoffAt;
+    dragging.update(5499);
+    const oneFrameShort = dragging.dragCutoffAt;
+    dragging.update(5500);
+    const afterThePush = { at: at(dragging), nextSealIndex: dragging.nextSealIndex, cutoff: dragging.dragCutoffAt };
+    dragging.update(9500);
+    const afterTheRun = { finished: dragging.finished, cutoff: dragging.dragCutoffAt };
+
+    // (3) FINISHING CANCELS THE PUNISHMENT, isolated from the other two conditions: the caret is
+    // still on L0 and L0 is still the next line due to seal, and the only thing that changed is that
+    // the line no longer owes a character. GAPPED holds the other two still, because its second line
+    // is eighteen seconds off and the rush bound therefore PARKS the finished caret on L0 rather
+    // than rolling it off.
+    const typedOut = new TB.TypingEngine(build(GAPPED));
+    typedOut.update(1000);
+    typedOut.processKey('a', 1000);
+    const owedOne = typedOut.dragCutoffAt;
+    typedOut.processKey('b', 2000);
+
+    // (4) A line the player WALKED OUT OF with a line skip keeps its drag grace (it has to reach its
+    // misses at the instant it would have with the player sitting there), but nobody is standing on
+    // it to be pushed: the seal loop's hand-over arm only fires for the line the caret is on. So the
+    // stale line warns nobody, and the warning appears only once the seal cursor catches up to the
+    // line the player really is on.
+    const abandoned = new TB.TypingEngine(build(TWO_LINES));
+    abandoned.update(1000);
+    abandoned.processKey('a', 1000);
+    const beforeTheSkip = abandoned.dragCutoffAt;
+    abandoned.update(2500);
+    const skipped = abandoned.processEnter(2500);
+    const afterTheSkip = { at: at(abandoned), nextSealIndex: abandoned.nextSealIndex, cutoff: abandoned.dragCutoffAt };
+    abandoned.update(5500);
+    const staleLineSealed = { at: at(abandoned), nextSealIndex: abandoned.nextSealIndex, cutoff: abandoned.dragCutoffAt };
+
+    out.pushWarning = {
+        // Pinned before the readings are, so a fixture that drifted cannot be read as an engine
+        // divergence: every cutoff below is endTime + sealGraceMs + dragGraceMs of some line here.
+        dragGraceMs: TB.constants.FLETCHER_DRAG_GRACE_MS,
+        cueLeadMs: TB.constants.CUE_LEAD_MS,
+        lines: fixture.lines.map(l => ({ endTime: l.endTime, sealGraceMs: l.sealGraceMs })),
+        gappedLines: gapFixture.lines.map(l => ({ endTime: l.endTime, sealGraceMs: l.sealGraceMs })),
+        entryOpensAt: fixture.entryOpensAt(1),
+        gappedEntryOpensAt: gapFixture.entryOpensAt(1),
+
+        pinnedBeforeAnything: pinnedBeforeAnything,
+        pinnedAt: at(pinned),
+        pinnedDragging: pinned.dragCutoffAt,
+        flexibleBeforeAnyLine: flexibleIdle.dragCutoffAt,
+
+        afterFirstPress: afterFirstPress,
+        atTheDeadline: atTheDeadline,
+        oneFrameShort: oneFrameShort,
+        afterThePush: afterThePush,
+        afterTheRun: afterTheRun,
+
+        owedOne: owedOne,
+        typedOutAt: at(typedOut),
+        typedOutNextSealIndex: typedOut.nextSealIndex,
+        typedOutLineComplete: typedOut.isLineComplete(typedOut.activeLineIndex),
+        typedOutCutoff: typedOut.dragCutoffAt,
+
+        beforeTheSkip: beforeTheSkip,
+        skipHandled: skipped,
+        afterTheSkip: afterTheSkip,
+        staleLineSealed: staleLineSealed
+    };
+}
+
 // THE LINE-START SNAP. Typing L0 out rolls the caret straight on to the cell-less L1 (L1's own
 // activation is its 3000 start, so entry into it opens at 1500, which is exactly when the 'b' lands:
 // the bound is deliberately not what puts the caret here), where it is complete on arrival and

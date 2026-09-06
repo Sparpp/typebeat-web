@@ -328,6 +328,104 @@ public class FlexibleLinesParityTest
     }
 
     /// <summary>
+    /// THE PUSH WARNING READOUT (backlog 263), the browser half of the game's
+    /// <c>TypingEngine.DragCutoffAt</c>. The drag cutoff above force-seals a line out from under the
+    /// player and lands their caret on the next one, and it used to arrive with no notice at all;
+    /// both clients now count it down with a red bar right-anchored at the end of the line, the
+    /// mirror of the blue cue-in bars that grow out of the start of the line a player is about to
+    /// gain. This is the readout that bar is drawn from, and it decides nothing whatever.
+    ///
+    /// <para>So the only two things it can get wrong are the two pinned here. It must EQUAL the
+    /// deadline <c>sealPermitted</c> already compares against, or the warning disagrees with the
+    /// punishment it warns about: L0's 4000 deadline plus its zero seal grace plus
+    /// <c>FLETCHER_DRAG_GRACE_MS</c> is the same 5500 the force-seal lands at above. And it must be
+    /// SILENT everywhere no push is coming, which is the other three arms: a pinned caret (snatched
+    /// at the boundary, so there is no borrowed time to count down), a line typed out (nothing owed,
+    /// so it seals on its ordinary deadline with nobody pushed), and a line walked out of with a line
+    /// skip (still held open for its misses, but nobody is standing on it).</para>
+    ///
+    /// <para>Golden values from typebeat-osu's <c>NonVisual/FletcherEngineTest.cs</c>, region "The
+    /// push warning readout (backlog 263)". The game's fixture lines are shorter than this harness's,
+    /// so the arithmetic is asserted against the harness's own emitted line coordinates rather than
+    /// against the game's literals; the SHAPE is the same one, arm for arm.</para>
+    /// </summary>
+    [Test]
+    public void ThePushWarningReadsOutTheCutoffAndIsSilentWhereNoPushIsComing()
+    {
+        var push = Section("pushWarning");
+        var lines = push.GetProperty("lines");
+
+        double CutoffOf(JsonElement line)
+            => line.GetProperty("endTime").GetDouble() + line.GetProperty("sealGraceMs").GetDouble()
+               + push.GetProperty("dragGraceMs").GetDouble();
+
+        double firstCutoff = CutoffOf(lines[0]);
+        double secondCutoff = CutoffOf(lines[1]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(firstCutoff, Is.EqualTo(5500), "4000 + 0 + FLETCHER_DRAG_GRACE_MS, the very instant the force-seal above lands");
+            Assert.That(secondCutoff, Is.EqualTo(9500));
+
+            // SILENT WHERE NO PUSH CAN HAPPEN.
+            Assert.That(IsNull(push, "pinnedBeforeAnything"), Is.True, "nothing is active yet");
+            Assert.That(At(push.GetProperty("pinnedAt")), Is.EqualTo((0, 1)), "a character is still owed, so this is the dragging shape");
+            Assert.That(IsNull(push, "pinnedDragging"), Is.True, "but a pinned caret is snatched, not pushed");
+            Assert.That(IsNull(push, "flexibleBeforeAnyLine"), Is.True, "and the unpinned engine is equally silent before its first line activates");
+
+            // THE CUTOFF ITSELF. It is a property of the LINE, so it does not move as the song leaves
+            // it: only the player draws a window, the final CUE_LEAD_MS of it, and the two constants
+            // being equal is what makes the bar's first frame the instant the line's own grace ends.
+            Assert.That(push.GetProperty("afterFirstPress").GetDouble(), Is.EqualTo(firstCutoff));
+            Assert.That(push.GetProperty("atTheDeadline").GetDouble(), Is.EqualTo(firstCutoff), "unchanged as the song leaves the line");
+            Assert.That(push.GetProperty("oneFrameShort").GetDouble(), Is.EqualTo(firstCutoff));
+            Assert.That(push.GetProperty("cueLeadMs").GetDouble(), Is.EqualTo(push.GetProperty("dragGraceMs").GetDouble()),
+                "the bar covers the final CUE_LEAD_MS before the cutoff, so with the two constants equal it covers the whole of the borrowed time");
+
+            // The push lands: the caret is handed to L1, which is now the next unsealed line and owes
+            // both its characters, so the readout is L1's own cutoff. Then the run ends, and a
+            // finished run is warned about nothing.
+            var afterThePush = push.GetProperty("afterThePush");
+            Assert.That(At(afterThePush.GetProperty("at")), Is.EqualTo((1, 0)));
+            Assert.That(afterThePush.GetProperty("nextSealIndex").GetInt32(), Is.EqualTo(1));
+            Assert.That(afterThePush.GetProperty("cutoff").GetDouble(), Is.EqualTo(secondCutoff), "the warning follows the caret through the push");
+            Assert.That(push.GetProperty("afterTheRun").GetProperty("finished").GetBoolean(), Is.True);
+            Assert.That(IsNull(push.GetProperty("afterTheRun"), "cutoff"), Is.True);
+
+            // FINISHING CANCELS THE PUNISHMENT, isolated: same line, same seal cursor, nothing owed.
+            // The gapped map's second line is eighteen seconds off (entry opens at 18500), so the
+            // rush bound parks the finished caret on L0 rather than rolling it off it.
+            Assert.That(push.GetProperty("gappedEntryOpensAt").GetDouble(), Is.EqualTo(18500));
+            Assert.That(push.GetProperty("owedOne").GetDouble(), Is.EqualTo(CutoffOf(push.GetProperty("gappedLines")[0])));
+            Assert.That(At(push.GetProperty("typedOutAt")), Is.EqualTo((0, 2)));
+            Assert.That(push.GetProperty("typedOutNextSealIndex").GetInt32(), Is.Zero);
+            Assert.That(push.GetProperty("typedOutLineComplete").GetBoolean(), Is.True);
+            Assert.That(IsNull(push, "typedOutCutoff"), Is.True, "a line with nothing owed seals on its own deadline, with nobody pushed");
+
+            // AN ABANDONED LINE WARNS NOBODY. Entry into L1 opens at 2500, so the line skip rolls the
+            // caret straight on; L0 keeps its grace and reaches its misses at 5500 without touching
+            // the caret, and only then is the player's own line the next one due to seal.
+            Assert.That(push.GetProperty("entryOpensAt").GetDouble(), Is.EqualTo(2500));
+            Assert.That(push.GetProperty("beforeTheSkip").GetDouble(), Is.EqualTo(firstCutoff));
+            Assert.That(push.GetProperty("skipHandled").GetBoolean(), Is.True);
+
+            var afterTheSkip = push.GetProperty("afterTheSkip");
+            Assert.That(At(afterTheSkip.GetProperty("at")), Is.EqualTo((1, 0)), "the caret has left L0");
+            Assert.That(afterTheSkip.GetProperty("nextSealIndex").GetInt32(), Is.Zero, "while L0 is still held open for its misses");
+            Assert.That(IsNull(afterTheSkip, "cutoff"), Is.True, "nobody is standing on the line being held");
+
+            var sealed_ = push.GetProperty("staleLineSealed");
+            Assert.That(At(sealed_.GetProperty("at")), Is.EqualTo((1, 0)), "the stale line's seal does not move the caret");
+            Assert.That(sealed_.GetProperty("nextSealIndex").GetInt32(), Is.EqualTo(1));
+            Assert.That(sealed_.GetProperty("cutoff").GetDouble(), Is.EqualTo(secondCutoff), "and only now is a push coming for the player");
+        });
+    }
+
+    /// <summary>Whether a harness property came back as JSON null, which is how the readouts say "nothing".</summary>
+    private static bool IsNull(JsonElement element, string property)
+        => element.GetProperty(property).ValueKind == JsonValueKind.Null;
+
+    /// <summary>
     /// THE LINE-START SNAP, the one behaviour the new default has that the retired mod never did.
     /// The state it covers is the one the keypress roll-forward cannot: a caret that arrived on a
     /// line ALREADY complete, so no press of the player's can ever finish it and nothing would ever

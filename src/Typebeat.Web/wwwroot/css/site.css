@@ -2706,6 +2706,17 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .tb-cue { position: absolute; left: 0; top: 1.28em; width: 0; height: 4px; pointer-events: none; z-index: 2; }
 .tb-cue-bar { position: absolute; left: 0; top: 0; height: 4px; width: 0; background: var(--tb-sung); opacity: 0; }
 
+/* ---- the push warning (backlog 263) ----
+   The same depleting bar in the same band, mirrored: the cues grow out of the START of the line the
+   player is about to gain, this one shrinks back into the END of the line the player is about to
+   lose (the drag cutoff, TypingEngine.dragCutoffAt). Its box is pinned to the line's end and the bar
+   hangs off that edge with translateX(-100%), which is the TopRight origin the desktop's Box takes:
+   the width depletes leftward while the right edge stays put. --bad is this site's port of
+   TypeBeatStyle.ErrorChar, the same red a wrongly typed character already wears, because it is the
+   opposite message from a cue: a line about to be taken rather than a line about to be given. */
+.tb-push { position: absolute; left: 0; top: 1.28em; width: 0; height: 4px; pointer-events: none; z-index: 2; }
+.tb-push-bar { background: var(--bad); transform: translateX(-100%); }
+
 /* ---- rejected wrong key ----
    The offending letter pops up beside the caret (alternating sides), falls away and fades; it
    never enters the line. Pure decoration, so this one animation runs on wall time. */

@@ -2454,6 +2454,35 @@
             return this.activeLineIndex >= 0 && this.activeLineIndex === this.nextSealIndex && this.songWindowOpen;
         }
 
+        // TypingEngine.DragCutoffAt. THE PUSH (backlog 263), read out for DISPLAY ONLY: the instant
+        // the caret's own line will be force-sealed out from under it and the caret landed on the
+        // next line, or null when no such push is coming. Nothing here decides anything, it only
+        // reports the deadline sealPermitted already compares against, so typebeat-player.js can
+        // warn the player before it arrives (the red right-anchored bar, the mirror of the cue-in
+        // bars) instead of the push landing with no notice at all.
+        //
+        // Non-null under exactly the three conditions the drag cutoff's hand-over arm needs. The
+        // caret must be UNPINNED (fletcherEnabled), or the line was never held open for the player
+        // in the first place; the browser holds that true unconditionally, and the clause is kept
+        // because this is a mirror of the C# and a divergence in the CONDITION is as real as one in
+        // the value. The caret's line must also be the next line due to seal, or the seal loop
+        // reaches it with the caret elsewhere and that arm does not run: a line the player walked
+        // out of with a line skip is still held open by lineAbandoned, but nobody is standing on it
+        // to be pushed. And the line must still owe a character (the same noTypeableUntyped scan the
+        // seal asks), because a line with nothing left untyped seals on its ordinary deadline with
+        // no drag to protect and no punishment to warn about: typing the last cell out calls the
+        // push off there and then.
+        get dragCutoffAt() {
+            if (this.finished || !this.fletcherEnabled || this.activeLineIndex === -1
+                || this.activeLineIndex !== this.nextSealIndex) return null;
+
+            const line = this.lines[this.activeLineIndex];
+
+            if (this.noTypeableUntyped(line)) return null;
+
+            return line.endTime + line.sealGraceMs + FLETCHER_DRAG_GRACE_MS;
+        }
+
         // DrawableTypeBeatCharObject.ApplyEngineResult: a cell hands the score processor its ONE
         // result and every later attempt on the same cell is dropped (`if (Judged) return;`). Every
         // processor.applyResult in this engine goes through here, so the submitted account can never

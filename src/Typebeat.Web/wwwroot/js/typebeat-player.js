@@ -847,9 +847,16 @@
             const cueWord = el('div', 'tb-cue-bar');
             const cueBoundary = el('div', 'tb-cue-bar');
             cue.append(cueWord, cueBoundary);
-            row.append(sweep, cellsBox, cue);
+            // The PUSH WARNING (backlog 263) shares the cue bars' band and their depleting shape,
+            // but it is anchored at the END of the line and it is red, so it gets a box of its own
+            // rather than a third child of the cue's: the cue box is pinned to the start of the
+            // UPCOMING line, and while the player is being pushed those are two different rows.
+            const push = el('div', 'tb-push');
+            const pushBar = el('div', 'tb-cue-bar tb-push-bar');
+            push.append(pushBar);
+            row.append(sweep, cellsBox, cue, push);
             return {
-                row, cellsBox, sweep, sweepFill, sweepGlow, cue, cueWord, cueBoundary,
+                row, cellsBox, sweep, sweepFill, sweepGlow, cue, cueWord, cueBoundary, push, pushBar,
                 spans: [], offsets: [0], line: null, index: -1, scale: 1
             };
         }
@@ -1034,6 +1041,44 @@
         function applyCueBar(bar, state) {
             bar.style.width = state.width.toFixed(2) + 'px';
             bar.style.opacity = state.shown ? state.alpha.toFixed(3) : '0';
+        }
+
+        // THE PUSH WARNING (backlog 263), mirrors LyricStage.updatePushWarning. A player lagging
+        // behind on a line the song has already left keeps it only until the drag cutoff, where the
+        // engine force-seals it and lands the caret on the next line (TypingEngine.dragCutoffAt).
+        // That used to arrive with no notice at all, so the same depleting bar the cue-in bars use
+        // counts it down, RIGHT-ANCHORED at the end of the line and in the error red: the opposite
+        // corner and the opposite colour from a cue, because it is the opposite message, a line
+        // about to be taken rather than a line about to be given.
+        //
+        // Driven through the very same cueBar() the cues are, at full opacity, so it covers the
+        // final CUE_LEAD_MS before the cutoff. With CUE_LEAD_MS and FLETCHER_DRAG_GRACE_MS both
+        // 1500 the first frame it draws is endTime + sealGraceMs: the instant the song leaves the
+        // line's own grace and the seal becomes permitted but for drag protection, so the player
+        // watches precisely the borrowed time drain away.
+        //
+        // Display only. It reads a nullable engine readout and nothing else, so every path where no
+        // push is coming (the line typed out, the caret rolled on ahead of an abandoned line, the
+        // run finished) falls through to the same hide below.
+        function updatePushWarning(time) {
+            const cutoff = engine.dragCutoffAt;
+            const target = cutoff === null ? -1 : engine.activeLineIndex;
+            const rowObj = (target >= 0 && target < beatmap.lines.length) ? rowFor(target) : null;
+            const bar = rowObj && rowObj.line ? cueBar(cutoff - time, 1) : null;
+            const shown = bar !== null && bar.shown;
+
+            for (const r of rows) {
+                if (!shown || r !== rowObj) r.push.style.display = 'none';
+            }
+            if (!shown) return;
+
+            // The END of the line (offsets[n]), not the caret, which is somewhere mid-line by
+            // definition while the player is dragging. The box is pinned there and the bar hangs
+            // off its right edge (CSS translateX(-100%)), which is the TopRight origin the desktop
+            // gives its Box: the width depletes leftward while the right edge stays put.
+            rowObj.push.style.display = '';
+            rowObj.push.style.left = xAt(rowObj, rowObj.line.cells.length).toFixed(2) + 'px';
+            applyCueBar(rowObj.pushBar, bar);
         }
 
         // The sung underline: a faint full-width track under every visible line, a fill that sweeps
@@ -1335,6 +1380,7 @@
             // every cell offset under it.
             paintSelection();
             updateCue(time, active);
+            updatePushWarning(time);
             updateGap(time);
 
             const stats = liveStats(engine);

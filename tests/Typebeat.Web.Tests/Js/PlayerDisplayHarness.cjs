@@ -220,6 +220,44 @@ function playMidWordSpaceTypo() {
     return engine;                  // left unsealed, so the untouched gap after it is still todo
 }
 
+// --- the push warning (backlog 263) ---
+// One frame of the red bar that counts down the drag cutoff (updatePushWarning): which line it hangs
+// off, and the bar it draws there. It is the SAME cueBar() the blue cue-in bars are drawn with, at
+// full opacity, so the only new statements are the line it belongs to (the ACTIVE one, the one about
+// to be taken, rather than the upcoming one a cue belongs to) and the window it covers, which is the
+// final CUE_LEAD_MS before TypingEngine.dragCutoffAt.
+function pushWarningAt(engine, time) {
+    const cutoff = engine.dragCutoffAt;
+    return {
+        cutoff: cutoff,
+        line: cutoff === null ? -1 : engine.activeLineIndex,
+        bar: cutoff === null ? null : D.cueBar(cutoff - time, 1)
+    };
+}
+
+// A player one character into "ab cd" and going nowhere. The line's deadline is 4000 with no seal
+// grace, so the drag holds it to 5500 and that is what the bar counts down to.
+function playDragging() {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    return engine;
+}
+
+// The same line TYPED OUT, left unsealed. Nothing is owed, so no push is coming and the bar has
+// nothing to draw, however close the line's deadline is.
+function playTypedOut() {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    engine.update(1000);
+    for (const [c, t] of [['a', 1000], ['b', 1500], [' ', 2000], ['c', 2000], ['d', 2500]]) {
+        engine.update(t);
+        engine.processKey(c, t);
+    }
+    return engine;
+}
+
 // --- the sung row under a parked caret (backlog 217) ---
 // Two lines typed FAST: both characters of line 0 go in by 1500, which finishes the line, so the
 // flexible caret (the default since backlog 208) rolls forward and parks at the head of line 1 while
@@ -514,6 +552,30 @@ const out = {
     cueTargetIdle: D.cueTargetLine(gapMap.lines, -1, 0, 0),
     cueTargetOwnLeadIn: D.cueTargetLine(gapMap.lines, 1, 1, 11000),
     cueTargetNext: D.cueTargetLine(gapMap.lines, 0, 0, 1500),
+
+    // THE PUSH WARNING (backlog 263): the same bar, mirrored. It hangs off the END of the line the
+    // player is ON and counts down the drag cutoff instead of a line's arrival. The line's own
+    // deadline is 4000 with no seal grace and the cutoff is therefore 5500, so with CUE_LEAD_MS and
+    // FLETCHER_DRAG_GRACE_MS both 1500 the window opens at exactly 4000: the instant the song leaves
+    // the line's own grace, which makes the whole of the borrowed time what the player watches drain.
+    pushWarning: (function () {
+        const dragging = playDragging();
+        const samples = [3999, 4000, 4750, 5499].map(t => { dragging.update(t); return pushWarningAt(dragging, t); });
+
+        dragging.update(5500);
+
+        return {
+            lineEnd: dragging.lines[0].endTime,
+            lineSealGraceMs: dragging.lines[0].sealGraceMs,
+            samples: samples,
+            // The push has landed: on this one-line map that ends the run, and a finished run is
+            // warned about nothing.
+            afterTheCutoff: pushWarningAt(dragging, 5500),
+            // Nothing owed, nothing coming: typing the last cell out calls the warning off where the
+            // player stands, at a time the bar would otherwise be mid-window.
+            typedOut: pushWarningAt(playTypedOut(), 4500)
+        };
+    })(),
 
     // Which line carries the sung sweep, sung head and sung caret (LyricStage.sungLineFor). The
     // rule alone, on the two-line roll map with made-up cursor coordinates. At 1600 the playhead is
