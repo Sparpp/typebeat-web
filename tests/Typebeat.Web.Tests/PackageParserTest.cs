@@ -85,8 +85,10 @@ public class PackageParserTest
             Assert.That(diff.Pace.AverageCpm, Is.EqualTo(100).Within(1e-9));
             Assert.That(diff.Pace.AverageWpm, Is.EqualTo(20).Within(1e-9)); // CPM/5 since LyricPace v15
             Assert.That(diff.Pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
-            // Strain-based stars (LyricDifficulty): "ab cd" -> per-word strain sum -> 0.63.
-            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.63).Within(0.01));
+            // Stars (LyricDifficulty): "ab cd" is sung over 2000 ms, just enough for the smallest
+            // scheduled window (1.36 s) to fit, so it rates 0.59 under the feats model (0.63 under
+            // the strain model this replaced).
+            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.59).Within(0.01));
 
             // Last line end = min(song_end 4000, end_ms 3000 + 3000 tail) = 4000 ms.
             Assert.That(diff.TotalLengthS, Is.EqualTo(4.0).Within(1e-9));

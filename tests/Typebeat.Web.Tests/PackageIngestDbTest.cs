@@ -222,7 +222,7 @@ public class PackageIngestDbTest
             // 5 cells / 0.05 min = 100 CPM, stored WPM = 100/5 = 20 (LyricPace v15). The two counts
             // above are what the stored figure is derived from and neither of them moved.
             Assert.That((double)beatmap.Wpm, Is.EqualTo(20).Within(1e-6));
-            Assert.That(beatmap.Difficulty, Is.EqualTo(0.63).Within(0.01)); // strain-based stars
+            Assert.That(beatmap.Difficulty, Is.EqualTo(0.59).Within(0.01)); // window/feats stars
             Assert.That(beatmap.Lyrics, Is.EqualTo("ab cd")); // the lyrics: search haystack
         });
 
@@ -424,7 +424,7 @@ public class PackageIngestDbTest
         {
             // The regression package: "ab cd" over a 3000 ms boundary window.
             Assert.That((double)row.Wpm, Is.EqualTo(20).Within(1e-6));
-            Assert.That(row.Difficulty, Is.EqualTo(0.63).Within(0.01)); // strain-based stars
+            Assert.That(row.Difficulty, Is.EqualTo(0.59).Within(0.01)); // window/feats stars
             Assert.That(row.WordCount, Is.EqualTo(2));
             Assert.That(row.CharCount, Is.EqualTo(5));
             Assert.That(row.Lyrics, Is.EqualTo("ab cd")); // v8 fills the lyrics: haystack
@@ -607,12 +607,12 @@ public class PackageIngestDbTest
             Assert.That(row.Ht!.Value, Is.EqualTo(starsAtRate(RateMods.HalfTimeBaseRate)).Within(1e-9));
 
             // All three differ, i.e. the rate genuinely moves the rating rather than the columns
-            // being copies of the base one. (No DIRECTION is asserted: this fixture's map is two
-            // words long, and on a map that short the duration weighting in LyricDifficulty's soft
-            // maximum outweighs the strain increase, so up-rating it actually rates LOWER. That is
-            // the difficulty model's own behaviour on degenerate input, not pp's business; the
-            // pp-side contract, "a harder rating is worth more pp", is pinned in
-            // PerformancePointsTest where the ratings are inputs.)
+            // being copies of the base one. (No DIRECTION is asserted here even though this
+            // fixture does now order them HT < base < DT: the ordering is LyricDifficulty's
+            // business and is pinned there, and on a map short enough to fall out of the longer
+            // scheduled windows at 1.50x it can legitimately invert. The pp-side contract, "a
+            // harder rating is worth more pp", is pinned in PerformancePointsTest where the
+            // ratings are inputs.)
             Assert.That(row.Dt.Value, Is.Not.EqualTo(row.Base).Within(1e-6));
             Assert.That(row.Ht.Value, Is.Not.EqualTo(row.Base).Within(1e-6));
             Assert.That(row.Dt.Value, Is.Not.EqualTo(row.Ht.Value).Within(1e-6));
@@ -1298,7 +1298,7 @@ public class PackageIngestDbTest
     private const string freestyle_lyrics =
         """
         {"version":2,"song_end_ms":9000,"granularity":"Line"}
-        {"text":"me &&& you","start_ms":1000,"end_ms":8000,"freestyle":true}
+        {"text":"me &&& you","start_ms":1000,"end_ms":2600,"freestyle":true}
         """;
 
     [Test]

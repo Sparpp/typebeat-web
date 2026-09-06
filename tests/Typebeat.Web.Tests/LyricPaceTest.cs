@@ -6,8 +6,9 @@ namespace Typebeat.Web.Tests;
 /// The pace + difficulty arithmetic against known values. Pace anchors on the game's own
 /// regression test (typebeat-osu typebeat.Game.Rulesets.TypeBeat.Tests/NonVisual/
 /// LyricPaceStatisticsTest.cs): "ab cd" over a 3000 ms boundary window -> 5 cells, 2 words,
-/// CPM 100, WPM 20 (CPM/5), 2.5 cells per word. Stars follow <see cref="LyricDifficulty"/>
-/// (strain-based); the hand-computed "cat cat" -> 0.79 anchor is shared with the game's
+/// CPM 100, WPM 20 (CPM/5), 2.5 cells per word. Stars follow <see cref="LyricDifficulty"/>, the
+/// window/feats model (backlog 269); the anchor whose every digit came out of the prototype that
+/// model is a port of (docs/sr-feats-model.js in the parent superrepo) is shared with the game's
 /// LyricDifficultyTest to lock the two ports.
 /// </summary>
 public class LyricPaceTest
@@ -42,9 +43,10 @@ public class LyricPaceTest
             Assert.That(pace.AverageCpm, Is.EqualTo(100.0).Within(1e-9));
             Assert.That(pace.AverageWpm, Is.EqualTo(20.0).Within(1e-9));
             Assert.That(pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
-            // stars from LyricDifficulty (per-word strain sum + power remap), UNMOVED: the star
-            // model never read a WPM.
-            Assert.That(pace.DifficultyRating, Is.EqualTo(0.63).Within(0.01));
+            // Stars from LyricDifficulty. Two seconds of singing is just long enough for the
+            // smallest scheduled window (1.36 s) to fit, so this rates something rather than
+            // nothing; it read 0.63 under the strain model and 0.59 under the feats one.
+            Assert.That(pace.DifficultyRating, Is.EqualTo(0.59).Within(0.01));
         });
     }
 
@@ -183,12 +185,58 @@ public class LyricPaceTest
         });
     }
 
+    /// <summary>
+    /// THE SHARED ANCHOR, and the one expectation in this file that is not the port's own opinion:
+    /// every digit was produced by docs/sr-feats-model.js in the parent superrepo, the prototype
+    /// <see cref="LyricDifficulty"/> is a literal port of, run over the same four words. The game's
+    /// LyricDifficultyTest pins the identical number, so the three implementations are held
+    /// together here.
+    /// </summary>
     [Test]
     public void DifficultyRating_MatchesGameAnchor()
     {
-        // Anchor shared with the game's LyricDifficultyTest ("cat cat" -> 0.79), locking the two
-        // ports together on the per-word strain formula.
-        var line = new LyricLine
+        LyricLine[] map =
+        [
+            new LyricLine
+            {
+                RawText = "hello brave",
+                StartTime = 0,
+                EndTime = 2600,
+                SingEndTime = 2600,
+                Units =
+                [
+                    new TimedUnit { Text = "hello", StartTime = 0, EndTime = 600 },
+                    new TimedUnit { Text = "brave", StartTime = 700, EndTime = 1300 },
+                ],
+            },
+            new LyricLine
+            {
+                RawText = "world again",
+                StartTime = 2600,
+                EndTime = 5200,
+                SingEndTime = 5200,
+                Units =
+                [
+                    new TimedUnit { Text = "world", StartTime = 2600, EndTime = 3400 },
+                    new TimedUnit { Text = "again", StartTime = 3600, EndTime = 4600 },
+                ],
+            },
+        ];
+
+        Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(2.0640903577664327));
+    }
+
+    /// <summary>
+    /// THE SHORT-MAP RULE (backlog 269), mirroring the game's test of the same shape. Windows are
+    /// scheduled in real seconds and are never clamped down to the map, so a map whose whole sung
+    /// timeline is under the smallest scheduled window (1.36 s) finds no feat and rates its length
+    /// term alone. "cat cat" over 800 ms was this file's anchor for six backlog items and now rates
+    /// exactly nothing; the same two words over three seconds rate something.
+    /// </summary>
+    [Test]
+    public void DifficultyRating_AMapShorterThanTheSmallestWindowRatesItsLengthAlone()
+    {
+        var tooShort = new LyricLine
         {
             RawText = "cat cat",
             StartTime = 0,
@@ -201,62 +249,149 @@ public class LyricPaceTest
             ],
         };
 
-        Assert.That(LyricPace.Compute([line]).DifficultyRating, Is.EqualTo(0.79).Within(0.01));
+        var longEnough = new LyricLine
+        {
+            RawText = "cat cat",
+            StartTime = 0,
+            EndTime = 3000,
+            SingEndTime = 3000,
+            Units =
+            [
+                new TimedUnit { Text = "cat", StartTime = 0, EndTime = 1500 },
+                new TimedUnit { Text = "cat", StartTime = 1500, EndTime = 3000 },
+            ],
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(LyricPace.Compute([tooShort]).DifficultyRating, Is.Zero, "0.8 s of singing fits no window at all");
+            Assert.That(LyricPace.Compute([longEnough]).DifficultyRating, Is.GreaterThan(0), "3 s of the same two words does");
+        });
+    }
+
+    /// <summary>
+    /// AN INTER-WORD SPACE IS A CELL (backlog 269) and it belongs to its LINE: a word whose
+    /// successor is on the same line carries the spacebar press after it, a word ending its line
+    /// does not. So the same two words at the same two times rate differently depending on whether
+    /// the author put them on one line or two, which is right, because on two lines the player
+    /// really does type one keystroke fewer. Mirrors the game's test of the same name.
+    /// </summary>
+    [Test]
+    public void DifficultyRating_AnInterWordSpaceIsACellAndBelongsToItsLine()
+    {
+        LyricLine[] oneLine =
+        [
+            new LyricLine
+            {
+                RawText = "aaa bbb",
+                StartTime = 0,
+                EndTime = 2000,
+                SingEndTime = 2000,
+                Units =
+                [
+                    new TimedUnit { Text = "aaa", StartTime = 0, EndTime = 1000 },
+                    new TimedUnit { Text = "bbb", StartTime = 1000, EndTime = 2000 },
+                ],
+            },
+        ];
+
+        LyricLine[] twoLines =
+        [
+            new LyricLine
+            {
+                RawText = "aaa",
+                StartTime = 0,
+                EndTime = 1000,
+                SingEndTime = 1000,
+                Units = [new TimedUnit { Text = "aaa", StartTime = 0, EndTime = 1000 }],
+            },
+            new LyricLine
+            {
+                RawText = "bbb",
+                StartTime = 1000,
+                EndTime = 2000,
+                SingEndTime = 2000,
+                Units = [new TimedUnit { Text = "bbb", StartTime = 1000, EndTime = 2000 }],
+            },
+        ];
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(LyricDifficulty.Compute(oneLine), Is.EqualTo(0.8078544371659612), "7 cells: aaa + space + bbb");
+            Assert.That(LyricDifficulty.Compute(twoLines), Is.EqualTo(0.6609718122266955), "6 cells: no space over a line break");
+        });
+    }
+
+    /// <summary>
+    /// The DT/HT TRIPLE, pinned exactly rather than by inequality, because these three numbers are
+    /// what a beatmap row stores as <c>difficulty_rating</c>, <c>sr_dt</c> and <c>sr_ht</c> and what
+    /// PerformancePoints prices a rate play from. The game's LyricDifficultyTest pins the same
+    /// triple on the same fixture.
+    /// </summary>
+    [Test]
+    public void DifficultyRating_TheRateTripleIsPinned()
+    {
+        var map = denseMap(lineCount: 12, wordsPerLine: 6, lineMs: 1800);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(LyricDifficulty.Compute(map, 0.75), Is.EqualTo(5.627915297368787), "sr_ht");
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(7.215163474421059), "difficulty_rating");
+            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(8.810646556914051), "sr_dt");
+        });
     }
 
     [Test]
     public void DifficultyRating_RateAdjustedRatingIsNotTruncatedAtTheTop()
     {
-        // backlog 118, and the anchor for it is shared with the game's LyricDifficultyTest exactly
-        // as the "cat cat" one above is. LyricDifficulty used to end in a flat clamp to 10 stars,
-        // chosen to keep a star BADGE sane, and it truncated the rate-adjusted ratings with it.
-        // That reached stored data: sr_dt is what PerformancePoints prices a Double Time play from,
-        // and it is never a badge. The shape below stays clear of 10 at 1.00x and passes it at
-        // 1.50x, which is the same asymmetry the live catalogue has (no base rating has ever
-        // reached 10, while sr_dt reached it on 3 of the 5 real reference maps).
-        var map = denseMap(lineCount: 40, wordsPerLine: 8, lineMs: 1200);
+        // backlog 118, and the fixture is shared with the game's LyricDifficultyTest exactly as the
+        // anchor above is. LyricDifficulty used to end in a flat clamp to 10 stars, chosen to keep
+        // a star BADGE sane, and it truncated the rate-adjusted ratings with it. That reached
+        // stored data: sr_dt is what PerformancePoints prices a Double Time play from, and it is
+        // never a badge. The shape below stays clear of 10 at 1.00x and passes it at 1.50x, which
+        // is the asymmetry the live catalogue has.
+        var map = denseMap(lineCount: 40, wordsPerLine: 6, lineMs: 2000);
 
         Assert.Multiple(() =>
         {
-            // Both figures carry the backlog-152 length bonus, which is 0.1445 on this 1600-cell
-            // fixture (0.12 * log10(16)) and is the SAME on both rates, since the bonus reads the
-            // cell count and a clock change adds no cells. Before it they read 6.1622 and 10.5567.
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(6.3067).Within(0.001));
-            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(10.7012).Within(0.001), "under the old ceiling this read exactly 10.00");
+            // Both figures carry the backlog-152 length bonus, which is the SAME on both rates,
+            // since the bonus reads the cell count and a clock change adds no cells.
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(7.744395928445708).Within(1e-9));
+            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(10.630203384913813).Within(1e-9), "under the old ceiling this read exactly 10.00");
         });
     }
 
     /// <summary>
     /// The additive per-decade length bonus (backlog 152), stated as its own quantity and shared
-    /// with the game's LyricDifficultyTest exactly as the two anchors above are. Every word
-    /// <see cref="denseMap"/> emits is a 5-character pool word, so the cell count is exactly
-    /// <c>lineCount * wordsPerLine * 5</c> and the bonus is a number this test can write out rather
-    /// than read back off the thing under test. The other half of each expectation is the STRAIN
-    /// rating, which is the value the same fixture rated before this term existed.
+    /// with the game's LyricDifficultyTest exactly as the anchors above are. Every word
+    /// <see cref="denseMap"/> emits is a 5-character pool word and every line's words but its last
+    /// carry a SPACE (backlog 269), so the cell count is exactly
+    /// <c>lineCount * (wordsPerLine * 5 + wordsPerLine - 1)</c> and the bonus is a number this test
+    /// can write out rather than read back off the thing under test. The other half of each
+    /// expectation is the FEATS rating, measured by setting <c>length_stars</c> to 0.
     /// </summary>
-    [TestCase(40, 8, 1200, 1600, 6.16224)] // the RateAdjusted fixture above, pinned pre-152 at 6.1622
-    [TestCase(40, 4, 2400, 800, 3.43140)]
-    public void DifficultyRating_TheLengthBonusIsAddedFlatOnTopOfTheStrainRating(int lineCount, int wordsPerLine, double lineMs, int cells, double strainOnly)
+    [TestCase(40, 8, 1200, 1880, 15.291281961350359)] // the fixture the ceiling test used to use
+    [TestCase(40, 4, 2400, 920, 4.023130071607224)]
+    public void DifficultyRating_TheLengthBonusIsAddedFlatOnTopOfTheFeatsRating(int lineCount, int wordsPerLine, double lineMs, int cells, double featsOnly)
     {
         var map = denseMap(lineCount, wordsPerLine, lineMs);
 
         double bonus = 0.12 * Math.Log10(cells / 100.0);
 
+        Assert.That(cells, Is.EqualTo(lineCount * (wordsPerLine * 5 + wordsPerLine - 1)), "the stated cell count is the fixture's");
         Assert.That(bonus, Is.GreaterThan(0), "the fixture has to be over the pivot for this to test anything");
-        Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(strainOnly + bonus).Within(1e-5));
+        Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(featsOnly + bonus).Within(1e-5));
     }
 
     /// <summary>
     /// AND IT IS EXACTLY ZERO BELOW 100 CELLS, which is what the <c>max(0, .)</c> clamp is for and
     /// is not a rounding claim: the raw term is NEGATIVE under the pivot, so without the clamp every
-    /// short fixture would LOSE stars (0.0122 at 90 cells, and 0.147 on the 6-cell "cat cat" anchor
-    /// above). Every synthetic-map regression constant on both sides, the 0.79 anchor above and the
-    /// 0.63s in <c>PackageParserTest</c> and this file, is a short fixture, so the clamp is the
-    /// reason they all rate byte-identically across this change.
+    /// short fixture would LOSE stars. The at-pivot fixture is one word per line, so it carries no
+    /// inter-word spaces at all and its 20 five-letter words are exactly 100 cells.
     /// </summary>
-    [TestCase(3, 6, 1800, 90, 4.189181)] // under the pivot: the raw term is negative
-    [TestCase(4, 5, 2000, 100, 3.195837)] // AT the pivot: log10(1) is exactly 0
-    public void DifficultyRating_TheLengthBonusIsExactlyNothingAtOrBelowTheHundredCellPivot(int lineCount, int wordsPerLine, double lineMs, int cells, double strainOnly)
+    [TestCase(2, 6, 1800, 70, 4.846615926359888)] // under the pivot: the raw term is negative
+    [TestCase(20, 1, 600, 100, 2.4622788302413965)] // AT the pivot: log10(1) is exactly 0
+    public void DifficultyRating_TheLengthBonusIsExactlyNothingAtOrBelowTheHundredCellPivot(int lineCount, int wordsPerLine, double lineMs, int cells, double featsOnly)
     {
         var map = denseMap(lineCount, wordsPerLine, lineMs);
 
@@ -264,18 +399,18 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
+            Assert.That(cells, Is.EqualTo(lineCount * (wordsPerLine * 5 + wordsPerLine - 1)), "the stated cell count is the fixture's");
             Assert.That(raw, Is.LessThanOrEqualTo(0), "the clamp cannot be tested where the raw term is positive");
-            // The expectation is the STRAIN rating alone, i.e. what the fixture rated before this
-            // term existed (verified by setting length_stars to 0 and re-running). Drop the clamp
-            // and the 90-cell case reads 4.183690 instead, which this catches.
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(strainOnly).Within(1e-5));
+            // The expectation is the FEATS rating alone, i.e. what the fixture rates with
+            // length_stars set to 0 (measured that way). Drop the clamp and the 70-cell case loses
+            // 0.0186 of a star, which this catches.
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(featsOnly).Within(1e-5));
         });
     }
 
     /// <summary>
     /// A uniform map of varied words, mirroring the game's LyricDifficultyTest.buildMap so the two
-    /// ports can be pinned against the same shape. The word pool is varied on purpose: repeating one
-    /// word saturates LyricDifficulty's repetition factor and flattens the rating.
+    /// ports can be pinned against the same shape.
     /// </summary>
     private static LyricLine[] denseMap(int lineCount, int wordsPerLine, double lineMs)
     {
@@ -637,27 +772,32 @@ public class LyricPaceTest
     public void FreestyleSlot_AddsAWholeCellToThePaceAndAQuarterToTheRating()
     {
         // The game's split, mirrored, and it MOVED in backlog 211: a freestyle slot has always been
-        // a keypress the pace counts whole, and it used to be worth nothing at all to the strain
+        // a keypress the pace counts whole, and it used to be worth nothing at all to the star
         // model (these two ratings were once asserted EQUAL). It is a cell with a real deadline and
         // no letter to find, so it is now worth a quarter of an ordinary cell, and the slot count is
         // published in its own right (031_freestyle_cell_count.sql). Identical timings on both, so
         // the difference between the ratings is the quarter and nothing else.
+        //
+        // The word is six letters long over 1.4 s, rather than the two letters over 3 s it used to
+        // be, because backlog 269 measures a window's PACE: two cells spread over three seconds is
+        // under the model's feat floor and both maps would rate exactly nothing, which would make
+        // the comparison below vacuous rather than false.
         var freestyle = new LyricLine
         {
-            RawText = "a&b",
+            RawText = "abc&def",
             StartTime = 1000,
             EndTime = 5000,
-            SingEndTime = 4000,
-            Units = [new TimedUnit { Text = "a&b", StartTime = 1000, EndTime = 4000 }],
+            SingEndTime = 2400,
+            Units = [new TimedUnit { Text = "abc&def", StartTime = 1000, EndTime = 2400 }],
         };
 
         var plain = new LyricLine
         {
-            RawText = "ab",
+            RawText = "abcdef",
             StartTime = 1000,
             EndTime = 5000,
-            SingEndTime = 4000,
-            Units = [new TimedUnit { Text = "ab", StartTime = 1000, EndTime = 4000 }],
+            SingEndTime = 2400,
+            Units = [new TimedUnit { Text = "abcdef", StartTime = 1000, EndTime = 2400 }],
         };
 
         var freePace = LyricPace.Compute([freestyle]);
@@ -665,9 +805,9 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(freePace.TypeableCellCount, Is.EqualTo(3));
-            Assert.That(plainPace.TypeableCellCount, Is.EqualTo(2));
-            Assert.That(freePace.FreestyleCellCount, Is.EqualTo(1), "one of those three cells is a slot");
+            Assert.That(freePace.TypeableCellCount, Is.EqualTo(7));
+            Assert.That(plainPace.TypeableCellCount, Is.EqualTo(6));
+            Assert.That(freePace.FreestyleCellCount, Is.EqualTo(1), "one of those seven cells is a slot");
             Assert.That(plainPace.FreestyleCellCount, Is.Zero, "and a map with no markers says so");
             Assert.That(freePace.DifficultyRating, Is.GreaterThan(plainPace.DifficultyRating),
                 "the slot used to be free here, which is what backlog 211 fixed");
@@ -689,36 +829,19 @@ public class LyricPaceTest
     [Test]
     public void DifficultyRating_AMapWithNoFreestyleSlotsRatesBitIdenticallyToBeforeTheyWerePriced()
     {
-        var catcat = new[]
-        {
-            new LyricLine
-            {
-                RawText = "cat cat",
-                StartTime = 0,
-                EndTime = 800,
-                SingEndTime = 800,
-                Units =
-                [
-                    new TimedUnit { Text = "cat", StartTime = 0, EndTime = 400 },
-                    new TimedUnit { Text = "cat", StartTime = 400, EndTime = 800 },
-                ],
-            },
-        };
-
         var big = denseMap(lineCount: 40, wordsPerLine: 8, lineMs: 1200);
         var realistic = denseMap(lineCount: 40, wordsPerLine: 4, lineMs: 2400);
         var mid = denseMap(lineCount: 12, wordsPerLine: 6, lineMs: 1800);
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(catcat), Is.EqualTo(0.7881034645919412), "the shared cat cat anchor");
-            Assert.That(LyricDifficulty.Compute(big), Is.EqualTo(6.306729385543521));
-            Assert.That(LyricDifficulty.Compute(big, 1.50), Is.EqualTo(10.701160103747016));
-            Assert.That(LyricDifficulty.Compute(realistic), Is.EqualTo(3.5397724499548717));
-            Assert.That(LyricDifficulty.Compute(mid, 0.75), Is.EqualTo(3.7404617917658656));
-            Assert.That(LyricDifficulty.Compute(mid), Is.EqualTo(4.79255273276615));
-            Assert.That(LyricDifficulty.Compute(mid, 1.50), Is.EqualTo(8.025340379053887));
-            Assert.That(LyricDifficulty.Compute(mid, 1, literate: true), Is.EqualTo(4.79255273276615));
+            Assert.That(LyricDifficulty.Compute(big), Is.EqualTo(15.444180903262001));
+            Assert.That(LyricDifficulty.Compute(big, 1.50), Is.EqualTo(22.44830032037408));
+            Assert.That(LyricDifficulty.Compute(realistic), Is.EqualTo(4.138784610888691));
+            Assert.That(LyricDifficulty.Compute(mid, 0.75), Is.EqualTo(5.627915297368787));
+            Assert.That(LyricDifficulty.Compute(mid), Is.EqualTo(7.215163474421059));
+            Assert.That(LyricDifficulty.Compute(mid, 1.50), Is.EqualTo(8.810646556914051));
+            Assert.That(LyricDifficulty.Compute(mid, 1, literate: true), Is.EqualTo(7.215163474421059));
         });
     }
 
@@ -729,20 +852,20 @@ public class LyricPaceTest
     /// same map written "ab,".
     ///
     /// <para>Everything else about the pair is held equal BY CONSTRUCTION, which is what lets this
-    /// be an equality: uniform spans make both cvs exactly 0, no word repeats a letter so every run
-    /// factor is 1, the two shapes repeat at the same indices so the repetition factors match word
-    /// for word, and 60 words put both maps over the 100-cell length pivot (120 priced cells plain,
-    /// 180 under Literate) so the length accumulator has to count the quarter too.</para>
+    /// be an equality: the two maps occupy the same timeline word for word, they are cut into lines
+    /// at the same places (so they carry the same inter-word spaces), and 60 words put both over the
+    /// 100-cell length pivot (170 priced cells plain, 230 under Literate, spaces included) so the
+    /// length accumulator has to count the quarter too.</para>
     ///
-    /// <para>The two spacings hit the two arithmetic paths the weight enters. LOOSE (400 ms step,
-    /// floor 2 cells x 50 ms = 100 ms) never touches the per-character window floor, so it is a
-    /// pure test of <c>cost</c>. TIGHT (80 ms step) is under the floor, so the window itself is the
-    /// weight: read that floor off the fixed-key chars alone and the equality breaks.</para>
+    /// <para>Two spacings, because the model reads a word's SPAN as well as its onset: LOOSE
+    /// (400 ms step, 350 ms span) leaves a gap between words, TIGHT (80 ms step, 60 ms span) puts
+    /// several words inside a single 50 ms timeline bin, which is where the uniform spread and the
+    /// partial-bin proration actually do something.</para>
     /// </summary>
     [TestCase(400, 350, false, TestName = "AFreestyleSlotIsExactlyAQuarterCell(loose, plain)")]
     [TestCase(400, 350, true, TestName = "AFreestyleSlotIsExactlyAQuarterCell(loose, literate)")]
-    [TestCase(80, 60, false, TestName = "AFreestyleSlotIsExactlyAQuarterCell(tight window floor, plain)")]
-    [TestCase(80, 60, true, TestName = "AFreestyleSlotIsExactlyAQuarterCell(tight window floor, literate)")]
+    [TestCase(80, 60, false, TestName = "AFreestyleSlotIsExactlyAQuarterCell(tight bins, plain)")]
+    [TestCase(80, 60, true, TestName = "AFreestyleSlotIsExactlyAQuarterCell(tight bins, literate)")]
     public void FourFreestyleSlotsWeighExactlyOneCell(double stepMs, double spanMs, bool literate)
     {
         // "a&&&&," : one fixed key (two under Literate, the mark) plus four quarter-cells.
@@ -838,9 +961,7 @@ public class LyricPaceTest
 
     /// <summary>
     /// <paramref name="count"/> tokens built from <paramref name="shape"/>, which is handed the
-    /// word's index and takes its letters from <see cref="alphabet"/>. Every shape above cycles with
-    /// the same period (36), so any two maps here repeat their words at exactly the same indices and
-    /// the repetition factor is identical between them.
+    /// word's index and takes its letters from <see cref="alphabet"/>.
     /// </summary>
     private static string[] tokens(int count, Func<int, string> shape) => Enumerable.Range(0, count).Select(shape).ToArray();
 

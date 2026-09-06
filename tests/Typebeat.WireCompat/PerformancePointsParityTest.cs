@@ -601,10 +601,12 @@ public class PerformancePointsParityTest
     /// <summary>
     /// A DENSE twin, rating past the 10 stars the difficulty model used to clamp at (backlog 118).
     /// <see cref="TwinMaps"/> rates a few stars at every rate, so it cannot tell the two ports apart
-    /// anywhere a ceiling would act; this one rates about 6.3 at 1.00x and about 10.7 at 1.50x, so
-    /// it straddles where the old one sat, which is where the ports have to be held together for
-    /// <c>sr_dt</c> to mean anything. The word pool is varied on purpose: repeating one word
-    /// saturates the model's repetition factor and flattens the rating back under the region.
+    /// anywhere a ceiling would act; this one rates about 15.4 at 1.00x and about 22.4 at 1.50x
+    /// under the window/feats model (backlog 269), so both of its figures are past where the old
+    /// ceiling sat, which is where the ports have to be held together for <c>sr_dt</c> to mean
+    /// anything. Eight five-letter words to a 1.2 second line is well past what any human sustains,
+    /// which is exactly why it reaches the region: the model prices pace against human capability
+    /// and this fixture is roughly one and a half times it.
     /// </summary>
     private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) DenseTwinMaps()
     {
@@ -929,14 +931,17 @@ public class PerformancePointsParityTest
     {
         // WHY THERE ARE SIX STORED COLUMNS AND NOT FOUR. The obvious saving is to store sr_literate
         // alone and recover the rate pair as sr_literate * (sr_dt / difficulty_rating), i.e. to
-        // assume Literate and the rate compose multiplicatively. They do not, and the reason is
-        // structural: LyricDifficulty ends in star_scale * raw^star_power and the rate enters raw
-        // ADDITIVELY, so a ratio taken through that power cannot survive a change of baseline.
+        // assume Literate and the rate compose multiplicatively. They do not, and under the
+        // window/feats model (backlog 269) the reason is that the two act on DIFFERENT AXES. The
+        // rate compresses the timeline, which changes which scheduled windows still fit on the map
+        // and which bins each greedy feat consumes, so it can change the SET of feats. Literate
+        // adds cells to the words already there, changing every window's density without moving a
+        // single boundary. Neither is a scalar on the other, and a map where the rate drops a long
+        // window off the schedule is a map where the ratio is not even continuous in it.
         //
         // This test is the standing proof of that, so that a future reader who reaches for the
         // saving finds the counter-example already written down rather than having to rediscover
-        // it. On the five real reference maps the same prediction is out by up to 5.8% in stars,
-        // which is 11.2% in pp, and it errs in both directions.
+        // it.
         var (_, server) = TwinMaps();
 
         double plainBase = ServerDifficulty.Compute(server);

@@ -69,8 +69,15 @@ internal static class Length
     /// <summary>
     /// A map's PRICED CELL COUNT as the length bonus counts it: mirrors
     /// <c>LyricDifficulty</c>'s own accumulator summed over the tokens of every line, which is a
-    /// different number from <c>LyricPace.PaceStatistics.TypeableCellCount</c> (that one adds a
-    /// cell per token gap and counts a freestyle slot as a whole cell).
+    /// different number from <c>LyricPace.PaceStatistics.TypeableCellCount</c> (that one counts a
+    /// freestyle slot as a whole cell, measures the DEFAULT stream whatever the variant, and takes
+    /// its gaps between all split tokens rather than between typed words).
+    ///
+    /// <para>INTER-WORD SPACES ARE IN since backlog 269, because that accumulator counts them: a
+    /// word whose successor is on the same LINE carries the spacebar press after it, so a line of
+    /// n words carries n - 1 spaces and the last word of a line carries none. Leave them out and
+    /// every map's bonus is computed off a count roughly a sixth short of the real one, which shows
+    /// up as scatter in <see cref="Fit"/> rather than as anything obvious.</para>
     ///
     /// <para>FRACTIONAL since backlog 211, because that accumulator is: a freestyle slot is worth
     /// <c>LyricDifficulty.freestyle_cost_weight</c>, a quarter of an ordinary cell, and counting it
@@ -95,16 +102,32 @@ internal static class Length
 
         foreach (var line in lines)
         {
+            int words = 0;
+
             foreach (string token in line.RawText.Split(' '))
             {
+                double tokenCells = 0;
+
                 foreach (char c in token)
                 {
                     if (Typeability.IsTypeable(c) || (literate && Typeability.IsPunctuation(c)))
-                        cells++;
+                        tokenCells++;
                     else if (Typeability.IsFreestyle(c))
-                        cells += FREESTYLE_COST_WEIGHT;
+                        tokenCells += FREESTYLE_COST_WEIGHT;
                 }
+
+                // A token with nothing to type is not a word, so it neither costs cells nor earns
+                // itself a space, exactly as LyricDifficulty's own extraction skips it.
+                if (tokenCells <= 0)
+                    continue;
+
+                cells += tokenCells;
+                words++;
             }
+
+            // The spacebar presses inside this line: one after every word but its last.
+            if (words > 1)
+                cells += words - 1;
         }
 
         return cells;

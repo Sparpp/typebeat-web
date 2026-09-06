@@ -16,10 +16,12 @@ namespace Typebeat.Web.Packages.Lyrics;
 ///    screen; the map's true word length is published separately as
 ///    <see cref="PaceStatistics.AverageCharsPerWord"/> rather than left implicit in a CPM:WPM
 ///    ratio nobody could read off the page.
-///  - stars: <see cref="LyricDifficulty"/>, a duration-weighted soft maximum over per-word
-///    typing strain (sr-formula-v1.md), mirroring the game's
-///    typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty. Unlike the pace, this DOES use
-///    unit target times (per-word windows drive strain).
+///  - stars: <see cref="LyricDifficulty"/>, the map's pace over sliding windows measured against
+///    human typing capability, summed over greedy non-overlapping FEATS (backlog 269), mirroring
+///    the game's typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty. That file's own summary
+///    is the model description, and the prototype it is a literal port of is docs/sr-feats-model.js
+///    in the parent superrepo. Unlike the pace, this DOES use unit target times (a word occupies
+///    the timeline from its onset to the end of its sung span).
 /// </summary>
 public static class LyricPace
 {
@@ -177,6 +179,30 @@ public static class LyricPace
     /// keeps every existing beatmap row byte-identical, and the next bump taken for its own reasons
     /// will drag the re-derive along just as v16 dragged 202's.</para>
     ///
+    /// <para>v17 = THE STAR RATING IS A DIFFERENT MODEL (backlog 269). The strain curve is gone:
+    /// per-word density and endurance, line pressure, the rhythm cv multiplier, the run and
+    /// word-repetition factors, the duration-weighted soft maximum and <c>star_scale</c> with its
+    /// power all went with it. <see cref="LyricDifficulty"/> now lays the map out as a timeline of
+    /// 50 ms bins, measures the pace of sliding windows from 1.36 seconds up to the map's own length
+    /// against S(t), the WPM the fastest humans sustain for t seconds, and sums the map's FEATS:
+    /// the highest-ratio window at any duration, then the highest of what is left over after its
+    /// bins are consumed, and so on, weighted 0.25^k and normalised so that record pace throughout
+    /// rates 10.6. Two consequences beyond the numbers. First, INTER-WORD SPACES ARE CELLS here now,
+    /// as they have always been for the pace, which also widens the length bonus' own accumulator
+    /// (its clamp still gives a sub-100-cell map nothing). Second, every feat is scored against
+    /// HUMAN ABILITY rather than against the map's own peak, so a cut version can no longer outrate
+    /// the full version it was cut from. Measured over the 94 ranked difficulties with a per-word
+    /// extract, the mean shift is +0.10 stars at a Spearman of 0.935, the Double Time premium falls
+    /// from x1.55 to x1.34 and Half Time reads x0.82; a map whose whole sung timeline is under
+    /// about a second and a half now rates its length term alone, since no window fits on it. All
+    /// six star columns move, so the sweep re-rates the whole catalogue and stamps
+    /// <c>pp_version = 0</c> on every score it touches, exactly as at v9, v10, v12 and v14. The
+    /// pace columns are untouched: no word or cell count that this file publishes and no WPM figure
+    /// changes, only the ratings. <c>PerformancePoints.VERSION</c> deliberately stays where it is,
+    /// as at v12 and v16: the new ratings reach pp through the star columns and the pp FORMULA does
+    /// not move. This backfill has to COMPLETE before any pp version bump lands, or PpBackfill
+    /// prices the catalogue against ratings this sweep is still rewriting.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -189,7 +215,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 16;
+    public const int VERSION = 17;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's

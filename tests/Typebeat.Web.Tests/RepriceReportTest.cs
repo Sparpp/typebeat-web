@@ -16,7 +16,7 @@ namespace Typebeat.Web.Tests;
 ///
 /// <para>ONE THING IS DELIBERATELY NOT PINNED HERE, and the writeup says so: that the tool's copy of
 /// the star bonus equals <c>LyricDifficulty</c>'s, whose constant and cell count are both private and
-/// cannot be observed from outside (the term is added to a strain aggregate no caller can compute
+/// cannot be observed from outside (the term is added to a feats sum no caller can compute
 /// separately). What answers that is the tool's own FIT of the constant out of the live catalogue,
 /// which it prints next to the assumed value.</para>
 /// </summary>
@@ -74,16 +74,20 @@ public class RepriceReportTest
     {
         var parsed = BeatmapPackageParser.ParseDifficulty("punctuated.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: PunctuatedLyrics)));
 
-        // "Hello, world!" -> plain "hello" + "world" = 10 cells; under Literate the comma and the
-        // exclamation mark are real cells too, so 12.
+        // "Hello, world!" -> plain "hello" + "world" = 10 letters plus the space between them = 11
+        // cells (backlog 269 put inter-word spaces into the count); under Literate the comma and
+        // the exclamation mark are real cells too, so 13.
         Assert.Multiple(() =>
         {
             Assert.That(parsed.Lines, Has.Count.EqualTo(1));
-            Assert.That(Length.Count(parsed.Lines, literate: false), Is.EqualTo(10));
-            Assert.That(Length.Count(parsed.Lines, literate: true), Is.EqualTo(12));
+            Assert.That(Length.Count(parsed.Lines, literate: false), Is.EqualTo(11));
+            Assert.That(Length.Count(parsed.Lines, literate: true), Is.EqualTo(13));
 
-            // NOT LyricPace's count, which is a different number on purpose (it adds one cell per
-            // token gap). Holding the two apart is why the report prints both.
+            // STILL NOT LyricPace's count, which is a different number on purpose: it counts a
+            // freestyle slot whole rather than at a quarter, always measures the DEFAULT stream
+            // (so it does not move under Literate at all), and takes its gaps between every split
+            // token rather than between typed words. On this mark-free plain line the two happen
+            // to coincide, which is why the LITERATE row above is the one that separates them.
             Assert.That(parsed.Pace.TypeableCellCount, Is.EqualTo(11));
         });
     }
@@ -97,15 +101,20 @@ public class RepriceReportTest
     {
         var row = PreDeployMap(beatmapId: 1, lines: 50);
 
+        // 50 lines of 4 five-letter words plus the 3 inter-word spaces each line carries (backlog
+        // 269 put those into the count that the bonus reads).
+        const double cells = 50 * (4 * 5 + 3);
+        double expected = Length.LENGTH_STARS * Math.Log10(cells / Length.REFERENCE_CELLS);
+
         Assert.That(row.Resolved, Is.True);
-        Assert.That(row.Cells, Is.EqualTo(1000), "50 lines of 4 five-letter words");
+        Assert.That(row.Cells, Is.EqualTo(cells), "50 lines of 4 five-letter words and 3 spaces");
 
         var findings = SrAnalysis.Run([row], new Tolerances());
 
         Assert.Multiple(() =>
         {
-            Assert.That(row.Delta(SrVariant.Base)!.Value, Is.EqualTo(0.12).Within(1e-9));
-            Assert.That(row.ExpectedBonus(SrVariant.Base), Is.EqualTo(0.12).Within(1e-9));
+            Assert.That(row.Delta(SrVariant.Base)!.Value, Is.EqualTo(expected).Within(1e-9));
+            Assert.That(row.ExpectedBonus(SrVariant.Base), Is.EqualTo(expected).Within(1e-9));
             Assert.That(row.Residual(SrVariant.Base)!.Value, Is.EqualTo(0).Within(1e-12));
 
             // Every variant, including the three Literate ones, whose bonus is computed off the
@@ -180,15 +189,15 @@ public class RepriceReportTest
     [Test]
     public void ShortMap_GainsNothing_SoThePinnedSyntheticRatingDoesNotMove()
     {
-        // The 5-cell fixture the game's own pace regression is pinned on. 152's clamp is what keeps
-        // it at 0.63, and a report that claimed a move here would be reporting on a broken clamp.
+        // The fixture the game's own pace regression is pinned on. 152's clamp is what keeps it at
+        // 0.59, and a report that claimed a move here would be reporting on a broken clamp.
         var parsed = BeatmapPackageParser.ParseDifficulty("short.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
 
         Assert.Multiple(() =>
         {
-            Assert.That(Length.Count(parsed.Lines, literate: false), Is.EqualTo(4));
+            Assert.That(Length.Count(parsed.Lines, literate: false), Is.EqualTo(5), "ab + space + cd");
             Assert.That(Length.StarBonus(Length.Count(parsed.Lines, literate: false)), Is.EqualTo(0));
-            Assert.That(parsed.Pace.DifficultyRating, Is.EqualTo(0.63).Within(0.01));
+            Assert.That(parsed.Pace.DifficultyRating, Is.EqualTo(0.59).Within(0.01));
         });
     }
 
