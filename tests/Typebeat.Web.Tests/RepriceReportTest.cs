@@ -281,9 +281,20 @@ public class RepriceReportTest
             Assert.That(row.ImpliedDeletedFactor!.Value, Is.EqualTo(Length.DeletedPpFactor(800)).Within(1e-9));
             Assert.That(row.FactorResidual!.Value, Is.EqualTo(0).Within(1e-9));
 
-            // What pp still sees of length: ((SR + bonus)/SR)^2, a few percent, not 1.45x.
+            // What pp still sees of length: a few percent, not 1.45x. It STOPPED BEING THE CLOSED
+            // FORM ((SR + bonus)/SR)^2 at backlog 270, and the reason is worth stating rather than
+            // just re-fitting: the play is a full combo, so it now carries an ADDITIVE bonus that
+            // is LINEAR in SR_eff on top of a product that goes as SR_eff^2. The whole ratio is a
+            // weighted blend of the two and therefore sits strictly between them, which is what is
+            // asserted; the exact value depends on the play's own pp and is not a property of the
+            // length bonus at all.
             double bonus = Length.StarBonus(800);
-            Assert.That(row.StarBonusRatio!.Value, Is.EqualTo(Math.Pow((5.0 + bonus) / 5.0, 2)).Within(1e-9));
+            double productMoves = Math.Pow((5.0 + bonus) / 5.0, 2);
+            // 1.0 is combo_bonus_zero; this file is not on the pp tool's marked list, so it is spelled out.
+            double comboBonusMoves = (5.0 + bonus - 1.0) / (5.0 - 1.0);
+
+            Assert.That(row.StarBonusRatio!.Value, Is.LessThan(productMoves));
+            Assert.That(row.StarBonusRatio!.Value, Is.GreaterThan(comboBonusMoves));
 
             // And the whole move is the one divided by the other.
             Assert.That(row.Ratio!.Value, Is.EqualTo(row.StarBonusRatio!.Value / Length.DeletedPpFactor(800)).Within(1e-9));

@@ -84,21 +84,53 @@ public class PerformancePointsParityTest
         return mod;
     }
 
-    /// <summary>Every mod the type!beat ruleset ships, as the mod panel offers them.</summary>
+    /// <summary>
+    /// Every mod the type!beat ruleset ships, read off <c>TypeBeatRuleset.GetModsFor</c>'s five
+    /// player-facing columns plus the resolvable System one.
+    ///
+    /// <para>THIS LIST WENT STALE AND THAT IS EXACTLY THE FAILURE IT EXISTS TO CATCH. It was
+    /// missing Easy, Hard Rock, Recite, Dyslexia, Autoplay, Puppeteer and Conductor when backlog
+    /// 270 found it, so the two sweeps below (single and pair) had never once reached the EZ, HR or
+    /// RE arms of either mirror: a multiplier landed in one repo only would have gone unnoticed
+    /// here and shown up as a leaderboard divergence instead. A mod added to the ruleset has to be
+    /// added here, and nothing enforces that but reading the ruleset.</para>
+    ///
+    /// <para><c>ModWindUp</c> and <c>ModWindDown</c> are deliberately absent: they are the
+    /// always-unranked pair, so no score carrying one is ever priced at all.</para>
+    /// </summary>
     private static IReadOnlyList<Mod> AllRulesetMods() =>
     [
+        new TypeBeatModEasy(),
         new TypeBeatModNoFail(),
         new TypeBeatModHalfTime(),
+        new TypeBeatModHardRock(),
         new TypeBeatModSuddenDeath(),
         new TypeBeatModDoubleTime(),
         new TypeBeatModNightcore(),
         new TypeBeatModFlashlight(),
         new TypeBeatModLiterate(),
-        new TypeBeatModGatekeeper(),
+        new TypeBeatModRecite(),
         new TypeBeatModFletcher(),
+        new TypeBeatModGatekeeper(),
+        new TypeBeatModDyslexia(),
+        new TypeBeatModAutoplay(),
         new TypeBeatModMashing(),
         new TypeBeatModMuted(),
+        new TypeBeatModPuppeteer(),
+        new TypeBeatModConductor(),
     ];
+
+    /// <summary>
+    /// What a FULL combo adds to a play at this rating (backlog 270), spelled once because it is
+    /// needed on both sides of every ratio in this file.
+    ///
+    /// <para>THE BONUS DOES NOT CANCEL IN A RATIO. Combo was a FACTOR of the product through v20,
+    /// so dividing one play by another left it out; it is ADDED now, so a ratio of two plays that
+    /// both carry it is <c>(P1 + B)/(P2 + B)</c> and says nothing about either product. Every pin
+    /// below that used to lean on the cancellation subtracts this instead.</para>
+    /// </summary>
+    private static double FullComboBonus(double starRating)
+        => 12.5 * (starRating - 1.0); // pp:const combo_bonus_slope=12.5 combo_bonus_zero=1.0
 
     #endregion
 
@@ -162,8 +194,14 @@ public class PerformancePointsParityTest
         // (no tolerance) below pins.
         const int notes = 500;
 
-        double clientSpotless = ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, 0);
-        double serverSpotless = ServerPp.Compute(4, notes, 0, 0.9, notes, no_server_mods, 0);
+        // EVERY RATIO BELOW IS TAKEN AT NO COMBO AT ALL (backlog 270), which is what keeps the
+        // cancellation these figures depend on exact. The combo bonus is ADDED to the product
+        // rather than being a factor of it, so it does not cancel in a ratio; subtracting it back
+        // off works in the middle of the range and NOT at the ends, because a play one miss below
+        // the cliff has a product of about 1e-23 and adding 37.5 pp to that loses it entirely in
+        // double. At maxCombo 0 the bonus is exactly 0 and pp IS the product.
+        double clientSpotless = ClientPp.Compute(4, notes, 0, 0.9, 0, no_client_mods, 0);
+        double serverSpotless = ServerPp.Compute(4, notes, 0, 0.9, 0, no_server_mods, 0);
 
         Assert.That(clientSpotless, Is.EqualTo(serverSpotless), "the spotless baseline itself must agree");
 
@@ -187,18 +225,18 @@ public class PerformancePointsParityTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(ClientPp.Compute(4, notes, 60, 0.9, notes, no_client_mods, 80) / clientSpotless,
+            Assert.That(ClientPp.Compute(4, notes, 60, 0.9, 0, no_client_mods, 80) / clientSpotless,
                 Is.EqualTo(0.008341).Within(1e-6)); // pp[f.penalty(500, 60, 80)]
-            Assert.That(ClientPp.Compute(4, notes, 10, 0.9, notes, no_client_mods, 20) / clientSpotless,
+            Assert.That(ClientPp.Compute(4, notes, 10, 0.9, 0, no_client_mods, 20) / clientSpotless,
                 Is.EqualTo(0.542001).Within(1e-6)); // pp[f.penalty(500, 10, 20)]
 
             // Zero typos leaves the typo term at exactly 1.0 on both sides, so the play is
             // priced by its misses alone. Ten misses, not the sixty this used to use: sixty was past
             // the backlog-97 cliff, so both sides would have been asserted to equal zero and the
             // restatement would have stopped saying anything about the arithmetic that produced it.
-            Assert.That(ClientPp.Compute(4, notes, 10, 0.9, notes, no_client_mods, 0) / clientSpotless,
+            Assert.That(ClientPp.Compute(4, notes, 10, 0.9, 0, no_client_mods, 0) / clientSpotless,
                 Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.2) / 500.0), 10)).Within(1e-12)); // pp:const count_power=1.2 miss_exponent=10
-            Assert.That(ServerPp.Compute(4, notes, 10, 0.9, notes, no_server_mods, 0) / serverSpotless,
+            Assert.That(ServerPp.Compute(4, notes, 10, 0.9, 0, no_server_mods, 0) / serverSpotless,
                 Is.EqualTo(Math.Pow(Math.Max(0.0, 1.0 - Math.Pow(10.0, 1.2) / 500.0), 10)).Within(1e-12)); // pp:const count_power=1.2 miss_exponent=10
 
             // And BOTH sides reach the clamped zero from the same input, which is the seam the
@@ -206,18 +244,32 @@ public class PerformancePointsParityTest
             // here rather than a zero, and nothing else in this file would catch it. The thresholds
             // are the CURRENT cliffs, so a mirror at the old power would fail the two below the
             // cliff rather than the two at it.
+            //
+            // AT NO COMBO THE PLAY REALLY IS AN EXACT ZERO on both sides, which is what these
+            // pinned before the bonus existed and still the sharpest form of the claim.
             const int missCliff = 178; // pp[math.ceil(f.miss_cliff(500))]
             const int typoCliff = 249; // pp[math.ceil(f.typo_cliff(500))]
 
-            Assert.That(ClientPp.Compute(4, notes, missCliff, 0.9, notes, no_client_mods, 0), Is.Zero);
-            Assert.That(ServerPp.Compute(4, notes, missCliff, 0.9, notes, no_server_mods, 0), Is.Zero);
-            Assert.That(ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, typoCliff), Is.Zero);
-            Assert.That(ServerPp.Compute(4, notes, 0, 0.9, notes, no_server_mods, typoCliff), Is.Zero);
+            Assert.That(ClientPp.Compute(4, notes, missCliff, 0.9, 0, no_client_mods, 0), Is.Zero);
+            Assert.That(ServerPp.Compute(4, notes, missCliff, 0.9, 0, no_server_mods, 0), Is.Zero);
+            Assert.That(ClientPp.Compute(4, notes, 0, 0.9, 0, no_client_mods, typoCliff), Is.Zero);
+            Assert.That(ServerPp.Compute(4, notes, 0, 0.9, 0, no_server_mods, typoCliff), Is.Zero);
 
-            Assert.That(ClientPp.Compute(4, notes, missCliff - 1, 0.9, notes, no_client_mods, 0), Is.GreaterThan(0));
-            Assert.That(ServerPp.Compute(4, notes, missCliff - 1, 0.9, notes, no_server_mods, 0), Is.GreaterThan(0));
-            Assert.That(ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, typoCliff - 1), Is.GreaterThan(0));
-            Assert.That(ServerPp.Compute(4, notes, 0, 0.9, notes, no_server_mods, typoCliff - 1), Is.GreaterThan(0));
+            Assert.That(ClientPp.Compute(4, notes, missCliff - 1, 0.9, 0, no_client_mods, 0), Is.GreaterThan(0));
+            Assert.That(ServerPp.Compute(4, notes, missCliff - 1, 0.9, 0, no_server_mods, 0), Is.GreaterThan(0));
+            Assert.That(ClientPp.Compute(4, notes, 0, 0.9, 0, no_client_mods, typoCliff - 1), Is.GreaterThan(0));
+            Assert.That(ServerPp.Compute(4, notes, 0, 0.9, 0, no_server_mods, typoCliff - 1), Is.GreaterThan(0));
+
+            // WITH A FULL COMBO the same two inputs are worth EXACTLY the bonus and not a fraction
+            // more (backlog 270), which is where the clamped product now goes: it is added to,
+            // not multiplied by. Both sides, because a bonus placed inside the product on one
+            // mirror only would show here and nowhere else in this region.
+            double bonus = FullComboBonus(4);
+
+            Assert.That(ClientPp.Compute(4, notes, missCliff, 0.9, notes, no_client_mods, 0), Is.EqualTo(bonus));
+            Assert.That(ServerPp.Compute(4, notes, missCliff, 0.9, notes, no_server_mods, 0), Is.EqualTo(bonus));
+            Assert.That(ClientPp.Compute(4, notes, 0, 0.9, notes, no_client_mods, typoCliff), Is.EqualTo(bonus));
+            Assert.That(ServerPp.Compute(4, notes, 0, 0.9, notes, no_server_mods, typoCliff), Is.EqualTo(bonus));
         });
     }
 
@@ -279,7 +331,7 @@ public class PerformancePointsParityTest
 
         // And the generation itself, so a half-landed cross-repo change that bumped BOTH mirrors
         // but left docs/pp.md and the two per-repo pins behind is caught here too.
-        Assert.That(ServerPp.VERSION, Is.EqualTo(20)); // pp:version
+        Assert.That(ServerPp.VERSION, Is.EqualTo(21)); // pp:version
     }
 
     #endregion
@@ -400,19 +452,23 @@ public class PerformancePointsParityTest
     }
 
     /// <summary>
-    /// BOTH MIRRORS STILL PRICE A STORED RH, AT THE SAME NUMBER. The mod shipped (backlog 135) and
-    /// was removed from the client by backlog 147, but pp is recomputed from a stored row's mods on
-    /// every <c>PpBackfill</c> sweep and every recalc, so an arm that survives on one side only is a
-    /// silent 10% divergence between the counter and the stored value, and an arm that survives on
-    /// neither reprices every such row downward while its <c>ModMultiplier.TotalScoreCeiling</c>
-    /// twin puts the row above its own ceiling and stores it unranked.
+    /// A STORED RH IS UNPRICED ON BOTH SIDES SINCE BACKLOG 270, and that is what needs pinning now.
+    /// The mod shipped (backlog 135) and left the client at backlog 147, so no play can carry the
+    /// acronym any more; exactly one stored row still does, and it reprices 10% down at v21, which
+    /// is what a VERSION bump is for.
     ///
-    /// <para>This is the one mod multiplier that is deliberately unreachable from the mod panel, so
-    /// it needs its own pin: the sweeps above iterate what the ruleset OFFERS and would pass just as
-    /// happily with both arms deleted.</para>
+    /// <para>The removal has to land on BOTH sides or it is worse than not landing at all: pp is
+    /// recomputed from a stored row's mods on every <c>PpBackfill</c> sweep and every recalc, so an
+    /// arm surviving on one side only is a silent 10% divergence between the in-game counter and
+    /// the stored value. That is the same argument the pin made before the deletion, one direction
+    /// over, and it is why this test is inverted rather than deleted.</para>
+    ///
+    /// <para>The <c>ModMultiplier.TotalScoreCeiling</c> table the old note worried about is a
+    /// DIFFERENT FILE and is untouched: it still prices <c>"RH"</c> at 1.10, so the stored row's
+    /// total stays under its own ceiling and stays ranked.</para>
     /// </summary>
     [Test]
-    public void AStoredRhythmicIsStillPricedIdenticallyOnBothSides()
+    public void AStoredRhythmicIsUnpricedOnBothSides()
     {
         var clientStack = Stack(new RetiredRhythmicMod());
         var serverStack = ServerMods(clientStack);
@@ -424,14 +480,73 @@ public class PerformancePointsParityTest
         {
             Assert.That(ClientPp.ModMultiplier(clientStack, notes), Is.EqualTo(ServerPp.ModMultiplier(serverStack, notes)),
                 $"RH at {notes} notes");
-            Assert.That(ServerPp.ModMultiplier(serverStack, notes), Is.EqualTo(1.10).Within(1e-12),
-                $"and it is still the 1.10 it was submitted at, at {notes} notes");
+            Assert.That(ServerPp.ModMultiplier(serverStack, notes), Is.EqualTo(1.0).Within(1e-12),
+                $"and it is unpriced on both sides, at {notes} notes");
         }
 
-        // Stacked, because the multiplier is a product and a lost arm hides inside a single-mod
-        // test whenever the neutral answer happens to be right.
+        // Stacked, because the multiplier is a product and a stray arm hides inside a single-mod
+        // test whenever the neutral answer happens to be right. FC is 1.02 since backlog 270, so
+        // the pair is worth exactly FC and an RH arm left in either mirror would show here.
         var pair = Stack(new RetiredRhythmicMod(), new TypeBeatModFletcher());
         Assert.That(ClientPp.ModMultiplier(pair, 500), Is.EqualTo(ServerPp.ModMultiplier(ServerMods(pair), 500)));
+        Assert.That(ClientPp.ModMultiplier(pair, 500), Is.EqualTo(ClientPp.ModMultiplier(Stack(new TypeBeatModFletcher()), 500)));
+    }
+
+    /// <summary>
+    /// THE COMBO BONUS SITS OUTSIDE THE PRODUCT, MOD MULTIPLIER INCLUDED (backlog 270), and this is
+    /// the pin that catches a mirror that put it anywhere else.
+    ///
+    /// <para>Every other parity pin in this file is blind to the placement. A SPOTLESS FULL COMBO
+    /// prices identically whether the bonus multiplies or adds, the no-mod sweep at the top has no
+    /// multiplier to distribute over, and a play with no combo at all has no bonus to misplace. It
+    /// takes all three at once: a LOSSY play (so the product is not 1), at less than a full combo
+    /// (so the bonus is not the whole of it), carrying a MOD STACK (so there is a multiplier to
+    /// distribute), on a map rated above <c>combo_bonus_zero</c> (so the bonus is not clamped to
+    /// nothing).</para>
+    ///
+    /// <para>Both mirrors are asserted against each other AND against the arithmetic spelled out,
+    /// because the two agreeing on a wrong placement is exactly the failure a cross-repo hand edit
+    /// produces: the same mistake gets made twice.</para>
+    /// </summary>
+    [Test]
+    public void ALossyModdedNonFullComboPricesTheBonusOutsideTheProductOnBothSides()
+    {
+        const double stars = 5.5;
+        const int notes = 800;
+        const int misses = 30;
+        const int typos = 40;
+        const int maxCombo = 512;
+        const double accuracy = 0.91;
+
+        var clientStack = Stack(new TypeBeatModNoFail(), new TypeBeatModHardRock(), new TypeBeatModFlashlight());
+        var serverStack = ServerMods(clientStack);
+
+        double client = ClientPp.Compute(stars, notes, misses, accuracy, maxCombo, clientStack, typos);
+        double server = ServerPp.Compute(stars, notes, misses, accuracy, maxCombo, serverStack, typos);
+
+        // The bonus, computed the way both mirrors group it: the combo RATIO times the clamped
+        // slope, and nothing about the mods.
+        double bonus = (double)maxCombo / notes * Math.Max(0.0, 12.5 * (stars - 1.0)); // pp:const combo_bonus_slope=12.5 combo_bonus_zero=1.0
+        double modMultiplier = ClientPp.ModMultiplier(clientStack, notes);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client, Is.EqualTo(server), "the two mirrors must agree on the placement");
+
+            // The bare play, priced with no mods, is the same product plus the same bonus, so the
+            // modded play is (bare - bonus) * modMult + bonus. If either mirror multiplied the
+            // bonus in, this is off by (modMult - 1) * bonus, which is about 7.5 pp here.
+            double bare = ClientPp.Compute(stars, notes, misses, accuracy, maxCombo, no_client_mods, typos);
+
+            Assert.That(client, Is.EqualTo((bare - bonus) * modMultiplier + bonus).Within(1e-9));
+            Assert.That(client, Is.Not.EqualTo(bare * modMultiplier).Within(1e-6),
+                "the whole play must NOT scale with the mod stack; only its product half does");
+
+            // And the mod multiplier really is above 1 on this stack, so the two spellings above
+            // are genuinely different numbers rather than accidentally equal.
+            Assert.That(modMultiplier, Is.GreaterThan(1.05));
+            Assert.That(bonus, Is.GreaterThan(30));
+        });
     }
 
     [Test]
@@ -1170,8 +1285,17 @@ public class PerformancePointsParityTest
             // The rate factor of a Half Time play is the PLAIN rating ratio now, not the reciprocal
             // of Double Time's. Both are stated, because the second is what this pinned before and
             // its failure is the whole point: the two are not equal on this fixture map.
-            double up = doubleTime / nomod;
-            double down = halfTimePrice / nomod;
+            //
+            // THE LAW IS ABOUT THE PRODUCT TERM (backlog 270). The combo bonus is ADDED after the
+            // product and is itself a function of SR_eff, so it neither cancels in a ratio nor
+            // scales like one: the three arms of this test sit at three different ratings, so each
+            // carries a DIFFERENT bonus. Each is taken off before the division, which leaves
+            // exactly the (SR_rate/SR_base)^sr_exponent this pins.
+            double ComboBonus(double stars) => 380.0 / 400.0 * Math.Max(0.0, 12.5 * (stars - 1.0)); // pp:const combo_bonus_slope=12.5 combo_bonus_zero=1.0
+
+            double baseProduct = nomod - ComboBonus(baseStars);
+            double up = (doubleTime - ComboBonus(dtStars)) / baseProduct;
+            double down = (halfTimePrice - ComboBonus(htStars)) / baseProduct;
 
             double downRatio = Math.Pow(htStars / baseStars, 2.00); // pp:const sr_exponent=2.00
 

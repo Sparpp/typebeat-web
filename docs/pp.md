@@ -17,11 +17,11 @@ Per play:
 
 ```
 pp = C · SR_eff^2.00
-       · max(0, 1 − miss^1.2/notes)^10                   # cleanliness
-       · max(0, 1 − typos^1.2/(notes+typos))^4           # typos
-       · acc^1.80 · 1/(1 + e^(−(acc − 0.80)/0.025))      # accuracy (timing quality)
-       · (ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50   # combo
-       · modMult                                         # NOT for DT/HT; rate lives in SR_eff only
+       · max(0, 1 − miss^1.2/notes)^10                  # cleanliness
+       · max(0, 1 − typos^1.2/(notes+typos))^4          # typos
+       · acc^1.80 · 1/(1 + e^(−(acc − 0.80)/0.025))     # accuracy (timing quality)
+       · modMult                                        # NOT for DT/HT; rate lives in SR_eff only
+       + maxcombo/notes · max(0, 12.5·(SR_eff − 1.0))   # combo bonus, OUTSIDE the product
 
 C = 12.4    # global scale constant, does not affect ranking order
 ```
@@ -74,18 +74,31 @@ Factor by factor, in descending priority:
   `acc = acc_knee` whatever the width, strictly increasing so it can never reorder two plays, and
   finite over the whole of `[0, 1]` with no clamp. A width of 0 or less means there is no knee at
   all (the factor is exactly 1.0), which is what every mirror before v19 computes.
-* **(ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50**: near enough **linear** in the combo ratio
-  down to about 0.7. The exponent is steep, but the log base is concave and very nearly cancels
-  it over the range real plays live in (backlog 131), so a broken combo costs roughly its face
-  value rather than several times it. That is the point: combo overlaps with misses (a miss
-  breaks combo), so it must not read as a second heavy penalty. It still earns its place,
-  because combo can break without a miss (a wrong keypress the player then corrects, or a word
-  given up on with the space-skip setting: both break the run and neither is a miss) and because
-  it distinguishes spread-out misses from one choke that dropped several. Backlog 199 took the
-  other example off that list: a badly-timed hit (the right character struck outside the outermost
-  Meh window) used to break the run and resolve its cell as a miss, and is now an accepted
-  character worth zero points that EXTENDS the run and resolves as a `meh`, so it is priced by
-  `acc` alone and touches neither `maxcombo` nor the miss count. No constant here moves with it.
+* **maxcombo/notes · max(0, 12.5·(SR_eff − 1.0))**: an ADDITIVE BONUS, and the only term here
+  that is not a factor of the product (backlog 270). It is added AFTER everything else including
+  `modMult`, so a play keeps whatever its difficulty, cleanliness, typos and accuracy say it is
+  worth and a long run adds to that. `combo_bonus_slope` (12.5) is the bonus a FULL combo earns
+  per star above `combo_bonus_zero` (1.0), so an FC is worth 25 pp at 3 stars, 50 at 5 and 75 at
+  7, and half the map's longest run collects half of it. The `max(0, ...)` is load-bearing rather
+  than defensive: the feats model really can rate a map below 1.0 (one whose whole sung timeline
+  is under about a second and a half rates its length term alone), and without the clamp such a
+  play would be paid a NEGATIVE bonus that a longer run made worse.
+  * WHY A BONUS. From v1 to v20 combo was a MULTIPLIER, latterly a log-bent ratio raised to 2.50
+    (backlog 131), tuned so that a broken combo cost roughly its face value rather than several
+    times it. That was already an admission that the term overlapped with the misses: a miss
+    breaks combo, so the play was charged twice for the same flub, and non-FC plays were crushed
+    whatever the map. As a bonus the overlap costs nothing, because the run is only ever ADDED.
+  * IT IS DELIBERATELY NOT GATED BY ACCURACY, and the consequence is recorded rather than
+    overlooked. Since backlog 199 a badly-timed hit (the right character struck outside the
+    outermost Meh window) EXTENDS the run rather than breaking it, so combo does not break on an
+    off-time press at all and a full-combo run at 69% accuracy collects the whole bonus. Gating
+    it by `acc^1.80` times the knee was measured over the live corpus and moves top-20 totals by
+    only 1 to 4%, which is not worth making the bonus a second accuracy term. The spec is a naive
+    fraction of a naive bonus.
+  * IT STILL EARNS ITS PLACE, for the reason it always did: combo can break without a miss (a
+    wrong keypress the player then corrects, or a word given up on with the space-skip setting:
+    both break the run and neither is a miss), and it distinguishes spread-out misses from one
+    choke that dropped several.
 
 **Definitions (pinned to the score row):**
 
@@ -168,16 +181,27 @@ stored `ranked = false` and therefore earn no pp.
   separate 1.10x, chosen so the fattest reachable ranked stack (DT@2.00 × FL × LT × HR = 1.770615)
   stays under the server's 2.0 stack cap; at 1.25 that product would be 2.0121 and an honest maximal
   play would be clamped and stored unranked. Decided on 2026-08-13.
-* **RH** (Rhythmic): flat × 1.10, **for stored rows only**. The mod judged a play on the
-  MILLISECOND window ladder (each character against its own target time) instead of the
-  character-distance one backlog 133 had made the default, which was the tighter pair on any map
-  slower than 10 characters per second, i.e. nearly all of them. Backlog 147 made the millisecond
+* **RE** (Recite): flat × 1.07 (backlog 270). The lyric text is hidden until the line is sung,
+  so the play is typed from listening rather than from reading ahead. Flat for the reason Easy
+  and Hard Rock are: the mod converts nothing, so the cells, their target times and the map's
+  pace are identical and no rating input can see it.
+* **FC** (Fletcher): flat × 1.02 (backlog 270). The caret is PINNED back to the line the song is
+  on, which since backlog 208 is the harder half of the pair (the unpinned caret became the
+  default for every play and the mod reversed). Flat for the same reason again, and NOT to be
+  confused with **FT** below, which is the retired acronym for the opposite behaviour.
+* **FT** (the retired Fletcher): × 0.90, for stored rows only. It is a `ModType.System` mod
+  nobody can select, kept resolvable so the rows that carry it keep the price and the era they
+  were played under.
+* **RH** (Rhythmic): **no longer priced** (backlog 270). It was a flat × 1.10 from backlog 135.
+  The mod judged a play on the MILLISECOND window ladder (each character against its own target
+  time) instead of the character-distance one backlog 133 had made the default, which was the
+  tighter pair on any map slower than 10 characters per second; backlog 147 made the millisecond
   ladder the default again and removed the mod from the client, so no NEW play can carry the
-  acronym. The multiplier stays because RH shipped: pp is recomputed from a stored row's mods on
-  every `PpBackfill` sweep, and dropping the arm would reprice those rows 10% down while
-  `ModMultiplier.TotalScoreCeiling` (its twin) put each row's own stored total above its ceiling
-  and stored it unranked.
-* **Fletcher**: × 0.90 (10% pp decrease).
+  acronym and exactly one stored row still does. That row reprices 10% down at v21, which is a
+  VERSION bump doing what a VERSION bump is for. The argument that used to keep the arm alive
+  cited `ModMultiplier.TotalScoreCeiling`, which is the SCORE-side table in a different file
+  entirely: it still prices RH at 1.10 and is untouched, so the row's own stored total stays
+  under its ceiling and stays ranked.
 * **NF** (No Fail): × 0.90, osu's pricing. DECIDED: NF cannot be free for pp, since it converts
   a would-be fail (which earns nothing) into a completed play, and it protects runs the miss
   penalty only partially catches. The 0.5x score multiplier stays score-side only; mirroring it
@@ -185,12 +209,13 @@ stored `ranked = false` and therefore earn no pp.
 * **SD / MU**: × 1.0 (no effect, matching their score multipliers).
 
 ```
-modMult = (FL       ? max(1.0, 1 + 0.02 + 0.06·log10(notes/100)) : 1)
-        · (EZ       ? 0.75                                      : 1)
-        · (HR       ? 1.25                                      : 1)
-        · (RH       ? 1.10                                      : 1)
-        · (Fletcher ? 0.90                                      : 1)
-        · (NF       ? 0.90                                      : 1)
+modMult = (FL ? max(1.0, 1 + 0.02 + 0.06·log10(notes/100)) : 1)
+        · (EZ ? 0.75                                      : 1)
+        · (HR ? 1.25                                      : 1)
+        · (RE ? 1.07                                      : 1)
+        · (FC ? 1.02                                      : 1)
+        · (FT ? 0.90                                      : 1)
+        · (NF ? 0.90                                      : 1)
 ```
 
 ## Aggregation
@@ -223,8 +248,10 @@ In order: clearing **harder** maps, and clearing them **cleanly**. Difficulty se
 of a play and misses decide how much of that ceiling you actually keep. Length gives sustained hard
 play its reward too, but through the star rating rather than here (backlog 152), where it is a soft
 signal worth a flat 0.12 stars per decade of cells rather than a multiplier on the whole play.
-Accuracy and combo are gentle secondary signals, because in a
-typing game raw accuracy is already hard to push and largely tracks the misses. The per-set
+Accuracy is a gentle secondary signal, because in a
+typing game raw accuracy is already hard to push and largely tracks the misses. Combo is not a
+signal at all since backlog 270: it is a BONUS added to the finished play rather than a factor
+of it, so holding a long run adds pp and breaking one never takes any away. The per-set
 dedup plus weighted top-N then makes your rank the sum of your best performances, not a reward
 for volume, so grinding easy maps (or one hard map, or every difficulty of one song) stops
 mattering once there are enough songs.
@@ -903,7 +930,7 @@ rating is not stored cannot be priced at all, and Literate is ORTHOGONAL to the 
 Double Time play needs the CONVERTED map rated at 1.50x. Migration 029_literate_stars.sql adds
 sr_literate, sr_literate_dt and sr_literate_ht beside the existing three, and LyricPace.VERSION
 bumps to 13 so the startup sweep fills them. That cross product is not avoidable by arithmetic:
-LyricDifficulty ends in star_scale times raw^star_power with the rate entering raw ADDITIVELY,
+LyricDifficulty measured difficulty as star_scale times raw^star_power with the rate entering raw ADDITIVELY,
 so predicting sr_literate_dt as sr_literate times (sr_dt/difficulty_rating) is wrong by up to
 5.8% in stars and 11.2% in pp over the same five maps, in both directions. A Literate play on a
 map the sweep has not reached yet is written UNPRICED and retried on a later boot, exactly as a
@@ -955,7 +982,8 @@ pp keeps NONE.
 
 **Why ADDITIVE, in SR.** A multiplier moves the hardest maps the most, which is exactly the wrong
 shape here: "there is simply more of it" is worth the same on a 2 star map and on an 8 star one. A
-flat log bonus prices it that way and leaves rhythm density and pace, through the strain model, as
+flat log bonus prices it that way and leaves rhythm density and pace, through whatever difficulty
+model SR is running (the strain one at the time of writing, the feats one since backlog 269), as
 the hard signals. The `max(0, ·)` clamp gives a sub-100-cell map nothing, which also keeps every
 short synthetic fixture rating byte-identically.
 
@@ -1200,6 +1228,10 @@ fractional exponent on a negative base is non-real.
 
 ## Amendment (2026-09-06): Half Time is priced through its star rating alone (backlog 265)
 
+> Superseded in part by the amendment below (backlog 270), which replaces the combo multiplier
+> with an additive bonus. Everything this amendment says about Half Time and the rate factors
+> still holds.
+
 The mirror multiplier of the 2026-08-07 amendment is DELETED, and `half_time_buff_clamp` with it.
 A base-rate Half Time play is priced by `sr_ht` and by nothing else, exactly as a base-rate Double
 Time play is priced by `sr_dt` and by nothing else. `rateMult` leaves the formula, `RateStars`
@@ -1265,3 +1297,59 @@ are unmoved, because neither carries a rate mod at all. They are not witnesses t
 beside it, so the bump is mandatory. `PpBackfill` repasses every `scores` row at the next boot,
 reading only columns; no migration is needed, and the rows that were left `Pending` for a missing
 `sr_dt` are picked up by the same sweep.
+
+## Amendment (2026-09-06): combo becomes an additive bonus, and the mod table gains RE and FC (backlog 270)
+
+COMBO STOPS BEING A FACTOR OF THE PRODUCT AND BECOMES AN ADDITIVE BONUS. The log-bent multiplier
+backlog 131 introduced is deleted, constants and all, and pp gains a term ADDED after everything
+else including modMult: `maxcombo/notes * max(0, combo_bonus_slope * (SR_eff -
+combo_bonus_zero))`, at a slope of 12.5 pp per star above a zero point of 1.0. A full combo is
+therefore worth 25 pp at 3 stars, 50 at 5 and 75 at 7, and a play with half the map's longest
+run collects half of that. WHY: as a factor, combo scaled the WHOLE play down for a run it had
+already been charged for by the miss and typo terms, and non-FC plays were crushed. As a bonus,
+a play keeps whatever its difficulty, cleanliness, typos and accuracy say it is worth, and a
+long run adds to it. THE BONUS IS DELIBERATELY NOT GATED BY ACCURACY, and the consequence is
+recorded rather than overlooked: since backlog 199 combo does not break on an off-time press, so
+a full-combo run at 69 percent accuracy collects the whole bonus (qoiauve on The Words I Never
+Said +HRFLLT goes 2 to 44 pp), and 178 plays in the 2026-09-01 corpus gain more than 15 pp from
+the ungated form. Gating it by `acc^accuracy_exponent` times the knee was measured and moves
+top-20 totals by only 1 to 4 percent, which is not worth making the bonus a second accuracy
+term. THE PLACEMENT IS THE SUBSTANCE: the bonus sits OUTSIDE the mod multiplier, so a mod stack
+moves the core pp of a play and leaves what the run itself is worth alone. THE MOD TABLE CHANGES
+TOO. `rhythmic_multiplier` (RH, 1.10) is deleted: the mod left the client at backlog 147, so no
+play can carry the acronym and the one stored row that does reprices 10 percent down, which is a
+VERSION bump working as designed. The XMLDoc that argued against the deletion cited
+`ModMultiplier.TotalScoreCeiling`, which is the SCORE-side table in a different file: it still
+prices RH at 1.10 and is untouched, so that row stays under its own ceiling and stays ranked.
+`recite_multiplier` (RE, 1.07) and `fletcher_strict_multiplier` (FC, 1.02) are added, for mods
+whose gameplay change no star rating can see. Their values EQUALLING their score multipliers is
+the user's chosen numbers and not a derivation rule: EZ is 0.75 here against 0.5x score, HR 1.25
+against 1.10x, NF 0.90 against 0.5x and FL a length-scaled bonus against a flat 1.12x. EXPECTED
+EFFECT, measured in the pp sandbox over the 2026-09-01 corpus against the companion star-rating
+item's feats ratings: Noe 4778 to 4034 (-16 percent), lily 3826 to 3437 (-10 percent), qoiauve
+2286 to 2460, iys 1584 to 1822, Aethaels 1281 to 1819, qd4 1109 to 1507, Allizion 900 to 1456,
+melonmystery 837 to 1103, emma 613 to 1006, eiko 715 to 835; 40 of 55 players change rank. The
+top two fall because the feats model prices Double Time against the record for the shortened
+window, and everyone below gains from non-FC plays keeping their core pp. ORDERING: this bump
+must land AFTER the star-rating backfill has run, or every stored row is repriced against stale
+ratings and nothing reprices them when the ratings later move.
+
+```
+BEFORE:  max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − typos^1.2/(notes + typos))^4
+         ·  (ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50
+
+AFTER:   max(0, 1 − miss^1.2/notes)^10  ·  max(0, 1 − typos^1.2/(notes + typos))^4
+         +  maxcombo/notes · max(0, 12.5·(SR_eff − 1.0))
+```
+
+SR, the global scale, accuracy, eligibility and the aggregation are all untouched. The typo
+count still sits on both sides of its own fraction, for the reason the backlog-89 amendment
+gives: keypresses are unbounded, and a fractional exponent on a negative base is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, typo=80` | `0.008341` | `0.008341` | +0% |
+| `notes=500, miss=10, typo=20` | `0.542001` | `0.542001` | +0% |
+
+**`VERSION` bumps to 21.** Every stored row the change values differently is repriced by
+`PpBackfill` at the next boot, reading only columns; no migration is needed.

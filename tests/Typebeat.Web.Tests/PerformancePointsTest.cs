@@ -14,7 +14,7 @@ public class PerformancePointsTest
     private static readonly IReadOnlyList<ScoreMod> no_mods = [];
 
     /// <summary>A clean-ish reference play: 4 stars, 500 notes, no misses, 90% acc, full combo.</summary>
-    private const double reference_pp = 161.174292; // pp[f.compute(4, 500, 0, 0.9, 500)]
+    private const double reference_pp = 198.674292; // pp[f.compute(4, 500, 0, 0.9, 500)]
 
     [Test]
     public void Compute_MatchesAnIndependentlyEvaluatedReferencePlay()
@@ -79,13 +79,20 @@ public class PerformancePointsTest
     {
         // 1000 notes on a 4-star map, 900 of them missed: exactly the shape the miss term exists to
         // kill. It must not merely be "smaller", it must be negligible next to a clean play.
+        //
+        // SINCE BACKLOG 270 IT IS NOT EXACTLY ZERO. The miss term still clamps (900^1.2 is 3506
+        // against 1000 notes), so the PRODUCT half is exactly 0, but the combo bonus is ADDED to
+        // that product rather than multiplied into it, and a run of 10 on a 4-star map collects
+        // 10/1000 of 12.5 * (4 - 1) = 0.375 pp. That is the shape working as intended rather than
+        // a leak: the bonus is what a run is worth, and this play held one, briefly.
         double giveUp = PerformancePoints.Compute(4, notes: 1000, misses: 900, accuracy: 0.1, maxCombo: 10, no_mods);
+        double runOfTen = 10.0 / 1000.0 * fullComboBonus(4);
 
         Assert.Multiple(() =>
         {
-            Assert.That(giveUp, Is.GreaterThanOrEqualTo(0));
-            Assert.That(giveUp, Is.LessThan(0.001));
-            Assert.That(giveUp, Is.LessThan(reference_pp / 1000));
+            Assert.That(giveUp, Is.EqualTo(runOfTen), "the product half is an exact zero, so the bonus is the whole of it");
+            Assert.That(giveUp, Is.EqualTo(0.375).Within(1e-12));
+            Assert.That(giveUp, Is.LessThan(reference_pp / 100));
         });
     }
 
@@ -116,8 +123,14 @@ public class PerformancePointsTest
         // reason: backlog 227 put a soft knee at 80% on the accuracy term, which multiplies a 60%
         // play by 0.00034. The comparison would then be decided by the KNEE (the sloppy play prices
         // at 0.03) and would say nothing whatever about the miss exponent. At 0.85 both plays sit
-        // above the knee, where it costs 12% and 0.5% respectively, and the sloppy one lands at
-        // ~130 against ~44.
+        // above the knee, where it costs 12% and 0.5% respectively.
+        //
+        // BACKLOG 270 NARROWS THE GAP WITHOUT CLOSING IT, which is the point of the change and is
+        // why the case is restated rather than deleted. Under v20 the missy play was ALSO charged
+        // a combo multiplier for its broken run (0.70 of the map, worth 0.716 of the term) and
+        // landed at ~44 against ~130. Combo is now an additive bonus, so the missy play keeps its
+        // core pp and collects 0.7 of the 37.5 a full combo is worth: ~90 against ~168. The miss
+        // term is still what decides it, which is the claim.
         double sloppyButClean = PerformancePoints.Compute(4, 500, misses: 0, accuracy: 0.85, maxCombo: 500, no_mods);
         double accurateButMissy = PerformancePoints.Compute(4, 500, misses: 25, accuracy: 0.93, maxCombo: 350, no_mods);
 
@@ -142,8 +155,13 @@ public class PerformancePointsTest
         {
             double onTheKnee = PerformancePoints.Compute(4, notes, 0, 0.80, notes, no_mods, typos: 0); // pp:const acc_knee=0.80
             double halfTheExponentAlone = 12.4 * Math.Pow(4, 2.00) * (Math.Pow(0.80, 1.80) * 0.5); // pp:const scale=12.4 sr_exponent=2.00 acc_knee=0.80 accuracy_exponent=1.80
+            // A full combo, so the additive bonus (backlog 270) is the whole of what a full combo
+            // is worth at 4 stars. It is spelled out rather than cancelled because it does NOT
+            // cancel: it is ADDED to the product, so an identity about the product has to carry it
+            // explicitly. Grouped as Compute groups it, since the assertion is bit-exact.
+            double bonus = fullComboBonus(4);
 
-            Assert.That(onTheKnee, Is.EqualTo(halfTheExponentAlone), $"notes={notes}");
+            Assert.That(onTheKnee, Is.EqualTo(halfTheExponentAlone + bonus), $"notes={notes}");
         }
     }
 
@@ -154,15 +172,33 @@ public class PerformancePointsTest
         // increasing in the accuracy and so is acc^1.80, so their product is too. Swept across the
         // whole range at 0.005, straddling the knee, on a play that is neither spotless nor an FC so
         // every other factor is a fixed positive number and only the timing term moves.
+        // SWEPT AT NO COMBO (backlog 270), and not to dodge anything: the combo bonus is ADDED
+        // and is accuracy-independent, so it cannot reorder two plays on this axis by
+        // construction. What it CAN do is hide them from each other in double: at the bottom of
+        // the range the product runs to about 1e-16, and adding a constant 32 pp to that makes
+        // several consecutive steps equal, so a STRICT claim would be about float spacing rather
+        // than about the knee. The bonus arm is the non-decreasing sweep below, which is the
+        // honest statement there.
         double previous = -1;
+
+        for (int step = 0; step <= 200; step++)
+        {
+            double accuracy = step / 200.0;
+            double pp = PerformancePoints.Compute(4.2, 500, 25, accuracy, maxCombo: 0, no_mods, typos: 12);
+
+            Assert.That(pp, Is.GreaterThan(previous), $"accuracy={accuracy}");
+            previous = pp;
+        }
+
+        double previousWithRun = -1;
 
         for (int step = 0; step <= 200; step++)
         {
             double accuracy = step / 200.0;
             double pp = PerformancePoints.Compute(4.2, 500, 25, accuracy, 400, no_mods, typos: 12);
 
-            Assert.That(pp, Is.GreaterThan(previous), $"accuracy={accuracy}");
-            previous = pp;
+            Assert.That(pp, Is.GreaterThanOrEqualTo(previousWithRun), $"accuracy={accuracy} with a run");
+            previousWithRun = pp;
         }
     }
 
@@ -188,13 +224,20 @@ public class PerformancePointsTest
         // A perfect play is not FREE of the knee, merely barely touched by it (1/(1 + e^-8), i.e.
         // 0.9997), which is the point of putting the cliff at 80% instead of raising the exponent:
         // the top of the range keeps what it had.
+        //
+        // THE CLAIM IS ABOUT THE PRODUCT, so the additive combo bonus is taken back off first
+        // (backlog 270). This play is a full combo on a 4-star map, so it collects the whole of
+        // 12.5 * (4 - 1) on top of a product that is by construction just UNDER 12.4 * 4^2; left
+        // in, the total would sit above that ceiling and the comparison would say nothing about
+        // the knee at all.
         double perfect = PerformancePoints.Compute(4, 500, 0, 1.0, 500, no_mods, typos: 0);
         double exponentAlone = 12.4 * Math.Pow(4, 2.00); // pp:const scale=12.4 sr_exponent=2.00
+        double product = perfect - fullComboBonus(4);
 
         Assert.Multiple(() =>
         {
-            Assert.That(perfect, Is.LessThan(exponentAlone));
-            Assert.That(perfect, Is.GreaterThan(exponentAlone * 0.999));
+            Assert.That(product, Is.LessThan(exponentAlone));
+            Assert.That(product, Is.GreaterThan(exponentAlone * 0.999));
         });
     }
 
@@ -240,12 +283,12 @@ public class PerformancePointsTest
         // at 90%. That inversion is deliberate and is not reachable: pp is a pure function over
         // primitives and this feeds it a rating no one-cell map could ever carry, since the star
         // rating is what knows how long a map is (LyricDifficulty's own length bonus is zero below
-        // 100 cells, and a one-cell map's strain aggregate is nowhere near 5 stars).
+        // 100 cells, and a one-cell map has no window the feats model can score at all).
         double pp = PerformancePoints.Compute(5, notes: 1, misses: 0, accuracy: 1, maxCombo: 1, no_mods);
 
         Assert.Multiple(() =>
         {
-            Assert.That(pp, Is.EqualTo(309.896041).Within(1e-5)); // pp[f.compute(5, 1, 0, 1, 1)]
+            Assert.That(pp, Is.EqualTo(359.896041).Within(1e-5)); // pp[f.compute(5, 1, 0, 1, 1)]
             Assert.That(pp, Is.GreaterThan(reference_pp));
         });
     }
@@ -327,19 +370,31 @@ public class PerformancePointsTest
     {
         // The reason CountNotes has to exclude it. Line containers are one ignore_hit per LINE, so
         // a 400-note map with 60 lines would read as 460 "notes". The note count sits under both
-        // penalty terms, the combo ratio and Flashlight's bonus, and the most visible casualty is
-        // the combo term: a genuine full combo would stop reading as one. On a spotless play (this
-        // one) the penalty terms are exactly 1.0 either way, so the combo ratio is the whole of
-        // what moves here now that backlog 152 has removed the length factor that used to move
-        // with it.
+        // penalty terms, the combo RATIO and Flashlight's bonus, and the most visible casualty is
+        // the combo: a genuine full combo would stop reading as one. On a spotless play (this one)
+        // the penalty terms are exactly 1.0 either way, so the combo ratio is the whole of what
+        // moves here now that backlog 152 has removed the length factor that used to move with it.
+        //
+        // THE BOUND IS RESTATED AT 2% RATHER THAN 3% (backlog 270), honestly and not to make a
+        // failing test pass. Combo used to be a FACTOR of the whole play, so a ratio of 400/460
+        // cost 13.0% of the pp under v20's log-bent term and 29.5% under the plain ratio before
+        // it. As an ADDITIVE bonus it can only ever cost the bonus' own share: the product half is
+        // identical at both note counts, so the whole difference is 60/460 of what a full combo is
+        // worth at 4 stars, i.e. 4.89 pp against a play worth 167.9, which is 2.9%. Still several
+        // times any plausible rounding, and still an answer the inflation would change.
         double fullCombo = PerformancePoints.Compute(4, 400, 0, 0.85, 400, no_mods);
         double inflated = PerformancePoints.Compute(4, 460, 0, 0.85, 400, no_mods);
 
         Assert.Multiple(() =>
         {
             Assert.That(inflated, Is.LessThan(fullCombo));
-            Assert.That((fullCombo - inflated) / fullCombo, Is.GreaterThan(0.03),
+            Assert.That((fullCombo - inflated) / fullCombo, Is.GreaterThan(0.02),
                 "counting the line containers would cost a full combo several percent of its pp");
+
+            // And it is EXACTLY the bonus that moved, which is the sharper statement the additive
+            // shape makes available: nothing else in this play reads the note count.
+            Assert.That(fullCombo - inflated,
+                Is.EqualTo((1 - 400.0 / 460.0) * fullComboBonus(4)).Within(1e-9));
         });
     }
 
@@ -385,26 +440,61 @@ public class PerformancePointsTest
     }
 
     /// <summary>
-    /// Rhythmic (backlog 135) pays a bonus, and it is the only pp mod multiplier above 1.0 that is
-    /// not length-scaled: judging a press on its millisecond offset from its own target instead of
-    /// on its distance from the playhead is the tighter ladder on any map slower than 10 characters
-    /// per second, which is nearly all of them.
+    /// Rhythmic USED to pay 10% here (backlog 135) and pays nothing since backlog 270. The mod was
+    /// removed from the client at backlog 147, so no play can carry the acronym any more and one
+    /// stored row still does; that row reprices 10% down at v21, which is what a VERSION bump is
+    /// for.
+    ///
+    /// <para>The XMLDoc that argued for keeping the constant cited
+    /// <c>ModMultiplier.TotalScoreCeiling</c>, which lives in a DIFFERENT FILE: that table
+    /// still prices <c>"RH"</c> at 1.10 (ModMultiplierTest pins it), so the stored row's total
+    /// stays under its own ceiling and stays ranked. Only the pp table lost the entry.</para>
     /// </summary>
     [Test]
-    public void ModMultiplier_RhythmicPaysTenPercent()
+    public void ModMultiplier_RhythmicIsUnpricedSinceTheModWasRemoved()
     {
         Assert.Multiple(() =>
         {
-            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RH", null)], 300), Is.EqualTo(1.10).Within(1e-12)); // pp[f.rhythmic_multiplier]
-            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("rh", null)], 300), Is.EqualTo(1.10).Within(1e-12)); // pp[f.rhythmic_multiplier]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RH", null)], 300), Is.EqualTo(1.0).Within(1e-12));
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("rh", null)], 300), Is.EqualTo(1.0).Within(1e-12));
 
-            // It stacks with the other flat multipliers, and a duplicated acronym is applied once.
-            // LT rides along contributing exactly nothing since backlog 144 (see the Literate test
-            // above), so this pair is worth what RH alone is.
-            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RH", null), new ScoreMod("LT", null)], 300),
-                Is.EqualTo(1.100).Within(1e-12)); // pp[f.mod_multiplier(["RH", "LT"], 300)]
-            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RH", null), new ScoreMod("RH", null)], 300),
-                Is.EqualTo(1.10).Within(1e-12)); // pp[f.rhythmic_multiplier]
+            // Priced exactly as an acronym this table has never heard of, which is precisely what
+            // it now is, and stacked with a mod that IS priced only that mod's value survives.
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RH", null), new ScoreMod("NF", null)], 300),
+                Is.EqualTo(PerformancePoints.ModMultiplier([new ScoreMod("NF", null)], 300)).Within(1e-12));
+        });
+    }
+
+    /// <summary>
+    /// Recite (<c>RE</c>) and Fletcher (<c>FC</c>) join the table at backlog 270. Both change how
+    /// the play is TYPED without changing the map, so there is no converted rating to price them
+    /// through and each takes a flat term, exactly as Easy and Hard Rock do.
+    ///
+    /// <para>THE VALUES EQUALLING THEIR SCORE MULTIPLIERS IS A COINCIDENCE, not a derivation rule:
+    /// the user chose 1.07 and 1.02 here and the same two numbers happen to sit in
+    /// <c>Scoring/ModMultiplier.cs</c>. Easy is 0.75 here against 0.5x score, Hard Rock 1.25 against
+    /// 1.10x, No Fail 0.90 against 0.5x and Flashlight length-scaled against a flat 1.12x, so the
+    /// two tables agree on nothing else and must never be read off each other.</para>
+    /// </summary>
+    [Test]
+    public void ModMultiplier_ReciteAndFletcherAreEachPricedFlat()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RE", null)], 300), Is.EqualTo(1.07).Within(1e-12)); // pp[f.recite_multiplier]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("re", null)], 300), Is.EqualTo(1.07).Within(1e-12)); // pp[f.recite_multiplier]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("FC", null)], 300), Is.EqualTo(1.02).Within(1e-12)); // pp[f.fletcher_strict_multiplier]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("fc", null)], 300), Is.EqualTo(1.02).Within(1e-12)); // pp[f.fletcher_strict_multiplier]
+
+            // FC is NOT the retired FT acronym, which means the opposite thing (an unpinned caret,
+            // back when that was the mod rather than the default) and keeps its own 0.90.
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("FT", null)], 300), Is.EqualTo(0.90).Within(1e-12)); // pp[f.fletcher_multiplier]
+
+            // They stack with the other flat multipliers, and a duplicated acronym is applied once.
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RE", null), new ScoreMod("FC", null)], 300),
+                Is.EqualTo(1.0914).Within(1e-12)); // pp[f.mod_multiplier(["RE", "FC"], 300)]
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("RE", null), new ScoreMod("RE", null)], 300),
+                Is.EqualTo(1.07).Within(1e-12)); // pp[f.recite_multiplier]
         });
     }
 
@@ -496,10 +586,25 @@ public class PerformancePointsTest
         });
     }
 
+    /// <summary>
+    /// THE MOD MULTIPLIER SCALES THE PRODUCT AND NOT THE COMBO BONUS (backlog 270). It used to
+    /// distribute over the whole of pp, because pp WAS a product; combo is an additive bonus now
+    /// and sits outside every factor, the mod multiplier included, so a modded play is
+    /// <c>product * modMult + bonus</c> and not <c>(product + bonus) * modMult</c>.
+    ///
+    /// <para>That is the one placement mistake the shape invites, so the bonus is subtracted out
+    /// explicitly here rather than being allowed to cancel: putting it inside the product would
+    /// leave every FC pin in this file green and only this assertion and the WireCompat parity pin
+    /// red.</para>
+    /// </summary>
     [Test]
-    public void Compute_AppliesTheModMultiplierToTheWholeFormula()
+    public void Compute_AppliesTheModMultiplierToTheProductAndNotToTheComboBonus()
     {
         double bare = PerformancePoints.Compute(3, 300, 5, 0.8, 250, no_mods);
+        // Grouped exactly as Compute groups it: the ratio, then the clamped slope times the rating
+        // above the zero point. A run of 250 on a 300-note 3-star map.
+        double comboBonus = 250.0 / 300.0 * fullComboBonus(3);
+        double bareProduct = bare - comboBonus;
 
         Assert.Multiple(() =>
         {
@@ -508,17 +613,23 @@ public class PerformancePointsTest
             // typo term is exactly 1.0 whatever the power, and the whole change is
             // max(0, 1 - 5^1.2/300)^10 = 0.97700^10 replacing 0.91667^10. Five misses is far under
             // the 116-miss cliff on a 300-note map, so this prices comfortably.
-            Assert.That(bare, Is.EqualTo(24.642832).Within(1e-5)); // pp[f.compute(3, 300, 5, 0.8, 250)]
+            Assert.That(bare, Is.EqualTo(50.424483).Within(1e-5)); // pp[f.compute(3, 300, 5, 0.8, 250)]
             Assert.That(PerformancePoints.Compute(3, 300, 5, 0.8, 250, [new ScoreMod("NF", null)]),
-                Is.EqualTo(bare * 0.90).Within(1e-9)); // pp:const no_fail_multiplier=0.90
+                Is.EqualTo(bareProduct * 0.90 + comboBonus).Within(1e-9)); // pp:const no_fail_multiplier=0.90
             Assert.That(PerformancePoints.Compute(3, 300, 5, 0.8, 250, [new ScoreMod("FT", null)]),
-                Is.EqualTo(bare * 0.90).Within(1e-9)); // pp:const fletcher_multiplier=0.90
+                Is.EqualTo(bareProduct * 0.90 + comboBonus).Within(1e-9)); // pp:const fletcher_multiplier=0.90
             // Literate does not reach this function at all any more: it moves the star rating that
             // was passed IN, not the multiplier applied here (backlog 144).
             Assert.That(PerformancePoints.Compute(3, 300, 5, 0.8, 250, [new ScoreMod("LT", null)]),
                 Is.EqualTo(bare).Within(1e-9));
             Assert.That(PerformancePoints.Compute(3, 300, 5, 0.8, 250, [new ScoreMod("FL", null)]),
-                Is.EqualTo(bare * PerformancePoints.FlashlightMultiplier(300)).Within(1e-9));
+                Is.EqualTo(bareProduct * PerformancePoints.FlashlightMultiplier(300) + comboBonus).Within(1e-9));
+
+            // And the mistake stated as its own assertion: distributing the multiplier over the
+            // BONUS as well would land 10% of the bonus lower here, which is 2.08 pp and far
+            // outside the tolerance above.
+            Assert.That(PerformancePoints.Compute(3, 300, 5, 0.8, 250, [new ScoreMod("NF", null)]),
+                Is.Not.EqualTo(bare * 0.90).Within(1e-9)); // pp:const no_fail_multiplier=0.90
         });
     }
 
@@ -640,8 +751,9 @@ public class PerformancePointsTest
     {
         // The asymmetry backlog 90 existed to close is real and is now simply LEFT: on this spread
         // Double Time is already worth +111% while Half Time costs only -34.5%. Whether that is the
-        // right split is a question for the strain model behind sr_ht, and never again for a second
-        // multiplier here, which is the whole of the backlog-265 decision.
+        // right split is a question for the feats model behind sr_ht (backlog 269 replaced the
+        // strain model this sentence used to name), and never again for a second multiplier here,
+        // which is the whole of the backlog-265 decision.
         Assert.Multiple(() =>
         {
             Assert.That(rateFactor(4.2, 6.1), Is.EqualTo(2.109410).Within(1e-6), "Double Time is +111% on this map"); // pp[f.rate_factor(4.2, 6.1)]
@@ -801,9 +913,15 @@ public class PerformancePointsTest
         var (dt, _) = PerformancePoints.ForScore(true, [new ScoreMod("DT", 1.50)], counts, 0.9, 480, 4.2, 6.1, 3.4);
         var (ht, _) = PerformancePoints.ForScore(true, [new ScoreMod("HT", 0.75)], counts, 0.9, 480, 4.2, 6.1, 3.4);
 
-        // Every non-rate factor is shared, so the ratios ARE the rate factors.
-        double upFactor = dt!.Value / nomod!.Value;
-        double downFactor = ht!.Value / nomod.Value;
+        // Every non-rate factor of the PRODUCT is shared, so the ratios ARE the rate factors once
+        // the combo bonus is off. It does not cancel (backlog 270): it is ADDED after the product
+        // and is itself a function of SR_eff, so the three arms sit at three different ratings and
+        // carry three different bonuses. Each is taken off before the division.
+        double bonus(double stars) => 480.0 / 500.0 * Math.Max(0.0, 12.5 * (stars - 1.0)); // pp:const combo_bonus_slope=12.5 combo_bonus_zero=1.0
+
+        double baseProduct = nomod!.Value - bonus(4.2);
+        double upFactor = (dt!.Value - bonus(6.1)) / baseProduct;
+        double downFactor = (ht!.Value - bonus(3.4)) / baseProduct;
 
         Assert.Multiple(() =>
         {
@@ -1099,17 +1217,29 @@ public class PerformancePointsTest
     }
 
     /// <summary>
-    /// The two penalty terms in isolation. Nothing else in the formula reads misses or typos, so
-    /// dividing a play's pp by the pp of the same play with neither is EXACTLY
-    /// <c>max(0, 1 - miss^1.2/notes)^10 * max(0, 1 - typos^1.2/(notes+typos))^6</c>, with
+    /// The two penalty terms in isolation. Nothing else in the PRODUCT reads misses or typos, so
+    /// dividing a play's product by the product of the same play with neither is EXACTLY
+    /// <c>max(0, 1 - miss^1.2/notes)^10 * max(0, 1 - typos^1.2/(notes+typos))^4</c>, with
     /// every other factor cancelling. Every expected number below is that product.
+    ///
+    /// <para>BOTH PLAYS ARE MEASURED AT NO COMBO AT ALL (backlog 270), which is what keeps that
+    /// cancellation exact. The bonus is ADDED to the product rather than being a factor of it, so
+    /// a ratio of two plays that carry it would be <c>(P·m·t + B)/(P + B)</c> and not the penalty
+    /// product; subtracting it back off works in the middle of the range and NOT at the ends,
+    /// because a play one miss below the cliff has a product of about 1e-23 and adding 37.5 pp to
+    /// that loses it entirely in double. At <c>maxCombo</c> 0 the bonus is exactly 0 and pp IS the
+    /// product, so the ends stay measurable.</para>
     /// </summary>
     private static double penaltyFactor(int notes, int misses, int typos)
     {
-        double spotless = PerformancePoints.Compute(4, notes, 0, 0.9, notes, no_mods, typos: 0);
+        double spotless = PerformancePoints.Compute(4, notes, 0, 0.9, maxCombo: 0, no_mods, typos: 0);
 
-        return PerformancePoints.Compute(4, notes, misses, 0.9, notes, no_mods, typos) / spotless;
+        return PerformancePoints.Compute(4, notes, misses, 0.9, maxCombo: 0, no_mods, typos) / spotless;
     }
+
+    /// <summary>What a FULL combo adds to a play at this rating (backlog 270).</summary>
+    private static double fullComboBonus(double starRating)
+        => 12.5 * (starRating - 1.0); // pp:const combo_bonus_slope=12.5 combo_bonus_zero=1.0
 
     [Test]
     public void Compute_ReproducesTheDecidedRebalanceWorkedExamples()
@@ -1178,7 +1308,10 @@ public class PerformancePointsTest
             double knee = 1.0 / (1.0 + Math.Exp(-(0.9 - 0.80) / 0.025)); // pp:const acc_knee=0.80 acc_knee_width=0.025
             double withoutEitherPenaltyTerm = 12.4 * Math.Pow(4, 2.00) * (Math.Pow(0.9, 1.80) * knee); // pp:const scale=12.4 sr_exponent=2.00 accuracy_exponent=1.80
 
-            Assert.That(spotless, Is.EqualTo(withoutEitherPenaltyTerm), $"notes={notes}");
+            // A FULL COMBO, so the additive bonus (backlog 270) is on top of that product and
+            // has to be carried explicitly: it does not cancel, and it is the same number at
+            // every note count because the ratio is exactly 1.0.
+            Assert.That(spotless, Is.EqualTo(withoutEitherPenaltyTerm + fullComboBonus(4)), $"notes={notes}");
         }
     }
 
@@ -1378,23 +1511,38 @@ public class PerformancePointsTest
     [Test]
     public void Compute_APlayPastEitherCliffEarnsExactlyZeroPp()
     {
-        // Not merely a small factor: the whole play is worth nothing, whatever its difficulty,
-        // accuracy or combo. That is a deliberate consequence of the shape and not a rounding
+        // Not merely a small factor: the PRODUCT half of the play is worth nothing, whatever its
+        // difficulty or accuracy. That is a deliberate consequence of the shape and not a rounding
         // artefact, so it is asserted on Compute itself rather than on the penalty factor.
+        //
+        // SINCE BACKLOG 270 "EXACTLY ZERO" NEEDS A ZERO COMBO TOO, and that is the change rather
+        // than a dodge: the bonus is ADDED to the clamped product, so a play past the cliff that
+        // still held a run is worth exactly that run's bonus and nothing else. Both facts are
+        // pinned.
         const int missCliff = 178; // pp[math.ceil(f.miss_cliff(500))]
         const int typoCliff = 249; // pp[math.ceil(f.typo_cliff(500))]
 
         Assert.Multiple(() =>
         {
-            Assert.That(PerformancePoints.Compute(6, 500, missCliff, 0.95, 500 - missCliff, no_mods), Is.Zero,
+            Assert.That(PerformancePoints.Compute(6, 500, missCliff, 0.95, maxCombo: 0, no_mods), Is.Zero,
                 "the miss cliff");
-            Assert.That(PerformancePoints.Compute(6, 500, 0, 0.95, 500, no_mods, typoCliff), Is.Zero,
+            Assert.That(PerformancePoints.Compute(6, 500, 0, 0.95, maxCombo: 0, no_mods, typoCliff), Is.Zero,
                 "the typo cliff");
+
+            // With a run, the same two plays are worth exactly the bonus that run earns, which is
+            // a strictly stronger claim than "zero" was: it also says that nothing of the clamped
+            // product leaked through.
+            double run = (500.0 - missCliff) / 500.0 * fullComboBonus(6);
+
+            Assert.That(PerformancePoints.Compute(6, 500, missCliff, 0.95, 500 - missCliff, no_mods),
+                Is.EqualTo(run), "the miss cliff, with a run");
+            Assert.That(PerformancePoints.Compute(6, 500, 0, 0.95, 500, no_mods, typoCliff),
+                Is.EqualTo(fullComboBonus(6)), "the typo cliff, with a full combo");
 
             // One below each, the same play is positive, so the zeros above are the clamp and not
             // some unrelated guard swallowing the play.
-            Assert.That(PerformancePoints.Compute(6, 500, missCliff - 1, 0.95, 501 - missCliff, no_mods), Is.GreaterThan(0));
-            Assert.That(PerformancePoints.Compute(6, 500, 0, 0.95, 500, no_mods, typoCliff - 1), Is.GreaterThan(0));
+            Assert.That(PerformancePoints.Compute(6, 500, missCliff - 1, 0.95, maxCombo: 0, no_mods), Is.GreaterThan(0));
+            Assert.That(PerformancePoints.Compute(6, 500, 0, 0.95, maxCombo: 0, no_mods, typoCliff - 1), Is.GreaterThan(0));
         });
     }
 
@@ -1434,7 +1582,7 @@ public class PerformancePointsTest
         // That proof does not survive a steeper MISS exponent, which reprices every stored row with
         // even one miss, so PpBackfill has to sweep. If this moves, so do the game's
         // PerformancePoints.VERSION and docs/pp.md.
-        Assert.That(PerformancePoints.VERSION, Is.EqualTo(20)); // pp:version
+        Assert.That(PerformancePoints.VERSION, Is.EqualTo(21)); // pp:version
     }
 
     [Test]

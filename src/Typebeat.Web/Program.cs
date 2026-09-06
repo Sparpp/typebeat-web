@@ -137,6 +137,14 @@ await SkipGateRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger)
 // by this one. No-op once every victim is recorded in score_refunds.
 await RateGateRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
 
+// Re-rank scores that were honest in every way and were stored unranked only because their SET was
+// still pending when they were submitted (backlog 270). Unlike the two above this is a STANDING
+// sweep with no migration key guarding it: the condition is intrinsically re-checkable, so a set
+// ranked at any point in the future heals its plays at the next boot with no further code. It runs
+// after both gate refunds (a row either of them re-ranks is no longer a candidate here) and BEFORE
+// PpBackfill, which is what actually prices the rows it flips.
+await SetRankRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
+
 // Recompute stored per-score pp for rows below the current PerformancePoints.VERSION
 // (020_performance_points.sql). Runs LAST of the sweeps: it reads beatmaps.sr_dt / sr_ht, which
 // PaceBackfill is what fills in (and which it stamps every affected score back to version 0 for),

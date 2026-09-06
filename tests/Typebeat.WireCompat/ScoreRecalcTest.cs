@@ -735,9 +735,24 @@ public class ScoreRecalcTest
             Assert.That(reproduce.Skip, Is.EqualTo(SkipReason.None));
             Assert.That(reproduce.NewMaxCombo, Is.LessThan(supersede.NewMaxCombo));
 
-            // ... and the combo the fix gives back is worth pp, which is the other half of the cost.
+            // ... and what the combo the fix gives back is WORTH changed shape at backlog 270,
+            // which flips this comparison. Combo used to be a MULTIPLIER on the whole play, so the
+            // streak the fix resumes outweighed the accuracy the backlog-210 cap costs and the
+            // superseded account came out AHEAD in pp. It is an additive BONUS now, worth
+            // `maxcombo/notes * 12.5 * (SR_eff - 1)` and nothing more, while the capped cell still
+            // costs 100 of this run's 3900 accuracy points through a term that goes as acc^1.80
+            // and then through the 80% knee. On a thirteen-cell fixture the accuracy now wins:
+            // 171.3 against 179.2.
+            //
+            // Asserted as the strict ordering it now is, rather than relaxed to "they differ", so
+            // that a later retune which flips it back is a decision somebody makes and reads here
+            // rather than a test that quietly starts passing again. What has NOT changed is that
+            // the two accounts are different and both are priced, which is the claim this file
+            // makes: the reproduce sweep holds the combo axis still and cannot reach the
+            // superseded account.
             Assert.That(supersede.NewPp, Is.Not.Null);
-            Assert.That(supersede.NewPp!.Value, Is.GreaterThan(reproduce.NewPp!.Value));
+            Assert.That(reproduce.NewPp, Is.Not.Null);
+            Assert.That(supersede.NewPp!.Value, Is.LessThan(reproduce.NewPp!.Value));
 
             // The mistype is still on the record. Only the cell and the streak came back.
             Assert.That(supersede.NewStatistics!["combo_break"], Is.EqualTo(1));

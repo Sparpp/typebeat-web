@@ -5,21 +5,31 @@ using Typebeat.Web.Data;
 namespace Typebeat.Web.Scoring;
 
 /// <summary>
-/// The shared machinery behind every play-time-gate refund: the startup pass that restores the
-/// <c>ranked</c> flag on scores a since-corrected version of <see cref="PlayTimeGate"/> unranked
-/// for a reason that was never the player's. Two of them exist so far, one per correction to the
-/// gate, and they differ only in a handful of values:
+/// The shared machinery behind every startup pass that restores the <c>ranked</c> flag on a score
+/// stored unranked for a reason that was never the player's. Two of them correct a since-fixed bug
+/// in <see cref="PlayTimeGate"/>, one per correction, and differ only in a handful of values:
 /// <list type="bullet">
 /// <item><see cref="SkipGateRefund"/> (016): the gate ignored the in-game skip button.</item>
 /// <item><see cref="RateGateRefund"/> (017): the gate ignored the play's rate mod.</item>
 /// </list>
 ///
 /// <para>
-/// Everything else is identical between them and lives here exactly once: which rows are even
-/// candidates, the re-derivation of every submit-time condition the gate itself did not decide, the
-/// <c>score_refunds</c> guard row that makes a rerun a no-op, and the audit trail. A <see cref="Plan"/>
-/// supplies the four things that genuinely vary (the migration key, an extra SQL candidate filter,
-/// the two bounds, and the per-row test for "this correction is the one that applies here").
+/// SINCE BACKLOG 270 IT ALSO CARRIES A THIRD KIND OF PASS, <see cref="SetRankRefund"/>, which is
+/// not a correction to the gate at all: it re-ranks a play that was honest in every way and was
+/// stored unranked only because its SET was still pending at submit time. Everything in this file
+/// except the two gate bounds is exactly what such a pass needs (the candidate query, the
+/// re-derivation of every submit-time condition, the audit trail), so it is a <see cref="Plan"/>
+/// like the others, flagged <see cref="Plan.Standing"/>. See that property for what the flag
+/// changes and why.
+/// </para>
+///
+/// <para>
+/// Everything else is identical between all three and lives here exactly once: which rows are even
+/// candidates, the re-derivation of every submit-time condition the pass itself did not decide, the
+/// <c>score_refunds</c> row, and the audit trail. A <see cref="Plan"/> supplies the handful of
+/// things that genuinely vary (the key, an extra SQL candidate filter, the two bounds, the per-row
+/// test for "this correction is the one that applies here", and whether the pass is
+/// <see cref="Plan.Standing"/>).
 /// </para>
 ///
 /// <para>
@@ -27,8 +37,9 @@ namespace Typebeat.Web.Scoring;
 /// allowance is derived from a blob in the file store (no query can see it), and deciding whether
 /// the GATE is the reason a row is unranked needs the submit path's own recompute, which already
 /// exists here (<see cref="ScoringContract"/>, <see cref="ModMultiplier"/>) and must not be mirrored
-/// a third time in SQL. Idempotency and the audit trail are the <c>score_refunds</c> table, in the
-/// same shape 015 uses <c>score_rescales</c>, keyed by migration so each pass guards itself.
+/// a third time in SQL. The audit trail is the <c>score_refunds</c> table, in the same shape 015
+/// uses <c>score_rescales</c>, keyed per pass; for a one-shot pass that row is also the guard that
+/// makes a rerun a no-op, and for a standing one idempotency is the candidate query itself.
 /// </para>
 ///
 /// <para>
@@ -68,10 +79,6 @@ namespace Typebeat.Web.Scoring;
 /// </summary>
 public static class GateRefund
 {
-    /// <summary>Mods that are unranked at any configuration (mirrors ScoreEndpoints' own set).</summary>
-    private static readonly HashSet<string> always_unranked_mod_acronyms =
-        new(StringComparer.OrdinalIgnoreCase) { "RX", "WU", "WD" };
-
     /// <summary>
     /// One refund pass, as its runner configures it.
     /// </summary>
@@ -96,13 +103,35 @@ public static class GateRefund
     /// <paramref name="CandidateFilterSql"/> instead.
     /// </param>
     /// <param name="Summary">What the log line says the refunded rows now clear.</param>
+    /// <param name="Standing">
+    /// FALSE (the default) for a one-shot MIGRATION pass: it corrects a bug in the gate, so a row
+    /// it declines can only ever be reconsidered by a LATER correction, its <c>score_refunds</c>
+    /// row is the guard that makes a rerun a no-op, and a reviewer who unranks a refunded score by
+    /// hand must have that stick.
+    ///
+    /// <para>TRUE for a pass whose condition is INTRINSICALLY RE-CHECKABLE, i.e. one that asks a
+    /// question about the world as it is now rather than about a bug that has been fixed. Two
+    /// things follow, and both follow from that one fact:</para>
+    ///
+    /// <list type="bullet">
+    /// <item>THE GUARD IS DROPPED. The pass reconsiders every unranked row at every boot, and the
+    /// <c>score_refunds</c> insert becomes an audit record rather than the thing that decides. It
+    /// stays idempotent because a row it re-ranks stops being a candidate (the query takes
+    /// unranked rows only), so a second run in the same boot moves nothing.</item>
+    /// <item>THE OLD BOUND IS NOT TESTED. <paramref name="OldRequiredSeconds"/> exists so a gate
+    /// correction can prove the gate FIRED on this row; a standing pass is not claiming the gate
+    /// was ever wrong, so it requires only that <paramref name="NewRequiredSeconds"/> is cleared
+    /// today, alongside every other submit-time condition.</item>
+    /// </list>
+    /// </param>
     public sealed record Plan(
         string MigrationKey,
         string CandidateFilterSql,
         Func<CandidateRow, double> OldRequiredSeconds,
         Func<CandidateRow, double> NewRequiredSeconds,
         Func<CandidateRow, bool> AppliesTo,
-        string Summary);
+        string Summary,
+        bool Standing = false);
 
     public static async Task<int> RunAsync(Db db, ILogger logger, Plan plan, CancellationToken ct = default)
     {
@@ -115,6 +144,14 @@ public static class GateRefund
 
         if (!ready)
             return 0;
+
+        // A STANDING pass reconsiders every unranked row at every boot, so it has no
+        // already-refunded clause at all; a one-shot pass is guarded by its own key. Built as a
+        // string rather than inlined, because a nested raw literal inside the interpolation hole
+        // of the query below would be a good deal harder to read than the query it filters.
+        string alreadyRefunded = plan.Standing
+            ? ""
+            : "AND NOT EXISTS (SELECT 1 FROM score_refunds r WHERE r.migration = @migration AND r.score_id = s.id)";
 
         // Candidates: unranked, passed, on a currently-ranked set, with an anchored elapsed time,
         // not already refunded by THIS pass, plus whatever the plan narrows to. Everything else is
@@ -142,8 +179,7 @@ public static class GateRefund
               AND s.started_at IS NOT NULL
               AND bs.status = 'ranked'
               AND {plan.CandidateFilterSql}
-              AND NOT EXISTS (SELECT 1 FROM score_refunds r
-                              WHERE r.migration = @migration AND r.score_id = s.id)
+              {alreadyRefunded}
             """,
             new { migration = plan.MigrationKey })).ToList();
 
@@ -176,10 +212,20 @@ public static class GateRefund
                     newRequired = plan.NewRequiredSeconds(row),
                 }, tx);
 
-            if (logged > 0)
+            // For a one-shot pass the insert IS the guard: a duplicate key means a concurrent boot
+            // got there first, so this one must not flip the flag again. A STANDING pass has no
+            // guard row to lose the race on (see Plan.Standing), and a second flip of an already
+            // flipped row is a no-op anyway, so it proceeds on its own candidate reading.
+            if (plan.Standing || logged > 0)
             {
+                // pp_version = 0 ALONGSIDE THE FLAG, and forgetting it is the bug backlog 270
+                // found. PpBackfill's sweep predicate is `pp_version < VERSION`, so a refunded row
+                // already stamped at the current version is SKIPPED: it stays at pp 0 while
+                // reading as priced. It only ever worked because both existing passes shipped
+                // beside a VERSION bump, which dragged every row in regardless. Every refund pass
+                // stamps it now, so a refund landing on its own still reprices.
                 await conn.ExecuteAsync(
-                    "UPDATE scores SET ranked = true WHERE id = @scoreId AND NOT ranked",
+                    "UPDATE scores SET ranked = true, pp_version = 0 WHERE id = @scoreId AND NOT ranked",
                     new { scoreId = row.ScoreId }, tx);
 
                 refunded++;
@@ -209,8 +255,9 @@ public static class GateRefund
             return false;
 
         // The gate must actually have been the thing that fired: a play that already cleared the
-        // bound of its day was unranked by something else entirely.
-        if (row.ElapsedS >= plan.OldRequiredSeconds(row))
+        // bound of its day was unranked by something else entirely. A STANDING pass makes no such
+        // claim (see Plan.Standing) and asks only that the current bound is cleared, below.
+        if (!plan.Standing && row.ElapsedS >= plan.OldRequiredSeconds(row))
             return false;
 
         // ... and the corrected bound must be cleared.
@@ -220,7 +267,10 @@ public static class GateRefund
         if (row.BuildBlocked)
             return false;
 
-        if (row.Mods.Any(m => m.Acronym != null && always_unranked_mod_acronyms.Contains(m.Acronym.Trim())))
+        // Read from the ONE list (backlog 270). This used to be a private copy that claimed to
+        // mirror ScoreEndpoints' and was three acronyms behind it, so a Conductor, Dyslexia or
+        // Puppeteer play the submit path refused could be re-ranked here.
+        if (UnrankedMods.StackIsUnranked(row.Mods.Select(m => m.Acronym)))
             return false;
 
         var statistics = ParseCounts(row.StatisticsJson);
