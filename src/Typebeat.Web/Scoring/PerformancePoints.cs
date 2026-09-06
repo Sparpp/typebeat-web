@@ -147,15 +147,16 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
-/// HALF TIME carries ONE extra term on top of that, and it is the only place in this file where a
-/// rate is priced by anything but the rating: <see cref="HalfTimeMultiplier"/>, the reciprocal of
-/// whatever Double Time is worth on the SAME map. Slowing a map down already lowers SR_eff, but on
-/// most maps it lowers it by far less than speeding it up raises it, so HT was the cheap way to
-/// keep a hard map's difficulty term while typing at a comfortable pace. Making the down-rate
-/// factor exactly 1/(up-rate factor) prices the two symmetrically, per map, rather than by a flat
-/// guess. It rides in <see cref="RateStars.Multiplier"/> and is applied by <see cref="Compute"/>'s
-/// <c>rateMultiplier</c>, NOT by <see cref="ModMultiplier"/>, which still carries no rate term at
-/// all (it sees only the mods and a note count, and could not compute this if it wanted to).
+/// HALF TIME IS PRICED BY ITS RATING AND NOTHING ELSE, exactly as Double Time is (backlog 265).
+/// From v3 to v19 it carried one extra term, a MIRROR multiplier that made the down-rate factor
+/// the reciprocal of the up-rate one on the same map, on the reading that slowing a map down
+/// lowers SR_eff by far less than speeding it up raises it. That term is gone. It was the only
+/// place in this file where a rate was priced by anything but the rating, it made one rate a
+/// function of all three of a map's ratings (so an HT play could not be priced at all until
+/// <c>sr_dt</c> was stored), and a degenerate <c>sr_dt</c> zeroed an otherwise honest play. If
+/// Half Time ever reads as underpriced again the fix belongs in the strain model behind
+/// <c>sr_ht</c>, never in a second multiplier here. So the claim docs/pp.md has made since task
+/// 61, that a rate is priced EXCLUSIVELY through SR_eff, is now literally true of both rates.
 /// </para>
 ///
 /// <para>
@@ -182,10 +183,10 @@ public static class PerformancePoints
     /// <item>v1 = the initial formula (docs/pp.md), including the backlog-72 mistype term.</item>
     /// <item>v2 = the backlog-89 rebalance: the miss exponent rises 7.5 to 8.5, and mistypes leave
     /// the cleanliness fraction for a term of their own at exponent 3.5.</item>
-    /// <item>v3 = the backlog-90 Half Time penalty: a base-rate HT play is multiplied by
-    /// <see cref="HalfTimeMultiplier"/> on top of its <c>sr_ht</c> rating, which makes the
-    /// down-rate factor the reciprocal of the up-rate one on the same map (or a flat 0.70 cut where
-    /// that reciprocal would be a BUFF). Reprices every stored HT row and nothing else.</item>
+    /// <item>v3 = the backlog-90 Half Time penalty: a base-rate HT play is multiplied by a MIRROR
+    /// multiplier on top of its <c>sr_ht</c> rating, which makes the down-rate factor the
+    /// reciprocal of the up-rate one on the same map (or a flat 0.70 cut where that reciprocal
+    /// would be a BUFF). Reprices every stored HT row and nothing else. Removed again at v20.</item>
     /// <item>v4 = the backlog-95 penalty rebalance: the miss exponent rises 8.5 to 10 and the
     /// mistype exponent 3.5 to 6. Both terms are exactly 1.0 at a count of zero whatever the
     /// exponent, so a spotless play is priced bit-identically; every stored row carrying even ONE
@@ -316,6 +317,17 @@ public static class PerformancePoints
     /// both mirrors that prices exactly as v18 did. Every stored row under a full accuracy is
     /// repriced, downwards and hardest at the bottom, which is what forces the bump; nothing
     /// outside pp moves.</item>
+    /// <item>v20 = the backlog-265 removal of the Half Time MIRROR multiplier. v3's extra term and
+    /// its 0.70 buff clamp are deleted, so Half Time is priced through <c>sr_ht</c> alone, exactly
+    /// as Double Time is priced through <c>sr_dt</c> alone. No constant moves and neither does the
+    /// SHAPE: what goes is a whole factor of the product, so every stored base-rate HT row is
+    /// repriced UPWARDS by exactly the reciprocal of the multiplier it used to carry (up to 1/0.70,
+    /// i.e. +43%, on a row that was taking the clamp), and no other row moves at all. It also
+    /// RELAXES a data dependency: an HT play needed both <c>sr_ht</c> and <c>sr_dt</c> and now
+    /// needs only <c>sr_ht</c>, so a map the SR sweep filled halfway stops holding its HT rows
+    /// pending, and a degenerate <c>sr_dt</c> (which used to zero the multiplier and with it the
+    /// whole play) is simply ignored. A Literate HT play follows without a branch of its own: the
+    /// converted triple is still picked before the rate question is asked.</item>
     /// </list>
     ///
     /// <para>Rows are ALSO invalidated back to 0 whenever the beatmap they were set on has its star
@@ -332,7 +344,7 @@ public static class PerformancePoints
     /// there is no set of rows the change provably leaves alone. Bump this the moment a change
     /// values ANY stored row differently.</para>
     /// </summary>
-    public const int VERSION = 19;
+    public const int VERSION = 20;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -445,13 +457,6 @@ public static class PerformancePoints
     /// block because it is a property of the note count, not of the mod.
     /// </summary>
     private const double reference_notes = 100.0;
-
-    /// <summary>
-    /// The flat cut a Half Time play takes when the mirror multiplier would be a BUFF, i.e. a 30%
-    /// reduction. See <see cref="HalfTimeMultiplier"/> for when that happens and why the guard is
-    /// not a <c>Math.Min</c>.
-    /// </summary>
-    private const double half_time_buff_clamp = 0.70;
 
     // ---- mod multipliers (docs/pp.md) ----
 
@@ -567,78 +572,17 @@ public static class PerformancePoints
     /// stale so <see cref="Packages.PpBackfill"/> recomputes it once the column is filled.</item>
     /// </list>
     ///
-    /// <para><see cref="Multiplier"/> is the play's RATE multiplier, 1.0 for everything except a
-    /// base-rate Half Time play (see <see cref="HalfTimeMultiplier"/>). It rides here rather than in
-    /// <see cref="ModMultiplier"/> because it is a function of all three star ratings, which the mod
-    /// multiplier neither has nor should have. It is meaningless when <see cref="Stars"/> is null,
-    /// since no price is computed at all in that case.</para>
+    /// <para>THERE IS NO RATE MULTIPLIER HERE any more (backlog 265). One rode alongside the rating
+    /// from v3 to v19, for base-rate Half Time alone; every rate is now priced by the rating this
+    /// type carries and by nothing else, so <see cref="Stars"/> is the whole of what a rate is
+    /// worth.</para>
     /// </summary>
-    public readonly record struct RateStars(double? Stars, bool Pending, double Multiplier = 1)
+    public readonly record struct RateStars(double? Stars, bool Pending)
     {
         public static RateStars Of(double stars) => new(stars, false);
-        public static RateStars Of(double stars, double multiplier) => new(stars, false, multiplier);
         public static readonly RateStars Ineligible = new(null, false);
         public static readonly RateStars Unavailable = new(null, true);
     }
-
-    /// <summary>
-    /// The extra multiplier a base-rate HALF TIME play is priced by, on top of its <c>sr_ht</c>
-    /// rating. 1.0 is NOT a possible answer here; every other rate's multiplier is 1.0 and never
-    /// reaches this function.
-    ///
-    /// <para>Write <c>D = (sr_dt/sr_base)^2.00</c> and <c>H = (sr_ht/sr_base)^2.00</c>, the exponent
-    /// being <c>sr_exponent</c> in both cases. Those are what the two base rates are ALREADY worth on
-    /// this map, purely through <c>SR^2.00</c>, with no term of their own anywhere: D is Double
-    /// Time's emergent bonus and H is Half Time's emergent discount, and both move with any retune of
-    /// the exponent. The mirror multiplier is <c>1/(D·H)</c>, which makes Half Time's TOTAL rate factor
-    /// <c>H · 1/(D·H) = 1/D</c>, exactly the reciprocal of Double Time's, per map. Speeding a map up
-    /// and slowing it down are then equal and opposite by construction rather than by a flat guess,
-    /// which is the whole point: HT used to be the cheap way to keep a hard map's difficulty term
-    /// while typing at a comfortable pace, because slowing down costs far less than speeding up
-    /// pays.</para>
-    ///
-    /// <para>THE GUARD IS LOAD-BEARING, NOT DEFENSIVE. The mirror is a BUFF exactly when
-    /// <c>1/D &gt; H</c>, i.e. <c>D·H &lt; 1</c>, i.e. <c>sr_dt · sr_ht &lt; sr_base²</c>: a map
-    /// whose SR curve is concave in log-rate, so slowing it down helps far more than speeding it up
-    /// hurts. That is precisely the map an unguarded mirror would REWARD for using Half Time. Worked
-    /// example: base 4.2, dt 4.5, ht 2.0 gives D = 1.148 and H = 0.227, so the mirror would make
-    /// HT's total factor 0.871 against today's 0.227, a nearly four-fold buff. Clamped, it is
-    /// <c>0.70 · 0.227 = 0.159</c>, still a nerf.</para>
-    ///
-    /// <para>IT IS NOT A <c>Math.Min</c>. A mirror multiplier of, say, 0.90 is a mild nerf and must
-    /// be used AS IS. <c>Math.Min(mirror, 0.70)</c> would deepen every mild nerf into a flat 30% cut
-    /// and quietly throw away the per-map symmetry this term exists for. The clamp applies only on
-    /// the wrong side of 1.0.</para>
-    ///
-    /// <para>Hostile input yields 0, in keeping with the rest of this file: a non-finite or
-    /// non-positive rating describes no map, and returning 0 makes the play price to 0 rather than
-    /// to NaN. <see cref="Compute"/> would already return 0 for a non-positive
-    /// <c>starRating</c>, but this is reached down a different path (<see cref="StarsFor"/>) and
-    /// a NaN here would survive that guard and poison the product.</para>
-    /// </summary>
-    /// <param name="baseStars"><c>beatmaps.difficulty_rating</c>, the rate-1.0 rating.</param>
-    /// <param name="starsDoubleTime"><c>beatmaps.sr_dt</c>, the rating at 1.50x.</param>
-    /// <param name="starsHalfTime"><c>beatmaps.sr_ht</c>, the rating at 0.75x.</param>
-    public static double HalfTimeMultiplier(double baseStars, double starsDoubleTime, double starsHalfTime)
-    {
-        if (!IsRateableRating(baseStars) || !IsRateableRating(starsDoubleTime) || !IsRateableRating(starsHalfTime))
-            return 0;
-
-        double doubleTimeFactor = Math.Pow(starsDoubleTime / baseStars, sr_exponent);
-        double halfTimeFactor = Math.Pow(starsHalfTime / baseStars, sr_exponent);
-
-        double mirror = 1.0 / (doubleTimeFactor * halfTimeFactor);
-
-        if (!double.IsFinite(mirror) || mirror <= 0)
-            return 0;
-
-        // Strictly above 1.0 the mirror would PAY for playing slower; that, and only that, takes
-        // the flat cut. Anything at or below 1.0 is already a nerf and is used exactly as computed.
-        return mirror > 1 ? half_time_buff_clamp : mirror;
-    }
-
-    /// <summary>A star rating that can be divided by or raised to a power without producing nonsense.</summary>
-    private static bool IsRateableRating(double stars) => double.IsFinite(stars) && stars > 0;
 
     /// <summary>
     /// Notes, misses and typos from a play's <c>statistics</c> dictionary. Negative counts
@@ -779,15 +723,14 @@ public static class PerformancePoints
     /// makes DT / NC / HT mutually exclusive), so it is treated as ineligible rather than guessed
     /// at, exactly as <see cref="ModMultiplier"/> treats it as the conservative case for scoring.</para>
     ///
-    /// <para>A HALF TIME play needs BOTH down-rate ratings: <c>sr_ht</c> to price it and
-    /// <c>sr_dt</c> to mirror against (<see cref="HalfTimeMultiplier"/>). A map with <c>sr_ht</c>
-    /// stored but <c>sr_dt</c> still null is therefore <see cref="RateStars.Unavailable"/>, not
-    /// priced off <c>sr_ht</c> alone: leaving the row stale for <see cref="Packages.PpBackfill"/> to
-    /// retry costs one boot, whereas pricing it now would stamp a value the very next sweep has to
-    /// disagree with. A LITERATE Half Time play needs the converted map's pair, for the same reason
-    /// and with the same outcome; the mirror is computed entirely within one triple, never across
-    /// the two, or Half Time's total factor would stop being the reciprocal of Double Time's ON THE
-    /// MAP THE PLAY WAS ON.</para>
+    /// <para>THE TWO RATE ARMS ARE SYMMETRIC (backlog 265): a Double Time play needs <c>sr_dt</c>
+    /// and a Half Time play needs <c>sr_ht</c>, each priced off its own rating alone, and neither
+    /// looks at the other. From backlog 90 to backlog 265 the down-rate arm ALSO needed
+    /// <c>sr_dt</c>, to mirror against, so a map the SR sweep had filled halfway left its HT plays
+    /// <see cref="RateStars.Unavailable"/>; deleting the mirror deletes that dependency, and the
+    /// rows that were waiting on it price on the next sweep. Either rating still missing on the arm
+    /// that needs it is <see cref="RateStars.Unavailable"/>, left stale for
+    /// <see cref="Packages.PpBackfill"/> rather than priced off a rating that is not the play's.</para>
     /// </summary>
     /// <param name="mods">The play's parsed mods (<see cref="ScoreMods.Parse"/>).</param>
     /// <param name="baseStars"><c>beatmaps.difficulty_rating</c>, the rate-1.0 rating.</param>
@@ -844,13 +787,10 @@ public static class PerformancePoints
         if (range.Default > 1)
             return up is double sped ? RateStars.Of(sped) : RateStars.Unavailable;
 
-        // Half Time is priced off the down-rate rating AND mirrored against the up-rate one, so it
-        // needs both (see the docs above): either one missing leaves the row for the next backfill
-        // pass. All three arguments to the mirror come from the SAME triple.
-        if (down is not double slowed || up is not double mirrorAgainst)
-            return RateStars.Unavailable;
-
-        return RateStars.Of(slowed, HalfTimeMultiplier(unrated, mirrorAgainst, slowed));
+        // Half Time is priced off the down-rate rating and nothing else, the exact mirror image of
+        // the up-rate arm above (see the docs): the up-rate rating is not consulted at all, so a map
+        // storing only this one prices its HT plays today rather than waiting on the other column.
+        return down is double slowed ? RateStars.Of(slowed) : RateStars.Unavailable;
     }
 
     /// <summary>
@@ -953,14 +893,11 @@ public static class PerformancePoints
     /// stat existed carries and the value at which the typo term is exactly 1.0, leaving the
     /// play priced by its misses alone.</para>
     ///
-    /// <para><paramref name="rateMultiplier"/> is the play's RATE multiplier, which is 1.0 for
-    /// every play except a base-rate Half Time one; <see cref="ForScore"/> supplies it from
-    /// <see cref="RateStars.Multiplier"/>. It is a parameter rather than something computed here
-    /// because it takes all three of the map's star ratings and this function is handed only the
-    /// one it prices with. A caller that omits it prices the play WITHOUT the Half Time penalty, so
-    /// every path that can see an HT play must pass it; the end-to-end parity test is what pins
-    /// that. Non-finite or negative values fall out as 0 through the guard at the end, exactly like
-    /// every other hostile input.</para>
+    /// <para>THERE IS NO RATE ARGUMENT (backlog 265). A rate is priced entirely by the
+    /// <paramref name="starRating"/> it is handed, so a caller holding the effective rating holds
+    /// the whole price. From v3 to v19 a base-rate Half Time play took an extra multiplier here,
+    /// which every path that could see one had to remember to pass; nothing does now, and the
+    /// forgetting-to-pass-it failure mode is gone with it.</para>
     /// </summary>
     public static double Compute(
         double starRating,
@@ -969,8 +906,7 @@ public static class PerformancePoints
         double accuracy,
         int maxCombo,
         IReadOnlyList<ScoreMod>? mods,
-        int typos = 0,
-        double rateMultiplier = 1)
+        int typos = 0)
     {
         // No notes describes no play; a zero or non-finite rating prices nothing.
         if (notes <= 0 || !double.IsFinite(starRating) || starRating <= 0)
@@ -1029,7 +965,7 @@ public static class PerformancePoints
         double comboBase = Math.Log(1.0 + combo_log_shape * comboRatio) / Math.Log(1.0 + combo_log_shape);
         double combo = Math.Pow(comboBase, combo_exponent);
 
-        double pp = scale * difficulty * cleanliness * typoPenalty * timing * combo * ModMultiplier(mods, notes) * rateMultiplier;
+        double pp = scale * difficulty * cleanliness * typoPenalty * timing * combo * ModMultiplier(mods, notes);
 
         return double.IsFinite(pp) && pp > 0 ? pp : 0;
     }
@@ -1049,9 +985,9 @@ public static class PerformancePoints
     /// that into "no pp was ever on offer" rather than "you earned zero".</item>
     /// <item><c>(null, settled: false)</c>: NOT PRICED YET. A star rating the play needs is not
     /// stored, so the row is left stale (pp 0, version 0) for <see cref="Packages.PpBackfill"/>
-    /// rather than being stamped at a value it would have to disagree with later. A Half Time play
-    /// needs TWO of them, <c>sr_ht</c> and <c>sr_dt</c>; a LITERATE play needs the converted map's
-    /// rating instead of the plain one, and a Literate Half Time play two of those; see
+    /// rather than being stamped at a value it would have to disagree with later. Each rate needs
+    /// exactly ONE rating since backlog 265 (<c>sr_dt</c> for Double Time, <c>sr_ht</c> for Half
+    /// Time); a LITERATE play needs the converted map's rating instead of the plain one; see
     /// <see cref="StarsFor"/>.</item>
     /// </list>
     ///
@@ -1079,6 +1015,6 @@ public static class PerformancePoints
         if (stars.Stars is not double effective)
             return (null, !stars.Pending);
 
-        return (Compute(effective, notes.Notes, notes.Misses, accuracy, maxCombo, mods, notes.Typos, stars.Multiplier), true);
+        return (Compute(effective, notes.Notes, notes.Misses, accuracy, maxCombo, mods, notes.Typos), true);
     }
 }

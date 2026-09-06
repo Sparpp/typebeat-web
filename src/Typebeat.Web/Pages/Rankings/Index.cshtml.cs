@@ -103,18 +103,18 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         /// the number the pp came from, and showing it would misexplain the board's dominant term.
         ///
         /// <para>
-        /// FROM, not "equal to", on a Half Time row: since backlog 90 an HT play is priced from
-        /// <c>sr_ht</c> and then multiplied by <see cref="PerformancePoints.HalfTimeMultiplier"/>,
-        /// so this rating is the play's difficulty but no longer its whole price. The column stays
-        /// the rating rather than becoming some penalty-adjusted number, because a star rating is
-        /// what a player reads it as; the header tooltip carries the caveat.
+        /// FROM, and since backlog 265 also EQUAL TO, on a Half Time row: from backlog 90 to
+        /// backlog 265 an HT play was priced from <c>sr_ht</c> and then multiplied by a mirror
+        /// penalty on top, so the rating was its difficulty but not its whole price. That
+        /// multiplier is gone, and every rate is now priced by the rating in this column and
+        /// nothing else.
         /// </para>
         ///
         /// <para>
         /// Never null in practice. <see cref="PerformancePoints.ForScore"/> prices nothing at all,
         /// and its callers store 0, whenever <see cref="PerformancePoints.StarsFor"/> yields no
         /// rating (a custom rate, a multi-rate stack, or a map missing a rating the play needs:
-        /// <c>sr_dt</c> for a DT play, BOTH <c>sr_ht</c> and <c>sr_dt</c> for an HT one, and the
+        /// <c>sr_dt</c> for a DT play, <c>sr_ht</c> for an HT one, and the
         /// matching <c>sr_literate*</c> for anything carrying Literate), and the board only
         /// carries plays with <c>pp &gt; 0</c>, so every row here priced from one of the six
         /// stored ratings and the sr columns only ever go from null to filled. It stays nullable

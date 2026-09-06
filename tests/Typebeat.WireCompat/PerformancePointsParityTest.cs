@@ -262,55 +262,13 @@ public class PerformancePointsParityTest
         }
     }
 
-    [Test]
-    public void TheTwoHalfTimeMirrorsAgreeExactlyOnBothBranches()
-    {
-        // Backlog 90 gave Half Time an extra multiplier that neither side can derive from the one
-        // rating it prices with: it needs all three. That is a fresh seam, and the branch it takes
-        // is decided by a comparison against 1.0, so a spread that only ever lands on one side of
-        // that comparison could miss a divergence entirely.
-        double[] ratings = [0, -1, 1e-9, 0.5, 1, 2, 3.4, 4.0, 4.2, 4.5, 6.1, 10, 1e9, double.NaN, double.PositiveInfinity, double.NegativeInfinity];
-
-        int compared = 0;
-
-        foreach (double baseStars in ratings)
-        foreach (double dt in ratings)
-        foreach (double ht in ratings)
-        {
-            double client = ClientPp.HalfTimeMultiplier(baseStars, dt, ht);
-            double server = ServerPp.HalfTimeMultiplier(baseStars, dt, ht);
-
-            string context = $"base={baseStars} dt={dt} ht={ht}";
-
-            Assert.That(client, Is.EqualTo(server), context);
-            Assert.That(double.IsFinite(client), Is.True, context);
-            Assert.That(client, Is.GreaterThanOrEqualTo(0), context);
-            compared++;
-        }
-
-        Assert.That(compared, Is.GreaterThan(1000), "the spread must actually be a spread");
-
-        Assert.Multiple(() =>
-        {
-            // The three decided cases, stated as exact values so this file pins WHAT the mirror is
-            // worth and not merely that the two halves agree.
-
-            // The mirror branch, on the fixture spread used further down this file.
-            Assert.That(ClientPp.HalfTimeMultiplier(4.2, 6.1, 3.4), Is.EqualTo(0.723402).Within(1e-6)); // pp[f.half_time_multiplier(4.2, 6.1, 3.4)]
-            Assert.That(ServerPp.HalfTimeMultiplier(4.2, 6.1, 3.4), Is.EqualTo(0.723402).Within(1e-6)); // pp[f.half_time_multiplier(4.2, 6.1, 3.4)]
-
-            // The CLAMPED branch: sr_dt · sr_ht < sr_base², so an unguarded mirror would BUFF Half
-            // Time on this map. Both sides must take the flat cut, not the mirror.
-            Assert.That(ClientPp.HalfTimeMultiplier(4.2, 4.5, 2.0), Is.EqualTo(0.70).Within(1e-12)); // pp[f.half_time_buff_clamp]
-            Assert.That(ServerPp.HalfTimeMultiplier(4.2, 4.5, 2.0), Is.EqualTo(0.70).Within(1e-12)); // pp[f.half_time_buff_clamp]
-
-            // A mild mirror, strictly between the clamp and 1.0: used AS IS on both sides. A
-            // Math.Min on either side would return 0.70 here and the two would still agree with
-            // each other, which is why the value itself is pinned as well as the parity.
-            Assert.That(ClientPp.HalfTimeMultiplier(4.0, 4.5, 3.7), Is.EqualTo(0.923446).Within(1e-6)); // pp[f.half_time_multiplier(4.0, 4.5, 3.7)]
-            Assert.That(ServerPp.HalfTimeMultiplier(4.0, 4.5, 3.7), Is.EqualTo(0.923446).Within(1e-6)); // pp[f.half_time_multiplier(4.0, 4.5, 3.7)]
-        });
-    }
+    // THE HALF TIME MIRROR IS GONE (backlog 265). A test stood here sweeping both mirrors over a
+    // 4096-point rating cube, because backlog 90 had given Half Time a multiplier neither side
+    // could derive from the one rating it prices with and whose branch turned on a comparison
+    // against 1.0. Neither side computes anything of the kind now: an HT play is its 0.75x rating,
+    // a DT play its 1.50x one, and the seam that needed a cube to cover no longer exists. What
+    // replaces it is the exact re-pin at the bottom of this file, which asserts that a Half Time
+    // play prices at the UNPENALISED value and that its rate factor is the plain rating ratio.
 
     [Test]
     public void TheTwoFormulasAreTheSameGeneration()
@@ -318,6 +276,10 @@ public class PerformancePointsParityTest
         // A client shipped against generation N must not quietly price plays the server stores at
         // generation N+1. Bumping one without the other is exactly what this catches.
         Assert.That(ClientPp.VERSION, Is.EqualTo(ServerPp.VERSION));
+
+        // And the generation itself, so a half-landed cross-repo change that bumped BOTH mirrors
+        // but left docs/pp.md and the two per-repo pins behind is caught here too.
+        Assert.That(ServerPp.VERSION, Is.EqualTo(20)); // pp:version
     }
 
     #endregion
@@ -927,11 +889,10 @@ public class PerformancePointsParityTest
 
             string context = string.Join('+', clientStack.Select(m => m.Acronym));
 
+            // The rating is the WHOLE of what the two sides have to agree on since backlog 265: the
+            // rate multiplier that used to ride beside it, derived by the client from the lines and
+            // by the server from its stored columns, no longer exists on either side.
             Assert.That(clientStars, Is.EqualTo(serverStars.Stars), context);
-
-            // And the rate MULTIPLIER that goes with the rating (backlog 90). The client derives it
-            // from the lines; the server from its three stored columns. Same number, both ways.
-            Assert.That(ClientPp.RateMultiplier(client, clientStack), Is.EqualTo(serverStars.Multiplier), context);
         }
     }
 
@@ -1009,9 +970,13 @@ public class PerformancePointsParityTest
             (ServerPp.StarsFor(ServerMods(Stack(new TypeBeatModLiterate())), baseStars, dtStars, htStars, default), "LT with no converted ratings at all"),
             (ServerPp.StarsFor(ServerMods(Stack(new TypeBeatModLiterate(), new TypeBeatModDoubleTime())), baseStars, dtStars, htStars,
                 new ServerPp.LiterateStars(full.Base, null, full.HalfTime)), "LT+DT with sr_literate_dt missing"),
-            (ServerPp.StarsFor(ServerMods(Stack(new TypeBeatModLiterate(), new TypeBeatModHalfTime())), baseStars, dtStars, htStars,
-                new ServerPp.LiterateStars(full.Base, null, full.HalfTime)), "LT+HT missing the up-rate it mirrors against"),
         ];
+
+        // The case that FLIPS with backlog 265. LT+HT used to need sr_literate_dt as well, to
+        // mirror against, so this triple was pending; the mirror is gone and it prices off
+        // sr_literate_ht alone.
+        var literateHalfTime = ServerPp.StarsFor(ServerMods(Stack(new TypeBeatModLiterate(), new TypeBeatModHalfTime())), baseStars, dtStars, htStars,
+            new ServerPp.LiterateStars(full.Base, null, full.HalfTime));
 
         Assert.Multiple(() =>
         {
@@ -1020,6 +985,9 @@ public class PerformancePointsParityTest
                 Assert.That(stars.Stars, Is.Null, name);
                 Assert.That(stars.Pending, Is.True, name + ": left stale for PpBackfill, not settled at a wrong price");
             }
+
+            Assert.That(literateHalfTime.Stars, Is.EqualTo(full.HalfTime), "LT+HT prices off sr_literate_ht with no up-rate rating stored");
+            Assert.That(literateHalfTime.Pending, Is.False);
 
             // And with the columns filled it prices, off the CONVERTED rating rather than the plain one.
             var priced = ServerPp.StarsFor(ServerMods(Stack(new TypeBeatModLiterate())), baseStars, dtStars, htStars, full);
@@ -1031,29 +999,34 @@ public class PerformancePointsParityTest
     }
 
     [Test]
-    public void AHalfTimeMapMissingItsUpRateRatingIsPendingRatherThanPricedOffTheDownRateAlone()
+    public void AHalfTimeMapPricesOffItsDownRateRatingWhetherOrNotTheUpRateOneIsStored()
     {
-        // Backlog 90 gave the server a new data dependency the client does not have: pricing an HT
-        // play needs sr_dt as well as sr_ht, and the client simply computes both. The server must
-        // therefore DEFER rather than price off sr_ht alone, or every HT play on a map the SR sweep
-        // has not fully reached would be stamped at a value the next sweep has to disagree with.
-        var (_, server) = TwinMaps();
+        // Backlog 90 gave the server a data dependency the client did not have: pricing an HT play
+        // needed sr_dt as well as sr_ht, so the server had to DEFER where the client simply computed
+        // both, and this test asserted that deferral. Backlog 265 removes the mirror and with it the
+        // dependency, so the two halves need exactly the same one rating again, and the rows that
+        // were waiting on the other column price on the v20 sweep.
+        var (client, server) = TwinMaps();
 
         double baseStars = ServerDifficulty.Compute(server);
         double htStars = ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.HalfTimeBaseRate);
 
-        var halfTime = ServerMods(Stack(new TypeBeatModHalfTime()));
+        var clientStack = Stack(new TypeBeatModHalfTime());
+        var halfTime = ServerMods(clientStack);
 
         var withoutDt = ServerPp.StarsFor(halfTime, baseStars, null, htStars, ServerLiterate(server));
         var withDt = ServerPp.StarsFor(halfTime, baseStars, ServerDifficulty.Compute(server, Typebeat.Web.Scoring.RateMods.DoubleTimeBaseRate), htStars, ServerLiterate(server));
 
         Assert.Multiple(() =>
         {
-            Assert.That(withoutDt.Stars, Is.Null);
-            Assert.That(withoutDt.Pending, Is.True, "left stale for PpBackfill, not settled at a wrong price");
+            Assert.That(withoutDt.Stars, Is.EqualTo(htStars), "sr_dt is not consulted at all");
+            Assert.That(withoutDt.Pending, Is.False);
 
-            Assert.That(withDt.Stars, Is.EqualTo(htStars), "and with both columns filled it prices normally");
+            Assert.That(withDt.Stars, Is.EqualTo(htStars), "and storing it changes nothing");
             Assert.That(withDt.Pending, Is.False);
+
+            // Which is the client's own answer for the same play, computed from the lines.
+            Assert.That(ClientPp.StarsFor(client, clientStack), Is.EqualTo(htStars));
         });
     }
 
@@ -1115,11 +1088,10 @@ public class PerformancePointsParityTest
 
             // What the in-game counter would show (nothing at all when the play's rate makes it
             // ineligible, which is the same "no price exists" the server reports as a null). The
-            // rate multiplier is passed exactly as the client's own surfaces pass it: omitting it
-            // here would price every Half Time stack below WITHOUT the backlog-90 penalty, and this
-            // assertion is what catches a client surface that forgets to.
+            // rating is the whole of the call since backlog 265: there is no second argument a
+            // client surface could forget, which is what the extra argument here used to catch.
             double? clientPp = clientStars is double stars
-                ? ClientPp.ForPlay(stars, clientCounts, accuracy, maxCombo, clientStack, ClientPp.RateMultiplier(client, clientStack))
+                ? ClientPp.ForPlay(stars, clientCounts, accuracy, maxCombo, clientStack)
                 : null;
 
             // ...against what the server would write to scores.pp for the very same play.
@@ -1139,11 +1111,13 @@ public class PerformancePointsParityTest
     }
 
     [Test]
-    public void AHalfTimePlayCarriesTheMirrorPenaltyOnBothSidesAndIsDoubleTimesReciprocal()
+    public void AHalfTimePlayCarriesNoPenaltyOnEitherSideAndPricesAtItsPlainRatingRatio()
     {
         // The pipeline test above proves the two agree on an HT play; this proves what they agree
-        // ON, i.e. that the penalty is actually being applied rather than both sides having dropped
-        // it together.
+        // ON. It used to prove the backlog-90 mirror penalty was actually being applied rather than
+        // both sides having dropped it together; since backlog 265 it proves the exact opposite,
+        // that BOTH sides have dropped it, which is a claim of the same shape and needs pinning for
+        // the same reason: a half-landed removal would leave the two agreeing on nothing.
         var (client, server) = TwinMaps();
 
         double baseStars = ServerDifficulty.Compute(server);
@@ -1175,30 +1149,30 @@ public class PerformancePointsParityTest
         double doubleTime = Price(Stack(new TypeBeatModDoubleTime()));
         double halfTimePrice = Price(halfTime);
 
-        // The client's own reading of the very same play, penalty and all.
+        // The client's own reading of the very same play.
         double clientHalfTime = ClientPp.ForPlay(
-            ClientPp.StarsFor(client, halfTime)!.Value, ClientPp.CountNotes(play), 0.93, 380, halfTime,
-            ClientPp.RateMultiplier(client, halfTime));
+            ClientPp.StarsFor(client, halfTime)!.Value, ClientPp.CountNotes(play), 0.93, 380, halfTime);
 
-        // What Half Time used to be worth: sr_ht alone, with no multiplier.
+        // What Half Time is worth priced off sr_ht and nothing else, which from v3 to v19 was the
+        // UNPENALISED value the mirror multiplied down and is now the value itself.
         double unpenalised = ClientPp.ForPlay(ClientPp.StarsFor(client, halfTime)!.Value, ClientPp.CountNotes(play), 0.93, 380, halfTime);
 
         Assert.Multiple(() =>
         {
-            Assert.That(clientHalfTime, Is.EqualTo(halfTimePrice), "the two halves price the penalised play identically");
-            Assert.That(halfTimePrice, Is.LessThan(unpenalised), "and the penalty is genuinely being applied");
+            Assert.That(clientHalfTime, Is.EqualTo(halfTimePrice), "the two halves price the play identically");
+            Assert.That(halfTimePrice, Is.EqualTo(unpenalised), "and it is the unpenalised value exactly, on both sides");
 
-            // Equal and opposite: HT's rate factor is exactly the reciprocal of DT's whenever the
-            // mirror (rather than the flat clamp) is in force, which is the term's whole purpose.
+            // The rate factor of a Half Time play is the PLAIN rating ratio now, not the reciprocal
+            // of Double Time's. Both are stated, because the second is what this pinned before and
+            // its failure is the whole point: the two are not equal on this fixture map.
             double up = doubleTime / nomod;
             double down = halfTimePrice / nomod;
 
-            double mirror = 1.0 / (Math.Pow(dtStars / baseStars, 2.00) * Math.Pow(htStars / baseStars, 2.00)); // pp:const sr_exponent=2.00*2
+            double downRatio = Math.Pow(htStars / baseStars, 2.00); // pp:const sr_exponent=2.00
 
-            Assert.That(mirror, Is.LessThan(1.0), "the premise: this fixture map is not a concave one");
-            Assert.That(ClientPp.HalfTimeMultiplier(baseStars, dtStars, htStars), Is.EqualTo(mirror).Within(1e-12),
-                "so the mirror is used here, not the flat clamp");
-            Assert.That(down, Is.EqualTo(1.0 / up).Within(1e-9));
+            Assert.That(down, Is.EqualTo(downRatio).Within(1e-9), "HT's rate factor is (sr_ht/sr_base)^sr_exponent");
+            Assert.That(down, Is.Not.EqualTo(1.0 / up).Within(1e-6),
+                "and deliberately NOT Double Time's reciprocal any more, which is the asymmetry backlog 265 accepts");
         });
     }
 

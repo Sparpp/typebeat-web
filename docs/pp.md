@@ -22,7 +22,6 @@ pp = C · SR_eff^2.00
        · acc^1.80 · 1/(1 + e^(−(acc − 0.80)/0.025))      # accuracy (timing quality)
        · (ln(1 + 9.0·maxcombo/notes)/ln(1 + 9.0))^2.50   # combo
        · modMult                                         # NOT for DT/HT; rate lives in SR_eff only
-       · rateMult                                        # 1.0 except base-rate HT (see the Half Time amendment)
 
 C = 12.4    # global scale constant, does not affect ranking order
 ```
@@ -122,9 +121,10 @@ stored `ranked = false` and therefore earn no pp.
 ## Mods
 
 * **DT / HT**: rate is priced **exclusively through SR_eff** (SR recomputed at the play's clock
-  rate); there is NO flat DT/HT multiplier in modMult, so nothing double-counts. **Half Time
-  additionally carries the mirror penalty of the 2026-08-07 amendment below**, which is still not in
-  modMult (it needs all three star ratings, which modMult does not have). DECIDED:
+  rate); there is NO flat DT/HT multiplier in modMult, so nothing double-counts. That sentence is
+  **literally true again since the 2026-09-06 amendment below**, which deletes the Half Time mirror
+  penalty the 2026-08-07 amendment added: from v3 to v19 Half Time was the one rate priced by
+  something other than its rating, and it is not any more. DECIDED:
   only the **base rates** (DT 1.5x, HT 0.75x) are pp-eligible. A custom rate makes the play
   **pp-ineligible only**: it still ranks on the score leaderboards exactly as today (the
   variable-rate ranking feature is preserved, no retroactive unranking), it just earns 0 pp.
@@ -234,7 +234,9 @@ the opposite of what cumulative score rewards today.
 ## Decision log (2026-07-28)
 
 * DT/HT base-rate reward comes from **SR_eff only**; the earlier "1.5x pp weighting" phrasing
-  described intent, not an extra multiplier. No flat rate multiplier exists in modMult.
+  described intent, not an extra multiplier. No flat rate multiplier exists in modMult. (Half Time
+  carried a per-map MIRROR multiplier outside modMult from the 2026-08-07 amendment until the
+  2026-09-06 one deleted it; this line is the rule again, without an exception.)
 * Custom DT/HT rates are **pp-ineligible only**; score-leaderboard ranking at every rate is
   preserved, nothing retroactively unranked.
 * Aggregation: **best play per set, weighted sum over all** with decay 0.85; no hard top-10
@@ -372,11 +374,18 @@ no migration is needed, since migration 020 already created the `pp_version` col
 
 ## Amendment (2026-08-07): Half Time carries a mirror penalty (backlog 90)
 
-> **Figures superseded, mechanism in force.** The mirror multiplier is exactly as this section
-> defines it, but `sr_exponent` has since moved from the 2.70 written throughout it to 2.00, so
-> every D, H and percentage below is a figure at 2.70. On the same fixture spread at 2.00:
+> **SUPERSEDED by the 2026-09-06 amendment at the end of this file (backlog 265), which DELETES
+> the mirror multiplier outright.** Nothing in this section is in force: there is no `m`, no
+> `half_time_buff_clamp`, and no `rateMult` in the formula. Half Time is priced through `sr_ht`
+> alone, exactly as Double Time is priced through `sr_dt` alone, and the asymmetry this section
+> set out to close is accepted rather than corrected. Read it for the argument, which is still
+> the honest statement of what a down-rate is emergently worth, and for the record of what every
+> stored HT row was priced at from v3 to v19.
+>
+> **Figures were already superseded once before that.** The `D`, `H` and percentage figures below
+> are all at `sr_exponent = 2.70`, which moved to 2.00 in v11. On the same fixture spread at 2.00:
 > `D = 2.109`, `H = 0.655`, `m = 0.723`, and Half Time's total factor `0.474` against the `0.655`
-> it would carry without the mirror.
+> it carried without the mirror, which is the `0.655` in force today.
 
 Rate has always been priced **exclusively through `SR_eff`**, and it still is for Double Time. That
 is not a neutral choice for the down-rate, though, and the numbers say so. Because pp scales as
@@ -1188,3 +1197,71 @@ fractional exponent on a negative base is non-real.
 
 **`VERSION` bumps to 19.** Every stored row the change values differently is repriced by
 `PpBackfill` at the next boot, reading only columns; no migration is needed.
+
+## Amendment (2026-09-06): Half Time is priced through its star rating alone (backlog 265)
+
+The mirror multiplier of the 2026-08-07 amendment is DELETED, and `half_time_buff_clamp` with it.
+A base-rate Half Time play is priced by `sr_ht` and by nothing else, exactly as a base-rate Double
+Time play is priced by `sr_dt` and by nothing else. `rateMult` leaves the formula, `RateStars`
+stops carrying a multiplier, `PerformancePoints.Compute` stops taking one, and the client's
+`TypeBeatDifficultyAttributes` (which existed solely to ship the number to a performance calculator
+that had no beatmap to derive it from) is deleted along with it.
+
+THE ASYMMETRY IS REAL AND IS BEING ACCEPTED, not fixed elsewhere by sleight of hand. On the parity
+fixture's spread (`sr_base = 4.2`, `sr_dt = 6.1`, `sr_ht = 3.4`) speeding a map up pays **+111%**
+while slowing it down costs only **-34.5%**, which is what backlog 90 set out to close. The mirror
+closed it at a price this file has now decided is too high. It made ONE rate a function of all
+three of a map's ratings, which is the only thing in pp that reads a rating the play was not set
+on; it was the only exception to the rule stated in the very first section, that a rate is priced
+EXCLUSIVELY through `SR_eff`, so that sentence has been false since v3 and is true again now; and
+its own guard was load-bearing precisely because the mirror was wrong on a whole class of maps (the
+`sr_dt · sr_ht < sr_base²` concave ones), where the answer was not a per-map symmetry at all but a
+flat 0.70 that came from nowhere. **If Half Time ever reads as underpriced again, the fix is in the
+strain model behind `sr_ht`, never in a reinstated multiplier here.** That is where a claim about
+what typing a map slowly is worth belongs, and it is measurable there.
+
+EVERY STORED HALF TIME PLAY REPRICES UPWARDS, by exactly the reciprocal of the multiplier it used
+to carry. A row that was taking the flat clamp gains `1/0.70`, i.e. **+43%**, the largest move this
+change can make; a row on the mirror branch gains `D · H`, which on the fixture spread is
+`0.723 -> 1`, i.e. +38%. Nothing else moves at all: a Double Time row, a no-mod row, a custom-rate
+row and every Literate row that is not also Half Time are priced bit-identically.
+
+THE DATA DEPENDENCY RELAXES, which is the part with a second-order effect. Pricing a Half Time play
+needed BOTH `sr_ht` (to price it) and `sr_dt` (to mirror against), so a map the SR sweep had filled
+halfway left its HT rows `Pending` and unpriced; a Literate Half Time play needed `sr_literate_ht`
+and `sr_literate_dt` the same way. Each rate now needs exactly its own one rating, so those rows
+price on the v20 sweep instead of waiting for a column they never used. In the same movement, a
+DEGENERATE `sr_dt` or base rating stops zeroing an HT play: the mirror returned 0 on a non-finite
+or non-positive input and that 0 propagated through the whole product, so a map whose up-rate
+rating was broken paid its honest down-rate plays nothing. Those ratings are simply not read now.
+
+LITERATE HALF TIME FOLLOWS WITHOUT A BRANCH OF ITS OWN, on both sides. The server picks WHICH
+TRIPLE (converted or plain) before it asks the rate question, so deleting the mirror from the rate
+arm serves both triples at once; the client's Literate handling lived entirely inside the deleted
+`RateMultiplier`, so it goes with it.
+
+```
+BEFORE:  SR_eff^2.00 · ... · modMult · rateMult
+         rateMult = 1 / (D · H)  for base-rate HT (or 0.70 where that would be a buff), else 1.0
+
+AFTER:   SR_eff^2.00 · ... · modMult
+```
+
+SR, the global scale, accuracy, combo, the mod multipliers, eligibility and the aggregation are all
+untouched. The typo count still sits on both sides of its own fraction, for the reason the
+backlog-89 amendment gives: keypresses are unbounded, and a fractional exponent on a negative base
+is non-real.
+
+| play | before | after | change |
+|------|--------|--------|--------|
+| `notes=500, miss=60, typo=80` | `0.008341` | `0.008341` | +0% |
+| `notes=500, miss=10, typo=20` | `0.542001` | `0.542001` | +0% |
+
+The worked table above is the two PENALTY examples this file has tracked since backlog 89, and both
+are unmoved, because neither carries a rate mod at all. They are not witnesses to this change; the
++43% and the fixture spread in the prose above are the ones to read.
+
+**`VERSION` bumps to 20.** Every stored base-rate Half Time row is now worth MORE than the value
+beside it, so the bump is mandatory. `PpBackfill` repasses every `scores` row at the next boot,
+reading only columns; no migration is needed, and the rows that were left `Pending` for a missing
+`sr_dt` are picked up by the same sweep.

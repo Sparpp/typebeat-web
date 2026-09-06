@@ -24,11 +24,12 @@ namespace Typebeat.Web.Packages;
 /// <list type="number">
 /// <item>PaceBackfill is what FILLS <c>beatmaps.sr_dt</c> / <c>sr_ht</c>. A DT/HT play whose rate
 /// rating is still NULL cannot be priced, so it is deliberately left stale (pp 0, version 0) and
-/// retried on the next boot rather than being stamped at zero forever. Since backlog 90 a HALF TIME
-/// play needs BOTH columns, <c>sr_ht</c> to price it and <c>sr_dt</c> to mirror against; a map
-/// carrying only one of the two therefore leaves its HT plays pending. Since backlog 144 the same
-/// holds one level up: a LITERATE play needs the converted map's ratings, so a map the sweep has
-/// not reached leaves even a plain no-rate Literate play pending.</item>
+/// retried on the next boot rather than being stamped at zero forever. Each rate needs exactly ONE
+/// column since backlog 265, its own; from backlog 90 until then a HALF TIME play needed BOTH
+/// (<c>sr_ht</c> to price it and <c>sr_dt</c> to mirror against), so a map carrying only one of the
+/// two held its HT plays pending, and the v20 sweep is what prices them. Since backlog 144 the
+/// deferral holds one level up: a LITERATE play needs the converted map's ratings, so a map the
+/// sweep has not reached leaves even a plain no-rate Literate play pending.</item>
 /// <item>PaceBackfill is also what INVALIDATES rows: when it rewrites a beatmap's ratings it stamps
 /// every score on that map back to version 0, so a stored pp can never outlive the star rating it
 /// was computed from.</item>
