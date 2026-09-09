@@ -9,9 +9,11 @@ namespace Typebeat.Web.Pages;
 /// <param name="CoverUrl">Site-relative list-cover URL (150×150 bucket), or null → gradient placeholder (never a broken img).</param>
 /// <param name="PreviewUrl">Site-relative 30s preview mp3, or null → no play button.</param>
 /// <param name="Date">submitted_at; timestamptz arrives from Npgsql as UTC DateTime.</param>
-/// <param name="Wpm">Perfect-play words per minute of the hardest difficulty, null when unknown. A
-/// word is five typeable cells (LyricPace.CHARS_PER_WORD), the typing-test convention, so this is
-/// exactly that difficulty's CPM over five and means what a WPM means anywhere else.</param>
+/// <param name="Wpm">The headline pace of the hardest difficulty, null when unknown: its TARGET
+/// WPM (033_target_wpm.sql, the 80th percentile of its rolling windows), falling back to the stored
+/// AVERAGE WPM on any row the LyricPace v18 backfill has not reached yet, so a card is never blank
+/// while the sweep is still running. A word is five typeable cells (LyricPace.CHARS_PER_WORD), the
+/// typing-test convention, so either reading means what a WPM means anywhere else.</param>
 /// <param name="HasPackage">False for pre-M3 sets with no uploaded package: the download rail
 /// icon becomes an inert "available in-game only" hint instead of a dead 404 link.</param>
 /// <param name="Explicit">Creator-declared explicit content (submission wizard toggle): renders
@@ -148,7 +150,15 @@ public static class BeatmapsetCardSql
         LEFT JOIN LATERAL (
             -- filename IS NOT NULL = the diff is live in the current version; dropped diffs and
             -- freshly-allocated blank rows (never deleted, scores FK) must not drive the chips.
-            SELECT max(b.difficulty_rating) AS stars, max(b.wpm) AS wpm
+            -- The pace chip is the TARGET WPM (033_target_wpm.sql), with the stored average as the
+            -- fallback: target_wpm is NULL on every row the v18 backfill has not reached, and a
+            -- COALESCE inside the max keeps those cards populated with the figure they showed
+            -- before rather than dropping the chip mid-sweep. Both are WPM in the same unit, so the
+            -- fallback is a slightly lower number, never a differently-scaled one.
+            -- The cast is on the numeric wpm, not on the coalesce, so the two arms are the same
+            -- type going in and the aggregate cannot pick one up by implicit resolution.
+            SELECT max(b.difficulty_rating) AS stars,
+                   max(coalesce(b.target_wpm, b.wpm::double precision)) AS wpm
             FROM beatmaps b
             WHERE b.set_id = s.id AND b.filename IS NOT NULL
         ) d ON true

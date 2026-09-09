@@ -123,14 +123,18 @@ public class BeatmapSearchQueryTest
     }
 
     [Test]
-    public void Wpm_And_Cpm_And_Bpm_AreNumericFields()
+    public void Wpm_And_Cpm_And_Target_And_Bpm_AreNumericFields()
     {
-        var q = BeatmapSearchQuery.Parse("wpm:>120 cpm:600-800 bpm:128");
+        var q = BeatmapSearchQuery.Parse("wpm:>120 cpm:600-800 target:>=140 bpm:128");
 
         Assert.Multiple(() =>
         {
             Assert.That(q.NumericFilters, Has.One.Matches<NumericFilter>(n => n.Field == FilterField.Wpm && n.Op == Comparator.Gt && n.Low == 120));
             Assert.That(q.NumericFilters, Has.One.Matches<NumericFilter>(n => n.Field == FilterField.Cpm && n.Op == Comparator.Range && n.Low == 600 && n.High == 800));
+
+            // target: is the new key (backlog 272), and it is its OWN field: wpm: still parses to
+            // Wpm and still means the stored average, so a saved search keeps working.
+            Assert.That(q.NumericFilters, Has.One.Matches<NumericFilter>(n => n.Field == FilterField.TargetWpm && n.Op == Comparator.Gte && n.Low == 140));
             Assert.That(q.NumericFilters, Has.One.Matches<NumericFilter>(n => n.Field == FilterField.Bpm && n.Op == Comparator.Eq && n.Low == 128));
         });
     }
@@ -341,6 +345,24 @@ public class BeatmapSearchQueryTest
             // wrong for every map whose average word is not exactly 5 cells long.
             Assert.That(sql, Does.Not.Contain("char_count").IgnoreCase);
             Assert.That(sql, Does.Not.Contain("word_count").IgnoreCase);
+        });
+    }
+
+    [Test]
+    public void Sql_Target_ReadsTheStoredColumnWithNoFallback()
+    {
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("target:>140"));
+
+        Assert.Multiple(() =>
+        {
+            // Stored outright (033_target_wpm.sql), unlike cpm: which is derived from wpm.
+            Assert.That(sql, Does.Contain("b.target_wpm > @op0"));
+            Assert.That(param["op0"], Is.EqualTo(140.0));
+
+            // And deliberately NOT coalesced onto b.wpm the way the card chip and the /play pill
+            // are: a filter has to mean what it says, so a difficulty whose target_wpm the v18
+            // backfill has not written is invisible to target: rather than matched on a stand-in.
+            Assert.That(sql, Does.Not.Contain("coalesce").IgnoreCase);
         });
     }
 

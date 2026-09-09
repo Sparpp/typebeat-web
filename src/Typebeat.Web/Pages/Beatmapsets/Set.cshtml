@@ -157,12 +157,18 @@
                     {
                         <div class="stat-row"><span class="stat-row__label">Characters</span><span class="stat-row__value">@chars.ToString("N0", CultureInfo.InvariantCulture)</span></div>
                     }
-                    @* Peak first, then average, because the two are the same unit and read as a
-                       pair: the fastest stretch the map ever asks for, and what it asks on the
-                       whole. The peak is missing on any row the v11 backfill has not reached. *@
+                    @* Peak, then target, then average: one unit, three readings, hardest first. The
+                       fastest stretch the map ever asks for; the pace 80 percent of its keystrokes
+                       are typed at or below, which is the one worth aiming at; and what it asks on
+                       the whole. Peak is missing on any row the v11 backfill has not reached, target
+                       on any the v18 one has not. *@
                     @if (Model.Diff.PeakWpm is double peakWpm)
                     {
                         <div class="stat-row"><span class="stat-row__label">Peak WPM</span><span class="stat-row__value">@peakWpm.ToString("0", CultureInfo.InvariantCulture)</span></div>
+                    }
+                    @if (Model.Diff.TargetWpm is double targetWpm)
+                    {
+                        <div class="stat-row"><span class="stat-row__label">Target WPM</span><span class="stat-row__value">@targetWpm.ToString("0", CultureInfo.InvariantCulture)</span></div>
                     }
                     @if (Model.Diff.Wpm is double averageWpm)
                     {
@@ -213,9 +219,9 @@
                         {
                             <div class="stat-row"><span class="stat-row__label">Peak WPM</span><span class="stat-row__value">@graphPeak.ToString("0", CultureInfo.InvariantCulture)</span></div>
                         }
-                        @if (Model.Diff.PeakCpm is double peakCpm)
+                        @if (Model.Diff.TargetWpm is double graphTarget)
                         {
-                            <div class="stat-row"><span class="stat-row__label">Peak CPM</span><span class="stat-row__value">@peakCpm.ToString("0", CultureInfo.InvariantCulture)</span></div>
+                            <div class="stat-row"><span class="stat-row__label">Target WPM</span><span class="stat-row__value">@graphTarget.ToString("0", CultureInfo.InvariantCulture)</span></div>
                         }
                         @if (Model.Diff.Wpm is double avgWpm)
                         {
@@ -227,9 +233,10 @@
                         }
                         <p class="wpm-graph__caption faint">
                             Rolling 30-keystroke pace, from the first typed character to the last.
-                            A word is five keystrokes here, the typing-test convention, so the WPM
-                            is exactly the CPM over five and the row above says how long this map's
-                            own words actually run.
+                            A word is five keystrokes here, the typing-test convention, and the row
+                            above says how long this map's own words actually run. Target is the
+                            80th percentile of those windows: 80 percent of the map's keystrokes are
+                            typed at or below it, so it is the pace to hold rather than the peak.
                         </p>
                     }
                     else

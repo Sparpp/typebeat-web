@@ -38,12 +38,19 @@ public class SetPageTest
             Assert.That(html, Does.Contain(">600<"));
             Assert.That(html, Does.Contain("3.2"));
 
-            // The pace pair, peak above average, with "Average" spelled out: a bare "WPM" next to
-            // one number does not say which of the two figures it is.
+            // The pace ladder, peak then target then average, each spelled out: a bare "WPM"
+            // next to one number does not say which of the three figures it is.
             Assert.That(html, Does.Contain("Peak WPM"));
             Assert.That(html, Does.Contain(">143<"));
+            Assert.That(html, Does.Contain("Target WPM"));
+            Assert.That(html, Does.Contain(">118<"));
             Assert.That(html, Does.Contain("Average WPM"));
             Assert.That(html, Does.Contain(">80<"));
+
+            // And the CPM readout is gone from the page entirely (backlog 272): it was the WPM
+            // times five exactly, so it said nothing the row above it did not.
+            Assert.That(html, Does.Not.Contain("Peak CPM"));
+            Assert.That(html, Does.Not.Contain("Average CPM"));
 
             // Chars/word sits under Average WPM and needs no column: it is char_count / word_count
             // off the same row, 600/120 = 5.0 here. ONE DECIMAL, matching the game's wedge, because
@@ -166,8 +173,12 @@ public class SetPageTest
             Assert.That(html, Does.Contain("wpm-graph"));
             Assert.That(html, Does.Contain("title=\"143 WPM\""));
             Assert.That(html, Does.Contain("wpm-graph__bar is-empty"));
-            Assert.That(html, Does.Contain("Peak CPM"));
-            Assert.That(html, Does.Contain(">702<"));
+            // The pace panel's own readout ladder: target replaced the peak CPM that used to sit
+            // here, and the seeded 702 must not surface anywhere on the page any more.
+            Assert.That(html, Does.Contain("Target WPM"));
+            Assert.That(html, Does.Contain(">118<"));
+            Assert.That(html, Does.Not.Contain("Peak CPM"));
+            Assert.That(html, Does.Not.Contain(">702<"));
 
             // Tallest bar is full height, the 60 next to a 143 peak is 41.96% of it.
             Assert.That(html, Does.Contain("height:100%"));
@@ -192,8 +203,11 @@ public class SetPageTest
             Assert.That(html, Does.Contain("No pace graph for this difficulty yet."));
             Assert.That(html, Does.Not.Contain("wpm-graph__bar"));
 
-            // A missing peak drops its row rather than printing a blank or a fabricated 0.
+            // A missing peak drops its row rather than printing a blank or a fabricated 0, and a
+            // missing target (this fixture has neither, being the shape of a row no backfill has
+            // reached) does the same: only the stored average survives.
             Assert.That(html, Does.Not.Contain("Peak WPM"));
+            Assert.That(html, Does.Not.Contain("Target WPM"));
             Assert.That(html, Does.Contain("Average WPM"));
         });
     }

@@ -30,6 +30,28 @@ public class ListingPageTest
     }
 
     [Test]
+    public async Task CardPaceChip_ShowsTheTargetWpm_AndFallsBackToTheAverage()
+    {
+        // The chip is max(coalesce(target_wpm, wpm)) over the set's live difficulties (backlog
+        // 272). Alpha carries a target of 180 against a stored average of 100, so a chip reading
+        // 100 would be reading the wrong column; the packageless fixture carries no target at all,
+        // which is the shape of every row the v18 backfill has not reached, and its chip must still
+        // read its stored 60 rather than disappearing.
+        string alpha = await GetHtml("/beatmapsets?q=" + Uri.EscapeDataString("Operator Alpha"));
+        string packageless = await GetHtml("/beatmapsets?q=" + Uri.EscapeDataString("Editor Era"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(alpha, Does.Contain($"data-set-id=\"{PublicSiteSeed.OpAlphaId}\""));
+            Assert.That(alpha, Does.Contain(">180 WPM<"));
+            Assert.That(alpha, Does.Not.Contain(">100 WPM<"));
+
+            Assert.That(packageless, Does.Contain($"data-set-id=\"{PublicSiteSeed.PackagelessId}\""));
+            Assert.That(packageless, Does.Contain(">60 WPM<"));
+        });
+    }
+
+    [Test]
     public async Task Search_ShortQuery_FallsBackToSubstringMatch()
     {
         // "oh" is mid-word in "Bohemian"; only the ILIKE fallback can find it.

@@ -205,11 +205,11 @@ public class PackageIngestDbTest
         Assert.That(searchHits, Is.True, "search vector should match the title");
 
         // Beatmap row upserted by allocated id with the pace-derived stats.
-        var beatmap = await conn.QuerySingleAsync<(string Filename, string Checksum, int WordCount, int CharCount, decimal Wpm, double Difficulty, string Lyrics)>(
+        var beatmap = await conn.QuerySingleAsync<(string Filename, string Checksum, int WordCount, int CharCount, decimal Wpm, double Difficulty, string Lyrics, double? TargetWpm, int PaceVersion)>(
             """
             SELECT filename AS Filename, checksum_md5 AS Checksum, word_count AS WordCount,
                    char_count AS CharCount, wpm AS Wpm, difficulty_rating AS Difficulty,
-                   lyrics AS Lyrics
+                   lyrics AS Lyrics, target_wpm AS TargetWpm, pace_version AS PaceVersion
             FROM beatmaps WHERE id = 1001
             """);
 
@@ -224,6 +224,13 @@ public class PackageIngestDbTest
             Assert.That((double)beatmap.Wpm, Is.EqualTo(20).Within(1e-6));
             Assert.That(beatmap.Difficulty, Is.EqualTo(0.59).Within(0.01)); // window/feats stars
             Assert.That(beatmap.Lyrics, Is.EqualTo("ab cd")); // the lyrics: search haystack
+
+            // 033_target_wpm.sql: written by the same upsert, NULL here because 5 cells is under
+            // LyricWpmCurve.WINDOW_CELLS = 30 and there is no window to take a percentile of. The
+            // pace_version stamp is what makes the startup sweep skip this row, so it has to be
+            // the CURRENT version or the new column would be filled twice over.
+            Assert.That(beatmap.TargetWpm, Is.Null);
+            Assert.That(beatmap.PaceVersion, Is.EqualTo(LyricPace.VERSION));
         });
 
         // Blobs + assembled package + covers exist in the store.

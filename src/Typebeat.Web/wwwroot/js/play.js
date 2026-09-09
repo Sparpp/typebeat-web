@@ -119,7 +119,7 @@
         if (d.wpm != null) {
             const wpm = document.createElement('span');
             wpm.className = 'diff-pill__wpm';
-            wpm.title = 'average words per minute, five keystrokes to the word';
+            wpm.title = "target words per minute: 80 percent of the map's keystrokes are typed at or below this pace";
             wpm.textContent = Math.round(d.wpm) + ' WPM';
             btn.appendChild(wpm);
         }

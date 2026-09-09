@@ -77,7 +77,11 @@ public static class PlayEndpoints
             SELECT b.id                    AS id,
                    b.version_name          AS versionName,
                    b.difficulty_rating     AS stars,
-                   b.wpm::double precision AS wpm
+                   -- The pill's pace is the TARGET WPM (033_target_wpm.sql), with the stored
+                   -- average as the fallback so a difficulty the LyricPace v18 backfill has not
+                   -- reached still shows a figure rather than losing the pill. Same substitution
+                   -- and same fallback as the listing card's chip (BeatmapsetCardSql).
+                   coalesce(b.target_wpm, b.wpm::double precision) AS wpm
             FROM beatmaps b
             WHERE b.set_id = @setId AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
             ORDER BY b.difficulty_rating DESC, b.id ASC

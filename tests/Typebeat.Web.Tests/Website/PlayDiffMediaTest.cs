@@ -40,11 +40,17 @@ public class PlayDiffMediaTest
             Assert.That((long)diffs[0]["id"]!, Is.EqualTo(PublicSiteSeed.MultiDiffHardId));
             Assert.That((string?)diffs[0]["version_name"], Is.EqualTo("twin hard"));
             Assert.That((double)diffs[0]["stars"]!, Is.EqualTo(6.0).Within(1e-9));
-            Assert.That((double)diffs[0]["wpm"]!, Is.EqualTo(180).Within(1e-9));
+            // The pill's pace is the TARGET WPM since backlog 272, with the stored average as the
+            // fallback for a row the LyricPace v18 backfill has not reached. The hard diff carries
+            // both (target 165, average 180) and the easy one carries only the average (60), so
+            // this one response covers both arms: a pill reading 180 here would be reading the
+            // wrong column.
+            Assert.That((double)diffs[0]["wpm"]!, Is.EqualTo(165).Within(1e-9));
 
             Assert.That((long)diffs[1]["id"]!, Is.EqualTo(PublicSiteSeed.MultiDiffEasyId));
             Assert.That((string?)diffs[1]["version_name"], Is.EqualTo("twin easy"));
             Assert.That((double)diffs[1]["stars"]!, Is.EqualTo(2.0).Within(1e-9));
+            Assert.That((double)diffs[1]["wpm"]!, Is.EqualTo(60).Within(1e-9), "no target stored, so the average stands in");
 
             // The colour is the site's one ramp, not a second one ported into the player script.
             Assert.That((string?)diffs[0]["colour"], Is.EqualTo(Typebeat.Web.DifficultyColour.ForStars(6.0)));

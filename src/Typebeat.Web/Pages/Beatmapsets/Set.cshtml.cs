@@ -118,6 +118,8 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
                    -- any map too short to measure; DiffStats.HasCurve folds the two together.
                    b.peak_wpm              AS PeakWpm,
                    b.peak_cpm              AS PeakCpm,
+                   -- 033_target_wpm.sql, on the same NULL contract as the two above.
+                   b.target_wpm            AS TargetWpm,
                    b.wpm_curve             AS WpmCurve
             FROM beatmaps b
             WHERE b.set_id = @id AND b.filename IS NOT NULL
@@ -390,6 +392,14 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         public string Lyrics { get; init; } = string.Empty;
         public double? PeakWpm { get; init; }
         public double? PeakCpm { get; init; }
+
+        /// <summary>
+        /// The pace to sustain: the 80th percentile of the map's rolling-window readings
+        /// (033_target_wpm.sql, LyricPace v18). Same NULL contract as the peaks above, so the page
+        /// drops the row rather than printing a fabricated 0.
+        /// </summary>
+        public double? TargetWpm { get; init; }
+
         public float[]? WpmCurve { get; init; }
 
         /// <summary>A non-zero bar is never invisible, however small it is next to the peak

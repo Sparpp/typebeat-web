@@ -17,7 +17,8 @@ namespace Typebeat.WireCompat;
 /// <para>
 /// Pace exists twice: the game's <see cref="ClientPace"/> and <see cref="ClientCurve"/> feed song
 /// select's metadata wedge, and the server's <see cref="ServerPace"/> and <see cref="ServerCurve"/>
-/// write <c>beatmaps.wpm</c>, <c>peak_wpm</c>, <c>peak_cpm</c> and <c>wpm_curve</c>, which is what
+/// write <c>beatmaps.wpm</c>, <c>peak_wpm</c>, <c>peak_cpm</c>, <c>target_wpm</c> and
+/// <c>wpm_curve</c>, which is what
 /// the set page prints and graphs. Unlike a score, NONE OF THIS IS EVER ON THE WIRE: the client
 /// computes its figures locally and the server computes its own at ingest, so the mirror is the only
 /// thing keeping the two readouts equal, and a player comparing the wedge with the website is the
@@ -126,6 +127,7 @@ public class LyricPaceParityTest
             Assert.That(s.IsEmpty, Is.False, "the fixture has to be long enough to measure");
             Assert.That(s.PeakWpm, Is.EqualTo(c.PeakWpm), "beatmaps.peak_wpm");
             Assert.That(s.PeakCpm, Is.EqualTo(c.PeakCpm), "beatmaps.peak_cpm");
+            Assert.That(s.TargetWpm, Is.EqualTo(c.TargetWpm), "beatmaps.target_wpm");
             Assert.That(s.StartTime, Is.EqualTo(c.StartTime), "curve start");
             Assert.That(s.EndTime, Is.EqualTo(c.EndTime), "curve end");
 
@@ -138,6 +140,16 @@ public class LyricPaceParityTest
             // the two peaks now always sit in the same window.
             Assert.That(s.PeakWpm, Is.EqualTo(s.PeakCpm / ServerCurve.CHARS_PER_WORD));
             Assert.That(c.PeakWpm, Is.EqualTo(c.PeakCpm / ClientCurve.CHARS_PER_WORD));
+
+            // Non-vacuity for the target row: the fixture's three advertised paces must be three
+            // DIFFERENT numbers, or a port that returned the peak (or the map average) under the
+            // name TargetWpm would satisfy the equality above on both sides at once and the pin
+            // would prove nothing. The fixture is built for this, mixed speeds and a 21 second
+            // instrumental rest, and the assertion is what stops a future edit flattening it.
+            Assert.That(s.TargetWpm, Is.Not.EqualTo(s.PeakWpm), "target is not the peak");
+            Assert.That(s.TargetWpm, Is.Not.EqualTo(ServerPace.Compute(server).AverageWpm), "nor the map average");
+            Assert.That(s.PeakWpm, Is.Not.EqualTo(ServerPace.Compute(server).AverageWpm), "nor are those two each other");
+            Assert.That(s.TargetWpm, Is.LessThan(s.PeakWpm), "and it sits under the peak, being one of the windows");
         });
     }
 
@@ -155,6 +167,8 @@ public class LyricPaceParityTest
             Assert.That(serverCurve.IsEmpty, Is.EqualTo(clientCurve.IsEmpty));
             Assert.That(serverCurve.PeakWpm, Is.EqualTo(clientCurve.PeakWpm));
             Assert.That(serverCurve.PeakCpm, Is.EqualTo(clientCurve.PeakCpm));
+            Assert.That(serverCurve.TargetWpm, Is.EqualTo(clientCurve.TargetWpm));
+            Assert.That(serverCurve.TargetWpm, Is.Zero, "no windows, so no percentile of them");
 
             // And a map with no words divides by no zero: 0, not NaN, on both sides.
             Assert.That(ServerPace.Compute([]).AverageCharsPerWord, Is.EqualTo(ClientPace.Compute([]).AverageCharsPerWord));

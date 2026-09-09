@@ -203,6 +203,26 @@ public static class LyricPace
     /// not move. This backfill has to COMPLETE before any pp version bump lands, or PpBackfill
     /// prices the catalogue against ratings this sweep is still rewriting.</para>
     ///
+    /// <para>v18 = <c>beatmaps.target_wpm</c> IS WRITTEN ALONGSIDE (backlog 272,
+    /// 033_target_wpm.sql): <see cref="LyricWpmCurve.TargetWpm"/>, the 80th percentile of the
+    /// rolling-window WPM readings the v11 sweep already computes, which is the pace 80 percent of
+    /// the map's keystrokes are typed at or below. As at v7, v8, v11 and v13 THE ARITHMETIC OF
+    /// EVERY EXISTING COLUMN IS UNCHANGED: the percentile is taken from the same window readings the
+    /// peaks are taken from, nothing that feeds a count, a pace or a rating moves, and every column
+    /// that already existed rewrites BYTE-IDENTICALLY. The bump exists purely to make the sweep
+    /// revisit every row and fill the new one from the stored blob. The pages this feeds drop the
+    /// CPM readouts in the same change (a CPM has been its WPM times five exactly since v15, so
+    /// <c>peak_cpm</c> told a reader nothing <c>peak_wpm</c> did not); the COLUMN stays and stays
+    /// written, since the <c>cpm:</c> search filter derives from <c>wpm</c> anyway and dropping a
+    /// stored column would buy nothing.
+    /// It is still not free for scores, for the mechanical reason v13 and v15 were not:
+    /// <see cref="PaceBackfill"/> stamps <c>pp_version = 0</c> on every score of every row it
+    /// rewrites, so the whole score table reprices at the next boot, TO IDENTICAL VALUES (pp reads
+    /// star ratings, never a WPM figure, and no rating moves here).
+    /// <c>PerformancePoints.VERSION</c> deliberately stays where it is. Note the ordering against
+    /// v17: that sweep re-rated the whole catalogue and has already COMPLETED on production
+    /// (shipped 2026-09-09), so this bump follows it cleanly rather than racing it.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -215,7 +235,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 17;
+    public const int VERSION = 18;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's

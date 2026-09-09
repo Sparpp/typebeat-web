@@ -215,7 +215,7 @@ public static class PublicSiteSeed
             LeaderboardBeatmapId = await InsertBeatmapAsync(conn, LeaderboardSetId,
                 totalLengthS: 95.5, stars: 3.2, wpm: 80, wordCount: 120, charCount: 600,
                 lyrics: "Neon LIGHTS are calling\nWe TYPE through the storm\n<i>stage whisper</i>",
-                peakWpm: 143, peakCpm: 702, wpmCurve: [60, 95, 143, 0, 88]);
+                peakWpm: 143, peakCpm: 702, wpmCurve: [60, 95, 143, 0, 88], targetWpm: 118);
 
             CoveredSetId = await InsertSetAsync(conn,
                 title: "Covered In Neon", artist: "The Artwork",
@@ -289,9 +289,14 @@ public static class PublicSiteSeed
                 totalLengthS: 100, stars: 2.0, wpm: 60, wordCount: 90, charCount: 420,
                 versionName: "twin easy", filename: "easy.osu");
 
+            // The hard diff carries a target_wpm and the easy one does not, so /play/map/{id}/diffs
+            // proves both arms of its coalesce in one response: the pill reads the target where
+            // there is one, and falls back to the stored average where the v18 backfill has not
+            // been. The target is deliberately BELOW its own average, which no real map is, so a
+            // pill still reading 180 would be reading the wrong column rather than a close number.
             MultiDiffHardId = await InsertBeatmapAsync(conn, MultiDiffSetId,
                 totalLengthS: 100, stars: 6.0, wpm: 180, wordCount: 260, charCount: 1300,
-                versionName: "twin hard", filename: "hard.osu");
+                targetWpm: 165, versionName: "twin hard", filename: "hard.osu");
 
             MultiDiffDroppedId = await InsertBeatmapAsync(conn, MultiDiffSetId,
                 totalLengthS: 100, stars: 4.0, wpm: 120, wordCount: 150, charCount: 700,
@@ -319,16 +324,19 @@ public static class PublicSiteSeed
                 tags: "operatorset", submittedAt: new DateTime(2024, 3, 15, 0, 0, 0, DateTimeKind.Utc));
             // Disjoint lyric haystacks (only "night" shared) so the lyrics: tests can prove
             // single-word narrowing and multi-word AND semantics within the pair.
+            // Alpha's target (180) is ABOVE Bravo's (130) while its average WPM is below: the
+            // target: operator has to invert the wpm: ordering on this pair, which is what proves
+            // it reads its own column instead of the one next to it.
             await InsertBeatmapAsync(conn, OpAlphaId,
                 totalLengthS: 90, stars: 4.5, wpm: 100, wordCount: 100, charCount: 500,
-                lyrics: "neon skyline glowing all night");
+                lyrics: "neon skyline glowing all night", targetWpm: 180);
 
             OpBravoId = await InsertSetAtAsync(conn,
                 title: "Operator Bravo Ballad", artist: "Piano Operator",
                 tags: "operatorset", submittedAt: new DateTime(2022, 11, 1, 0, 0, 0, DateTimeKind.Utc));
             await InsertBeatmapAsync(conn, OpBravoId,
                 totalLengthS: 240, stars: 7.0, wpm: 200, wordCount: 100, charCount: 700,
-                lyrics: "quiet rain falls on the piano at night");
+                lyrics: "quiet rain falls on the piano at night", targetWpm: 130);
 
             // Every seeded set EXCEPT the packageless one gets a version row, mirroring sets
             // that went through the upload pipeline: the set page / card Download actions key
@@ -402,32 +410,35 @@ public static class PublicSiteSeed
             new { ownerId = MapperId, title, artist, tags, status, submittedAt });
 
     /// <summary>
-    /// <paramref name="peakWpm"/> / <paramref name="wpmCurve"/> are the 028_wpm_curve.sql columns.
-    /// Left NULL by default, which is the state of every row the v11 pace backfill has not reached
-    /// (and of every map too short to measure): the set page's WPM tab must degrade to a note for
-    /// those. Only the leaderboard fixture carries a curve, so both paths are covered.
+    /// <paramref name="peakWpm"/> / <paramref name="wpmCurve"/> are the 028_wpm_curve.sql columns
+    /// and <paramref name="targetWpm"/> is 033_target_wpm.sql's. All left NULL by default, which is
+    /// the state of every row the pace backfill has not reached (and of every map too short to
+    /// measure): the set page's WPM tab must degrade to a note for those, and the listing card and
+    /// the /play pill must fall back to the stored average rather than going blank. Only some
+    /// fixtures carry them, so both paths are covered.
     /// </summary>
     private static async Task<long> InsertBeatmapAsync(NpgsqlConnection conn, long setId,
         double totalLengthS, double stars, double wpm, int wordCount, int charCount,
         string lyrics = "", double? peakWpm = null, double? peakCpm = null, float[]? wpmCurve = null,
+        double? targetWpm = null,
         string versionName = "type!beat", string? filename = "map.osu")
         => await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmaps
                 (set_id, version_name, checksum_md5, total_length_s, drain_length_s,
                  difficulty_rating, filename, word_count, char_count, wpm, lyrics,
-                 peak_wpm, peak_cpm, wpm_curve)
+                 peak_wpm, peak_cpm, wpm_curve, target_wpm)
             VALUES
                 (@setId, @versionName, @checksum, @totalLengthS, @drainLengthS,
                  @stars, @filename, @wordCount, @charCount, @wpm, @lyrics,
-                 @peakWpm, @peakCpm, @wpmCurve)
+                 @peakWpm, @peakCpm, @wpmCurve, @targetWpm)
             RETURNING id
             """,
             new
             {
                 setId, versionName, checksum = Guid.NewGuid().ToString("N"), totalLengthS,
                 drainLengthS = totalLengthS * 0.9, stars, filename, wordCount, charCount, wpm, lyrics,
-                peakWpm, peakCpm, wpmCurve,
+                peakWpm, peakCpm, wpmCurve, targetWpm,
             });
 
     /// <summary>

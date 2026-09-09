@@ -10,8 +10,8 @@ namespace Typebeat.Web.Search;
 /// listing's base predicate, and every value is a Dapper parameter; column references come
 /// only from the parser's whitelist, values are NEVER interpolated. Aliases assumed by the
 /// generated SQL match <see cref="Pages.BeatmapsetCardSql"/>: <c>s</c> = beatmapsets,
-/// <c>u</c> = owner. Per-difficulty filters (the stars/wpm/cpm/length numerics and the lyrics:
-/// words) resolve through an EXISTS over <c>beatmaps</c>, so a set matches when ONE of its live
+/// <c>u</c> = owner. Per-difficulty filters (the stars/wpm/cpm/target/length numerics and the
+/// lyrics: words) resolve through an EXISTS over <c>beatmaps</c>, so a set matches when ONE of its live
 /// difficulties satisfies all of them together; everything else (including language:) is
 /// set-scoped.
 /// </summary>
@@ -37,6 +37,11 @@ public static class BeatmapSearchSql
         // time double, never user input) and is the whole lesson of the bug above: an identity
         // written out twice is an identity waiting to drift.
         FilterField.Cpm => $"(b.wpm::double precision * {LyricPace.CHARS_PER_WORD.ToString(CultureInfo.InvariantCulture)})",
+        // Stored outright (033_target_wpm.sql), so no derivation and no fallback: unlike the card
+        // chip and the /play pill, a filter has to mean exactly what it says. A row the LyricPace
+        // v18 backfill has not reached holds NULL here, and NULL fails every comparison, so such a
+        // difficulty is simply invisible to target: rather than being matched on a stand-in.
+        FilterField.TargetWpm => "b.target_wpm",
         FilterField.Length => "b.total_length_s",
         _ => throw new ArgumentOutOfRangeException(nameof(field), field, "not a per-difficulty numeric field"),
     };

@@ -93,6 +93,25 @@ public class BeatmapSearchOperatorTest
     }
 
     [Test]
+    public async Task Target_FiltersOnItsOwnColumn_NotTheStoredAverage()
+    {
+        // Alpha's target is 180 against an average of 100; Bravo's is 130 against an average of
+        // 200. The two orderings are therefore OPPOSITE, which is the whole point of the fixture:
+        // target:>150 has to pick Alpha where wpm:>150 picks Bravo, so an implementation that
+        // quietly read b.wpm (or coalesced onto it) fails here rather than passing by luck.
+        var fastTarget = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset target:>150")));
+        var slowTarget = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset target:<150")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(fastTarget, Does.Contain(PublicSiteSeed.OpAlphaId));
+            Assert.That(fastTarget, Does.Not.Contain(PublicSiteSeed.OpBravoId));
+            Assert.That(slowTarget, Does.Contain(PublicSiteSeed.OpBravoId));
+            Assert.That(slowTarget, Does.Not.Contain(PublicSiteSeed.OpAlphaId));
+        });
+    }
+
+    [Test]
     public async Task Length_MmSs_Filters()
     {
         // Alpha 90s, Bravo 240s.

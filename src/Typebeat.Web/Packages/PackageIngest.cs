@@ -360,12 +360,12 @@ public sealed class PackageIngest(
                     (id, set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s,
                      difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics,
                      sr_dt, sr_ht, sr_literate, sr_literate_dt, sr_literate_ht,
-                     peak_wpm, peak_cpm, wpm_curve, gameplay_fingerprint, freestyle_cell_count)
+                     peak_wpm, peak_cpm, target_wpm, wpm_curve, gameplay_fingerprint, freestyle_cell_count)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
                      @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
                      @srDt, @srHt, @srLiterate, @srLiterateDt, @srLiterateHt,
-                     @peakWpm, @peakCpm, @wpmCurve, @gameplayFingerprint, @freestyleCellCount)
+                     @peakWpm, @peakCpm, @targetWpm, @wpmCurve, @gameplayFingerprint, @freestyleCellCount)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -387,6 +387,7 @@ public sealed class PackageIngest(
                     sr_literate_ht = EXCLUDED.sr_literate_ht,
                     peak_wpm = EXCLUDED.peak_wpm,
                     peak_cpm = EXCLUDED.peak_cpm,
+                    target_wpm = EXCLUDED.target_wpm,
                     wpm_curve = EXCLUDED.wpm_curve,
                     gameplay_fingerprint = EXCLUDED.gameplay_fingerprint,
                     freestyle_cell_count = EXCLUDED.freestyle_cell_count;
@@ -429,10 +430,12 @@ public sealed class PackageIngest(
                     srLiterate = diff.SrLiterate,
                     srLiterateDt = diff.SrLiterateDoubleTime,
                     srLiterateHt = diff.SrLiterateHalfTime,
-                    // The rolling-window pace the set page's WPM tab graphs (028_wpm_curve.sql).
-                    // All three are NULL for a map too short to measure, which renders as no graph.
+                    // The rolling-window pace the set page's WPM tab graphs (028_wpm_curve.sql),
+                    // plus the target pace the pages headline (033_target_wpm.sql). All four are
+                    // NULL for a map too short to measure, which renders as no graph.
                     peakWpm = diff.PeakWpm,
                     peakCpm = diff.PeakCpm,
+                    targetWpm = diff.TargetWpm,
                     wpmCurve = diff.WpmCurvePoints,
                     // The identity of this difficulty's GAMEPLAY (030_gameplay_fingerprint.sql):
                     // the [Lyrics] timing payload minus the menu-only beatdrop, plus the hash of

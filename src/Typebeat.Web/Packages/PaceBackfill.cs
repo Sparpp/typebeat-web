@@ -100,6 +100,7 @@ public static class PaceBackfill
                         sr_literate_ht = @srLiterateHt,
                         peak_wpm = @peakWpm,
                         peak_cpm = @peakCpm,
+                        target_wpm = @targetWpm,
                         wpm_curve = @wpmCurve,
                         freestyle_cell_count = @freestyleCellCount,
                         pace_version = @paceVersion
@@ -137,6 +138,11 @@ public static class PaceBackfill
                         // what a map too short to measure stores.
                         peakWpm = diff.PeakWpm,
                         peakCpm = diff.PeakCpm,
+                        // v18: the target pace the set page, the listing cards and the /play picker
+                        // headline (033_target_wpm.sql), on the same NULL contract. A card or a
+                        // picker pill on a row this sweep has not reached falls back to the stored
+                        // average WPM rather than going blank.
+                        targetWpm = diff.TargetWpm,
                         wpmCurve = diff.WpmCurvePoints,
                         // v16: how many of char_count are freestyle slots, the cells the star
                         // rating prices at a quarter each (031_freestyle_cell_count.sql). Rows

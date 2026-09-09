@@ -1,0 +1,26 @@
+-- typebeat-web migration 033: the map's TARGET typing pace (LyricPace v18), the 80th percentile of
+-- the rolling-window WPM readings 028 already sweeps. 80 percent of a map's keystrokes are typed at
+-- or below this, so it is the pace to sustain through the demanding fifth, sitting between the peak
+-- (one window, often a burst nobody experiences as the map's speed) and the per-line average
+-- (dragged down by every quiet stretch). The game computes the same number locally from the beatmap
+-- it has loaded (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricWpmCurve.cs, mirrored here as
+-- Packages/Lyrics/LyricWpmCurve.cs); this column exists so the set page, the listing cards and the
+-- /play picker can read it without reparsing a .osu blob on every request.
+--
+-- It arrives as the retirement of the CPM readouts: since LyricPace v15 a CPM is its WPM times five
+-- exactly, so peak_cpm said nothing peak_wpm did not, and the pace surfaces now read Peak / Target /
+-- Average, all three in WPM. peak_cpm keeps its column and keeps being written (the cpm: search
+-- filter still derives from wpm, and dropping a stored column buys nothing here); it is only off the
+-- pages.
+--
+-- As with 028 none of this can be computed in SQL: LyricWpmCurve sweeps a 30-cell rolling window
+-- over cell target times reconstructed from the stored .osu lyric data. So this migration only adds
+-- the column, and Packages/PaceBackfill.cs reparses the stored blobs at startup and fills it; the
+-- LyricPace VERSION bump to 18 is what makes that sweep revisit every existing row.
+--
+-- NULL, and no DEFAULT, on 028's exact contract: "no reading" stays distinguishable from a genuine
+-- 0 WPM, and two different rows are NULL here. One the backfill has not reached yet; one it HAS
+-- reached and found unmeasurable (fewer than LyricWpmCurve.WINDOW_CELLS = 30 typeable cells, or no
+-- span at all, which it reports as IsEmpty). Both mean "there is no pace curve for this difficulty",
+-- and every surface either drops the row or falls back to the stored average.
+ALTER TABLE beatmaps ADD COLUMN target_wpm double precision;

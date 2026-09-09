@@ -128,6 +128,102 @@ public class LyricWpmCurveTest
         }
     }
 
+    /// <summary>
+    /// A 30-character word over [0, 3000] (cells at 0, 100, ... 2900) followed by
+    /// <paramref name="tails"/> one-character lines, each contributing exactly one cell at its own
+    /// instant. That makes every window's span hand-computable: window i spans
+    /// targets[i + 29] - targets[i], so window 0 is the word itself and window i &gt; 0 reaches from
+    /// the word's cell i to tail cell i - 1.
+    /// </summary>
+    private static IReadOnlyList<LyricLine> wordThenTails(params double[] tails)
+    {
+        var lines = new List<LyricLine> { singleWordLine(new string('a', 30), 0, 3000) };
+
+        foreach (double t in tails)
+            lines.Add(singleWordLine("a", t, t));
+
+        return lines;
+    }
+
+    [Test]
+    public void TargetWpmIsTheEightiethPercentileOfTheWindowReadings()
+    {
+        // Five windows, hand-computed. cpm = 29 * 60000 / span = 1740000 / span, wpm = cpm / 5:
+        //
+        //   w0: 2900 - 0     =  2900 -> 600 cpm -> 120 wpm
+        //   w1: 5900 - 100   =  5800 -> 300 cpm ->  60 wpm
+        //   w2: 8900 - 200   =  8700 -> 200 cpm ->  40 wpm
+        //   w3: 11900 - 300  = 11600 -> 150 cpm ->  30 wpm
+        //   w4: 17800 - 400  = 17400 -> 100 cpm ->  20 wpm
+        //
+        // Sorted ascending that is [20, 30, 40, 60, 120] with n = 5, and the nearest-rank index is
+        // floor(0.8 * 4 + 0.5) = floor(3.7) = 3, i.e. 60. Same fixture and same numbers as the
+        // game's own LyricWpmCurveTest, which is the point of porting it.
+        var lines = wordThenTails(5900, 8900, 11900, 17800);
+        var curve = LyricWpmCurve.Compute(lines);
+
+        // Non-vacuity: the three figures a map advertises have to be three DIFFERENT numbers here,
+        // or an implementation that reported the peak (or the average) as the target would pass
+        // everything below. The average is the per-line mean: the 30-cell word runs 600 cpm and
+        // each one-cell tail runs 1 cell over the 500 ms floor = 120 cpm, so the mean is
+        // (600 + 4 * 120) / 5 = 216 cpm = 43.2 wpm.
+        double average = LyricPace.Compute(lines).AverageWpm;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(curve.IsEmpty, Is.False);
+            Assert.That(curve.PeakWpm, Is.EqualTo(120.0).Within(1e-9));
+            Assert.That(curve.TargetWpm, Is.EqualTo(60.0).Within(1e-9));
+
+            Assert.That(average, Is.EqualTo(43.2).Within(1e-9));
+            Assert.That(curve.TargetWpm, Is.Not.EqualTo(curve.PeakWpm));
+            Assert.That(curve.TargetWpm, Is.Not.EqualTo(average));
+            Assert.That(curve.PeakWpm, Is.Not.EqualTo(average));
+        });
+    }
+
+    [Test]
+    public void TargetWpmRoundsTheRankToNearestRatherThanTruncatingIt()
+    {
+        // The index rule at a boundary. Seven windows, same arithmetic as above:
+        //
+        //   w0: 2900          -> 120 wpm      w4: 9100 - 400  =  8700 -> 40 wpm
+        //   w1: 3580 - 100    = 3480 -> 100   w5: 12100 - 500 = 11600 -> 30 wpm
+        //   w2: 4550 - 200    = 4350 ->  80   w6: 18000 - 600 = 17400 -> 20 wpm
+        //   w3: 6100 - 300    = 5800 ->  60
+        //
+        // Sorted: [20, 30, 40, 60, 80, 100, 120], n = 7, and 0.8 * (7 - 1) = 4.8 sits between two
+        // ranks. Nearest rank takes index 5 (100 wpm); truncating the same product would take
+        // index 4 (80 wpm), and a percentile that quietly reports the rank BELOW the one it claims
+        // understates every map. This fixture is what tells the two apart.
+        var curve = LyricWpmCurve.Compute(wordThenTails(3580, 4550, 6100, 9100, 12100, 18000));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(curve.IsEmpty, Is.False);
+            Assert.That(curve.PeakWpm, Is.EqualTo(120.0).Within(1e-9));
+            Assert.That(curve.TargetWpm, Is.EqualTo(100.0).Within(1e-9));
+        });
+    }
+
+    [Test]
+    public void TargetWpmIsNeverAboveThePeakNorBelowTheSlowestWindow()
+    {
+        // It is one of the readings, not an interpolation between two of them and not a mean, so it
+        // is always a pace some window of the map really asks for.
+        foreach (var curve in new[]
+                 {
+                     LyricWpmCurve.Compute([evenWordsLine(40, 0, 100)]),
+                     LyricWpmCurve.Compute([evenWordsLine(40, 0, 200), evenWordsLine(40, 8000, 60)]),
+                     LyricWpmCurve.Compute(wordThenTails(5900, 8900, 11900, 17800)),
+                 })
+        {
+            Assert.That(curve.IsEmpty, Is.False);
+            Assert.That(curve.TargetWpm, Is.LessThanOrEqualTo(curve.PeakWpm));
+            Assert.That(curve.TargetWpm, Is.GreaterThan(0));
+        }
+    }
+
     [Test]
     public void PeakIsTheMaximumOfTheCurve()
     {
@@ -171,6 +267,7 @@ public class LyricWpmCurveTest
             Assert.That(curve.Curve, Is.Empty);
             Assert.That(curve.PeakWpm, Is.Zero);
             Assert.That(curve.PeakCpm, Is.Zero);
+            Assert.That(curve.TargetWpm, Is.Zero);
         });
     }
 
@@ -184,6 +281,7 @@ public class LyricWpmCurveTest
             Assert.That(curve.IsEmpty, Is.True);
             Assert.That(curve.PeakWpm, Is.Zero);
             Assert.That(curve.PeakCpm, Is.Zero);
+            Assert.That(curve.TargetWpm, Is.Zero);
             Assert.That(curve.StartTime, Is.Zero);
             Assert.That(curve.EndTime, Is.Zero);
         });
@@ -201,6 +299,7 @@ public class LyricWpmCurveTest
             Assert.That(curve.IsEmpty, Is.True);
             Assert.That(curve.PeakWpm, Is.Zero);
             Assert.That(curve.PeakCpm, Is.Zero);
+            Assert.That(curve.TargetWpm, Is.Zero);
         });
     }
 
@@ -239,6 +338,7 @@ public class LyricWpmCurveTest
         {
             Assert.That(punctuated.PeakWpm, Is.EqualTo(plain.PeakWpm).Within(1e-9));
             Assert.That(punctuated.PeakCpm, Is.EqualTo(plain.PeakCpm).Within(1e-9));
+            Assert.That(punctuated.TargetWpm, Is.EqualTo(plain.TargetWpm).Within(1e-9));
             Assert.That(punctuated.Curve, Is.EqualTo(plain.Curve));
         });
     }
