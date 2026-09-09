@@ -225,11 +225,12 @@ public class PackageIngestDbTest
             Assert.That(beatmap.Difficulty, Is.EqualTo(0.59).Within(0.01)); // window/feats stars
             Assert.That(beatmap.Lyrics, Is.EqualTo("ab cd")); // the lyrics: search haystack
 
-            // 033_target_wpm.sql: written by the same upsert, NULL here because 5 cells is under
-            // LyricWpmCurve.WINDOW_CELLS = 30 and there is no window to take a percentile of. The
-            // pace_version stamp is what makes the startup sweep skip this row, so it has to be
-            // the CURRENT version or the new column would be filled twice over.
-            Assert.That(beatmap.TargetWpm, Is.Null);
+            // 033_target_wpm.sql: written by the same upsert. The map is a single line, so the
+            // fastest fifth of it is that line and the target equals the average, 20 WPM: a
+            // per-line figure needs no rolling window, which is why this is a number where
+            // peak_wpm is NULL. The pace_version stamp is what makes the startup sweep skip this
+            // row, so it has to be the CURRENT version or the new column would be filled twice over.
+            Assert.That(beatmap.TargetWpm, Is.EqualTo(20.0).Within(1e-9));
             Assert.That(beatmap.PaceVersion, Is.EqualTo(LyricPace.VERSION));
         });
 

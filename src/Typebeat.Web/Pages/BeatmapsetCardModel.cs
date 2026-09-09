@@ -10,7 +10,7 @@ namespace Typebeat.Web.Pages;
 /// <param name="PreviewUrl">Site-relative 30s preview mp3, or null → no play button.</param>
 /// <param name="Date">submitted_at; timestamptz arrives from Npgsql as UTC DateTime.</param>
 /// <param name="Wpm">The headline pace of the hardest difficulty, null when unknown: its TARGET
-/// WPM (033_target_wpm.sql, the 80th percentile of its rolling windows), falling back to the stored
+/// WPM (033_target_wpm.sql, the average pace of its fastest fifth of lines), falling back to the stored
 /// AVERAGE WPM on any row the LyricPace v18 backfill has not reached yet, so a card is never blank
 /// while the sweep is still running. A word is five typeable cells (LyricPace.CHARS_PER_WORD), the
 /// typing-test convention, so either reading means what a WPM means anywhere else.</param>

@@ -111,11 +111,10 @@ public sealed class ParsedDifficulty
 
     /// <summary>
     /// The map's rolling-window pace (<see cref="LyricWpmCurve"/>): the peak WPM and CPM a perfect
-    /// player would ever hit on it, the target (80th percentile) pace, plus the downsampled WPM
-    /// curve over map time. Stored on the beatmap row as <c>peak_wpm</c> / <c>peak_cpm</c> /
-    /// <c>target_wpm</c> / <c>wpm_curve</c> (028_wpm_curve.sql, 033_target_wpm.sql) so the set page
-    /// can graph the map without reparsing its blob. Computed lazily and cached like the rate
-    /// ratings above: it is a full sweep over every cell of the map.
+    /// player would ever hit on it, plus the downsampled WPM curve over map time. Stored on the
+    /// beatmap row as <c>peak_wpm</c> / <c>peak_cpm</c> / <c>wpm_curve</c> (028_wpm_curve.sql) so
+    /// the set page can graph the map without reparsing its blob. Computed lazily and cached like
+    /// the rate ratings above: it is a full sweep over every cell of the map.
     /// </summary>
     public LyricWpmCurve WpmCurve => wpmCurve ??= LyricWpmCurve.Compute(Lines);
 
@@ -130,12 +129,19 @@ public sealed class ParsedDifficulty
     public double? PeakCpm => WpmCurve.IsEmpty ? null : WpmCurve.PeakCpm;
 
     /// <summary>
-    /// The pace to sustain (<see cref="LyricWpmCurve.TargetWpm"/>, the 80th percentile of the
-    /// window readings), stored as <c>target_wpm</c> (033_target_wpm.sql). Same
-    /// null-when-unmeasurable rule as <see cref="PeakWpm"/>: a map with no curve has no target
-    /// either, and NULL rather than 0 keeps that distinguishable from a real reading.
+    /// The pace to sustain (<see cref="LyricPace.PaceStatistics.TargetWpm"/>, the average WPM
+    /// across the fastest fifth of the map's lyric lines), stored as <c>target_wpm</c>
+    /// (033_target_wpm.sql).
+    ///
+    /// <para>It comes off <see cref="Pace"/>, NOT off <see cref="WpmCurve"/>, so its null rule is
+    /// the one <c>beatmaps.wpm</c> itself would want rather than the curve's: null exactly when the
+    /// map has no counted line at all (<see cref="LyricPace.PaceStatistics.TypeableCellCount"/> is
+    /// 0), which is the only shape on which a per-line mean is meaningless. A map of three lines is
+    /// far too short for the 30-cell curve but its fastest line is a perfectly good target, so
+    /// gating this on <c>WpmCurve.IsEmpty</c> would blank a figure the game's own wedge is happily
+    /// showing. NULL rather than 0 keeps "no reading" distinguishable from a real one.</para>
     /// </summary>
-    public double? TargetWpm => WpmCurve.IsEmpty ? null : WpmCurve.TargetWpm;
+    public double? TargetWpm => Pace.TypeableCellCount == 0 ? null : Pace.TargetWpm;
 
     /// <summary>
     /// The WPM curve as the <c>real[]</c> the column holds (<c>float4</c> is well past what a bar

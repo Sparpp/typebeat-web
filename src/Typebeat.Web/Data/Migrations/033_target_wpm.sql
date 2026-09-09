@@ -1,10 +1,11 @@
--- typebeat-web migration 033: the map's TARGET typing pace (LyricPace v18), the 80th percentile of
--- the rolling-window WPM readings 028 already sweeps. 80 percent of a map's keystrokes are typed at
--- or below this, so it is the pace to sustain through the demanding fifth, sitting between the peak
--- (one window, often a burst nobody experiences as the map's speed) and the per-line average
--- (dragged down by every quiet stretch). The game computes the same number locally from the beatmap
--- it has loaded (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricWpmCurve.cs, mirrored here as
--- Packages/Lyrics/LyricWpmCurve.cs); this column exists so the set page, the listing cards and the
+-- typebeat-web migration 033: the map's TARGET typing pace (LyricPace v18), the average WPM across
+-- the FASTEST FIFTH of its lyric lines. It is the same per-line estimator beatmaps.wpm already is (a
+-- line's typeable cells over its boundary window, floored at 500 ms, averaged unweighted over
+-- lines), taken over the top 20 percent of the lines instead of over all of them, so it says what
+-- the map's demanding stretches ask where wpm says what it asks on the whole, and it can never read
+-- BELOW wpm. The game computes the same number locally from the beatmap it has loaded
+-- (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricPaceStatistics.cs, mirrored here as
+-- Packages/Lyrics/LyricPace.cs); this column exists so the set page, the listing cards and the
 -- /play picker can read it without reparsing a .osu blob on every request.
 --
 -- It arrives as the retirement of the CPM readouts: since LyricPace v15 a CPM is its WPM times five
@@ -13,14 +14,18 @@
 -- filter still derives from wpm, and dropping a stored column buys nothing here); it is only off the
 -- pages.
 --
--- As with 028 none of this can be computed in SQL: LyricWpmCurve sweeps a 30-cell rolling window
--- over cell target times reconstructed from the stored .osu lyric data. So this migration only adds
--- the column, and Packages/PaceBackfill.cs reparses the stored blobs at startup and fills it; the
--- LyricPace VERSION bump to 18 is what makes that sweep revisit every existing row.
+-- As with 028 none of this can be computed in SQL: the per-line rates are reconstructed from the
+-- stored .osu lyric data, through the same text normalization the client types against. So this
+-- migration only adds the column, and Packages/PaceBackfill.cs reparses the stored blobs at startup
+-- and fills it; the LyricPace VERSION bump to 18 is what makes that sweep revisit every existing
+-- row.
 --
--- NULL, and no DEFAULT, on 028's exact contract: "no reading" stays distinguishable from a genuine
--- 0 WPM, and two different rows are NULL here. One the backfill has not reached yet; one it HAS
--- reached and found unmeasurable (fewer than LyricWpmCurve.WINDOW_CELLS = 30 typeable cells, or no
--- span at all, which it reports as IsEmpty). Both mean "there is no pace curve for this difficulty",
--- and every surface either drops the row or falls back to the stored average.
+-- NULL, and no DEFAULT, so "no reading" stays distinguishable from a genuine 0 WPM. This is NOT
+-- 028's contract, because this figure is not the curve's: 028's peak_wpm / wpm_curve are NULL on any
+-- map under LyricWpmCurve.WINDOW_CELLS = 30 typeable cells, while a fifth of the lines exists as
+-- soon as ONE line does. So the only row this is NULL on for arithmetic reasons is a map with no
+-- counted line at all (BeatmapPackage.TargetWpm, TypeableCellCount = 0), exactly the shape on which
+-- beatmaps.wpm itself would be meaningless; every other NULL here is a row the v18 backfill has not
+-- reached yet. The card chip and the /play pill coalesce onto the stored average for those, and the
+-- set page and the target: search filter drop them.
 ALTER TABLE beatmaps ADD COLUMN target_wpm double precision;

@@ -17,8 +17,8 @@ namespace Typebeat.WireCompat;
 /// <para>
 /// Pace exists twice: the game's <see cref="ClientPace"/> and <see cref="ClientCurve"/> feed song
 /// select's metadata wedge, and the server's <see cref="ServerPace"/> and <see cref="ServerCurve"/>
-/// write <c>beatmaps.wpm</c>, <c>peak_wpm</c>, <c>peak_cpm</c>, <c>target_wpm</c> and
-/// <c>wpm_curve</c>, which is what
+/// write <c>beatmaps.wpm</c> and <c>target_wpm</c> (the pace pair) plus <c>peak_wpm</c>,
+/// <c>peak_cpm</c> and <c>wpm_curve</c> (the curve), which is what
 /// the set page prints and graphs. Unlike a score, NONE OF THIS IS EVER ON THE WIRE: the client
 /// computes its figures locally and the server computes its own at ingest, so the mirror is the only
 /// thing keeping the two readouts equal, and a player comparing the wedge with the website is the
@@ -104,6 +104,7 @@ public class LyricPaceParityTest
             Assert.That(s.AverageCpm, Is.EqualTo(c.AverageCpm), "average CPM");
             Assert.That(s.AverageWpm, Is.EqualTo(c.AverageWpm), "beatmaps.wpm");
             Assert.That(s.AverageCharsPerWord, Is.EqualTo(c.AverageCharsPerWord), "the set page's Chars/word row");
+            Assert.That(s.TargetWpm, Is.EqualTo(c.TargetWpm), "beatmaps.target_wpm");
 
             // Non-vacuity for the row above: a fixture whose words happened to average exactly 5
             // cells would satisfy every assertion here even if one side had kept the real-word
@@ -111,6 +112,23 @@ public class LyricPaceParityTest
             Assert.That(s.AverageCharsPerWord, Is.Not.EqualTo(ServerPace.CHARS_PER_WORD),
                 "the fixture has to sit off 5 cells per word for this to test anything");
             Assert.That(s.AverageWpm, Is.EqualTo(s.AverageCpm / ServerPace.CHARS_PER_WORD), "and WPM is CPM/5 on both sides");
+
+            // Non-vacuity for the target row, which needs two separate things of the fixture.
+            //
+            // First, the two figures must be DIFFERENT numbers: a port that returned the map
+            // average under the name TargetWpm would satisfy the equality above on both sides at
+            // once and the pin would prove nothing. The fixture's five lines run 340, 435, 1020,
+            // 432 and 840 CPM, so the average is 3067/5 = 613.4 CPM = 122.68 WPM while the target
+            // is the fastest ceil(0.20 * 5) = 1 of them, 1020 CPM = 204 WPM.
+            //
+            // Second, and this is why the fixture has FIVE lines rather than the four it had before
+            // the target existed: at n = 5 the selected count steps with the fraction
+            // (ceil(0.20 * 5) = 1 against ceil(0.25 * 5) = 2), so a one-sided retune of
+            // target_line_fraction in either mirror lands here. At n = 4 both fractions select one
+            // line and this pin would sleep through the drift.
+            Assert.That(s.TargetWpm, Is.EqualTo(204.0).Within(1e-9), "the fastest line, 1020 CPM");
+            Assert.That(s.AverageWpm, Is.EqualTo(122.68).Within(1e-9), "against a 613.4 CPM map average");
+            Assert.That(s.TargetWpm, Is.GreaterThan(s.AverageWpm), "target is not the average");
         });
     }
 
@@ -127,7 +145,6 @@ public class LyricPaceParityTest
             Assert.That(s.IsEmpty, Is.False, "the fixture has to be long enough to measure");
             Assert.That(s.PeakWpm, Is.EqualTo(c.PeakWpm), "beatmaps.peak_wpm");
             Assert.That(s.PeakCpm, Is.EqualTo(c.PeakCpm), "beatmaps.peak_cpm");
-            Assert.That(s.TargetWpm, Is.EqualTo(c.TargetWpm), "beatmaps.target_wpm");
             Assert.That(s.StartTime, Is.EqualTo(c.StartTime), "curve start");
             Assert.That(s.EndTime, Is.EqualTo(c.EndTime), "curve end");
 
@@ -141,15 +158,12 @@ public class LyricPaceParityTest
             Assert.That(s.PeakWpm, Is.EqualTo(s.PeakCpm / ServerCurve.CHARS_PER_WORD));
             Assert.That(c.PeakWpm, Is.EqualTo(c.PeakCpm / ClientCurve.CHARS_PER_WORD));
 
-            // Non-vacuity for the target row: the fixture's three advertised paces must be three
-            // DIFFERENT numbers, or a port that returned the peak (or the map average) under the
-            // name TargetWpm would satisfy the equality above on both sides at once and the pin
-            // would prove nothing. The fixture is built for this, mixed speeds and a 21 second
-            // instrumental rest, and the assertion is what stops a future edit flattening it.
-            Assert.That(s.TargetWpm, Is.Not.EqualTo(s.PeakWpm), "target is not the peak");
-            Assert.That(s.TargetWpm, Is.Not.EqualTo(ServerPace.Compute(server).AverageWpm), "nor the map average");
-            Assert.That(s.PeakWpm, Is.Not.EqualTo(ServerPace.Compute(server).AverageWpm), "nor are those two each other");
-            Assert.That(s.TargetWpm, Is.LessThan(s.PeakWpm), "and it sits under the peak, being one of the windows");
+            // The peak, the target and the map average are three different statistics over the same
+            // fixture, and they have to read as three different numbers or a surface that showed
+            // one where it means another would go unnoticed. The target itself lives on the pace
+            // pair, not here (it is a per-line figure), and is pinned in the test above.
+            Assert.That(s.PeakWpm, Is.Not.EqualTo(ServerPace.Compute(server).AverageWpm), "peak is not the map average");
+            Assert.That(s.PeakWpm, Is.Not.EqualTo(ServerPace.Compute(server).TargetWpm), "nor the map target");
         });
     }
 
@@ -167,19 +181,32 @@ public class LyricPaceParityTest
             Assert.That(serverCurve.IsEmpty, Is.EqualTo(clientCurve.IsEmpty));
             Assert.That(serverCurve.PeakWpm, Is.EqualTo(clientCurve.PeakWpm));
             Assert.That(serverCurve.PeakCpm, Is.EqualTo(clientCurve.PeakCpm));
-            Assert.That(serverCurve.TargetWpm, Is.EqualTo(clientCurve.TargetWpm));
-            Assert.That(serverCurve.TargetWpm, Is.Zero, "no windows, so no percentile of them");
+
+            // The TARGET does not degenerate with the curve, and both ports have to agree on that
+            // too: one line is already a fifth of one line, so this two-word map has a target where
+            // it has no peak, and with one counted line the target is that line, i.e. the average.
+            Assert.That(ServerPace.Compute(server).TargetWpm, Is.EqualTo(ClientPace.Compute(client).TargetWpm));
+            Assert.That(ServerPace.Compute(server).TargetWpm, Is.EqualTo(ServerPace.Compute(server).AverageWpm));
+            Assert.That(ServerPace.Compute(server).TargetWpm, Is.Not.Zero, "a per-line figure survives a map with no window");
 
             // And a map with no words divides by no zero: 0, not NaN, on both sides.
             Assert.That(ServerPace.Compute([]).AverageCharsPerWord, Is.EqualTo(ClientPace.Compute([]).AverageCharsPerWord));
             Assert.That(ServerPace.Compute([]).AverageCharsPerWord, Is.Zero);
+            Assert.That(ServerPace.Compute([]).TargetWpm, Is.EqualTo(ClientPace.Compute([]).TargetWpm));
+            Assert.That(ServerPace.Compute([]).TargetWpm, Is.Zero, "no counted line, so no fifth of one");
         });
     }
 
     /// <summary>
     /// The awkward fixture described on the class, projected into each repo's own line type. Long
-    /// enough to fill several rolling windows (about 98 typeable cells against a 30-cell window), so
-    /// the curve has real bars rather than the single window a minimal fixture would give it.
+    /// enough to fill several rolling windows (127 typeable cells against a 30-cell window), so the
+    /// curve has real bars rather than the single window a minimal fixture would give it.
+    ///
+    /// <para>FIVE lines, and the count is load bearing: the target pace selects
+    /// ceil(target_line_fraction * lineCount) of them, which at five lines takes one line at 0.20
+    /// and two at 0.25. So a one-sided retune of that constant in either mirror shows up here,
+    /// where at four lines both fractions would have selected the same one line and the pin would
+    /// have slept through it.</para>
     /// </summary>
     private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) TwinMaps()
         => Twin(
@@ -192,6 +219,8 @@ public class LyricPaceParityTest
                 [("world", 8000, 8300), ("world", 8300, 8600), ("world", 8600, 9000)]),
             ("After a long-drawn instrumental rest...", 30000, 35000,
                 [("After", 30000, 31000), ("a", 31000, 31300), ("long-drawn", 31300, 32200), ("instrumental", 32200, 34000), ("rest...", 34000, 35000)]),
+            ("Twin maps need one more line", 36000, 38000,
+                [("Twin", 36000, 36400), ("maps", 36400, 36700), ("need", 36700, 37000), ("one", 37000, 37300), ("more", 37300, 37600), ("line", 37600, 38000)]),
         ]);
 
     /// <summary>The one lyric shape, projected into each repo's own <c>LyricLine</c> type.</summary>

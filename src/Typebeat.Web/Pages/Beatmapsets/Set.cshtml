@@ -158,10 +158,10 @@
                         <div class="stat-row"><span class="stat-row__label">Characters</span><span class="stat-row__value">@chars.ToString("N0", CultureInfo.InvariantCulture)</span></div>
                     }
                     @* Peak, then target, then average: one unit, three readings, hardest first. The
-                       fastest stretch the map ever asks for; the pace 80 percent of its keystrokes
-                       are typed at or below, which is the one worth aiming at; and what it asks on
-                       the whole. Peak is missing on any row the v11 backfill has not reached, target
-                       on any the v18 one has not. *@
+                       fastest stretch the map ever asks for; the average WPM across the fastest
+                       fifth of its lyric lines, which is the one worth aiming at; and what it asks
+                       on the whole. Peak is missing on any row the v11 backfill has not reached,
+                       target on any the v18 one has not. *@
                     @if (Model.Diff.PeakWpm is double peakWpm)
                     {
                         <div class="stat-row"><span class="stat-row__label">Peak WPM</span><span class="stat-row__value">@peakWpm.ToString("0", CultureInfo.InvariantCulture)</span></div>
@@ -234,9 +234,10 @@
                         <p class="wpm-graph__caption faint">
                             Rolling 30-keystroke pace, from the first typed character to the last.
                             A word is five keystrokes here, the typing-test convention, and the row
-                            above says how long this map's own words actually run. Target is the
-                            80th percentile of those windows: 80 percent of the map's keystrokes are
-                            typed at or below it, so it is the pace to hold rather than the peak.
+                            above says how long this map's own words actually run. Target is not off
+                            this graph: it is the average WPM across the fastest fifth of the map's
+                            lyric lines, so it is the pace to hold through the hard stretches rather
+                            than the one window at the peak.
                         </p>
                     }
                     else

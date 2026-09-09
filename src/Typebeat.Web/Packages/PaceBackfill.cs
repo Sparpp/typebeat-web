@@ -139,9 +139,11 @@ public static class PaceBackfill
                         peakWpm = diff.PeakWpm,
                         peakCpm = diff.PeakCpm,
                         // v18: the target pace the set page, the listing cards and the /play picker
-                        // headline (033_target_wpm.sql), on the same NULL contract. A card or a
-                        // picker pill on a row this sweep has not reached falls back to the stored
-                        // average WPM rather than going blank.
+                        // headline (033_target_wpm.sql), the average WPM of the map's fastest fifth
+                        // of lines. NULL only on a map with no counted line, which is a stricter
+                        // rule than the curve columns above it carry. A card or a picker pill on a
+                        // row this sweep has not reached yet falls back to the stored average WPM
+                        // rather than going blank.
                         targetWpm = diff.TargetWpm,
                         wpmCurve = diff.WpmCurvePoints,
                         // v16: how many of char_count are freestyle slots, the cells the star

@@ -163,6 +163,10 @@ WireCompat is where that is provable, because it is the only project that compil
   curve), computed locally by song select and stored here on the beatmap row for the set page's WPM
   tab (`028_wpm_curve.sql`). It is deliberately NOT on the wire, so the mirror is the only thing
   keeping the two readouts equal. It stores, so a change needs a `LyricPace.VERSION` bump too.
+  The PER-LINE figures are the other half of the same story and live in `Packages/Lyrics/LyricPace.cs`
+  (mirroring the game's `Beatmaps/LyricPaceStatistics.cs`): `beatmaps.wpm` and, since backlog 272,
+  `beatmaps.target_wpm` (`033_target_wpm.sql`), the average WPM across the fastest fifth of the map's
+  lines, on the same not-on-the-wire, bump-the-VERSION rule. `LyricPaceParityTest` pins both halves.
 - **`InstrumentalGaps` must stay in lockstep** with the game copy (`MIN_GAP_MS` 10000 and the
   perceived-gap/skip-window rules): the play-time anti-cheat gate subtracts the skip allowance it
   computes, so drift either re-unranks honest skip users or lets impossibly fast plays rank. Since

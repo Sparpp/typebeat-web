@@ -430,11 +430,13 @@ public sealed class PackageIngest(
                     srLiterate = diff.SrLiterate,
                     srLiterateDt = diff.SrLiterateDoubleTime,
                     srLiterateHt = diff.SrLiterateHalfTime,
-                    // The rolling-window pace the set page's WPM tab graphs (028_wpm_curve.sql),
-                    // plus the target pace the pages headline (033_target_wpm.sql). All four are
-                    // NULL for a map too short to measure, which renders as no graph.
+                    // The rolling-window pace the set page's WPM tab graphs (028_wpm_curve.sql).
+                    // All three are NULL for a map too short to measure, which renders as no graph.
                     peakWpm = diff.PeakWpm,
                     peakCpm = diff.PeakCpm,
+                    // The target pace the pages headline (033_target_wpm.sql). NOT on the curve's
+                    // contract: it is a per-line figure, so it survives on maps far too short to
+                    // sweep and is NULL only where beatmaps.wpm itself would be meaningless.
                     targetWpm = diff.TargetWpm,
                     wpmCurve = diff.WpmCurvePoints,
                     // The identity of this difficulty's GAMEPLAY (030_gameplay_fingerprint.sql):

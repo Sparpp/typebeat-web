@@ -15,7 +15,10 @@ namespace Typebeat.Web.Packages.Lyrics;
 ///    one, so WPM here means what it means on MonkeyType, on the in-game HUD and on the results
 ///    screen; the map's true word length is published separately as
 ///    <see cref="PaceStatistics.AverageCharsPerWord"/> rather than left implicit in a CPM:WPM
-///    ratio nobody could read off the page.
+///    ratio nobody could read off the page. <see cref="PaceStatistics.TargetWpm"/> is that same
+///    unweighted mean taken over the FASTEST fifth of the lines instead of all of them, one
+///    estimator over two selections of the one pool, which is why it lives here and not on the
+///    rolling-window curve next door.
 ///  - stars: <see cref="LyricDifficulty"/>, the map's pace over sliding windows measured against
 ///    human typing capability, summed over greedy non-overlapping FEATS (backlog 269), mirroring
 ///    the game's typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty. That file's own summary
@@ -204,11 +207,14 @@ public static class LyricPace
     /// prices the catalogue against ratings this sweep is still rewriting.</para>
     ///
     /// <para>v18 = <c>beatmaps.target_wpm</c> IS WRITTEN ALONGSIDE (backlog 272,
-    /// 033_target_wpm.sql): <see cref="LyricWpmCurve.TargetWpm"/>, the 80th percentile of the
-    /// rolling-window WPM readings the v11 sweep already computes, which is the pace 80 percent of
-    /// the map's keystrokes are typed at or below. As at v7, v8, v11 and v13 THE ARITHMETIC OF
-    /// EVERY EXISTING COLUMN IS UNCHANGED: the percentile is taken from the same window readings the
-    /// peaks are taken from, nothing that feeds a count, a pace or a rating moves, and every column
+    /// 033_target_wpm.sql): <see cref="PaceStatistics.TargetWpm"/>, the average WPM across the
+    /// FASTEST FIFTH of the map's lyric lines, which is the pace its demanding stretches ask for.
+    /// It is the same per-line estimator <c>wpm</c> itself is (a line's typeable cells over its
+    /// boundary window, unweighted across lines), taken over the top
+    /// <c>target_line_fraction</c> of the lines instead of all of them, so it can never read below
+    /// the stored average. As at v7, v8, v11 and v13 THE ARITHMETIC OF EVERY EXISTING COLUMN IS
+    /// UNCHANGED: the new figure is a second selection over the same per-line rates the average is
+    /// already taken over, nothing that feeds a count, a pace or a rating moves, and every column
     /// that already existed rewrites BYTE-IDENTICALLY. The bump exists purely to make the sweep
     /// revisit every row and fill the new one from the stored blob. The pages this feeds drop the
     /// CPM readouts in the same change (a CPM has been its WPM times five exactly since v15, so
@@ -248,7 +254,28 @@ public static class LyricPace
     // LyricPaceStatistics.cs: guards degenerate data from exploding the rate.
     private const double min_line_window_ms = 500;
 
+    /// <summary>
+    /// LyricPaceStatistics.cs: how much of the map <see cref="PaceStatistics.TargetWpm"/> averages,
+    /// the fastest 0.20 of its counted lines, rounded UP so every map has at least one line in the
+    /// selection however short it is.
+    /// </summary>
+    private const double target_line_fraction = 0.20;
+
     /// <param name="AverageCpm">Mean of per-line (typeable cells / boundary window) rates.</param>
+    /// <param name="TargetWpm">
+    /// The pace to SUSTAIN: the average WPM across the FASTEST <see cref="target_line_fraction"/>
+    /// of the map's lyric lines (rounded up, at least one), stored as <c>beatmaps.target_wpm</c>
+    /// (033_target_wpm.sql). Exactly the estimator <see cref="PaceStatistics.AverageWpm"/> is,
+    /// restricted to the demanding lines, so the two read as a pair and
+    /// <see cref="PaceStatistics.AverageWpm"/> &lt;= this ALWAYS (a mean over the top fifth cannot
+    /// sit below the mean over all of them), with equality exactly when every counted line runs at
+    /// the same rate.
+    ///
+    /// <para>Selection is by LINE, not by keystroke and not by time, so an instrumental gap between
+    /// lines cannot dilute it and a burst inside one line cannot inflate it: a line is one vote
+    /// whatever it holds, the same convention <paramref name="AverageCpm"/> already uses. 0 for a
+    /// map with no counted line.</para>
+    /// </param>
     /// <param name="DifficultyRating">Stars from <see cref="LyricDifficulty"/> (no-mod baseline).</param>
     /// <param name="FreestyleCellCount">
     /// How many of <paramref name="TypeableCellCount"/> are FREESTYLE slots, i.e. cells with a
@@ -264,7 +291,8 @@ public static class LyricPace
         int TypeableCellCount,
         int WordCount,
         double DifficultyRating,
-        int FreestyleCellCount)
+        int FreestyleCellCount,
+        double TargetWpm)
     {
         /// <summary>
         /// <see cref="AverageCpm"/> over <see cref="CHARS_PER_WORD"/>. DERIVED rather than
@@ -297,6 +325,12 @@ public static class LyricPace
         int totalFreestyle = 0;
         int lineCount = 0;
         double cpmSum = 0;
+
+        // Every counted line's own rate, kept so TargetWpm can average the fastest fifth of them.
+        // One entry per line, in the same order cpmSum accumulates, so the selection pool is
+        // EXACTLY the set of lines the map average is taken over: a line skipped for holding no
+        // cell is skipped by both or by neither.
+        var lineCpms = new List<double>();
 
         foreach (var line in lines)
         {
@@ -349,7 +383,10 @@ public static class LyricPace
             // WPM is not accumulated here: it is CPM / CHARS_PER_WORD by definition (see
             // PaceStatistics.AverageWpm), so a second sum could only introduce a way for the two to
             // disagree. The word COUNT is still accumulated, because AverageCharsPerWord needs it.
-            cpmSum += cells / windowMinutes;
+            double lineCpm = cells / windowMinutes;
+
+            cpmSum += lineCpm;
+            lineCpms.Add(lineCpm);
             totalCells += cells;
             totalWords += words;
             totalFreestyle += freestyle;
@@ -359,11 +396,25 @@ public static class LyricPace
         if (lineCount == 0)
             return default;
 
+        // The fastest fifth, by line: sort the per-line rates DESCENDING and take the head of the
+        // list. The count rounds up, so a map of four lines still selects its one hardest line
+        // rather than an empty slice, and Math.Max is belt and braces around a retune of
+        // target_line_fraction (at 0.20 the ceiling is already at least 1 for every lineCount this
+        // line is reachable with).
+        lineCpms.Sort((a, b) => b.CompareTo(a));
+
+        int targetLines = Math.Max(1, (int)Math.Ceiling(target_line_fraction * lineCount));
+        double targetCpmSum = 0;
+
+        for (int i = 0; i < targetLines; i++)
+            targetCpmSum += lineCpms[i];
+
         return new PaceStatistics(
             cpmSum / lineCount,
             totalCells,
             totalWords,
             LyricDifficulty.Compute(lines),
-            totalFreestyle);
+            totalFreestyle,
+            targetCpmSum / targetLines / CHARS_PER_WORD);
     }
 }

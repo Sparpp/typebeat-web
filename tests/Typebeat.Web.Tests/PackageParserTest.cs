@@ -90,13 +90,18 @@ public class PackageParserTest
             // the strain model this replaced).
             Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.59).Within(0.01));
 
-            // The rolling-window columns (028_wpm_curve.sql, 033_target_wpm.sql) are all NULL
-            // here, and that is the unmeasurable arm of their contract rather than an omission:
-            // "ab cd" is 5 cells against LyricWpmCurve.WINDOW_CELLS = 30, so there is not one
-            // window to read, let alone a percentile of them.
+            // The rolling-window columns (028_wpm_curve.sql) are NULL here, and that is the
+            // unmeasurable arm of their contract rather than an omission: "ab cd" is 5 cells
+            // against LyricWpmCurve.WINDOW_CELLS = 30, so there is not one window to read.
             Assert.That(diff.PeakWpm, Is.Null);
             Assert.That(diff.PeakCpm, Is.Null);
-            Assert.That(diff.TargetWpm, Is.Null);
+
+            // target_wpm (033_target_wpm.sql) is NOT on that contract, which is exactly the point
+            // of it being a per-line figure: one line is already a fifth of one line, so this map
+            // has a target even though it has no curve. One counted line means the fastest fifth IS
+            // that line, so the target equals the average, 20 WPM.
+            Assert.That(diff.TargetWpm, Is.EqualTo(20.0).Within(1e-9));
+            Assert.That(diff.TargetWpm, Is.EqualTo(diff.Pace.AverageWpm).Within(1e-12));
 
             // Last line end = min(song_end 4000, end_ms 3000 + 3000 tail) = 4000 ms.
             Assert.That(diff.TotalLengthS, Is.EqualTo(4.0).Within(1e-9));

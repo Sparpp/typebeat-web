@@ -172,6 +172,130 @@ public class LyricPaceTest
         Units = [new TimedUnit { Text = text, StartTime = start, EndTime = end }],
     };
 
+    /// <summary>
+    /// <paramref name="windowsMs"/> lines of "abcde", one per boundary window given. Every line holds
+    /// exactly 5 cells (one token, five chars, no inter-word space), so its rate is
+    /// 5 * 60000 / window CPM and the whole distribution is hand-computable. Same fixture shape and
+    /// same numbers as the game's LyricPaceStatisticsTest, which is the point of porting it.
+    /// </summary>
+    private static LyricLine[] linesAtWindows(params double[] windowsMs)
+    {
+        var lines = new LyricLine[windowsMs.Length];
+        double at = 1000;
+
+        for (int i = 0; i < windowsMs.Length; i++)
+        {
+            lines[i] = windowLine("abcde", at, at + windowsMs[i]);
+            at += windowsMs[i] + 500;
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// The map's six windows, chosen so every per-line rate is a round CPM: 500 ms -> 600 CPM
+    /// (120 WPM), 600 -> 500 (100), 750 -> 400 (80), 1000 -> 300 (60), 1500 -> 200 (40),
+    /// 3000 -> 100 (20).
+    /// </summary>
+    private static readonly double[] six_windows = [500, 600, 750, 1000, 1500, 3000];
+
+    [Test]
+    public void TargetWpm_IsTheMeanOfTheFastestFifthOfTheLines()
+    {
+        // Six lines at 600, 500, 400, 300, 200 and 100 CPM (see six_windows).
+        //
+        //   average = (600 + 500 + 400 + 300 + 200 + 100) / 6 = 2100 / 6 = 350 CPM = 70 WPM
+        //   target  = the fastest ceil(0.20 * 6) = 2 of them, (600 + 500) / 2 = 550 CPM = 110 WPM
+        //   fastest single line                              = 600 CPM              = 120 WPM
+        //
+        // Three DIFFERENT numbers, which is the point of the fixture: an implementation that
+        // returned the map average, or the one fastest line, under the name TargetWpm would pass a
+        // fixture where any two of them coincided.
+        var pace = LyricPace.Compute(linesAtWindows(six_windows));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pace.AverageWpm, Is.EqualTo(70.0).Within(1e-9));
+            Assert.That(pace.TargetWpm, Is.EqualTo(110.0).Within(1e-9));
+
+            Assert.That(pace.TargetWpm, Is.Not.EqualTo(pace.AverageWpm));
+            Assert.That(pace.TargetWpm, Is.Not.EqualTo(120.0));
+        });
+    }
+
+    [Test]
+    public void TargetLineCount_RoundsTheFifthUp()
+    {
+        // The count is ceil(0.20 * lineCount), and this is where it steps. Five lines take ONE line
+        // (0.20 * 5 = 1.0 exactly), six take TWO (1.2 rounds up), which is why adding a SLOWER sixth
+        // line LOWERS the target: the selection widened to two lines and the second-fastest is below
+        // the fastest. That is the statistic working, not a defect.
+        var five = LyricPace.Compute(linesAtWindows(500, 600, 750, 1000, 1500));
+        var six = LyricPace.Compute(linesAtWindows(six_windows));
+
+        Assert.Multiple(() =>
+        {
+            // Five: target = 600 CPM = 120 WPM, average = 2000 / 5 = 400 CPM = 80 WPM.
+            Assert.That(five.TargetWpm, Is.EqualTo(120.0).Within(1e-9));
+            Assert.That(five.AverageWpm, Is.EqualTo(80.0).Within(1e-9));
+
+            Assert.That(six.TargetWpm, Is.EqualTo(110.0).Within(1e-9));
+
+            // And below the step the fifth rounds up to the whole of the one selected line: every
+            // map from one line to four selects exactly its fastest, never an empty slice.
+            for (int n = 1; n <= 4; n++)
+                Assert.That(LyricPace.Compute(linesAtWindows(six_windows[..n])).TargetWpm, Is.EqualTo(120.0).Within(1e-9), $"{n} line(s)");
+        });
+    }
+
+    [Test]
+    public void Target_IsNeverBelowTheAverage()
+    {
+        // Guaranteed by construction (a mean over the fastest fifth cannot sit below the mean over
+        // all of them), so both arms are pinned rather than only the interesting one.
+        var mixed = LyricPace.Compute(linesAtWindows(six_windows));
+        var uniform = LyricPace.Compute(linesAtWindows(1000, 1000, 1000, 1000, 1000));
+
+        Assert.Multiple(() =>
+        {
+            // STRICT on a mixed map: 110 against 70 above.
+            Assert.That(mixed.TargetWpm, Is.GreaterThan(mixed.AverageWpm));
+
+            // EQUAL on a uniform one, which is the only shape that reaches equality: five lines all
+            // at 1000 ms = 300 CPM, so both selections average 300 CPM = 60 WPM.
+            Assert.That(uniform.AverageWpm, Is.EqualTo(60.0).Within(1e-9));
+            Assert.That(uniform.TargetWpm, Is.EqualTo(60.0).Within(1e-9));
+            Assert.That(uniform.TargetWpm, Is.EqualTo(uniform.AverageWpm).Within(1e-12));
+        });
+    }
+
+    [Test]
+    public void Target_SkipsTheSameLinesTheAverageSkips()
+    {
+        // The selection pool is EXACTLY the set of lines the average counts. A line with no typeable
+        // cell at all ("..." projects to nothing) is skipped by both, so it can neither enter the
+        // fastest fifth as a phantom 0 nor widen the count that decides how many lines the fifth is.
+        var withEmpty = LyricPace.Compute(
+        [
+            windowLine("abcde", 1000, 1500),
+            windowLine("...", 2000, 2100),
+            windowLine("abcde", 3000, 4000),
+            windowLine("...", 5000, 5100),
+            windowLine("abcde", 6000, 7000),
+        ]);
+
+        var withoutEmpty = LyricPace.Compute(linesAtWindows(500, 1000, 1000));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(withEmpty.AverageWpm, Is.EqualTo(withoutEmpty.AverageWpm).Within(1e-12));
+            Assert.That(withEmpty.TargetWpm, Is.EqualTo(withoutEmpty.TargetWpm).Within(1e-12));
+
+            // Three counted lines: ceil(0.6) = 1, so the target is the 500 ms line alone at 600 CPM.
+            Assert.That(withEmpty.TargetWpm, Is.EqualTo(120.0).Within(1e-9));
+        });
+    }
+
     [Test]
     public void EmptyMap_IsZero()
     {
@@ -181,6 +305,9 @@ public class LyricPaceTest
         {
             Assert.That(pace.TypeableCellCount, Is.Zero);
             Assert.That(pace.AverageWpm, Is.Zero);
+
+            // No counted line, so no fastest fifth of one either: 0, on the same rule.
+            Assert.That(pace.TargetWpm, Is.Zero);
             Assert.That(pace.DifficultyRating, Is.Zero);
         });
     }

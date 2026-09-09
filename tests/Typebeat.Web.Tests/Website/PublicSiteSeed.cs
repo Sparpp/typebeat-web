@@ -292,8 +292,11 @@ public static class PublicSiteSeed
             // The hard diff carries a target_wpm and the easy one does not, so /play/map/{id}/diffs
             // proves both arms of its coalesce in one response: the pill reads the target where
             // there is one, and falls back to the stored average where the v18 backfill has not
-            // been. The target is deliberately BELOW its own average, which no real map is, so a
-            // pill still reading 180 would be reading the wrong column rather than a close number.
+            // been. The target is deliberately BELOW its own average, which no real map can be (a
+            // mean over the fastest fifth of the lines cannot sit under the mean over all of them),
+            // so a pill still reading 180 would be reading the wrong column rather than a close
+            // number. These are stored values written straight into the column, not computed ones,
+            // which is what lets the fixture take a shape the arithmetic never produces.
             MultiDiffHardId = await InsertBeatmapAsync(conn, MultiDiffSetId,
                 totalLengthS: 100, stars: 6.0, wpm: 180, wordCount: 260, charCount: 1300,
                 targetWpm: 165, versionName: "twin hard", filename: "hard.osu");
@@ -326,7 +329,9 @@ public static class PublicSiteSeed
             // single-word narrowing and multi-word AND semantics within the pair.
             // Alpha's target (180) is ABOVE Bravo's (130) while its average WPM is below: the
             // target: operator has to invert the wpm: ordering on this pair, which is what proves
-            // it reads its own column instead of the one next to it.
+            // it reads its own column instead of the one next to it. Bravo's pairing (target 130
+            // under an average of 200) is one the arithmetic cannot produce, and that is on
+            // purpose: these are values written straight into the column rather than computed.
             await InsertBeatmapAsync(conn, OpAlphaId,
                 totalLengthS: 90, stars: 4.5, wpm: 100, wordCount: 100, charCount: 500,
                 lyrics: "neon skyline glowing all night", targetWpm: 180);

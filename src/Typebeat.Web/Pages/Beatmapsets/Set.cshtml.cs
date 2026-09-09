@@ -118,7 +118,8 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
                    -- any map too short to measure; DiffStats.HasCurve folds the two together.
                    b.peak_wpm              AS PeakWpm,
                    b.peak_cpm              AS PeakCpm,
-                   -- 033_target_wpm.sql, on the same NULL contract as the two above.
+                   -- 033_target_wpm.sql; NULL only until the v18 sweep fills it, since a per-line
+                   -- figure needs no rolling window the way the two above do.
                    b.target_wpm            AS TargetWpm,
                    b.wpm_curve             AS WpmCurve
             FROM beatmaps b
@@ -394,9 +395,9 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         public double? PeakCpm { get; init; }
 
         /// <summary>
-        /// The pace to sustain: the 80th percentile of the map's rolling-window readings
-        /// (033_target_wpm.sql, LyricPace v18). Same NULL contract as the peaks above, so the page
-        /// drops the row rather than printing a fabricated 0.
+        /// The pace to sustain: the average WPM across the fastest fifth of the map's lyric lines
+        /// (033_target_wpm.sql, LyricPace v18). NULL until the v18 sweep reaches the row, so the
+        /// page drops it rather than printing a fabricated 0, exactly as it does for the peaks.
         /// </summary>
         public double? TargetWpm { get; init; }
 

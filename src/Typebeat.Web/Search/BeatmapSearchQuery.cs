@@ -185,8 +185,8 @@ internal static class Fields
         ["stars"] = FilterField.Stars,
         ["wpm"] = FilterField.Wpm,
         ["cpm"] = FilterField.Cpm,
-        // The map's TARGET pace (033_target_wpm.sql): the 80th percentile of its rolling windows,
-        // the figure the cards and the set page headline. wpm: and cpm: are left exactly as they
+        // The map's TARGET pace (033_target_wpm.sql): the average WPM across the fastest fifth of
+        // its lyric lines, the figure the cards and the set page headline. wpm: and cpm: are as they
         // were, on the LyricPace v15 precedent: a saved search or a shared URL carrying either keeps
         // working and keeps meaning the stored average.
         ["target"] = FilterField.TargetWpm,
