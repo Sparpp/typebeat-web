@@ -86,9 +86,9 @@ public class PackageParserTest
             Assert.That(diff.Pace.AverageWpm, Is.EqualTo(20).Within(1e-9)); // CPM/5 since LyricPace v15
             Assert.That(diff.Pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
             // Stars (LyricDifficulty): "ab cd" is sung over 2000 ms, just enough for the smallest
-            // scheduled window (1.36 s) to fit, so it rates 0.59 under the feats model (0.63 under
-            // the strain model this replaced).
-            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.59).Within(0.01));
+            // scheduled window (1.36 s) to fit, so it rates 0.67 under the envelope model at the
+            // 12.0 anchor (0.59 at the 10.6 anchor, 0.63 under the strain model this replaced).
+            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.67).Within(0.01));
 
             // The rolling-window columns (028_wpm_curve.sql) are NULL here, and that is the
             // unmeasurable arm of their contract rather than an omission: "ab cd" is 5 cells

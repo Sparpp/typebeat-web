@@ -190,14 +190,14 @@ public class RepriceReportTest
     public void ShortMap_GainsNothing_SoThePinnedSyntheticRatingDoesNotMove()
     {
         // The fixture the game's own pace regression is pinned on. 152's clamp is what keeps it at
-        // 0.59, and a report that claimed a move here would be reporting on a broken clamp.
+        // 0.67, and a report that claimed a move here would be reporting on a broken clamp.
         var parsed = BeatmapPackageParser.ParseDifficulty("short.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
 
         Assert.Multiple(() =>
         {
             Assert.That(Length.Count(parsed.Lines, literate: false), Is.EqualTo(5), "ab + space + cd");
             Assert.That(Length.StarBonus(Length.Count(parsed.Lines, literate: false)), Is.EqualTo(0));
-            Assert.That(parsed.Pace.DifficultyRating, Is.EqualTo(0.59).Within(0.01));
+            Assert.That(parsed.Pace.DifficultyRating, Is.EqualTo(0.67).Within(0.01));
         });
     }
 

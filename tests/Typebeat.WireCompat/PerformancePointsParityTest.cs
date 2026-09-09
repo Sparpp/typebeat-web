@@ -716,8 +716,9 @@ public class PerformancePointsParityTest
     /// <summary>
     /// A DENSE twin, rating past the 10 stars the difficulty model used to clamp at (backlog 118).
     /// <see cref="TwinMaps"/> rates a few stars at every rate, so it cannot tell the two ports apart
-    /// anywhere a ceiling would act; this one rates about 17.4 at 1.00x and about 25.2 at 1.50x
-    /// under the window/envelope model (backlog 273), so both of its figures are past where the old
+    /// anywhere a ceiling would act; this one rates about 19.7 at 1.00x and about 28.6 at 1.50x
+    /// under the window/envelope model (backlog 273 at its 12.0 anchor), so both of its figures are
+    /// past where the old
     /// ceiling sat, which is where the ports have to be held together for <c>sr_dt</c> to mean
     /// anything. Eight five-letter words to a 1.2 second line is well past what any human sustains,
     /// which is exactly why it reaches the region: the model prices pace against human capability

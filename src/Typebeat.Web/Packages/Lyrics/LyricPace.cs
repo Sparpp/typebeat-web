@@ -263,6 +263,29 @@ public static class LyricPace
     /// backfill has to COMPLETE before any pp version bump lands, or PpBackfill prices the catalogue
     /// against ratings this sweep is still rewriting.</para>
     ///
+    /// <para>v20 = THE STAR ANCHOR MOVES FROM 10.6 TO 12.0 (backlog 273's recorded alternative, now
+    /// taken). This is a ONE CONSTANT change: <c>LyricDifficulty.stars_at_human_peak</c>, what a map
+    /// typing at the record pace throughout with its range filled is worth. Nothing else about the
+    /// envelope model moves, and the model is LINEAR in that constant, so every stored rating simply
+    /// multiplies by <c>12 / 10.6</c> (about x1.132) and NOTHING can reorder: the six star columns
+    /// keep their ordering exactly, cuts still sit under their full versions, and the rate premiums
+    /// (Double Time x1.386, Half Time x0.800) are ratios and do not move at all. The reason is the
+    /// one v19 measured and left on the table: the envelope at 10.6 read a mean 0.59 star BELOW the
+    /// pre-269 strain ratings the pool had been shown, because the median map fills only 48% of its
+    /// range and therefore lands near the floor rather than near the anchor. 12.0 restores that mean
+    /// without touching a single shape in the model. Record pace with the range filled now rates
+    /// 12.0 and the hardest window alone rates 12.0 / 1.3333 (about 9.0).
+    /// All six star columns move, so <see cref="PaceBackfill"/> re-rates the whole catalogue at boot
+    /// and stamps <c>pp_version = 0</c> on every score of every row it rewrites, exactly as at v9,
+    /// v10, v12, v14, v17 and v19, so <see cref="PpBackfill"/> reprices the score table in the same
+    /// startup. The pace columns are untouched: no word or cell count and no WPM figure changes,
+    /// only the ratings. <c>PerformancePoints.VERSION</c> deliberately stays at 21, as at v12, v16,
+    /// v17 and v19: pp reads the ratings as INPUTS, so every pp value here moves through
+    /// <c>SR_eff</c> alone and the pp FORMULA does not move, which is exactly the intended
+    /// repricing. Note the ordering against v19: that sweep has already COMPLETED on production
+    /// (shipped 2026-09-09, the catalogue re-rated at 10.6), so this bump follows it cleanly rather
+    /// than racing it, and it is the bump that INVALIDATES those 10.6-scale rows.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -275,7 +298,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 19;
+    public const int VERSION = 20;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's
