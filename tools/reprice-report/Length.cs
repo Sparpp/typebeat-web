@@ -9,6 +9,17 @@ namespace Typebeat.Tools.RepriceReport;
 /// length factor was deleted outright, so a tool that wants to say "this map moved by exactly its
 /// length bonus and nothing else" has to be able to say what that bonus was.
 ///
+/// <para>THE STAR HALF IS NOW HISTORY, DELIBERATELY. Backlog 273 DELETED the length term from
+/// <c>LyricDifficulty</c> outright: stars no longer carry an additive per-decade bonus at all, and
+/// length reaches the rating only through the characters it adds to the envelope's difficult
+/// character sum. So <see cref="LENGTH_STARS"/>, <see cref="REFERENCE_CELLS"/> and
+/// <see cref="StarBonus"/> describe the COMPOSITION OF A ROW STORED BETWEEN BACKLOG 152 AND 273 and
+/// nothing about the model as it stands. That is still the right thing for this tool to hold, since
+/// it is a one-off dry run for 152's own acceptance clause and every predicate here is 152's, but a
+/// run of it against a post-273 catalogue will find that the bonus explains no move at all, and
+/// that is the tool being honest rather than the tool being wrong. The split has been kept rather
+/// than dropped precisely so the report can still say what a legacy stored rating was made of.</para>
+///
 /// <para>THESE ARE MIRRORS, AND MIRRORS DRIFT, so nothing here is trusted on its own. Every number
 /// below is FITTED BACK OUT OF THE DATA as well (see <see cref="Fit"/>): the report prints the
 /// constant it assumed next to the constant the catalogue actually moved by, and a disagreement is

@@ -716,12 +716,14 @@ public class PerformancePointsParityTest
     /// <summary>
     /// A DENSE twin, rating past the 10 stars the difficulty model used to clamp at (backlog 118).
     /// <see cref="TwinMaps"/> rates a few stars at every rate, so it cannot tell the two ports apart
-    /// anywhere a ceiling would act; this one rates about 15.4 at 1.00x and about 22.4 at 1.50x
-    /// under the window/feats model (backlog 269), so both of its figures are past where the old
+    /// anywhere a ceiling would act; this one rates about 17.4 at 1.00x and about 25.2 at 1.50x
+    /// under the window/envelope model (backlog 273), so both of its figures are past where the old
     /// ceiling sat, which is where the ports have to be held together for <c>sr_dt</c> to mean
     /// anything. Eight five-letter words to a 1.2 second line is well past what any human sustains,
     /// which is exactly why it reaches the region: the model prices pace against human capability
-    /// and this fixture is roughly one and a half times it.
+    /// and this fixture is roughly one and a half times it. It is also SUSTAINED, forty lines of it,
+    /// so the envelope fills its range almost completely and the premise below has a wide margin
+    /// rather than sitting on the line.
     /// </summary>
     private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) DenseTwinMaps()
     {
@@ -1047,12 +1049,14 @@ public class PerformancePointsParityTest
         // WHY THERE ARE SIX STORED COLUMNS AND NOT FOUR. The obvious saving is to store sr_literate
         // alone and recover the rate pair as sr_literate * (sr_dt / difficulty_rating), i.e. to
         // assume Literate and the rate compose multiplicatively. They do not, and under the
-        // window/feats model (backlog 269) the reason is that the two act on DIFFERENT AXES. The
+        // window/envelope model (backlog 273) the reason is that the two act on DIFFERENT AXES. The
         // rate compresses the timeline, which changes which scheduled windows still fit on the map
-        // and which bins each greedy feat consumes, so it can change the SET of feats. Literate
-        // adds cells to the words already there, changing every window's density without moving a
-        // single boundary. Neither is a scalar on the other, and a map where the rate drops a long
-        // window off the schedule is a map where the ratio is not even continuous in it.
+        // and therefore which window is the PEAK, i.e. the range every rating is a fraction of.
+        // Literate adds cells to the words already there, changing every bin's density and so the
+        // FILL relative to that peak, without moving a single boundary. Stars are the product of a
+        // peak-scaled range and a fill, so neither change is a scalar on the other, and a map where
+        // the rate drops a long window off the schedule is a map where the ratio is not even
+        // continuous in it.
         //
         // This test is the standing proof of that, so that a future reader who reaches for the
         // saving finds the counter-example already written down rather than having to rediscover

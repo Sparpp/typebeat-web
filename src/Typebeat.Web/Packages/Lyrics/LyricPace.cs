@@ -20,11 +20,12 @@ namespace Typebeat.Web.Packages.Lyrics;
 ///    estimator over two selections of the one pool, which is why it lives here and not on the
 ///    rolling-window curve next door.
 ///  - stars: <see cref="LyricDifficulty"/>, the map's pace over sliding windows measured against
-///    human typing capability, summed over greedy non-overlapping FEATS (backlog 269), mirroring
+///    human typing capability, where the hardest window sets a RANGE and the characters sitting
+///    near that peak difficulty fill it (backlog 273, replacing 269's greedy feats), mirroring
 ///    the game's typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty. That file's own summary
-///    is the model description, and the prototype it is a literal port of is docs/sr-feats-model.js
-///    in the parent superrepo. Unlike the pace, this DOES use unit target times (a word occupies
-///    the timeline from its onset to the end of its sung span).
+///    is the model description, and the prototype it is a literal port of is
+///    docs/sr-envelope-model.js in the parent superrepo. Unlike the pace, this DOES use unit target
+///    times (a word occupies the timeline from its onset to the end of its sung span).
 /// </summary>
 public static class LyricPace
 {
@@ -229,6 +230,39 @@ public static class LyricPace
     /// v17: that sweep re-rated the whole catalogue and has already COMPLETED on production
     /// (shipped 2026-09-09), so this bump follows it cleanly rather than racing it.</para>
     ///
+    /// <para>v19 = THE STAR RATING IS A DIFFERENT MODEL AGAIN (backlog 273, the ENVELOPE model; the
+    /// item's own text calls it "SR v18" because it was written before backlog 272 took v18 for
+    /// <c>target_wpm</c>, so the model may still be called that in prose but the constant is 19).
+    /// The v17 FEATS TAIL is gone (the greedy non-overlapping extraction, <c>feat_decay</c>,
+    /// <c>feat_max</c>, <c>feat_floor</c>, <c>feat_min_seconds</c> and the weight epsilon) and SO IS
+    /// THE LENGTH TERM (backlog 152's additive <c>0.12 * max(0, log10(cells/100))</c>). The timeline,
+    /// the cells, the 50 ms bins, the capability curve and the window schedule are all unchanged.
+    /// What replaces the tail: the hardest window at any scheduled duration sets the RANGE
+    /// (<c>10.6 / (1 + 1/3) * ratio_0</c> is its floor), and where the map lands inside that range is
+    /// decided by how many of its CHARACTERS sit near that peak difficulty, each weighted
+    /// <c>(env/ratio_0)^8</c> with no cutoff and summed to N, the range filling as
+    /// <c>1 - exp(-N/500)</c>. The reason is that the feats tail credited a map for how many windows
+    /// its difficulty happened to SPLIT INTO: eight two-second bursts filled eight slots while two
+    /// sixty-second sections filled two, so burst-built maps read about 7% too high, a map that was
+    /// one long feat had nothing to add, and a cut sharing its full version's hardest part could tie
+    /// it. Counting characters instead of windows cannot be gamed by chopping. Length now counts
+    /// ONLY through the characters it adds, which is a much softer signal than the old term: padding
+    /// a 123 s sustain with 60 s of 60 WPM singing is worth about +0.09%.
+    /// Measured over the 94 ranked difficulties with a per-word extract, the mean shift is -0.69
+    /// stars against v17 at a Spearman of 0.985 and -0.59 against the pre-269 strain rating at 0.948;
+    /// the median map fills 48% of its range (p10 15%, p90 78%), no cut outrates its full version in
+    /// any of the 7 pairs, and the Double Time premium reads x1.386 against Half Time's x0.800. The
+    /// biggest falls are the burst-built maps and the biggest rises the sustained ones. A map whose
+    /// whole sung timeline is under the smallest scheduled window now rates EXACTLY zero rather than
+    /// its length term (there is no length term to rate).
+    /// All six star columns move, so the sweep re-rates the whole catalogue and stamps
+    /// <c>pp_version = 0</c> on every score it touches, exactly as at v9, v10, v12, v14 and v17. The
+    /// pace columns are untouched: no word or cell count and no WPM figure changes, only the ratings.
+    /// <c>PerformancePoints.VERSION</c> deliberately stays at 21, as at v12, v16 and v17: the new
+    /// ratings reach pp through the star columns and the pp FORMULA does not move. As at v17, this
+    /// backfill has to COMPLETE before any pp version bump lands, or PpBackfill prices the catalogue
+    /// against ratings this sweep is still rewriting.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -241,7 +275,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 18;
+    public const int VERSION = 19;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's

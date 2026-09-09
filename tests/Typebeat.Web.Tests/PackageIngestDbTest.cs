@@ -432,7 +432,7 @@ public class PackageIngestDbTest
         {
             // The regression package: "ab cd" over a 3000 ms boundary window.
             Assert.That((double)row.Wpm, Is.EqualTo(20).Within(1e-6));
-            Assert.That(row.Difficulty, Is.EqualTo(0.59).Within(0.01)); // window/feats stars
+            Assert.That(row.Difficulty, Is.EqualTo(0.59).Within(0.01)); // window/envelope stars
             Assert.That(row.WordCount, Is.EqualTo(2));
             Assert.That(row.CharCount, Is.EqualTo(5));
             Assert.That(row.Lyrics, Is.EqualTo("ab cd")); // v8 fills the lyrics: haystack
@@ -727,14 +727,33 @@ public class PackageIngestDbTest
 
         // INVALIDATION: when the map's ratings are rewritten, every pp set on it must be recomputed
         // rather than left pointing at a rating that no longer exists.
+        //
+        // THE VERSION ARM IS WHAT IS PINNED HERE, on its own, because that is the arm a star-model
+        // change travels on: LyricPace.VERSION bumps (v9, v10, v12, v14, v17 and, for the envelope
+        // model, v19), the sweep re-rates every row one generation behind, and the pp_version = 0
+        // stamp on that row's scores is what hands them to PpBackfill in the same startup. The two
+        // rate columns are deliberately left FILLED, so the second (IS NULL) staleness arm cannot
+        // be what selects the row and this cannot pass for the wrong reason.
         await conn.ExecuteAsync(
-            "UPDATE beatmaps SET difficulty_rating = 9.9, sr_dt = NULL, sr_ht = NULL, pace_version = 1 WHERE id = 1001");
+            "UPDATE beatmaps SET difficulty_rating = 9.9, pace_version = @previous WHERE id = 1001",
+            new { previous = LyricPace.VERSION - 1 });
+
+        Assert.That(await conn.ExecuteScalarAsync<int>(
+                "SELECT count(*) FROM beatmaps WHERE id = 1001 AND (sr_dt IS NULL OR sr_ht IS NULL)"),
+            Is.Zero, "only the version arm may select this row");
 
         await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
 
-        Assert.That(await conn.ExecuteScalarAsync<int>(
-                "SELECT count(*) FROM scores WHERE beatmap_id = 1001 AND pp_version = 0"),
-            Is.GreaterThan(0), "rewriting a map's stars hands its scores back to the pp sweep");
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await conn.ExecuteScalarAsync<int>(
+                    "SELECT count(*) FROM scores WHERE beatmap_id = 1001 AND pp_version = 0"),
+                Is.GreaterThan(0), "rewriting a map's stars hands its scores back to the pp sweep");
+
+            Assert.That(await conn.ExecuteScalarAsync<int>(
+                    "SELECT pace_version FROM beatmaps WHERE id = 1001"),
+                Is.EqualTo(LyricPace.VERSION), "and the row is stamped at the current arithmetic");
+        });
 
         await PpBackfill.RunAsync(db, NullLogger.Instance);
 

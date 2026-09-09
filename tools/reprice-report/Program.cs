@@ -30,6 +30,15 @@ using Typebeat.Web.Scoring;
 //
 // Anything failing a predicate is listed BY ID. A summary that says "all within range" while hiding
 // an outlier is the failure mode the whole thing exists to avoid.
+//
+// THE SR HALF IS SPENT. Backlog 269 replaced the star model wholesale and backlog 273 DELETED the
+// length term this tool was written around, so a run against today's catalogue re-rates through the
+// current model (it always calls the server's own code) and then measures the move against a bonus
+// that no longer exists. Every SR predicate here is 152's and stays 152's, which means they now
+// describe what a row stored between 152 and 273 was MADE OF rather than what a reprice would do.
+// Kept, not deleted: the pp half is unaffected, and a forensic tool that can still decompose a
+// legacy rating is worth more than one silently retuned to a model it was never about. See
+// Length.cs for the same note next to the constants.
 
 /// <summary>
 /// The entry point, spelled out rather than left to top-level statements: those generate a type
