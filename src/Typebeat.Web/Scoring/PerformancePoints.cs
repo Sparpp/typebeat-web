@@ -103,11 +103,11 @@ namespace Typebeat.Web.Scoring;
 /// THERE IS NO LENGTH FACTOR HERE, AND ADDING ONE BACK WOULD DOUBLE COUNT (backlog 152). Through
 /// v15 this file carried <c>max(0.1, 1 + 0.50·log10(notes/100))</c>, worth up to 1.70x, while the
 /// star rating priced length barely at all. Length now lives entirely in
-/// <see cref="Packages.Lyrics.LyricDifficulty"/>, as an ADDITIVE
-/// <c>0.12·max(0, log10(cells/100))</c> star bonus, so pp still sees a long map, but only as
-/// <c>((SR + bonus)/SR)^2.00</c>, a few percent rather than up to 70. That deflates long-map plays
-/// hardest (roughly 18% at 340 cells, 28% at 800, 38% at 2300), which is the intended reordering:
-/// length stops buying pp it no longer earns. <c>notes</c> itself stays, and is still load-bearing
+/// <see cref="Packages.Lyrics.LyricDifficulty"/>, which since backlog 273 has no separate length
+/// term of its own: length counts only through the characters it adds to the envelope's
+/// difficulty sum, so pp still sees a long map, but only a few percent through SR_eff rather than
+/// up to 70. That is the intended reordering: length stops buying pp it no longer earns.
+/// <c>notes</c> itself stays, and is still load-bearing
 /// for both penalty terms, the combo ratio and <see cref="FlashlightMultiplier"/>.
 /// </para>
 ///
@@ -144,13 +144,14 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <para>
 /// THE SIX ARE A CROSS PRODUCT, NOT A LIST, because Literate is orthogonal to rate and the two do
-/// not compose. Since backlog 269 <see cref="Packages.Lyrics.LyricDifficulty"/> is the FEATS
-/// model: it lays the map out in 50 ms bins, measures every sliding window against <c>S(t)</c>,
-/// the pace the fastest humans sustain for <c>t</c> seconds, and sums the best non-overlapping
-/// feats at <c>0.25^k</c>. A rate change moves both sides of every one of those ratios (the
-/// window's own pace AND the duration it is scored at, so a different point of a non-linear
-/// <c>S</c>) and can reorder which feats survive the consumption pass, while Literate inserts
-/// cells that change the bins themselves. Neither the strain model this replaced nor the feats
+/// not compose. Since backlog 273 <see cref="Packages.Lyrics.LyricDifficulty"/> is the ENVELOPE
+/// model: the hardest sliding window on the map, measured against <c>S(t)</c>, the pace the
+/// fastest humans sustain for <c>t</c> seconds, sets the FLOOR and RANGE of the map's rating, and
+/// how many characters sit near that peak difficulty decides where inside that range the map
+/// lands (there is no length term). A rate change moves both sides of every one of those ratios
+/// (the window's own pace AND the duration it is scored at, so a different point of a non-linear
+/// <c>S</c>) and can move which characters sit near the peak, while Literate inserts
+/// cells that change the bins themselves. Neither the strain model this replaced nor the envelope
 /// model admits a rate FACTOR that could be carried across a change of baseline: measured over the
 /// five reference maps under the strain model, predicting <c>sr_literate_dt</c> as
 /// <c>sr_literate · (sr_dt/difficulty_rating)</c> was already wrong by up to 5.8% in stars and
@@ -165,7 +166,7 @@ namespace Typebeat.Web.Scoring;
 /// place in this file where a rate was priced by anything but the rating, it made one rate a
 /// function of all three of a map's ratings (so an HT play could not be priced at all until
 /// <c>sr_dt</c> was stored), and a degenerate <c>sr_dt</c> zeroed an otherwise honest play. If
-/// Half Time ever reads as underpriced again the fix belongs in the feats model behind
+/// Half Time ever reads as underpriced again the fix belongs in the SR model behind
 /// <c>sr_ht</c>, never in a second multiplier here. So the claim docs/pp.md has made since task
 /// 61, that a rate is priced EXCLUSIVELY through SR_eff, is now literally true of both rates.
 /// </para>
@@ -486,8 +487,9 @@ public static class PerformancePoints
     /// THE RATING BELOW WHICH A FULL COMBO IS WORTH NOTHING (backlog 270): the bonus is
     /// <c>max(0, combo_bonus_slope · (SR_eff − combo_bonus_zero))</c>, so it opens at
     /// <c>SR_eff = combo_bonus_zero</c> and grows linearly above it. The <c>Math.Max</c> is
-    /// load-bearing and not defensive: a real map can rate below 1.0 (the feats model gives a map
-    /// with no window long enough to score its length term alone), and without the clamp such a
+    /// load-bearing and not defensive: a real map can rate below 1.0 (a map with no window long
+    /// enough to fit the smallest scheduled duration rates EXACTLY 0 under the envelope model,
+    /// there being no length term left to give it anything else), and without the clamp such a
     /// play would be handed a NEGATIVE bonus that a long run made worse.
     /// </summary>
     private const double combo_bonus_zero = 1.0;

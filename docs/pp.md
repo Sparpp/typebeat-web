@@ -59,9 +59,10 @@ Factor by factor, in descending priority:
   amendment states are the live ones again.
 * **Length**: NOT A FACTOR HERE, since the backlog-152 amendment. pp carried the standard osu log
   bonus `max(0.1, 1 + 0.50·log10(notes/100))` through v15; length is now priced by the STAR RATING
-  instead, as an additive `0.12·max(0, log10(cells/100))` bonus inside `LyricDifficulty`, so pp sees
-  a long map only through `SR_eff` (i.e. as `((SR + bonus)/SR)^2.00`, a few percent where the old
-  term paid up to 1.70x). Two length terms would double count, so pp keeps none. `notes` itself is
+  instead. Since backlog 273 `LyricDifficulty` has no separate length term at all: length counts
+  only through the characters it adds to the envelope's difficulty sum, so pp still sees a long
+  map only through `SR_eff`, a few percent where the old term paid up to 1.70x. Two length terms
+  would double count, so pp keeps none. `notes` itself is
   still load-bearing: both penalty terms, the combo ratio and FL all read it.
 * **acc^1.80 · 1/(1 + e^(−(acc − 0.80)/0.025))**: an exponent that is deliberately **gentle**,
   unlike osu, multiplied by a **soft knee** since the backlog-227 amendment. In type!beat real
@@ -80,9 +81,10 @@ Factor by factor, in descending priority:
   worth and a long run adds to that. `combo_bonus_slope` (12.5) is the bonus a FULL combo earns
   per star above `combo_bonus_zero` (1.0), so an FC is worth 25 pp at 3 stars, 50 at 5 and 75 at
   7, and half the map's longest run collects half of it. The `max(0, ...)` is load-bearing rather
-  than defensive: the feats model really can rate a map below 1.0 (one whose whole sung timeline
-  is under about a second and a half rates its length term alone), and without the clamp such a
-  play would be paid a NEGATIVE bonus that a longer run made worse.
+  than defensive: a real map can rate below 1.0, and since backlog 273 one whose whole sung
+  timeline is under about a second and a half (short of the smallest scheduled window) rates
+  EXACTLY 0 under the envelope model, there being no length term left to give it anything else,
+  and without the clamp such a play would be paid a NEGATIVE bonus that a longer run made worse.
   * WHY A BONUS. From v1 to v20 combo was a MULTIPLIER, latterly a log-bent ratio raised to 2.50
     (backlog 131), tuned so that a broken combo cost roughly its face value rather than several
     times it. That was already an admission that the term overlapped with the misses: a miss
@@ -983,9 +985,9 @@ pp keeps NONE.
 **Why ADDITIVE, in SR.** A multiplier moves the hardest maps the most, which is exactly the wrong
 shape here: "there is simply more of it" is worth the same on a 2 star map and on an 8 star one. A
 flat log bonus prices it that way and leaves rhythm density and pace, through whatever difficulty
-model SR is running (the strain one at the time of writing, the feats one since backlog 269), as
-the hard signals. The `max(0, ·)` clamp gives a sub-100-cell map nothing, which also keeps every
-short synthetic fixture rating byte-identically.
+model SR is running (the strain one at the time of writing, the feats one since backlog 269, the
+envelope one since backlog 273), as the hard signals. The `max(0, ·)` clamp gives a sub-100-cell
+map nothing, which also keeps every short synthetic fixture rating byte-identically.
 
 **What it does to the catalogue.** Measured live at 0.12: Nanana x Cola [Extreme] 7.81 to 7.97,
 HYPER4ID [Hyper] 7.47 to 7.60, Riptide [Seaside] 6.20 to 6.35, Spectator [Wolf] 4.54 to 4.65, mean
