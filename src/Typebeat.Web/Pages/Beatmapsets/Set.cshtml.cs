@@ -395,8 +395,9 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         public double? PeakCpm { get; init; }
 
         /// <summary>
-        /// The pace to sustain: the average WPM across the fastest fifth of the map's lyric lines
-        /// (033_target_wpm.sql, LyricPace v18). NULL until the v18 sweep reaches the row, so the
+        /// The pace to sustain: the average WPM across the fastest fifth of the map's lyric lines of
+        /// at least three words (033_target_wpm.sql, LyricPace v18, the eligibility floor added in
+        /// v20). NULL until the v18 sweep reaches the row, so the
         /// page drops it rather than printing a fabricated 0, exactly as it does for the peaks.
         /// </summary>
         public double? TargetWpm { get; init; }

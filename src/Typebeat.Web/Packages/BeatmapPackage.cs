@@ -130,8 +130,8 @@ public sealed class ParsedDifficulty
 
     /// <summary>
     /// The pace to sustain (<see cref="LyricPace.PaceStatistics.TargetWpm"/>, the average WPM
-    /// across the fastest fifth of the map's lyric lines), stored as <c>target_wpm</c>
-    /// (033_target_wpm.sql).
+    /// across the fastest fifth of the map's lyric lines of at least three words), stored as
+    /// <c>target_wpm</c> (033_target_wpm.sql).
     ///
     /// <para>It comes off <see cref="Pace"/>, NOT off <see cref="WpmCurve"/>, so its null rule is
     /// the one <c>beatmaps.wpm</c> itself would want rather than the curve's: null exactly when the
@@ -139,7 +139,10 @@ public sealed class ParsedDifficulty
     /// 0), which is the only shape on which a per-line mean is meaningless. A map of three lines is
     /// far too short for the 30-cell curve but its fastest line is a perfectly good target, so
     /// gating this on <c>WpmCurve.IsEmpty</c> would blank a figure the game's own wedge is happily
-    /// showing. NULL rather than 0 keeps "no reading" distinguishable from a real one.</para>
+    /// showing. NULL rather than 0 keeps "no reading" distinguishable from a real one. The
+    /// three-word eligibility floor (backlog 274) does not touch this either: a map whose every line
+    /// is under three words falls back to selecting from all of them, so the rule stays "no counted
+    /// line" and never becomes "no eligible line".</para>
     /// </summary>
     public double? TargetWpm => Pace.TypeableCellCount == 0 ? null : Pace.TargetWpm;
 

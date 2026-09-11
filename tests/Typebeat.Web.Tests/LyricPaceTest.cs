@@ -174,24 +174,44 @@ public class LyricPaceTest
     };
 
     /// <summary>
-    /// <paramref name="windowsMs"/> lines of "abcde", one per boundary window given. Every line holds
-    /// exactly 5 cells (one token, five chars, no inter-word space), so its rate is
+    /// <paramref name="windowsMs"/> lines of "a b c", one per boundary window given. The line holds
+    /// exactly 5 cells (three tokens, three chars, two inter-word spaces), so its rate is
     /// 5 * 60000 / window CPM and the whole distribution is hand-computable. Same fixture shape and
     /// same numbers as the game's LyricPaceStatisticsTest, which is the point of porting it.
+    ///
+    /// <para>THREE tokens rather than the single "abcde" this used to write, so every line clears the
+    /// target's three-word eligibility floor and the fixtures below exercise the SELECTION rather
+    /// than its all-short fallback. Cell for cell it is the same 5, so every pinned CPM and WPM below
+    /// is the number it was before the floor existed. <see cref="short_line"/> and
+    /// <see cref="one_word_line"/> are the ineligible counterparts at identical rates.</para>
     /// </summary>
-    private static LyricLine[] linesAtWindows(params double[] windowsMs)
+    private static LyricLine[] linesAtWindows(params double[] windowsMs) => linesAtWindowsOf("a b c", windowsMs);
+
+    /// <summary><see cref="linesAtWindows"/> with the line text chosen, for the eligibility fixtures.</summary>
+    private static LyricLine[] linesAtWindowsOf(string text, params double[] windowsMs)
     {
         var lines = new LyricLine[windowsMs.Length];
         double at = 1000;
 
         for (int i = 0; i < windowsMs.Length; i++)
         {
-            lines[i] = windowLine("abcde", at, at + windowsMs[i]);
+            lines[i] = windowLine(text, at, at + windowsMs[i]);
             at += windowsMs[i] + 500;
         }
 
         return lines;
     }
+
+    /// <summary>
+    /// A TWO-word line of the same 5 cells ("ab" + space + "cd"), so it runs at exactly the rate a
+    /// <see cref="linesAtWindows"/> line of the same window runs at while being INELIGIBLE for the
+    /// target pool. Every fixture below that wants to show the floor doing something pairs this
+    /// against "a b c" over the same windows.
+    /// </summary>
+    private const string short_line = "ab cd";
+
+    /// <summary>A ONE-word line of the same 5 cells, for the all-short fallback.</summary>
+    private const string one_word_line = "abcde";
 
     /// <summary>
     /// The map's six windows, chosen so every per-line rate is a round CPM: 500 ms -> 600 CPM
@@ -249,11 +269,22 @@ public class LyricPaceTest
         });
     }
 
+    /// <summary>
+    /// The pairing the two figures are READ as, and since backlog 274 a property of the fixture
+    /// rather than of the arithmetic. While the pool was every counted line a mean over the top fifth
+    /// could not sit below the mean over all of them, so this held unconditionally; the three-word
+    /// eligibility floor makes the pool a SUBSET, and a fast enough ineligible line now raises the
+    /// average without being able to raise the target (<see cref="AFastTwoWordBurstCannotDefineTheTarget"/>
+    /// is that map, and it is the pin that says so out loud). What survives, and what these fixtures
+    /// hold, is the ordinary case: where the map's fastest lines clear the floor, the target still
+    /// sits above the average, and equality is still exactly the map on which every counted line runs
+    /// at one rate.
+    /// </summary>
     [Test]
-    public void Target_IsNeverBelowTheAverage()
+    public void Target_IsNeverBelowTheAverage_WhenTheFastestLinesAreEligible()
     {
-        // Guaranteed by construction (a mean over the fastest fifth cannot sit below the mean over
-        // all of them), so both arms are pinned rather than only the interesting one.
+        // Both arms are pinned rather than only the interesting one. Every line of both maps is
+        // three words, so the pool is the whole map and the old guarantee applies as it stood.
         var mixed = LyricPace.Compute(linesAtWindows(six_windows));
         var uniform = LyricPace.Compute(linesAtWindows(1000, 1000, 1000, 1000, 1000));
 
@@ -278,11 +309,11 @@ public class LyricPaceTest
         // fastest fifth as a phantom 0 nor widen the count that decides how many lines the fifth is.
         var withEmpty = LyricPace.Compute(
         [
-            windowLine("abcde", 1000, 1500),
+            windowLine("a b c", 1000, 1500),
             windowLine("...", 2000, 2100),
-            windowLine("abcde", 3000, 4000),
+            windowLine("a b c", 3000, 4000),
             windowLine("...", 5000, 5100),
-            windowLine("abcde", 6000, 7000),
+            windowLine("a b c", 6000, 7000),
         ]);
 
         var withoutEmpty = LyricPace.Compute(linesAtWindows(500, 1000, 1000));
@@ -294,6 +325,107 @@ public class LyricPaceTest
 
             // Three counted lines: ceil(0.6) = 1, so the target is the 500 ms line alone at 600 CPM.
             Assert.That(withEmpty.TargetWpm, Is.EqualTo(120.0).Within(1e-9));
+        });
+    }
+
+    /// <summary>
+    /// THE FEATURE (backlog 274), and the fixture that shows what it is for, mirroring the game's
+    /// test of the same name. A map of four ordinary three-word lines with six two-word
+    /// interjections cut through it: the interjections are over in half a second each, so they read
+    /// as the fastest lines on the map by a distance, and before the floor they WERE the map's
+    /// target.
+    /// </summary>
+    [Test]
+    public void AFastTwoWordBurstCannotDefineTheTarget()
+    {
+        // Four eligible lines (three words, 5 cells) at 1000, 1500, 3000 and 3000 ms
+        //   -> 300, 200, 100 and 100 CPM
+        // Six ineligible bursts (two words, the same 5 cells) at 500 ms -> 600 CPM each.
+        //
+        //   average  = (300 + 200 + 100 + 100 + 6 * 600) / 10 = 4300 / 10 = 430 CPM = 86 WPM
+        //   target   = the fastest ceil(0.20 * 4) = 1 ELIGIBLE line, 300 CPM             = 60 WPM
+        //   pre-274  = the fastest ceil(0.20 * 10) = 2 of ALL ten, (600 + 600) / 2
+        //                                                        = 600 CPM              = 120 WPM
+        //
+        // So the floor HALVES this map's target, which is the whole point: 120 WPM was the pace of a
+        // two-word shout, and nothing on the map asks a player to hold it.
+        LyricLine[] lines =
+        [
+            .. linesAtWindows(1000, 1500, 3000, 3000),
+            .. linesAtWindowsOf(short_line, 500, 500, 500, 500, 500, 500),
+        ];
+
+        var pace = LyricPace.Compute(lines);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pace.AverageWpm, Is.EqualTo(86.0).Within(1e-9));
+            Assert.That(pace.TargetWpm, Is.EqualTo(60.0).Within(1e-9));
+
+            // The pre-274 answer, named rather than implied: revert the floor and this reads 120.
+            Assert.That(pace.TargetWpm, Is.Not.EqualTo(120.0));
+
+            // AND THE 272 INVARIANT IS GONE. The bursts are counted by the average and refused by
+            // the pool, so here the target sits BELOW the average rather than above it. That is not a
+            // defect: the average is diluted upward by lines nobody sustains, and the target is the
+            // pace of the map's real lines.
+            Assert.That(pace.TargetWpm, Is.LessThan(pace.AverageWpm));
+        });
+    }
+
+    /// <summary>
+    /// THE FLOOR ITSELF, at the boundary: three words in, two words out. Two lines at the same
+    /// 5 cells, so the only thing separating them is where their spaces are.
+    /// </summary>
+    [Test]
+    public void ThreeWordsAreEligibleAndTwoAreNot()
+    {
+        // "ab cd" over 500 ms  -> 600 CPM = 120 WPM, two words, REFUSED
+        // "a b c" over 1000 ms -> 300 CPM =  60 WPM, three words, SELECTED
+        //
+        //   average = (600 + 300) / 2 = 450 CPM = 90 WPM
+        //   target  = the fastest ceil(0.20 * 1) = 1 eligible line, 300 CPM = 60 WPM
+        //
+        // At a floor of TWO both lines are eligible and the target reads 120 (the fastest of the
+        // two); at a floor of FOUR neither is, the fallback takes every line and the target reads 120
+        // again. So this one number pins the three from both sides.
+        var pace = LyricPace.Compute([windowLine(short_line, 1000, 1500), windowLine("a b c", 2000, 3000)]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pace.AverageWpm, Is.EqualTo(90.0).Within(1e-9));
+            Assert.That(pace.TargetWpm, Is.EqualTo(60.0).Within(1e-9));
+        });
+    }
+
+    /// <summary>
+    /// THE FALLBACK (backlog 274): a map on which NOTHING clears the floor keeps a target, by
+    /// selecting from all of its counted lines exactly as it did before the floor existed. Filtering
+    /// to an empty pool would leave such a map with no target at all, and the rule for a 0 (and so
+    /// for beatmaps.target_wpm's NULL) stays what it was, a map with no COUNTED line rather than one
+    /// with no eligible line.
+    /// </summary>
+    [Test]
+    public void AMapOfNothingButShortLinesFallsBackToEveryLine()
+    {
+        // The same six rates three ways: as three-word lines (the pool is the whole map), as two-word
+        // lines and as one-word lines (the pool is empty and the fallback is the whole map). All
+        // three read the 110 WPM TargetWpm_IsTheMeanOfTheFastestFifthOfTheLines pins, so the fallback
+        // really is the pre-274 arithmetic and not an approximation of it.
+        var eligible = LyricPace.Compute(linesAtWindows(six_windows));
+        var twoWord = LyricPace.Compute(linesAtWindowsOf(short_line, six_windows));
+        var oneWord = LyricPace.Compute(linesAtWindowsOf(one_word_line, six_windows));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(eligible.TargetWpm, Is.EqualTo(110.0).Within(1e-9));
+            Assert.That(twoWord.TargetWpm, Is.EqualTo(110.0).Within(1e-9));
+            Assert.That(oneWord.TargetWpm, Is.EqualTo(110.0).Within(1e-9));
+
+            // The rates are identical too, which is what makes the equality above mean anything: all
+            // three texts are 5 cells over the same windows.
+            Assert.That(twoWord.AverageWpm, Is.EqualTo(70.0).Within(1e-9));
+            Assert.That(oneWord.AverageWpm, Is.EqualTo(70.0).Within(1e-9));
         });
     }
 

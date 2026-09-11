@@ -113,22 +113,30 @@ public class LyricPaceParityTest
                 "the fixture has to sit off 5 cells per word for this to test anything");
             Assert.That(s.AverageWpm, Is.EqualTo(s.AverageCpm / ServerPace.CHARS_PER_WORD), "and WPM is CPM/5 on both sides");
 
-            // Non-vacuity for the target row, which needs two separate things of the fixture.
+            // Non-vacuity for the target row, which needs three separate things of the fixture.
             //
             // First, the two figures must be DIFFERENT numbers: a port that returned the map
             // average under the name TargetWpm would satisfy the equality above on both sides at
-            // once and the pin would prove nothing. The fixture's five lines run 340, 435, 1020,
-            // 432 and 840 CPM, so the average is 3067/5 = 613.4 CPM = 122.68 WPM while the target
-            // is the fastest ceil(0.20 * 5) = 1 of them, 1020 CPM = 204 WPM.
+            // once and the pin would prove nothing. The fixture's six lines run 340, 435, 1020,
+            // 432, 840 and 1400 CPM, so the average is 4467/6 = 744.5 CPM = 148.9 WPM while the
+            // target is the fastest ceil(0.20 * 5) = 1 ELIGIBLE line, 1020 CPM = 204 WPM.
             //
-            // Second, and this is why the fixture has FIVE lines rather than the four it had before
-            // the target existed: at n = 5 the selected count steps with the fraction
+            // Second, and this is why the fixture has five ELIGIBLE lines rather than the four it
+            // had before the target existed: at n = 5 the selected count steps with the fraction
             // (ceil(0.20 * 5) = 1 against ceil(0.25 * 5) = 2), so a one-sided retune of
             // target_line_fraction in either mirror lands here. At n = 4 both fractions select one
             // line and this pin would sleep through the drift.
-            Assert.That(s.TargetWpm, Is.EqualTo(204.0).Within(1e-9), "the fastest line, 1020 CPM");
-            Assert.That(s.AverageWpm, Is.EqualTo(122.68).Within(1e-9), "against a 613.4 CPM map average");
+            //
+            // Third, and this is the SIXTH line (backlog 274): "screaming fast" is two words, so the
+            // eligibility floor refuses it, and it is the fastest line on the map at 1400 CPM. Drop
+            // the floor in either mirror alone and that side selects the fastest ceil(0.20 * 6) = 2
+            // of all six, (1400 + 1020) / 2 = 1210 CPM = 242 WPM, and this pin goes red. Without a
+            // short line the fixture cannot see a one-sided floor at all, exactly as it could not
+            // see a one-sided fraction at four lines.
+            Assert.That(s.TargetWpm, Is.EqualTo(204.0).Within(1e-9), "the fastest ELIGIBLE line, 1020 CPM");
+            Assert.That(s.AverageWpm, Is.EqualTo(148.9).Within(1e-9), "against a 744.5 CPM map average");
             Assert.That(s.TargetWpm, Is.GreaterThan(s.AverageWpm), "target is not the average");
+            Assert.That(s.TargetWpm, Is.Not.EqualTo(242.0).Within(1e-9), "nor the unfiltered fastest fifth");
         });
     }
 
@@ -185,6 +193,9 @@ public class LyricPaceParityTest
             // The TARGET does not degenerate with the curve, and both ports have to agree on that
             // too: one line is already a fifth of one line, so this two-word map has a target where
             // it has no peak, and with one counted line the target is that line, i.e. the average.
+            // It is also the ALL-SHORT FALLBACK on both sides (backlog 274): "hi there" is two
+            // words, so nothing here clears the eligibility floor and the pool is every counted line,
+            // which is why the figure survives at all rather than dividing by an empty selection.
             Assert.That(ServerPace.Compute(server).TargetWpm, Is.EqualTo(ClientPace.Compute(client).TargetWpm));
             Assert.That(ServerPace.Compute(server).TargetWpm, Is.EqualTo(ServerPace.Compute(server).AverageWpm));
             Assert.That(ServerPace.Compute(server).TargetWpm, Is.Not.Zero, "a per-line figure survives a map with no window");
@@ -199,14 +210,20 @@ public class LyricPaceParityTest
 
     /// <summary>
     /// The awkward fixture described on the class, projected into each repo's own line type. Long
-    /// enough to fill several rolling windows (127 typeable cells against a 30-cell window), so the
+    /// enough to fill several rolling windows (141 typeable cells against a 30-cell window), so the
     /// curve has real bars rather than the single window a minimal fixture would give it.
     ///
-    /// <para>FIVE lines, and the count is load bearing: the target pace selects
-    /// ceil(target_line_fraction * lineCount) of them, which at five lines takes one line at 0.20
+    /// <para>FIVE ELIGIBLE lines, and the count is load bearing: the target pace selects
+    /// ceil(target_line_fraction * poolCount) of them, which at five lines takes one line at 0.20
     /// and two at 0.25. So a one-sided retune of that constant in either mirror shows up here,
     /// where at four lines both fractions would have selected the same one line and the pin would
     /// have slept through it.</para>
+    ///
+    /// <para>Plus a SIXTH line that is deliberately INELIGIBLE (backlog 274): "screaming fast" is two
+    /// words, under the three-word floor, and it is the fastest line on the map. The target must
+    /// therefore ignore it, and a mirror that dropped the floor would select it and read a different
+    /// number. That is the same reason the fifth line exists, one constant along: a pin can only see
+    /// a rule the fixture actually reaches.</para>
     /// </summary>
     private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) TwinMaps()
         => Twin(
@@ -221,6 +238,10 @@ public class LyricPaceParityTest
                 [("After", 30000, 31000), ("a", 31000, 31300), ("long-drawn", 31300, 32200), ("instrumental", 32200, 34000), ("rest...", 34000, 35000)]),
             ("Twin maps need one more line", 36000, 38000,
                 [("Twin", 36000, 36400), ("maps", 36400, 36700), ("need", 36700, 37000), ("one", 37000, 37300), ("more", 37300, 37600), ("line", 37600, 38000)]),
+            // The two-word burst: 14 cells over a 600 ms window is 1400 CPM, the fastest line here
+            // by a distance, and the three-word floor keeps it out of the target pool.
+            ("screaming fast", 39000, 39600,
+                [("screaming", 39000, 39400), ("fast", 39400, 39600)]),
         ]);
 
     /// <summary>The one lyric shape, projected into each repo's own <c>LyricLine</c> type.</summary>

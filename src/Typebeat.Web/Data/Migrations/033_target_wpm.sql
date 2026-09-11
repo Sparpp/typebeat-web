@@ -3,7 +3,13 @@
 -- line's typeable cells over its boundary window, floored at 500 ms, averaged unweighted over
 -- lines), taken over the top 20 percent of the lines instead of over all of them, so it says what
 -- the map's demanding stretches ask where wpm says what it asks on the whole, and it can never read
--- BELOW wpm. The game computes the same number locally from the beatmap it has loaded
+-- BELOW wpm. (BACKLOG 274, LyricPace v20, AMENDS BOTH HALVES OF THAT SENTENCE: only a line of at
+-- least three WORDS may enter the fastest fifth, since a two-word interjection is over almost as
+-- soon as it begins and its boundary window reads as a rate nothing on the map asks anyone to hold.
+-- A map on which no line clears the floor falls back to the whole set of counted lines, so the NULL
+-- rule below is untouched, but "never below wpm" is no longer a guarantee: an INELIGIBLE fast line
+-- raises wpm without being able to raise this column.) The game computes the same number locally
+-- from the beatmap it has loaded
 -- (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricPaceStatistics.cs, mirrored here as
 -- Packages/Lyrics/LyricPace.cs); this column exists so the set page, the listing cards and the
 -- /play picker can read it without reparsing a .osu blob on every request.
