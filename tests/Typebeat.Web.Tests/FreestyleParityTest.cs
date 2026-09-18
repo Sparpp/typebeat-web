@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Typebeat.Web.Packages.Lyrics;
 
 namespace Typebeat.Web.Tests;
@@ -344,9 +344,18 @@ public class FreestyleParityTest
     /// <summary>
     /// Third leg of the parity triangle: the SERVER's ingest pipeline (Typeability / LyricTiming /
     /// LyricPace, what stamps a beatmap row's char_count, word_count, wpm and stars at upload)
-    /// counts exactly the cells the browser core flattens for the same .osu. Leaderboards take
-    /// their statistics from the client, so a divergence here is metadata quality, not scoring,
-    /// but an undercounted freestyle map would still show the wrong pace in song select.
+    /// counts exactly the cells the browser core flattens for the same .osu, MINUS its freestyle
+    /// slots. Leaderboards take their statistics from the client, so a divergence here is metadata
+    /// quality, not scoring, but an undercounted map would still show the wrong pace in song select.
+    ///
+    /// <para>THE TWO COUNTS PARTED COMPANY DELIBERATELY AT LyricPace v21, which is why the
+    /// comparison carries a term rather than being a plain equality. The browser flattens the CELLS
+    /// the player presses, freestyle slots included, because that is what it has to draw and judge.
+    /// The pace counts what the map ASKS FOR A PARTICULAR SPEED IN, which a slot is not: it takes
+    /// any key, so no map can demand a speed in one, and counting it would credit the map with
+    /// typing it never asked for. The difference between the two is exactly
+    /// <c>FreestyleCellCount</c>, which is asserted here rather than left implicit: a divergence for
+    /// any OTHER reason then still fails, which a loosened equality would have hidden.</para>
     /// </summary>
     [TestCase("freestyleShape", """{"granularity":"word","version":2,"song_end_ms":20000}""", """{"text":"a&b","start_ms":1000,"end_ms":4000,"freestyle":true,"words":[{"text":"a&b","start_ms":1000,"end_ms":4000,"score":1}]}""")]
     [TestCase("plainShape", """{"granularity":"word","version":2,"song_end_ms":20000}""", """{"text":"axb","start_ms":1000,"end_ms":4000,"words":[{"text":"axb","start_ms":1000,"end_ms":4000,"score":1}]}""")]
@@ -362,7 +371,12 @@ public class FreestyleParityTest
         Assert.Multiple(() =>
         {
             Assert.That(lines[0].RawText, Is.EqualTo(Str(browser, "text")));
-            Assert.That(pace.TypeableCellCount, Is.EqualTo(Num(browser, "count")));
+            Assert.That(pace.TypeableCellCount + pace.FreestyleCellCount, Is.EqualTo(Num(browser, "count")),
+                "the browser's keypresses are the pace's typed cells plus the map's any-key slots");
+
+            // And the slot count itself agrees, so the term above is the real one rather than a
+            // fudge that happens to close the gap.
+            Assert.That(pace.FreestyleCellCount, Is.EqualTo(Num(browser, "freestyleCount")));
         });
     }
 

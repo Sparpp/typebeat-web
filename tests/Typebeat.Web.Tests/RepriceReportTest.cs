@@ -1,7 +1,8 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using Typebeat.Tools.RepriceReport;
 using Typebeat.Web.Packages;
+using Typebeat.Web.Packages.Lyrics;
 using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Tests;
@@ -189,15 +190,18 @@ public class RepriceReportTest
     [Test]
     public void ShortMap_GainsNothing_SoThePinnedSyntheticRatingDoesNotMove()
     {
-        // The fixture the game's own pace regression is pinned on. 152's clamp is what keeps it at
-        // 0.67, and a report that claimed a move here would be reporting on a broken clamp.
+        // The fixture the game's own pace regression is pinned on. 152's clamp is what keeps this
+        // map's LENGTH BONUS at exactly 0, and a report that claimed a move here would be reporting
+        // on a broken clamp. The RATING itself moved to 0.82 with the difficulty rework (it was 0.67
+        // under the envelope model), which is a different claim and not the one this pins: what
+        // matters is that the bonus is 0, so the report says the map gains nothing.
         var parsed = BeatmapPackageParser.ParseDifficulty("short.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
 
         Assert.Multiple(() =>
         {
             Assert.That(Length.Count(parsed.Lines, literate: false), Is.EqualTo(5), "ab + space + cd");
             Assert.That(Length.StarBonus(Length.Count(parsed.Lines, literate: false)), Is.EqualTo(0));
-            Assert.That(parsed.Pace.DifficultyRating, Is.EqualTo(0.67).Within(0.01));
+            Assert.That(parsed.Pace.DifficultyRating, Is.EqualTo(0.82).Within(0.01));
         });
     }
 
@@ -281,20 +285,18 @@ public class RepriceReportTest
             Assert.That(row.ImpliedDeletedFactor!.Value, Is.EqualTo(Length.DeletedPpFactor(800)).Within(1e-9));
             Assert.That(row.FactorResidual!.Value, Is.EqualTo(0).Within(1e-9));
 
-            // What pp still sees of length: a few percent, not 1.45x. It STOPPED BEING THE CLOSED
-            // FORM ((SR + bonus)/SR)^2 at backlog 270, and the reason is worth stating rather than
-            // just re-fitting: the play is a full combo, so it now carries an ADDITIVE bonus that
-            // is LINEAR in SR_eff on top of a product that goes as SR_eff^2. The whole ratio is a
-            // weighted blend of the two and therefore sits strictly between them, which is what is
-            // asserted; the exact value depends on the play's own pp and is not a property of the
-            // length bonus at all.
+            // What pp still sees of length: a few percent, not 1.45x. It IS THE CLOSED FORM
+            // ((SR + bonus)/SR)^sr_exponent AGAIN, and the round trip is worth recording. Through
+            // v20 it was that form because every factor of the product was SR-independent bar the
+            // difficulty. Backlog 270 broke it by ADDING a bonus that is LINEAR in SR_eff outside
+            // the product, so the ratio became a blend of the two and this test could only bound it.
+            // v22 restores it from the other side: the combo bonus is a FACTOR now, and one that
+            // reads the note count and the miss count but NOT the rating, so it cancels in a ratio
+            // of two plays on the same map exactly as every other factor does.
             double bonus = Length.StarBonus(800);
-            double productMoves = Math.Pow((5.0 + bonus) / 5.0, 2);
-            // 1.0 is combo_bonus_zero; this file is not on the pp tool's marked list, so it is spelled out.
-            double comboBonusMoves = (5.0 + bonus - 1.0) / (5.0 - 1.0);
 
-            Assert.That(row.StarBonusRatio!.Value, Is.LessThan(productMoves));
-            Assert.That(row.StarBonusRatio!.Value, Is.GreaterThan(comboBonusMoves));
+            // 2.30 is sr_exponent; this file is not on the pp tool's marked list, so it is spelled out.
+            Assert.That(row.StarBonusRatio!.Value, Is.EqualTo(Math.Pow((5.0 + bonus) / 5.0, 2.30)).Within(1e-9));
 
             // And the whole move is the one divided by the other.
             Assert.That(row.Ratio!.Value, Is.EqualTo(row.StarBonusRatio!.Value / Length.DeletedPpFactor(800)).Within(1e-9));
@@ -684,6 +686,16 @@ public class RepriceReportTest
             LiterateCells = cells,
             PaceCells = (int)cells,
             Recomputed = [recomputed, recomputed, recomputed, recomputed, recomputed, recomputed],
+            // THE MATRIX A REAL REPARSE WOULD CARRY (034_ratings_matrix.sql), which the report
+            // needs because since PerformancePoints v22 a price reads it and nothing else: a
+            // synthetic row without one leaves every play on it PENDING, which is a correct reading
+            // of a map that cannot be reparsed but makes this fixture price to zero everywhere.
+            //
+            // The difficult-character count is the map's own CELL COUNT, which is the model's upper
+            // bound for it. This report's fixtures are clean full completions (see PreDeployScore),
+            // so the cleanliness term is exactly 1.0 at any positive count and the figure cannot
+            // move a single number the report is about: the whole file measures the STAR move.
+            Ratings = TestRatings.FromStars(recomputed, recomputed, recomputed, recomputed, recomputed, recomputed, cells),
         };
 
     /// <summary>A map whose recomputed ratings are its stored ones plus the length bonus.</summary>
@@ -711,7 +723,11 @@ public class RepriceReportTest
         var map = Resolved(beatmapId, cells, storedStars);
         int notes = (int)cells;
 
-        double atStoredStars = PerformancePoints.Compute(storedStars, notes, 0, 1, notes, null);
+        // The DIFFICULT CHARACTERS the recomputed matrix carries for this map, which is what the
+        // "at stored stars" column pairs the stored stars with (see PpRow.Price): no column ever
+        // stored a count, so the recomputed one is the only one there is.
+        double difficult = map.Ratings?.TryGet(LyricDifficulty.JudgementArm.None, false, 1.0)?.DifficultCharacters ?? 0;
+        double atStoredStars = PerformancePoints.Compute(storedStars, notes, difficult, 0, 1, notes, null);
         double storedPp = storedPpOverride ?? atStoredStars * Length.DeletedPpFactor(notes);
 
         return PpRow.Price(

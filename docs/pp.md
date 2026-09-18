@@ -16,47 +16,56 @@ profile) is a separate follow-up with wire + client changes.
 Per play:
 
 ```
-pp = C · SR_eff^2.00
-       · max(0, 1 − miss^1.2/notes)^10                  # cleanliness
-       · max(0, 1 − typos^1.2/(notes+typos))^4          # typos
-       · acc^1.80 · 1/(1 + e^(−(acc − 0.80)/0.025))     # accuracy (timing quality)
+pp = C · SR_eff^2.30
+       · max(0, 1 − (miss/difficult)^1.2)^13.5134       # cleanliness, over DIFFICULT characters
+       · accShare(acc) · knee(acc)                      # accuracy (timing quality)
        · modMult                                        # NOT for DT/HT; rate lives in SR_eff only
-       + maxcombo/notes · max(0, 12.5·(SR_eff − 1.0))   # combo bonus, OUTSIDE the product
+       · (1 + comboBonus)                               # combo bonus, a FRACTION of the price
 
-C = 12.4    # global scale constant, does not affect ranking order
+accShare(acc) = expCurve((acc − 0.5) / (1 − 0.5))       # 0 at or below the floor, 1 at a perfect play
+expCurve(t)   = (e^(1.75·t) − 1) / (e^1.75 − 1)         # or t itself at a steepness of 0
+knee(acc)     = 1                                       # acc_knee_width is 0: the knee is OFF
+comboBonus    = min(10, cells/200 · 1)/100 · maxcombo/cells · (1.5 on a spotless full combo)
+
+C = 9.0     # global scale constant, does not affect ranking order
 ```
 
 Factor by factor, in descending priority:
 
-* **SR_eff^2.00**: difficulty is the primary driver. SR_eff is the map's star rating
-  **recomputed at the play's clock rate** for DT/HT and **on the map the conversion mods produced**
-  for LT (see mods below), not the base SR.
-* **cleanliness^10**: cells the play did not type right. Since the backlog-213 amendment that is
-  `miss + good`, i.e. a cell nobody finished PLUS one finished with the wrong character and never
-  corrected; before it, `miss` alone. The raw COUNT carries a power, not the ratio, since the
-  backlog-97 amendment, and that power has been the declared constant `count_power` since the
-  backlog-101 one. It stands at 1.2 (v8 took it to 1.6 and the backlog-137 amendment, v13, put it
-  back). That makes this a steep curve and a CLAMPED one: the base
-  `1 - miss^1.2/notes` reaches zero at `miss = notes^(1/1.2)`, i.e. 178 misses on a 500-note map, and
-  `max(0, ...)` holds it there rather than letting it go negative. Past that point a play earns
-  exactly nothing from any factor, and well before it the term is already negligible. A give-up run
-  (e.g. 900+ misses) collapses to exactly 0.
-* **typos^4**: wrong keypresses the play RECOVERED from, priced separately since the backlog-89
-  amendment, and with its own count under the same power since the backlog-97 one. Since the
-  backlog-213 amendment that is `max(0, combo_break - good)`: the keypresses that produced an
-  uncorrected cell leave this term, because that cell is now priced by cleanliness and one flub must
-  be priced ONCE. Still the cheaper of the two failures
-  (4 against 10), because a stumble you recover from is not the same failure as never typing the
-  cell at all, and because the count sits in its denominator too, which pushes its cliff out to the
-  positive root of `m^1.2 - m - notes = 0` (249 typos at 500 notes) rather than to
-  `notes^(1/1.2)` (178). The two terms therefore price DISJOINT populations of events, which they did not
-  before 213: an uncorrected typo used to be charged to this term through its keypress while
-  completion already charged the cell as a miss.
-* **`count_power`** is where a rebalance of the two penalties is made, rather than the exponents 10
-  and 4: it alone decides at what count each term reaches its cliff, and how that cliff scales with
-  map size. The backlog-101 amendment records the two arguments that were used to set it, at 1.2;
-  v8 retuned it to 1.6 without an amendment of its own and v13 restored the 1.2, so the counts that
-  amendment states are the live ones again.
+* **SR_eff^2.30**: difficulty is the primary driver. SR_eff is the map's star rating
+  **recomputed at the play's clock rate** for DT/HT, **on the map the conversion mods produced**
+  for LT, and **in the play's JUDGEMENT ARM** for EZ/HR (see mods below), not the base SR. The three
+  are orthogonal, so the server stores their cross product: three arms times two streams times three
+  rates is eighteen readings, `beatmaps.ratings` (034_ratings_matrix.sql). The client recomputes the
+  one it needs from the beatmap it has loaded.
+* **`difficult`**: the map's DIFFICULT CHARACTERS at that same (arm, stream, rate), i.e.
+  `LyricDifficulty.ModelResult.DifficultCharacters`, every cell weighted by how close its own bin
+  sits to the map's peak. It is a property of the MAP, not of the play, and it travels in the same
+  stored cell as the rating because a price needs both. A play whose cell is not stored yet is
+  PENDING, exactly as an unfilled `sr_dt` has been since backlog 90.
+* **cleanliness^13.5134**: cells the play did not type right. Since the backlog-213 amendment that
+  is `miss + good`, i.e. a cell nobody finished PLUS one finished with the wrong character and never
+  corrected; before it, `miss` alone. Since the v22 amendment the count is measured as a FRACTION of
+  the map's DIFFICULT CHARACTERS rather than as a raw count over the plain note count, so the same
+  miss RATE costs the same share of the core price on every map, where the old shape made the cliff
+  move with map size. `count_power` (1.2) is the power the fraction carries and `miss_exponent`
+  (13.5134) the power the base carries; the second is `ln(2)/ln(1/0.95)`, the exponent that puts
+  HALF the core price at a 5% miss rate AT a count power of 1. At the live 1.2 the same 5% keeps
+  0.686, 10% keeps 0.414, 25% keeps 0.059 and half the difficult characters keeps 0.00044. The base
+  reaches zero only when EVERY difficult character was missed; the `max(0, ...)` is still
+  load-bearing, because misses are cells and a map has fewer difficult characters than cells, so the
+  fraction really can exceed 1 and a fractional power on a negative base is not a real number. A map
+  with NO difficult characters cannot absorb a miss at all: any dropped cell zeroes the term rather
+  than producing 0/0.
+* **THERE IS NO TYPO TERM** since the v22 amendment. A wrong keypress the play RECOVERED from costs
+  exactly nothing: the price is the rating, cleanliness, timing, the mods and the combo bonus alone.
+  The COUNT is still derived (`typos = max(0, combo_break - good)`, backlog 213) and still travels on
+  the wire, because the surfaces that display a typo count read it and because an UNCORRECTED typo is
+  still folded into the miss count and priced as harshly as ever. The parameter stays on both
+  mirrors' `Compute` signatures, defaulted, so every call site reads unchanged.
+* **`count_power`** is where a rebalance of the miss penalty is made, rather than `miss_exponent`:
+  at 1 the calibrated half-point is a plain miss RATE, and above it the curve buys a grace region at
+  low miss rates and falls more steeply near the top. It stands at 1.2.
 * **Length**: NOT A FACTOR HERE, since the backlog-152 amendment. pp carried the standard osu log
   bonus `max(0.1, 1 + 0.50·log10(notes/100))` through v15; length is now priced by the STAR RATING
   instead. Since backlog 273 `LyricDifficulty` has no separate length term at all: length counts
@@ -64,43 +73,47 @@ Factor by factor, in descending priority:
   map only through `SR_eff`, a few percent where the old term paid up to 1.70x. Two length terms
   would double count, so pp keeps none. `notes` itself is
   still load-bearing: both penalty terms, the combo ratio and FL all read it.
-* **acc^1.80 · 1/(1 + e^(−(acc − 0.80)/0.025))**: an exponent that is deliberately **gentle**,
-  unlike osu, multiplied by a **soft knee** since the backlog-227 amendment. In type!beat real
-  accuracies live at 55–93%, not 97–100%, so an osu-style steep curve (acc^6+) would crush
-  everything and make accuracy dominate: keep the exponent around 1–2 and price the BOTTOM of the
-  range with the knee instead, which is a separate dial and does not touch the top. `acc_knee`
-  (0.80) is where that cliff falls and `acc_knee_width` (0.025) how sharply, each retunable without
-  the other or the exponent moving. The knee costs 0.25% at 95% accuracy, 1.8% at 90% and 11% at
-  85%, HALVES an 80% play exactly, and multiplies 75% by 0.12 and 70% by 0.02. It is exactly 0.5 at
-  `acc = acc_knee` whatever the width, strictly increasing so it can never reorder two plays, and
-  finite over the whole of `[0, 1]` with no clamp. A width of 0 or less means there is no knee at
-  all (the factor is exactly 1.0), which is what every mirror before v19 computes.
-* **maxcombo/notes · max(0, 12.5·(SR_eff − 1.0))**: an ADDITIVE BONUS, and the only term here
-  that is not a factor of the product (backlog 270). It is added AFTER everything else including
-  `modMult`, so a play keeps whatever its difficulty, cleanliness, typos and accuracy say it is
-  worth and a long run adds to that. `combo_bonus_slope` (12.5) is the bonus a FULL combo earns
-  per star above `combo_bonus_zero` (1.0), so an FC is worth 25 pp at 3 stars, 50 at 5 and 75 at
-  7, and half the map's longest run collects half of it. The `max(0, ...)` is load-bearing rather
-  than defensive: a real map can rate below 1.0, and since backlog 273 one whose whole sung
-  timeline is under about a second and a half (short of the smallest scheduled window) rates
-  EXACTLY 0 under the envelope model, there being no length term left to give it anything else,
-  and without the clamp such a play would be paid a NEGATIVE bonus that a longer run made worse.
-  * WHY A BONUS. From v1 to v20 combo was a MULTIPLIER, latterly a log-bent ratio raised to 2.50
-    (backlog 131), tuned so that a broken combo cost roughly its face value rather than several
-    times it. That was already an admission that the term overlapped with the misses: a miss
-    breaks combo, so the play was charged twice for the same flub, and non-FC plays were crushed
-    whatever the map. As a bonus the overlap costs nothing, because the run is only ever ADDED.
+* **accShare(acc)**: a NORMALISED EXPONENTIAL above a FLOOR since the v23 amendment, replacing
+  `acc^accuracy_exponent`. Accuracy is rescaled onto `[acc_floor, 1]` and run through
+  `(e^(k·t) − 1)/(e^k − 1)`, which pins both ends for every steepness: the floor is exactly where
+  the price reaches zero and a perfect play is exactly 1, so `acc_steepness` (1.75) moves the SHAPE
+  without moving either end. `acc_floor` (0.5) is the hard end: an accuracy at or below it earns
+  nothing at all, which the power curve only ever approached. In type!beat real accuracies live at
+  55–93%, not 97–100%, which is why the shaping is done on the bottom of the range rather than by a
+  steeper exponent that would tax the top with it. The curve is strictly increasing above the floor,
+  so it can respread the accuracy axis and never reorder two plays on it.
+* **knee(acc)**: the backlog-227 SOFT KNEE, a logistic centred on `acc_knee` and `acc_knee_width`
+  wide, still multiplying the timing term and OFF at the live dials. A width of 0 or less means there
+  is no knee at all and the factor is exactly 1.0, which is what both mirrors compute today: the
+  exponential above already does the shaping the knee was added for. The position is written as 0 as
+  well, which is inert either way. Both constants are kept declared so a retune is a value change
+  rather than a code change.
+* **(1 + comboBonus)**: a PERCENTAGE OF THE PRICE since the v22 amendment, where backlog 270 had
+  made it a number of pp added beside one. The ceiling is a straight line through the origin worth
+  `combo_bonus_at_200_cells` (1.0) percent at 200 cells, capped at `combo_bonus_cap` (10.0) percent
+  from 2000 cells up, times the share of the map the longest run held, times `combo_bonus_perfect`
+  (1.5) when the play was SPOTLESS and held the whole map in one run. So a 2000-cell map pays +15%
+  for 2000/2000 and just under +10% for 1999/2000, and a 400-cell map pays at most +3%.
+  * WHY A PERCENTAGE. As an amount the bonus was worth the same number of pp on a play that earned
+    150 and on one the miss term had zeroed, so a give-up run that happened to hold a short streak
+    still collected something. As a percentage a price zeroed by misses stays zero, and the mod
+    multiplier scales the bonus along with everything else it multiplies, which is the opposite of
+    v21's placement and is what the version bump records.
+  * WHY IT SCALES WITH LENGTH. A flat pp amount is worth far more on a short map than a long one
+    relative to what the map is worth, and a full combo on a two-minute map is a different
+    achievement from a full combo on eight bars. The ceiling grows with the note count instead, on a
+    line through the origin, so the reward is proportional to what was held together.
   * IT IS DELIBERATELY NOT GATED BY ACCURACY, and the consequence is recorded rather than
     overlooked. Since backlog 199 a badly-timed hit (the right character struck outside the
     outermost Meh window) EXTENDS the run rather than breaking it, so combo does not break on an
-    off-time press at all and a full-combo run at 69% accuracy collects the whole bonus. Gating
-    it by `acc^1.80` times the knee was measured over the live corpus and moves top-20 totals by
-    only 1 to 4%, which is not worth making the bonus a second accuracy term. The spec is a naive
-    fraction of a naive bonus.
+    off-time press at all and a full-combo run at 69% accuracy collects the whole bonus.
   * IT STILL EARNS ITS PLACE, for the reason it always did: combo can break without a miss (a
     wrong keypress the player then corrects, or a word given up on with the space-skip setting:
     both break the run and neither is a miss), and it distinguishes spread-out misses from one
     choke that dropped several.
+  * `combo_bonus_slope` (12.5) and `combo_bonus_zero` (1.0), the v21 pair, are kept DECLARED in both
+    mirrors and read by nothing. They are the record of what v21 priced, and they are what lets the
+    retune tool tell a mirror one generation behind from a mirror that is simply broken.
 
 **Definitions (pinned to the score row):**
 
@@ -120,11 +133,15 @@ Factor by factor, in descending priority:
   cell is one cell of the map however it was typed.
 * `miss = miss + good` from `statistics`, the cleanliness term's count, since the backlog-213
   amendment. Read straight off the `miss` key before it.
-* `typos = max(0, combo_break - good)` from `statistics`, the typo term's count, since the same
-  amendment. Read straight off `combo_break` before it. **The clamp is load-bearing, not
-  defensive**: the two counts arrive off the wire independently, so `good` can exceed `combo_break`
-  on a row stored before the mistype stat existed at all (no `combo_break` key, backlog 72) and on
-  any tamper-shaped dictionary, and a negative count under the fractional `count_power` is NaN.
+* `typos = max(0, combo_break - good)` from `statistics`, derived exactly as it always was and
+  PRICED BY NOTHING since the v22 amendment. Read straight off `combo_break` before backlog 213. The
+  clamp stays, because the two counts arrive off the wire independently and a surface that displays
+  a negative typo count is still wrong.
+* `difficult` is the map's DIFFICULT-CHARACTER count at the play's (arm, stream, rate), read off
+  `beatmaps.ratings` server-side and computed from the loaded beatmap client-side. It is NOT derived
+  from the score row and never can be: it is a property of the map. 0 means "no such reading", and
+  any miss then zeroes the cleanliness term rather than falling back to the cell count; on the server
+  that state is unreachable, because a play whose cell is missing is left PENDING instead of priced.
 * `maxcombo` is the stored `max_combo`; the theoretical max equals `notes` for a typing map.
 
 ## Eligibility
@@ -153,9 +170,12 @@ stored `ranked = false` and therefore earn no pp.
   so DT is overpaid by roughly 18% and HT (windows tightened to 0.75x) underpaid by about 11%. Left
   alone deliberately: it is a rebalance, not a bug fix, and it would reprice every stored rate row.
   Implementation consequence: the server only ever needs SR at three rates (1.0 / 1.5 / 0.75)
-  per cell stream; store `sr_dt` / `sr_ht` (and, since the Literate amendment, `sr_literate` /
-  `sr_literate_dt` / `sr_literate_ht`) per beatmap at ingest and backfill via the existing pace
-  VERSION-bump mechanism. No on-the-fly rate-SR math.
+  per cell stream and per judgement arm; store the whole eighteen-cell matrix per beatmap at ingest
+  (`beatmaps.ratings`, 034_ratings_matrix.sql) and backfill via the existing pace VERSION-bump
+  mechanism. The six legacy columns (`difficulty_rating`, `sr_dt`, `sr_ht`, `sr_literate`,
+  `sr_literate_dt`, `sr_literate_ht`) are the matrix's ARM-NONE stars and stay written, for the
+  pages, the client's own beatmap lookup and the search filters, none of which know about an arm. No
+  on-the-fly rate-SR math.
 * **LT** (Literate): priced **exclusively through SR_eff**, exactly as a rate is, and with no flat
   multiplier in modMult for the same reason there is none for DT/HT. Literate is a **conversion**
   mod: it makes every supported punctuation mark a typed cell of its own, so it changes the map's
@@ -167,26 +187,30 @@ stored `ranked = false` and therefore earn no pp.
   flashlight bonus, but grows with song length, so it pays off on long maps. The `max` clamp is
   required: unclamped, the raw term dips **below 1.0 under ~46 notes**, which would punish FL on
   short maps rather than "barely move".
-* **EZ** (Easy): flat × 0.75. The mod DOUBLES every judgement window, so each character is twice as
-  forgiving to land. Flat rather than priced through SR_eff, and that is not the Literate case: Easy
-  converts nothing, so the cells, their target times and the map's pace are all identical and no
-  rating input can see it. Its score multiplier is osu's 0.5x for a difficulty reduction, the same
-  value No Fail carries; the pp value is separate and was decided at 0.75 on 2026-08-13.
-* **HR** (Hard Rock): flat × 1.25, the exact mirror of Easy on the same lever. Since backlog 264 the
-  mod no longer halves the judgement windows for a live play: it now judges under the classic
-  per-character point-target rule at the same 1.0x windows as an unmodded play. A stored replay from
-  before that change still resolves under the halved ladder, carried by the replay's own CONFIG
-  frame (the era travels with the row, so no new axis is needed to recalc it). Flat for the same
-  reason Easy is:
-  it converts nothing, so no rating input can see it. Deliberately not the reciprocal of Easy's 0.75
-  (1.333...): the window scales mirror each other, the prices need not. Its score multiplier is a
-  separate 1.10x, chosen so the fattest reachable ranked stack (DT@2.00 × FL × LT × HR = 1.770615)
-  stays under the server's 2.0 stack cap; at 1.25 that product would be 2.0121 and an honest maximal
-  play would be clamped and stored unranked. Decided on 2026-08-13.
-* **RE** (Recite): flat × 1.07 (backlog 270). The lyric text is hidden until the line is sung,
-  so the play is typed from listening rather than from reading ahead. Flat for the reason Easy
-  and Hard Rock are: the mod converts nothing, so the cells, their target times and the map's
-  pace are identical and no rating input can see it.
+* **EZ** (Easy): a JUDGEMENT ARM of SR_eff, plus a flat × 0.85. The mod DOUBLES every judgement
+  window and shelters the whole WORD rather than the syllable, and since the difficulty rework the
+  star rating prices the intervals a press may land in, so the play is rated against the matrix's
+  `ez` cell. "No rating input can see it", which every generation through v21 said here, stopped
+  being true then. The flat term is what the PP Sandbox charges for what is LEFT after the arm, at
+  its live dial. Its score multiplier is osu's 0.5x for a difficulty reduction, the same value No
+  Fail carries; the pp value is separate.
+* **HR** (Hard Rock): a JUDGEMENT ARM of SR_eff, and flat × 1.00, i.e. NEUTRAL in modMult. Since
+  backlog 264 the mod judges under the classic per-character point-target rule at the same 1.0x
+  windows as an unmodded play (a stored replay from before that change still resolves under the
+  halved ladder, carried by the replay's own CONFIG frame). Those point targets are exactly what the
+  rework's rhythm arm reads, so the play is rated against the matrix's `hr` cell and the flat term is
+  left at 1.0 rather than paying for the same change twice, which is the double count this file
+  exists to forbid. It used to be a flat × 1.25 against Easy's 0.75. Its score multiplier is a
+  separate 1.10x, chosen so the fattest reachable ranked stack stays under the server's 2.0 stack
+  cap.
+* **RE** (Recite): × `1 + 2.0·(FL(notes) − 1)`, i.e. a SCALE on Flashlight's bonus rather than a
+  flat term (the v23 amendment; it was a flat × 1.07 at v21). The lyric is hidden until the line is
+  sung, which is what Flashlight charges for (the map is typed from memory rather than read ahead),
+  and that cost grows with how much map there is to hold in the head, so the mod is length-scaled for
+  the same reason Flashlight is. `recite_multiplier` (2.0) is the scale: 0 is free, 1 is exactly what
+  Flashlight is worth, and the live 2.0 pays twice it. Under Flashlight's own floor (~46 notes) there
+  is no bonus to scale, so Recite is worth exactly nothing there too. The two mods still MULTIPLY
+  when both are selected, exactly as every other pair does.
 * **FC** (Fletcher): flat × 1.02 (backlog 270). The caret is PINNED back to the line the song is
   on, which since backlog 208 is the harder half of the pair (the unpinned caret became the
   default for every play and the mod reversed). Flat for the same reason again, and NOT to be
@@ -211,13 +235,15 @@ stored `ranked = false` and therefore earn no pp.
 * **SD / MU**: × 1.0 (no effect, matching their score multipliers).
 
 ```
-modMult = (FL ? max(1.0, 1 + 0.02 + 0.06·log10(notes/100)) : 1)
-        · (EZ ? 0.75                                      : 1)
-        · (HR ? 1.25                                      : 1)
-        · (RE ? 1.07                                      : 1)
-        · (FC ? 1.02                                      : 1)
-        · (FT ? 0.90                                      : 1)
-        · (NF ? 0.90                                      : 1)
+FL(notes) = max(1.0, 1 + 0.02 + 0.06·log10(notes/100))
+
+modMult = (FL ? FL(notes)              : 1)
+        · (RE ? 1 + 2.0·(FL(notes)−1)  : 1)
+        · (EZ ? 0.85                   : 1)
+        · (HR ? 1.00                   : 1)     # neutral: the judgement ARM prices it
+        · (FC ? 1.02                   : 1)
+        · (FT ? 0.90                   : 1)
+        · (NF ? 0.90                   : 1)
 ```
 
 ## Aggregation
@@ -1355,3 +1381,86 @@ gives: keypresses are unbounded, and a fractional exponent on a negative base is
 
 **`VERSION` bumps to 21.** Every stored row the change values differently is repriced by
 `PpBackfill` at the next boot, reading only columns; no migration is needed.
+
+
+## Amendment (2026-09-18): the pricing shape forks, and the rating gains a judgement arm (v22, v23, v24)
+
+SUPERSEDES the 2026-09-06 combo amendment's placement and the 2026-08-28 accuracy knee, and deletes
+the typo term the 2026-08-07 split created. The formula block and every bullet at the top of this
+file are the LIVE shape; this section is the record of what moved and why.
+
+This is the pp half of a cross-repo change: the game's difficulty model was reworked in the same
+landing (its shipped star rating is now a CHUNKED ENDURANCE axis carrying a typability adjustment
+and a rhythmic-complexity multiplier, and it takes a JUDGEMENT ARM), and the server's mirrors were
+brought back into step with it. `LyricPace.VERSION` bumps to 21 in the same change, which is what
+re-rates the catalogue; `PerformancePoints.VERSION` bumps to 24, which is what reprices the score
+table. THE ORDERING MATTERS AND IS SAFE IN EITHER DIRECTION: a play whose map has no stored matrix
+cell yet is left PENDING rather than priced, so whichever sweep runs second settles what the first
+could not.
+
+### THREE VERSIONS, LANDED TOGETHER
+
+**v22 is the shape fork**, tuned in the PP Sandbox (`tools/pp-sandbox/`), whose module is the same
+arithmetic with every constant lifted into a dial. Four departures:
+
+1. **The typo term is gone.** A wrong keypress the player recovered from costs nothing. The count is
+   still derived and still displayed; nothing prices it.
+2. **The miss penalty is judged against the map's DIFFICULT CHARACTERS, not its cell count.**
+   Dropping a cell therefore costs more on a map whose difficulty is concentrated in a few passages,
+   and the count is a property of the map rather than of the play.
+3. **The loss curve is calibrated in fractions.** The power sits on the missed FRACTION, so the same
+   miss RATE costs the same share of the core price on every map, where the old count-based shape
+   made the cliff move with map size (46% of a 100-note map against 28% of a 2000-note one).
+4. **The combo bonus multiplies the price instead of adding to it**, at a ceiling that scales with
+   the map. A price zeroed by misses now stays zero.
+
+**v23 has no changelog entry on the client**, which is worth stating outright rather than leaving as
+a hole: the two departures it carries are documented where they act and the version number is the
+only record that they landed together.
+
+5. **The accuracy shape is a normalised exponential above a floor**, replacing
+   `acc^accuracy_exponent` and leaving the soft knee inert at width 0. An accuracy at or below
+   `acc_floor` (0.5) now earns exactly nothing, where the power curve only approached zero.
+6. **Recite is a multiplied Flashlight bonus** rather than a flat term, because hiding the lyric is
+   what Flashlight charges for and that cost grows with map length.
+
+**v24 is the PP Sandbox's LIVE dials**, re-read from the lab after the owner retuned it. The Easy
+multiplier drops 0.9 to 0.85, and the knee position is written as the 0 the lab's panel holds (inert
+either way, since the width is 0). Every other dial already agreed with the lab: scale 9,
+sr_exponent 2.30, count_power 1.2, acc_steepness 1.75, acc_floor 0.5, knee off, miss_exponent
+13.5134, the combo cap and kicker, reference_notes 100, Recite 2.0, Hard Rock neutral, Fletcher and
+No Fail 0.9.
+
+### THE JUDGEMENT ARM IS A RATING INPUT, NOT A MULTIPLIER
+
+Easy and Hard Rock move the engine's own windows, and since the rework the star rating prices the
+INTERVALS a press may land in: Easy doubles every window and shelters the whole word, Hard Rock keeps
+normal windows but puts every cell on its own point target. Those are different ratings, so the arm
+selects one, and paying for it again in `modMult` would be exactly the double count this file forbids
+for DT/HT and LT. Hard Rock's flat term is therefore NEUTRAL, and Easy's 0.85 is only what the lab
+charges for what is left.
+
+### THE STORAGE CONSEQUENCE: EIGHTEEN READINGS, NOT SIX
+
+The arm is orthogonal to the stream and to the rate, so the server stores their cross product: three
+arms times two streams times three rates. Each cell carries BOTH halves a price needs, the stars and
+the difficult characters, because a caller holding one without the other would have to invent the
+missing half and the two ways of doing that price the same play very differently. That is
+`beatmaps.ratings`, a nullable jsonb column (034_ratings_matrix.sql).
+
+NULL IS THE UNFILLED STATE, not a rating of zero, and it has exactly the contract `sr_dt` has had
+since 020: a play whose cell is missing is NOT SETTLED, earns 0 for now and is left stale for
+`PpBackfill` to revisit. That is stricter than the six columns were, because `difficulty_rating` is
+NOT NULL and a no-mod play could never be pending before; on a row the pace sweep has not reached,
+every play is pending now, including a browser `/play` one.
+
+The six legacy columns are the matrix's ARM-NONE stars and stay written, from the same parse: they
+are what the set page and the listing cards print, what the client's own beatmap lookup reads off the
+API, and what the search filters sort and range on, none of which know anything about a judgement
+arm.
+
+### WHAT REPRICES
+
+Everything. The scale, the rating exponent, the cleanliness shape, the accuracy shape and the combo
+placement all moved, so no stored row is left at its old value, and the star ratings the prices are
+read from moved underneath them as well. Both sweeps run at the next boot.

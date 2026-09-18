@@ -1,4 +1,4 @@
-using Dapper;
+﻿using Dapper;
 using Newtonsoft.Json.Linq;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
@@ -82,7 +82,8 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         DateTime EndedAt,
         string ModsJson,
         string StatisticsJson,
-        bool HasReplay)
+        bool HasReplay,
+        string? Ratings)
     {
         /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
         public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);
@@ -113,13 +114,20 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         /// <para>
         /// Never null in practice. <see cref="PerformancePoints.ForScore"/> prices nothing at all,
         /// and its callers store 0, whenever <see cref="PerformancePoints.StarsFor"/> yields no
-        /// rating (a custom rate, a multi-rate stack, or a map missing a rating the play needs:
-        /// <c>sr_dt</c> for a DT play, <c>sr_ht</c> for an HT one, and the
-        /// matching <c>sr_literate*</c> for anything carrying Literate), and the board only
-        /// carries plays with <c>pp &gt; 0</c>, so every row here priced from one of the six
-        /// stored ratings and the sr columns only ever go from null to filled. It stays nullable
-        /// anyway, and renders as an empty cell, because the honest answer to "which rating is this"
-        /// is nothing rather than a number that did not price the play.
+        /// rating (a custom rate, a multi-rate stack, or a map whose RATING MATRIX does not carry
+        /// the cell the play needs: its judgement arm, its stream and its rate,
+        /// 034_ratings_matrix.sql), and the board only carries plays with <c>pp &gt; 0</c>, so every
+        /// row here priced from a stored cell and the matrix only ever goes from null to filled. It
+        /// stays nullable anyway, and renders as an empty cell, because the honest answer to "which
+        /// rating is this" is nothing rather than a number that did not price the play.
+        /// </para>
+        ///
+        /// <para>
+        /// THE SIX RATING COLUMNS ARE STILL SELECTED alongside the matrix, and are what the row's
+        /// own star readouts print. They are the matrix's arm-none stars, so on a play in no
+        /// judgement arm this column and the map's published rating are the same number; on an Easy
+        /// or Hard Rock play they are deliberately not, which is the whole point of the arm being a
+        /// rating input.
         /// </para>
         ///
         /// <para>
@@ -130,8 +138,7 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         /// </para>
         /// </summary>
         public double? EffectiveStars
-            => PerformancePoints.StarsFor(Mods, BaseStars, StarsDoubleTime, StarsHalfTime,
-                new PerformancePoints.LiterateStars(StarsLiterate, StarsLiterateDoubleTime, StarsLiterateHalfTime)).Stars;
+            => PerformancePoints.StarsFor(Mods, BeatmapRatings.Parse(Ratings)).Stars;
 
         private JObject? statistics;
         private JObject Statistics => statistics ??= JObject.Parse(string.IsNullOrEmpty(StatisticsJson) ? "{}" : StatisticsJson);
@@ -273,7 +280,8 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                             sc.ended_at AS EndedAt,
                             sc.mods::text AS ModsJson,
                             sc.statistics::text AS StatisticsJson,
-                            sc.replay_key IS NOT NULL AS HasReplay
+                            sc.replay_key IS NOT NULL AS HasReplay,
+                            b.ratings::text AS Ratings
                      FROM (
                          SELECT best.id, best.user_id, best.beatmap_id, best.pp
                          FROM ({PpRanking.BestPerSetSql}) best

@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using Dapper;
 using Newtonsoft.Json;
 using Typebeat.Web.Auth;
@@ -115,7 +115,8 @@ public static class ScoreEndpoints
             """
             SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                    b.difficulty_rating AS baseStars, b.sr_dt AS srDt, b.sr_ht AS srHt,
-                   b.sr_literate AS srLiterate, b.sr_literate_dt AS srLiterateDt, b.sr_literate_ht AS srLiterateHt
+                   b.sr_literate AS srLiterate, b.sr_literate_dt AS srLiterateDt, b.sr_literate_ht AS srLiterateHt,
+                   b.ratings::text AS ratings
             FROM beatmaps b
             JOIN beatmapsets bs ON bs.id = b.set_id
             WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
@@ -203,7 +204,8 @@ public static class ScoreEndpoints
             """
             SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS,
                    difficulty_rating AS baseStars, sr_dt AS srDt, sr_ht AS srHt,
-                   sr_literate AS srLiterate, sr_literate_dt AS srLiterateDt, sr_literate_ht AS srLiterateHt
+                   sr_literate AS srLiterate, sr_literate_dt AS srLiterateDt, sr_literate_ht AS srLiterateHt,
+                   ratings::text AS ratings
             FROM beatmaps WHERE id = @beatmapId
             """,
             new { beatmapId }, tx);
@@ -329,14 +331,13 @@ public static class ScoreEndpoints
             PerformancePoints.CountNotes(statistics),
             storedAccuracy,
             storedMaxCombo,
-            beatmap.BaseStars,
-            beatmap.SrDt,
-            beatmap.SrHt,
-            // The Literate-converted map's three (029_literate_stars.sql). A Literate play is
-            // priced through them and carries no flat multiplier any more (backlog 144), so a map
-            // the SR sweep has not reached leaves it unpriced and retried, exactly as an unfilled
-            // sr_dt already does for a Double Time play.
-            new PerformancePoints.LiterateStars(beatmap.SrLiterate, beatmap.SrLiterateDt, beatmap.SrLiterateHt));
+            // THE RATING MATRIX (034_ratings_matrix.sql): since PerformancePoints v22 a price needs
+            // the map's DIFFICULT CHARACTERS as well as its stars, and since the difficulty rework
+            // it needs the play's JUDGEMENT ARM too, so one lookup into this replaces the six
+            // rating columns that used to be passed here. A map the sweep has not reached carries
+            // no matrix at all and leaves the play unpriced and retried, exactly as an unfilled
+            // sr_dt already did for a Double Time play.
+            BeatmapRatings.Parse(beatmap.Ratings));
 
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
@@ -739,11 +740,14 @@ public static class ScoreEndpoints
 
     // Appended, never reordered: Dapper maps positional records by position (BaseStars/SrDt/SrHt
     // are the 020_performance_points.sql additions, the three SrLiterate* the 029_literate_stars.sql
-    // ones).
+    // ones, Ratings the 034_ratings_matrix.sql one). The six ratings are no longer read by the
+    // pricing path below, which reads the matrix alone; they stay on the row because the response
+    // this endpoint builds still reports the play's own rating to the client.
     private sealed record BeatmapRow(
         long Id, string ChecksumMd5, double DrainLengthS, double SkippableS,
         double BaseStars, double? SrDt, double? SrHt,
-        double? SrLiterate, double? SrLiterateDt, double? SrLiterateHt);
+        double? SrLiterate, double? SrLiterateDt, double? SrLiterateHt,
+        string? Ratings);
 
     private sealed record BestScoreRow(long Id, long TotalScore);
 

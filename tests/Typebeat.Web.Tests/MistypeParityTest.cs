@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Tests;
@@ -122,7 +122,7 @@ public class MistypeParityTest
     }
 
     [Test]
-    public void PpReadsTheBrowsersMistypeCountAndPricesItOnlyThroughCleanliness()
+    public void PpReadsTheBrowsersMistypeCountAndNoLongerPricesIt()
     {
         var root = Harness();
 
@@ -141,10 +141,16 @@ public class MistypeParityTest
             Assert.That(mistyped.Typos, Is.EqualTo(7));
         });
 
-        double cleanPp = PerformancePoints.Compute(5, clean.Notes, clean.Misses, 1.0, 15, [], clean.Typos);
-        double mistypedPp = PerformancePoints.Compute(5, mistyped.Notes, mistyped.Misses, 1.0, 15, [], mistyped.Typos);
+        // THE PRICE NO LONGER MOVES, and that is the change rather than a weakened test:
+        // PerformancePoints v22 deleted the typo term outright, so a wrong keypress the player
+        // recovered from costs nothing. The COUNT still has to cross the wire and still has to be
+        // read identically on both sides (everything above this line), because the surfaces that
+        // display it read it and because an UNCORRECTED typo is still folded into the miss count,
+        // which is priced as harshly as ever.
+        double cleanPp = PerformancePoints.Compute(5, clean.Notes, clean.Notes, clean.Misses, 1.0, 15, [], clean.Typos);
+        double mistypedPp = PerformancePoints.Compute(5, mistyped.Notes, mistyped.Notes, mistyped.Misses, 1.0, 15, [], mistyped.Typos);
 
-        Assert.That(mistypedPp, Is.LessThan(cleanPp), "mistyping must cost pp; that is the point of the stat");
+        Assert.That(mistypedPp, Is.EqualTo(cleanPp), "the stat is carried and displayed; since v22 it is not priced");
     }
 
     /// <summary>

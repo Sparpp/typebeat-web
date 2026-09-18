@@ -1,4 +1,4 @@
-using Typebeat.Web;
+﻿using Typebeat.Web;
 using Typebeat.Web.Scoring;
 
 namespace Typebeat.Tools.RepriceReport;
@@ -99,13 +99,25 @@ internal sealed class PpRow
         var notes = PerformancePoints.CountNotes(stored.StatisticsJson);
         bool literate = PerformancePoints.IsLiterate(mods);
 
-        var storedLiterate = new PerformancePoints.LiterateStars(map.Stored.SrLiterate, map.Stored.SrLiterateDt, map.Stored.SrLiterateHt);
+        // THE TWO MATRICES THIS ROW IS PRICED AGAINST. Since PerformancePoints v22 a price needs the
+        // map's DIFFICULT CHARACTERS as well as its stars, and only the recomputed side has them:
+        // the six stored star COLUMNS are all the stored side ever was, and no column has ever
+        // carried a difficult-character count. So the "at stored stars" matrix is the recomputed one
+        // with its arm-none stars swapped for the stored ones, which is exactly what this column is
+        // for: it isolates the STAR move from the formula move, and pairing stored stars with
+        // recomputed counts is the only pairing available and the right one for that question.
+        //
+        // An UNRESOLVED map has no matrix at all, so it has no price either. It used to have one
+        // (the stored star columns alone could price it), and losing that is the honest reading of
+        // v22: a row whose map cannot be reparsed cannot be priced under a formula that reads the
+        // map. Those rows already carry no "after" column and are reported as unresolved.
+        BeatmapRatings? storedRatings = map.Ratings?.WithArmNoneStars((literateStream, rate)
+            => map.Stored.Rating(Variant(literateStream, rate)));
 
         var atStored = PerformancePoints.ForScore(
-            stored.Ranked, mods, notes, stored.Accuracy, stored.MaxCombo,
-            map.Stored.DifficultyRating, map.Stored.SrDt, map.Stored.SrHt, storedLiterate);
+            stored.Ranked, mods, notes, stored.Accuracy, stored.MaxCombo, storedRatings);
 
-        var starBefore = PerformancePoints.StarsFor(mods, map.Stored.DifficultyRating, map.Stored.SrDt, map.Stored.SrHt, storedLiterate);
+        var starBefore = PerformancePoints.StarsFor(mods, storedRatings);
 
         if (!map.Resolved)
         {
@@ -122,15 +134,8 @@ internal sealed class PpRow
             };
         }
 
-        var newLiterate = new PerformancePoints.LiterateStars(
-            map.New(SrVariant.Literate), map.New(SrVariant.LiterateDoubleTime), map.New(SrVariant.LiterateHalfTime));
-
-        double newBase = map.New(SrVariant.Base)!.Value;
-        double? newDt = map.New(SrVariant.DoubleTime);
-        double? newHt = map.New(SrVariant.HalfTime);
-
         var priced = PerformancePoints.ForScore(
-            stored.Ranked, mods, notes, stored.Accuracy, stored.MaxCombo, newBase, newDt, newHt, newLiterate);
+            stored.Ranked, mods, notes, stored.Accuracy, stored.MaxCombo, map.Ratings);
 
         return new PpRow
         {
@@ -146,8 +151,24 @@ internal sealed class PpRow
             Settled = priced.Settled,
             Refused = priced.Settled && priced.Pp is null,
             StarBefore = starBefore.Stars,
-            StarAfter = PerformancePoints.StarsFor(mods, newBase, newDt, newHt, newLiterate).Stars,
+            StarAfter = PerformancePoints.StarsFor(mods, map.Ratings).Stars,
         };
+    }
+
+    /// <summary>
+    /// Which of the six stored rating columns holds a given (stream, rate), i.e. the inverse of
+    /// <see cref="SrRow.CellsFor"/>'s split. The two rates are compared against the matrix's own
+    /// list rather than against literals, so a retune of either base rate moves both together.
+    /// </summary>
+    private static SrVariant Variant(bool literate, double rate)
+    {
+        bool up = rate > 1;
+        bool down = rate < 1;
+
+        if (literate)
+            return up ? SrVariant.LiterateDoubleTime : down ? SrVariant.LiterateHalfTime : SrVariant.Literate;
+
+        return up ? SrVariant.DoubleTime : down ? SrVariant.HalfTime : SrVariant.Base;
     }
 }
 

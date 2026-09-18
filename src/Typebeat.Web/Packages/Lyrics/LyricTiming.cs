@@ -8,6 +8,30 @@ public sealed class TimedUnit
     public required string Text { get; init; }
     public required double StartTime { get; init; }
     public required double EndTime { get; init; }
+
+    /// <summary>
+    /// The word's AUTHORED syllable starts, strictly inside (<see cref="StartTime"/>,
+    /// <see cref="EndTime"/>) and ascending, or empty when the word carries none (game's
+    /// TimedUnit.SyllableBoundaries, LyricBeatmap.cs:445).
+    ///
+    /// <para>The server ignored these until the difficulty rework, because nothing it computed read
+    /// them: the pace figures do not, and the envelope model spreads a word's cells uniformly across
+    /// its whole span. The rhythm arm of the chunked axis DOES (see
+    /// <c>LyricDifficulty.PressIntervals</c>): a cell is judged inside its own syllable's sung span,
+    /// so a subdivided word offers a different set of judgement intervals from the syllabified
+    /// fallback, and a mirror that dropped the boundaries would rate every subdivided map
+    /// differently from the client. Empty by default, so every caller that builds a unit by hand
+    /// (the tests, the interpolation fallback) reads exactly as it did.</para>
+    ///
+    /// <para>NOT PORTED, and the one place the two sides can still disagree: the '|' SPLIT MARKER
+    /// path. The game keeps pipes through normalization, strips them into per-word character
+    /// positions and lets them AUTHOR even boundaries over a word the aligner did not subdivide
+    /// (Beatmaps/SplitMarkers.cs, Gameplay/SyllableSegments.IsAuthoredValid). The server's
+    /// <see cref="Typeability"/> has no split marker at all, so a pipe is simply dropped from the
+    /// text as any unsupported character is: the stored TEXT agrees with the game's, and only a
+    /// piped word with no <c>syllables</c> array of its own rates here as unsubdivided.</para>
+    /// </summary>
+    public IReadOnlyList<double> SyllableBoundaries { get; init; } = Array.Empty<double>();
 }
 
 /// <summary>A resolved lyric line (game's LyricLine, minus gameplay-only fields).</summary>
@@ -48,11 +72,18 @@ public static class LyricTiming
     public const int SUPPORTED_VERSION = 2;
     public const double LAST_LINE_TAIL_MS = 3000;
 
+    /// <summary>
+    /// One parsed [Lyrics] line. <c>Words</c>'s fourth member is the word's AUTHORED SYLLABLE
+    /// STARTS as they sit on the wire (the <c>"syllables"</c> array LyricOsuFormat writes and
+    /// TimingJsonLoader reads back), unclamped and unfiltered: <see cref="buildExplicitUnits"/>
+    /// applies the game's rules to them once the word's own span is known. Empty for the words of
+    /// every map the aligner did not subdivide, which is what makes this addition inert for them.
+    /// </summary>
     public readonly record struct RawLine(
         string Text,
         double StartMs,
         double EndMs,
-        List<(string Text, double Start, double End)> Words);
+        List<(string Text, double Start, double End, double[] Syllables)> Words);
 
     /// <summary>Header fields of a [Lyrics] section (all optional on the wire).</summary>
     public sealed class Header
@@ -175,7 +206,7 @@ public static class LyricTiming
             endMs = parsedEnd;
         }
 
-        var words = new List<(string Text, double Start, double End)>();
+        var words = new List<(string Text, double Start, double End, double[] Syllables)>();
 
         if (lineElement.TryGetProperty("words", out JsonElement wordsElement)
             && wordsElement.ValueKind == JsonValueKind.Array)
@@ -192,7 +223,27 @@ public static class LyricTiming
                 double ws = wordElement.TryGetProperty("start_ms", out JsonElement wsEl) && tryGetDouble(wsEl, out double wsv) ? wsv : startMs;
                 double we = wordElement.TryGetProperty("end_ms", out JsonElement weEl) && tryGetDouble(weEl, out double wev) ? wev : ws;
 
-                words.Add((wordText, ws, we));
+                // The word's authored syllable STARTS, read exactly as TimingJsonLoader reads them
+                // (its words[].syllables): every number the array holds, in wire order, with
+                // non-numbers skipped. They are neither clamped nor filtered here, because the rule
+                // the game applies ("strictly inside the CLAMPED word") needs the word's resolved
+                // span, which BuildLines has and this parse does not.
+                double[] syllables = Array.Empty<double>();
+
+                if (wordElement.TryGetProperty("syllables", out JsonElement sylEl) && sylEl.ValueKind == JsonValueKind.Array)
+                {
+                    var parsed = new List<double>(sylEl.GetArrayLength());
+
+                    foreach (JsonElement entry in sylEl.EnumerateArray())
+                    {
+                        if (tryGetDouble(entry, out double at))
+                            parsed.Add(at);
+                    }
+
+                    syllables = parsed.Count == 0 ? Array.Empty<double>() : parsed.ToArray();
+                }
+
+                words.Add((wordText, ws, we, syllables));
             }
         }
 
@@ -300,7 +351,7 @@ public static class LyricTiming
     // window and enforce non-decreasing across units.
     private static IReadOnlyList<TimedUnit> buildExplicitUnits(
         string[] tokens,
-        List<(string Text, double Start, double End)> words,
+        List<(string Text, double Start, double End, double[] Syllables)> words,
         double lineStart,
         double lineEnd)
     {
@@ -322,12 +373,44 @@ public static class LyricTiming
                 Text = tokens[m],
                 StartTime = ws,
                 EndTime = we,
+                // "Keep only subdivisions that stayed strictly inside the (possibly clamped) word",
+                // distinct and ordered, exactly as TimingJsonLoader.cs:406 filters them. A boundary
+                // ON either edge would author an empty syllable segment, which is why the
+                // comparisons are strict on both sides.
+                SyllableBoundaries = syllableBoundaries(words[m].Syllables, ws, we),
             });
 
             prevEnd = we;
         }
 
         return units;
+    }
+
+    /// <summary>
+    /// The wire's syllable starts reduced to a word's own boundaries:
+    /// <c>Where(b => b &gt; start &amp;&amp; b &lt; end).Distinct().OrderBy(b =&gt; b)</c>, which is
+    /// TimingJsonLoader.cs:406 verbatim. The order of the three steps is the game's and is
+    /// load bearing for the DISTINCT one: two equal boundaries would author a zero-width syllable,
+    /// and the game drops the duplicate rather than the pair.
+    /// </summary>
+    private static IReadOnlyList<double> syllableBoundaries(double[] syllables, double start, double end)
+    {
+        if (syllables.Length == 0)
+            return Array.Empty<double>();
+
+        var kept = new List<double>(syllables.Length);
+
+        foreach (double at in syllables)
+        {
+            if (at > start && at < end && !kept.Contains(at))
+                kept.Add(at);
+        }
+
+        if (kept.Count == 0)
+            return Array.Empty<double>();
+
+        kept.Sort();
+        return kept;
     }
 
     private static bool tryGetDouble(JsonElement element, out double value)

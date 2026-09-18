@@ -72,40 +72,71 @@ public sealed class ParsedDifficulty
     public required IReadOnlyList<LyricLine> Lines { get; init; }
     public required LyricPace.PaceStatistics Pace { get; init; }
 
-    private double? srDoubleTime;
-    private double? srHalfTime;
+    private BeatmapRatings? ratings;
+
+    /// <summary>
+    /// THE RATING MATRIX, <c>beatmaps.ratings</c> (034_ratings_matrix.sql): the eighteen
+    /// (judgement arm, stream, rate) readings pp prices a play from, each carrying both the star
+    /// rating and the map's DIFFICULT CHARACTERS at that combination. Since
+    /// <c>PerformancePoints.VERSION</c> 22 a price needs both halves, and since the difficulty
+    /// rework it needs the arm, so this is the whole of what the pricing paths read.
+    ///
+    /// <para>Computed lazily and cached, because every cell is a full pass over the map's words and
+    /// this is the most expensive thing ingest does: about 120 ms for a six-minute map, against
+    /// about 17 ms for one rating. The five rate and stream columns below are READ OFF IT rather
+    /// than computed a second time for that reason, and for a better one: a cell and its column are
+    /// then the same number by construction rather than by two evaluations agreeing.</para>
+    /// </summary>
+    public BeatmapRatings Ratings => ratings ??= BeatmapRatings.Compute(Lines);
+
+    /// <summary>The matrix as the <c>jsonb</c> the column holds (<see cref="BeatmapRatings.ToJson"/>).</summary>
+    public string RatingsJson => Ratings.ToJson();
+
+    /// <summary>
+    /// One of the matrix's ARM-NONE stars, which is what the five legacy rating columns below hold.
+    /// <see cref="LyricDifficulty.Compute"/> defaults to <c>JudgementArm.None</c>, so the cell and
+    /// the call this replaced are the same sequence of operations over the same inputs and agree to
+    /// the last bit.
+    ///
+    /// <para>A cell is always there (<see cref="Ratings"/> writes all eighteen), so the fallback is
+    /// unreachable; it computes the rating rather than throwing, because a column that has to be
+    /// written is better served by a correct number than by a failed ingest.</para>
+    /// </summary>
+    private double ArmNoneStars(bool literate, double rate)
+        => Ratings.TryGet(LyricDifficulty.JudgementArm.None, literate, rate) is MapRating cell
+            ? cell.Stars
+            : LyricDifficulty.Compute(Lines, rate, literate);
 
     /// <summary>
     /// Star rating at Double Time's BASE clock rate (1.50x), stored on the beatmap row as
-    /// <c>beatmaps.sr_dt</c>. pp prices a rate play exclusively through the rating recomputed at its
-    /// rate (docs/pp.md), and only the base rates are pp-eligible, so the server needs exactly this
-    /// one figure per direction and never does rate maths at query time. Computed lazily and cached:
-    /// <see cref="LyricDifficulty.Compute"/> is a full pass over the map's words.
+    /// <c>beatmaps.sr_dt</c>. Only the base rates are pp-eligible, so the server needs exactly this
+    /// one figure per direction and never does rate maths at query time.
+    ///
+    /// <para>NOT WHAT PRICES A PLAY ANY MORE: since the difficulty rework pp reads
+    /// <see cref="Ratings"/>, which carries this same figure plus the two judgement arms and the
+    /// difficult-character counts. The column stays because the set page, the listing cards, the
+    /// search filters and the client's own beatmap lookup all read a plain star rating and know
+    /// nothing about an arm.</para>
     /// </summary>
-    public double SrDoubleTime => srDoubleTime ??= LyricDifficulty.Compute(Lines, RateMods.DoubleTimeBaseRate);
+    public double SrDoubleTime => ArmNoneStars(false, RateMods.DoubleTimeBaseRate);
 
     /// <summary>Star rating at Half Time's base clock rate (0.75x); <c>beatmaps.sr_ht</c>.</summary>
-    public double SrHalfTime => srHalfTime ??= LyricDifficulty.Compute(Lines, RateMods.HalfTimeBaseRate);
-
-    private double? srLiterate;
-    private double? srLiterateDoubleTime;
-    private double? srLiterateHalfTime;
+    public double SrHalfTime => ArmNoneStars(false, RateMods.HalfTimeBaseRate);
 
     /// <summary>
     /// The same three ratings for the LITERATE-CONVERTED map, stored as <c>beatmaps.sr_literate</c>
     /// / <c>sr_literate_dt</c> / <c>sr_literate_ht</c> (029_literate_stars.sql). Literate makes
     /// every punctuation mark a typed cell, so it moves the rating and is priced through it exactly
     /// as a rate is (docs/pp.md, backlog 144); it is ORTHOGONAL to the rate, so the two compose into
-    /// a cross product rather than a list and all three combinations are stored. Computed lazily and
-    /// cached like the plain pair above: each is a full pass over the map's words.
+    /// a cross product rather than a list and all three combinations are stored.
     /// </summary>
-    public double SrLiterate => srLiterate ??= LyricDifficulty.Compute(Lines, 1, literate: true);
+    public double SrLiterate => ArmNoneStars(true, 1);
 
     /// <summary>The converted map at 1.50x; <c>beatmaps.sr_literate_dt</c>.</summary>
-    public double SrLiterateDoubleTime => srLiterateDoubleTime ??= LyricDifficulty.Compute(Lines, RateMods.DoubleTimeBaseRate, literate: true);
+    public double SrLiterateDoubleTime => ArmNoneStars(true, RateMods.DoubleTimeBaseRate);
 
     /// <summary>The converted map at 0.75x; <c>beatmaps.sr_literate_ht</c>.</summary>
-    public double SrLiterateHalfTime => srLiterateHalfTime ??= LyricDifficulty.Compute(Lines, RateMods.HalfTimeBaseRate, literate: true);
+    public double SrLiterateHalfTime => ArmNoneStars(true, RateMods.HalfTimeBaseRate);
 
     private LyricWpmCurve? wpmCurve;
 
@@ -129,20 +160,20 @@ public sealed class ParsedDifficulty
     public double? PeakCpm => WpmCurve.IsEmpty ? null : WpmCurve.PeakCpm;
 
     /// <summary>
-    /// The pace to sustain (<see cref="LyricPace.PaceStatistics.TargetWpm"/>, the average WPM
-    /// across the fastest fifth of the map's lyric lines of at least three words), stored as
-    /// <c>target_wpm</c> (033_target_wpm.sql).
+    /// The pace to sustain (<see cref="LyricPace.PaceStatistics.TargetWpm"/>, the map's hardest
+    /// window by raw speed re-expressed at <c>LyricDifficulty.TargetWindowSeconds</c> and floored at
+    /// the whole-map average), stored as <c>target_wpm</c> (033_target_wpm.sql).
     ///
     /// <para>It comes off <see cref="Pace"/>, NOT off <see cref="WpmCurve"/>, so its null rule is
     /// the one <c>beatmaps.wpm</c> itself would want rather than the curve's: null exactly when the
     /// map has no counted line at all (<see cref="LyricPace.PaceStatistics.TypeableCellCount"/> is
-    /// 0), which is the only shape on which a per-line mean is meaningless. A map of three lines is
-    /// far too short for the 30-cell curve but its fastest line is a perfectly good target, so
-    /// gating this on <c>WpmCurve.IsEmpty</c> would blank a figure the game's own wedge is happily
-    /// showing. NULL rather than 0 keeps "no reading" distinguishable from a real one. The
-    /// three-word eligibility floor (backlog 274) does not touch this either: a map whose every line
-    /// is under three words falls back to selecting from all of them, so the rule stays "no counted
-    /// line" and never becomes "no eligible line".</para>
+    /// 0), which is the only shape on which a map pace is meaningless. A map of three lines is far
+    /// too short for the 30-cell curve but still has a hardest window, so gating this on
+    /// <c>WpmCurve.IsEmpty</c> would blank a figure the game's own wedge is happily showing. NULL
+    /// rather than 0 keeps "no reading" distinguishable from a real one. The change of estimator at
+    /// LyricPace v21 does not touch the rule either: a map too short for the model to find any
+    /// window reports its own average here rather than a 0, so the only null stays "no counted
+    /// line".</para>
     /// </summary>
     public double? TargetWpm => Pace.TypeableCellCount == 0 ? null : Pace.TargetWpm;
 

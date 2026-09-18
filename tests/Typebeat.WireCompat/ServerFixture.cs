@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using Dapper;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -52,6 +52,31 @@ public class ServerFixture
     /// (backlog 53). Lookup must report it "pending" and its board must serve that play.
     /// </summary>
     public static long PendingBeatmapId { get; private set; }
+
+    /// <summary>
+    /// The RATING MATRIX every seeded map carries (<c>beatmaps.ratings</c>, 034_ratings_matrix.sql).
+    /// Since <c>PerformancePoints.VERSION</c> 22 a play is priced from ONE CELL of this and nothing
+    /// else, so a seeded map without one leaves every play on it PENDING and the score loop's "a
+    /// priced play must not read as unpriced on the wire" pin would be reading an unswept map
+    /// instead of an unpriceable play.
+    ///
+    /// <para>The eighteen cells all carry the same 1.5 the <c>difficulty_rating</c> column does,
+    /// because this fixture's maps are seeded rows rather than parsed ones and no assertion here is
+    /// about a rate, a stream or a judgement arm. The DIFFICULT CHARACTERS are 500, comfortably
+    /// above any miss count the harness's plays carry, so the cleanliness term does not zero a play
+    /// this file expects to be worth something.</para>
+    /// </summary>
+    private static string SeededRatings => Typebeat.Web.Scoring.BeatmapRatings.Parse(
+        """
+        {"version":1,"cells":{
+          "none/plain/1.00":{"sr":1.5,"dc":500},"none/plain/1.50":{"sr":1.5,"dc":500},"none/plain/0.75":{"sr":1.5,"dc":500},
+          "none/literate/1.00":{"sr":1.5,"dc":500},"none/literate/1.50":{"sr":1.5,"dc":500},"none/literate/0.75":{"sr":1.5,"dc":500},
+          "ez/plain/1.00":{"sr":1.5,"dc":500},"ez/plain/1.50":{"sr":1.5,"dc":500},"ez/plain/0.75":{"sr":1.5,"dc":500},
+          "ez/literate/1.00":{"sr":1.5,"dc":500},"ez/literate/1.50":{"sr":1.5,"dc":500},"ez/literate/0.75":{"sr":1.5,"dc":500},
+          "hr/plain/1.00":{"sr":1.5,"dc":500},"hr/plain/1.50":{"sr":1.5,"dc":500},"hr/plain/0.75":{"sr":1.5,"dc":500},
+          "hr/literate/1.00":{"sr":1.5,"dc":500},"hr/literate/1.50":{"sr":1.5,"dc":500},"hr/literate/0.75":{"sr":1.5,"dc":500}
+        }}
+        """)!.ToJson();
 
     /// <summary>Raw bytes of a tiny "type!beat file format v1" file (test g).</summary>
     public static byte[] OsuFileBytes { get; private set; } = Array.Empty<byte>();
@@ -182,22 +207,22 @@ public class ServerFixture
         SeededBeatmapId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmaps
-                (set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s, difficulty_rating)
-            VALUES (@setId, 'type!beat', 0, @checksum, 60, 30, 1.5)
+                (set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s, difficulty_rating, ratings)
+            VALUES (@setId, 'type!beat', 0, @checksum, 60, 30, 1.5, @ratings::jsonb)
             RETURNING id
             """,
-            new { setId = SeededBeatmapSetId, checksum = SeedChecksum });
+            new { setId = SeededBeatmapSetId, checksum = SeedChecksum, ratings = SeededRatings });
 
         // MD5-parity map: checksum = MD5 of the fixture file bytes (test g asserts the client's
         // ComputeMD5Hash reproduces exactly this stored value).
         Md5SeededBeatmapId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmaps
-                (set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s, difficulty_rating)
-            VALUES (@setId, 'type!beat', 0, @checksum, 60, 30, 1.5)
+                (set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s, difficulty_rating, ratings)
+            VALUES (@setId, 'type!beat', 0, @checksum, 60, 30, 1.5, @ratings::jsonb)
             RETURNING id
             """,
-            new { setId = SeededBeatmapSetId, checksum = OsuFileChecksum });
+            new { setId = SeededBeatmapSetId, checksum = OsuFileChecksum, ratings = SeededRatings });
 
         // A pending set + map + one passed unranked play. Plays on a non-ranked set are always
         // stored unranked, so this is what the server's unranked board serves and what the client

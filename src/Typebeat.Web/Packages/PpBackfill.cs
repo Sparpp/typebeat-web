@@ -1,4 +1,4 @@
-using Dapper;
+﻿using Dapper;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
 
@@ -65,7 +65,8 @@ public static class PpBackfill
                        b.sr_ht              AS SrHt,
                        b.sr_literate        AS SrLiterate,
                        b.sr_literate_dt     AS SrLiterateDt,
-                       b.sr_literate_ht     AS SrLiterateHt
+                       b.sr_literate_ht     AS SrLiterateHt,
+                       b.ratings::text      AS Ratings
                 FROM scores s
                 JOIN beatmaps b ON b.id = s.beatmap_id
                 WHERE s.pp_version < @version
@@ -88,16 +89,18 @@ public static class PpBackfill
                     PerformancePoints.CountNotes(row.StatisticsJson),
                     row.Accuracy,
                     row.MaxCombo,
-                    row.BaseStars,
-                    row.SrDt,
-                    row.SrHt,
-                    new PerformancePoints.LiterateStars(row.SrLiterate, row.SrLiterateDt, row.SrLiterateHt));
+                    // The map's RATING MATRIX (034_ratings_matrix.sql), which is the whole of what a
+                    // price reads since PerformancePoints v22: the six rating columns above stay
+                    // selected because the report surfaces read them, but the pricing itself takes
+                    // one cell of this.
+                    BeatmapRatings.Parse(row.Ratings));
 
                 if (!settled)
                 {
-                    // The map's rate rating is not stored yet. Leave the row at version 0 (and at
-                    // whatever pp it holds, which for an unpriced row is 0) so the next boot, after
-                    // PaceBackfill has reached that map, computes it properly.
+                    // The reading this play needs is not stored yet, which since v22 means the
+                    // map's matrix cell rather than one rate rating. Leave the row at version 0
+                    // (and at whatever pp it holds, which for an unpriced row is 0) so the next
+                    // boot, after PaceBackfill has reached that map, computes it properly.
                     pending++;
                     continue;
                 }
@@ -135,5 +138,6 @@ public static class PpBackfill
         double? SrHt,
         double? SrLiterate,
         double? SrLiterateDt,
-        double? SrLiterateHt);
+        double? SrLiterateHt,
+        string? Ratings);
 }

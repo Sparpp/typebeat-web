@@ -1,4 +1,4 @@
-using System.Runtime.Serialization;
+﻿using System.Runtime.Serialization;
 using Newtonsoft.Json;
 using Typebeat.Web;
 using Typebeat.Web.Scoring;
@@ -47,7 +47,18 @@ public sealed record StoredScore(
     // when unknown (offline runs, which have no beatmap row).
     string CurrentChecksumMd5 = "",
     // Who owns the row, so the report can model a leaderboard (best score per user).
-    long UserId = 0)
+    long UserId = 0,
+    // beatmaps.ratings (034_ratings_matrix.sql), the map's RATING MATRIX, which is the whole of
+    // what prices a play since PerformancePoints v22: the six star columns above are its arm-none
+    // stars, and it also carries the DIFFICULT CHARACTERS the miss penalty is judged against, which
+    // no column holds. APPENDED, never inserted: Dapper maps this record positionally.
+    //
+    // Null for an OFFLINE score and for a map the pace sweep has not reached, and both mean the
+    // same thing here: the play cannot be priced at all, so its pp reads as unsettled rather than
+    // as a number. That is stricter than the six columns were (difficulty_rating is NOT NULL, so an
+    // offline run with a local .osu parse used to get a price out of them), and it is the honest
+    // reading: a v22 price reads a figure only a full parse of the map produces.
+    string? Ratings = null)
 {
     /// <summary>
     /// Whether this row was judged in the BACKLOG 133-TO-147 WINDOW: the day production graded on a
@@ -1276,10 +1287,7 @@ public static class Recalculation
             PerformancePoints.CountNotes(preMistypeEra && !backfillMistypes ? WithoutMistypes(oldStatistics) : oldStatistics),
             oldAccuracy,
             oldRule.MaxCombo,
-            stored.BaseStars,
-            stored.SrDt,
-            stored.SrHt,
-            new PerformancePoints.LiterateStars(stored.SrLiterate, stored.SrLiterateDt, stored.SrLiterateHt));
+            BeatmapRatings.Parse(stored.Ratings));
 
         var (pp, ppSettled) = PerformancePoints.ForScore(
             ranked,
@@ -1287,10 +1295,7 @@ public static class Recalculation
             PerformancePoints.CountNotes(statistics),
             accuracy,
             maxCombo,
-            stored.BaseStars,
-            stored.SrDt,
-            stored.SrHt,
-            new PerformancePoints.LiterateStars(stored.SrLiterate, stored.SrLiterateDt, stored.SrLiterateHt));
+            BeatmapRatings.Parse(stored.Ratings));
 
         return new RecalcResult(
             stored,

@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
@@ -131,7 +131,7 @@ public class Migration004BackfillTest
     }
 
     [Test]
-    public async Task Migrations_AppliedInOrder_001Through033()
+    public async Task Migrations_AppliedInOrder_001Through034()
     {
         await using var conn = await dataSource.OpenConnectionAsync();
 
@@ -170,6 +170,7 @@ public class Migration004BackfillTest
             "031_freestyle_cell_count.sql",
             "032_reviewer_grants.sql",
             "033_target_wpm.sql",
+            "034_ratings_matrix.sql",
         }));
     }
 

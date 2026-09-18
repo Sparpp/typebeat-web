@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Security.Cryptography;
 using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -205,11 +205,12 @@ public class PackageIngestDbTest
         Assert.That(searchHits, Is.True, "search vector should match the title");
 
         // Beatmap row upserted by allocated id with the pace-derived stats.
-        var beatmap = await conn.QuerySingleAsync<(string Filename, string Checksum, int WordCount, int CharCount, decimal Wpm, double Difficulty, string Lyrics, double? TargetWpm, int PaceVersion)>(
+        var beatmap = await conn.QuerySingleAsync<(string Filename, string Checksum, int WordCount, int CharCount, decimal Wpm, double Difficulty, string Lyrics, double? TargetWpm, int PaceVersion, string Ratings)>(
             """
             SELECT filename AS Filename, checksum_md5 AS Checksum, word_count AS WordCount,
                    char_count AS CharCount, wpm AS Wpm, difficulty_rating AS Difficulty,
-                   lyrics AS Lyrics, target_wpm AS TargetWpm, pace_version AS PaceVersion
+                   lyrics AS Lyrics, target_wpm AS TargetWpm, pace_version AS PaceVersion,
+                   ratings::text AS Ratings
             FROM beatmaps WHERE id = 1001
             """);
 
@@ -222,16 +223,27 @@ public class PackageIngestDbTest
             // 5 cells / 0.05 min = 100 CPM, stored WPM = 100/5 = 20 (LyricPace v15). The two counts
             // above are what the stored figure is derived from and neither of them moved.
             Assert.That((double)beatmap.Wpm, Is.EqualTo(20).Within(1e-6));
-            Assert.That(beatmap.Difficulty, Is.EqualTo(0.67).Within(0.01)); // window/envelope stars
+            Assert.That(beatmap.Difficulty, Is.EqualTo(0.82).Within(0.01)); // chunked-axis stars (0.67 under the envelope)
             Assert.That(beatmap.Lyrics, Is.EqualTo("ab cd")); // the lyrics: search haystack
 
-            // 033_target_wpm.sql: written by the same upsert. The map is a single line, so the
-            // fastest fifth of it is that line and the target equals the average, 20 WPM: a
-            // per-line figure needs no rolling window, which is why this is a number where
+            // 033_target_wpm.sql: written by the same upsert. Since LyricPace v21 it is the map's
+            // hardest window by raw speed, read off the difficulty model, which finds one on a map
+            // far too short for the 30-cell rolling window: that is why this is a number where
             // peak_wpm is NULL. The pace_version stamp is what makes the startup sweep skip this
             // row, so it has to be the CURRENT version or the new column would be filled twice over.
-            Assert.That(beatmap.TargetWpm, Is.EqualTo(20.0).Within(1e-9));
+            Assert.That(beatmap.TargetWpm, Is.EqualTo(21.84).Within(0.01));
             Assert.That(beatmap.PaceVersion, Is.EqualTo(LyricPace.VERSION));
+
+            // 034_ratings_matrix.sql: the eighteen readings pp prices a play from, written by the
+            // same upsert. Its arm-none rate-1.0 stars ARE difficulty_rating, which is what keeps
+            // the matrix and the legacy columns one computation rather than two.
+            Assert.That(beatmap.Ratings, Is.Not.Null, "the matrix is written at ingest, not by a later sweep");
+
+            var ingested = BeatmapRatings.Parse(beatmap.Ratings)!;
+
+            Assert.That(ingested.Count, Is.EqualTo(18));
+            Assert.That(ingested.TryGet(LyricDifficulty.JudgementArm.None, false, 1.0)!.Value.Stars,
+                Is.EqualTo(beatmap.Difficulty).Within(1e-12));
         });
 
         // Blobs + assembled package + covers exist in the store.
@@ -432,7 +444,7 @@ public class PackageIngestDbTest
         {
             // The regression package: "ab cd" over a 3000 ms boundary window.
             Assert.That((double)row.Wpm, Is.EqualTo(20).Within(1e-6));
-            Assert.That(row.Difficulty, Is.EqualTo(0.67).Within(0.01)); // window/envelope stars
+            Assert.That(row.Difficulty, Is.EqualTo(0.82).Within(0.01)); // chunked-axis stars (0.67 under the envelope)
             Assert.That(row.WordCount, Is.EqualTo(2));
             Assert.That(row.CharCount, Is.EqualTo(5));
             Assert.That(row.Lyrics, Is.EqualTo("ab cd")); // v8 fills the lyrics: haystack
@@ -679,6 +691,14 @@ public class PackageIngestDbTest
 
         // Three plays on the same map: a no-mod ranked one, a base-rate DT one (priced off sr_dt),
         // and one at a CUSTOM rate, which stays exactly as it is on the score boards and earns 0 pp.
+        //
+        // SPOTLESS SINCE PerformancePoints v22, and the reason is worth stating: the miss penalty is
+        // judged against the map's DIFFICULT CHARACTERS now, and this fixture's note count (120) is
+        // a fiction against a five-cell map, so its eight misses read as several times the whole
+        // map's difficulty and price every arm to exactly zero. That made the DT/no-mod comparison
+        // below 0 against 0, which is the same way this fixture went degenerate at the backlog-97
+        // cliff. It is a PLUMBING test (does the DT row read sr_dt), so the flubs are dropped
+        // rather than retuned: any priced play proves the plumbing.
         long noMod = await insertPlayAsync(conn, playerId, "[]");
         long baseRateDt = await insertPlayAsync(conn, playerId, """[{"acronym":"DT","settings":{"speed_change":1.5}}]""");
         long customRateDt = await insertPlayAsync(conn, playerId, """[{"acronym":"DT","settings":{"speed_change":1.75}}]""");
@@ -688,16 +708,21 @@ public class PackageIngestDbTest
 
         await PpBackfill.RunAsync(db, NullLogger.Instance);
 
-        var beatmap = await conn.QuerySingleAsync<(double Base, double Dt)>(
-            "SELECT difficulty_rating AS Base, sr_dt AS Dt FROM beatmaps WHERE id = 1001");
+        var beatmap = await conn.QuerySingleAsync<(double Base, double Dt, string Ratings)>(
+            "SELECT difficulty_rating AS Base, sr_dt AS Dt, ratings::text AS Ratings FROM beatmaps WHERE id = 1001");
 
-        // 112 great + 8 miss = 120 notes; ignore_hit is not a note (see insertPlayAsync). EIGHT
-        // misses, not the twenty this fixture used to carry: the backlog-97 miss cliff on a
-        // 120-note map is sqrt(120) = 10.95, so twenty priced the whole play to zero and the
-        // no-mod/DT comparison below (a PLUMBING check that the DT row is priced off sr_dt) became
-        // 0 against 0.
-        double expectedNoMod = PerformancePoints.Compute(beatmap.Base, 120, 8, 0.9, 100, []);
-        double expectedDt = PerformancePoints.Compute(beatmap.Dt, 120, 8, 0.9, 100, []);
+        // The matrix the ingest wrote (034_ratings_matrix.sql), which is what the pricing reads: its
+        // arm-none stars ARE the two columns above, and it carries the difficult characters as well,
+        // which no column does.
+        var ratings = BeatmapRatings.Parse(beatmap.Ratings)!;
+        var noModCell = ratings.TryGet(LyricDifficulty.JudgementArm.None, false, 1.0)!.Value;
+        var dtCell = ratings.TryGet(LyricDifficulty.JudgementArm.None, false, RateMods.DoubleTimeBaseRate)!.Value;
+
+        // 120 great = 120 notes; ignore_hit is not a note (see insertPlayAsync). NO MISSES, for the
+        // reason given where the plays are inserted: this fixture's note count is unrelated to its
+        // five-cell map, so any miss count at all prices every arm to zero under v22.
+        double expectedNoMod = PerformancePoints.Compute(noModCell.Stars, 120, noModCell.DifficultCharacters, 0, 0.9, 100, []);
+        double expectedDt = PerformancePoints.Compute(dtCell.Stars, 120, dtCell.DifficultCharacters, 0, 0.9, 100, []);
 
         double noModPp = await ppOf(conn, noMod);
         double dtPp = await ppOf(conn, baseRateDt);
@@ -793,11 +818,12 @@ public class PackageIngestDbTest
         long literatePlay = await insertPlayAsync(conn, playerId, """[{"acronym":"LT"}]""");
 
         // The state every existing row is in the moment 029 deploys: the three new columns NULL and
-        // the pace stamp one generation behind.
+        // the pace stamp one generation behind. The RATING MATRIX goes with them (034): it is what a
+        // price reads now, so leaving it behind is what makes the play below pending at all.
         await conn.ExecuteAsync(
             """
             UPDATE beatmaps
-            SET sr_literate = NULL, sr_literate_dt = NULL, sr_literate_ht = NULL, pace_version = 12
+            SET sr_literate = NULL, sr_literate_dt = NULL, sr_literate_ht = NULL, ratings = NULL, pace_version = 12
             WHERE id = 1001
             """);
 
@@ -818,8 +844,10 @@ public class PackageIngestDbTest
         // Now the pace sweep reaches the map, on the VERSION arm alone.
         await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
 
-        var beatmap = await conn.QuerySingleAsync<(double? Lt, int PaceVersion)>(
-            "SELECT sr_literate AS Lt, pace_version AS PaceVersion FROM beatmaps WHERE id = 1001");
+        var beatmap = await conn.QuerySingleAsync<(double? Lt, int PaceVersion, string Ratings)>(
+            "SELECT sr_literate AS Lt, pace_version AS PaceVersion, ratings::text AS Ratings FROM beatmaps WHERE id = 1001");
+
+        var literateCell = BeatmapRatings.Parse(beatmap.Ratings)!.TryGet(LyricDifficulty.JudgementArm.None, true, 1.0)!.Value;
 
         await PpBackfill.RunAsync(db, NullLogger.Instance);
 
@@ -836,7 +864,8 @@ public class PackageIngestDbTest
             // Priced off sr_literate, with NO mod multiplier of its own: since backlog 144 Literate
             // contributes nothing to modMult, so on this mark-free fixture (whose converted rating
             // equals its plain one) the play is worth exactly what the no-mod play is.
-            Assert.That(priced, Is.EqualTo(PerformancePoints.Compute(beatmap.Lt!.Value, 120, 8, 0.9, 100, [])).Within(1e-9));
+            Assert.That(priced, Is.EqualTo(PerformancePoints.Compute(
+                literateCell.Stars, 120, literateCell.DifficultCharacters, 0, 0.9, 100, [])).Within(1e-9));
         });
     }
 
@@ -850,7 +879,7 @@ public class PackageIngestDbTest
             VALUES
                 (@userId, 1001, 500000, 0.9, 0.83, 100, 'B', true, @ranked,
                  CAST(@modsJson AS jsonb),
-                 '{"great":112,"miss":8,"ignore_hit":8}'::jsonb,
+                 '{"great":120,"ignore_hit":8}'::jsonb,
                  '{"great":120,"ignore_hit":8}'::jsonb)
             RETURNING id
             """,
@@ -1378,9 +1407,13 @@ public class PackageIngestDbTest
         Assert.Multiple(() =>
         {
             Assert.That(plainRow.Freestyle, Is.Zero, "a map with no flagged line stores 0, not NULL");
-            // "me &&& you": 5 letters + 2 inter-word spaces + the 3 slots = 10 cells, 3 of them slots.
+            // "me &&& you": 5 letters + 2 inter-word spaces = 7 typed cells, plus 3 any-key slots.
+            // The two counts are DISJOINT since LyricPace v21, which reverses what v6 decided: a
+            // slot takes any key, so no map can ask for a particular speed in one and the pace does
+            // not count it. It is still a cell of the map with a deadline, priced at a quarter by
+            // the star rating, which is what freestyle_cell_count is for.
             Assert.That(freeRow.Freestyle, Is.EqualTo(3));
-            Assert.That(freeRow.Chars, Is.EqualTo(10), "the slots are inside char_count, not added to it");
+            Assert.That(freeRow.Chars, Is.EqualTo(7), "the slots are counted beside char_count, not inside it");
             Assert.That(freeRow.Rating, Is.GreaterThan(0));
         });
 
