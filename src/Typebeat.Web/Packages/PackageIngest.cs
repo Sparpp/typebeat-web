@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using Dapper;
 using Npgsql;
 using Typebeat.Web.Data;
@@ -360,12 +360,14 @@ public sealed class PackageIngest(
                     (id, set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s,
                      difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics,
                      sr_dt, sr_ht, sr_literate, sr_literate_dt, sr_literate_ht,
-                     peak_wpm, peak_cpm, target_wpm, wpm_curve, gameplay_fingerprint, freestyle_cell_count)
+                     peak_wpm, peak_cpm, target_wpm, wpm_curve, gameplay_fingerprint, freestyle_cell_count,
+                     ratings)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
                      @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
                      @srDt, @srHt, @srLiterate, @srLiterateDt, @srLiterateHt,
-                     @peakWpm, @peakCpm, @targetWpm, @wpmCurve, @gameplayFingerprint, @freestyleCellCount)
+                     @peakWpm, @peakCpm, @targetWpm, @wpmCurve, @gameplayFingerprint, @freestyleCellCount,
+                     @ratings::jsonb)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -390,7 +392,8 @@ public sealed class PackageIngest(
                     target_wpm = EXCLUDED.target_wpm,
                     wpm_curve = EXCLUDED.wpm_curve,
                     gameplay_fingerprint = EXCLUDED.gameplay_fingerprint,
-                    freestyle_cell_count = EXCLUDED.freestyle_cell_count;
+                    freestyle_cell_count = EXCLUDED.freestyle_cell_count,
+                    ratings = EXCLUDED.ratings;
 
                 -- A re-upload can move this difficulty's star ratings, and the stored per-score pp
                 -- is a function of them, so hand every score set on this map back to PpBackfill
@@ -444,11 +447,21 @@ public sealed class PackageIngest(
                     // the audio it points at. Compared against the snapshot above to decide
                     // whether this upload demotes a ranked set.
                     gameplayFingerprint = incomingFingerprints[diff.BeatmapId!.Value],
-                    // How many of charCount are freestyle slots (031_freestyle_cell_count.sql).
-                    // A subset of that count, not an addition to it, and always written (0 for a
-                    // map with no flagged freestyle line); NULL there means only that the pace
-                    // backfill has not reached the row yet.
+                    // How many freestyle slots the map carries (031_freestyle_cell_count.sql).
+                    // Since LyricPace v21 an ADDITION to charCount rather than a subset of it, the
+                    // pace having stopped counting any-key cells, and always written (0 for a map
+                    // with no flagged freestyle line); NULL there means only that the pace backfill
+                    // has not reached the row yet.
                     freestyleCellCount = diff.Pace.FreestyleCellCount,
+                    // THE RATING MATRIX (034_ratings_matrix.sql): the eighteen (judgement arm,
+                    // stream, rate) readings, each carrying its star rating AND the map's difficult
+                    // characters, which is what pp prices a play from since PerformancePoints v22.
+                    // The six rating columns above are its arm-none stars and stay written for the
+                    // pages, the client lookup and the search filters; neither is derived from the
+                    // other, both come off the same parse. EIGHTEEN FULL PASSES over the map's
+                    // words, so it is the most expensive thing this upsert asks for, and it is
+                    // asked for once per difficulty (BeatmapPackage.Ratings caches).
+                    ratings = diff.RatingsJson,
                 });
         }
 

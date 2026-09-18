@@ -9,6 +9,16 @@
   <ItemGroup>
     <!-- Migrations ship inside the binary so deploys are a single artifact. -->
     <EmbeddedResource Include="Data\Migrations\*.sql" />
+    <!--
+      The Typability Index's shipped line table and the model tables plus the four Hunspell
+      dictionaries it reads, mirrored from the game's own Resources\ folder (whose
+      Directory.Build.props globs that whole tree the same way). Embedded rather than shipped beside
+      the binary for the reason the migrations are: a star rating has to be computable from the
+      assembly alone. The manifest names come out as Typebeat.Web.Packages.Lyrics.Resources.*, and
+      that prefix is the ONE thing the mirrored TypabilityIndex / TypabilityModel change against
+      the game's copies.
+    -->
+    <EmbeddedResource Include="Packages\Lyrics\Resources\**\*.*" />
   </ItemGroup>
 
   <ItemGroup>

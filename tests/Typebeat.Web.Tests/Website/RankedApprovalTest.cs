@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Headers;
 using Dapper;
 using Newtonsoft.Json;
@@ -84,11 +84,15 @@ public class RankedApprovalTest
 
         beatmapId = await conn.ExecuteScalarAsync<long>(
             """
-            INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating, filename)
-            VALUES (@setId, 'type!beat', @checksum, 60, 0, 2.0, 'map.osu')
+            INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating, filename, ratings)
+            VALUES (@setId, 'type!beat', @checksum, 60, 0, 2.0, 'map.osu', @ratings::jsonb)
             RETURNING id
             """,
-            new { setId, checksum });
+            // The RATING MATRIX (034_ratings_matrix.sql) goes in beside difficulty_rating: since
+            // PerformancePoints v22 it is what prices a play, so a map without one leaves every
+            // score on it PENDING and the "a ranked play on a ranked map earns pp" assertion below
+            // would be reading an unswept map rather than an unranked one.
+            new { setId, checksum, ratings = TestRatings.Json(2.0) });
 
         // Self-rank fixtures: one map_reviewer and one admin, each owning their own pending set.
         ownerReviewerSetId = await seedOwnedPendingSetAsync(conn, owner_reviewer_name,

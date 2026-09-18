@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using Dapper;
 using Newtonsoft.Json;
 using Npgsql;
@@ -301,7 +301,8 @@ internal static class Cli
                     b.sr_literate_dt             AS SrLiterateDt,
                     b.sr_literate_ht             AS SrLiterateHt,
                     b.checksum_md5               AS CurrentChecksumMd5,
-                    s.user_id                    AS UserId
+                    s.user_id                    AS UserId,
+                    b.ratings::text              AS Ratings
              FROM scores s
              JOIN beatmaps b ON b.id = s.beatmap_id
              WHERE s.ruleset_id = 0 {filter}

@@ -1,5 +1,6 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Typebeat.Web.Packages.Lyrics;
 
 namespace Typebeat.Web.Scoring;
 
@@ -8,13 +9,64 @@ namespace Typebeat.Web.Scoring;
 /// constant below is pinned there and must not drift from it.
 ///
 /// <code>
-/// pp = 12.4 · SR_eff^2.00
-///      · max(0, 1 − miss^1.2/notes)^10                  cleanliness
-///      · max(0, 1 − typos^1.2/(notes+typos))^4          typos
-///      · acc^1.80 · 1/(1 + e^(−(acc − 0.80)/0.025))     timing quality
+/// pp = 9 · SR_eff^2.30
+///      · max(0, 1 − (miss/difficult)^1.2)^13.5134        cleanliness, over DIFFICULT characters
+///      · accuracyShare(acc) · knee(acc)                  timing quality
 ///      · modMult
-///      + maxcombo/notes · max(0, 12.5·(SR_eff − 1.0))   combo bonus
+///      · (1 + comboBonus)                              combo bonus, a FRACTION of the price
+///
+/// accuracyShare(acc) = expCurve((acc − acc_floor) / (1 − acc_floor))
+/// expCurve(t)        = (e^(k·t) − 1) / (e^k − 1), or t itself when k is 0
+///
+/// comboBonus = min(10, cells/200 · 1) / 100 · maxCombo/cells · (1.5 on a spotless full combo)
 /// </code>
+///
+/// <para>VERSIONS 22 THROUGH 24 ARE A FORK OF THE PRICING SHAPE, tuned in the PP Sandbox
+/// (<c>tools/pp-sandbox/</c>), whose module is the same arithmetic with every constant lifted into
+/// a dial. Six departures from v21, each marked where it acts:</para>
+///
+/// <list type="number">
+/// <item><description>THE TYPO TERM IS GONE. A wrong keypress the player recovered from costs
+/// nothing: the price is the rating, cleanliness, timing, mods and the combo bonus alone. The typo
+/// COUNT is still derived by <see cref="CountNotes(IReadOnlyDictionary{string, int})"/> for the
+/// surfaces that display it, and still carried on <see cref="NoteCounts"/> and on this method's
+/// signature, but nothing here reads it.</description></item>
+/// <item><description>THE MISS PENALTY IS JUDGED AGAINST THE MAP'S DIFFICULT CHARACTERS, NOT ITS
+/// CELL COUNT. That count is <c>LyricDifficulty.ModelResult.DifficultCharacters</c> at the played
+/// rate, on the played stream and in the played judgement arm: every cell weighted by how close its
+/// own bin sits to the map's peak, to the envelope power. Dropping a cell therefore costs more on a
+/// map whose difficulty is concentrated in a few passages, and the count is a property of the MAP
+/// rather than of the play, which is why the server stores it per map in
+/// <c>beatmaps.ratings</c> (<see cref="BeatmapRatings"/>) rather than deriving it from a
+/// score.</description></item>
+/// <item><description>THE LOSS CURVE IS CALIBRATED IN FRACTIONS. The power sits on the missed
+/// FRACTION of those difficult characters, so the same miss RATE costs the same share of the core
+/// price on every map. <c>miss_exponent</c> 13.5134 is <c>ln(2)/ln(1/0.95)</c>: at
+/// <c>count_power</c> 1, missing 5% of the difficult characters keeps exactly half the core. A map
+/// with no difficult characters cannot absorb a miss at all: any dropped cell zeroes the term rather
+/// than producing 0/0.</description></item>
+/// <item><description>THE COMBO BONUS MULTIPLIES THE PRICE INSTEAD OF ADDING TO IT, at a ceiling
+/// that scales with the map: +1% at 200 cells on a straight line through the origin, 10% from 2000
+/// cells up, times the share of the map the longest run held, and times a 1.5 kicker on a spotless
+/// full combo. Because it is a percentage rather than an amount, a price zeroed by misses stays
+/// zero.</description></item>
+/// <item><description>THE ACCURACY SHAPE IS AN EXPONENTIAL WITH A FLOOR, replacing
+/// <c>acc^accuracy_exponent</c>: accuracy is rescaled onto <c>[acc_floor, 1]</c> and run through a
+/// normalised exponential that pins both ends, so the floor is exactly 0 and a perfect play exactly
+/// 1 at every steepness. The soft knee still multiplies it and ships at width 0, where it is exactly
+/// 1.</description></item>
+/// <item><description>RECITE IS A MULTIPLIED FLASHLIGHT BONUS rather than a flat term (see
+/// <see cref="ReciteMultiplierFor"/>): the mod hides the lyric until it is sung, which is what
+/// Flashlight charges for, and that cost grows with how much map there is to hold in the
+/// head.</description></item>
+/// </list>
+///
+/// <para>THE JUDGEMENT ARM IS A RATING INPUT, NOT A MULTIPLIER. Easy and Hard Rock move the
+/// engine's own windows, and since the difficulty rework the rating prices the intervals a press may
+/// land in, so a play in either arm is rated against a different number
+/// (<see cref="JudgementArmFor"/>, <see cref="BeatmapRatings"/>). Their flat terms in
+/// <see cref="ModMultiplier"/> are the sandbox's dials for what is LEFT after that, which is why
+/// Hard Rock's is neutral.</para>
 ///
 /// <para>
 /// WHAT COUNTS AS A MISS AND WHAT COUNTS AS A TYPO (backlog 213). A miss is a cell the play did
@@ -368,8 +420,37 @@ public static class PerformancePoints
     /// exponent reprices every stored row carrying even ONE miss, whatever its typo count, so
     /// there is no set of rows the change provably leaves alone. Bump this the moment a change
     /// values ANY stored row differently.</para>
+    ///
+    /// <para>v22 is the fork described on the class: the typo term deleted, the miss penalty judged
+    /// against the map's difficult characters, the loss curve calibrated in missed fractions, the
+    /// combo bonus turned into a map-scaled percentage of the price, and the shape retuned to the PP
+    /// Sandbox's dials as they stood then (scale 8, rating exponent 2.30, accuracy exponent 3, Hard
+    /// Rock 1.15). EVERY stored row reprices, which is what the bump is for.</para>
+    ///
+    /// <para>v23 HAS NO CHANGELOG ENTRY ON THE CLIENT, which is worth saying outright rather than
+    /// leaving as a hole: the departures it carries are documented where they act (DEPARTURE 5, the
+    /// exponential accuracy curve with its <c>acc_floor</c>, replacing <c>acc^accuracy_exponent</c>;
+    /// and DEPARTURE 6, Recite as a MULTIPLIED Flashlight bonus rather than a flat term) and the
+    /// version number is the only record that they landed together. Both reprice every stored row
+    /// that carries them: the accuracy curve reprices ALL of them, Recite the Recite ones.</para>
+    ///
+    /// <para>v24 is the PP Sandbox's LIVE dials, re-read from the lab after the owner retuned it.
+    /// The Easy multiplier drops 0.9 to 0.85, and the knee position is written as the 0 the lab's
+    /// panel holds, inert either way since the width is 0 and the knee is therefore exactly 1.0, so
+    /// the only live move is Easy's and it reprices Easy rows alone. Every other dial already agreed
+    /// with the lab: scale 9, sr_exponent 2.30, count_power 1.2, acc_steepness 1.75, acc_floor 0.5,
+    /// knee off, miss_exponent 13.5134, the combo cap and kicker, reference_notes 100, Recite 2.0,
+    /// Hard Rock neutral, Fletcher and No Fail 0.9.</para>
+    ///
+    /// <para>ALL THREE LAND AT ONCE HERE, and the ordering against the ratings matters: the server
+    /// cannot price a v24 play at all until <see cref="Packages.PaceBackfill"/> has filled
+    /// <c>beatmaps.ratings</c> (034_ratings_matrix.sql) for the map, because the difficult-character
+    /// count is a stored figure now. A row whose cell is missing stays PENDING rather than being
+    /// priced with a zeroed cleanliness term, exactly as an unfilled <c>sr_dt</c> already does, so
+    /// the two sweeps compose in either order and the second one settles what the first could
+    /// not.</para>
     /// </summary>
-    public const int VERSION = 21;
+    public const int VERSION = 24;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -383,31 +464,34 @@ public static class PerformancePoints
     /// </summary>
     public const double DECAY = 0.85;
 
-    // ---- formula constants (docs/pp.md) ----
+    // ---- formula constants (docs/pp.md, which pins the PP Sandbox's active dials) ----
 
-    private const double scale = 12.4;              // C: global scale, does not affect ranking order
-    private const double sr_exponent = 2.00;
-    private const double miss_exponent = 10.0;
-    private const double typo_exponent = 4.0;
+    private const double scale = 9.0;               // C: global scale, does not affect ranking order
+    private const double sr_exponent = 2.30;
 
     /// <summary>
-    /// The power the RAW COUNT is raised to inside both penalty bases, before its denominator
-    /// divides it. A tunable, not a hard-wired square: backlog 97 introduced this shape with the
-    /// power written out longhand as <c>(double)x * x</c>, which read as part of the shape and could
-    /// only be retuned by hand in both mirrors; backlog 101 lifted it out here.
-    ///
-    /// <para>It is the constant that decides WHERE EACH TERM'S CLIFF FALLS, since the cleanliness
-    /// base vanishes at <c>miss = notes^(1/count_power)</c>. At 2 that is 23 misses on a 500-note
-    /// map, i.e. 4.6% of it, which zeroed essentially every real play; backlog 101 moved it to 1.2,
-    /// where it is 178, i.e. 35%; at the 1.6 v8 set it is 49, i.e. 9.7%. It also decides how the
-    /// cliff scales WITH map size: as a fraction of the map it is <c>notes^(1/count_power - 1)</c>,
-    /// so at 2 it swung from 10% of a 100-note map to 2.2% of a 2000-note map (long maps drastically
-    /// harsher, for no reason anyone chose), at 1.2 it moved 46% to 35% to 28% across 100, 500 and
-    /// 2000 notes, and at 1.6 it moves 17.8% to 9.7% to 5.8% across the same three.</para>
+    /// <c>ln(2) / ln(1 / 0.95)</c>, rounded: the exponent that puts HALF the core price at a 5% miss
+    /// rate with <see cref="count_power"/> 1, on maps of every size.
+    /// </summary>
+    private const double miss_exponent = 13.5134;
+
+    /// <summary>
+    /// The power the MISSED FRACTION carries. 1 is linear in the fraction, which is what makes the
+    /// calibrated half-point a miss RATE; higher gives a grace region at low miss rates and a
+    /// steeper fall near 100%. The base reaches zero only when every difficult character was missed,
+    /// whatever this is set to.
     /// </summary>
     private const double count_power = 1.2;
 
-    private const double accuracy_exponent = 1.80;
+    // DEPARTURE 5 (v23). The accuracy SHAPE, replacing the shipped acc^accuracy_exponent.
+    // Accuracy is rescaled onto [acc_floor, 1] and run through a normalised exponential, which pins
+    // both ends for every steepness: the floor is exactly 0 and a perfect play exactly 1.
+    // `acc_steepness` is the shape dial, 0 being the straight line from the floor, and higher values
+    // holding the price low through the middle of the range before climbing hard over the last few
+    // points. These are the PP Sandbox's active dials, which is where the fork is tuned; see
+    // tools/pp-sandbox/pp.mjs.
+    private const double acc_steepness = 1.75;
+    private const double acc_floor = 0.5;
 
     /// <summary>
     /// WHERE THE ACCURACY CLIFF SITS (backlog 227). The timing term is
@@ -436,7 +520,11 @@ public static class PerformancePoints
     /// a width of 0.025 the argument to <c>Math.Exp</c> runs between -8 and +32, nowhere near the
     /// ~709 at which it overflows to infinity.</para>
     /// </summary>
-    private const double acc_knee = 0.80;
+    // 0 at the PP Sandbox's live dials, which is the position its own panel holds. Inert either
+    // way: the width below is 0, this file's declared-absence sentinel, so the whole knee is
+    // exactly 1.0. Written as the lab writes it so the two sides do not disagree about a dial they
+    // both ignore.
+    private const double acc_knee = 0.0;
 
     /// <summary>
     /// How sharply the knee at <see cref="acc_knee"/> falls: the accuracy interval over which the
@@ -453,7 +541,9 @@ public static class PerformancePoints
     /// gives a STEP, and 0/0 at the knee itself is NaN), so only the branch makes the sentinel
     /// true of the arithmetic as well as of the tool.</para>
     /// </summary>
-    private const double acc_knee_width = 0.025;
+    // OFF at the sandbox's active dials: the exponential accuracy curve already does the shaping
+    // the knee was added for, and a width of 0 is this file's declared-absence sentinel.
+    private const double acc_knee_width = 0.0;
 
     /// <summary>
     /// WHAT A FULL COMBO IS WORTH, PER STAR (backlog 270). The combo bonus is
@@ -494,6 +584,33 @@ public static class PerformancePoints
     /// </summary>
     private const double combo_bonus_zero = 1.0;
 
+    // ---- v22 combo bonus, which REPLACED the two constants above ----
+    //
+    // They are kept (and referenced by nothing) because they are the record of what v21 priced: the
+    // fork's bonus is a PERCENTAGE of the price rather than a number of pp added beside it, and its
+    // ceiling grows with the map instead of being a flat pp amount a short map and a long one
+    // collect alike.
+
+    /// <summary>
+    /// The percentage a FULL COMBO is worth on a 200-cell map. The ceiling is a straight line
+    /// through the origin, so this one number also sets the slope: 1% here is 2% at 400 cells, 5% at
+    /// 1000 and 10% at 2000, where <see cref="combo_bonus_cap"/> takes over. 0 removes the bonus
+    /// exactly.
+    /// </summary>
+    private const double combo_bonus_at_200_cells = 1.0;
+
+    /// <summary>
+    /// The most the combo bonus can ever be worth, as a percentage of the price, on any map.
+    /// </summary>
+    private const double combo_bonus_cap = 10.0;
+
+    /// <summary>
+    /// What a SPOTLESS full combo (every cell typed, none dropped) multiplies its own ceiling by: a
+    /// 2000-cell map pays +15% for 2000/2000 and just under +10% for 1999/2000. 1 removes the kicker
+    /// and leaves the line unbroken.
+    /// </summary>
+    private const double combo_bonus_perfect = 1.5;
+
     /// <summary>
     /// The pivot of <see cref="FlashlightMultiplier"/>'s log bonus: 100 notes is where it is worth
     /// exactly <c>1 + flashlight_offset</c>. It was shared with the length bonus until backlog 152
@@ -521,11 +638,15 @@ public static class PerformancePoints
 
     /// <summary>
     /// Recite (backlog 236): the lyric text is hidden until the line is sung, so the play is typed
-    /// from listening rather than from reading ahead. Nothing about the map changes, so there is
-    /// no converted rating to price it through and it takes a flat term, exactly as Easy and Hard
-    /// Rock do.
+    /// from listening rather than from reading ahead. Nothing about the map changes, so there is no
+    /// converted rating to price it through.
+    ///
+    /// <para>SINCE v23 IT IS NOT A FLAT TERM EITHER but the SCALE on Flashlight's bonus (see
+    /// <see cref="ReciteMultiplierFor"/>), because hiding the lyric is what Flashlight charges for
+    /// and that cost grows with how much map there is to hold in the head. 0 is free, 1 is exactly
+    /// what Flashlight is worth, and the sandbox's active 2.0 pays twice Flashlight's bonus.</para>
     /// </summary>
-    private const double recite_multiplier = 1.07;
+    private const double recite_multiplier = 2.0;
 
     /// <summary>
     /// Fletcher (backlog 208): the caret is PINNED back to the line the song is on, which is the
@@ -545,9 +666,16 @@ public static class PerformancePoints
     /// forgiving to land. Priced as the difficulty reduction it is, at a value the user chose on
     /// 2026-08-13. Flat rather than routed through the star rating, unlike Literate: the mod
     /// converts nothing (the cells, their target times and the map's pace are identical), it only
-    /// widens the tolerance around each target, which no rating input can see.
+    /// widens the tolerance around each target.
+    ///
+    /// <para>"WHICH NO RATING INPUT CAN SEE" WAS TRUE UNTIL THE DIFFICULTY REWORK AND IS NOT NOW:
+    /// the rating prices the intervals a press may land in, so Easy's doubled, word-sheltered
+    /// windows are a JUDGEMENT ARM of their own and the play is rated against a different number
+    /// (<see cref="JudgementArmFor"/>, <see cref="BeatmapRatings"/>). This flat term is what the
+    /// PP Sandbox charges for what is LEFT after that, at its live dial (0.85; the lab's own panel
+    /// is where the value is chosen).</para>
     /// </summary>
-    private const double easy_multiplier = 0.75;
+    private const double easy_multiplier = 0.85;
 
     /// <summary>
     /// Hard Rock (backlog 150): the play was judged on HALVED windows, the exact mirror of Easy, so
@@ -555,9 +683,13 @@ public static class PerformancePoints
     /// mod converts nothing, so no rating input can see it), at a value the user chose on
     /// 2026-08-13. Deliberately NOT the reciprocal of <see cref="easy_multiplier"/> (1.333...): the
     /// window scales mirror each other, the prices need not. Separate from the mod's 1.10x SCORE
-    /// multiplier in <see cref="ModMultiplier"/>, exactly as Easy's 0.75 is separate from its 0.5x.
+    /// multiplier in <see cref="ModMultiplier"/>, exactly as Easy's flat term is separate from its
+    /// 0.5x.
     /// </summary>
-    private const double hard_rock_multiplier = 1.25;
+    // NEUTRAL at the PP Sandbox's active dials: Hard Rock's judgement windows are what the rhythm
+    // arm of the star rating reads, so the sandbox leaves the flat term at 1.0 rather than paying
+    // for the same change twice.
+    private const double hard_rock_multiplier = 1.0;
 
     private const double fletcher_multiplier = 0.90;
     private const double no_fail_multiplier = 0.90;
@@ -625,10 +757,29 @@ public static class PerformancePoints
     private const string mistype_key = "combo_break";
 
     /// <summary>
-    /// Notes, misses and typos for a play, as the formula defines them. <see cref="Typos"/>
-    /// defaults to 0 so a play that carries no typo count prices exactly as it always did.
+    /// Notes, misses and typos for a play, as the formula defines them. <see cref="Typos"/> defaults
+    /// to 0 so a play that carries no typo count prices exactly as it always did, and since v22
+    /// nothing in <see cref="Compute"/> reads it at all: it survives for the surfaces that display a
+    /// typo count.
     /// </summary>
-    public readonly record struct NoteCounts(int Notes, int Misses, int Typos = 0);
+    public readonly record struct NoteCounts(int Notes, int Misses, int Typos = 0)
+    {
+        /// <summary>
+        /// THE DIFFICULT CHARACTERS of the map the play was set on, at the played rate, on the
+        /// played stream and in the played judgement arm: what the miss penalty is judged against
+        /// since v22 (see the class docs). It is a property of the MAP rather than of the play, so
+        /// the server fills it from the map's stored matrix (<see cref="BeatmapRatings"/>, through
+        /// <see cref="StarsFor"/>) rather than from a score row, and a caller with no matrix cell
+        /// leaves it at 0, which prices any miss as a zeroed cleanliness term rather than silently
+        /// falling back to the cell count.
+        ///
+        /// <para>ON THE SERVER THAT FALLBACK IS UNREACHABLE BY DESIGN: a play whose cell is missing
+        /// is <see cref="RateStars.Unavailable"/> and never reaches <see cref="Compute"/> at all.
+        /// The property carries the game's contract anyway, because the two files are mirrors and a
+        /// reader of either one has to find the same rule written down.</para>
+        /// </summary>
+        public double DifficultCharacters { get; init; }
+    }
 
     /// <summary>
     /// The star rating a play should be priced at, or why there is none.
@@ -648,9 +799,16 @@ public static class PerformancePoints
     /// type carries and by nothing else, so <see cref="Stars"/> is the whole of what a rate is
     /// worth.</para>
     /// </summary>
-    public readonly record struct RateStars(double? Stars, bool Pending)
+    /// <param name="DifficultCharacters">
+    /// The other half of the map's reading for this play (<see cref="MapRating"/>): the difficult
+    /// characters the miss penalty is judged against since v22. It travels with the rating rather
+    /// than beside it because a caller holding one without the other would have to invent the
+    /// missing half, and the two ways of doing that price the same play very differently. 0 on both
+    /// null outcomes, where it is never read.
+    /// </param>
+    public readonly record struct RateStars(double? Stars, bool Pending, double DifficultCharacters = 0)
     {
-        public static RateStars Of(double stars) => new(stars, false);
+        public static RateStars Of(MapRating rating) => new(rating.Stars, false, rating.DifficultCharacters);
         public static readonly RateStars Ineligible = new(null, false);
         public static readonly RateStars Unavailable = new(null, true);
     }
@@ -757,74 +915,75 @@ public static class PerformancePoints
     }
 
     /// <summary>
-    /// The Literate-CONVERTED map's three ratings, <c>beatmaps.sr_literate</c> /
-    /// <c>sr_literate_dt</c> / <c>sr_literate_ht</c> (029_literate_stars.sql). One type rather than
-    /// three more <c>double?</c> parameters, so the plain triple and the converted one cannot be
-    /// transposed at a call site, and so a future conversion mod adds a field here instead of
-    /// widening every signature in this file again.
+    /// WHICH JUDGEMENT ARM a play is rated in, from its mods: the two mods that change the engine's
+    /// own windows rather than the map (Easy and Hard Rock, which the client makes mutually
+    /// exclusive), read the way <see cref="IsLiterate"/> reads the typed stream. Everything else
+    /// rates in the live span rule.
     ///
-    /// <para>ALL THREE ARE NULLABLE, INCLUDING THE RATE-1.0 ONE, which is the one asymmetry against
-    /// the plain triple: <c>difficulty_rating</c> has existed since 001 and is NOT NULL, whereas
-    /// <c>sr_literate</c> is filled by the same startup sweep that fills <c>sr_dt</c> and is
-    /// therefore null on any map that sweep has not reached. A Literate play on such a map is
-    /// <see cref="RateStars.Unavailable"/>, exactly as a Double Time play on a map without
-    /// <c>sr_dt</c> already is, and for the same reason: it is retried on a later boot rather than
-    /// stamped at a value the next sweep would have to disagree with.</para>
+    /// <para>THE ARM IS A RATING INPUT, not a filter over the finished price: since the difficulty
+    /// rework the star rating prices the intervals a press may land in, so a wider window or a point
+    /// target is a different rating. It is deliberately NOT a multiplier as well, which would charge
+    /// the same change twice, once in the rating and once in <see cref="ModMultiplier"/>.</para>
     ///
-    /// <para><c>default</c> is all-null, and that is the SAFE default for a caller that has not
-    /// been taught the columns: it makes Literate plays pending rather than mispricing them off the
-    /// unconverted map's rating.</para>
+    /// <para>THE ONE DIFFERENCE FROM THE GAME'S COPY: the client keys on the mod TYPES
+    /// (<c>TypeBeatModEasy</c>, <c>TypeBeatModHardRock</c>), which exist only in the client, so this
+    /// keys on the ACRONYMS that travel on the wire, exactly as <see cref="IsLiterate"/> and
+    /// <see cref="ModMultiplier"/> already do. A stack carrying both (which no client can produce)
+    /// takes whichever comes first, matching the client's own loop.</para>
     /// </summary>
-    public readonly record struct LiterateStars(double? Base, double? DoubleTime, double? HalfTime);
+    public static LyricDifficulty.JudgementArm JudgementArmFor(IReadOnlyList<ScoreMod>? mods)
+    {
+        if (mods is null)
+            return LyricDifficulty.JudgementArm.None;
+
+        foreach (var mod in mods)
+        {
+            string? acronym = mod.Acronym?.Trim();
+
+            if (string.Equals(acronym, EASY_ACRONYM, StringComparison.OrdinalIgnoreCase))
+                return LyricDifficulty.JudgementArm.Easy;
+
+            if (string.Equals(acronym, HARD_ROCK_ACRONYM, StringComparison.OrdinalIgnoreCase))
+                return LyricDifficulty.JudgementArm.HardRock;
+        }
+
+        return LyricDifficulty.JudgementArm.None;
+    }
+
+    /// <summary>The acronym of the EASY mod, keyed as <see cref="LITERATE_ACRONYM"/> is.</summary>
+    public const string EASY_ACRONYM = "EZ";
+
+    /// <summary>The acronym of the HARD ROCK mod, keyed as <see cref="LITERATE_ACRONYM"/> is.</summary>
+    public const string HARD_ROCK_ACRONYM = "HR";
 
     /// <summary>
-    /// Which star rating prices this play, given the map's stored ratings. See
-    /// <see cref="RateStars"/> for the three outcomes.
+    /// Which reading of the map prices this play, given the map's stored rating matrix
+    /// (<c>beatmaps.ratings</c>, <see cref="BeatmapRatings"/>). See <see cref="RateStars"/> for the
+    /// three outcomes.
     ///
-    /// <para>TWO QUESTIONS IN ORDER, and the first is WHICH MAP. Literate is a conversion mod: it
-    /// makes every punctuation mark a typed cell, so a Literate play is a play on a DIFFERENT map
-    /// with three ratings of its own, and since backlog 144 it is priced through those and carries
-    /// no flat multiplier (see <see cref="ModMultiplier"/>). The rate question is then asked inside
-    /// whichever triple that selected, completely unchanged: Literate is ORTHOGONAL to rate, so a
-    /// Literate Double Time play prices at the converted map's rating AT 1.50x, which is a stored
-    /// figure of its own and provably not recoverable from the other two (a rate ratio measured on
-    /// the plain map mispredicts the converted map's by up to 5.8% in stars, i.e. 11% in pp).</para>
+    /// <para>THREE QUESTIONS, and the matrix answers all of them at once because they are a cross
+    /// product rather than a list. WHICH MAP: Literate is a conversion mod, so a Literate play is a
+    /// play on a different map, and since backlog 144 it is priced through that map's rating and
+    /// carries no flat multiplier (see <see cref="ModMultiplier"/>). WHICH ARM: Easy and Hard Rock
+    /// move the engine's own windows, which the rating now prices
+    /// (<see cref="JudgementArmFor"/>). WHICH RATE: the play's own clock. The three are orthogonal,
+    /// so eighteen cells are stored and this reads exactly one of them.</para>
     ///
     /// <para>A stack carrying MORE THAN ONE rate mod is tamper-shaped by construction (the client
     /// makes DT / NC / HT mutually exclusive), so it is treated as ineligible rather than guessed
-    /// at, exactly as <see cref="ModMultiplier"/> treats it as the conservative case for scoring.</para>
+    /// at, exactly as <see cref="ModMultiplier"/> treats it as the conservative case for
+    /// scoring.</para>
     ///
-    /// <para>THE TWO RATE ARMS ARE SYMMETRIC (backlog 265): a Double Time play needs <c>sr_dt</c>
-    /// and a Half Time play needs <c>sr_ht</c>, each priced off its own rating alone, and neither
-    /// looks at the other. From backlog 90 to backlog 265 the down-rate arm ALSO needed
-    /// <c>sr_dt</c>, to mirror against, so a map the SR sweep had filled halfway left its HT plays
-    /// <see cref="RateStars.Unavailable"/>; deleting the mirror deletes that dependency, and the
-    /// rows that were waiting on it price on the next sweep. Either rating still missing on the arm
-    /// that needs it is <see cref="RateStars.Unavailable"/>, left stale for
-    /// <see cref="Packages.PpBackfill"/> rather than priced off a rating that is not the play's.</para>
+    /// <para>A CELL THE MATRIX DOES NOT CARRY IS <see cref="RateStars.Unavailable"/>, which covers
+    /// both a NULL column (a row the sweep has not reached) and a matrix written by an older shape
+    /// that has no such cell. That play is left stale for <see cref="Packages.PpBackfill"/> rather
+    /// than priced off a rating that is not its own, which is the same contract an unfilled
+    /// <c>sr_dt</c> has had since backlog 90.</para>
     /// </summary>
     /// <param name="mods">The play's parsed mods (<see cref="ScoreMods.Parse"/>).</param>
-    /// <param name="baseStars"><c>beatmaps.difficulty_rating</c>, the rate-1.0 rating.</param>
-    /// <param name="starsDoubleTime"><c>beatmaps.sr_dt</c>, the rating at 1.50x; null until filled.</param>
-    /// <param name="starsHalfTime"><c>beatmaps.sr_ht</c>, the rating at 0.75x; null until filled.</param>
-    /// <param name="literate">The converted map's three, used only for a Literate play.</param>
-    public static RateStars StarsFor(
-        IReadOnlyList<ScoreMod>? mods,
-        double baseStars,
-        double? starsDoubleTime,
-        double? starsHalfTime,
-        LiterateStars literate = default)
+    /// <param name="ratings">The map's stored matrix, or null when the column is NULL.</param>
+    public static RateStars StarsFor(IReadOnlyList<ScoreMod>? mods, BeatmapRatings? ratings)
     {
-        // WHICH MAP first (see the docs above). The plain triple's rate-1.0 member is a plain
-        // double and can never be missing, so this branch is the only one that can go Unavailable
-        // before a rate is even looked at.
-        (double? atBaseRate, double? up, double? down) = IsLiterate(mods)
-            ? (literate.Base, literate.DoubleTime, literate.HalfTime)
-            : (baseStars, starsDoubleTime, starsHalfTime);
-
-        if (atBaseRate is not double unrated)
-            return RateStars.Unavailable;
-
         ScoreMod rateMod = default;
         int rateMods = 0;
 
@@ -840,28 +999,38 @@ public static class PerformancePoints
             }
         }
 
-        if (rateMods == 0)
-            return RateStars.Of(unrated);
+        double rate = 1;
 
-        if (rateMods > 1 || !RateMods.TryGetRange(rateMod.Acronym, out var range))
+        if (rateMods > 1)
             return RateStars.Ineligible;
 
-        // ScoreMods.Parse already snapped and clamped this, and fell back to the mod's default for a
-        // historic row that carries no speed_change at all (under the old rules a ranked bare DT
-        // could only have been 1.50x), so a legitimately base-rate play always lands exactly here.
-        double rate = rateMod.Rate ?? range.Default;
+        if (rateMods == 1)
+        {
+            if (!RateMods.TryGetRange(rateMod.Acronym, out var range))
+                return RateStars.Ineligible;
 
-        if (Math.Abs(rate - range.Default) > rate_epsilon)
-            return RateStars.Ineligible;
+            // ScoreMods.Parse already snapped and clamped this, and fell back to the mod's default
+            // for a historic row that carries no speed_change at all (under the old rules a ranked
+            // bare DT could only have been 1.50x), so a legitimately base-rate play always lands
+            // exactly on the default here.
+            rate = rateMod.Rate ?? range.Default;
 
-        // The two rate mods' defaults straddle 1.0: DT / NC at 1.50x, HT at 0.75x.
-        if (range.Default > 1)
-            return up is double sped ? RateStars.Of(sped) : RateStars.Unavailable;
+            if (Math.Abs(rate - range.Default) > rate_epsilon)
+                return RateStars.Ineligible;
 
-        // Half Time is priced off the down-rate rating and nothing else, the exact mirror image of
-        // the up-rate arm above (see the docs): the up-rate rating is not consulted at all, so a map
-        // storing only this one prices its HT plays today rather than waiting on the other column.
-        return down is double slowed ? RateStars.Of(slowed) : RateStars.Unavailable;
+            // The matrix is keyed on the DEFAULT rather than on the parsed figure, so a value that
+            // cleared the epsilon above by a hair still reads the cell it was meant to read.
+            rate = range.Default;
+        }
+
+        // THE COLUMN'S NULL IS PENDING AND NOT A PRICE, so this is checked before the lookup rather
+        // than folded into it: a map the sweep has not reached carries no cell for any stack.
+        if (ratings is null)
+            return RateStars.Unavailable;
+
+        return ratings.TryGet(JudgementArmFor(mods), IsLiterate(mods), rate) is MapRating rating
+            ? RateStars.Of(rating)
+            : RateStars.Unavailable;
     }
 
     /// <summary>
@@ -915,7 +1084,7 @@ public static class PerformancePoints
                 "FL" => FlashlightMultiplier(notes),
                 "EZ" => easy_multiplier,
                 "HR" => hard_rock_multiplier,
-                "RE" => recite_multiplier,
+                "RE" => ReciteMultiplierFor(notes),
                 "FC" => fletcher_strict_multiplier,
                 "FT" => fletcher_multiplier,
                 "NF" => no_fail_multiplier,
@@ -934,6 +1103,44 @@ public static class PerformancePoints
         => notes <= 0
             ? flashlight_floor
             : Math.Max(flashlight_floor, 1 + flashlight_offset + flashlight_weight * Math.Log10(notes / reference_notes));
+
+    /// <summary>
+    /// DEPARTURE 6 (v23). Recite is a MULTIPLIED Flashlight bonus rather than a flat term:
+    /// <c>1 + recite_multiplier * (FlashlightMultiplier(notes) - 1)</c>. The mod hides the lyric
+    /// until the line is sung, which is what Flashlight charges for (the map is typed from memory
+    /// rather than read ahead), and that cost grows with how much map there is to hold in the head.
+    /// So <see cref="recite_multiplier"/> is the SCALE on that bonus, not a bonus of its own: 0 is
+    /// free, 1 is exactly what Flashlight is worth, and the sandbox's active 2.0 pays twice
+    /// Flashlight's bonus. The two mods still multiply when both are selected, exactly as every
+    /// other pair in the table does.
+    /// </summary>
+    public static double ReciteMultiplierFor(int notes)
+        => 1 + recite_multiplier * (FlashlightMultiplier(notes) - 1);
+
+    /// <summary>
+    /// DEPARTURE 5 (v23). The share of its core pp a play keeps from accuracy alone:
+    /// <c>ExpCurve((accuracy - acc_floor) / (1 - acc_floor))</c>, so the floor is exactly where the
+    /// price reaches zero and a perfect play is exactly 1. The normalisation is what makes the two
+    /// dials independent: the steepness moves the shape without moving either end.
+    /// </summary>
+    private static double AccuracyShare(double accuracy)
+    {
+        if (!double.IsFinite(accuracy) || accuracy <= acc_floor)
+            return 0;
+
+        double t = accuracy >= 1 ? 1 : (accuracy - acc_floor) / (1 - acc_floor);
+        double share = ExpCurve(t, acc_steepness);
+        return double.IsFinite(share) ? Math.Clamp(share, 0, 1) : 0;
+    }
+
+    /// <summary>
+    /// The normalised exponential both the accuracy curve and its steepness dial are built on:
+    /// <c>(e^(k*t) - 1) / (e^k - 1)</c>, exactly 0 at t = 0 and exactly 1 at t = 1 for every k.
+    /// k = 0 is the limit and is taken directly rather than through the ratio, which is 0/0 there:
+    /// the curve is then the straight line from the floor to perfection.
+    /// </summary>
+    private static double ExpCurve(double t, double steepness)
+        => steepness > 1e-6 ? (Math.Exp(steepness * t) - 1) / (Math.Exp(steepness) - 1) : t;
 
     /// <summary>
     /// The accuracy SOFT KNEE (backlog 227): a logistic centred on <see cref="acc_knee"/> and
@@ -956,14 +1163,21 @@ public static class PerformancePoints
     /// (<see cref="StarsFor"/>), <paramref name="accuracy"/> the stored <c>scores.accuracy</c>,
     /// <paramref name="maxCombo"/> the stored <c>scores.max_combo</c>.
     ///
-    /// <para>Inputs are clamped rather than trusted: misses and combo into <c>[0, notes]</c> (the
-    /// theoretical max combo of a typing map IS its note count), typos to non-negative (they have
-    /// no upper bound: a player can press as many wrong keys as they like) and accuracy into
-    /// <c>[0, 1]</c>. The result is guaranteed finite and non-negative.</para>
+    /// <para><paramref name="difficultCharacters"/> is the MAP's difficult-character count at the
+    /// played rate, stream and judgement arm (<see cref="MapRating.DifficultCharacters"/>, off the
+    /// stored matrix), which is what the miss penalty is judged against since v22. 0 means "no such
+    /// count", and any miss then zeroes the cleanliness term rather than falling back to the cell
+    /// count; on this server a play with no cell never reaches here, because
+    /// <see cref="StarsFor"/> leaves it pending.</para>
     ///
-    /// <para><paramref name="typos"/> defaults to 0, which is both what a play from before the
-    /// stat existed carries and the value at which the typo term is exactly 1.0, leaving the
-    /// play priced by its misses alone.</para>
+    /// <para>Inputs are clamped rather than trusted: misses and combo into <c>[0, notes]</c> (the
+    /// theoretical max combo of a typing map IS its note count), the difficult characters to a
+    /// finite non-negative, and accuracy into <c>[0, 1]</c>. The result is guaranteed finite and
+    /// non-negative.</para>
+    ///
+    /// <para><paramref name="typos"/> IS NO LONGER READ (v22 deleted the typo term). It stays on
+    /// the signature, defaulted, so every call site that passes a count reads unchanged and the two
+    /// mirrors keep one shape.</para>
     ///
     /// <para>THERE IS NO RATE ARGUMENT (backlog 265). A rate is priced entirely by the
     /// <paramref name="starRating"/> it is handed, so a caller holding the effective rating holds
@@ -974,6 +1188,7 @@ public static class PerformancePoints
     public static double Compute(
         double starRating,
         int notes,
+        double difficultCharacters,
         int misses,
         double accuracy,
         int maxCombo,
@@ -986,64 +1201,54 @@ public static class PerformancePoints
 
         misses = Math.Clamp(misses, 0, notes);
         maxCombo = Math.Clamp(maxCombo, 0, notes);
-        typos = Math.Max(typos, 0);
+        difficultCharacters = double.IsFinite(difficultCharacters) ? Math.Max(0, difficultCharacters) : 0;
         accuracy = double.IsFinite(accuracy) ? Math.Clamp(accuracy, 0, 1) : 0;
 
         double difficulty = Math.Pow(starRating, sr_exponent);
 
-        // Dropped cells, and nothing else. The RAW COUNT carries the power (count_power), not the
-        // ratio, so this base falls off far faster than misses/notes ever did: it reaches 0 at
-        // misses = notes^(1/count_power), i.e. 49 misses on a 500-note map, and would run NEGATIVE
-        // past that. Math.Max is what makes it a well-defined cliff instead, and it is load-bearing:
-        // misses can equal notes after the clamp above, so the unclamped base really does go
-        // negative, and a fractional exponent on a negative base is non-real. THE Math.Clamp ABOVE
-        // HAS TO COME FIRST for the same reason from the other direction: Math.Pow of a negative
-        // count under a fractional power is NaN, not a wrong number. Math.Pow also converts to
-        // double, which is what stops a tamper-shaped note count overflowing an int square and
-        // flipping the sign of the whole penalty. What a miss costs does not depend on the
-        // keypresses. At zero misses Math.Pow(0, count_power) is exactly 0, so the base is exactly
-        // 1.0 and the term with it.
-        double missBase = Math.Max(0.0, 1.0 - Math.Pow(misses, count_power) / notes);
+        // CLEANLINESS, over the map's DIFFICULT CHARACTERS rather than its cells, with the power on
+        // the missed FRACTION. Two special cases are load-bearing rather than defensive: a spotless
+        // play must be exactly 1.0 on every map, and a map whose difficulty sits entirely below its
+        // own peak has NO difficult characters to spend, so any dropped cell zeroes the term instead
+        // of producing 0/0. The clamp is load-bearing too: misses are cells and a map has fewer
+        // difficult characters than cells, so the fraction can exceed 1 and the base would run
+        // negative, where a fractional power is non-real rather than merely wrong.
+        double difficultShare = difficultCharacters > 0 ? misses / difficultCharacters : 0;
+        double missBase = misses == 0 ? 1
+            : difficultCharacters > 0 ? Math.Max(0, 1 - Math.Pow(difficultShare, count_power))
+            : 0;
         double cleanliness = Math.Pow(missBase, miss_exponent);
 
-        // Wrong keypresses, and nothing else, under the same power. The count is UNBOUNDED, so it
-        // still sits on BOTH sides of the fraction: that is what keeps the denominator growing with
-        // the count, putting the zero at the positive root of m^count_power - m - notes = 0 (about
-        // 51.71, i.e. 52 typos, on a 500-note map) rather than at notes^(1/count_power). The
-        // numerator goes through Math.Pow and the sum is taken in DOUBLE, independently and for the
-        // same reason: an int square overflows catastrophically (the true square at int.MaxValue is
-        // about 4.6e18) and notes + typos as ints overflows too. In double, int.MaxValue typos
-        // give a ratio of about 4.0e5, so the base clamps to a well-defined 0 rather than wrapping into
-        // a NaN or a bonus. At zero typos this is exactly 1.0. notes is untouched by design (see
-        // the class docs): only this term prices typos.
-        double typoBase = Math.Max(0.0, 1.0 - Math.Pow(typos, count_power) / ((double)notes + typos));
-        double typoPenalty = Math.Pow(typoBase, typo_exponent);
+        // THERE IS NO TYPO TERM since v22: a wrong keypress the player recovered from costs nothing.
+        // The count is still derived by CountNotes for the surfaces that display it, and the
+        // parameter stays on this signature so those call sites read unchanged.
 
-        // The play's accuracy, gently curved by accuracy_exponent and then bent through the SOFT
-        // KNEE (see acc_knee): the exponent keeps doing the ordering work above the knee while
-        // the logistic takes the bottom of the range out. NO CLAMP IS NEEDED HERE and none would
-        // bite: accuracy is clamped into [0, 1] above, so at a width of 0.025 the argument to
-        // Math.Exp runs between -8 and +32 and the knee between 1.3e-14 and 0.9997. The knee is
-        // exactly 0.5 at accuracy == acc_knee and strictly increasing everywhere, so it can
-        // respread this axis but never reorder two plays on it.
-        double timing = Math.Pow(accuracy, accuracy_exponent) * AccuracyKnee(accuracy);
+        // The play's accuracy, curved by the normalised exponential (DEPARTURE 5) and then bent
+        // through the SOFT KNEE (see acc_knee). The knee ships at width 0, where AccuracyKnee is
+        // exactly 1 and the curve is the whole of the accuracy shape; at a live width it is exactly
+        // 0.5 at accuracy == acc_knee and strictly increasing everywhere, so it can respread this
+        // axis but never reorder two plays on it. NO CLAMP IS NEEDED HERE and none would bite:
+        // accuracy is clamped into [0, 1] above and AccuracyShare pins both ends.
+        double timing = AccuracyShare(accuracy) * AccuracyKnee(accuracy);
 
-        // The longest run as a fraction of the map, times what a full combo is worth at this
-        // rating. NO CLAMP IS NEEDED ON THE RATIO and none would bite: maxCombo is already clamped
-        // into [0, notes] above, so comboRatio is in [0, 1]. The Math.Max IS load-bearing, on the
-        // other side: a rating below combo_bonus_zero would otherwise pay a NEGATIVE bonus that a
-        // longer run made worse (see combo_bonus_zero). At a slope of 0 this is exactly 0 for
-        // every play, which is the no-bonus sentinel tools/pp.py reads an absent declaration as.
+        // THE COMBO BONUS MULTIPLIES THE PRICE, at a ceiling this map's LENGTH earns it: a straight
+        // line through the origin worth combo_bonus_at_200_cells percent at 200 cells, capped, times
+        // the share of the map the longest run held, times the kicker when nothing was dropped at
+        // all. Because it is a percentage of the product rather than a number of pp beside it, a
+        // price zeroed by misses stays zero, and the mod multiplier scales the bonus along with
+        // everything else it multiplies. NO CLAMP IS NEEDED ON THE RATIO: maxCombo is already
+        // clamped into [0, notes] above, so it is in [0, 1].
+        double comboCeiling = Math.Min(combo_bonus_cap, Math.Max(0, notes) / 200.0 * combo_bonus_at_200_cells) / 100.0;
         double comboRatio = (double)maxCombo / notes;
-        double comboBonus = comboRatio * Math.Max(0.0, combo_bonus_slope * (starRating - combo_bonus_zero));
+        bool comboPerfect = misses == 0 && maxCombo >= notes;
+        double comboBonus = comboCeiling * comboRatio * (comboPerfect ? combo_bonus_perfect : 1);
 
-        // THE BONUS SITS OUTSIDE THE WHOLE PRODUCT, ModMultiplier INCLUDED (backlog 270). It is
-        // not a factor and it is not scaled by one: a mod stack moves the core pp of the play and
-        // leaves what the run itself is worth alone. Putting it inside the product, or before the
-        // mod multiplier, is the one placement mistake this shape invites, and it is what
-        // PerformancePointsParityTest's lossy non-FC pin exists to catch.
-        double pp = scale * difficulty * cleanliness * typoPenalty * timing * ModMultiplier(mods, notes)
-                    + comboBonus;
+        // THE BONUS IS INSIDE THE PRODUCT, deliberately, because it is a percentage OF the price and
+        // not a number of pp beside it: a mod stack scales it along with the core, and a core zeroed
+        // by misses cannot keep a consolation bonus. That is the opposite of v21's placement, which
+        // is what the version bump records.
+        double core = scale * difficulty * cleanliness * timing * ModMultiplier(mods, notes);
+        double pp = core * (1 + comboBonus);
 
         return double.IsFinite(pp) && pp > 0 ? pp : 0;
     }
@@ -1074,25 +1279,28 @@ public static class PerformancePoints
     /// priced this play, and this is the answer".</para>
     /// </summary>
     /// <param name="ranked">The score's stored <c>ranked</c> flag: an unranked play earns nothing.</param>
+    /// <param name="ratings">
+    /// The map's stored rating matrix (<c>beatmaps.ratings</c>, <see cref="BeatmapRatings"/>), or
+    /// null when the column is NULL. Since v22 a price needs the map's DIFFICULT CHARACTERS as well
+    /// as its stars, and both travel in one cell, so the matrix replaced the six rating parameters
+    /// this method used to take. Null, or a matrix with no cell for this stack, is PENDING.
+    /// </param>
     public static (double? Pp, bool Settled) ForScore(
         bool ranked,
         IReadOnlyList<ScoreMod>? mods,
         NoteCounts notes,
         double accuracy,
         int maxCombo,
-        double baseStars,
-        double? starsDoubleTime,
-        double? starsHalfTime,
-        LiterateStars literate = default)
+        BeatmapRatings? ratings)
     {
         if (!ranked)
             return (null, true);
 
-        var stars = StarsFor(mods, baseStars, starsDoubleTime, starsHalfTime, literate);
+        var stars = StarsFor(mods, ratings);
 
         if (stars.Stars is not double effective)
             return (null, !stars.Pending);
 
-        return (Compute(effective, notes.Notes, notes.Misses, accuracy, maxCombo, mods, notes.Typos), true);
+        return (Compute(effective, notes.Notes, stars.DifficultCharacters, notes.Misses, accuracy, maxCombo, mods, notes.Typos), true);
     }
 }

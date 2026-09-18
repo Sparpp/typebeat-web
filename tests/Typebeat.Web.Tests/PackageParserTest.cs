@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using Typebeat.Web.Packages;
 
 namespace Typebeat.Web.Tests;
@@ -85,10 +85,11 @@ public class PackageParserTest
             Assert.That(diff.Pace.AverageCpm, Is.EqualTo(100).Within(1e-9));
             Assert.That(diff.Pace.AverageWpm, Is.EqualTo(20).Within(1e-9)); // CPM/5 since LyricPace v15
             Assert.That(diff.Pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
-            // Stars (LyricDifficulty): "ab cd" is sung over 2000 ms, just enough for the smallest
-            // scheduled window (1.36 s) to fit, so it rates 0.67 under the envelope model at the
-            // 12.0 anchor (0.59 at the 10.6 anchor, 0.63 under the strain model this replaced).
-            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.67).Within(0.01));
+            // Stars (LyricDifficulty): "ab cd" is sung over 2000 ms and rates 0.82 on the CHUNKED
+            // endurance axis, which is what the model ships since the difficulty rework (0.67 under
+            // the envelope model at the 12.0 anchor, 0.59 at the 10.6 anchor, 0.63 under the strain
+            // model before that).
+            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.82).Within(0.01));
 
             // The rolling-window columns (028_wpm_curve.sql) are NULL here, and that is the
             // unmeasurable arm of their contract rather than an omission: "ab cd" is 5 cells
@@ -96,12 +97,15 @@ public class PackageParserTest
             Assert.That(diff.PeakWpm, Is.Null);
             Assert.That(diff.PeakCpm, Is.Null);
 
-            // target_wpm (033_target_wpm.sql) is NOT on that contract, which is exactly the point
-            // of it being a per-line figure: one line is already a fifth of one line, so this map
-            // has a target even though it has no curve. One counted line means the fastest fifth IS
-            // that line, so the target equals the average, 20 WPM.
-            Assert.That(diff.TargetWpm, Is.EqualTo(20.0).Within(1e-9));
-            Assert.That(diff.TargetWpm, Is.EqualTo(diff.Pace.AverageWpm).Within(1e-12));
+            // target_wpm (033_target_wpm.sql) is NOT on that contract, and that is still the point,
+            // though for a different reason since LyricPace v21: the target is the map's hardest
+            // window by raw speed read off the difficulty model, and the model finds one on a map
+            // far too short for the 30-cell rolling window. This map's smallest scheduled window
+            // (1.36 s) sits inside its 2 s of singing and reads 21.84 WPM, which is ABOVE the
+            // whole-map average, so the floor does not bite and the two figures differ.
+            Assert.That(diff.TargetWpm, Is.EqualTo(21.84).Within(0.01));
+            Assert.That(diff.TargetWpm, Is.GreaterThan(diff.Pace.AverageWpm),
+                "the hardest window asks for more than the whole map's own pace");
 
             // Last line end = min(song_end 4000, end_ms 3000 + 3000 tail) = 4000 ms.
             Assert.That(diff.TotalLengthS, Is.EqualTo(4.0).Within(1e-9));
@@ -110,11 +114,17 @@ public class PackageParserTest
     }
 
     [Test]
-    public void Parse_FreestyleLine_CountsMarkersAsCells()
+    public void Parse_FreestyleLine_CountsTheSlotsSeparatelyFromTheTypedCells()
     {
-        // A map blob carrying the editor's freestyle opt-in. Ingest must count the '&' slots as
-        // cells (they are keypresses), or the stored pace/difficulty undercount the map; an
+        // A map blob carrying the editor's freestyle opt-in. Ingest must SEE the '&' slots, since
+        // the star rating prices each at a quarter of a cell and the row stores their count; an
         // ampersand in an unflagged line stays lyric punctuation and is stripped as always.
+        //
+        // THEY ARE NOT IN char_count SINCE LyricPace v21, which is the reverse of what v6 decided
+        // and is why this test is renamed rather than retuned. A slot takes ANY key, so no map can
+        // ask for a particular speed in one, and the pace is about the speed a map asks for; the
+        // count lives in freestyle_cell_count instead, as an addition to char_count rather than a
+        // subset of it.
         const string lyrics =
             """
             {"granularity":"word","version":2,"song_end_ms":20000}
@@ -133,12 +143,19 @@ public class PackageParserTest
         Assert.Multiple(() =>
         {
             Assert.That(free.Lines[0].RawText, Is.EqualTo("me & you"));
-            Assert.That(free.Pace.TypeableCellCount, Is.EqualTo(8)); // 6 letters + the slot + 2 spaces
-            Assert.That(free.Pace.WordCount, Is.EqualTo(3));
+            Assert.That(free.Pace.TypeableCellCount, Is.EqualTo(7)); // 6 letters + 2 spaces, and NOT the slot
+            Assert.That(free.Pace.FreestyleCellCount, Is.EqualTo(1)); // which is counted here instead
+            Assert.That(free.Pace.WordCount, Is.EqualTo(2), "a token of nothing but a slot asks for no typing");
 
             Assert.That(legacy.Lines[0].RawText, Is.EqualTo("me you"));
             Assert.That(legacy.Pace.TypeableCellCount, Is.EqualTo(6));
+            Assert.That(legacy.Pace.FreestyleCellCount, Is.Zero);
             Assert.That(legacy.Pace.WordCount, Is.EqualTo(2));
+
+            // THE SLOT STILL COSTS SOMETHING, which is the half of the old claim that survives: it
+            // is a cell of the map with a deadline, priced at a quarter by the star rating, so the
+            // flagged map rates above the one where the same ampersand is stripped as punctuation.
+            Assert.That(free.Pace.DifficultyRating, Is.Not.EqualTo(legacy.Pace.DifficultyRating));
         });
     }
 

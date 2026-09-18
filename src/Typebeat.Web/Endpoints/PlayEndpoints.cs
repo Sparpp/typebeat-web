@@ -1,4 +1,4 @@
-using Dapper;
+﻿using Dapper;
 using Microsoft.AspNetCore.Antiforgery;
 using Newtonsoft.Json;
 using Npgsql;
@@ -221,7 +221,7 @@ public static class PlayEndpoints
             ? await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 """
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
-                       b.difficulty_rating AS baseStars
+                       b.difficulty_rating AS baseStars, b.ratings::text AS ratings
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.id = @beatmapId
@@ -233,7 +233,7 @@ public static class PlayEndpoints
             : await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 """
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
-                       b.difficulty_rating AS baseStars
+                       b.difficulty_rating AS baseStars, b.ratings::text AS ratings
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked')
@@ -331,7 +331,7 @@ public static class PlayEndpoints
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
             """
             SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS,
-                   difficulty_rating AS baseStars
+                   difficulty_rating AS baseStars, ratings::text AS ratings
             FROM beatmaps WHERE id = @beatmapId
             """,
             new { beatmapId }, tx);
@@ -391,22 +391,24 @@ public static class PlayEndpoints
         var endedAt = DateTimeOffset.UtcNow;
 
         // Performance points (docs/pp.md). The browser player stores a hardcoded empty mod stack
-        // (below), so there is no mod multiplier, no rate and no CONVERSION mod to price: the play
-        // is always valued at the map's base star rating, which is never NULL, so this row is
-        // always settled at the current version and the backfill never has to revisit it.
+        // (below), so there is no mod multiplier, no rate, no CONVERSION mod and no JUDGEMENT ARM to
+        // price: the play always reads the matrix's none/plain/1.00 cell.
         //
-        // The empty stack is what makes omitting the sr_literate* triple correct here. /play never
-        // offers Literate (see play.js), so if it ever does, this call has to read and pass those
-        // columns too or every browser Literate play would sit unpriced forever.
+        // THAT CELL IS NOT ALWAYS THERE, which is a change from the six-column pricing this
+        // replaced (034_ratings_matrix.sql). difficulty_rating is NOT NULL and has been since 001,
+        // so a browser play used to be settled unconditionally; the matrix is a new column and is
+        // NULL on every row PaceBackfill has not swept, so a browser play on such a map is now
+        // PENDING and is priced on a later boot, exactly as a Double Time desktop play on an
+        // unswept map already was. Nothing else about the path changes, and the whole stack is
+        // still passed rather than assumed, so if /play ever gains mods this call already reads the
+        // cell they select.
         var (pp, ppSettled) = PerformancePoints.ForScore(
             ranked,
             mods: [],
             PerformancePoints.CountNotes(statistics),
             storedAccuracy,
             storedMaxCombo,
-            beatmap.BaseStars,
-            starsDoubleTime: null,
-            starsHalfTime: null);
+            BeatmapRatings.Parse(beatmap.Ratings));
 
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
@@ -675,7 +677,9 @@ public static class PlayEndpoints
     // Appended, never reordered: Dapper maps positional records by position (BaseStars is the
     // 020_performance_points.sql addition; this player never sends rate mods, so sr_dt/sr_ht are
     // not read here).
-    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS, double BaseStars);
+    // Appended, never reordered: Dapper maps positional records by position (Ratings is the
+    // 034_ratings_matrix.sql addition).
+    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS, double BaseStars, string? Ratings);
 
     private sealed record BuildRow(long Id, bool Blocked);
 

@@ -1,31 +1,31 @@
 ﻿namespace Typebeat.Web.Packages.Lyrics;
 
 /// <summary>
-/// Boundary-window typing-pace statistics + star rating for a lyric map, the numbers the
-/// client's song select shows and the exact difficulty formula it stores. Ports, from
-/// typebeat-osu:
+/// Typing-pace statistics + star rating for a lyric map, the numbers the client's song select
+/// shows and the exact difficulty formula it stores. Ports, from typebeat-osu:
 ///
 ///  - pace: LyricPaceStatistics.Compute
-///    (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricPaceStatistics.cs): a line's typing
-///    window is EndTime - StartTime (the boundary-to-boundary time a player actually gets),
-///    floored at 500 ms; per line CPM = real typeable cells / window (chars + one inter-word
-///    space per token gap; TypingLine's cell arithmetic) and WPM is that CPM over
-///    <see cref="CHARS_PER_WORD"/>; the map pace is the unweighted mean of per-line rates, so
-///    instrumental gaps between lines never dilute it. The word convention is the TYPING-TEST
-///    one, so WPM here means what it means on MonkeyType, on the in-game HUD and on the results
-///    screen; the map's true word length is published separately as
-///    <see cref="PaceStatistics.AverageCharsPerWord"/> rather than left implicit in a CPM:WPM
-///    ratio nobody could read off the page. <see cref="PaceStatistics.TargetWpm"/> is that same
-///    unweighted mean taken over the FASTEST fifth of the lines that hold at least three words,
-///    instead of over all of them, one estimator over two selections of the one pool, which is why
-///    it lives here and not on the rolling-window curve next door.
-///  - stars: <see cref="LyricDifficulty"/>, the map's pace over sliding windows measured against
-///    human typing capability, where the hardest window sets a RANGE and the characters sitting
-///    near that peak difficulty fill it (backlog 273, replacing 269's greedy feats), mirroring
-///    the game's typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty. That file's own summary
-///    is the model description, and the prototype it is a literal port of is
-///    docs/sr-envelope-model.js in the parent superrepo. Unlike the pace, this DOES use unit target
-///    times (a word occupies the timeline from its onset to the end of its sung span).
+///    (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricPaceStatistics.cs), in three deliberate
+///    shapes. <see cref="PaceStatistics.AverageWpm"/> is the WHOLE-MAP rate: every counted line's
+///    typeable cells over the total time the map is actually being SUNG, walked span by span so a
+///    breath between words counts and a real break (over <see cref="break_min_ms"/>) does not, so
+///    a line is weighted by how long it is sung rather than getting one vote.
+///    <see cref="PaceStatistics.LineAverageWpm"/> is the figure that averaged before it, the
+///    unweighted mean of the per-line (cells / boundary window) rates, kept as the companion the
+///    whole-map rate is read against. <see cref="PaceStatistics.TargetWpm"/> is neither: it is the
+///    map's hardest window BY RAW SPEED, read off the difficulty model's envelope arm and
+///    re-expressed at <c>LyricDifficulty.TargetWindowSeconds</c>, floored at the whole-map rate.
+///    The word convention is the TYPING-TEST one, so WPM here means what it means on MonkeyType,
+///    on the in-game HUD and on the results screen; the map's true word length is published
+///    separately as <see cref="PaceStatistics.AverageCharsPerWord"/> rather than left implicit in
+///    a CPM:WPM ratio nobody could read off the page.
+///  - stars: <see cref="LyricDifficulty"/>, mirroring the game's
+///    typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty. That file's own summary is the
+///    model description; since the difficulty rework the SHIPPED reading is its CHUNKED ENDURANCE
+///    axis (<c>LyricDifficulty.Live</c>), with the envelope model kept as the named
+///    <c>EnduranceAxis.Envelope</c> arm that the target figure above still reads. Unlike the pace,
+///    the rating DOES use unit target times (a word occupies the timeline from its onset to the
+///    end of its sung span) and, since the rework, the words' authored syllable boundaries too.
 /// </summary>
 public static class LyricPace
 {
@@ -301,6 +301,54 @@ public static class LyricPace
     /// counted line and is now merely usual, since an ineligible fast line raises the average and
     /// not the target.</para>
     ///
+    /// <para>v21 = THE STAR RATING IS A DIFFERENT MODEL AGAIN, AND THE PACE FIGURES CHANGE SHAPE
+    /// WITH IT (the difficulty rework). Three separate things move, and every one of them rewrites
+    /// stored columns.</para>
+    ///
+    /// <para>FIRST, THE RATING. <see cref="LyricDifficulty"/>'s shipped reading is no longer the
+    /// envelope model but its CHUNKED ENDURANCE axis (<c>LyricDifficulty.Live</c>), which cuts the
+    /// map into chunks and scores each as a window of its own, and the rating now carries two
+    /// adjustments the envelope never had: TYPABILITY (<see cref="TypabilityIndex"/>, how hard the
+    /// line's own text is to type, measured against the 136M Keystrokes study and gated on a map
+    /// carrying scores for half its weighted cells) and RHYTHMIC COMPLEXITY
+    /// (<see cref="RhythmicComplexity"/>, how much keeping perfect timing forces a change of pace).
+    /// The rating also takes a JUDGEMENT ARM now, because the two mods that move the engine's own
+    /// windows (Easy and Hard Rock) change which intervals a press may land in and therefore what
+    /// the rhythm arm reads. All six stored star columns move, and so does every entry of the new
+    /// <c>beatmaps.ratings</c> matrix, so the sweep re-rates the whole catalogue and stamps
+    /// <c>pp_version = 0</c> on every score of every row it rewrites, exactly as at v9, v10, v12,
+    /// v14, v17, v19 and v20.</para>
+    ///
+    /// <para>SECOND, THE PACE. <see cref="PaceStatistics.AverageWpm"/> is now the WHOLE-MAP rate
+    /// over the time the map is actually sung (<see cref="SungWindow"/>, pauses counted up to
+    /// <see cref="break_min_ms"/> and real breaks dropped whole), where it used to be the unweighted
+    /// mean of the per-line rates; that old figure survives as
+    /// <see cref="PaceStatistics.LineAverageWpm"/>, which is NOT stored in a column of its own. A
+    /// CELL also narrows: <see cref="Typeability.IsTypeable"/> rather than
+    /// <see cref="Typeability.IsCell"/>, so FREESTYLE SLOTS no longer count towards the pace, on the
+    /// argument that no map can ask for a particular speed in a slot that takes any key. So
+    /// <c>beatmaps.wpm</c> moves on EVERY map (the denominator changed), and <c>char_count</c> moves
+    /// on any map carrying a freestyle line, which reverses v6's half of that decision while leaving
+    /// <c>freestyle_cell_count</c> itself exactly where it was: it is now an ADDITION to the cell
+    /// count rather than a subset of it.</para>
+    ///
+    /// <para>THIRD, THE TARGET. <c>beatmaps.target_wpm</c> is no longer a per-line selection at all
+    /// (v18's fastest fifth and v20's three-word eligibility floor are both gone, along with
+    /// <c>target_line_fraction</c> and <c>target_line_min_words</c>). It is now the map's hardest
+    /// window BY RAW SPEED, read from the difficulty model's ENVELOPE arm and re-expressed at
+    /// <c>LyricDifficulty.TargetWindowSeconds</c>, and it is FLOORED at the whole-map average so a
+    /// map whose hardest stretch is slower than its own relentless pace reports the average rather
+    /// than a target below it. The column's NULL rule is untouched (033_target_wpm.sql): the only
+    /// row null for arithmetic reasons is still a map with no counted line.</para>
+    ///
+    /// <para>UNLIKE v12, v16, v17, v19 and v20, THIS ONE DOES MOVE THE PP FORMULA:
+    /// <c>PerformancePoints.VERSION</c> bumps to 24 in the same change, and pp now needs a
+    /// DIFFICULT-CHARACTER count per map as well as a rating, which is what the new
+    /// <c>beatmaps.ratings</c> matrix (034_ratings_matrix.sql) carries. As at v17 and v19 this
+    /// backfill has to COMPLETE before the repricing means anything, and it does: a row whose
+    /// matrix entry is still missing leaves its plays PENDING, exactly as an unfilled
+    /// <c>sr_dt</c> does, rather than pricing them against a rating that is not theirs.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -313,7 +361,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 20;
+    public const int VERSION = 21;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's
@@ -327,58 +375,118 @@ public static class LyricPace
     private const double min_line_window_ms = 500;
 
     /// <summary>
-    /// LyricPaceStatistics.cs: how much of the map <see cref="PaceStatistics.TargetWpm"/> averages,
-    /// the fastest 0.20 of its ELIGIBLE lines, rounded UP so every map has at least one line in the
-    /// selection however short it is.
+    /// LyricPaceStatistics.cs: how long a pause has to be before it stops counting as singing time,
+    /// i.e. the threshold that separates a breath from a break in <see cref="SungWindow"/>.
+    ///
+    /// <para>The engine's own rest threshold is 400 ms (the widest Great-late window in the
+    /// judgement ladder): a gap wider than that resets a player's pace. This is deliberately far
+    /// more forgiving, so a breath between words still counts towards the average and only a real
+    /// break is dropped whole. Lower it towards 0 to drop every pause, or raise it to include the
+    /// song's longer silences as typing time.</para>
     /// </summary>
-    private const double target_line_fraction = 0.20;
+    private const double break_min_ms = 1000;
 
     /// <summary>
-    /// LyricPaceStatistics.cs: the ELIGIBILITY FLOOR for that selection (backlog 274). A line enters
-    /// the pool only if it holds at least three WORDS, counted exactly as
-    /// <see cref="PaceStatistics.WordCount"/> counts them (a token holding at least one typeable
-    /// cell, on the same default stream). A two-word interjection is over almost as soon as it
-    /// begins, so its boundary window is short enough to read as an enormous rate, and without the
-    /// floor one such line could define the whole map's target.
+    /// LyricPaceStatistics.cs: whether a target below the whole-map average is raised to it, the
+    /// lab's own presentation rule (its <c>paceFloorTarget</c>), and it is ON.
     ///
-    /// <para>FALLBACK: on a map where NO line clears the floor (every line one or two words) the
-    /// pool is ALL of the counted lines instead, which is exactly the pre-274 behaviour. Filtering
-    /// to nothing would leave such a map with no target at all, and a map built out of two-word
-    /// lines still has a hardest stretch worth naming. It also keeps <c>beatmaps.target_wpm</c>'s
-    /// NULL rule where it was (033_target_wpm.sql): the only row NULL for arithmetic reasons is a
-    /// map with no COUNTED line, never a map with no eligible one.</para>
+    /// <para>WHY IT NEEDS A RULE AT ALL. The two figures answer different questions, the target
+    /// being the pace of the map's hardest window and the average the pace of the whole song, and on
+    /// most maps the target is comfortably the higher of the two. On a map whose hardest stretch is
+    /// SLOWER than its relentless average they invert, and the figure presented as "the pace this
+    /// map asks for" comes out below the pace the map already demands everywhere. Raising the target
+    /// to the average whenever the average is the higher of the two removes the contradiction.</para>
+    ///
+    /// <para>DISPLAY ONLY, like both figures: no rating reads either one, so this moves no star. A
+    /// map with no qualifying window at all reads its average here rather than the 0 the model
+    /// returned, since every positive average is above it.</para>
     /// </summary>
-    private const int target_line_min_words = 3;
+    private const bool pace_floor_target = true;
 
-    /// <param name="AverageCpm">Mean of per-line (typeable cells / boundary window) rates.</param>
+    /// <summary>
+    /// LyricPaceStatistics.SungWindow: the time a line is actually SUNG, walked word span by word
+    /// span. Every span counts, every pause counts up to <see cref="break_min_ms"/>, and a pause
+    /// wider than that is a break and is dropped whole. A line carrying no word timings falls back
+    /// to its vocal end, which is the figure the whole-map average divided by before the breaks
+    /// became a threshold.
+    /// </summary>
+    private static double SungWindow(LyricLine line)
+    {
+        if (line.Units.Count == 0)
+            return Math.Max(line.SingEndTime - line.StartTime, 0);
+
+        double charged = 0;
+        double cursor = line.StartTime;
+
+        // A line whose end precedes its start (a mid-edit line, or a malformed import) has no
+        // window to charge: clamping against it would throw, so it reads as its own start and
+        // the walk below charges nothing for it.
+        double lineEnd = Math.Max(line.EndTime, line.StartTime);
+
+        foreach (TimedUnit unit in line.Units)
+        {
+            double start = Math.Clamp(unit.StartTime, line.StartTime, lineEnd);
+            double end = Math.Clamp(unit.EndTime, start, lineEnd);
+            double gap = start - cursor;
+
+            if (gap > 0 && gap <= break_min_ms)
+                charged += gap;
+
+            charged += end - start;
+            cursor = Math.Max(cursor, end);
+        }
+
+        double tail = lineEnd - cursor;
+
+        if (tail > 0 && tail <= break_min_ms)
+            charged += tail;
+
+        return charged;
+    }
+
+    /// <param name="AverageCpm">
+    /// The WHOLE-MAP rate: total typeable cells over the summed SUNG windows
+    /// (<see cref="SungWindow"/>), where a sung window is the line's word spans plus every pause no
+    /// wider than <see cref="break_min_ms"/>. Breaks are NOT in the denominator, and a line
+    /// contributes time in proportion to how long it is sung rather than one vote. Stored as
+    /// <c>beatmaps.wpm</c> (over <see cref="CHARS_PER_WORD"/>).
+    /// </param>
+    /// <param name="LineAverageCpm">
+    /// Mean of the per-line (typeable cells / boundary window) rates: one vote per counted line,
+    /// with the pause that follows each line inside that line's own window. This is what
+    /// <paramref name="AverageCpm"/> used to be, kept as the companion figure the whole-map rate is
+    /// read against, and it has NO COLUMN of its own: no surface stores or prints it yet, and the
+    /// mirror carries it because the game does.
+    /// </param>
     /// <param name="TargetWpm">
-    /// The pace to SUSTAIN: the average WPM across the FASTEST <see cref="target_line_fraction"/>
-    /// of the map's lyric lines of at least <see cref="target_line_min_words"/> words (rounded up,
-    /// at least one), stored as <c>beatmaps.target_wpm</c> (033_target_wpm.sql). Exactly the
-    /// estimator <see cref="PaceStatistics.AverageWpm"/> is, restricted to the demanding lines, so
-    /// the two read as a pair.
+    /// The pace to SUSTAIN: the map's hardest window BY RAW SPEED, re-expressed as the WPM an
+    /// equally demanding <c>LyricDifficulty.TargetWindowSeconds</c> stretch would ask for, stored as
+    /// <c>beatmaps.target_wpm</c> (033_target_wpm.sql). It is <c>ModelResult.TargetWpm</c> off the
+    /// difficulty model's ENVELOPE arm, so the figure the website prints and the figure song select
+    /// prints are one computation rather than two kept in step by hand.
     ///
-    /// <para>Since the eligibility floor (backlog 274) the pool is a SUBSET of the lines the average
-    /// is taken over, so <see cref="PaceStatistics.AverageWpm"/> &lt;= this is NO LONGER
-    /// GUARANTEED: a two-word interjection can raise the average without being able to raise the
-    /// target. It still holds wherever the map's fastest lines clear the floor, which is the common
-    /// case, and equality is still exactly the map on which every counted line runs at the same
-    /// rate.</para>
+    /// <para>The window is chosen on the AUTHORED density with the typability multiplier and the
+    /// rhythm bonus left out of BOTH the choice and the conversion, which is what stops the figure
+    /// moving when either experiment does; it can therefore name a different window from the
+    /// rating's peak. DISPLAY ONLY: nothing here feeds a rating.</para>
     ///
-    /// <para>Selection is by LINE, not by keystroke and not by time, so an instrumental gap between
-    /// lines cannot dilute it and a burst inside one line cannot inflate it: a line is one vote
-    /// whatever it holds, the same convention <paramref name="AverageCpm"/> already uses. 0 for a
-    /// map with no counted line.</para>
+    /// <para>FLOORED at <paramref name="AverageCpm"/> over <see cref="CHARS_PER_WORD"/> (see
+    /// <see cref="pace_floor_target"/>), so a map whose hardest window is slower than its own
+    /// whole-map pace reports the average instead of a target below it, and a map with no
+    /// qualifying window at all, which the model prices at 0, reports its average for the same
+    /// reason. 0 for a map with no counted line, which is the only row the column is NULL on for
+    /// arithmetic reasons.</para>
     /// </param>
     /// <param name="DifficultyRating">Stars from <see cref="LyricDifficulty"/> (no-mod baseline).</param>
     /// <param name="FreestyleCellCount">
-    /// How many of <paramref name="TypeableCellCount"/> are FREESTYLE slots, i.e. cells with a
-    /// deadline and no letter (<see cref="Typeability.IsFreestyle"/>), stored as
-    /// <c>beatmaps.freestyle_cell_count</c> (031_freestyle_cell_count.sql). A SUBSET of that count
-    /// and never an addition to it: markers have counted towards the pace since v6, and this says
-    /// how much of it they are. 0 on every map without a line flagged <c>"freestyle": true</c>,
-    /// which is nearly all of them, and the number the star rating prices at a quarter each since
-    /// v16 (<see cref="LyricDifficulty"/>).
+    /// The map's FREESTYLE slots, i.e. cells with a deadline and no letter
+    /// (<see cref="Typeability.IsFreestyle"/>), stored as <c>beatmaps.freestyle_cell_count</c>
+    /// (031_freestyle_cell_count.sql). It was a SUBSET of <paramref name="TypeableCellCount"/> from
+    /// v6 to v20; since v21 the pace counts <see cref="Typeability.IsTypeable"/> rather than
+    /// <see cref="Typeability.IsCell"/>, so a slot is no longer in that count and this is an
+    /// ADDITION to it. 0 on every map without a line flagged <c>"freestyle": true</c>, which is
+    /// nearly all of them, and the number the star rating prices at a quarter each since v16
+    /// (<see cref="LyricDifficulty"/>).
     /// </param>
     public readonly record struct PaceStatistics(
         double AverageCpm,
@@ -386,8 +494,15 @@ public static class LyricPace
         int WordCount,
         double DifficultyRating,
         int FreestyleCellCount,
-        double TargetWpm)
+        double TargetWpm,
+        double LineAverageCpm = 0)
     {
+        /// <summary>
+        /// <see cref="LineAverageCpm"/> over <see cref="CHARS_PER_WORD"/>: the unweighted mean of
+        /// the per-line rates, the figure <see cref="AverageWpm"/> replaced at v21.
+        /// </summary>
+        public double LineAverageWpm => LineAverageCpm / CHARS_PER_WORD;
+
         /// <summary>
         /// <see cref="AverageCpm"/> over <see cref="CHARS_PER_WORD"/>. DERIVED rather than
         /// accumulated in its own sum, mirroring the game, so the two figures cannot drift apart by
@@ -420,16 +535,8 @@ public static class LyricPace
         int lineCount = 0;
         double cpmSum = 0;
 
-        // Every counted line's own rate, kept so TargetWpm can average the fastest fifth of them.
-        // One entry per line, in the same order cpmSum accumulates, so a line skipped for holding no
-        // cell is skipped by the average and by the target alike.
-        var lineCpms = new List<double>();
-
-        // And the same rates again for the lines that clear target_line_min_words, which is the pool
-        // the target actually selects from. Filled on the same pass rather than filtered out of
-        // lineCpms afterwards, because the WORD COUNT that decides eligibility is the loop's own
-        // count and is not recoverable from a rate.
-        var eligibleCpms = new List<double>();
+        // The whole-map denominator: the time the map is actually SUNG, accumulated line by line.
+        double vocalMinutes = 0;
 
         foreach (var line in lines)
         {
@@ -454,16 +561,19 @@ public static class LyricPace
 
                 foreach (char ch in token)
                 {
-                    // Freestyle slots are keypresses too, so they count towards the pace.
-                    if (Typeability.IsCell(ch))
+                    // TYPING, not mere keypresses (v21): a freestyle slot takes any key, so no map
+                    // can ask for a particular speed in one. IsCell would count them, which is what
+                    // v6 to v20 did; IsTypeable does not, and the pace figure is about the speed the
+                    // map actually demands.
+                    if (Typeability.IsTypeable(ch))
                         typeable++;
 
-                    // And they are counted AGAIN on their own, as a subset rather than an
-                    // addition: beatmaps.freestyle_cell_count says how much of the map is cells
-                    // with a deadline and no letter, which is what the star rating prices at a
-                    // quarter each (v16). Counted here, on the same walk over the same default
-                    // stream every other per-map stat is measured on, so it cannot end up
-                    // describing a different text from the one the counts above describe.
+                    // And the slots are counted separately, as an ADDITION to the cell count since
+                    // the line above stopped including them: beatmaps.freestyle_cell_count says how
+                    // much of the map is cells with a deadline and no letter, which is what the star
+                    // rating prices at a quarter each (v16). Counted here, on the same walk over the
+                    // same default stream every other per-map stat is measured on, so it cannot end
+                    // up describing a different text from the one the counts above describe.
                     if (Typeability.IsFreestyle(ch))
                         freestyle++;
                 }
@@ -484,11 +594,11 @@ public static class LyricPace
             // disagree. The word COUNT is still accumulated, because AverageCharsPerWord needs it.
             double lineCpm = cells / windowMinutes;
 
-            cpmSum += lineCpm;
-            lineCpms.Add(lineCpm);
+            // The whole-map denominator: the time the line is actually SUNG, walked span by span so
+            // that short pauses count and real breaks do not (see SungWindow).
+            vocalMinutes += Math.Max(SungWindow(line), min_line_window_ms) / 60000.0;
 
-            if (words >= target_line_min_words)
-                eligibleCpms.Add(lineCpm);
+            cpmSum += lineCpm;
 
             totalCells += cells;
             totalWords += words;
@@ -499,29 +609,42 @@ public static class LyricPace
         if (lineCount == 0)
             return default;
 
-        // The fastest fifth, by line: sort the ELIGIBLE per-line rates DESCENDING and take the head
-        // of the list. The count rounds up, so a pool of four lines still selects its one hardest
-        // line rather than an empty slice, and Math.Max is belt and braces around a retune of
-        // target_line_fraction (at 0.20 the ceiling is already at least 1 for every non-empty pool).
+        double averageCpm = vocalMinutes > 0 ? totalCells / vocalMinutes : 0;
+
+        // THE TARGET. Read from the difficulty model, which is where the window schedule, the
+        // density prefix and the capability curve live: this file has no second copy of the scan, so
+        // the figure the set page prints and the figure song select prints are the same computation
+        // rather than two that have to be kept in step by hand. The ENVELOPE axis is asked for by
+        // name because that is the arm that owns the scan on every configuration (the chunked axis
+        // rates none of it), and typability and rhythm are left out of the figure there by
+        // construction.
         //
-        // The fraction is taken over the POOL and not over lineCount, so widening the map with lines
-        // that cannot be selected cannot widen the selection either.
-        var targetPool = eligibleCpms.Count > 0 ? eligibleCpms : lineCpms;
+        // Guarded rather than thrown, exactly as the game guards it: a map too long for the model
+        // (30 minutes at the read rate) still has a perfectly good average, and dropping the target
+        // is a better answer for a metadata strip than refusing to ingest the map at all.
+        double targetWpm = 0;
 
-        targetPool.Sort((a, b) => b.CompareTo(a));
+        try
+        {
+            targetWpm = LyricDifficulty
+                .ComputeDetail(lines, 1, false, LyricDifficulty.EnduranceAxis.Envelope)
+                .TargetWpm;
+        }
+        catch (InvalidOperationException)
+        {
+            targetWpm = 0;
+        }
 
-        int targetLines = Math.Max(1, (int)Math.Ceiling(target_line_fraction * targetPool.Count));
-        double targetCpmSum = 0;
-
-        for (int i = 0; i < targetLines; i++)
-            targetCpmSum += targetPool[i];
+        if (pace_floor_target && averageCpm / CHARS_PER_WORD > targetWpm)
+            targetWpm = averageCpm / CHARS_PER_WORD;
 
         return new PaceStatistics(
-            cpmSum / lineCount,
+            averageCpm,
             totalCells,
             totalWords,
             LyricDifficulty.Compute(lines),
             totalFreestyle,
-            targetCpmSum / targetLines / CHARS_PER_WORD);
+            targetWpm,
+            cpmSum / lineCount);
     }
 }

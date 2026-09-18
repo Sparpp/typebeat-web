@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
 using Dapper;
@@ -657,17 +657,29 @@ public class RankingsPageTest
             """,
             new { ownerId = PublicSiteSeed.MapperId, title, status });
 
+    /// <summary>
+    /// A beatmap row with its ratings. The RATING MATRIX (034_ratings_matrix.sql) is written
+    /// alongside the three legacy columns and carries the same figures in its arm-none cells,
+    /// because since PerformancePoints v22 that matrix is what the board resolves a play's
+    /// EffectiveStars through: a row without one reads as a map the sweep has not reached and shows
+    /// no rating at all.
+    /// </summary>
     private static async Task<long> insertBeatmapAsync(NpgsqlConnection conn, long setId,
         double stars = 3.0, double? srDt = null, double? srHt = null)
         => await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmaps
                 (set_id, version_name, checksum_md5, total_length_s, drain_length_s,
-                 difficulty_rating, sr_dt, sr_ht, filename, word_count, char_count, wpm)
-            VALUES (@setId, 'type!beat', @checksum, 90, 80, @stars, @srDt, @srHt, 'map.osu', 100, 500, 75)
+                 difficulty_rating, sr_dt, sr_ht, filename, word_count, char_count, wpm, ratings)
+            VALUES (@setId, 'type!beat', @checksum, 90, 80, @stars, @srDt, @srHt, 'map.osu', 100, 500, 75,
+                    @ratings::jsonb)
             RETURNING id
             """,
-            new { setId, checksum = Guid.NewGuid().ToString("N"), stars, srDt, srHt });
+            new
+            {
+                setId, checksum = Guid.NewGuid().ToString("N"), stars, srDt, srHt,
+                ratings = TestRatings.Json(stars, srDt, srHt),
+            });
 
     private static async Task insertScoreAsync(NpgsqlConnection conn, long userId, long beatmapId,
         long totalScore, double pp = 0, bool ranked = true, bool passed = true,

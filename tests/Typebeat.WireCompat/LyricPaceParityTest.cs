@@ -1,4 +1,4 @@
-using ClientCurve = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricWpmCurve;
+﻿using ClientCurve = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricWpmCurve;
 using ClientLine = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricLine;
 using ClientPace = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricPaceStatistics;
 using ClientTypeability = typebeat.Game.Rulesets.TypeBeat.Beatmaps.Typeability;
@@ -106,37 +106,38 @@ public class LyricPaceParityTest
             Assert.That(s.AverageCharsPerWord, Is.EqualTo(c.AverageCharsPerWord), "the set page's Chars/word row");
             Assert.That(s.TargetWpm, Is.EqualTo(c.TargetWpm), "beatmaps.target_wpm");
 
-            // Non-vacuity for the row above: a fixture whose words happened to average exactly 5
-            // cells would satisfy every assertion here even if one side had kept the real-word
-            // convention, because that is precisely the length at which the two agree.
+            // THE THIRD FIGURE, which the rework added and which has no column of its own: the
+            // unweighted per-line mean that AverageWpm used to be. It is mirrored because the game
+            // carries it, and an unmirrored figure is exactly the kind that drifts unnoticed.
+            Assert.That(s.LineAverageCpm, Is.EqualTo(c.LineAverageCpm), "the per-line mean");
+            Assert.That(s.LineAverageWpm, Is.EqualTo(c.LineAverageWpm), "and in words");
+
+            // Non-vacuity for the chars-per-word row: a fixture whose words happened to average
+            // exactly 5 cells would satisfy every assertion here even if one side had kept the
+            // real-word convention, because that is precisely the length at which the two agree.
             Assert.That(s.AverageCharsPerWord, Is.Not.EqualTo(ServerPace.CHARS_PER_WORD),
                 "the fixture has to sit off 5 cells per word for this to test anything");
             Assert.That(s.AverageWpm, Is.EqualTo(s.AverageCpm / ServerPace.CHARS_PER_WORD), "and WPM is CPM/5 on both sides");
 
-            // Non-vacuity for the target row, which needs three separate things of the fixture.
-            //
-            // First, the two figures must be DIFFERENT numbers: a port that returned the map
-            // average under the name TargetWpm would satisfy the equality above on both sides at
-            // once and the pin would prove nothing. The fixture's six lines run 340, 435, 1020,
-            // 432, 840 and 1400 CPM, so the average is 4467/6 = 744.5 CPM = 148.9 WPM while the
-            // target is the fastest ceil(0.20 * 5) = 1 ELIGIBLE line, 1020 CPM = 204 WPM.
-            //
-            // Second, and this is why the fixture has five ELIGIBLE lines rather than the four it
-            // had before the target existed: at n = 5 the selected count steps with the fraction
-            // (ceil(0.20 * 5) = 1 against ceil(0.25 * 5) = 2), so a one-sided retune of
-            // target_line_fraction in either mirror lands here. At n = 4 both fractions select one
-            // line and this pin would sleep through the drift.
-            //
-            // Third, and this is the SIXTH line (backlog 274): "screaming fast" is two words, so the
-            // eligibility floor refuses it, and it is the fastest line on the map at 1400 CPM. Drop
-            // the floor in either mirror alone and that side selects the fastest ceil(0.20 * 6) = 2
-            // of all six, (1400 + 1020) / 2 = 1210 CPM = 242 WPM, and this pin goes red. Without a
-            // short line the fixture cannot see a one-sided floor at all, exactly as it could not
-            // see a one-sided fraction at four lines.
-            Assert.That(s.TargetWpm, Is.EqualTo(204.0).Within(1e-9), "the fastest ELIGIBLE line, 1020 CPM");
-            Assert.That(s.AverageWpm, Is.EqualTo(148.9).Within(1e-9), "against a 744.5 CPM map average");
-            Assert.That(s.TargetWpm, Is.GreaterThan(s.AverageWpm), "target is not the average");
-            Assert.That(s.TargetWpm, Is.Not.EqualTo(242.0).Within(1e-9), "nor the unfiltered fastest fifth");
+            // NON-VACUITY FOR THE THREE PACE FIGURES, which is what this fixture is shaped for: they
+            // have to be THREE DIFFERENT NUMBERS, or a port that returned one of them under another's
+            // name would satisfy every equality above on both sides at once and the pin would prove
+            // nothing. The whole-map rate divides by the time the map is actually SUNG, the line mean
+            // gives every line one vote however long it is, and the target is the hardest window by
+            // raw speed read off the difficulty model. The fixture's long instrumental gap and its
+            // two-word burst are what pull the three apart.
+            Assert.That(s.AverageWpm, Is.Not.EqualTo(s.LineAverageWpm).Within(1e-9),
+                "the whole-map rate is not the per-line mean");
+            Assert.That(s.TargetWpm, Is.Not.EqualTo(s.AverageWpm).Within(1e-9),
+                "and the target is neither");
+            Assert.That(s.TargetWpm, Is.GreaterThan(0));
+
+            // THE FLOOR, which is the target's one presentation rule and is a real branch rather
+            // than an identity: a map whose hardest window is slower than its own whole-map pace
+            // reports the average instead of a target below it. So the target can never read below
+            // the average on either side, whatever the model says.
+            Assert.That(s.TargetWpm, Is.GreaterThanOrEqualTo(s.AverageWpm), "floored at the whole-map rate");
+            Assert.That(c.TargetWpm, Is.GreaterThanOrEqualTo(c.AverageWpm), "on the client too");
         });
     }
 
@@ -190,21 +191,22 @@ public class LyricPaceParityTest
             Assert.That(serverCurve.PeakWpm, Is.EqualTo(clientCurve.PeakWpm));
             Assert.That(serverCurve.PeakCpm, Is.EqualTo(clientCurve.PeakCpm));
 
-            // The TARGET does not degenerate with the curve, and both ports have to agree on that
-            // too: one line is already a fifth of one line, so this two-word map has a target where
-            // it has no peak, and with one counted line the target is that line, i.e. the average.
-            // It is also the ALL-SHORT FALLBACK on both sides (backlog 274): "hi there" is two
-            // words, so nothing here clears the eligibility floor and the pool is every counted line,
-            // which is why the figure survives at all rather than dividing by an empty selection.
+            // THE TARGET DOES NOT DEGENERATE WITH THE CURVE, and both ports have to agree on that
+            // too. A one-second map is far too short for the difficulty model to find any window on,
+            // so the model's own target is 0; the FLOOR then reports the whole-map average instead,
+            // which is why the figure survives at all rather than reading as a map that asks for
+            // nothing. That is the floor's second job (its first is the map whose hardest stretch is
+            // slower than its own average) and this is where a mirror missing it shows.
             Assert.That(ServerPace.Compute(server).TargetWpm, Is.EqualTo(ClientPace.Compute(client).TargetWpm));
             Assert.That(ServerPace.Compute(server).TargetWpm, Is.EqualTo(ServerPace.Compute(server).AverageWpm));
-            Assert.That(ServerPace.Compute(server).TargetWpm, Is.Not.Zero, "a per-line figure survives a map with no window");
+            Assert.That(ServerPace.Compute(server).TargetWpm, Is.Not.Zero, "the floor keeps a figure on a map with no window");
 
             // And a map with no words divides by no zero: 0, not NaN, on both sides.
             Assert.That(ServerPace.Compute([]).AverageCharsPerWord, Is.EqualTo(ClientPace.Compute([]).AverageCharsPerWord));
             Assert.That(ServerPace.Compute([]).AverageCharsPerWord, Is.Zero);
             Assert.That(ServerPace.Compute([]).TargetWpm, Is.EqualTo(ClientPace.Compute([]).TargetWpm));
-            Assert.That(ServerPace.Compute([]).TargetWpm, Is.Zero, "no counted line, so no fifth of one");
+            Assert.That(ServerPace.Compute([]).TargetWpm, Is.Zero, "no counted line, so nothing to floor against either");
+            Assert.That(ServerPace.Compute([]).LineAverageWpm, Is.EqualTo(ClientPace.Compute([]).LineAverageWpm));
         });
     }
 
@@ -213,17 +215,20 @@ public class LyricPaceParityTest
     /// enough to fill several rolling windows (141 typeable cells against a 30-cell window), so the
     /// curve has real bars rather than the single window a minimal fixture would give it.
     ///
-    /// <para>FIVE ELIGIBLE lines, and the count is load bearing: the target pace selects
-    /// ceil(target_line_fraction * poolCount) of them, which at five lines takes one line at 0.20
-    /// and two at 0.25. So a one-sided retune of that constant in either mirror shows up here,
-    /// where at four lines both fractions would have selected the same one line and the pin would
-    /// have slept through it.</para>
+    /// <para>ITS SHAPE IS WHAT PULLS THE THREE PACE FIGURES APART, which is the whole reason a
+    /// deliberately awkward fixture is worth having. The long instrumental gap separates the
+    /// WHOLE-MAP rate (which divides by the time the map is actually sung, so the gap is not in its
+    /// denominator) from the PER-LINE mean (which gives the line before the gap one vote like any
+    /// other). The two-word burst at the end is the fastest thing on the map by a distance, so it
+    /// pulls the whole-map rate up while being far too short to be anyone's hardest window, which
+    /// separates both of them from the TARGET. Three figures, three numbers, and the test asserts
+    /// that outright rather than trusting it.</para>
     ///
-    /// <para>Plus a SIXTH line that is deliberately INELIGIBLE (backlog 274): "screaming fast" is two
-    /// words, under the three-word floor, and it is the fastest line on the map. The target must
-    /// therefore ignore it, and a mirror that dropped the floor would select it and read a different
-    /// number. That is the same reason the fifth line exists, one constant along: a pin can only see
-    /// a rule the fixture actually reaches.</para>
+    /// <para>The six lines were shaped for the per-line selection the target used to be (a fastest
+    /// fifth over the lines of at least three words). That selection is gone, and the fixture is
+    /// kept exactly as it was: every property it was built for still separates the figures the
+    /// rework left behind, and a fixture nobody had to re-tune is one nobody can have tuned to make
+    /// a test pass.</para>
     /// </summary>
     private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) TwinMaps()
         => Twin(
@@ -243,6 +248,51 @@ public class LyricPaceParityTest
             ("screaming fast", 39000, 39600,
                 [("screaming", 39000, 39400), ("fast", 39400, 39600)]),
         ]);
+
+    [Test]
+    public void TheClientsStarRatingIsTheRatingTheServerStores()
+    {
+        // THE PACE PAIR AND THE RATING COME OUT OF ONE PARSE and are written by one statement, so
+        // they are pinned together here: PaceStatistics.DifficultyRating is what the server lands in
+        // beatmaps.difficulty_rating. The client's pace struct carries no such field (the game has
+        // no column to fill and asks the model directly), so the equality is against the model
+        // itself, which is exactly the claim: the number the server STORES is the number the client
+        // COMPUTES for the same map, through the same default reading (the CHUNKED axis).
+        //
+        // The eighteen-cell matrix is pinned in PerformancePointsParityTest, which is where a price
+        // reads it; this is the one rating this file's own Compute produces.
+        var (client, server) = TwinMaps();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ServerPace.Compute(server).DifficultyRating,
+                Is.EqualTo(typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty.Compute(client)), "beatmaps.difficulty_rating");
+
+            // And the server's stored figure really is the model's DEFAULT reading rather than one
+            // the pace file computed for itself, which is what keeps the pair and the rating one
+            // computation rather than two that have to be kept in step.
+            Assert.That(ServerPace.Compute(server).DifficultyRating,
+                Is.EqualTo(Typebeat.Web.Packages.Lyrics.LyricDifficulty.Compute(server)));
+
+            Assert.That(ServerPace.Compute(server).DifficultyRating, Is.GreaterThan(0),
+                "the fixture has to rate as something, or the equality above is vacuous");
+        });
+    }
+
+    [Test]
+    public void TheVersionsThatGateTheSweepsAreTheOnesTheChangeLandedAt()
+    {
+        // The pace VERSION is what makes PaceBackfill revisit every stored row, and the pp VERSION
+        // is what makes PpBackfill reprice every stored score. Both moved in this change, and a
+        // half-landed bump is a catalogue that never re-rates or a score table that never reprices.
+        // Pinned here rather than only in each repo's own suite, because the pp one is shared with
+        // the game and the pace one gates the column the pp one now depends on.
+        Assert.Multiple(() =>
+        {
+            Assert.That(ServerPace.VERSION, Is.EqualTo(21));
+            Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(24)); // pp:version
+        });
+    }
 
     /// <summary>The one lyric shape, projected into each repo's own <c>LyricLine</c> type.</summary>
     private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) Twin(

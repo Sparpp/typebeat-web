@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Headers;
 using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -288,12 +288,14 @@ public class VariableRateScoreTest
     {
         await using var conn = await dataSource.OpenConnectionAsync();
 
-        // The state of every map the moment 020 deploys: a base rating, no rate ratings yet.
+        // The state of every map the moment 020 deploys: a base rating, no rate ratings yet. Since
+        // 034 the RATING MATRIX is what pricing reads, so it is written alongside and carries
+        // exactly the same shape: an arm-none rate-1.0 cell and nothing else.
         await conn.ExecuteAsync(
-            "UPDATE beatmaps SET difficulty_rating = 2.0, sr_dt = NULL, sr_ht = NULL WHERE id = @beatmapId",
-            new { beatmapId });
+            "UPDATE beatmaps SET difficulty_rating = 2.0, sr_dt = NULL, sr_ht = NULL, ratings = @ratings::jsonb WHERE id = @beatmapId",
+            new { beatmapId, ratings = TestRatings.Json(2.0) });
 
-        // No mods: priced immediately off difficulty_rating, which is never null.
+        // No mods: priced immediately off the matrix's rate-1.0 cell, which this map carries.
         var noMod = await SubmitAsync(total: clean_base, mods: []);
 
         // Base-rate Double Time (1.50x): pp-ELIGIBLE, but unpriceable until sr_dt exists. It must
@@ -309,7 +311,7 @@ public class VariableRateScoreTest
         var customRateStored = await ppRowAsync(conn, customRate);
 
         // 10 greats, no misses, accuracy 1, full combo of 10.
-        double expectedNoMod = PerformancePoints.Compute(2.0, 10, 0, 1.0, 10, []);
+        double expectedNoMod = PerformancePoints.Compute(2.0, 10, TestRatings.DEFAULT_DIFFICULT_CHARACTERS, 0, 1.0, 10, []);
 
         Assert.Multiple(() =>
         {
@@ -354,8 +356,10 @@ public class VariableRateScoreTest
         });
 
         // The rate rating lands (in production: PaceBackfill, from the stored .osu blob) and the
-        // sweep prices the play that was waiting on it.
-        await conn.ExecuteAsync("UPDATE beatmaps SET sr_dt = 3.5 WHERE id = @beatmapId", new { beatmapId });
+        // sweep prices the play that was waiting on it. Both the legacy column and the matrix cell
+        // are written, exactly as that sweep writes both.
+        await conn.ExecuteAsync("UPDATE beatmaps SET sr_dt = 3.5, ratings = @ratings::jsonb WHERE id = @beatmapId",
+            new { beatmapId, ratings = TestRatings.Json(2.0, doubleTime: 3.5) });
 
         await PpBackfill.RunAsync(new Db(dataSource), NullLogger.Instance);
 
@@ -363,7 +367,7 @@ public class VariableRateScoreTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(backfilled.Pp, Is.EqualTo(PerformancePoints.Compute(3.5, 10, 0, 1.0, 10, [])).Within(1e-9),
+            Assert.That(backfilled.Pp, Is.EqualTo(PerformancePoints.Compute(3.5, 10, TestRatings.DEFAULT_DIFFICULT_CHARACTERS, 0, 1.0, 10, [])).Within(1e-9),
                 "priced off sr_dt, not off the base rating");
             Assert.That(backfilled.Version, Is.EqualTo(PerformancePoints.VERSION));
 

@@ -1,0 +1,58 @@
+-- typebeat-web migration 034: the beatmap's RATING MATRIX (LyricPace v21), the eighteen readings
+-- the difficulty model gives one map and the only place a play's price can now come from.
+--
+-- WHY EIGHTEEN, AND WHY A COLUMN RATHER THAN SIX MORE. Until the difficulty rework a play needed one
+-- number, a star rating, and the map's three rates times two streams were six columns
+-- (difficulty_rating since 001, sr_dt / sr_ht since 020, the three sr_literate* since 029). The
+-- rework moved two things at once.
+--
+--   1. THE RATING TAKES A JUDGEMENT ARM. The model now prices the INTERVALS a press may land in, so
+--      the two mods that change the engine's own windows (Easy, which doubles them and shelters the
+--      whole word, and Hard Rock, which keeps them normal but puts every cell on its own point
+--      target) rate a map differently. They are not multipliers over the finished price: paying for
+--      a window change in the rating AND again in PerformancePoints.ModMultiplier would charge it
+--      twice, which is the double count docs/pp.md exists to forbid. So the cross product gains a
+--      third axis and three ratings become nine, times two streams: eighteen.
+--
+--   2. pp NEEDS A SECOND FIGURE PER MAP. Since PerformancePoints VERSION 22 the miss penalty is
+--      judged against the map's DIFFICULT CHARACTERS (LyricDifficulty.ModelResult.DifficultCharacters:
+--      every cell weighted by how close its own bin sits to the map's peak) rather than against its
+--      plain cell count, so that a dropped cell costs more on a map whose difficulty is concentrated
+--      in a few passages. It is a property of the MAP at a given (arm, stream, rate), exactly as the
+--      rating is, and it comes out of the same single pass, so it is stored beside its rating rather
+--      than in an eighteen-column table of its own.
+--
+-- Eighteen pairs is thirty-six numbers. As columns that is a schema change per experiment and a
+-- Dapper record that grows by thirty-six members; as one jsonb document it is a single value the
+-- ingest writes whole and the pricing paths read whole. The document is
+--
+--   {"version": 1, "cells": {"<arm>/<stream>/<rate>": {"sr": <stars>, "dc": <difficult chars>}, ...}}
+--
+-- with arm in (none, ez, hr), stream in (plain, literate) and rate one of 1.00, 1.50 (Double Time's
+-- base) and 0.75 (Half Time's base), the only three rates pp is ever eligible to price. "version" is
+-- the DOCUMENT's own shape and not the model's: a rating change bumps LyricPace.VERSION and rewrites
+-- every row, which is how a recompute reaches stored maps. Scoring/BeatmapRatings.cs writes and
+-- parses it and is the only thing that should.
+--
+-- THE SIX LEGACY COLUMNS STAY, AND STAY WRITTEN, from the arm-none entries of this matrix. They are
+-- what the set page and the listing cards print, what the client's own beatmap lookup reads off the
+-- API, and what the search filters sort and range on, none of which know anything about a judgement
+-- arm. Nothing is derived from the other: both are written by the same ingest from the same pass, so
+-- they cannot disagree, and a reader that wants a plain star rating keeps reading a plain column.
+--
+-- NULL IS THE UNFILLED STATE, not a rating of zero, and it has exactly the contract sr_dt has had
+-- since 020: a play whose cell this column does not carry is NOT SETTLED. It earns 0 pp for now and
+-- its scores row is left stale (pp_version 0) for Packages/PpBackfill.cs to revisit on a later boot,
+-- rather than being stamped at a price the next sweep would have to disagree with. That is why there
+-- is no DEFAULT and why PerformancePoints.StarsFor returns Unavailable rather than coalescing a
+-- missing cell to zero: a zeroed difficult-character count is a real, and very harsh, price (any
+-- miss zeroes the cleanliness term), so it must never be reachable by accident.
+--
+-- As with 028 and 033 none of this can be computed in SQL: the readings come from a full pass over
+-- the map's words, through the same text normalization and the same syllable timing the client types
+-- against. So this migration only adds the column, and Packages/PaceBackfill.cs reparses the stored
+-- blobs at startup and fills it; the LyricPace VERSION bump to 21 is what makes that sweep revisit
+-- every existing row, and its staleness predicate also carries an explicit `ratings IS NULL` arm so
+-- a row that FAILED mid-sweep is retried on the next boot rather than left behind at a current
+-- version with an empty matrix.
+ALTER TABLE beatmaps ADD COLUMN ratings jsonb;

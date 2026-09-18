@@ -1,4 +1,5 @@
-using Typebeat.Web.Packages;
+﻿using Typebeat.Web.Packages;
+using Typebeat.Web.Scoring;
 
 namespace Typebeat.Tools.RepriceReport;
 
@@ -105,6 +106,13 @@ internal sealed class SrRow
     /// <summary>Recomputed ratings, indexed by <see cref="SrVariant"/>; empty when unresolved.</summary>
     public double[] Recomputed { get; init; } = Array.Empty<double>();
 
+    /// <summary>
+    /// The map's recomputed RATING MATRIX (034_ratings_matrix.sql), null when unresolved. It is a
+    /// superset of <see cref="Recomputed"/> (those six are its arm-none stars) and carries the
+    /// DIFFICULT CHARACTERS a price needs since PerformancePoints v22, which no stored column holds.
+    /// </summary>
+    public BeatmapRatings? Ratings { get; init; }
+
     public bool Resolved => Resolution == MapResolution.Recomputed;
 
     public double CellsFor(SrVariant variant)
@@ -168,6 +176,7 @@ internal sealed class SrRow
             Cells = Length.Count(parsed.Lines, literate: false),
             LiterateCells = Length.Count(parsed.Lines, literate: true),
             PaceCells = parsed.Pace.TypeableCellCount,
+            Ratings = parsed.Ratings,
             Recomputed =
             [
                 parsed.Pace.DifficultyRating,

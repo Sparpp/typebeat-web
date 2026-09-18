@@ -1,4 +1,4 @@
-using Dapper;
+﻿using Dapper;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages.Lyrics;
 using Typebeat.Web.Storage;
@@ -41,6 +41,16 @@ namespace Typebeat.Web.Packages;
 /// ratings on every map with freestyle content anyway, so the bump has to sweep the catalogue
 /// regardless of whether the new column is filled.
 /// </para>
+///
+/// <para>
+/// <c>ratings</c> (034_ratings_matrix.sql, v21) DOES GET A THIRD ARM, and it is the exception that
+/// proves the rule above. The others are figures a page reads: a row missing one renders a blank
+/// chip until the next bump sweeps it. This one is the ONLY thing a play can be priced from since
+/// <c>PerformancePoints.VERSION</c> 22, so a row that this sweep failed on leaves every score on the
+/// map unpriced and pending, and waiting for the next VERSION bump to retry it could be a very long
+/// wait. The <c>IS NULL</c> arm makes the retry happen on the next boot instead, exactly as the
+/// <c>sr_dt</c> / <c>sr_ht</c> arms do for the rate ratings they were added for.
+/// </para>
 /// </summary>
 public static class PaceBackfill
 {
@@ -55,7 +65,7 @@ public static class PaceBackfill
                 JOIN beatmapsets s ON s.id = b.set_id
                 JOIN set_versions sv ON sv.set_id = s.id AND sv.version_no = s.current_version
                 JOIN version_files vf ON vf.version_id = sv.id AND vf.filename = b.filename
-                WHERE b.pace_version < @version OR b.sr_dt IS NULL OR b.sr_ht IS NULL
+                WHERE b.pace_version < @version OR b.sr_dt IS NULL OR b.sr_ht IS NULL OR b.ratings IS NULL
                 """,
                 new { version = LyricPace.VERSION }))
             .ToList();
@@ -103,6 +113,7 @@ public static class PaceBackfill
                         target_wpm = @targetWpm,
                         wpm_curve = @wpmCurve,
                         freestyle_cell_count = @freestyleCellCount,
+                        ratings = @ratings::jsonb,
                         pace_version = @paceVersion
                     WHERE id = @id;
 
@@ -146,11 +157,20 @@ public static class PaceBackfill
                         // rather than going blank.
                         targetWpm = diff.TargetWpm,
                         wpmCurve = diff.WpmCurvePoints,
-                        // v16: how many of char_count are freestyle slots, the cells the star
-                        // rating prices at a quarter each (031_freestyle_cell_count.sql). Rows
-                        // this sweep cannot reach keep NULL, which is the one thing NULL means
-                        // there: 0 is a real measurement and the commonest one.
+                        // v16: the map's freestyle slots, the cells the star rating prices at a
+                        // quarter each (031_freestyle_cell_count.sql), and since v21 an addition to
+                        // char_count rather than a subset of it. Rows this sweep cannot reach keep
+                        // NULL, which is the one thing NULL means there: 0 is a real measurement and
+                        // the commonest one.
                         freestyleCellCount = diff.Pace.FreestyleCellCount,
+                        // v21: the rating matrix (034_ratings_matrix.sql), the eighteen (arm,
+                        // stream, rate) readings pp prices a play from. Rows this sweep cannot
+                        // reach keep NULL, i.e. EVERY play on them is pending and is retried on a
+                        // later boot rather than frozen at zero, which is exactly the contract an
+                        // unfilled sr_dt has had since 020. It is the only one of these figures a
+                        // play cannot be priced without, so the third staleness arm above names it
+                        // explicitly rather than trusting the version bump alone.
+                        ratings = diff.RatingsJson,
                         paceVersion = LyricPace.VERSION,
                     });
 
