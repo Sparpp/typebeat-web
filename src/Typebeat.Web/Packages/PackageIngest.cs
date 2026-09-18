@@ -1,4 +1,4 @@
-﻿using System.IO.Compression;
+using System.IO.Compression;
 using Dapper;
 using Npgsql;
 using Typebeat.Web.Data;

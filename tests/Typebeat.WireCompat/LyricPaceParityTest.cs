@@ -1,4 +1,4 @@
-﻿using ClientCurve = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricWpmCurve;
+using ClientCurve = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricWpmCurve;
 using ClientLine = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricLine;
 using ClientPace = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricPaceStatistics;
 using ClientTypeability = typebeat.Game.Rulesets.TypeBeat.Beatmaps.Typeability;

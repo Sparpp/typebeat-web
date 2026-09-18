@@ -210,6 +210,15 @@ public class ScoreRecalcTest
     /// A synthetic row for a later population has to be built under the rule that judged it, or it is
     /// a row no client ever produced.</para>
     /// </summary>
+    /// <summary>
+    /// The one-cell rating matrix (034_ratings_matrix.sql) every synthetic row here is priced from:
+    /// the same 4 stars the rows always carried, on the arm-none plain 1.00x cell, which is the only
+    /// cell a no-mod row reads. The 500 difficult characters sit above any miss count the fixtures
+    /// carry, so the cleanliness term does not zero a play this file expects to be worth something.
+    /// It is stored ON the row as well as used to price it, because the tool prices from the row.
+    /// </summary>
+    private const string fixture_ratings = """{"version":1,"cells":{"none/plain/1.00":{"sr":4,"dc":500}}}""";
+
     private static StoredScore StoredFor(
         IBeatmap map,
         Replay replay,
@@ -236,7 +245,7 @@ public class ScoreRecalcTest
         var (pp, _) = Typebeat.Web.Scoring.PerformancePoints.ForScore(
             true, Typebeat.Web.ScoreMods.Parse("[]"),
             Typebeat.Web.Scoring.PerformancePoints.CountNotes(statistics),
-            old.Accuracy, old.MaxCombo, 4, null, null);
+            old.Accuracy, old.MaxCombo, Typebeat.Web.Scoring.BeatmapRatings.Parse(fixture_ratings));
 
         return new StoredScore(
             ScoreId: 1,
@@ -260,7 +269,8 @@ public class ScoreRecalcTest
             SrHt: null,
             SrLiterate: null,
             SrLiterateDt: null,
-            SrLiterateHt: null);
+            SrLiterateHt: null,
+            Ratings: fixture_ratings);
     }
 
     private static Dictionary<string, int> ToWire(IReadOnlyDictionary<HitResult, int> counts)

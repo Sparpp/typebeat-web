@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;

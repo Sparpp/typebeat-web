@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Tests;

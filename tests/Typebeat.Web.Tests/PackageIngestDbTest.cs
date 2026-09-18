@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Security.Cryptography;
 using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;

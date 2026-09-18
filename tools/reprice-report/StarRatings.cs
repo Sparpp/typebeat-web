@@ -1,4 +1,4 @@
-﻿using Typebeat.Web.Packages;
+using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
 
 namespace Typebeat.Tools.RepriceReport;

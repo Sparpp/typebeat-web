@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Typebeat.Web.Packages.Lyrics;
 
 namespace Typebeat.Web.Tests;

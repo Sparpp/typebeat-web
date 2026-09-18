@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text;
 using Typebeat.Tools.RepriceReport;
 using Typebeat.Web.Packages;

@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using Typebeat.Web.Packages;
 
 namespace Typebeat.Web.Tests;

@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using Microsoft.AspNetCore.Antiforgery;
 using Newtonsoft.Json;
 using Npgsql;

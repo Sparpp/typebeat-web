@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages.Lyrics;
 using Typebeat.Web.Storage;

@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Linq;
 using Typebeat.Web.Packages.Lyrics;
 using Typebeat.Web.Scoring;
 
