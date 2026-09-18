@@ -65,8 +65,9 @@ public class UntimedSpaceParityTest
             foreach (var t in shape.GetProperty("typeable").EnumerateArray())
                 Assert.That(t.GetBoolean(), Is.True);
 
-            foreach (var t in shape.GetProperty("tiers").EnumerateArray())
-                Assert.That(t.GetString(), Is.EqualTo("Line"));
+            // There is no per-cell window tier left to pin: one symmetric ladder judges every cell
+            // of every map, so the beatmap granularity the fixture declares selects nothing and the
+            // browser's cells no longer carry the field that mirrored TypingCell.JudgeGranularity.
         });
     }
 

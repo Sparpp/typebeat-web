@@ -34,8 +34,11 @@ namespace Typebeat.WireCompat;
 /// their own loader (the browser's <c>buildBeatmap</c>, the game's
 /// <see cref="TypingLine.FromLyricLine"/>), so a fixture that drifted would show up as an account
 /// divergence and be blamed on the engine. <see cref="TheTwoLoadersAgreeOnEveryFixture"/> runs
-/// first in intent: it holds every cell's expected char, target time and judge tier, plus the
-/// line's deadline, cue and seal grace, against each other.</para>
+/// first in intent: it holds every cell's expected char and target time, plus the line's deadline,
+/// cue and seal grace, against each other. There is no per-cell judge tier left to hold: one
+/// symmetric ladder (Great 150 / Ok 300 / Meh 600) now grades every cell of every map, the beatmap
+/// granularity selects nothing, and <c>TypingCell.JudgeGranularity</c> and the browser's matching
+/// <c>tier</c> field went with it.</para>
 ///
 /// <para>The C# side is fed under every LIVE rule, because the browser selects no era on any axis:
 /// it has no mods payload, no replay input, and nothing anywhere re-scores a stored row through
@@ -210,8 +213,12 @@ public class EngineFuzzLiveParityTest
     }
 
     /// <summary>
-    /// The beatmap granularity each fixture's header declares, which decides the base window ladder
-    /// every cell of it is judged on unless the cell's own timing is unreliable.
+    /// The beatmap granularity each fixture's header declares. METADATA ONLY since the judgement
+    /// ladder was collapsed to one symmetric set of windows: it no longer decides what any cell is
+    /// graded against, and neither does an estimated line or a low-confidence word. It is still set
+    /// here because <see cref="LyricBeatmap.Granularity"/> is a required member every map carries,
+    /// and because the fixtures that declare something other than Line earn their keep on the CELL
+    /// side (a subdivided word, a low-confidence unit, an estimated line) rather than on the ladder.
     /// </summary>
     private static TimingGranularity GranularityOf(string name)
     {
@@ -359,7 +366,7 @@ public class EngineFuzzLiveParityTest
 
                 for (int i = 0; i < lines.Length; i++)
                 {
-                    var line = TypingLine.FromLyricLine(lines[i], GranularityOf(fixture.Name));
+                    var line = TypingLine.FromLyricLine(lines[i]);
                     var browserLine = browserLines[i];
 
                     Assert.That(browserLine.GetProperty("endTime").GetDouble(), Is.EqualTo(line.EndTime), $"{fixture.Name}[{i}]: endTime");
@@ -376,7 +383,6 @@ public class EngineFuzzLiveParityTest
 
                         Assert.That(browserCell.GetProperty("expected").GetString(), Is.EqualTo(cell.Expected.ToString()), $"{fixture.Name}[{i}][{c}]: expected");
                         Assert.That(browserCell.GetProperty("target").GetDouble(), Is.EqualTo(cell.TargetTime), $"{fixture.Name}[{i}][{c}]: target");
-                        Assert.That(browserCell.GetProperty("tier").GetString(), Is.EqualTo(cell.JudgeGranularity.ToString()), $"{fixture.Name}[{i}][{c}]: tier");
                     }
 
                     // The SYLLABLE groups (backlog 179), pinned here for the same reason the cells
@@ -436,8 +442,8 @@ public class EngineFuzzLiveParityTest
     [Test]
     public void TheAuthoredSplitFixtureReallyExercisesTheAuthoredArm()
     {
-        var authored = TypingLine.FromLyricLine(Fixture("authoredSplit")[0], GranularityOf("authoredSplit"));
-        var derived = TypingLine.FromLyricLine(WithoutSplits(Fixture("authoredSplit")[0]), GranularityOf("authoredSplit"));
+        var authored = TypingLine.FromLyricLine(Fixture("authoredSplit")[0]);
+        var derived = TypingLine.FromLyricLine(WithoutSplits(Fixture("authoredSplit")[0]));
 
         Assert.That(derived.Cells.Count, Is.EqualTo(authored.Cells.Count), "stripping the split must not change the cells themselves");
 
@@ -622,6 +628,7 @@ public class EngineFuzzLiveParityTest
         int skipPresses = 0, comboRestores = 0, backspaces = 0, passiveBreaks = 0, spanJudgements = 0, gapTypos = 0;
         int parkedGapTypos = 0, stepOvers = 0, midWordSpaceTypos = 0, stretchPointJudgements = 0, firstCharJudgements = 0;
         int rollForwards = 0, lineSnaps = 0, dragHolds = 0, rushCapBreaks = 0, refusedRolls = 0;
+        int lineStepBacks = 0;
         int ownCreditBreaks = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
@@ -650,6 +657,7 @@ public class EngineFuzzLiveParityTest
             dragHolds += browserCase.GetProperty("dragHolds").GetInt32();
             rushCapBreaks += browserCase.GetProperty("rushCapBreaks").GetInt32();
             refusedRolls += browserCase.GetProperty("refusedRolls").GetInt32();
+            lineStepBacks += browserCase.GetProperty("lineStepBacks").GetInt32();
             backspaces += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "");
         }
 
@@ -750,6 +758,17 @@ public class EngineFuzzLiveParityTest
             // early for "hi"), and scripted/rushBoundPark reaches it on purpose so it is not left to
             // a seed.
             Assert.That(refusedRolls, Is.GreaterThan(0), "no run finished a line early enough for the rush bound to refuse the roll");
+
+            // THE STEP BACK, the newest rule on this seam and the one with NO era bit of its own: a
+            // backspace at the head of a line hands the caret back into the line behind it while the
+            // engine has not sealed that line yet, landing it on the last character the line has an
+            // answer for rather than past its end. The C# gates it on FletcherEnabled, which bit 5
+            // already sets here, so both arms run it and a port that lost it would have one side
+            // erasing nothing where the other moved a caret and every later keystroke on a different
+            // cell. The sweep reaches it on its own (a rush or a snap leaves the caret at index 0 of
+            // the next line often enough that a generated backspace lands there), which is what this
+            // counter is asserting stays true.
+            Assert.That(lineStepBacks, Is.GreaterThan(0), "no run ever backspaced off the head of a line into the one behind it");
         });
     }
 
@@ -800,15 +819,18 @@ public class EngineFuzzLiveParityTest
             Assert.That(classic.TotalScore, Is.LessThan(spans.TotalScore), "classic era: total score");
             Assert.That(classic.Accuracy, Is.LessThan(spans.Accuracy), "classic era: accuracy");
 
-            // Under the LIVE rule (both bits) the twenty presses that open nothing keep their zero,
-            // and the five that open a syllable are paid how late into it they landed: 'c' at 1000
-            // and 'l' at 5000 open [1000, 2400] and [5000, 5750] dead on their starts, 't' at 2500
-            // opens [2400, 2857.14] 100 late and 'p' at 6600 opens [6500, 7250] 100 late, all four
-            // still Great on the Line ladder ([-250, 400] and [-600, 1000] for Ok). What moves is the
-            // rest: 'n' at 3900 opens the "night" span at 2857.14, which is 1042.86 late and off the
-            // ladder, and the 't' at 6400 and the 'p' at 7900 open [5750, 6500] and [7250, 8000] 650
-            // late, which is Ok. So 22 Greats, 2 Oks and the Meh backlog 199 grades an off-ladder hit.
-            Assert.That(Wire(hybrid.Statistics), Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 22, ["ok"] = 2, ["meh"] = 1 }), "hybrid era: statistics");
+            // Under the LIVE rule (both bits) the eighteen presses that open nothing keep their
+            // zero, and the seven that open a syllable are paid how late into it they landed: 'c' at
+            // 1000 and 'l' at 5000 open [1000, 2400] and [5000, 5750] dead on their starts, 't' at
+            // 2500 opens [2400, 2857.14] 100 late and 'p' at 6600 opens [6500, 7250] 100 late, all
+            // four inside the 150 ms Great window. The other three are off the ladder entirely: 'n'
+            // at 3900 opens the "night" span at 2857.14, 1042.86 late, and the 't' at 6400 and the
+            // 'p' at 7900 open [5750, 6500] and [7250, 8000] 650 late, which is past the 600 ms Meh
+            // bound. So 22 Greats and the three Mehs backlog 199 grades an off-ladder hit as.
+            //
+            // The middle rung emptied when the ladder was retuned: those two 650s were Oks under the
+            // old [-600, 1000] late window. Nothing about the run moved, only what it is worth.
+            Assert.That(Wire(hybrid.Statistics), Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 22, ["meh"] = 3 }), "hybrid era: statistics");
 
             // Nothing about the run changes but what the presses were WORTH: the caret lands on the
             // same cells and the map is still typed clean, so the hybrid sits strictly between the
@@ -942,14 +964,14 @@ public class EngineFuzzLiveParityTest
         {
             // Live: the four markers are judged on 1000 / 2000 / 3000 / 4000 against presses all at
             // 1000 (deltas 0, -1000, -2000, -3000) and the run's three cells on 8200 / 10600 / 13800
-            // against 9100 / 9200 / 9300 (900, -1400, -4500). On the Line ladder, Great [-250, 400]
-            // and Ok [-600, 1000], that is one Great, one Ok and five off the ladder, which backlog
-            // 199 grades as Meh hits. The other three Greats are the untimed word gap and the two
-            // cells of the first "aa" syllable, both pressed inside its [5000, 9000] span.
+            // against 9100 / 9200 / 9300 (900, -1400, -4500). On the one ladder (Great 150, Ok 300,
+            // Meh 600) that is one Great and six off the ladder, which backlog 199 grades as Meh
+            // hits. The other three Greats are the untimed word gap and the two cells of the first
+            // "aa" syllable, both pressed inside its [5000, 9000] span.
             var liveCounts = Wire(live.Statistics);
             Assert.That(liveCounts.GetValueOrDefault("great"), Is.EqualTo(4), "live era: the first marker, the gap and the two span-judged cells");
-            Assert.That(liveCounts.GetValueOrDefault("ok"), Is.EqualTo(1), "live era: the run's first cell, 900 late on its 8200 target");
-            Assert.That(liveCounts.GetValueOrDefault("meh"), Is.EqualTo(5), "live era: the mashed remainder, off the ladder either side of Ok");
+            Assert.That(liveCounts.GetValueOrDefault("ok"), Is.Zero, "live era: nothing this mashed lands on the middle rung");
+            Assert.That(liveCounts.GetValueOrDefault("meh"), Is.EqualTo(6), "live era: the mashed remainder, off the ladder either side");
 
             // Stored: the three stretch cells are inside their syllable's span, so they are paid 0,
             // and so are all four markers, whose whole token is one span from 1000 to 5000.

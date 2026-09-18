@@ -62,10 +62,16 @@ public sealed class ParsedDifficulty
     /// with blank/comment lines dropped (exactly what the parser fed to
     /// <see cref="LyricTiming.ParseSection"/>). Kept alongside the resolved
     /// <see cref="Lines"/> because <see cref="GameplayFingerprint"/> needs the payload the parse
-    /// DROPS as well as the part it keeps: the judge-granularity and seal-grace keys are
-    /// deliberately not ported into <see cref="LyricLine"/> (they move gameplay windows, not cell
-    /// target times), and a fingerprint blind to them would let a ranked map's judgement change
-    /// under its own leaderboard.
+    /// DROPS as well as the part it keeps: the granularity and seal-grace keys are deliberately not
+    /// ported into <see cref="LyricLine"/> (they move gameplay windows, not cell target times), and
+    /// a fingerprint blind to them would let a ranked map's judgement change under its own
+    /// leaderboard.
+    ///
+    /// <para>GRANULARITY NO LONGER MOVES A WINDOW: the three-tier ladder it selected was collapsed
+    /// to one symmetric set for every cell of every map, so today only the seal grace is a window
+    /// key. The argument is unchanged and the key is still hashed, because what the fingerprint
+    /// covers is the whole section VERBATIM, including keys this server does not model and keys
+    /// whose meaning the game may give back to them.</para>
     /// </summary>
     public required IReadOnlyList<string> LyricSectionLines { get; init; }
 

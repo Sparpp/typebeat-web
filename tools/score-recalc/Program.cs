@@ -21,25 +21,38 @@ using Typebeat.Tools.ScoreRecalc;
 //
 //   report / apply                     REPRODUCE. Re-derive under the rules the row was priced
 //                                      under, refuse anything that does not come back exactly, then
-//                                      report what today's TYPO rule alone makes of it. This is the
-//                                      verification sweep, and it is how the tool proves it
-//                                      understands a row at all.
+//                                      report what today's TYPO rule alone makes of it. This was the
+//                                      verification sweep, and it is how the tool proved it
+//                                      understood a row at all. IT NO LONGER PROVES THAT: see the
+//                                      note on the window retune below.
 //
 //   supersede-report / supersede-apply SUPERSEDE. Re-judge under ALL of today's rules and REPLACE
 //                                      the stored numbers (backlog 136, decided by the user
 //                                      2026-08-13). Reproduction is not the gate here: the sweep
 //                                      deliberately re-judges on rules the row was not played
-//                                      under, and for a row stored in the backlog 133-to-147 window
-//                                      reproduction is impossible outright, since backlog 147
-//                                      deleted the ladder that graded it. So it becomes a
-//                                      diagnostic and a DIFFERENT predicate takes over as the gate:
-//                                      the judgement of the run may move, the run may not.
+//                                      under, and reproduction is now impossible outright for the
+//                                      whole table. So it is a diagnostic and a DIFFERENT predicate
+//                                      takes over as the gate: the judgement of the run may move,
+//                                      the run may not.
 //
-// THE ERAS THE HARNESS CAN EXPRESS (backlog 151). A stored row is re-derived on the ladder it was
-// actually played on, through four switches on TypeBeatReplayScorer: the typo rule (backlog 109),
+// THE WINDOW RETUNE, AND WHY REPRODUCTION STOPPED BEING A PROOF. The judgement ladder was collapsed
+// from three granularity-chosen late-biased tiers to ONE symmetric set of windows (Great 150 ms, Ok
+// 300, Meh 600), and deliberately with NO era bit: no CONFIG frame records which ladder a run was
+// graded on, so there is no axis for the era search to hold at a row's own value and every stored
+// row is re-derived on windows its player never played against. Some rows still come back byte for
+// byte, because every press happened to sit inside the same rung on both ladders, but that is luck
+// and not verification. The position the backlog 133-to-147 window was always in (its four-tier
+// CHARACTER-DISTANCE ladder having been deleted outright by backlog 147) is now the position of the
+// whole table, which is why supersede is the only sweep that still says something true. The window
+// is still named separately wherever it is printed, because its mismatch has a different shape: a
+// four-tier row's per-cell maximum changes KEY, not just its rung.
+//
+// THE ERAS THE HARNESS CAN EXPRESS (backlog 151). A stored row is re-derived under the RULES it was
+// actually played under, through four switches on TypeBeatReplayScorer: the typo rule (backlog 109),
 // combo restore (140), the untimed spacebar (148) and the rate-scaled judgement windows (150). The
 // last two reach the widest: every map has spaces, and every DT/NC/HT row was graded on unscaled
-// windows. The one era NO switch can express is the backlog 133-to-147 window.
+// windows. What no switch can express is a LADDER that is gone: the backlog 133-to-147 window's, and
+// since the retune above the three-tier one every other stored row was played on.
 //
 // WHICH ERA A GIVEN ROW IS IN is decided two ways, neither of them a date (backlog 155, 156 and
 // 157). The typo rule is READ OFF THE ROW, because an uncorrected typo takes a key only one of the
@@ -53,10 +66,9 @@ using Typebeat.Tools.ScoreRecalc;
 // Those rows are superseded like any other, because their stored numbers describe a game no client
 // can play, which is what superseding is for. What they get instead of a gate is VISIBILITY: they
 // are counted as their own population in the report rather than folded into a reproduction
-// percentage (they are not the same thing as a row that disagrees with the harness for an unknown
-// reason), and supersede-apply will not start until --expect-unreproducible names the count. They
+// percentage, and supersede-apply will not start until --expect-unreproducible names the count. They
 // are not an --unreplayable case: every arm of that means nothing can be derived from the row, and
-// one of these derives perfectly well, it is only the CHECK that is unavailable.
+// these derive perfectly well, it is only the CHECK that is unavailable.
 //
 // Why not one command with a threshold: a threshold loose enough to pass a sweep in which nothing
 // reproduces is loose enough to pass genuine corruption, and that gate is the only thing standing
@@ -148,16 +160,17 @@ internal static class Cli
             }
 
             // The fourth guard, and the second that cannot be satisfied without having read a
-            // report: name how many rows come from the backlog 133-to-147 window. Those are
-            // superseded on numbers NOTHING can check, since the ladder that judged them is deleted,
-            // and a sweep should not be able to write them without the operator having seen how many
-            // there are. It changes no behaviour beyond that, deliberately.
+            // report: name how many rows were played on a ladder this code no longer has. Those are
+            // superseded on numbers NOTHING can check, and a sweep should not be able to write them
+            // without the operator having seen how many there are. Since the window retune that is
+            // every row, which makes the number less interesting and the READING of the report no
+            // less necessary. It changes no behaviour beyond that, deliberately.
             if (options.ExpectUnreproducible is null)
             {
-                Console.Error.WriteLine("error: 'supersede-apply' needs --expect-unreproducible <n>, the count of rows from the");
-                Console.Error.WriteLine("       backlog 133-to-147 window printed by the supersede-report you are applying. Those");
-                Console.Error.WriteLine("       rows were judged on a ladder that no longer exists, so nothing can verify what");
-                Console.Error.WriteLine("       they are being replaced with. Read the number, then pass it.");
+                Console.Error.WriteLine("error: 'supersede-apply' needs --expect-unreproducible <n>, the count printed by the");
+                Console.Error.WriteLine("       supersede-report you are applying as ON A DELETED LADDER. Those rows were judged");
+                Console.Error.WriteLine("       on windows this code no longer has, so nothing can verify what they are being");
+                Console.Error.WriteLine("       replaced with. Read the number, then pass it.");
                 return 1;
             }
         }
@@ -345,7 +358,7 @@ internal static class Cli
         {
             Console.Error.WriteLine($"error: {notTheSameRun.Count} row(s) were REFUSED: the replay does not describe the same run over");
             Console.Error.WriteLine("       the same map as the stored row. That is the corruption this gate exists to catch, and");
-            Console.Error.WriteLine("       it is not the expected pre-133 reproduction failure, which this sweep already");
+            Console.Error.WriteLine("       it is not the expected retuned-ladder reproduction failure, which this sweep already");
             Console.Error.WriteLine("       tolerates. Investigate them before writing anything, or pass --allow-refused-rows.");
 
             foreach (var r in notTheSameRun.Take(20))
@@ -356,10 +369,10 @@ internal static class Cli
 
         if (options.ExpectUnreproducible != plan.DeletedLadderWindow.Count)
         {
-            Console.Error.WriteLine($"error: --expect-unreproducible says {options.ExpectUnreproducible}, this run holds {plan.DeletedLadderWindow.Count} row(s) from the");
-            Console.Error.WriteLine("       backlog 133-to-147 window. The report you are applying is not this sweep. Those are");
-            Console.Error.WriteLine("       the rows no reproduction check can vouch for, so the count is read before the sweep");
-            Console.Error.WriteLine("       runs rather than discovered after it. Re-run supersede-report with the SAME options.");
+            Console.Error.WriteLine($"error: --expect-unreproducible says {options.ExpectUnreproducible}, this run holds {plan.DeletedLadderWindow.Count} row(s) played on");
+            Console.Error.WriteLine("       a ladder this code no longer has. The report you are applying is not this sweep.");
+            Console.Error.WriteLine("       Those are the rows no reproduction check can vouch for, so the count is read before");
+            Console.Error.WriteLine("       the sweep runs rather than after it. Re-run supersede-report with the SAME options.");
             return false;
         }
 
@@ -477,10 +490,10 @@ internal static class Cli
                                  today's multipliers, because a superseded row has to be a score
                                  today's client could produce. Reproduction is a diagnostic here,
                                  not a gate: the sweep re-judges on rules the row was not played
-                                 under, and a row from the backlog 133-to-147 window cannot
-                                 reproduce at all. What gates instead is that the replay must
-                                 describe the SAME RUN over the SAME MAP (cell counts, frames
-                                 consumed). Writes NOTHING.
+                                 under, and since the judgement windows were retuned with no era bit
+                                 NO row can be expected to reproduce. What gates instead is that the
+                                 replay must describe the SAME RUN over the SAME MAP (cell counts,
+                                 frames consumed). Writes NOTHING.
               supersede-apply    Same, then write. Needs three confirmations, see below.
 
             Options:
@@ -523,12 +536,12 @@ internal static class Cli
                                  Checked against what this run would write, so a stale or unread
                                  report stops the sweep.
               --expect-unreproducible <n>
-                                 how many of them come from the backlog 133-to-147 window, the count
-                                 the report prints as FROM THE 133-TO-147 WINDOW. Those rows were
-                                 judged on a four-tier character ladder backlog 147 deleted, so they
-                                 cannot be reproduced and nothing can verify the numbers replacing
-                                 them. This changes no behaviour: it exists so the sweep cannot be
-                                 started by anyone who has not read how many there are.
+                                 how many of them were played on a ladder this code no longer has,
+                                 the count the report prints as ON A DELETED LADDER. Since the
+                                 judgement windows were retuned with no era bit that is every row, so
+                                 nothing can verify the numbers replacing any of them. This changes
+                                 no behaviour: it exists so the sweep cannot be started by anyone who
+                                 has not read how many there are.
               --allow-unavailable-beatmaps
                                  proceed even though some packages could not be fetched, accepting a
                                  partly superseded leaderboard
@@ -563,7 +576,7 @@ internal static class Cli
         public int? ExpectSuperseded { get; private init; }
 
         /// <summary>
-        /// How many rows the operator read as coming from the backlog 133-to-147 window. Required by
+        /// How many rows the operator read as having been played on a deleted ladder. Required by
         /// <c>supersede-apply</c> for the same reason <see cref="ExpectSuperseded"/> is, and it is a
         /// separate number because it answers a separate question: that one says how many rows are
         /// being written, this one says how many of them are being written on a re-derivation nothing
@@ -636,7 +649,7 @@ internal static class Cli
                     case "--expect-unreproducible":
                         if (!int.TryParse(Next(), out int u) || u < 0)
                         {
-                            error = "--expect-unreproducible needs a non-negative number, the 133-to-147 window count from the report.";
+                            error = "--expect-unreproducible needs a non-negative number, the deleted-ladder count from the report.";
                             return false;
                         }
 

@@ -105,18 +105,19 @@ const FIXTURES = {
                 { text: 'jumps', start_ms: 5800, end_ms: 7000, score: 1 }]
     }], 12000),
 
-    // Everything the four maps above leave out of the CELL side, in one fixture, because the
-    // judgement windows a press is graded against are a property of the cell and not of the engine:
-    //   * WORD granularity, so the windows are the 0.6 ladder rather than the 1.0 one;
+    // Everything the four maps above leave out of the CELL side, in one fixture:
+    //   * WORD granularity in the header, which is metadata now (the three-tier ladder it used to
+    //     select is gone, replaced by one symmetric set of windows for every cell of every map) but
+    //     is still decoded, still stamped on the hit objects and still mirrored here;
     //   * a SYLLABLE subdivision inside "bad-cat", which warps the char-to-time mapping within the
     //     word instead of running one flat ramp across it;
-    //   * a LOW-CONFIDENCE word ("sat.", score 0.1 under LOW_CONFIDENCE_SCORE), whose cells fall
-    //     back to the widest Line ladder while the rest of the line stays at Word;
-    //   * an ESTIMATED line, which does the same thing a whole line at a time;
+    //   * a LOW-CONFIDENCE word ("sat.", score 0.1), which used to fall back to the widest ladder
+    //     and now buys no tolerance at all, so its CELLS are the whole of what it still tests;
+    //   * an ESTIMATED line, which used to do the same thing a whole line at a time;
     //   * PUNCTUATION and CASE, so the cells are the derived default stream ("the bad cat sat")
     //     rather than the authored text: a hyphen becomes a typed space on the slot the hyphen
     //     held, a period disappears, and capitals fold.
-    // A press graded on the wrong ladder lands in a different tier, which moves the statistics, the
+    // A cell whose target moved lands a press in a different band, which moves the statistics, the
     // accuracy and the score, so this is scoring surface and not decoration.
     mixedTiers: osu([{
         text: 'The bad-cat sat.', start_ms: 1000, end_ms: 4000,
@@ -129,9 +130,10 @@ const FIXTURES = {
                 { text: 'no', start_ms: 5700, end_ms: 6500, score: 1 }]
     }], 12000, 'word'),
 
-    // The tightest ladder there is: SYLLABLE granularity scales every window to 0.45, so the same
-    // press offsets the other fixtures grade as Great land two tiers lower here. Nothing else about
-    // it is unusual, which is the point: it isolates the tier scale.
+    // SYLLABLE granularity in the header, over a word carrying one subdivision. It was written to
+    // isolate the tier scale, which no longer exists: the windows are the same here as everywhere.
+    // What it still isolates is the SPAN, which is the axis that replaced the tier as the thing a
+    // fixture's granularity is really about.
     syllabic: osu([{
         text: 'one two', start_ms: 1000, end_ms: 3000,
         words: [{ text: 'one', start_ms: 1000, end_ms: 2000, score: 1, syllables: [{ start_ms: 1500 }] },
@@ -312,12 +314,17 @@ function lcg(seed) {
     };
 }
 
-// Press offsets against the cell's own target, chosen to land in every band the Line-granularity
-// ladder has: Great [-250, 400], Ok [-600, 1000], Meh [-1200, 2000], and Premature / Lagging
+// Press offsets against the cell's own target, chosen to land in every band THE ONE LADDER has,
+// on both sides of it: Great [-150, 150], Ok [-300, 300], Meh [-600, 600], and Premature / Lagging
 // outside it. A run therefore exercises the scoring tiers, the two zero-point tiers (which since
 // backlog 199 are hits that pay accuracy rather than breaks that end the run), and the sync quality
 // ramp, rather than only the happy path.
-const OFFSETS = [0, 120, -180, 380, 700, -520, 1400, -900, 1900, 2600, -1600];
+//
+// Retuned with the ladder: the previous set was written against the asymmetric three-tier one
+// (Great [-250, 400] and so on), where its wide LATE values still sat in a scoring band. Against a
+// symmetric 150/300/600 half of them fell off the end together, so the sweep would have spent most
+// of its presses on Lagging and stopped covering the bands in between.
+const OFFSETS = [0, 90, -90, 220, -220, 450, -450, 800, -800, 1400, -1100];
 
 const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
 
@@ -582,11 +589,21 @@ function play(name, keys, spaceSkipsWord) {
     //                  engine's own predicate, and only when it answered false. The C# arm sets
     //                  CONFIG flags bit 7, so a port that quietly lost the bound would leave both
     //                  sides on the UNBOUNDED roll, green, and covering nothing.
+    //
+    // The SIXTH is the newest, and it is on the same seam without an era bit of its own:
+    //
+    //   lineStepBacks  THE STEP BACK: a backspace at the HEAD of a line put the caret back into the
+    //                  line behind it, which the engine had not yet sealed, landing it on the last
+    //                  character that line has an answer for. The C# gates it on FletcherEnabled
+    //                  alone, so bit 5 is already the whole of what the C# arm needs, and a port
+    //                  that quietly lost it would leave every such press erasing nothing on one side
+    //                  and moving a caret on the other. Counted on the engine's own method.
     let rollForwards = 0;
     let lineSnaps = 0;
     let dragHolds = 0;
     let rushCapBreaks = 0;
     let refusedRolls = 0;
+    let lineStepBacks = 0;
 
     const rollForward = engine.rollForwardIfFinishedEarly.bind(engine);
 
@@ -618,6 +635,13 @@ function play(name, keys, spaceSkipsWord) {
         const permitted = sealPermitted(index, time);
         if (!permitted) dragHolds++;
         return permitted;
+    };
+
+    const stepBackIntoLine = engine.stepBackIntoLine.bind(engine);
+
+    engine.stepBackIntoLine = function (...args) {
+        lineStepBacks++;
+        return stepBackIntoLine(...args);
     };
 
     const rushesPastCap = engine.rushesPastCap.bind(engine);
@@ -681,7 +705,8 @@ function play(name, keys, spaceSkipsWord) {
         lineSnaps: lineSnaps,
         dragHolds: dragHolds,
         rushCapBreaks: rushCapBreaks,
-        refusedRolls: refusedRolls
+        refusedRolls: refusedRolls,
+        lineStepBacks: lineStepBacks
     };
 }
 
@@ -728,7 +753,7 @@ function cellsOf(name) {
         endTime: line.endTime,
         activationTime: line.activationTime,
         sealGraceMs: line.sealGraceMs,
-        cells: line.cells.map(c => ({ expected: c.expected, target: c.target, tier: c.tier })),
+        cells: line.cells.map(c => ({ expected: c.expected, target: c.target })),
         // The SYLLABLE groups and the per-cell membership map (backlog 179). Emitted beside the
         // cells and pinned before any account, for the same reason the cells are: the spans are now
         // what a press is judged against, so a group that drifted would reach the account

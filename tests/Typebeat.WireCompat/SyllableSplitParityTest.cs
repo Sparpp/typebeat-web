@@ -303,13 +303,18 @@ public class SyllableSplitParityTest
         => LyricOsuFormat.GenerateOsu("a", "t", "a.mp3", "c",
             $"{{\"version\":2,\"song_end_ms\":{songEndMs.ToString(CultureInfo.InvariantCulture)},\"lines\":[{linesJson}]}}");
 
-    /// <summary>One decoded map as the game reads it: the granularity plus a built line per lyric line.</summary>
+    /// <summary>
+    /// One decoded map as the game reads it: the granularity plus a built line per lyric line. The
+    /// granularity is METADATA now (it stopped selecting a judgement ladder when the three tiers
+    /// became one symmetric set of windows), and it is still held against the browser's reading
+    /// because the decoder still stamps it on every hit object and a one-sided parse would drift.
+    /// </summary>
     private static (TimingGranularity Granularity, TypingLine[] Lines) Decode(string osu, bool literate)
     {
         var hitObjects = DecodeObjects(osu);
         var granularity = hitObjects.Count > 0 ? hitObjects[0].Granularity : TimingGranularity.Line;
 
-        return (granularity, hitObjects.Select(h => TypingLine.FromLyricLine(h.Line, h.Granularity, literate)).ToArray());
+        return (granularity, hitObjects.Select(h => TypingLine.FromLyricLine(h.Line, literate)).ToArray());
     }
 
     /// <summary>The map as the production decoder reads it, units and all.</summary>
@@ -412,7 +417,6 @@ public class SyllableSplitParityTest
                         {
                             Assert.That(browserCells[c].GetProperty("expected").GetString(), Is.EqualTo(line.Cells[c].Expected.ToString()), $"{what}[{i}][{c}]: expected");
                             Assert.That(browserCells[c].GetProperty("target").GetDouble(), Is.EqualTo(line.Cells[c].TargetTime), $"{what}[{i}][{c}]: target");
-                            Assert.That(browserCells[c].GetProperty("tier").GetString(), Is.EqualTo(line.Cells[c].JudgeGranularity.ToString()), $"{what}[{i}][{c}]: tier");
                         }
 
                         var browserGroups = browserLine.GetProperty("syllables");

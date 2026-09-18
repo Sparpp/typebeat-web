@@ -134,13 +134,25 @@ WireCompat is where that is provable, because it is the only project that compil
   `LosslessSkipReclaimLiveParityTest` is the pin. Its third defect, the Ctrl+A anchor being widened
   past a wholly abandoned word so the mass backspace cannot overshoot its own selection, carries no
   era at all (it is input layer) and is pinned in `WordInputParityTest`, which is where the whole
-  gesture composition lives. Since backlog 262 **bit 12** joins them (a break that takes the claim
+  gesture composition lives. The **backspace at the HEAD of a line**, which steps back up into the
+  line behind it while that line is still unsealed, carries no era either (the C# gates it on
+  `FletcherEnabled` alone, which is bit 5, already set): it is live rule on an ordinary `/play` run
+  and is mirrored as `stepBackIntoLine`. Since backlog 262 **bit 12** joins them (a break that takes the claim
   off an older break FOLDS that claim into its own instead of discarding it, so two accidents both
   fully corrected cost the run nothing and the newest of the broken cells redeems the whole chain,
   transitively), so every such parity fixture also sets `FoldsDisplacedClaim = true`.
   `DisplacedClaimFoldLiveParityTest` is the pin, and unlike bits 10 and 11 the generated sweep DOES
-  roll this shape, so `EngineFuzzLiveParityTest` needs the bit as well. A harness that SPIES on an
-  engine method must forward every argument
+  roll this shape, so `EngineFuzzLiveParityTest` needs the bit as well. **Bit 14 (manual newlines)
+  is the one caret bit the fixtures must LEAVE CLEAR**: it is a desktop SETTING and `/play` has no
+  settings surface, so the browser runs the automatic hand-over a clear bit means.
+  **The JUDGEMENT WINDOWS are not an era at all.** One symmetric ladder (Great 150 ms, Ok 300, Meh
+  600) grades every cell of every map: no granularity tier, no low-confidence fallback, no per-cell
+  `tier` field on either side, and no CONFIG bit recording which ladder a run was played on. A
+  retune is therefore an ordinary mirrored edit (`WINDOWS` here, `SyncWindows` there) that both
+  clients take at once, and `tools/score-recalc` treats every stored row as unreproducible by
+  construction because of it. The EASY mod's word-level shelter (`TypingEngine.WordShelter`) is not
+  mirrored, for the reason the window scale is not: `/play` has no mods payload. A harness that
+  SPIES on an engine method must forward every argument
   (`CoreFuzzHarness.cjs` wraps `rushesPastCap`): a dropped one reads out of the prefix table as NaN
   and silently answers "no rush" for the entire sweep.
 - **The .osu FORMAT VERSION GATE exists three times** since backlog 255, and all three read the

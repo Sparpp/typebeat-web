@@ -31,8 +31,9 @@ const TB = global.window.TypeBeatCore;
 
 // The game fixture's workhorse line, transcribed into the .osu form /play consumes: "ab cd", words
 // "ab" [1000, 2000] and "cd" [2000, 3000], so cells are a = 1000, b = 1500, ' ' = 2000 (the first
-// word's end), c = 2000, d = 2500. Line granularity, matching the C# fixture, so the windows are
-// the unscaled ones: Great [-250, 400], Ok [-600, 1000], Meh [-1200, 2000].
+// word's end), c = 2000, d = 2500. The header still declares Line granularity, matching the C#
+// fixture, but that is metadata now: there is one symmetric ladder for every cell of every map,
+// Great +/-150, Ok +/-300, Meh +/-600.
 //
 // Two boundaries of the same line. `end_ms` on the line is its SUNG end (3000 either way); the
 // line's deadline is the next line's start, or song_end_ms for the last line, which is the knob
@@ -93,8 +94,7 @@ function shape() {
     return {
         expected: cells.map(c => c.expected),
         targets: cells.map(c => c.target),
-        typeable: cells.map(c => c.typeable),
-        tiers: cells.map(c => c.tier)
+        typeable: cells.map(c => c.typeable)
     };
 }
 

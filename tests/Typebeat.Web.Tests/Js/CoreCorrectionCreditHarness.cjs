@@ -274,11 +274,14 @@ function account(kind) {
 
 const out = {
     // The min() over the ladder, walked from the edge of cell 3's span.
+    // Walked with the ladder: the offsets were 0 / 200 / 700 / 1500 / 2500 against the old
+    // asymmetric three-tier one, and these are the same five positions on the symmetric
+    // 150 / 300 / 600 that replaced it (inside Great, inside Great, inside Ok, inside Meh, off).
     ladderDeadOn: ladder(0),
-    ladderGreat: ladder(200),
-    ladderOk: ladder(700),
-    ladderMeh: ladder(1500),
-    ladderOffTime: ladder(2500),
+    ladderGreat: ladder(100),
+    ladderOk: ladder(200),
+    ladderMeh: ladder(450),
+    ladderOffTime: ladder(900),
 
     announcedIsStored: announcedIsStored(),
 

@@ -295,10 +295,15 @@ function sameCellFumbledTwice() {
 // target, while the browser only ever plays live and judges a cell against its SYLLABLE's sung
 // span. This line's spans are cells 0-2 over [1000, 2500] and cells 3-7 over [2500, 5000], so the
 // off-time press is cell 3 struck at 4600 (cell 3 OPENS the second group, so since backlog 247 it is
-// judged from that group's START: 2100 late, off the Line ladder whose MehLate is 2000) and the
-// ordinary press after it is cell 4 struck at 6700 (a non-opening cell, so it keeps the whole span
-// and is 1700 past its end, still on the ladder, an honest Meh). Same shape as the C# case, same
+// judged from that group's START: 2100 late, off the one ladder whose Meh bound is 600) and the
+// ordinary press after it is cell 4 struck at 5500 (a non-opening cell, so it keeps the whole span
+// and is 500 past its end, still on the ladder, an honest Meh). Same shape as the C# case, same
 // tiers in the same order, and chronological.
+//
+// The follow-up press was written at 6700, which was an honest Meh against the old asymmetric
+// ladder (MehLate 2000) and is off the end of the symmetric one. It moved with the ladder, because
+// what the fixture needs is an ON-ladder press after an off-ladder one and not any particular
+// number.
 //
 // The two presses sit one cell later than the C# fixture's for that reason alone: the hybrid gives
 // an OPENING cell the only anchor early enough for an off-ladder press to be followed, in time, by
@@ -313,7 +318,7 @@ function offTimePressBetweenATypoAndItsFix() {
     typo(engine, 2);            // snapshots the run of 2 against cell 2
 
     engine.processKey(WORD[3], 4600);   // off the ladder: a hit worth nothing since backlog 199
-    engine.processKey(WORD[4], 6700);   // still on it: an ordinary Meh
+    engine.processKey(WORD[4], 5500);   // still on it: an ordinary Meh
     const comboBeforeFix = engine.combo;
 
     // Read BEFORE the fix, which backspaces over both cells on its way to cell 2 and clears the

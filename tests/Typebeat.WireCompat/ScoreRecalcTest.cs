@@ -95,7 +95,7 @@ public class ScoreRecalcTest
     }
 
     private static IReadOnlyList<double> Targets(IBeatmap map)
-        => TypingLine.FromLyricLine(((TypeBeatHitObject)map.HitObjects[0]).Line, TimingGranularity.Line, false)
+        => TypingLine.FromLyricLine(((TypeBeatHitObject)map.HitObjects[0]).Line, false)
                      .Cells.Select(c => c.TargetTime).ToList();
 
     /// <summary>A run typing every cell correctly except one, which is typed wrong then FIXED.</summary>
@@ -1161,23 +1161,27 @@ public class ScoreRecalcTest
     }
 
     /// <summary>
-    /// The population the revert leaves behind, told apart from a genuine anomaly (backlog 151).
-    /// <c>Reproduced == false</c> answers two questions at once: a row from the backlog 133-to-147
-    /// window CANNOT reproduce (the ladder that judged it was deleted), and a row that disagrees with
-    /// the harness for any other reason is a fact nobody has explained. Superseding is right for
-    /// both; reading them as one number is not, because a sweep carrying one anomaly would look
-    /// exactly like a sweep carrying none.
+    /// The population the revert leaves behind, and what the WINDOW RETUNE did to it. Every stored
+    /// row is now unreproducible by construction: the three-tier ladder was collapsed to one
+    /// symmetric set of windows with no CONFIG bit recording which ladder judged a run, so there is
+    /// no axis to hold at a row's own value and reproduction stopped being a proof for anybody. That
+    /// is what <c>JudgedOnTheDeletedLadder</c> says now, of every row.
     ///
-    /// <para>Both directions are pinned, and on the shape the classifier actually meets: an era-2
-    /// row's <c>maximum_statistics</c> carries <c>perfect</c> and no <c>great</c>, an era-1 row's
-    /// carries <c>great</c> and no <c>perfect</c>, and the classification is
+    /// <para>The backlog 133-to-147 window is still told apart, through
+    /// <c>JudgedOnTheFourTierCharacterLadder</c>, because its mismatch has a different SHAPE: an
+    /// era-2 row was graded on CHARACTER DISTANCE in four tiers, so its <c>maximum_statistics</c>
+    /// carries <c>perfect</c> and no <c>great</c> and the key itself moves, where every other row
+    /// merely lands on different rungs of the same three. Both directions of that discriminator are
+    /// pinned below, on the shape the classifier actually meets, and through
     /// <c>ScoringContract.JudgedUnderTheFourthTier</c> itself rather than the tool's own reading of
-    /// those keys. The anomaly half is the non-vacuity: it does not reproduce EITHER, so a classifier
-    /// stuck at true would put it in the window and a classifier stuck at false would empty the
-    /// window, and each failure fails a different assertion below.</para>
+    /// those keys.</para>
+    ///
+    /// <para>The anomaly row (a stored max_combo the run never reached) is kept as the reminder of
+    /// what the split used to be for. It is no longer separable BY REPRODUCTION, which is exactly
+    /// the cost the retune imposed, and what still catches it is the same-run gate.</para>
     /// </summary>
     [Test]
-    public void TheDeletedWindowIsCountedApartFromAnUnexplainedFailure()
+    public void TheDeletedLadderPopulationIsTheWholeTableAndTheFourTierWindowIsStillNamed()
     {
         var map = Beatmap();
         var replay = FixedTypoReplay(map);
@@ -1216,9 +1220,12 @@ public class ScoreRecalcTest
             // The server's own predicate, both ways, and the tool reading it through that predicate.
             Assert.That(Typebeat.Web.Scoring.ScoringContract.JudgedUnderTheFourthTier(eraTwoMaximum), Is.True);
             Assert.That(Typebeat.Web.Scoring.ScoringContract.JudgedUnderTheFourthTier(eraOneMaximum), Is.False);
-            Assert.That(eraTwo.JudgedOnTheDeletedLadder, Is.True);
-            Assert.That(eraOne.JudgedOnTheDeletedLadder, Is.False);
-            Assert.That(anomaly.JudgedOnTheDeletedLadder, Is.False, "a row can fail to reproduce without being from the window");
+            Assert.That(eraTwo.JudgedOnTheFourTierCharacterLadder, Is.True);
+            Assert.That(eraOne.JudgedOnTheFourTierCharacterLadder, Is.False);
+            Assert.That(anomaly.JudgedOnTheFourTierCharacterLadder, Is.False, "a row can fail to reproduce without being from the window");
+
+            // ...and the wider fact the retune made true of all three, which is what the guard counts.
+            Assert.That(results.Select(r => r.Stored.JudgedOnTheDeletedLadder), Is.All.True);
 
             // All three rows are superseded; only their VISIBILITY differs. No new refusal, no new
             // skip reason, and the era-2 row is not treated as unreplayable.
@@ -1226,15 +1233,14 @@ public class ScoreRecalcTest
             Assert.That(results.Select(r => r.Reproduced), Is.EquivalentTo(new[] { true, false, false }));
             Assert.That(plan.Unreplayable, Is.Empty);
 
-            // One row per population, and the count the new guard reads is the window's.
-            Assert.That(plan.DeletedLadderWindow.Select(r => r.Stored.ScoreId), Is.EquivalentTo(new long[] { 2 }));
+            // The population is the whole run now, and that is the count the guard reads.
+            Assert.That(plan.DeletedLadderWindow.Select(r => r.Stored.ScoreId), Is.EquivalentTo(new long[] { 1, 2, 3 }));
 
-            Assert.That(text, Does.Contain("FROM THE 133-TO-147 WINDOW   1"));
+            Assert.That(text, Does.Contain("ON A DELETED LADDER          3"));
             Assert.That(text, Does.Contain("--expect-unreproducible"));
             Assert.That(text, Does.Contain("reproduced exactly           1"));
             Assert.That(text, Does.Contain("did not reproduce            2"));
-            Assert.That(text, Does.Contain("from the 133-to-147 window 1"));
-            Assert.That(text, Does.Contain("unexplained                1"));
+            Assert.That(text, Does.Contain("of those, 133-to-147       1"));
 
             // The anomaly is named by id so it can be looked at; the window row is not, because
             // there is nothing to look at.
@@ -1291,8 +1297,8 @@ public class ScoreRecalcTest
 
                 Assert.That(WireCounts.Parse(loaded[78].MaximumStatisticsJson).ContainsKey("perfect"), Is.True,
                     "the .osr blob is the offline run's only copy of maximum_statistics");
-                Assert.That(loaded[78].JudgedOnTheDeletedLadder, Is.True, "an offline era-2 row classifies as one");
-                Assert.That(loaded[77].JudgedOnTheDeletedLadder, Is.False, "and an era-1 row does not");
+                Assert.That(loaded[78].JudgedOnTheFourTierCharacterLadder, Is.True, "an offline era-2 row classifies as one");
+                Assert.That(loaded[77].JudgedOnTheFourTierCharacterLadder, Is.False, "and an era-1 row does not");
             });
 
             void Write(long scoreId, IReadOnlyDictionary<HitResult, int> statistics, IReadOnlyDictionary<HitResult, int> maximumStatistics)
@@ -1494,10 +1500,16 @@ public class ScoreRecalcTest
     }
 
     /// <summary>
-    /// The same for backlog 150. Three presses 500 ms late are an Ok apiece on the base ladder, which
-    /// is what a pre-150 Double Time client stored; today's rule stretches the Great window by the
-    /// clock rate and pays all three. Narrower than the space era (it only reaches DT / NC / HT rows)
-    /// but it moves the same two quantities on the rows it does reach.
+    /// The same for backlog 150. Three presses 200 ms late are an Ok apiece on the base ladder
+    /// (Great is 150 ms), which is what a pre-150 Double Time client stored; today's rule stretches
+    /// the ladder by the clock rate, so at 1.5x Great reaches 225 and all three are paid. Narrower
+    /// than the space era (it only reaches DT / NC / HT rows) but it moves the same two quantities on
+    /// the rows it does reach.
+    ///
+    /// <para>The offset is 200 and not the 500 it was written with because the ladder was retuned:
+    /// against the old asymmetric one 500 late was an Ok that 1.5x lifted into Great, and against the
+    /// symmetric 150 / 300 / 600 it is a Meh on BOTH arms, so the fixture would have stopped
+    /// discriminating the axis it exists to discriminate while still passing every gate.</para>
     ///
     /// <para>Inverted at backlog 156 for the same reason as the space case above: a DT row played
     /// since 150 shipped exists now, so the pass proves its era instead of refusing it. The map has
@@ -1508,7 +1520,7 @@ public class ScoreRecalcTest
     public void ARowPlayedBeforeTheRateWindowScalingReproducesAgain()
     {
         var map = PlainBeatmap();
-        var replay = Pressed((500, 'a'), (4500, 'b'), (8500, 'c'));
+        var replay = Pressed((200, 'a'), (4200, 'b'), (8200, 'c'));
         Mod[] doubleTime = { new TypeBeatModDoubleTime { SpeedChange = { Value = 1.5 } } };
         const string mods_json = @"[{""acronym"":""DT"",""settings"":{""speed_change"":1.5}}]";
 
@@ -1525,13 +1537,13 @@ public class ScoreRecalcTest
             Assert.That(storedEra.Skip, Is.EqualTo(SkipReason.None), "a pre-150 rate row must be re-derivable");
             Assert.That(storedEra.Reproduced, Is.True);
             Assert.That(storedEra.ReproducedUnderEra, Is.EqualTo(Recalculation.DefaultEra));
-            Assert.That(storedEra.OldRuleStatistics!["ok"], Is.EqualTo(3), "the base ladder graded 500 ms late as an Ok");
+            Assert.That(storedEra.OldRuleStatistics!["ok"], Is.EqualTo(3), "the base ladder graded 200 ms late as an Ok");
 
             Assert.That(liveEra.Skip, Is.EqualTo(SkipReason.None), "a post-150 rate row is re-derivable under its own era");
             Assert.That(liveEra.Reproduced, Is.True);
             Assert.That(liveEra.EraProvedByReconstruction, Is.True);
             Assert.That(liveEra.ReproducedUnderEra!.Value.Rate, Is.EqualTo(RateWindowRule.ScaledByRate));
-            Assert.That(liveEra.OldRuleStatistics!["great"], Is.EqualTo(3), "scaled by 1.5x the same 500 ms is inside the Great window");
+            Assert.That(liveEra.OldRuleStatistics!["great"], Is.EqualTo(3), "scaled by 1.5x the same 200 ms is inside the Great window");
         });
     }
 
@@ -1791,14 +1803,19 @@ public class ScoreRecalcTest
     #region The eras PROVED BY RECONSTRUCTION: spacebar and rate windows (156), combo restore (157), the typo rule where no key proves it (158)
 
     /// <summary>
-    /// The space 500 ms late: an Ok on the timed ladder (the late Ok window is 1000 ms) and a top-tier
-    /// hit on the untimed one, with no combo break either way. That is the PRODUCTION SIGNATURE of
+    /// The space 200 ms late: an Ok on the timed ladder (Great is 150 ms, Ok 300) and a top-tier hit
+    /// on the untimed one, with no combo break either way. That is the PRODUCTION SIGNATURE of
     /// backlog 156 in its smallest form, <c>great</c> falling while <c>ok</c> rises, and it is a
     /// better fixture for the search than <see cref="LateSpaceReplay"/> because the two eras differ in
     /// exactly one cell's tier and in nothing else.
+    ///
+    /// <para>It was written at 500, which was an Ok on the old asymmetric ladder and is a Meh on the
+    /// symmetric one that replaced it. The fixture is about the SMALLEST tier move the search has to
+    /// resolve, so it follows the ladder: 200 is one rung off Great here exactly as 500 was
+    /// there.</para>
     /// </summary>
     private static Replay MarginalSpaceReplay()
-        => Pressed((0, 'a'), (3000, 'b'), (6500, ' '), (20000, 'c'), (23000, 'd'));
+        => Pressed((0, 'a'), (3000, 'b'), (6200, ' '), (20000, 'c'), (23000, 'd'));
 
     /// <summary>
     /// The same run with a TYPO CORRECTED in it as well, which is what makes the combo axis bite: the
@@ -1808,7 +1825,7 @@ public class ScoreRecalcTest
     /// 5410 and 5414 and the reason backlog 157 exists.
     /// </summary>
     private static Replay MarginalSpaceWithACorrectedTypoReplay()
-        => Pressed((0, 'a'), (3000, 'x'), (3000, TypeBeatReplayFrame.BACKSPACE), (3000, 'b'), (6500, ' '), (20000, 'c'), (23000, 'd'));
+        => Pressed((0, 'a'), (3000, 'x'), (3000, TypeBeatReplayFrame.BACKSPACE), (3000, 'b'), (6200, ' '), (20000, 'c'), (23000, 'd'));
 
     /// <summary>
     /// WHY BACKLOG 156 EXISTS. Backlog 148 and 150 shipped while the score table was already filling,

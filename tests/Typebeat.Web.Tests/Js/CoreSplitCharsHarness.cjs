@@ -44,7 +44,7 @@ function read(osuText, literate) {
             endTime: line.endTime,
             activationTime: line.activationTime,
             sealGraceMs: line.sealGraceMs,
-            cells: line.cells.map(c => ({ expected: c.expected, target: c.target, tier: c.tier })),
+            cells: line.cells.map(c => ({ expected: c.expected, target: c.target })),
             syllables: line.syllables.map(g => ({
                 startCell: g.startCell, endCellExclusive: g.endCellExclusive, startTime: g.startTime, endTime: g.endTime
             })),

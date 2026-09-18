@@ -67,10 +67,15 @@ public static class Report
             output.WriteLine("    `ok` and a fixed typo no longer scores identically to a clean play. Nothing else about");
             output.WriteLine("    such a row moves on this axis: max_combo, misses, mistypes, completion and rank are the");
             output.WriteLine("    same under both arms, because a capped cell is still a hit that counts as typed.");
-            output.WriteLine("  - a row stored in the backlog 133-to-147 window (a `perfect` key in its statistics)");
-            output.WriteLine("    was graded on CHARACTER DISTANCE in four tiers and is re-graded on the millisecond");
-            output.WriteLine("    ladder in three, so its tier counts move in both directions. Every other row was");
-            output.WriteLine("    played on the ladder it is being re-judged with.");
+            output.WriteLine("  - EVERY row is re-graded on a ladder it was NOT played on. The three-tier ladder");
+            output.WriteLine("    (Line / Word / Syllable, late-biased, chosen per cell from the map's granularity) was");
+            output.WriteLine("    retired for ONE symmetric set of windows: Great 150 ms, Ok 300, Meh 600. No CONFIG bit");
+            output.WriteLine("    records which ladder a run was played against, so there is no axis to hold at the");
+            output.WriteLine("    row's own value and nothing to search: the retune is simply applied. Tier counts move");
+            output.WriteLine("    in both directions, and the tighter Great window moves most of them down.");
+            output.WriteLine("  - a row stored in the backlog 133-to-147 window (a `perfect` key in its statistics) is");
+            output.WriteLine("    the one whose mismatch has a different SHAPE on top of that: it was graded on");
+            output.WriteLine("    CHARACTER DISTANCE in four tiers, so its per-cell maximum changes key as well.");
             output.WriteLine("  - EVERY row gains on its SPACES. Backlog 148 took the spacebar out of the timing");
             output.WriteLine("    challenge, so a loosely hit space that used to be an Ok, a Meh or a combo-breaking");
             output.WriteLine("    Lagging press is re-judged as a top-tier hit. Every map has spaces, so no row is");
@@ -111,7 +116,7 @@ public static class Report
         // Named, never folded into a reproduction percentage: a row from that window is a different
         // thing from a row that disagrees with the harness, and the operator has to see which is
         // which before deciding anything.
-        output.WriteLine($"FROM THE 133-TO-147 WINDOW   {plan.DeletedLadderWindow.Count}"
+        output.WriteLine($"ON A DELETED LADDER          {plan.DeletedLadderWindow.Count}"
                          + (plan.Mode == RecalcMode.Supersede ? "   <- pass this to --expect-unreproducible" : string.Empty));
 
         // The other population that is a fact about the DATA rather than about the sweep, printed in
@@ -146,12 +151,19 @@ public static class Report
             output.WriteLine("refuse the whole sweep. Read this as coverage, not as a pass or a fail: a row that DOES");
             output.WriteLine("reproduce is one the tool understands completely.");
             output.WriteLine();
-            output.WriteLine("Since backlog 151 the harness can express four judgement eras (the typo rule, combo");
-            output.WriteLine("restore, the untimed spacebar, the rate-scaled windows), so a row from before the backlog");
-            output.WriteLine("133 arc SHOULD reproduce. A row stored in the backlog 133-to-147 window (a `perfect` key in");
-            output.WriteLine("its maximum_statistics) never can: it was graded on a four-tier CHARACTER-DISTANCE ladder");
-            output.WriteLine("that backlog 147 deleted, and no switch can bring back code that is gone. A row that fails");
-            output.WriteLine("to reproduce and is NOT from that window is worth looking at before applying.");
+            output.WriteLine("NO ROW CAN BE EXPECTED TO REPRODUCE ANY MORE, and that is a change. The judgement");
+            output.WriteLine("windows were retuned to one symmetric ladder with NO era bit recording which ladder a run");
+            output.WriteLine("was played on, so there is nothing for the era search to hold at the row's own value and");
+            output.WriteLine("every row is re-derived on windows its player never played against. A row that DOES come");
+            output.WriteLine("back is one whose every press sat well inside the same rung on both ladders: welcome, but");
+            output.WriteLine("luck rather than proof. This is the position the backlog 133-to-147 window (a `perfect` key");
+            output.WriteLine("in its maximum_statistics) was always in, now widened to the whole table, which is why");
+            output.WriteLine("superseding is the only sweep that still says something true about these rows.");
+            output.WriteLine();
+            output.WriteLine("The four expressible eras (the typo rule, combo restore, the untimed spacebar, the");
+            output.WriteLine("rate-scaled windows) are still searched and still pinned per row: they decide WHICH RULES");
+            output.WriteLine("judged the run, which the retune does not touch. What they can no longer do is make the");
+            output.WriteLine("re-derivation come back exactly.");
             output.WriteLine();
             output.WriteLine("A row played SINCE the 2026-08-13 release should reproduce too (backlog 156), and so should a");
             output.WriteLine("row played since backlog 140 gave combo back for a corrected typo (backlog 157), and so should");
@@ -299,55 +311,57 @@ public static class Report
     }
 
     /// <summary>
-    /// The rows that did NOT reproduce, split into the two different things that number has always
-    /// been made of. <c>Reproduced == false</c> isolates rows from the backlog 133-to-147 window
-    /// TOGETHER WITH rows that disagree with the harness for an unknown reason, and those call for
-    /// opposite responses: the first population is unreproducible by construction (the four-tier
-    /// ladder that judged it was deleted, so no era switch can bring it back) and superseding it is
-    /// the answer, while the second is a fact nobody has explained and is worth reading before
-    /// anything is written.
+    /// The rows that did NOT reproduce, split by WHY, which is the split this section has always
+    /// existed to make. It used to be "from the backlog 133-to-147 window" against "unexplained",
+    /// because only that window was unreproducible by construction while anything else failing was a
+    /// fact nobody had named.
     ///
-    /// <para>Named rather than folded into a reproduction percentage for exactly that reason: a
-    /// single "did not reproduce, as expected" line makes a sweep with one anomaly in it look like a
-    /// sweep with none. The classification comes from
-    /// <see cref="StoredScore.JudgedOnTheDeletedLadder"/>, i.e. from the server's own era
-    /// discriminator, so it cannot start disagreeing with the code that prices those rows.</para>
+    /// <para>THE WINDOW RETUNE COLLAPSED THAT SPLIT: with one symmetric ladder and no era bit
+    /// recording which ladder a run was played against, EVERY row is re-derived on windows it was not
+    /// played on, so a row failing to reproduce is expected everywhere and there is no "unexplained"
+    /// population left to name. What is still worth separating, and is printed instead, is the
+    /// four-tier CHARACTER-DISTANCE window (see
+    /// <see cref="StoredScore.JudgedOnTheFourTierCharacterLadder"/>), whose rows do not merely land
+    /// on different rungs but change the KEY their per-cell maximum is stored under.</para>
+    ///
+    /// <para>The classification still comes from the server's own era discriminator, so it cannot
+    /// start disagreeing with the code that prices those rows.</para>
     /// </summary>
     private static void PrintUnreproducible(IReadOnlyList<RecalcResult> eligible, WritePlan plan, TextWriter output)
     {
         var didNot = eligible.Where(r => !r.Reproduced).ToList();
-        var window = didNot.Where(r => r.Stored.JudgedOnTheDeletedLadder).ToList();
-        var unexplained = didNot.Where(r => !r.Stored.JudgedOnTheDeletedLadder).ToList();
+        var fourTier = didNot.Where(r => r.Stored.JudgedOnTheFourTierCharacterLadder).ToList();
 
         output.WriteLine($"did not reproduce            {didNot.Count}"
                          + (eligible.Count > 0 ? $"  ({Percent(didNot.Count, eligible.Count)})" : string.Empty));
-        output.WriteLine($"  from the 133-to-147 window {window.Count,-6}  judged on the four-tier character ladder backlog 147");
-        output.WriteLine("                                     deleted, so no era switch can re-derive them. Expected.");
-        output.WriteLine($"  unexplained                {unexplained.Count,-6}  the harness and the row disagree for a reason nobody");
-        output.WriteLine("                                     has named. Worth reading before anything is written.");
+        output.WriteLine("  on a retuned ladder               EVERY row is re-derived on one symmetric set of windows");
+        output.WriteLine("                                     (150 / 300 / 600) that no stored row was played against,");
+        output.WriteLine("                                     and no era bit records which ladder judged it. Expected,");
+        output.WriteLine("                                     and no longer a signal about any individual row.");
+        output.WriteLine($"  of those, 133-to-147       {fourTier.Count,-6}  ALSO graded on character distance in four tiers, so");
+        output.WriteLine("                                     their per-cell maximum changes key, not just its rung.");
+        output.WriteLine($"  reproduced anyway          {eligible.Count - didNot.Count,-6}  every press sat inside the same rung on both");
+        output.WriteLine("                                     ladders. Luck, not verification.");
 
-        int elsewhere = plan.DeletedLadderWindow.Count - window.Count;
+        int elsewhere = plan.DeletedLadderWindow.Count - didNot.Count - (eligible.Count - didNot.Count);
 
         if (elsewhere > 0)
         {
-            output.WriteLine($"  ({plan.DeletedLadderWindow.Count} row(s) in this run carry that window's era stamp in all; the other {elsewhere}");
+            output.WriteLine($"  ({plan.DeletedLadderWindow.Count} row(s) in this run were played on a retired ladder in all; the other {elsewhere}");
             output.WriteLine("   had no usable replay, so the sweep never tried to reproduce them.)");
         }
 
-        // In a reproduce sweep every one of these is a refusal and is listed further down with its
-        // mismatch. In a supersede sweep nothing else prints them, and an unexplained row is the one
-        // thing in this section an operator is being asked to act on.
-        if (plan.Mode == RecalcMode.Supersede && unexplained.Count > 0)
-        {
-            output.WriteLine();
-            output.WriteLine("  unexplained rows (not from the window, and not refused by the same-run gate):");
-
-            foreach (var r in unexplained.Take(20))
-                output.WriteLine($"    score {r.Stored.ScoreId,-8} {r.ReproductionDetail}");
-
-            if (unexplained.Count > 20)
-                output.WriteLine($"    ... and {unexplained.Count - 20} more");
-        }
+        // THE PER-ROW LISTING IS GONE, and its absence is the point. A supersede sweep used to print
+        // every non-reproducing row that was NOT from the 133-to-147 window, because such a row was
+        // the one thing in this section an operator was being asked to act on. With the ladder
+        // retuned and no era bit carrying it, that population is now the whole table and the listing
+        // would be twenty arbitrary rows of expected noise per run: it would train a reader to skip
+        // the section that still matters. Window rows were never listed either, and for the same
+        // reason, that there is nothing to look at.
+        //
+        // What catches a row the tool does not understand is the same-run gate printed immediately
+        // below, which compares the quantities a re-judgement cannot move. That is now the only
+        // refusal a supersede sweep has, and it is where an operator should be reading.
     }
 
     /// <summary>

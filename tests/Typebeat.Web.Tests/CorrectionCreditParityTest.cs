@@ -88,10 +88,10 @@ public class CorrectionCreditParityTest
         (string Case, int Offset, string Uncapped, string Capped)[] expected =
         [
             ("ladderDeadOn", 0, "Great", "Ok"),
-            ("ladderGreat", 200, "Great", "Ok"),
-            ("ladderOk", 700, "Ok", "Ok"),
-            ("ladderMeh", 1500, "Meh", "Meh"),
-            ("ladderOffTime", 2500, "Lagging", "Lagging"),
+            ("ladderGreat", 100, "Great", "Ok"),
+            ("ladderOk", 200, "Ok", "Ok"),
+            ("ladderMeh", 450, "Meh", "Meh"),
+            ("ladderOffTime", 900, "Lagging", "Lagging"),
         ];
 
         Assert.Multiple(() =>

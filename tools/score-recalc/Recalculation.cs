@@ -50,27 +50,52 @@ public sealed record StoredScore(
     long UserId = 0)
 {
     /// <summary>
-    /// Whether this row was judged in the BACKLOG 133-TO-147 WINDOW: the day production graded on a
-    /// four-tier character-distance ladder, which backlog 147 deleted. Read off the row's own
-    /// <c>maximum_statistics</c> by <see cref="ScoringContract.JudgedUnderTheFourthTier"/>, the same
-    /// predicate the server prices such a row with, so the tool cannot end up disagreeing with the
-    /// contract about which era a row belongs to.
+    /// Whether this row was judged on a LADDER THIS CODE NO LONGER HAS, i.e. whether reproducing it
+    /// is impossible by construction rather than merely unsuccessful.
     ///
-    /// <para>It is the one population a sweep can never CHECK. Reproducing a row means re-deriving it
-    /// under the rules that judged it, and no setting of any era switch brings back code that is
-    /// gone, so these rows are unreproducible by construction rather than by disagreement. That is
-    /// why they are counted and named separately from the rows that fail to reproduce for a reason
-    /// nobody has explained yet: superseding both is right, but only one of them is a surprise.</para>
+    /// <para>IT IS NOW TRUE OF EVERY ROW, and that is the whole of what changed. It used to name one
+    /// population, the backlog 133-to-147 window whose four-tier character-distance ladder backlog
+    /// 147 deleted (see <see cref="JudgedOnTheFourTierCharacterLadder"/>, which still reads that
+    /// stamp off the row and is still worth printing, because its mismatch has a different SHAPE).
+    /// Then the three-tier millisecond ladder those rows were re-graded on was itself retired, for
+    /// one symmetric set of windows (Great 150, Ok 300, Meh 600) with no CONFIG bit recording which
+    /// ladder a run was played against. A retune with no era carrier is not an axis the search can
+    /// hold at the row's own value, so every stored row, without exception, is now being re-derived
+    /// on windows its player's fingers were never graded against.</para>
+    ///
+    /// <para>WHAT THAT DOES AND DOES NOT MEAN. It does NOT mean nothing reproduces: a row whose every
+    /// press sat well inside the same rung on both ladders comes back byte for byte, and plenty will.
+    /// What it means is that reproduction has stopped being a PROOF. A row that comes back did so by
+    /// luck of where its presses fell, and a row that does not is no longer telling anybody anything
+    /// they did not already know, so the reproduce sweep can no longer be read as a verification of
+    /// the table and the supersede sweep is the only one that says something true. That is exactly
+    /// the position the 133-to-147 window was always in, widened to everything.</para>
     ///
     /// <para>Deliberately NOT a <c>SkipReason</c> and NOT an <see cref="UnreplayableCase"/>. Every arm
-    /// of those means "nothing can be derived from this row", and one of these rows derives perfectly
-    /// well: it has a replay, a map and a run, and only the CHECK is unavailable. Folding it in would
+    /// of those means "nothing can be derived from this row", and these rows derive perfectly well:
+    /// they have a replay, a map and a run, and only the CHECK is unavailable. Folding it in would
     /// let one <c>--unreplayable</c> answer decide two different questions.</para>
     ///
     /// <para>Serialized into <c>--out</c> alongside the rest of the row, so an operator can pick the
     /// population out of the JSON without knowing which keys stamp which era.</para>
     /// </summary>
-    public bool JudgedOnTheDeletedLadder
+    public bool JudgedOnTheDeletedLadder => true;
+
+    /// <summary>
+    /// Whether this row carries the BACKLOG 133-TO-147 window's own stamp: the day production graded
+    /// on a four-tier character-distance ladder. Read off the row's own <c>maximum_statistics</c> by
+    /// <see cref="ScoringContract.JudgedUnderTheFourthTier"/>, the same predicate the server prices
+    /// such a row with, so the tool cannot end up disagreeing with the contract about which era a row
+    /// belongs to.
+    ///
+    /// <para>A strict subset of <see cref="JudgedOnTheDeletedLadder"/> since the window retune made
+    /// that one universal, and kept because the two mismatches do not look alike: every other row is
+    /// re-graded on a ladder of the same SHAPE (three millisecond rungs, retuned and made symmetric),
+    /// while one of these is re-graded on a different AXIS entirely, so its tier counts move in both
+    /// directions and its per-cell maximum changes key. A reader comparing a printout to a row needs
+    /// to know which of the two they are looking at.</para>
+    /// </summary>
+    public bool JudgedOnTheFourTierCharacterLadder
         => ScoringContract.JudgedUnderTheFourthTier(WireCounts.Parse(MaximumStatisticsJson));
 
     /// <summary>

@@ -312,12 +312,18 @@
     const MAX_SEAL_GRACE_MS = 700;
     const MIN_BOUNDARY_GRACE_MS = 250;
     const BOUNDARY_EPSILON_MS = 30;
-    const LOW_CONFIDENCE_SCORE = 0.15;
 
     function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
     // Beatmap-level granularity: an explicit header value wins; otherwise Word if any
     // surviving line carries words[], else Line (mirrors LyricBeatmapDecoder.finalise).
+    //
+    // METADATA ONLY NOW. It used to pick the judgement ladder a cell was graded on, and the
+    // widest-ladder fallback for an estimated line or a low-confidence word (the deleted
+    // SyncWindows.LOW_CONFIDENCE_SCORE of 0.15) lived alongside it; the single symmetric ladder
+    // retired both. It is still derived, and still mirrored, because the game's decoder still
+    // stamps it on every TypeBeatHitObject and the parity harnesses hold the two readings against
+    // each other.
     function granularityFor(header, rawLines) {
         const g = String((header && header.granularity) || '').toLowerCase();
         if (g === 'word') return 'Word';
@@ -1107,12 +1113,11 @@
     //
     // Letter timings are IDENTICAL either way: the per-word char spread counts only isCell chars
     // (never punctuation), so the mod adds cells without moving any of the existing ones.
-    function buildCells(text, units, estimated, granularity, literate) {
+    function buildCells(text, units, literate) {
         const n = text.length;
         const expected = new Array(n);
         const typeableFlags = new Array(n).fill(false);
         const targets = new Array(n).fill(null);
-        const tiers = new Array(n).fill(granularity);
 
         // Pass 1: walk the authored text token by token (spaces delimit tokens; token m maps to
         // units[m]). Punctuation is placed but left UNTIMED, and is excluded from k, so adding a
@@ -1124,9 +1129,7 @@
             const unit = units.length > 0 ? units[Math.min(m, units.length - 1)] : null;
             const unitStart = unit ? unit.start : 0;
             const unitEnd = unit ? unit.end : 0;
-            const conf = unit ? unit.conf : 1;
             const boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
-            const tier = (estimated || conf < LOW_CONFIDENCE_SCORE) ? 'Line' : granularity;
             const token = tokens[m];
 
             // k = number of cells in this token, freestyle slots included (the player presses a key
@@ -1146,7 +1149,6 @@
             for (let t = 0; t < token.length; t++) {
                 const ch = token[t];
                 expected[pos] = ch;
-                tiers[pos] = tier;
                 if (isCell(ch)) {
                     typeableFlags[pos] = true;
                     targets[pos] = syllableCharTarget(unitStart, unitEnd, boundaries, k, j, cuts);
@@ -1159,7 +1161,6 @@
                 expected[pos] = ' '; // inter-word space cell: preceding unit's end
                 typeableFlags[pos] = true;
                 targets[pos] = unitEnd;
-                tiers[pos] = tier;
                 pos++;
             }
         }
@@ -1203,18 +1204,18 @@
         if (literate) {
             // One cell per authored char, all of them typed. A mark is a first-class typeable cell.
             for (let i = 0; i < n; i++) {
-                cells.push(newCell(expected[i], targets[i], tiers[i], typeableFlags[i] || isPunctuation(expected[i])));
+                cells.push(newCell(expected[i], targets[i], typeableFlags[i] || isPunctuation(expected[i])));
             }
         } else {
-            // The default stream. Each surviving char keeps the timing and judge tier of the
-            // authored char it came from, so a hyphen-turned-space lands on the interpolated slot
-            // the hyphen held between the two letters it separated.
+            // The default stream. Each surviving char keeps the timing of the authored char it
+            // came from, so a hyphen-turned-space lands on the interpolated slot the hyphen held
+            // between the two letters it separated.
             const projected = projectDefault(text);
             sources = projected.sources;
             for (let i = 0; i < projected.text.length; i++) {
                 const src = projected.sources[i];
                 const ch = projected.text[i];
-                cells.push(newCell(ch, targets[src], tiers[src], isCell(ch)));
+                cells.push(newCell(ch, targets[src], isCell(ch)));
             }
         }
 
@@ -1334,7 +1335,7 @@
                 ? buildExplicitUnits(tokens, line.words, start, endTime)
                 : interpolateUnits(line.text, start, singEndTime);
 
-            const flattened = buildCells(line.text, units, line.estimated, granularity, literate);
+            const flattened = buildCells(line.text, units, literate);
             const cells = flattened.cells;
 
             // The line's syllable GROUPS, built ALWAYS (cheap and pure) because they are what a
@@ -1386,11 +1387,10 @@
         };
     }
 
-    function newCell(expected, target, tier, typeable) {
+    function newCell(expected, target, typeable) {
         return {
             expected: expected,
             target: target,
-            tier: tier,
             // Normally true: every char of the default stream is typeable, and under Literate every
             // authored char is. False only for a char outside both the typeable surface and the
             // supported marks, which normalize strips, so it is the defensive auto-skip path.
@@ -1439,8 +1439,27 @@
     // ---------------------------------------------------------------------------
     // Judgement windows (Judgement.cs SyncWindows).
     // ---------------------------------------------------------------------------
-    const BASE_WINDOWS = { ge: 250, gl: 400, oe: 600, ol: 1000, me: 1200, ml: 2000 };
-    const TIER_SCALE = { Line: 1.0, Word: 0.6, Syllable: 0.45 };
+    // ONE LADDER FOR EVERY CELL, symmetric around the cell's target: milliseconds between the
+    // keypress and the target, with the same bound on either side.
+    //
+    // It replaced a three-tier ladder (Line 250/400, Word 150/240, Syllable 112.5/180, six
+    // late-biased constants scaled by 1.0 / 0.6 / 0.45) whose tier came from the beatmap's
+    // granularity, widened back to the Line tier for an estimated line or a low-confidence word.
+    // The whole of that went on both sides: the timing data a map carries still varies, but the
+    // JUDGEMENT no longer does, so unreliable timing buys no extra tolerance and a well-subdivided
+    // map is not judged more tightly than a coarse one. The per-cell `tier` this file used to carry
+    // went with it, exactly as TypingCell.JudgeGranularity did, because a cell no longer selects
+    // anything.
+    //
+    // A RETUNE OF THESE THREE NUMBERS IS NOT AN ERA on either side: no CONFIG bit records which
+    // ladder a run was graded on, so a stored replay re-derives on whatever ladder ships today. That
+    // is the recalculation tool's problem (tools/score-recalc) and never this file's, which only
+    // ever plays live. The era bits AROUND the ladder still bind, because they are rules that
+    // survive a retune: bit 13's Hard Rock halving multiplies whatever is here, and bit 8's
+    // first-char rule narrows what the delta is measured from.
+    const GREAT_WINDOW_MS = 150;
+    const OK_WINDOW_MS = 300;
+    const MEH_WINDOW_MS = 600;
 
     // The C# carries one more factor here since backlog 149: TypingEngine.WindowScale, a
     // multiplicative scale a mod may put on every window. Easy still doubles them live. Hard Rock
@@ -1453,10 +1472,15 @@
     // computed) and no rate control either (see the update() note about clockRate), so the
     // browser's scale is permanently 1 and the C# at 1 is bit-identical to this. The day browser
     // play gains a mods payload or a rate, this is where the scale has to arrive.
-    function windowsFor(tier) {
-        const s = TIER_SCALE[tier] != null ? TIER_SCALE[tier] : 1.0;
-        return { ge: BASE_WINDOWS.ge * s, gl: BASE_WINDOWS.gl * s, oe: BASE_WINDOWS.oe * s, ol: BASE_WINDOWS.ol * s, me: BASE_WINDOWS.me * s, ml: BASE_WINDOWS.ml * s };
-    }
+    //
+    // Kept as the six-field object the two consumers below already read, rather than collapsed to
+    // three numbers, so `classify` and the sync ramp stay written against an early and a late bound
+    // and a scale would have exactly one place to land. Mirrors SyncWindows.Default.
+    const WINDOWS = {
+        ge: GREAT_WINDOW_MS, gl: GREAT_WINDOW_MS,
+        oe: OK_WINDOW_MS, ol: OK_WINDOW_MS,
+        me: MEH_WINDOW_MS, ml: MEH_WINDOW_MS
+    };
 
     function classify(delta, w) {
         if (delta >= -w.ge && delta <= w.gl) return 'Great';
@@ -1985,6 +2009,20 @@
             // only value it can hold, and the pre-218 UNBOUNDED era is unreachable in it exactly as
             // the pinned one is. The C# arm of the fuzz parity test therefore has to SET bits 5 and
             // 7 in the frames it feeds, the same treatment bits 2, 3, 4 and 6 already get.
+            //
+            // MANUAL NEWLINES (TypingEngine.ManualNewlines, CONFIG frame bit 14) is the third caret
+            // axis and is NOT mirrored, because it is a SETTING and the browser has no settings
+            // surface: /play mounts this engine from typebeat-player.js with nothing but the map,
+            // and the whole of what the setting does (the two time-driven hand-overs going quiet, a
+            // finished line being held open to its drag cutoff, a space or Enter on a finished line
+            // becoming the newline, the greyed AwaitingEntry wait before a line's entry window
+            // opens) is gated on it in the C# too. The browser therefore runs the AUTOMATIC
+            // hand-over, which is the C# default and what a CONFIG frame with bit 14 clear means, so
+            // the parity harnesses leave the bit alone rather than setting it the way they set 2, 3,
+            // 4, 5, 6, 7, 8, 10, 11 and 12. What IS reachable here, and is mirrored, is the backspace
+            // at the head of a line stepping back up into the line behind it: the C# gates that on
+            // FletcherEnabled alone, with no era bit, so it is live rule on an ordinary /play run
+            // (see processBackspace and stepBackIntoLine).
             this.fletcherEnabled = true;
             this.flexibleLineSnap = true;
             // THE SYMMETRIC RUSH BOUND (backlog 218): a finished caret may enter the next line only
@@ -3073,7 +3111,7 @@
         // TypingEngine.judgedDeltaFor). A cell inside a SYLLABLE GROUP is judged against the
         // group's sung SPAN: 0 anywhere inside [startTime, endTime] (edge-inclusive), the signed
         // distance to the nearer edge outside it (negative early, positive late), so the same
-        // asymmetric classify ladder grades distance from the syllable's edge.
+        // classify ladder grades distance from the syllable's edge.
         //
         // A cell in NO group keeps the classic point delta (time minus the cell's own target), and
         // that fallback is what gives a stylised word its per-character judgement: space cells,
@@ -3101,6 +3139,15 @@
         // client's own upload path), and nothing re-scores a stored row through this file. So the
         // live rule is the only rule this engine can be in, and all three parts of it are
         // unconditional.
+        //
+        // THE FOURTH SPAN, the EASY mod's word-level shelter (TypingEngine.WordShelter), is NOT
+        // mirrored, and it is the one arm here that is a mod rather than an era. It draws the same
+        // rule around the whole WORD (TypingLine.Words) instead of the syllable, so a press anywhere
+        // inside the word is dead on. /play has no mods payload at all (see the scoreMultiplier note
+        // where the total is computed), so the browser can no more turn Easy on than it can turn on
+        // the window scale that travels with it, and porting the shelter would add a span nothing
+        // could select. The day browser play gains a mods payload, this is the second place it has
+        // to arrive, right after WINDOWS.
         judgedDeltaFor(line, cellIndex, time) {
             const syllable = syllableIndexOf(line, cellIndex);
 
@@ -3160,6 +3207,16 @@
         // does not have.
         processEnter(time) {
             if (this.finished || this.activeLineIndex < 0) return false;
+
+            // PINNED CARET: Enter is not a gameplay key at all, so the press does nothing here and
+            // falls through to whatever the client binds it to. The skip below is CARET MOVEMENT,
+            // and it is worth something only because the unpinned caret may carry the player on
+            // early: with the caret pinned to the song there is nothing to move them to, and the
+            // press would give the rest of the line up for NOTHING. The browser is permanently
+            // unpinned (fletcherEnabled is set in the constructor and nothing turns it off), so this
+            // is a mirror of the C# guard rather than an arm a /play run can reach; the harnesses
+            // that build a pinned engine by hand do reach it.
+            if (!this.fletcherEnabled) return false;
 
             const line = this.lines[this.activeLineIndex];
 
@@ -3509,7 +3566,7 @@
             // not to the cell's judgement.
             this.resumeStreakIfThisRedeemsTheBreak(this.caretIndex);
 
-            const w = windowsFor(cell.tier);
+            const w = WINDOWS;
             const inertRetype = cell.firstCorrectDelta !== null;
             let type, points = 0;
 
@@ -3652,6 +3709,60 @@
             return true;
         }
 
+        // TypingEngine.stepBackIntoLine. HAND BACK INTO A LINE the player was moved off: the undo for
+        // a mid-line Enter that gave the rest of the line up (processEnter), and just as much the way
+        // back to a line the SONG has handed them on from. The caret lands at the LAST CHARACTER THEY
+        // ACTUALLY TYPED, just after the last cell they put something into, and everything that was
+        // given up is handed back LIVE rather than left behind the caret to be missed at the seal.
+        //
+        // THE END OF THE LINE IS THE WRONG PLACE FOR IT: parked past the last cell the line reads
+        // COMPLETE (isLineComplete), keypresses there are inert, the characters the player came back
+        // for are unreachable, and the misses the return was meant to erase are the very ones it
+        // guarantees. On the frontier they are all in front of the caret again, where typing them is
+        // what erases them, the same "come back and type it" account the word skip's reclaim keeps.
+        //
+        // WHAT THE WALK BACK STOPS ON: a cell the player TYPED (correct or wrong) and a cell already
+        // resolved as 'missed' both end it, so the caret lands after the last thing the line has an
+        // answer for. The C#'s note about a Missed cell in that tail is about a stored run re-derived
+        // under the pre-167 immediate-miss era, which the browser can never be in; the arm is
+        // mirrored anyway, because it is the same walk and a state-keyed rule is not an era rule.
+        //
+        // The line's own abandonment goes with the skip (lineAbandoned): the flag exists to hold the
+        // line open, past its deadline, for the misses the player walked away from, and there is
+        // nothing left to hold it open for once they have walked back. An ABANDONED word caught in
+        // the tail is re-opened the way processBackspace's own walk re-opens one; the C# raises
+        // AbandonReclaimed for the HEALTH refund there, which this mirror has no counterpart for on
+        // either backspace path, because the browser models health off consecutiveWrongKeys rather
+        // than as an account. Its combo still comes back at the retype, which is what the claim left
+        // in place is for.
+        stepBackIntoLine(index) {
+            const cells = this.lines[index].cells;
+
+            let frontier = 0;
+
+            for (let i = cells.length - 1; i >= 0; i--) {
+                const state = cells[i].state;
+
+                if (state === 'correct' || state === 'wrong' || state === 'missed') {
+                    frontier = i + 1;
+                    break;
+                }
+            }
+
+            for (let i = frontier; i < cells.length; i++) {
+                if (cells[i].state === 'abandoned' || cells[i].state === 'autoskip') {
+                    cells[i].state = 'untyped';
+                    cells[i].judgeType = null;
+                }
+            }
+
+            this.lineAbandoned[index] = false;
+
+            this.activeLineIndex = index;
+            this.caretIndex = frontier;
+            this.autoSkipForward();
+        }
+
         // TypingEngine.ProcessBackspace. Erase the most recent typed cell within the active line,
         // stepping back transparently over auto-skipped punctuation (which is un-skipped so retyping
         // re-marks it) and, since backlog 167, over the ABANDONED cells of a skipped word (which go
@@ -3671,6 +3782,35 @@
         // a word, and nothing at all if it did not.
         processBackspace() {
             if (this.finished || this.activeLineIndex < 0) return false;
+
+            // THE HEAD OF A LINE THE PLAYER ARRIVED ON: a backspace there steps BACK UP to the line
+            // it came from. That is the way back to a line the SONG has just handed them on from, so
+            // a typo noticed a beat too late is still the player's to fix, and equally the undo for a
+            // mid-line Enter that gave the rest of a line up. It works for exactly as long as that
+            // line is still theirs, whoever moved them: until the engine TAKES it, which is the seal
+            // (sealPermitted, the instant the push warning's red bar has counted down to) and not the
+            // vocals running out or the next cue arriving. Once the line is sealed the press is
+            // inert, just as it is on any other line's head.
+            //
+            // AND IT LANDS ON WHAT THE PLAYER LAST TYPED rather than at the end of the line (see
+            // stepBackIntoLine): the line it comes back to is one the player may have given the rest
+            // of up to a mid-line Enter, and the characters that press gave up have to be in front of
+            // the caret again for coming back to mean anything.
+            //
+            // NO ERA BIT. The C# gates it on FletcherEnabled alone, which the browser is permanently
+            // in, so this is live rule and reachable on an ordinary /play run: a flexible caret that
+            // finished a line early, or was moved on by the line-start snap, is one backspace from
+            // the line behind it.
+            if (this.caretIndex === 0 && this.activeLineIndex > 0 && this.fletcherEnabled) {
+                const previous = this.activeLineIndex - 1;
+
+                if (previous >= this.nextSealIndex) {
+                    this.stepBackIntoLine(previous);
+                    return true;
+                }
+
+                return false;
+            }
 
             const cells = this.lines[this.activeLineIndex].cells;
 
@@ -4002,10 +4142,10 @@
         // for the same reason, so the game's own SyllableSegments can be held against it.
         isAuthoredValid, derivedSplits, splitsFor, cellCuts, segmentOf,
         TypingEngine, computeScore, rankFromCompletion,
-        windowsFor, classify, toHitResult,
+        WINDOWS, classify, toHitResult,
         freestyleTick, freestyleGlyph,
         constants: {
-            CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, LOW_CONFIDENCE_SCORE, FREESTYLE_MARKER,
+            CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, FREESTYLE_MARKER,
             SHIMMER_INTERVAL_MS, PUNCTUATION, WORD_BREAK, STRETCH_RUN_LENGTH,
             // The format version gate (backlog 255), exported so the harnesses pin the same numbers
             // the C# decoder carries rather than transcribing them.

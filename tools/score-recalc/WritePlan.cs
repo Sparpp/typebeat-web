@@ -106,15 +106,22 @@ public sealed class WritePlan
     public required IReadOnlyList<RecalcResult> Refused { get; init; }
 
     /// <summary>
-    /// Rows judged in the backlog 133-to-147 window (<see cref="StoredScore.JudgedOnTheDeletedLadder"/>),
+    /// Rows judged on a ladder this code no longer has (<see cref="StoredScore.JudgedOnTheDeletedLadder"/>),
     /// whatever else the sweep does with them, and the count <c>--expect-unreproducible</c> names.
     ///
+    /// <para>SINCE THE WINDOW RETUNE THAT IS EVERY ROW, and the list is kept rather than collapsed to
+    /// a count for two reasons: the property it selects on may narrow again if a future ladder change
+    /// ever carries an era bit, and the guard reads a LIST so the operator's number is checked
+    /// against the rows the apply would actually touch. It used to be the backlog 133-to-147 window
+    /// alone; that sub-population is still named separately in the report, because its mismatch has a
+    /// different shape (see <see cref="StoredScore.JudgedOnTheFourTierCharacterLadder"/>).</para>
+    ///
     /// <para>Every row the run considered is counted, not just the ones it re-derived, because the
-    /// membership is a FACT ABOUT THE DATA rather than about how the sweep went: a row carries the
-    /// era stamp whether or not its replay decoded, and no client can produce a new one, so the same
-    /// selection gives the same count on the report and on the apply. It is computed here rather than
-    /// in the report so the number an operator reads and the number the guard checks cannot be two
-    /// different definitions.</para>
+    /// membership is a FACT ABOUT THE DATA rather than about how the sweep went: a row was played on
+    /// the ladder it was played on whether or not its replay decoded, and no client can produce a new
+    /// one for a retired ladder, so the same selection gives the same count on the report and on the
+    /// apply. It is computed here rather than in the report so the number an operator reads and the
+    /// number the guard checks cannot be two different definitions.</para>
     /// </summary>
     public required IReadOnlyList<RecalcResult> DeletedLadderWindow { get; init; }
 

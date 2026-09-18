@@ -28,11 +28,12 @@ namespace Typebeat.Web.Packages;
 ///     IS the timing schema: per-line start/end, per-word units and their syllable arrays, the
 ///     freestyle flag, the header's <c>song_end_ms</c> (which caps the last line's seal deadline)
 ///     and <c>granularity</c>. Taking it raw rather than through the parsed
-///     <see cref="Lyrics.LyricLine"/> model is deliberate: the server's port drops the
-///     judge-granularity and seal-grace machinery as "gameplay windows only, never cell target
-///     times" (Lyrics/LyricTiming.cs), and those windows are exactly the kind of thing a
-///     fingerprint must not be blind to. Raw text sees every key, including ones this server does
-///     not model yet.
+///     <see cref="Lyrics.LyricLine"/> model is deliberate: the server's port drops the granularity
+///     and seal-grace machinery as "gameplay windows only, never cell target times"
+///     (Lyrics/LyricTiming.cs), and those windows are exactly the kind of thing a fingerprint must
+///     not be blind to. Raw text sees every key, including ones this server does not model yet, and
+///     including <c>granularity</c>, which selected a judgement ladder until the three tiers were
+///     collapsed into one symmetric set and is metadata today.
 ///   </description></item>
 ///   <item><description>
 ///     <b>The SHA256 of the audio file the difficulty points at.</b> Not optional, and newly
