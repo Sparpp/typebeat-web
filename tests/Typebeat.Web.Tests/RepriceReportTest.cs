@@ -193,15 +193,16 @@ public class RepriceReportTest
         // The fixture the game's own pace regression is pinned on. 152's clamp is what keeps this
         // map's LENGTH BONUS at exactly 0, and a report that claimed a move here would be reporting
         // on a broken clamp. The RATING itself moved to 0.82 with the difficulty rework (it was 0.67
-        // under the envelope model), which is a different claim and not the one this pins: what
-        // matters is that the bonus is 0, so the report says the map gains nothing.
+        // under the envelope model) and to exactly 0 at LyricPace v22 (five cells is under the
+        // chunked axis's 16-character floor), which is a different claim and not the one this pins:
+        // what matters is that the bonus is 0, so the report says the map gains nothing.
         var parsed = BeatmapPackageParser.ParseDifficulty("short.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
 
         Assert.Multiple(() =>
         {
             Assert.That(Length.Count(parsed.Lines, literate: false), Is.EqualTo(5), "ab + space + cd");
             Assert.That(Length.StarBonus(Length.Count(parsed.Lines, literate: false)), Is.EqualTo(0));
-            Assert.That(parsed.Pace.DifficultyRating, Is.EqualTo(0.82).Within(0.01));
+            Assert.That(parsed.Pace.DifficultyRating, Is.Zero);
         });
     }
 

@@ -32,7 +32,45 @@ public sealed class TimedUnit
     /// piped word with no <c>syllables</c> array of its own rates here as unsubdivided.</para>
     /// </summary>
     public IReadOnlyList<double> SyllableBoundaries { get; init; } = Array.Empty<double>();
+
+    /// <summary>
+    /// The authored pauses inside this word, in TIME order: empty for every word in every map written
+    /// before the feature existed, and for every word that never needed one. See
+    /// <see cref="WordPause"/> (game's TimedUnit.Pauses, LyricBeatmap.cs).
+    ///
+    /// <para>N rests cut the word into N + 1 sung stretches, each timed in its own right by
+    /// <see cref="PausedWord"/>, which is what <see cref="LyricDifficulty"/> reads them through. The
+    /// rests never overlap each other and never share a character, and each one's cut stands in the
+    /// same order as its time. The parser keeps only the rests <see cref="PausedWord.UsableRests"/>
+    /// accepts against the CLAMPED word, exactly as the game's loader does, so a rest the play would
+    /// ignore is never stored here. Empty by default, so every caller that builds a unit by hand
+    /// reads exactly as it did.</para>
+    /// </summary>
+    public IReadOnlyList<WordPause> Pauses { get; init; } = Array.Empty<WordPause>();
 }
+
+/// <summary>
+/// AN AUTHORED PAUSE INSIDE ONE WORD, the Map Editor's <b>Insert Pause</b> (game's
+/// <c>WordPause</c>, LyricBeatmap.cs).
+///
+/// <para>A rest the singer takes between two of the word's characters, for the multisyllabic words
+/// where the breath falls mid-word: nothing is typed while it lasts, the caret waits where it is,
+/// and the characters after it are timed from its END. It is deliberately NOT a rest for the pace
+/// figures: the word still reads as uninterrupted singing, so the WPM denominators keep counting it
+/// as silence inside the word instead of resetting on a breath.</para>
+///
+/// <para><see cref="SplitChar"/> is the character index the pause sits AFTER (the character before
+/// it is the last one typed before the wait), so it is strictly inside the token, like the syllable
+/// splits it sits beside. The times are absolute milliseconds, strictly inside the unit's own span,
+/// with <see cref="StartTime"/> before <see cref="EndTime"/>. An old map carries none of this at
+/// all.</para>
+///
+/// <para>A word may take SEVERAL rests (see <see cref="TimedUnit.Pauses"/>), one per breath: each is
+/// a divider of its own, so the word is sung in as many stretches as it has rests plus one, and every
+/// pair must agree with the text: a rest later in TIME sits on a later character than the ones
+/// before it, and no two rests share a character or a moment.</para>
+/// </summary>
+public readonly record struct WordPause(double StartTime, double EndTime, int SplitChar);
 
 /// <summary>A resolved lyric line (game's LyricLine, minus gameplay-only fields).</summary>
 public sealed class LyricLine
@@ -74,16 +112,24 @@ public static class LyricTiming
 
     /// <summary>
     /// One parsed [Lyrics] line. <c>Words</c>'s fourth member is the word's AUTHORED SYLLABLE
-    /// STARTS as they sit on the wire (the <c>"syllables"</c> array LyricOsuFormat writes and
-    /// TimingJsonLoader reads back), unclamped and unfiltered: <see cref="buildExplicitUnits"/>
-    /// applies the game's rules to them once the word's own span is known. Empty for the words of
-    /// every map the aligner did not subdivide, which is what makes this addition inert for them.
+    /// STARTS as they sit on the wire (the <c>start_ms</c> of each <c>"syllables"</c> object the
+    /// game's encoder writes and TimingJsonLoader reads back), filtered to the word's RAW span
+    /// exactly as the game's parse filters them: <see cref="buildExplicitUnits"/> applies the
+    /// game's remaining rules once the word's clamped span is known. Empty for the words of every
+    /// map the aligner did not subdivide, which is what makes this addition inert for them.
+    ///
+    /// <para><paramref name="WordPauses"/> is PARALLEL to <paramref name="Words"/> (entry i holds
+    /// word i's authored pauses exactly as they sat on the wire, unvalidated) and is null when the
+    /// line authored none, which is every line of every map written before the feature existed:
+    /// the game's <c>TimingJsonLoader.RawLine.WordPauses</c>. It rides beside the word tuple rather
+    /// than inside it so every existing construction of this struct is unchanged.</para>
     /// </summary>
     public readonly record struct RawLine(
         string Text,
         double StartMs,
         double EndMs,
-        List<(string Text, double Start, double End, double[] Syllables)> Words);
+        List<(string Text, double Start, double End, double[] Syllables)> Words,
+        List<List<(double Start, double End, int Split)>>? WordPauses = null);
 
     /// <summary>Header fields of a [Lyrics] section (all optional on the wire).</summary>
     public sealed class Header
@@ -208,6 +254,9 @@ public static class LyricTiming
 
         var words = new List<(string Text, double Start, double End, double[] Syllables)>();
 
+        // Parallel to words[]: word i's authored pauses, raw (TimingJsonLoader's wordPauses).
+        var wordPauses = new List<List<(double Start, double End, int Split)>>();
+
         if (lineElement.TryGetProperty("words", out JsonElement wordsElement)
             && wordsElement.ValueKind == JsonValueKind.Array)
         {
@@ -224,10 +273,18 @@ public static class LyricTiming
                 double we = wordElement.TryGetProperty("end_ms", out JsonElement weEl) && tryGetDouble(weEl, out double wev) ? wev : ws;
 
                 // The word's authored syllable STARTS, read exactly as TimingJsonLoader reads them
-                // (its words[].syllables): every number the array holds, in wire order, with
-                // non-numbers skipped. They are neither clamped nor filtered here, because the rule
-                // the game applies ("strictly inside the CLAMPED word") needs the word's resolved
-                // span, which BuildLines has and this parse does not.
+                // (its words[].syllables): each entry is an OBJECT, the one the game's encoder and
+                // SynthesizedTimingJson write ({text, start_ms, end_ms}), and its start_ms becomes
+                // a boundary when it sits strictly inside the word's RAW span. The first syllable
+                // starts at the word's own start, so it contributes none. Anything else in the
+                // array (a bare number, an object without a numeric start_ms) is skipped, as the
+                // game skips it. The remaining rule ("strictly inside the CLAMPED word") needs the
+                // word's resolved span, which BuildLines has and this parse does not.
+                //
+                // Before PR 2's port this read BARE NUMBERS, a shape no writer produces, so every
+                // real subdivided map rated here as unsubdivided while the client read its
+                // boundaries. The parser parity test in WireCompat now pins this against the game's
+                // own loader.
                 double[] syllables = Array.Empty<double>();
 
                 if (wordElement.TryGetProperty("syllables", out JsonElement sylEl) && sylEl.ValueKind == JsonValueKind.Array)
@@ -236,18 +293,58 @@ public static class LyricTiming
 
                     foreach (JsonElement entry in sylEl.EnumerateArray())
                     {
-                        if (tryGetDouble(entry, out double at))
+                        if (entry.ValueKind == JsonValueKind.Object
+                            && entry.TryGetProperty("start_ms", out JsonElement sylStart)
+                            && tryGetDouble(sylStart, out double at)
+                            && at > ws && at < we)
+                        {
                             parsed.Add(at);
+                        }
                     }
 
                     syllables = parsed.Count == 0 ? Array.Empty<double>() : parsed.ToArray();
                 }
 
                 words.Add((wordText, ws, we, syllables));
+
+                // THE AUTHORED PAUSES (type!beat editor extension): the rests inside the word, read
+                // RAW here and validated against the CLAMPED word in buildExplicitUnits, exactly as
+                // the game's TimingJsonLoader does. `pauses` is the array a word writes when it takes
+                // more than one breath; the single `pause` object is the shape the feature had before
+                // a word could hold several, and reads the same way. An entry missing any of its
+                // three members, or carrying a non-number (or a fractional split), is dropped. When
+                // `pauses` is an array the single object is not read at all.
+                var pauses = new List<(double Start, double End, int Split)>();
+
+                void readPause(JsonElement element)
+                {
+                    if (element.ValueKind != JsonValueKind.Object
+                        || !element.TryGetProperty("start_ms", out JsonElement pauseStart) || !tryGetDouble(pauseStart, out double pauseMsA)
+                        || !element.TryGetProperty("end_ms", out JsonElement pauseEnd) || !tryGetDouble(pauseEnd, out double pauseMsB)
+                        || !element.TryGetProperty("split", out JsonElement pauseSplit) || !tryGetInt(pauseSplit, out int pauseChar))
+                    {
+                        return;
+                    }
+
+                    pauses.Add((pauseMsA, pauseMsB, pauseChar));
+                }
+
+                if (wordElement.TryGetProperty("pauses", out JsonElement pausesEl) && pausesEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement pauseEl in pausesEl.EnumerateArray())
+                        readPause(pauseEl);
+                }
+                else if (wordElement.TryGetProperty("pause", out JsonElement singlePauseEl))
+                {
+                    readPause(singlePauseEl);
+                }
+
+                wordPauses.Add(pauses);
             }
         }
 
-        rawLine = new RawLine(normalized, startMs, endMs, words);
+        rawLine = new RawLine(normalized, startMs, endMs, words,
+            wordPauses.Exists(p => p.Count > 0) ? wordPauses : null);
         return true;
     }
 
@@ -286,7 +383,7 @@ public static class LyricTiming
             IReadOnlyList<TimedUnit> units;
 
             if (tokens.Length == line.Words.Count && tokens.Length > 0)
-                units = buildExplicitUnits(tokens, line.Words, start, end);
+                units = buildExplicitUnits(tokens, line.Words, line.WordPauses, start, end);
             else
                 units = InterpolateUnits(line.Text, start, singEnd);
 
@@ -352,6 +449,7 @@ public static class LyricTiming
     private static IReadOnlyList<TimedUnit> buildExplicitUnits(
         string[] tokens,
         List<(string Text, double Start, double End, double[] Syllables)> words,
+        List<List<(double Start, double End, int Split)>>? wordPauses,
         double lineStart,
         double lineEnd)
     {
@@ -368,6 +466,19 @@ public static class LyricTiming
             if (we < ws)
                 we = ws;
 
+            // THE AUTHORED PAUSES, kept only when they survived the same clamping the syllables
+            // did and are real rests inside this token: both edges strictly inside the clamped
+            // word, start before end, and the split a character index that leaves typeable cells on
+            // both sides. Which of a word's rests survive is the DERIVATION's own answer
+            // (PausedWord.UsableRests, as TimingJsonLoader.cs asks it), so a map never loads a rest
+            // the play would ignore: the per-rest terms above, and then none overlapping an earlier
+            // one, no two sharing a character, and every later rest on a later character than the
+            // one before it. Anything else is dropped rather than guessed at.
+            var rawPauses = wordPauses != null && m < wordPauses.Count ? wordPauses[m] : null;
+            var keptPauses = PausedWord.UsableRests(
+                tokens[m], ws, we,
+                rawPauses?.Select(pause => new WordPause(pause.Start, pause.End, pause.Split)) ?? Enumerable.Empty<WordPause>());
+
             units.Add(new TimedUnit
             {
                 Text = tokens[m],
@@ -378,6 +489,7 @@ public static class LyricTiming
                 // ON either edge would author an empty syllable segment, which is why the
                 // comparisons are strict on both sides.
                 SyllableBoundaries = syllableBoundaries(words[m].Syllables, ws, we),
+                Pauses = keptPauses.Count == 0 ? Array.Empty<WordPause>() : keptPauses,
             });
 
             prevEnd = we;
@@ -411,6 +523,27 @@ public static class LyricTiming
 
         kept.Sort();
         return kept;
+    }
+
+    // TimingJsonLoader.tryGetInt: a JSON number that is a whole value, 2.0 as well as 2.
+    private static bool tryGetInt(JsonElement element, out int value)
+    {
+        value = 0;
+
+        if (element.ValueKind != JsonValueKind.Number)
+            return false;
+
+        if (element.TryGetInt32(out value))
+            return true;
+
+        // JSON doesn't distinguish 2 from 2.0; accept whole-number float tokens too.
+        if (element.TryGetDouble(out double d) && d == Math.Floor(d) && d >= int.MinValue && d <= int.MaxValue)
+        {
+            value = (int)d;
+            return true;
+        }
+
+        return false;
     }
 
     private static bool tryGetDouble(JsonElement element, out double value)

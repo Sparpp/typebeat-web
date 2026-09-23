@@ -85,11 +85,11 @@ public class PackageParserTest
             Assert.That(diff.Pace.AverageCpm, Is.EqualTo(100).Within(1e-9));
             Assert.That(diff.Pace.AverageWpm, Is.EqualTo(20).Within(1e-9)); // CPM/5 since LyricPace v15
             Assert.That(diff.Pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
-            // Stars (LyricDifficulty): "ab cd" is sung over 2000 ms and rates 0.82 on the CHUNKED
-            // endurance axis, which is what the model ships since the difficulty rework (0.67 under
-            // the envelope model at the 12.0 anchor, 0.59 at the 10.6 anchor, 0.63 under the strain
-            // model before that).
-            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.82).Within(0.01));
+            // Stars (LyricDifficulty): "ab cd" rates EXACTLY ZERO since LyricPace v22. It is five
+            // cells, and the chunked axis's 16-character floor prices a map with no window holding
+            // that many at nothing (0.82 on the v21 chunked grid, 0.67 under the envelope model at
+            // the 12.0 anchor, 0.59 at the 10.6 anchor, 0.63 under the strain model before that).
+            Assert.That(diff.Pace.DifficultyRating, Is.Zero);
 
             // The rolling-window columns (028_wpm_curve.sql) are NULL here, and that is the
             // unmeasurable arm of their contract rather than an omission: "ab cd" is 5 cells
@@ -98,14 +98,14 @@ public class PackageParserTest
             Assert.That(diff.PeakCpm, Is.Null);
 
             // target_wpm (033_target_wpm.sql) is NOT on that contract, and that is still the point,
-            // though for a different reason since LyricPace v21: the target is the map's hardest
-            // window by raw speed read off the difficulty model, and the model finds one on a map
-            // far too short for the 30-cell rolling window. This map's smallest scheduled window
-            // (1.36 s) sits inside its 2 s of singing and reads 21.84 WPM, which is ABOVE the
-            // whole-map average, so the floor does not bite and the two figures differ.
-            Assert.That(diff.TargetWpm, Is.EqualTo(21.84).Within(0.01));
-            Assert.That(diff.TargetWpm, Is.GreaterThan(diff.Pace.AverageWpm),
-                "the hardest window asks for more than the whole map's own pace");
+            // though for a different reason since LyricPace v22: the target is the map's hardest
+            // window by raw speed read off the difficulty model, FLOORED at the whole-map average.
+            // The model finds no qualifying window here any more (five cells is under the
+            // 16-character floor, where v21 read 21.84 WPM off the smallest scheduled window), so
+            // the floor is what the column holds: a number, where peak_wpm is NULL.
+            Assert.That(diff.TargetWpm, Is.EqualTo(diff.Pace.AverageWpm).Within(1e-12),
+                "no window qualifies, so the target is the whole map's own pace");
+            Assert.That(diff.TargetWpm, Is.EqualTo(20).Within(1e-9));
 
             // Last line end = min(song_end 4000, end_ms 3000 + 3000 tail) = 4000 ms.
             Assert.That(diff.TotalLengthS, Is.EqualTo(4.0).Within(1e-9));
@@ -125,16 +125,20 @@ public class PackageParserTest
         // ask for a particular speed in one, and the pace is about the speed a map asks for; the
         // count lives in freestyle_cell_count instead, as an addition to char_count rather than a
         // subset of it.
+        //
+        // THE LINE IS SIX TOKENS SINCE LyricPace v22 ("me & you" until then): its 7 cells rated
+        // exactly zero under the chunked axis's 16-character floor with or without the slot, which
+        // made the last assertion below vacuous.
         const string lyrics =
             """
             {"granularity":"word","version":2,"song_end_ms":20000}
-            {"text":"me & you","start_ms":1000,"end_ms":4000,"freestyle":true,"words":[{"text":"me","start_ms":1000,"end_ms":2000},{"text":"&","start_ms":2000,"end_ms":3000},{"text":"you","start_ms":3000,"end_ms":4000}]}
+            {"text":"take me & with you tonight","start_ms":1000,"end_ms":4000,"freestyle":true,"words":[{"text":"take","start_ms":1000,"end_ms":1500},{"text":"me","start_ms":1500,"end_ms":2000},{"text":"&","start_ms":2000,"end_ms":2500},{"text":"with","start_ms":2500,"end_ms":3000},{"text":"you","start_ms":3000,"end_ms":3500},{"text":"tonight","start_ms":3500,"end_ms":4000}]}
             """;
 
         const string legacyLyrics =
             """
             {"version":2,"song_end_ms":20000}
-            {"text":"me & you","start_ms":1000,"end_ms":4000}
+            {"text":"take me & with you tonight","start_ms":1000,"end_ms":4000}
             """;
 
         var free = BeatmapPackageParser.ParseDifficulty("free.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: lyrics)));
@@ -142,19 +146,20 @@ public class PackageParserTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(free.Lines[0].RawText, Is.EqualTo("me & you"));
-            Assert.That(free.Pace.TypeableCellCount, Is.EqualTo(7)); // 6 letters + 2 spaces, and NOT the slot
+            Assert.That(free.Lines[0].RawText, Is.EqualTo("take me & with you tonight"));
+            Assert.That(free.Pace.TypeableCellCount, Is.EqualTo(25)); // 20 letters + 5 spaces, and NOT the slot
             Assert.That(free.Pace.FreestyleCellCount, Is.EqualTo(1)); // which is counted here instead
-            Assert.That(free.Pace.WordCount, Is.EqualTo(2), "a token of nothing but a slot asks for no typing");
+            Assert.That(free.Pace.WordCount, Is.EqualTo(5), "a token of nothing but a slot asks for no typing");
 
-            Assert.That(legacy.Lines[0].RawText, Is.EqualTo("me you"));
-            Assert.That(legacy.Pace.TypeableCellCount, Is.EqualTo(6));
+            Assert.That(legacy.Lines[0].RawText, Is.EqualTo("take me with you tonight"));
+            Assert.That(legacy.Pace.TypeableCellCount, Is.EqualTo(24));
             Assert.That(legacy.Pace.FreestyleCellCount, Is.Zero);
-            Assert.That(legacy.Pace.WordCount, Is.EqualTo(2));
+            Assert.That(legacy.Pace.WordCount, Is.EqualTo(5));
 
             // THE SLOT STILL COSTS SOMETHING, which is the half of the old claim that survives: it
             // is a cell of the map with a deadline, priced at a quarter by the star rating, so the
             // flagged map rates above the one where the same ampersand is stripped as punctuation.
+            Assert.That(legacy.Pace.DifficultyRating, Is.GreaterThan(0), "the premise: the line clears the character floor");
             Assert.That(free.Pace.DifficultyRating, Is.Not.EqualTo(legacy.Pace.DifficultyRating));
         });
     }

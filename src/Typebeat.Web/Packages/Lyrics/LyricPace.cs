@@ -349,6 +349,44 @@ public static class LyricPace
     /// matrix entry is still missing leaves its plays PENDING, exactly as an unfilled
     /// <c>sr_dt</c> does, rather than pricing them against a rating that is not theirs.</para>
     ///
+    /// <para>v22 = THE CHUNKED AXIS MOVES AGAIN, AND AUTHORED PAUSES REACH THE RATING (PR 2, the
+    /// game's difficulty calculator Version 4). Four things move, and all but the last are mirrored
+    /// from the game rather than decided here.</para>
+    ///
+    /// <para>FIRST, THE LAYOUT AND THE DIALS. <see cref="ChunkedEndurance"/> reads the map through
+    /// the OVERLAPPING window profile with the Star Rating Sandbox's active dials instead of the
+    /// anchored chunk grid; a play shaped by Literate or a judgement mod has its runs decided on the
+    /// base material (<c>LyricDifficulty.RateChunked</c>'s base pass) so a mod cannot dissolve one;
+    /// and under Literate a run of capitals or shifted marks carries a Shift surcharge in the chunk
+    /// strain's demand.</para>
+    ///
+    /// <para>SECOND, THE CHARACTER FLOOR. <c>LyricDifficulty.MinimumWindowChars</c> goes from 0 to
+    /// 16, so the envelope arm's hardest window must carry at least sixteen weighted characters.
+    /// That arm feeds no rating, only <c>beatmaps.target_wpm</c>, which therefore moves on any map
+    /// whose fastest burst was shorter than that.</para>
+    ///
+    /// <para>THIRD, THE PAUSES. A word's authored rests (<see cref="WordPause"/>, the editor's
+    /// Insert Pause, stored per word as a <c>pauses</c> array, or the older single <c>pause</c>
+    /// object) are now parsed, validated through <see cref="PausedWord.UsableRests"/> exactly as the
+    /// game's loader validates them, and read by the rating as DIVIDERS: the word is judged in the
+    /// stretches it is sung in rather than as one span with the rests folded in as free time. Only a
+    /// map carrying rests moves for this reason. The pace figures deliberately do NOT read them (a
+    /// rest inside a word still counts as singing time, as in the game).</para>
+    ///
+    /// <para>FOURTH, A PARSER FIX THAT RIDES THE SAME SWEEP. <see cref="LyricTiming"/> read a
+    /// word's <c>syllables</c> as bare numbers, a shape no writer produces, so every stored map the
+    /// aligner or the editor subdivided was rated here WITHOUT its boundaries while the client read
+    /// them. It now reads the <c>start_ms</c> of each syllable object as the game does, so those maps
+    /// move onto the client's figure.</para>
+    ///
+    /// <para>All six star columns and every cell of the <c>beatmaps.ratings</c> matrix move, and so
+    /// does <c>target_wpm</c>, so <see cref="PaceBackfill"/> re-rates the whole catalogue at boot and
+    /// stamps <c>pp_version = 0</c> on every score of every row it rewrites, exactly as at v21.
+    /// <c>wpm</c>, the counts, the curve columns and <c>skippable_s</c> are untouched in arithmetic.
+    /// NO COLUMN IS ADDED OR CHANGED, so no migration comes with it. <c>PerformancePoints.VERSION</c>
+    /// stays at 24: the pp FORMULA does not move, and the new ratings and difficult-character counts
+    /// reach it through the matrix.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -361,7 +399,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 21;
+    public const int VERSION = 22;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's
@@ -527,7 +565,28 @@ public static class LyricPace
         public double AverageCharsPerWord => WordCount == 0 ? 0 : (double)TypeableCellCount / WordCount;
     }
 
-    public static PaceStatistics Compute(IReadOnlyList<LyricLine> lines)
+    /// <summary>
+    /// The pace figures for <paramref name="lines"/> (LyricPaceStatistics.Compute).
+    ///
+    /// <para><paramref name="literate"/> selects the cell stream, exactly as the game's
+    /// <c>TypingLine.FromLyricLine</c> does for the engine: off (the default) is
+    /// <see cref="Typeability.ToDefaultStream"/>, the play everyone shares and the one every stored
+    /// column is computed on; on is the authored text, where every supported punctuation mark is a
+    /// typed cell of its own and a hyphen is no longer a word break. The game reads the Literate
+    /// stream for the surfaces that display a beatmap converted with the selected mods; the server
+    /// stores only the default stream and calls this with the defaults, and carries the parameter
+    /// so the mirror can be held against the game at every stream and rate.</para>
+    /// </summary>
+    /// <param name="rate">
+    /// The CLOCK the map is read at: 1 for no rate mod, 1.5 for DoubleTime, 0.75 for HalfTime. The
+    /// two whole-map rates are cells over TIME, so they scale with it exactly; the TARGET is not,
+    /// because the fixed reading duration it is re-expressed at is a duration the faster clock also
+    /// shortens, so it is recomputed through the difficulty model at this rate rather than
+    /// multiplied. <see cref="PaceStatistics.DifficultyRating"/> stays the NO-MOD baseline whatever
+    /// either parameter says: it is the stored <c>difficulty_rating</c>, and the rated variants live
+    /// in <c>beatmaps.ratings</c>.
+    /// </param>
+    public static PaceStatistics Compute(IReadOnlyList<LyricLine> lines, bool literate = false, double rate = 1)
     {
         int totalCells = 0;
         int totalWords = 0;
@@ -543,13 +602,15 @@ public static class LyricPace
             // Cell arithmetic mirrors TypingLine.FromLyricLine: every typeable char is a
             // cell, plus one typeable space cell per token gap.
             //
-            // Measured on the DEFAULT stream, never the authored (punctuated, cased) line: a map's
-            // pace has to be the pace of the play everyone shares, not of the harder Literate
-            // variant, and it has to stay comparable with every figure computed before punctuation
-            // existed. For a hyphen-free, mark-free line, which is every line of every blob written
-            // before then, ToDefaultStream is exactly ToLowerInvariant, and case cannot change a
-            // count, so those rows recompute byte-identically and VERSION does not move.
-            string[] tokens = Typeability.ToDefaultStream(line.RawText).Split(' ');
+            // The DEFAULT stream unless the caller opted into the Literate one, and every stored
+            // column is the default: a map's pace has to be the pace of the play everyone shares,
+            // not of the harder Literate variant, and it has to stay comparable with every figure
+            // computed before punctuation existed. For a hyphen-free, mark-free line, which is every
+            // line of every blob written before then, ToDefaultStream is exactly ToLowerInvariant,
+            // and case cannot change a count. The Literate path is the authored text, where a mark
+            // is a typed cell and a hyphen keeps its word together, so both the cell total and the
+            // word total move with the mod.
+            string[] tokens = (literate ? line.RawText : Typeability.ToDefaultStream(line.RawText)).Split(' ');
 
             int cells = tokens.Length - 1;
             int words = 0;
@@ -564,8 +625,9 @@ public static class LyricPace
                     // TYPING, not mere keypresses (v21): a freestyle slot takes any key, so no map
                     // can ask for a particular speed in one. IsCell would count them, which is what
                     // v6 to v20 did; IsTypeable does not, and the pace figure is about the speed the
-                    // map actually demands.
-                    if (Typeability.IsTypeable(ch))
+                    // map actually demands. Under Literate a supported mark is demanded too, so it
+                    // counts exactly as the engine makes it a typed cell.
+                    if (Typeability.IsTypeable(ch) || (literate && Typeability.IsPunctuation(ch)))
                         typeable++;
 
                     // And the slots are counted separately, as an ADDITION to the cell count since
@@ -626,14 +688,21 @@ public static class LyricPace
 
         try
         {
+            // Read AT THE RATE, because the model's own scan is what "the SR algorithm's target"
+            // means: a faster clock does not merely scale the figures it finds, it moves the reading
+            // durations (the timeline is binned in REAL milliseconds) and can therefore name a
+            // different window. Scaling the rate-1 target would answer a different question.
             targetWpm = LyricDifficulty
-                .ComputeDetail(lines, 1, false, LyricDifficulty.EnduranceAxis.Envelope)
+                .ComputeDetail(lines, rate, literate, LyricDifficulty.EnduranceAxis.Envelope)
                 .TargetWpm;
         }
         catch (InvalidOperationException)
         {
             targetWpm = 0;
         }
+
+        // The two whole-map rates scale with the clock; the target is already read at it.
+        averageCpm *= rate;
 
         if (pace_floor_target && averageCpm / CHARS_PER_WORD > targetWpm)
             targetWpm = averageCpm / CHARS_PER_WORD;
@@ -645,6 +714,6 @@ public static class LyricPace
             LyricDifficulty.Compute(lines),
             totalFreestyle,
             targetWpm,
-            cpmSum / lineCount);
+            cpmSum / lineCount * rate);
     }
 }

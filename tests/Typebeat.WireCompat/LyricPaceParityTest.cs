@@ -142,6 +142,62 @@ public class LyricPaceParityTest
     }
 
     [Test]
+    public void EveryPaceFigureAgreesOnEveryStreamAndRateAndOnAPausedMap()
+    {
+        // PR 2 gave the game's pace a STREAM and a CLOCK (song select reads the map converted with
+        // the selected mods), and the server carries both parameters so the mirror can be held at
+        // every one of them even though it stores only the default. It also made authored pauses a
+        // rating input, and the paused fixtures are here to prove the pace figures did NOT follow:
+        // a rest inside a word is still singing time for the whole-map rates, and the target reads
+        // the envelope arm's DENSITY, which spreads a word's cells over its whole span (only the
+        // chunked axis's rhythm arm reads a word's dividers).
+        var fixtures = new[]
+        {
+            ("awkward", TwinMaps()),
+            ("paused", PerformancePointsParityTest.PausedTwinMaps()),
+            ("paused, ignored", PerformancePointsParityTest.PausedTwinMaps(PerformancePointsParityTest.PauseShape.InvalidOnly)),
+        };
+
+        Assert.Multiple(() =>
+        {
+            foreach ((string name, (IReadOnlyList<ClientLine> client, IReadOnlyList<ServerLine> server)) in fixtures)
+            foreach (bool literate in new[] { false, true })
+            foreach (double rate in new[] { 1.0, 1.5, 0.75 })
+            {
+                var c = ClientPace.Compute(client, literate, rate);
+                var s = ServerPace.Compute(server, literate, rate);
+                string context = $"{name} literate={literate} rate={rate}";
+
+                Assert.That(s.TypeableCellCount, Is.EqualTo(c.TypeableCellCount), $"{context}: cells");
+                Assert.That(s.WordCount, Is.EqualTo(c.WordCount), $"{context}: words");
+                Assert.That(s.AverageCpm, Is.EqualTo(c.AverageCpm), $"{context}: average CPM");
+                Assert.That(s.LineAverageCpm, Is.EqualTo(c.LineAverageCpm), $"{context}: per-line mean");
+                Assert.That(s.TargetWpm, Is.EqualTo(c.TargetWpm), $"{context}: target WPM");
+            }
+
+            // The default arguments ARE the stored figures: calling with them explicitly changes
+            // nothing, so no stored column can have moved for the parameters' sake.
+            var (awkwardClient, awkwardServer) = TwinMaps();
+            Assert.That(ServerPace.Compute(awkwardServer, false, 1), Is.EqualTo(ServerPace.Compute(awkwardServer)), "the defaults");
+
+            // THE PAUSES DO NOT REACH THE PACE, on either side: the paused fixture and its bare twin
+            // share every figure. (That the same rests DO move the rating is pinned in
+            // PerformancePointsParityTest, on the same fixture.)
+            var (pausedClient, pausedServer) = PerformancePointsParityTest.PausedTwinMaps();
+            var (bareClient, bareServer) = PerformancePointsParityTest.PausedTwinMaps(PerformancePointsParityTest.PauseShape.None);
+
+            Assert.That(ServerPace.Compute(pausedServer).AverageCpm, Is.EqualTo(ServerPace.Compute(bareServer).AverageCpm),
+                "a rest is not a break for the whole-map rate");
+            Assert.That(ClientPace.Compute(pausedClient).AverageCpm, Is.EqualTo(ClientPace.Compute(bareClient).AverageCpm),
+                "on the client either");
+            Assert.That(ServerPace.Compute(pausedServer).TargetWpm, Is.EqualTo(ServerPace.Compute(bareServer).TargetWpm),
+                "nor for the target, whose envelope density spreads a word over its whole span");
+            Assert.That(ClientPace.Compute(pausedClient).TargetWpm, Is.EqualTo(ClientPace.Compute(bareClient).TargetWpm),
+                "on the client either");
+        });
+    }
+
+    [Test]
     public void TheClientsRollingWindowIsTheCurveTheServerStores()
     {
         var (client, server) = TwinMaps();
@@ -289,7 +345,10 @@ public class LyricPaceParityTest
         // the game and the pace one gates the column the pp one now depends on.
         Assert.Multiple(() =>
         {
-            Assert.That(ServerPace.VERSION, Is.EqualTo(21));
+            // 22 since PR 2: the overlapping chunked profile, the character floor, and authored
+            // pauses reaching the rating (plus the server's syllable-object parse fix) all ride
+            // the one re-rate sweep. The pp formula does not move, so its VERSION stays.
+            Assert.That(ServerPace.VERSION, Is.EqualTo(22));
             Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(24)); // pp:version
         });
     }

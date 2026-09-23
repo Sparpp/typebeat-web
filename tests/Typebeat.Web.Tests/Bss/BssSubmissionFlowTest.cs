@@ -90,10 +90,13 @@ public class BssSubmissionFlowTest
     [Order(2)]
     public async Task FullPackageUpload_CutsVersionOne_AndPublishes()
     {
+        // RatedLyrics rather than the default pace-regression lyric, because the wire-shape case
+        // below needs a difficulty_rating that is more than zero to prove the column travels, and
+        // "ab cd" rates exactly zero since LyricPace v22 (under the 16-character floor).
         easyOsu = SyntheticPackage.Utf8(SyntheticPackage.OsuText(
-            creator: username, version: "easy", beatmapId: beatmapIds[0], beatmapSetId: setId));
+            creator: username, version: "easy", beatmapId: beatmapIds[0], beatmapSetId: setId, lyrics: SyntheticPackage.RatedLyrics));
         hardOsu = SyntheticPackage.Utf8(SyntheticPackage.OsuText(
-            creator: username, version: "hard", beatmapId: beatmapIds[1], beatmapSetId: setId, previewTime: 500));
+            creator: username, version: "hard", beatmapId: beatmapIds[1], beatmapSetId: setId, previewTime: 500, lyrics: SyntheticPackage.RatedLyrics));
         audio = MakeWav(seconds: 2);
         background = SyntheticPackage.TinyPng();
 
