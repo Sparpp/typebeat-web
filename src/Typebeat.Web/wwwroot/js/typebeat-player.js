@@ -1023,6 +1023,13 @@
         // line boundary (StartTime) and a 50%-opaque one landing on the FIRST WORD. A mapper may
         // set the boundary earlier than the first word, so the two can be distinct signals; when
         // they coincide they read as one solid bar. Mirrors LyricStage.updateApproachCue.
+        //
+        // Since PR 2 the BOUNDARY bar belongs to the PINNED caret only (FletcherEnabled false): a
+        // pinned caret is handed the line at its boundary, so that moment is one the player acts on,
+        // while a flexible caret enters on the first word and the boundary is no signal at all. The
+        // browser always runs the flexible caret (engine.fletcherEnabled is permanently true), so in
+        // practice only the first-word bar is drawn; the gate reads the engine flag rather than being
+        // deleted so it stays a line-for-line mirror of the desktop's.
         function updateCue(time, active) {
             const target = engine.finished ? -1
                 : cueTargetLine(beatmap.lines, active ? engine.activeLineIndex : -1, engine.nextSealIndex, time);
@@ -1035,7 +1042,8 @@
 
             const line = rowObj.line;
             const word = cueBar(line.cells[0].target - time, 0.5);
-            const boundary = cueBar(line.startTime - time, 1);
+            const pinnedCaret = !engine.fletcherEnabled;
+            const boundary = pinnedCaret ? cueBar(line.startTime - time, 1) : { shown: false, width: 0, alpha: 0 };
             if (!word.shown && !boundary.shown) { rowObj.cue.style.display = 'none'; return; }
 
             rowObj.cue.style.display = '';
