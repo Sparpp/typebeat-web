@@ -244,6 +244,66 @@ const FIXTURES = {
     }], 30000)
 };
 
+// PR 2's AUTHORED PAUSES, as the editor writes them (see PAUSED_LINES below).
+FIXTURES.pausedWords = osu(PAUSED_LINES(), 20000);
+
+// The same map with every pause taken away, which is what the pauseJudgements counter in play()
+// measures a press against: a press counts when the pause moved the answer it got.
+const STRIPPED = { pausedWords: osu(PAUSED_LINES().map(stripPauses), 20000) };
+
+// PR 2's surface, three lines of it, every shape the authored-pause derivation and the stretch
+// exclusion it shipped with can take on a live play:
+//
+//   L0 "tonight forever" [800, 5000), sung to 4000. The line STARTS 200 ms before its first vocal,
+//      so its activation (800) is the earlier edge of the first line's head start rather than
+//      FIRST_LINE_LEAD_MS (700 would be): both arms of the Math.min are live across the sweep.
+//      "tonight" [1000, 2400] rests [1300, 1700] after "toni", which the syllabifier would have cut
+//      "to|night". "forever" [2400, 4000] carries boundaries 2900 and 3500, the authored cut
+//      "fo|re|ver" and TWO rests, [2950, 3150] after "fore" and [3600, 3700] after "foreve", so its
+//      stretches are "fo|re", "v|e" (the authored 4 clamped to 5) and "r".
+//   L1 "breathe in" [5000, 8000), sung to 7000, in the LEGACY single `pause` shape. "breathe"
+//      [5000, 6500] rests [5600, 6000] after "bre", which SWALLOWS its 5700 boundary (routed to the
+//      nearer stretch at its relative position). "in" carries a rest on split 0, which cuts nothing
+//      and must be ignored by both sides.
+//   L2 "yooooooooou heyyyyy" [8000, 16000) (the last line: sung end + LAST_LINE_TAIL_MS), sung to
+//      13000: the STRETCH EXCLUSION PR 2 added (TypingLine.subdividedRun). "yooooo|oooo|u" paces
+//      nine 'o's into two spans, so neither run is char-timed; "hey|yyyy" only STARTS its run at
+//      the divider, so the four 'y's still are.
+function PAUSED_LINES() {
+    return [{
+        text: 'tonight forever', start_ms: 800, end_ms: 4000,
+        words: [{ text: 'tonight', start_ms: 1000, end_ms: 2400, score: 1,
+                  pauses: [{ start_ms: 1300, end_ms: 1700, split: 4 }] },
+                { text: 'forever', start_ms: 2400, end_ms: 4000, score: 1,
+                  syllables: [{ start_ms: 2400 }, { start_ms: 2900 }, { start_ms: 3500 }], split_chars: [2, 4],
+                  pauses: [{ start_ms: 2950, end_ms: 3150, split: 4 }, { start_ms: 3600, end_ms: 3700, split: 6 }] }]
+    }, {
+        text: 'breathe in', start_ms: 5000, end_ms: 7000,
+        words: [{ text: 'breathe', start_ms: 5000, end_ms: 6500, score: 1,
+                  syllables: [{ start_ms: 5000 }, { start_ms: 5700 }],
+                  pause: { start_ms: 5600, end_ms: 6000, split: 3 } },
+                { text: 'in', start_ms: 6500, end_ms: 7000, score: 1,
+                  pause: { start_ms: 6600, end_ms: 6700, split: 0 } }]
+    }, {
+        text: 'yooooooooou heyyyyy', start_ms: 8000, end_ms: 13000,
+        words: [{ text: 'yooooooooou', start_ms: 8000, end_ms: 11000, score: 1,
+                  syllables: [{ start_ms: 8000 }, { start_ms: 9500 }, { start_ms: 10500 }], split_chars: [6, 10] },
+                { text: 'heyyyyy', start_ms: 11000, end_ms: 13000, score: 1,
+                  syllables: [{ start_ms: 11000 }, { start_ms: 12000 }], split_chars: [3] }]
+    }];
+}
+
+function stripPauses(line) {
+    return Object.assign({}, line, {
+        words: line.words.map(w => {
+            const copy = Object.assign({}, w);
+            delete copy.pauses;
+            delete copy.pause;
+            return copy;
+        })
+    });
+}
+
 // THE ONE FIXTURE THAT IS NOT LOADER-DERIVED, and it has to be, because the state it reaches is one
 // the browser's own loader cannot express. The line-start snap only ever decides anything while a
 // FINISHED caret is parked on a line the SEAL has not yet reached and the next line has ALREADY
@@ -279,6 +339,7 @@ function withParkedMiddleLine(beatmap) {
         endTime: 20000,
         singEndTime: 19000,
         activationTime: 3000,
+        firstVocalTime: 3000,
         sealGraceMs: 0,
         estimated: false,
         cells: [],
@@ -299,6 +360,11 @@ function build(name) {
     const beatmap = TB.buildBeatmap(TB.parseLyricOsu(FIXTURES[name]), false);
 
     return name === 'parkedLine' ? withParkedMiddleLine(beatmap) : beatmap;
+}
+
+/** The fixture with its pauses taken away, or null for a fixture that carries none. */
+function buildStripped(name) {
+    return STRIPPED[name] ? TB.buildBeatmap(TB.parseLyricOsu(STRIPPED[name]), false) : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -342,10 +408,46 @@ function generate(name, seed, spaceSkipsWord) {
     let skipPresses = 0;
     let t = 0;
 
+    // PR 2's FIRST-LINE HEAD START is rolled on a stream of its own, so adding it moved no other
+    // decision the generator makes: every run keeps the rolls it had and only the ones that take the
+    // head start change shape. Decided once, at the top of the pre-roll.
+    const lead = lcg(seed ^ 0x5bd1e995);
+    let leadDecided = false;
+
     for (let step = 0; step < 140 && !engine.finished && !engine.failed; step++) {
         engine.update(t);
 
         if (engine.activeLineIndex < 0) {
+            // THE FIRST LINE'S HEAD START (PR 2): half the runs press the first line's first
+            // character (a quarter of those a wrong letter) somewhere inside
+            // [min(activation, first vocal - FIRST_LINE_LEAD_MS), activation), where the press itself
+            // opens the line. Before PR 2 every one of those presses was refused.
+            if (!leadDecided && engine.nextSealIndex === 0 && engine.lines.length > 0) {
+                leadDecided = true;
+
+                const first = engine.lines[0];
+                const opens = Math.min(first.activationTime, first.firstVocalTime - TB.constants.FIRST_LINE_LEAD_MS);
+                const span = first.activationTime - opens;
+
+                if (lead() < 0.5 && span > 0) {
+                    const pressTime = Math.max(t, opens + Math.floor(lead() * span));
+                    const head = first.cells.find(c => c.typeable);
+
+                    if (head && engine.firstLineTypingOpensAt(pressTime)) {
+                        let ch = head.expected;
+                        if (lead() < 0.25) {
+                            do { ch = LETTERS[Math.floor(lead() * LETTERS.length)]; } while (ch === head.expected);
+                        }
+
+                        keys.push([pressTime, ch]);
+                        engine.update(pressTime);
+                        engine.processKey(ch, pressTime);
+                        t = pressTime;
+                        continue;
+                    }
+                }
+            }
+
             // Pre-roll or the dead zone between two lines: nothing is typeable, so move the clock.
             t += 120 + Math.floor(rnd() * 900);
             continue;
@@ -497,6 +599,8 @@ function play(name, keys, spaceSkipsWord) {
     let spanJudgements = 0;
     let stretchPointJudgements = 0;
     let firstCharJudgements = 0;
+    let pauseJudgements = 0;
+    const stripped = buildStripped(name);
     const judgedDelta = engine.judgedDeltaFor.bind(engine);
 
     engine.judgedDeltaFor = function (line, cellIndex, time) {
@@ -523,6 +627,12 @@ function play(name, keys, spaceSkipsWord) {
             }
         }
 
+        // PR 2 coverage: a press whose judged delta the AUTHORED PAUSES moved, i.e. the same press on
+        // the same cell of the same map with every pause taken away would have been judged
+        // differently (a target timed from a rest's end, or a group edge a rest put there). Measured
+        // on the answer, so a port that quietly stopped honouring pauses reads zero.
+        if (stripped !== null && judgedDelta(stripped.lines[line.index], cellIndex, time) !== delta) pauseJudgements++;
+
         return delta;
     };
 
@@ -544,6 +654,11 @@ function play(name, keys, spaceSkipsWord) {
     let parkedGapTypos = 0;
     let stepOvers = 0;
     let midWordSpaceTypos = 0;
+
+    // PR 2 coverage: a press that OPENED the map's first line inside its head start, i.e. before
+    // the line's own activation, where every earlier build refused it. Measured on the engine's
+    // state around the call, so a port that lost the head start reads zero.
+    let leadInOpens = 0;
     const processKey = engine.processKey.bind(engine);
 
     engine.processKey = function (c, time) {
@@ -551,7 +666,10 @@ function play(name, keys, spaceSkipsWord) {
         const beforeCaret = engine.caretIndex;
         const beforeMidWord = midWordSpaceCount(engine);
         const parkedOn = parkedCell(engine);
+        const idleBeforeTheFirstLine = engine.activeLineIndex < 0 && engine.nextSealIndex === 0;
         const handled = processKey(c, time);
+
+        if (idleBeforeTheFirstLine && engine.activeLineIndex === 0 && time < engine.lines[0].activationTime) leadInOpens++;
 
         if (wrongGapCount(engine) > before) {
             gapTypos++;
@@ -706,7 +824,9 @@ function play(name, keys, spaceSkipsWord) {
         dragHolds: dragHolds,
         rushCapBreaks: rushCapBreaks,
         refusedRolls: refusedRolls,
-        lineStepBacks: lineStepBacks
+        lineStepBacks: lineStepBacks,
+        leadInOpens: leadInOpens,
+        pauseJudgements: pauseJudgements
     };
 }
 
@@ -752,6 +872,8 @@ function cellsOf(name) {
     return beatmap.lines.map(line => ({
         endTime: line.endTime,
         activationTime: line.activationTime,
+        // TypingLine.FirstVocalTime (PR 2), what the first line's head start is measured back from.
+        firstVocalTime: line.firstVocalTime,
         sealGraceMs: line.sealGraceMs,
         cells: line.cells.map(c => ({ expected: c.expected, target: c.target })),
         // The SYLLABLE groups and the per-cell membership map (backlog 179). Emitted beside the
@@ -1064,13 +1186,34 @@ const SCRIPTED = [
                [3000, ' '], [3000, 'b'], [3000, 'r'], [3000, 'o'], [3000, 'w'], [3000, 'n'],
                [3800, 'f'], [3800, 'o'], [3800, 'x'], [3800, ' '], [3800, 'j'], [3800, 'u'],
                [3800, 'm'], [3800, 'p'], [3800, 's']]
+    },
+    {
+        // PR 2, THE FIRST LINE'S HEAD START. "cat dog" activates on its first vocal at 1000, so its
+        // head start opens at 700: the 'c' at 750 OPENS the line (refused outright before PR 2, and
+        // on the C# arm with CONFIG bit 16 clear), and the 'a' at 900 then lands on an active line
+        // the song has not reached, which arms the WPM clock ahead of the cue exactly as a rushed
+        // press does. The rest of the line is typed on its targets.
+        name: 'scripted/firstLineHeadStart', fixture: 'catDog', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[750, 'c'], [900, 'a'], [2333, 't'], [3000, ' '], [3000, 'd'], [3667, 'o'], [4333, 'g']]
+    },
+    {
+        // PR 2, AUTHORED PAUSES. Every press of line 0 sits inside the span the PAUSED derivation
+        // gives its cell: "toni" [1000, 1300], "ght" [1700, 2400], then "fo" [2400, 2900], "re"
+        // [2900, 2950], "v" [3150, 3500], "e" [3500, 3600] and "r" [3700, 4000]. On the same map with
+        // its pauses taken away "tonight" cuts "to|night" and "forever" runs "fo|re|ver" straight
+        // through the rests, so the 'n', 'i', 'g', 'v', 'e' and 'r' here would each be judged off an
+        // edge instead. The press at 950 is inside the head start this line's own early start
+        // (800) already gives it.
+        name: 'scripted/pausedSpans', fixture: 'pausedWords', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[950, 't'], [1100, 'o'], [1200, 'n'], [1290, 'i'], [1750, 'g'], [2000, 'h'], [2300, 't'],
+               [2400, ' '], [2400, 'f'], [2600, 'o'], [2900, 'r'], [2940, 'e'], [3150, 'v'], [3500, 'e'], [3700, 'r']]
     }
 ];
 
 // ---------------------------------------------------------------------------------------------
 const names = ['catDog', 'abCd', 'catDogThenHi', 'quickBrownFox', 'mixedTiers', 'syllabic',
                'syllableWords', 'stylised', 'subtimed', 'authoredSplit', 'freestyleStretch',
-               'parkedLine', 'instrumentalGap'];
+               'parkedLine', 'instrumentalGap', 'pausedWords'];
 const cases = [];
 
 for (const scripted of SCRIPTED) {

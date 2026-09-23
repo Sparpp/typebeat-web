@@ -423,6 +423,24 @@ public class WordInputParityTest
             ],
         },
 
+        // PR 2's erase-run fix. A lyric typo on the 'b' moves the caret onto the gap, and a wrong
+        // letter there PARKS it (skip arm). Ctrl+A anchors on the head of "ab", so the selection
+        // ENDS on the parked gap. The next letter collapses it: the first erase clears the parked
+        // gap IN PLACE (caret unmoved), which the loop used to read as no progress and stop on,
+        // leaving "ab" standing and landing the letter on the just-cleared gap as a fresh typo. Now
+        // the run carries on through the word and the letter lands on the anchor.
+        new Scenario
+        {
+            Name = "aSelectionEndingOnAParkedGapErasesThroughIt",
+            Osu = AbCdEf(),
+            SpaceSkipsWord = true,
+            Steps =
+            [
+                Key('a', a_t), Key('x', b_t), Key('z', gap1_t), Churn(), CtrlA(),
+                Key('a', gap1_t), Key('b', gap1_t), Key(' ', gap1_t), Key('c', c_t),
+            ],
+        },
+
         // ---- A mark inside a word (Literate) -----------------------------------------------------
 
         // Under Literate the apostrophe is a first-class typeable cell, and it must still NOT read as
@@ -529,17 +547,30 @@ public class WordInputParityTest
     /// StrictSpaces have to be set by hand here because the C# keeps both as era arms (CONFIG flags
     /// bits 3 and 4) and the browser is permanently on their live side (see the notes in
     /// typebeat-core.js's wrong-key path).
+    ///
+    /// <para>The JUDGEMENT era bits are set here too (2, 5 to 8, 10 to 12 and 16), the full live set
+    /// every other parity fixture in this project carries. They were missing until PR 2's parked
+    /// erase scenario pressed a retyped cell late inside its syllable: the browser judged it on the
+    /// span and the point-rule C# arm did not, and every earlier scenario had pressed dead on target,
+    /// where the two rules agree.</para>
     /// </summary>
     private static Session Started(Scenario scenario)
     {
         var engine = new TypingEngine(Load(scenario.Osu), scenario.Literate)
         {
+            SyllableTiming = true,
+            CharTimedStretch = true,
+            FirstCharTiming = true,
+            FletcherEnabled = true,
+            FlexibleLineSnap = true,
+            BoundedRush = true,
             WrongInputOnWordGaps = true,
             StrictSpaces = true,
             SpaceSkipsWord = scenario.SpaceSkipsWord,
             BackDatedSealBreak = true,
             LosslessSkipReclaim = true,
             FoldsDisplacedClaim = true,
+            FirstLineLeadIn = true,
         };
 
         engine.Update(scenario.StartTime);
@@ -550,7 +581,9 @@ public class WordInputParityTest
     /// <c>TypeBeatKeyHandler.eraseBackTo</c>, and the same loop the browser player runs: ordinary
     /// backspaces back to a target, with the defensive no-progress break (an erase that reclaimed
     /// abandoned cells at the head of a line can land on 0 and be auto-skipped forward again, and a
-    /// gesture must never spin).
+    /// gesture must never spin). Since PR 2 the in-place clear of a PARKED typo is let through that
+    /// break (<see cref="TypingEngine.CaretOnParkedTypo"/>, read BEFORE the press as the playfield
+    /// reads it).
     /// </summary>
     private static int EraseBackTo(TypingEngine engine, int target)
     {
@@ -559,13 +592,14 @@ public class WordInputParityTest
         while (engine.CaretIndex > target)
         {
             int before = engine.CaretIndex;
+            bool parked = engine.CaretOnParkedTypo;
 
             if (!engine.ProcessBackspace())
                 break;
 
             erases++;
 
-            if (engine.CaretIndex >= before)
+            if (engine.CaretIndex >= before && !parked)
                 break;
         }
 

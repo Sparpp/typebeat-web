@@ -157,7 +157,97 @@ public class SyllableSplitParityTest
         // because whatever the rule is, the two clients have to apply it the same way.
         new Case("nonNumericElementIsSkipped", false, RawTonight(",\"split_chars\":[2,\"x\",5]"), RawTonight(",\"split_chars\":[2,5]"), false, false),
         new Case("tonightAuthoredMovesBoth", false, RawTonight(",\"split_chars\":[2,5]"), RawTonight(""), true, true),
+
+        // ---- AUTHORED PAUSES (PR 2, the Map Editor's Insert Pause) --------------------------------
+        //
+        // A rest inside a word is a subdivision with no characters in it: it cuts the word into
+        // stretches timed in their own right and gives the characters past it their own judgement
+        // span. Pinned here because it rides the same two axes an authored split does (targets and
+        // groups), through the same production encoder and both production loaders.
+
+        // One rest, written by the encoder, cutting "tonight" at "toni|ght" where the syllabifier
+        // would say "to|night", so both the ramp and the membership move.
+        new Case("pauseMovesBoth", false, PausedTonight(new WordPause(1300, 1500, 4)), PausedTonight(), true, true),
+
+        // Several rests on one word beside authored boundaries and an authored split, plus a second
+        // word with a rest of its own: the stretch routing, the per-stretch clamp of the authored
+        // cut ("fo|re" and "v|e") and the run spans all at once.
+        new Case("severalPausesBesideAuthoredSplits", false, PausedForever(true), PausedForever(false), true, true),
+
+        // A boundary that falls INSIDE a rest is routed to the nearer stretch at its relative
+        // position, which moves it: the one arm of the routing nothing above reaches.
+        new Case("boundaryInsideARestIsRerouted", false, PausedBreathe(true), PausedBreathe(false), true, true),
+
+        // The legacy single `pause` object reads exactly as the one-element array a newer build
+        // writes, and an array that is not an array falls back to it exactly as the C# does.
+        new Case("legacySinglePauseIsTheArray", false, RawBreathe(",\"pause\":" + breathe_rest), RawBreathe(",\"pauses\":[" + breathe_rest + "]"), false, false),
+        new Case("pausesNotAnArrayFallsBackToPause", false, RawBreathe(",\"pauses\":\"x\",\"pause\":" + breathe_rest), RawBreathe(",\"pauses\":[" + breathe_rest + "]"), false, false),
+        new Case("rawPauseMovesBoth", false, RawBreathe(",\"pauses\":[" + breathe_rest + "]"), RawBreathe(""), true, true),
+
+        // Every rest PausedWord.UsableRests refuses: an edge on or outside the word, an inverted or
+        // empty rest, a split leaving every cell on one side, a rest overlapping the one before it and
+        // one on an earlier character than the one before it. The survivors must read exactly as the
+        // map that spells only them out, and a word with none must read as if it had none.
+        new Case("unusableRestsAreIgnored", false,
+            RawBreathe(",\"pauses\":[{\"start_ms\":1000,\"end_ms\":1200,\"split\":3},{\"start_ms\":1800,\"end_ms\":2000,\"split\":3},"
+                       + "{\"start_ms\":1500,\"end_ms\":1500,\"split\":3},{\"start_ms\":1300,\"end_ms\":1200,\"split\":3},"
+                       + "{\"start_ms\":1300,\"end_ms\":1400,\"split\":0},{\"start_ms\":1300,\"end_ms\":1400,\"split\":7}]"),
+            RawBreathe(""), false, false),
+        new Case("overlappingAndBackwardRestsAreDropped", false,
+            RawBreathe(",\"pauses\":[{\"start_ms\":1300,\"end_ms\":1500,\"split\":3},{\"start_ms\":1400,\"end_ms\":1600,\"split\":5},{\"start_ms\":1700,\"end_ms\":1800,\"split\":2}]"),
+            RawBreathe(",\"pauses\":[{\"start_ms\":1300,\"end_ms\":1500,\"split\":3}]"), false, false),
+
+        // Malformed fields: a time that is not a JSON number and a fractional split are skipped; a
+        // whole-number float split is the index it plainly is.
+        new Case("malformedPauseFieldsAreSkipped", false,
+            RawBreathe(",\"pauses\":[{\"start_ms\":\"1400\",\"end_ms\":1600,\"split\":3},{\"start_ms\":1400,\"end_ms\":1600,\"split\":3.5},{\"start_ms\":1400,\"end_ms\":1600}]"),
+            RawBreathe(""), false, false),
+        new Case("wholeNumberFloatSplitIsTheSameRest", false,
+            RawBreathe(",\"pauses\":[{\"start_ms\":1400,\"end_ms\":1600,\"split\":3.0}]"), RawBreathe(",\"pauses\":[" + breathe_rest + "]"), false, false),
     ];
+
+    /// <summary>A word unit carrying authored pauses (and optionally boundaries and an authored split).</summary>
+    private static TimedUnit PausedUnit(string text, double start, double end, int[]? splits, WordPause[] pauses, params double[] boundaries)
+        => new TimedUnit
+        {
+            Text = text,
+            StartTime = start,
+            EndTime = end,
+            Source = TimingSource.Explicit,
+            SyllableBoundaries = boundaries,
+            SyllableSplits = splits ?? [],
+            Pauses = pauses,
+        };
+
+    /// <summary>"tonight" over [1000, 1900], with whatever rests are given.</summary>
+    private static string PausedTonight(params WordPause[] pauses)
+        => Encoded(Line("tonight", 1000, 2500, 1900, PausedUnit("tonight", 1000, 1900, null, pauses)));
+
+    /// <summary>
+    /// "forever young": "forever" over [1000, 2600] with boundaries 1500 and 2150, authored "fo|re|ver"
+    /// and two rests, [1650, 1850] after "fore" and [2250, 2350] after "foreve"; "young" over
+    /// [2600, 4000] with one rest after "yo". Stretch 0 "fore" keeps the 1500 boundary and the "fo|re"
+    /// cut, stretch 1 "ve" keeps 2150 with the authored 4 clamped to 5, stretch 2 is "r".
+    /// </summary>
+    private static string PausedForever(bool withPauses)
+        => Encoded(Line("forever young", 1000, 5000, 4000,
+            PausedUnit("forever", 1000, 2600, [2, 4], withPauses ? [new WordPause(1650, 1850, 4), new WordPause(2250, 2350, 6)] : [], 1500, 2150),
+            PausedUnit("young", 2600, 4000, null, withPauses ? [new WordPause(3000, 3300, 2)] : [])));
+
+    /// <summary>"breathe" over [1000, 2000] with a boundary at 1450, which a [1400, 1600] rest swallows.</summary>
+    private static string PausedBreathe(bool withPause)
+        => Encoded(Line("breathe", 1000, 2500, 2000,
+            PausedUnit("breathe", 1000, 2000, null, withPause ? [new WordPause(1400, 1600, 3)] : [], 1450)));
+
+    /// <summary>The one usable rest the hand-typed "breathe" cases are written against: "bre" | "athe".</summary>
+    private const string breathe_rest = "{\"start_ms\":1400,\"end_ms\":1600,\"split\":3}";
+
+    /// <summary>"breathe" over [1000, 2000] with no boundaries, and the word's pause fields spliced in verbatim.</summary>
+    private static string RawBreathe(string pauseFields)
+        => HandAuthored(
+            "{\"text\":\"breathe\",\"start_ms\":1000,\"end_ms\":2000,\"words\":[{\"text\":\"breathe\","
+            + "\"start_ms\":1000,\"end_ms\":2000,\"score\":1" + pauseFields + "}]}",
+            2500);
 
     /// <summary>
     /// Direct probes on the shared derivation itself. The readings above prove the whole pipeline

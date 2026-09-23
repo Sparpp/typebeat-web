@@ -691,11 +691,17 @@
         // The trailing check is defensive termination only. Every erase that reports a mutation
         // moves the caret back, but one that reclaimed abandoned cells at the head of a line can
         // land on 0 and be auto-skipped forward again, and a gesture must never spin.
+        //
+        // THE PARKED EXCEPTION IS NOT THAT CASE (PR 2): clearing a PARKED typo is a real mutation
+        // of the cell the caret is on with the caret deliberately unmoved, so breaking there would
+        // leave the rest of the selection standing. Read BEFORE the press, which is the only
+        // iteration the guard has to let through; the next press steps back normally.
         function eraseBackTo(target) {
             while (engine.caretIndex > target) {
                 const before = engine.caretIndex;
+                const parked = engine.caretOnParkedTypo;
                 if (!engine.processBackspace()) break;
-                if (engine.caretIndex >= before) break;
+                if (engine.caretIndex >= before && !parked) break;
             }
         }
 
@@ -804,7 +810,7 @@
             // else it falls straight into the typeable branch below and is a word-gap character,
             // which is the ONE thing that must not change: a skip that could fire mid-line would
             // both eat a keystroke and inject the skipped span into the WPM clock.
-            if ((e.key === ' ' || e.code === 'Space') && skipAllowedNow()) {
+            if ((e.key === ' ' || e.code === 'Space') && skipAllowedNow(nowMs())) {
                 const target = pendingSkipTarget(nowMs());
                 if (target !== null) {
                     e.preventDefault();
@@ -1262,13 +1268,20 @@
             // Live only where the key would be: a chip whose gap does not qualify, or one the
             // player is watching from a state the desktop would still be taking characters in,
             // stays the plain countdown it was.
-            setSkipAffordance(skipAllowedNow() ? skipTargetAt(gaps, introTarget, upcoming, time) : null);
+            setSkipAffordance(skipAllowedNow(time) ? skipTargetAt(gaps, introTarget, upcoming, time) : null);
         }
 
         // Whether Space is a skip right now rather than a character, on the desktop's own predicate.
-        function skipAllowedNow() {
+        //
+        // The FIRST LINE'S HEAD START (PR 2) counts as a live line here, as it does in
+        // TypeBeatPlayfield's key handler (`!engine.LineIsActive && !engine.FirstLineTypingOpensAt`):
+        // a press inside it opens the line and types, rather than falling through to the skip.
+        // Unreachable as a skip today (the intro target sits SKIP_LEAD_MS before the first vocal, far
+        // outside the head start), and mirrored so the two predicates cannot drift.
+        function skipAllowedNow(time) {
             const active = engine.activeLineIndex >= 0;
-            return skipAllowed(active, active && engine.isLineComplete(engine.activeLineIndex), selection !== null);
+            const typing = active || engine.firstLineTypingOpensAt(time);
+            return skipAllowed(typing, active && engine.isLineComplete(engine.activeLineIndex), selection !== null);
         }
 
         // The skip target live at `time`, or null. Kept apart from the chip so the key path and the

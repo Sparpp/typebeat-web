@@ -122,7 +122,7 @@ public class WordSkipLiveParityTest
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, wrongInputOnWordGaps: true, strictSpaces: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, wrongInputOnWordGaps: true, strictSpaces: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, firstLineLeadIn: true));
 
         foreach ((double time, char character) in keys)
             replay.Frames.Add(new TypeBeatReplayFrame(time, character));

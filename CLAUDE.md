@@ -144,7 +144,19 @@ WireCompat is where that is provable, because it is the only project that compil
   `DisplacedClaimFoldLiveParityTest` is the pin, and unlike bits 10 and 11 the generated sweep DOES
   roll this shape, so `EngineFuzzLiveParityTest` needs the bit as well. **Bit 14 (manual newlines)
   is the one caret bit the fixtures must LEAVE CLEAR**: it is a desktop SETTING and `/play` has no
-  settings surface, so the browser runs the automatic hand-over a clear bit means.
+  settings surface, so the browser runs the automatic hand-over a clear bit means. **Bit 15**
+  (PR 2's typed-through newline, `NewlineOnTypedLetter`) rides the same setting and is gated on
+  `ManualNewlines` in the engine, so it stays clear too. **Bit 16** (PR 2's first-line head start,
+  `FirstLineLeadIn`: a press up to `FIRST_LINE_LEAD_MS` = 300 before the map's first vocal opens
+  the first line) is the opposite: the live playfield sets it for every stack and the browser takes
+  it unconditionally (`firstLineTypingOpensAt`), so every parity fixture that feeds the C# arm sets
+  `FirstLineLeadIn = true` (or `firstLineLeadIn: true` on its CONFIG frame).
+  `EngineFuzzLiveParityTest`'s generator presses inside the head start on half its runs and counts
+  the openings (`leadInOpens`). PR 2 also made **authored pauses** (a word's `pauses` array, or the
+  legacy single `pause` object) scoring surface: `usableRests` / `pausedWordOf` /
+  `tokenCellTargets` mirror `Gameplay/PausedWord.cs` and `TypingLine.tokenCellTargets`, and move
+  both the per-cell targets and the judgement groups. `SyllableSplitParityTest` pins them through
+  both production loaders and the fuzz sweep's `pausedWords` fixture through the engines.
   **The JUDGEMENT WINDOWS are not an era at all.** One symmetric ladder (Great 150 ms, Ok 300, Meh
   600) grades every cell of every map: no granularity tier, no low-confidence fallback, no per-cell
   `tier` field on either side, and no CONFIG bit recording which ladder a run was played on. A

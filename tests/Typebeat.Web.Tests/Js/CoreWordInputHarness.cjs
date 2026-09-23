@@ -53,17 +53,19 @@ const input = JSON.parse(fs.readFileSync(scenarioPath, 'utf8'));
  * typebeat-player.js eraseBackTo / TypeBeatKeyHandler.eraseBackTo. Ordinary processBackspace calls
  * back to a target, with the defensive no-progress break: an erase that reclaimed abandoned cells
  * at the head of a line can land on 0 and be auto-skipped forward again, and a gesture must never
- * spin. Returns how many erases actually mutated, which is how many BACKSPACE frames a desktop run
- * would have recorded.
+ * spin. Since PR 2 the in-place clear of a PARKED typo is let through that break (see
+ * TypingEngine.CaretOnParkedTypo). Returns how many erases actually mutated, which is how many
+ * BACKSPACE frames a desktop run would have recorded.
  */
 function eraseBackTo(engine, target) {
     let erases = 0;
 
     while (engine.caretIndex > target) {
         const before = engine.caretIndex;
+        const parked = engine.caretOnParkedTypo;
         if (!engine.processBackspace()) break;
         erases++;
-        if (engine.caretIndex >= before) break;
+        if (engine.caretIndex >= before && !parked) break;
     }
 
     return erases;

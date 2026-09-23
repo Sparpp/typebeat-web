@@ -98,6 +98,7 @@ public class LineSkipLiveParityTest
         BackDatedSealBreak = true,
         LosslessSkipReclaim = true,
         FoldsDisplacedClaim = true,
+        FirstLineLeadIn = true,
     };
 
     /// <summary>The cell states as the JS mirror spells them (its own vocabulary, one for one).</summary>

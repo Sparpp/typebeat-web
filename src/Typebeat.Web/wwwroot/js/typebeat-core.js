@@ -363,7 +363,12 @@
                 ? authored.slice()
                 : EMPTY_SPLITS;
 
-            units.push({ text: tokens[m], start: ws, end: we, conf: clamp(words[m].score, 0, 1), syllables: boundaries, splits: splits });
+            // THE AUTHORED PAUSES that survive the same clamping: which of a word's rests are kept
+            // is the DERIVATION's own answer (usableRests, mirroring PausedWord.UsableRests), so a
+            // map never loads a rest the play would ignore.
+            const pauses = usableRests(tokens[m], ws, we, words[m].pauses || EMPTY_PAUSES);
+
+            units.push({ text: tokens[m], start: ws, end: we, conf: clamp(words[m].score, 0, 1), syllables: boundaries, splits: splits, pauses: pauses });
             prevEnd = we;
         }
         return units;
@@ -384,13 +389,14 @@
             const unitStart = start + span * (cumulative / totalWeight);
             cumulative += weights[i];
             const unitEnd = start + span * (cumulative / totalWeight);
-            units.push({ text: tokens[i], start: unitStart, end: unitEnd, conf: 1, syllables: EMPTY_BOUNDARIES, splits: EMPTY_SPLITS });
+            units.push({ text: tokens[i], start: unitStart, end: unitEnd, conf: 1, syllables: EMPTY_BOUNDARIES, splits: EMPTY_SPLITS, pauses: EMPTY_PAUSES });
         }
         return units;
     }
 
     const EMPTY_BOUNDARIES = [];
     const EMPTY_SPLITS = [];
+    const EMPTY_PAUSES = [];
 
     // ---------------------------------------------------------------------------
     // SyllableSegments: WHERE a subdivided word's characters are cut into syllable segments
@@ -478,6 +484,259 @@
         }
 
         return s;
+    }
+
+    // ---------------------------------------------------------------------------
+    // PausedWord: how a word's AUTHORED PAUSES (the Map Editor's Insert Pause, the word's
+    // `pauses` array) cut it into the stretches it is sung in (mirrors
+    // typebeat.Game.Rulesets.TypeBeat/Gameplay/PausedWord.cs, the gameplay half of it: Of and
+    // UsableRests; the editor's display runs are not ported).
+    //
+    // A rest is a SUBDIVISION with no characters in it. N rests cut a word into N + 1 stretches,
+    // each timed in its own right (so no cell's target sits inside a rest and the characters after
+    // one are timed FROM its end), and the judgement GROUPS gain a pair of edges at every rest, so
+    // the characters past a breath are judged against their own sung span. That makes this scoring
+    // surface: a rest honoured on one side and not the other moves every target and span after it.
+    //
+    // A rest that cannot cut its word is IGNORED, and a word whose every rest is ignored reads
+    // exactly as if it had none (pausedWordOf answers null).
+    // ---------------------------------------------------------------------------
+
+    // How many of a token's cells (isCell, the same count buildCells spreads over) sit before
+    // charIndex. Mirrors PausedWord.cellsBefore.
+    function cellsBefore(token, charIndex) {
+        let cells = 0;
+        for (let i = 0; i < charIndex && i < token.length; i++) if (isCell(token[i])) cells++;
+        return cells;
+    }
+
+    // The rests a word really has, in time order: each strictly inside the word with a split that
+    // separates typeable characters, none overlapping an earlier one, no two sharing a character,
+    // and every later rest on a later character than the one before it. Shared with the loader
+    // (buildExplicitUnits), exactly as the C# shares PausedWord.UsableRests with TimingJsonLoader.
+    // The sort is stable, as LINQ's OrderBy is, so two rests starting together keep their order.
+    function usableRests(token, unitStart, unitEnd, pauses) {
+        const rests = [];
+        const totalCells = typeableCount(token);
+        const ordered = pauses.slice().sort((a, b) => a.start - b.start);
+
+        for (const pause of ordered) {
+            if (pause.start <= unitStart || pause.end >= unitEnd || pause.start >= pause.end) continue;
+
+            const cut = clamp(pause.split, 0, token.length);
+            const cells = cellsBefore(token, cut);
+
+            if (cells <= 0 || cells >= totalCells) continue;
+
+            if (rests.length > 0) {
+                const last = rests[rests.length - 1];
+                if (pause.start < last.end || cut <= last.split) continue;
+            }
+
+            rests.push(pause);
+        }
+
+        return rests;
+    }
+
+    // Boundary `index` of a list, or `fallback` when the list is too short (PausedWord.boundaryAt).
+    function boundaryAt(boundaries, index, fallback) {
+        return index >= 0 && index < boundaries.length ? boundaries[index] : fallback;
+    }
+
+    // How a unit's authored rests cut `token` (PausedWord.Of): { pieces, splits, runSpans }, or null
+    // when it has none this derivation can honour, in which case every reader keeps the plain word.
+    //
+    //   pieces    the sung stretches, in text and time order: { firstChar, charCount, firstCell,
+    //             cellCount, startTime, endTime, boundaries, cellCuts, cuts }. cellCuts is null when
+    //             the word's char split is not authored (the derived even spread).
+    //   splits    every character position between the RUNS, ascending: each rest's own cut with the
+    //             stretches' interior cuts among them. What the judgement groups are split at.
+    //   runSpans  the span each run is sung over, in the order splits divides the word. What the
+    //             judgement groups take as their edges.
+    function pausedWordOf(token, unitStart, unitEnd, unit) {
+        if (!unit || !unit.pauses || unit.pauses.length === 0) return null;
+
+        const rests = usableRests(token, unitStart, unitEnd, unit.pauses);
+
+        if (rests.length === 0) return null;
+
+        const boundariesAll = unit.syllables || EMPTY_BOUNDARIES;
+
+        // The cuts this word's own subdivision describes: one per boundary, in boundary order.
+        const authored = isAuthoredValid(token, boundariesAll.length + 1, unit.splits);
+        const wordSplits = authored ? unit.splits : splitsFor(token, boundariesAll.length + 1, null);
+        const wordCuts = authored && wordSplits.length === boundariesAll.length ? cellCuts(token, wordSplits) : null;
+
+        const stretches = rests.length + 1;
+        const stretchStart = (i) => i === 0 ? unitStart : rests[i - 1].end;
+        const stretchEnd = (i) => i === rests.length ? unitEnd : rests[i].start;
+        const owned = [];
+
+        for (let i = 0; i < stretches; i++) owned.push([]);
+
+        // Route every boundary to the stretch whose span holds it. One that falls inside a rest goes
+        // to the NEARER stretch, keeping its relative position there.
+        for (let slot = 0; slot < boundariesAll.length; slot++) {
+            let time = boundariesAll[slot];
+            let stretch = -1;
+
+            for (let i = 0; i < stretches; i++) {
+                if (time >= stretchStart(i) && time <= stretchEnd(i)) {
+                    stretch = i;
+                    break;
+                }
+            }
+
+            if (stretch < 0) {
+                let rest = rests.length - 1;
+                for (let i = 0; i < rests.length; i++) {
+                    if (time >= rests[i].start && time <= rests[i].end) { rest = i; break; }
+                }
+
+                const fraction = (time - rests[rest].start) / (rests[rest].end - rests[rest].start);
+                stretch = time - rests[rest].start <= rests[rest].end - time ? rest : rest + 1;
+
+                const lo = stretchStart(stretch);
+                const hi = stretchEnd(stretch);
+                time = lo + fraction * (hi - lo);
+            }
+
+            owned[stretch].push({ time: time, slot: slot });
+        }
+
+        // One stretch's cuts: the word's AUTHORED ones for its boundaries, each clamped inside the
+        // stretch and forced ascending; when there are none to place, or they cannot all fit, the
+        // syllabifier's own cut for the stretch's text, exactly as a whole word with a stale split
+        // re-derives. The CELL cuts come from the resolved character cuts only when those are the
+        // mapper's, and are null (derived) otherwise.
+        function stretchCuts(firstChar, charCount, slots, firstCell, cells) {
+            const lastChar = firstChar + charCount;
+
+            if (charCount >= 2 && slots.length > 0 && wordCuts !== null && slots.length <= wordSplits.length) {
+                const placed = [];
+                let previous = firstChar;
+                let fits = true;
+
+                for (const slot of slots) {
+                    const cut = clamp(wordSplits[slot], firstChar + 1, lastChar - 1);
+
+                    if (cut <= previous) {
+                        fits = false;
+                        break;
+                    }
+
+                    placed.push(cut);
+                    previous = cut;
+                }
+
+                if (fits) {
+                    const splitCuts = new Array(placed.length + 2).fill(0);
+
+                    for (let i = 0; i < placed.length; i++) splitCuts[i + 1] = cellsBefore(token, placed[i]) - firstCell;
+
+                    splitCuts[splitCuts.length - 1] = cells;
+                    let legal = true;
+
+                    for (let i = 1; i < splitCuts.length; i++) {
+                        if (splitCuts[i] <= splitCuts[i - 1] || splitCuts[i] > cells) legal = false;
+                    }
+
+                    if (legal) return { cuts: placed, cells: splitCuts };
+                }
+            }
+
+            const derived = splitsFor(token.substring(firstChar, firstChar + charCount), slots.length + 1, null)
+                .map(cut => cut + firstChar);
+
+            return { cuts: derived, cells: null };
+        }
+
+        const pieces = [];
+        const splits = [];
+        const runSpans = [];
+        let firstChar = 0;
+        let firstCell = 0;
+
+        for (let i = 0; i < stretches; i++) {
+            const lastChar = i === stretches - 1 ? token.length : rests[i].split;
+            const charCount = Math.max(0, lastChar - firstChar);
+            const cells = Math.max(0, cellsBefore(token, lastChar) - firstCell);
+            const pieceStart = stretchStart(i);
+            const pieceEnd = stretchEnd(i);
+            // Stable, as OrderBy is: two boundaries at the same time keep their slot order.
+            const inOrder = owned[i].slice().sort((a, b) => a.time - b.time);
+            const slots = inOrder.map(pair => pair.slot);
+            const times = inOrder.map(pair => pair.time);
+
+            const resolved = stretchCuts(firstChar, charCount, slots, firstCell, cells);
+
+            pieces.push({
+                firstChar: firstChar, charCount: charCount,
+                firstCell: firstCell, cellCount: cells,
+                startTime: pieceStart, endTime: pieceEnd,
+                boundaries: times, cellCuts: resolved.cells, cuts: resolved.cuts
+            });
+
+            // The runs the stretch's text is drawn in and judged in, with the span each is sung over:
+            // boundaries paired positionally with the cuts, the LAST run taking what the stretch has
+            // left, and a clock guard so a stretch the cuts no longer describe never runs backwards.
+            let clock = pieceStart;
+
+            for (let run = 0; run <= resolved.cuts.length; run++) {
+                let lo = run === 0 ? pieceStart : boundaryAt(times, run - 1, pieceStart);
+                let hi = run === resolved.cuts.length ? pieceEnd : boundaryAt(times, run, pieceEnd);
+
+                lo = Math.max(lo, clock);
+                hi = Math.max(hi, lo);
+                clock = hi;
+
+                runSpans.push({ start: lo, end: hi });
+            }
+
+            for (const cut of resolved.cuts) splits.push(cut);
+            firstChar = lastChar;
+            firstCell += cells;
+
+            if (i < stretches - 1) splits.push(rests[i].split);
+        }
+
+        return { pieces: pieces, splits: splits, runSpans: runSpans };
+    }
+
+    // Per-CELL target times for one token (TypingLine.tokenCellTargets): ramp[j] is cell j of k.
+    // Without a usable pause this is exactly the old per-char syllableCharTarget call; a PAUSED word
+    // is timed stretch by stretch, each over its own span with its own boundaries and cell cuts
+    // (TypingLine.fillPausedStretches), so no cell has a target inside a rest.
+    function tokenCellTargets(token, unitStart, unitEnd, unit, k) {
+        const ramp = new Array(Math.max(0, k)).fill(0);
+
+        if (k <= 0) return ramp;
+
+        const boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
+        const paused = unit ? pausedWordOf(token, unitStart, unitEnd, unit) : null;
+
+        if (paused !== null) {
+            for (const piece of paused.pieces) {
+                for (let j = 0; j < piece.cellCount; j++) {
+                    ramp[piece.firstCell + j] = syllableCharTarget(piece.startTime, piece.endTime, piece.boundaries, piece.cellCount, j, piece.cellCuts);
+                }
+            }
+
+            return ramp;
+        }
+
+        // An AUTHORED char split (backlog 181, "ap|ple") replaces the even distribution within the
+        // word: the mapper's own cut says how many chars ride each segment, so the same split drives
+        // the targets here and the judgement groups in buildSyllables. Derived (absent, or stale)
+        // leaves the index-even spread untouched.
+        const cuts = (unit && isAuthoredValid(token, boundaries.length + 1, unit.splits))
+            ? cellCuts(token, unit.splits)
+            : null;
+
+        for (let j = 0; j < k; j++) ramp[j] = syllableCharTarget(unitStart, unitEnd, boundaries, k, j, cuts);
+
+        return ramp;
     }
 
     // ---------------------------------------------------------------------------
@@ -909,17 +1168,31 @@
             const boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
             const subtimed = boundaries.length > 0;
 
+            // A word carrying an authored PAUSE is a SUBTIMED word with one more divider: the rest's
+            // own pair of edges (its start closing the group before it and its end opening the one
+            // after) leave a gap no group covers, which gives the characters past the breath their
+            // own sung span to be judged against. A rest that cannot cut the word changes nothing
+            // here, exactly as it changes nothing in the targets (mirrors TypingLine.buildSyllables).
+            const paused = unit ? pausedWordOf(token, unitStart, unitEnd, unit) : null;
+
             // A stylised spelling gets no groups at all UNLESS the mapper subtimed it, in which case
             // the hand-authored count wins over anything the rules would have guessed.
-            if (token.length > 0 && (subtimed || isSyllabifiable(token))) {
-                const splits = subtimed
-                    ? splitsFor(token, boundaries.length + 1, unit ? unit.splits : null)
-                    : splitPoints(token);
+            if (token.length > 0 && (subtimed || paused !== null || isSyllabifiable(token))) {
+                const splits = paused !== null
+                    ? paused.splits
+                    : subtimed
+                        ? splitsFor(token, boundaries.length + 1, unit ? unit.splits : null)
+                        : splitPoints(token);
                 const groupBase = starts.length;
                 const groupCount = splits.length + 1;
 
                 for (let g = 0; g < groupCount; g++) {
-                    if (subtimed) {
+                    if (paused !== null) {
+                        // The run's own span, rest's gap and all: no run covers a rest.
+                        const run = paused.runSpans[Math.min(g, paused.runSpans.length - 1)];
+                        starts.push(run.start);
+                        ends.push(run.end);
+                    } else if (subtimed) {
                         starts.push(g === 0 ? unitStart : boundaries[g - 1]);
                         ends.push(g === groupCount - 1 ? unitEnd : boundaries[g]);
                     } else {
@@ -1030,7 +1303,7 @@
 
             if (extends_) continue;
 
-            if (cellSyllable[runStart] >= 0 && i - runStart >= STRETCH_RUN_LENGTH) {
+            if (cellSyllable[runStart] >= 0 && i - runStart >= STRETCH_RUN_LENGTH && !subdividedRun(cells, cellSyllable, runStart, i)) {
                 for (let j = runStart; j < i; j++) flags[j] = true;
             }
 
@@ -1038,6 +1311,43 @@
         }
 
         return flags;
+    }
+
+    // Whether the identical run at [start, end) is SUBDIVIDED (mirrors TypingLine.subdividedRun): a
+    // divider cuts through a long stretch of the same character, leaving a run of at least
+    // STRETCH_RUN_LENGTH of them on the OTHER side of the boundary too ("yooooo|oooo|u"). The author
+    // has paced that stretch into spans, so each group keeps its span rather than reverting to
+    // character timing. A divider that merely STARTS a run ("hey|yyyy", one 'y' on the far side) is
+    // not that shape, and its run stays char-timed.
+    function subdividedRun(cells, cellSyllable, start, end) {
+        const sameChar = (a, b) => fold(a.expected) === fold(b.expected);
+
+        if (start > 0
+            && cellSyllable[start - 1] >= 0
+            && cellSyllable[start - 1] !== cellSyllable[start]
+            && sameChar(cells[start - 1], cells[start])
+            && sameRunLength(cells, cellSyllable, start - 1, -1) >= STRETCH_RUN_LENGTH) return true;
+
+        return end < cells.length
+            && cellSyllable[end] >= 0
+            && cellSyllable[end] !== cellSyllable[start]
+            && sameChar(cells[end], cells[start])
+            && sameRunLength(cells, cellSyllable, end, 1) >= STRETCH_RUN_LENGTH;
+    }
+
+    // How many cells of the same folded character run from `index` in `direction` while staying
+    // inside that cell's OWN group (mirrors TypingLine.sameRunLength).
+    function sameRunLength(cells, cellSyllable, index, direction) {
+        const group = cellSyllable[index];
+        const expected = fold(cells[index].expected);
+        let count = 0;
+
+        for (let i = index; i >= 0 && i < cells.length && cellSyllable[i] === group; i += direction) {
+            if (fold(cells[i].expected) !== expected) break;
+            count++;
+        }
+
+        return count;
     }
 
     // Index into line.syllables of the group that judges cell cellIndex, or -1 when the cell is in
@@ -1129,7 +1439,6 @@
             const unit = units.length > 0 ? units[Math.min(m, units.length - 1)] : null;
             const unitStart = unit ? unit.start : 0;
             const unitEnd = unit ? unit.end : 0;
-            const boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
             const token = tokens[m];
 
             // k = number of cells in this token, freestyle slots included (the player presses a key
@@ -1137,13 +1446,10 @@
             let k = 0;
             for (let t = 0; t < token.length; t++) if (isCell(token[t])) k++;
 
-            // An AUTHORED char split (backlog 181, "ap|ple") replaces the even distribution within
-            // the word: the mapper's own cut says how many chars ride each segment, so the same
-            // split drives the targets here and the judgement groups in buildSyllables. Derived
-            // (absent, or stale) leaves the index-even spread untouched.
-            const cuts = (unit && isAuthoredValid(token, boundaries.length + 1, unit.splits))
-                ? cellCuts(token, unit.splits)
-                : null;
+            // Per-cell targets for this token, which is where syllable subdivisions, an AUTHORED
+            // char split (backlog 181) and an authored PAUSE warp the char-to-time mapping (see
+            // tokenCellTargets, mirroring TypingLine.tokenCellTargets).
+            const ramp = tokenCellTargets(token, unitStart, unitEnd, unit, k);
 
             let j = 0;
             for (let t = 0; t < token.length; t++) {
@@ -1151,7 +1457,7 @@
                 expected[pos] = ch;
                 if (isCell(ch)) {
                     typeableFlags[pos] = true;
-                    targets[pos] = syllableCharTarget(unitStart, unitEnd, boundaries, k, j, cuts);
+                    targets[pos] = ramp[j];
                     j++;
                 }
                 pos++;
@@ -1298,7 +1604,31 @@
                             splitChars.push(s);
                         }
                     }
-                    words.push({ text: typeof w.text === 'string' ? w.text : '', start: ws, end: we, score: score, syllables: syllables, splitChars: splitChars });
+                    // THE AUTHORED PAUSES (type!beat editor extension, the Map Editor's Insert Pause):
+                    // the rests the singer takes INSIDE this word. Read RAW here and validated against
+                    // the CLAMPED word in buildExplicitUnits, exactly as the splits above are (mirrors
+                    // TimingJsonLoader.TryParseRawLine). `pauses` is the array a word writes when it
+                    // takes more than one breath; the single `pause` object is the shape the feature
+                    // had before a word could hold several, and reads the same way. Each field is taken
+                    // on the C# reader's own terms: the two times must be JSON NUMBERS (tryGetDouble)
+                    // and the split a whole number inside int32 (tryGetInt), and a rest missing any of
+                    // them is skipped rather than guessed at.
+                    const pauses = [];
+                    const readPause = (p) => {
+                        if (p == null || typeof p !== 'object' || Array.isArray(p)) return;
+                        const a = p.start_ms, b = p.end_ms, s = p.split;
+                        if (typeof a !== 'number' || !isFinite(a)) return;
+                        if (typeof b !== 'number' || !isFinite(b)) return;
+                        if (typeof s !== 'number' || !isFinite(s) || Math.floor(s) !== s) return;
+                        if (s < -2147483648 || s > 2147483647) return;
+                        pauses.push({ start: a, end: b, split: s });
+                    };
+                    if (Array.isArray(w.pauses)) {
+                        for (const p of w.pauses) readPause(p);
+                    } else if (Object.prototype.hasOwnProperty.call(w, 'pause')) {
+                        readPause(w.pause);
+                    }
+                    words.push({ text: typeof w.text === 'string' ? w.text : '', start: ws, end: we, score: score, syllables: syllables, splitChars: splitChars, pauses: pauses });
                 }
             }
             const sealGraceMs = isFinite(+o.seal_grace_ms) ? +o.seal_grace_ms : null;
@@ -1345,6 +1675,14 @@
             const firstTarget = cells.length ? cells[0].target : start;
             const activationTime = Math.max(start, firstTarget - CUE_LEAD_MS);
 
+            // TypingLine.FirstVocalTime: the first TYPEABLE cell's target, or the line's own start
+            // when it has none. What the first line's head start (FIRST_LINE_LEAD_MS) is measured
+            // back from.
+            let firstVocalTime = start;
+            for (const c of cells) {
+                if (c.typeable) { firstVocalTime = c.target; break; }
+            }
+
             // Boundary bump: a last cell on the seal boundary gets a minimum finish window.
             let grace = sealGrace;
             if (cells.length && cells[cells.length - 1].target >= endTime - BOUNDARY_EPSILON_MS) {
@@ -1359,6 +1697,7 @@
                 endTime: endTime,
                 singEndTime: singEndTime,
                 activationTime: activationTime,
+                firstVocalTime: firstVocalTime,
                 sealGraceMs: grace,
                 estimated: line.estimated,
                 cells: cells,
@@ -1829,6 +2168,13 @@
     // of the song by exactly the margin they may fall behind it.
     const FLETCHER_DRAG_GRACE_MS = 1500;
 
+    // TypingEngine.FIRST_LINE_LEAD_MS (PR 2): how long before its first vocal the map's FIRST line
+    // opens for typing. A later line is reachable early by rushing from the one before it, but the
+    // first line has nothing to rush from and its boundary usually sits ON its first word, so the
+    // activationTime clamp left the player unable to type a character until that word was already
+    // being sung. A FLOOR, not a fixed window: a line whose own activation is earlier keeps it.
+    const FIRST_LINE_LEAD_MS = 300;
+
     // TypingCell.IsCountable: the currency the rush cap measures in. A space spends no budget, so
     // pressing one can never push the caret over the line by itself.
     function isCountable(cell) { return cell.typeable && cell.expected !== ' '; }
@@ -2019,7 +2365,12 @@
             // opens) is gated on it in the C# too. The browser therefore runs the AUTOMATIC
             // hand-over, which is the C# default and what a CONFIG frame with bit 14 clear means, so
             // the parity harnesses leave the bit alone rather than setting it the way they set 2, 3,
-            // 4, 5, 6, 7, 8, 10, 11 and 12. What IS reachable here, and is mirrored, is the backspace
+            // 4, 5, 6, 7, 8, 10, 11, 12 and 16. PR 2's TYPED-THROUGH NEWLINE
+            // (TypingEngine.NewlineOnTypedLetter, bit 15: a letter at a finished caret hands the line
+            // on and types) rides the same setting on the desktop and is gated on ManualNewlines in
+            // the engine too, so it is unreachable here for the same reason and its bit stays clear.
+            // (The desktop's default for that setting flipped to ON in PR 2; the browser's automatic
+            // hand-over is unchanged, because it has no setting to flip.) What IS reachable here, and is mirrored, is the backspace
             // at the head of a line stepping back up into the line behind it: the C# gates that on
             // FletcherEnabled alone, with no era bit, so it is live rule on an ordinary /play run
             // (see processBackspace and stepBackIntoLine).
@@ -2044,6 +2395,12 @@
             // hand-over nor the seal loop's ordinary one is refused: those are the SONG arriving, an
             // entry that is late rather than early.
             this.boundedRush = true;
+            // THE FIRST LINE'S HEAD START (PR 2, TypingEngine.FirstLineLeadIn, CONFIG frame bit 16):
+            // a press up to FIRST_LINE_LEAD_MS before the map's first vocal opens the first line (see
+            // firstLineTypingOpensAt). Defaulted FALSE in the C# so a replay stored before it
+            // re-derives under the old gate; set for every live stack there, and therefore
+            // unconditionally here, the browser having no era axis.
+            this.firstLineLeadIn = true;
             // The COUNTABLE-CHARACTER STREAM (the C# constructor's countableTargets /
             // countableBase / countablePrefix): the whole map read as one run of countable cells,
             // which is the currency the rush cap measures in. countableTargets holds every
@@ -2470,6 +2827,27 @@
         // caret has got to. Equal to "a line is active" with a pinned caret; under the flexible one
         // the two diverge, because the caret can be parked on a line the song has not reached
         // (rush) or still finishing one the song has left (drag).
+        // TypingEngine.FirstLineTypingOpensAt. Whether the map's FIRST line is inside the head start
+        // FIRST_LINE_LEAD_MS gives it at `time`: the window in which a press may open a line the
+        // clock has not activated yet (see processKey). The line's own activationTime is NOT moved,
+        // because the WPM clock is armed from it; a press made in the head start arms the clock
+        // ahead of the cue exactly as a rushed press on any later line does (armWpmClockAheadOfTheCue).
+        //
+        // The C# gates it on FirstLineLeadIn, CONFIG frame bit 16, which the live playfield sets for
+        // every stack and a replay stored before PR 2 carries clear. The browser only ever plays
+        // live, so it takes the head start unconditionally (firstLineLeadIn below is always true),
+        // and every parity fixture that feeds the C# arm has to set the bit, the same treatment bits
+        // 2 through 12 already get.
+        firstLineTypingOpensAt(time) {
+            if (!this.firstLineLeadIn || this.finished || this.activeLineIndex !== -1) return false;
+            if (this.nextSealIndex !== 0 || this.lines.length === 0) return false;
+
+            const first = this.lines[0];
+
+            return time >= Math.min(first.activationTime, first.firstVocalTime - FIRST_LINE_LEAD_MS)
+                && time < first.endTime + first.sealGraceMs;
+        }
+
         get songWindowOpen() {
             if (this.finished || this.nextSealIndex >= this.lines.length || this.lastUpdateTime === null) return false;
 
@@ -3242,6 +3620,17 @@
 
         processKey(c, time) {
             if (this.finished || this.failed) return false;
+
+            // THE MAP'S FIRST LINE OPENS EARLY (FIRST_LINE_LEAD_MS, mirrors the head of
+            // TypingEngine.ProcessKey). There is no previous line to rush from, so the PRESS is what
+            // opens it: the same hand-over update's activation arm performs, made on demand. The
+            // clock alone still leaves the line alone.
+            if (this.activeLineIndex < 0 && this.firstLineTypingOpensAt(time)) {
+                this.activeLineIndex = 0;
+                this.caretIndex = 0;
+                this.autoSkipForward();
+            }
+
             if (this.activeLineIndex < 0) return false; // dead zone / pre-roll: harmless
             const line = this.lines[this.activeLineIndex];
             this.autoSkipForward();
@@ -3780,6 +4169,20 @@
         // Scan first, mutate after, exactly as the C# does, because the two have to be told apart
         // before anything moves: a press with nothing typed behind it did SOMETHING if it reclaimed
         // a word, and nothing at all if it did not.
+        // TypingEngine.CaretOnParkedTypo (PR 2): true when the caret sits on a PARKED typo, the one
+        // cell state a backspace clears IN PLACE (see processBackspace below), reporting a mutation
+        // without moving the caret. The player's erase runs (eraseBackTo in typebeat-player.js)
+        // read it so an in-place clear is not mistaken for the end of a selection: a retype
+        // selection opened over a word skip ends on exactly such a cell whenever the player has
+        // since typed into the gap, and stopping there left the word it was opened for standing.
+        get caretOnParkedTypo() {
+            if (this.finished || this.activeLineIndex < 0) return false;
+
+            const cells = this.lines[this.activeLineIndex].cells;
+
+            return this.caretIndex < cells.length && cells[this.caretIndex].state === 'wrong';
+        }
+
         processBackspace() {
             if (this.finished || this.activeLineIndex < 0) return false;
 
@@ -4152,8 +4555,13 @@
             FORMAT_MAGIC, FALLBACK_FORMAT_VERSION, LITERAL_BRACKETS_FROM_VERSION,
             // The flexible caret's two tuning points (backlog 208), exported so the harnesses pin
             // the same numbers the game's own FletcherEngineTest does rather than transcribing them.
-            FLETCHER_MAX_CHARS_AHEAD, FLETCHER_DRAG_GRACE_MS
+            FLETCHER_MAX_CHARS_AHEAD, FLETCHER_DRAG_GRACE_MS,
+            // The first line's head start (PR 2), exported for the same reason.
+            FIRST_LINE_LEAD_MS
         },
+        // PausedWord (PR 2): the authored-pause derivation, exported so the harnesses can hold it
+        // against the game's own PausedWord and TypingLine.
+        usableRests, pausedWordOf, tokenCellTargets,
         // the renderer/high-level mount is attached in typebeat-player.js
     };
 })(window);

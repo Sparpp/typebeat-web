@@ -74,6 +74,15 @@ public class EngineFuzzLiveParityTest
     private static TimedUnit Authored(string text, double start, double end, int[] splits, params double[] syllables)
         => new TimedUnit { Text = text, StartTime = start, EndTime = end, SyllableBoundaries = syllables, SyllableSplits = splits };
 
+    /// <summary>
+    /// A word carrying AUTHORED PAUSES (PR 2, the word-level <c>pauses</c> array, or the legacy single
+    /// <c>pause</c> object) and optionally boundaries and an authored split. The C# fixture carries
+    /// every rest the harness writes, usable or not: <see cref="PausedWord"/> is where both sides
+    /// decide which ones count.
+    /// </summary>
+    private static TimedUnit Paused(string text, double start, double end, int[] splits, WordPause[] pauses, params double[] syllables)
+        => new TimedUnit { Text = text, StartTime = start, EndTime = end, SyllableBoundaries = syllables, SyllableSplits = splits, Pauses = pauses };
+
     private static LyricLine Line(string text, double start, double end, double singEnd, params TimedUnit[] units)
         => new LyricLine { RawText = text, StartTime = start, EndTime = end, SingEndTime = singEnd, Units = units };
 
@@ -200,6 +209,23 @@ public class EngineFuzzLiveParityTest
             // second and a half before line 0 could seal at all: a player who types "ab" out on time
             // is refused and parked for eleven seconds. Eight cells in the second line so the rush cap
             // has room to bite on the far side of the deferred roll.
+            // PR 2's AUTHORED PAUSES and its stretch exclusion, CoreFuzzHarness.cjs's pausedWords (see
+            // the comment there for every shape it holds). Line 0 starts 200 ms before its first vocal,
+            // so its activation (800) is the earlier edge of the first line's head start.
+            case "pausedWords":
+                return
+                [
+                    Line("tonight forever", 800, 5000, 4000,
+                        Paused("tonight", 1000, 2400, [], [new WordPause(1300, 1700, 4)]),
+                        Paused("forever", 2400, 4000, [2, 4], [new WordPause(2950, 3150, 4), new WordPause(3600, 3700, 6)], 2900, 3500)),
+                    Line("breathe in", 5000, 8000, 7000,
+                        Paused("breathe", 5000, 6500, [], [new WordPause(5600, 6000, 3)], 5700),
+                        Paused("in", 6500, 7000, [], [new WordPause(6600, 6700, 0)])),
+                    Line("yooooooooou heyyyyy", 8000, 16000, 13000,
+                        Authored("yooooooooou", 8000, 11000, [6, 10], 9500, 10500),
+                        Authored("heyyyyy", 11000, 13000, [3], 12000)),
+                ];
+
             case "instrumentalGap":
                 return
                 [
@@ -280,6 +306,16 @@ public class EngineFuzzLiveParityTest
     /// caret ran ahead of, on combo and therefore on every combo-weighted portion after it, with no
     /// keystroke moving at all.</para>
     ///
+    /// <para>Since PR 2 they set BIT 16 as well, the first line's head start
+    /// (<see cref="TypingEngine.FirstLineLeadIn"/>): a press up to
+    /// <see cref="TypingEngine.FIRST_LINE_LEAD_MS"/> before the map's first vocal opens the first line.
+    /// The live playfield sets it for every stack and the browser takes it unconditionally; without it
+    /// the C# arm would refuse every head-start press the generator rolls, the browser would open the
+    /// line on it, and every keystroke after it would land on a different cell. Bits 14 and 15
+    /// (manual newlines, and the typed-through newline riding on it) stay CLEAR: they are a desktop
+    /// SETTING the browser has no surface for, and a clear bit is the automatic hand-over the browser
+    /// runs.</para>
+    ///
     /// <para>Bit 5 is the one that cannot be read as a single fact, which is why it is a parameter
     /// here rather than a constant: bit 5 CLEAR means a PINNED caret for a plain old replay, but an
     /// unpinned caret WITHOUT the line-start snap for one carrying the retired "FT" acronym, so
@@ -287,11 +323,11 @@ public class EngineFuzzLiveParityTest
     /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>. The sweep passes no mods, so the frame is
     /// the whole of the answer here.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true)
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming, backDatedSealBreak: backDatedSealBreak, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: foldsDisplacedClaim));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming, backDatedSealBreak: backDatedSealBreak, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: foldsDisplacedClaim, firstLineLeadIn: firstLineLeadIn));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -371,6 +407,7 @@ public class EngineFuzzLiveParityTest
 
                     Assert.That(browserLine.GetProperty("endTime").GetDouble(), Is.EqualTo(line.EndTime), $"{fixture.Name}[{i}]: endTime");
                     Assert.That(browserLine.GetProperty("activationTime").GetDouble(), Is.EqualTo(line.ActivationTime), $"{fixture.Name}[{i}]: activationTime");
+                    Assert.That(browserLine.GetProperty("firstVocalTime").GetDouble(), Is.EqualTo(line.FirstVocalTime), $"{fixture.Name}[{i}]: firstVocalTime");
                     Assert.That(browserLine.GetProperty("sealGraceMs").GetDouble(), Is.EqualTo(line.SealGraceMs), $"{fixture.Name}[{i}]: sealGraceMs");
 
                     var browserCells = browserLine.GetProperty("cells");
@@ -466,8 +503,12 @@ public class EngineFuzzLiveParityTest
         });
     }
 
-    /// <summary>The same line with every authored split taken away, i.e. as a pre-181 map carries it.</summary>
-    private static LyricLine WithoutSplits(LyricLine line)
+    /// <summary>
+    /// The same line with every authored split taken away, i.e. as a pre-181 map carries it, and
+    /// with every authored PAUSE taken away too (PR 2). <paramref name="keepSplits"/> keeps the
+    /// splits, which is the pre-PR-2 reading of a map that has both.
+    /// </summary>
+    private static LyricLine WithoutSplits(LyricLine line, bool keepSplits = false)
     {
         var units = new List<TimedUnit>(line.Units.Count);
 
@@ -481,6 +522,7 @@ public class EngineFuzzLiveParityTest
                 Source = unit.Source,
                 Confidence = unit.Confidence,
                 SyllableBoundaries = unit.SyllableBoundaries,
+                SyllableSplits = keepSplits ? unit.SyllableSplits : Array.Empty<int>(),
             });
         }
 
@@ -630,6 +672,7 @@ public class EngineFuzzLiveParityTest
         int rollForwards = 0, lineSnaps = 0, dragHolds = 0, rushCapBreaks = 0, refusedRolls = 0;
         int lineStepBacks = 0;
         int ownCreditBreaks = 0;
+        int leadInOpens = 0, pauseJudgements = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -658,6 +701,8 @@ public class EngineFuzzLiveParityTest
             rushCapBreaks += browserCase.GetProperty("rushCapBreaks").GetInt32();
             refusedRolls += browserCase.GetProperty("refusedRolls").GetInt32();
             lineStepBacks += browserCase.GetProperty("lineStepBacks").GetInt32();
+            leadInOpens += browserCase.GetProperty("leadInOpens").GetInt32();
+            pauseJudgements += browserCase.GetProperty("pauseJudgements").GetInt32();
             backspaces += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "");
         }
 
@@ -769,6 +814,67 @@ public class EngineFuzzLiveParityTest
             // the next line often enough that a generated backspace lands there), which is what this
             // counter is asserting stays true.
             Assert.That(lineStepBacks, Is.GreaterThan(0), "no run ever backspaced off the head of a line into the one behind it");
+
+            // PR 2, THE FIRST LINE'S HEAD START: a press inside [min(activation, first vocal -
+            // FIRST_LINE_LEAD_MS), activation) that OPENED the first line, where every earlier build
+            // refused it. The CONFIG frame here sets bit 16, so both arms take it; a port that lost it
+            // would leave the browser refusing a press the C# arm opens the line on and every
+            // keystroke after it on a different cell. The generator rolls it for half of every
+            // fixture's runs on a stream of its own, and scripted/firstLineHeadStart writes it out.
+            Assert.That(leadInOpens, Is.GreaterThan(0), "no run opened the first line inside its head start");
+
+            // PR 2, AUTHORED PAUSES: a press whose judged delta the pauses MOVED, counted against the
+            // same press on the same map with every pause taken away. Only the pausedWords fixture can
+            // reach it, and scripted/pausedSpans presses inside every stretch on purpose.
+            Assert.That(pauseJudgements, Is.GreaterThan(0), "no run was judged differently for a word's authored pauses");
+        });
+    }
+
+    /// <summary>
+    /// COVERAGE for PR 2's cell side, the way <see cref="TheAuthoredSplitFixtureReallyExercisesTheAuthoredArm"/>
+    /// is for backlog 181's: the pausedWords fixture has to move targets AND membership when its
+    /// pauses are taken away (or the loader agreement above would pass on two sides that both
+    /// ignore them), and its last line has to hold one run the stretch exclusion SPARES
+    /// ("yooooo|oooo|u", paced into spans) beside one it still char-times ("hey|yyyy").
+    /// </summary>
+    [Test]
+    public void ThePausedFixtureReallyExercisesThePauseArm()
+    {
+        var lines = Fixture("pausedWords");
+        int movedTargets = 0;
+        int movedMembership = 0;
+
+        foreach (var original in lines)
+        {
+            var paused = TypingLine.FromLyricLine(original);
+            var plain = TypingLine.FromLyricLine(WithoutSplits(original, keepSplits: true));
+
+            Assert.That(plain.Cells.Count, Is.EqualTo(paused.Cells.Count), "stripping the pauses must not change the cells themselves");
+
+            for (int c = 0; c < paused.Cells.Count; c++)
+            {
+                if (paused.Cells[c].TargetTime != plain.Cells[c].TargetTime)
+                    movedTargets++;
+
+                if (paused.SyllableIndexOf(c) != plain.SyllableIndexOf(c))
+                    movedMembership++;
+            }
+        }
+
+        var stretchLine = TypingLine.FromLyricLine(lines[2]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(movedTargets, Is.GreaterThan(0), "the pauses moved no target: the sweep stopped exercising them");
+            Assert.That(movedMembership, Is.GreaterThan(0), "the pauses moved no cell into another group: the sweep stopped exercising them");
+
+            // "yooooooooou": cells 1..9 are the nine 'o's, split 5 | 4 by the authored cut.
+            for (int c = 1; c <= 9; c++)
+                Assert.That(stretchLine.IsCharTimedStretch(c), Is.False, $"'o' cell {c}: a run a divider paces into spans is not char-timed");
+
+            // "heyyyyy" starts at cell 12; its trailing four 'y's (cells 15..18) are one run the divider merely starts.
+            for (int c = 15; c <= 18; c++)
+                Assert.That(stretchLine.IsCharTimedStretch(c), Is.True, $"'y' cell {c}: a run a divider only starts stays char-timed");
         });
     }
 

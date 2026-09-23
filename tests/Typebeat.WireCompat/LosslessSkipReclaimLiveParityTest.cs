@@ -156,6 +156,7 @@ public class LosslessSkipReclaimLiveParityTest
         BackDatedSealBreak = true,
         LosslessSkipReclaim = losslessSkipReclaim,
         FoldsDisplacedClaim = true,
+        FirstLineLeadIn = true,
     };
 
     /// <summary>
@@ -171,7 +172,7 @@ public class LosslessSkipReclaimLiveParityTest
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
-            firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: true));
+            firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: true, firstLineLeadIn: true));
 
         foreach (var step in Run(scenario).GetProperty("script").EnumerateArray())
         {
