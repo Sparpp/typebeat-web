@@ -74,11 +74,14 @@ public class LyricPaceTest
             Assert.That(pace.LineAverageCpm, Is.EqualTo(pace.AverageCpm).Within(1e-12));
             Assert.That(pace.LineAverageWpm, Is.EqualTo(pace.AverageWpm).Within(1e-12));
 
-            // Stars from LyricDifficulty, and this is the SHIPPED (chunked) reading: two seconds of
-            // singing cut into ~1.35 s chunks. It read 0.63 under the strain model, 0.59 under the
-            // feats one, 0.5911 under the envelope at the 10.6 anchor, 0.6692 at the 12.0 anchor,
-            // and 0.8197 on the chunked axis the rework ships.
-            Assert.That(pace.DifficultyRating, Is.EqualTo(0.8196852717490518));
+            // Stars from LyricDifficulty, the SHIPPED (chunked) reading. It read 0.63 under the
+            // strain model, 0.59 under the feats one, 0.5911 under the envelope at the 10.6 anchor,
+            // 0.6692 at the 12.0 anchor and 0.8197 on the chunked axis the rework shipped, and it
+            // reads EXACTLY ZERO since v22: the line carries five cells, and the chunked axis's
+            // character floor (16, the sandbox's own dial, mirrored by the envelope's
+            // LyricDifficulty.MinimumWindowChars) prices a map with no window holding that many at
+            // nothing, however fast its short bursts are. The pace figures above do not move.
+            Assert.That(pace.DifficultyRating, Is.Zero);
         });
     }
 
@@ -450,14 +453,18 @@ public class LyricPaceTest
         }
 
         // And the two arms of that Math.Max, named rather than implied, so a failure says which one
-        // broke. Both of these publish the MODEL's figure rather than the floor: the peaked map's
-        // hardest window is far clear of its own average (151.05 against 102.86), and even the
-        // six-window map, which is six thin lines laid end to end, has a window figure (52.26) above
-        // its whole-map average (48.98). TargetWpm_IsNeverBelowTheWholeMapAverage pins the other arm.
+        // broke. The peaked map publishes the MODEL's figure, its hardest window being far clear of
+        // its own average (151.05 against 102.86). The six-window map, six thin lines laid end to
+        // end, published its model figure too until v22 (52.26 against an average of 48.98); since
+        // the 16-character floor (LyricDifficulty.MinimumWindowChars) the model's figure for it is
+        // 43.05, below the average, so it now publishes the floor, 48.98 exactly.
         Assert.Multiple(() =>
         {
             Assert.That(LyricPace.Compute(twoPaceMap(6, 1000, 21000)).TargetWpm, Is.EqualTo(151.05142388501122).Within(1e-9));
-            Assert.That(LyricPace.Compute(linesAtWindows(six_windows)).TargetWpm, Is.EqualTo(52.260991063739205).Within(1e-9));
+            Assert.That(modelTargetWpm(linesAtWindows(six_windows)), Is.EqualTo(43.052892689999808).Within(1e-9), "the model's own figure");
+            Assert.That(LyricPace.Compute(linesAtWindows(six_windows)).TargetWpm, Is.EqualTo(LyricPace.Compute(linesAtWindows(six_windows)).AverageWpm).Within(1e-12),
+                "published at the floor");
+            Assert.That(LyricPace.Compute(linesAtWindows(six_windows)).TargetWpm, Is.EqualTo(48.979591836734684).Within(1e-9));
         });
     }
 
@@ -547,10 +554,12 @@ public class LyricPaceTest
     /// <para>What this fixture USED to say is that the target's selection pool was exactly the set of
     /// lines the average counted, so a phantom line could not enter the fastest fifth as a 0 nor
     /// widen the count that decided how many lines the fifth was. There is no pool any more. The two
-    /// maps below still publish the same target, but for a DIFFERENT reason, and the fixture now says
-    /// so: the model's own window figure is not equal on them (30.45 WPM against 41.37, because empty
-    /// lines still shape the timeline the model scans), and both sit below the average, so what the
-    /// strip publishes is the floor in both cases.</para>
+    /// maps below still publish the same target, but for a DIFFERENT reason, and the fixture says so:
+    /// what the strip publishes is the floor in both cases. Until v22 the model's own window figures
+    /// differed (30.45 WPM against 41.37, because empty lines still shape the timeline the model
+    /// scans) and both sat below the average; since v22 both are exactly 0, because each map carries
+    /// 15 weighted cells, one short of the 16-character floor
+    /// (<c>LyricDifficulty.MinimumWindowChars</c>), so no window qualifies at all.</para>
     /// </summary>
     [Test]
     public void AnUntypeableLine_IsInvisibleToBothAverages_AndTheTargetFallsToItsFloor()
@@ -578,15 +587,13 @@ public class LyricPaceTest
             Assert.That(withEmpty.LineAverageWpm, Is.EqualTo(withoutEmpty.LineAverageWpm).Within(1e-12));
             Assert.That(withEmpty.AverageWpm, Is.EqualTo(72.0).Within(1e-9));
 
-            // THE TARGET AGREES ONLY THROUGH THE FLOOR. Both model figures are below 72, so both maps
-            // publish 72; the model figures themselves differ, which is exactly the claim the old
-            // version of this test would have had to give up.
+            // THE TARGET AGREES ONLY THROUGH THE FLOOR. Both model figures are below 72 (both are 0:
+            // neither map clears the character floor), so both maps publish 72.
             Assert.That(withEmpty.TargetWpm, Is.EqualTo(withoutEmpty.TargetWpm).Within(1e-12));
             Assert.That(withEmpty.TargetWpm, Is.EqualTo(withEmpty.AverageWpm).Within(1e-12));
 
-            Assert.That(modelTargetWpm(withEmptyLines), Is.LessThan(withEmpty.AverageWpm));
-            Assert.That(modelTargetWpm(withoutEmptyLines), Is.LessThan(withoutEmpty.AverageWpm));
-            Assert.That(modelTargetWpm(withEmptyLines), Is.Not.EqualTo(modelTargetWpm(withoutEmptyLines)));
+            Assert.That(modelTargetWpm(withEmptyLines), Is.Zero, "15 cells: under the 16-character floor");
+            Assert.That(modelTargetWpm(withoutEmptyLines), Is.Zero);
         });
     }
 
@@ -618,13 +625,16 @@ public class LyricPaceTest
     /// <summary>
     /// THE SHARED ANCHOR MAP, under both arms, and the honest note about what this file can still
     /// lock. The four words below are the fixture the game's LyricDifficultyTest calls its anchor and
-    /// pins at 1.9987321307058443, every digit of which came out of the prototype
-    /// (docs/sr-envelope-model.js in the parent superrepo) that the envelope model is a port of.
+    /// pins at 1.433936415287919 since the character floor (<c>LyricDifficulty.MinimumWindowChars</c>)
+    /// went to 16 (it was 1.9987321307058443 before, every digit of which came out of the prototype,
+    /// docs/sr-envelope-model.js in the parent superrepo, that the envelope model is a port of): the
+    /// map carries 22 cells, so the shortest stretch holding 16 of them is longer than the 1.36 s
+    /// duration floor and the peak is read off that longer window instead.
     ///
     /// <para>THIS MIRROR CAN NO LONGER REACH THAT NUMBER, so it no longer claims to. The game takes
     /// it with typability OFF, through an internal score source; the public API here applies the
     /// shipped typability index, which this fixture's lines clear the gate for, so the envelope arm
-    /// reads 2.0477 instead. The prototype lock lives
+    /// reads 1.4250 instead (2.0477 before v22). The prototype lock lives
     /// in the game's own fixture and in WireCompat. What this test pins is the pair the WEBSITE
     /// stores and shows: the SHIPPED chunked rating, which is what <c>difficulty_rating</c> holds,
     /// and the envelope arm beside it so a failure says which of the two moved.</para>
@@ -662,8 +672,8 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(1.728393016593313), "the shipped (chunked) reading");
-            Assert.That(LyricDifficulty.Compute(map, 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.EqualTo(2.047682702058108),
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(1.3022384832687535), "the shipped (chunked) reading");
+            Assert.That(LyricDifficulty.Compute(map, 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.EqualTo(1.4250280885191169),
                 "the envelope arm, with the typability the public API applies");
 
             // The default argument IS the shipped axis, which is what makes every unqualified
@@ -677,117 +687,108 @@ public class LyricPaceTest
     /// AMapShorterThanTheSmallestWindowRatesExactlyZero and it pinned exactly that: windows are
     /// scheduled in real seconds and never clamped down to the map, so a map whose whole sung
     /// timeline is under the smallest scheduled window (1.36 s) had no peak ratio and therefore no
-    /// range to fill. "cat cat" over 800 ms was this file's anchor for six backlog items and rated
-    /// exactly nothing.
+    /// range to fill.
     ///
-    /// <para>THE CHUNKED AXIS RATES IT, and rates it HIGH. It cuts the map into chunks of about
-    /// 1.35 s and scores each as a window in its own right, so a map that is one short chunk is
-    /// simply a map with one chunk: two words in 0.8 s is a fast burst and reads 2.60, well above
-    /// what the same two words stretched over three seconds read. The old claim is not deleted here,
-    /// it is relocated: the envelope arm still returns exactly zero, and that is asserted below so
-    /// the property has somewhere to fail from.</para>
+    /// <para>THE CHUNKED AXIS RATES IT. It scores the map's own windows directly, so a map that is
+    /// one short burst is simply a map with one short window: six words in a second reads as a
+    /// fast burst. The old claim is not deleted here, it is relocated: the envelope arm still
+    /// returns exactly zero, and that is asserted below so the property has somewhere to fail
+    /// from.</para>
+    ///
+    /// <para>THE FIXTURE CARRIES 23 CELLS SINCE v22, so the DURATION is the only thing under test.
+    /// "cat cat" over 800 ms was this file's anchor for six backlog items, but the character floor
+    /// (16, the sandbox's dial, which <c>LyricDifficulty.MinimumWindowChars</c> mirrors on the
+    /// envelope arm) prices its 7 cells at zero on BOTH arms whatever its length, so the claim needs
+    /// a map that clears the floor to be about the duration at all. The same six words the game's
+    /// own test uses; and "cat cat" is kept, to say that 7 cells is under the floor however long
+    /// the map runs.</para>
     /// </summary>
     [Test]
     public void DifficultyRating_AMapShorterThanTheSmallestWindow_RatesZeroOnlyOnTheEnvelopeArm()
     {
-        var tooShort = new LyricLine
+        static LyricLine cats(int count, double end)
         {
-            RawText = "cat cat",
-            StartTime = 0,
-            EndTime = 800,
-            SingEndTime = 800,
-            Units =
-            [
-                new TimedUnit { Text = "cat", StartTime = 0, EndTime = 400 },
-                new TimedUnit { Text = "cat", StartTime = 400, EndTime = 800 },
-            ],
-        };
+            var units = new TimedUnit[count];
 
-        var longEnough = new LyricLine
-        {
-            RawText = "cat cat",
-            StartTime = 0,
-            EndTime = 3000,
-            SingEndTime = 3000,
-            Units =
-            [
-                new TimedUnit { Text = "cat", StartTime = 0, EndTime = 1500 },
-                new TimedUnit { Text = "cat", StartTime = 1500, EndTime = 3000 },
-            ],
-        };
+            for (int i = 0; i < count; i++)
+                units[i] = new TimedUnit { Text = "cat", StartTime = Math.Round(end * i / count), EndTime = Math.Round(end * (i + 1) / count) };
+
+            return new LyricLine
+            {
+                RawText = string.Join(' ', Enumerable.Repeat("cat", count)),
+                StartTime = 0,
+                EndTime = end,
+                SingEndTime = end,
+                Units = units,
+            };
+        }
+
+        // Six "cat"s: 18 letters and the 5 spaces between them, which clears the 16-cell floor.
+        var tooShort = cats(6, 1000);
+        var longEnough = cats(6, 3000);
+        var belowTheFloor = cats(2, 3000);
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricPace.Compute([tooShort]).DifficultyRating, Is.EqualTo(2.6005197363745625), "0.8 s of singing is one fast chunk");
-            Assert.That(LyricPace.Compute([longEnough]).DifficultyRating, Is.EqualTo(0.784407215479153), "3 s of the same two words is a slow one");
+            Assert.That(LyricPace.Compute([tooShort]).DifficultyRating, Is.EqualTo(4.887130687171009), "1.0 s of singing is one fast burst");
+            Assert.That(LyricPace.Compute([longEnough]).DifficultyRating, Is.EqualTo(2.4949068839517472), "3 s of the same six words is a slow one");
 
-            // The ORDER is the part worth saying out loud: the short map now outrates the long one,
-            // where the envelope model had it at exactly nothing against 0.68.
+            // The ORDER is the part worth saying out loud: the short map outrates the long one,
+            // where the envelope model has it at exactly nothing.
             Assert.That(LyricPace.Compute([tooShort]).DifficultyRating, Is.GreaterThan(LyricPace.Compute([longEnough]).DifficultyRating));
 
             Assert.That(LyricDifficulty.Compute([tooShort], 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.Zero,
-                "0.8 s of singing still fits no scheduled window at all");
+                "1.0 s of singing still fits no scheduled window at all");
+            Assert.That(LyricDifficulty.Compute([longEnough], 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.GreaterThan(0),
+                "and 3 s of it does");
+
+            Assert.That(LyricPace.Compute([belowTheFloor]).DifficultyRating, Is.Zero, "and 3 s of \"cat cat\" rates nothing: 7 cells is under the floor");
+            Assert.That(LyricDifficulty.Compute([belowTheFloor], 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.Zero, "on either arm");
         });
     }
 
     /// <summary>
     /// AN INTER-WORD SPACE IS A CELL (backlog 269) and it belongs to its LINE: a word whose
     /// successor is on the same line carries the spacebar press after it, a word ending its line
-    /// does not. So the same two words at the same two times rate differently depending on whether
-    /// the author put them on one line or two, which is right, because on two lines the player
-    /// really does type one keystroke fewer. Mirrors the game's test of the same name.
+    /// does not. So the same words at the same times rate differently depending on whether the
+    /// author put them on one line or several, which is right, because across line breaks the
+    /// player really does type fewer keystrokes. Mirrors the game's test of the same name.
     ///
-    /// <para>The two values moved to the chunked axis with everything else; the claim did not. The
-    /// GAP between them narrowed sharply though, to 0.005 where the envelope had 0.167, so a failure
-    /// that flips the inequality is a far smaller change of model on this axis than it would have
-    /// been on the last one.</para>
+    /// <para>FOUR WORDS RATHER THAN TWO SINCE v22, exactly as the game's test moved: the comparison
+    /// has to clear the 16-character floor to be readable at all ("aaa bbb" carries 7 cells and now
+    /// rates zero on either layout). One line of four carries 3 spaces over the same timeline that
+    /// four lines of one carry none, which is the whole of the difference between the two
+    /// ratings below.</para>
     /// </summary>
     [Test]
     public void DifficultyRating_AnInterWordSpaceIsACellAndBelongsToItsLine()
     {
-        LyricLine[] oneLine =
-        [
-            new LyricLine
-            {
-                RawText = "aaa bbb",
-                StartTime = 0,
-                EndTime = 2000,
-                SingEndTime = 2000,
-                Units =
-                [
-                    new TimedUnit { Text = "aaa", StartTime = 0, EndTime = 1000 },
-                    new TimedUnit { Text = "bbb", StartTime = 1000, EndTime = 2000 },
-                ],
-            },
-        ];
+        static LyricLine line(double start, double end, params (string Text, double Start, double End)[] words) => new()
+        {
+            RawText = string.Join(' ', words.Select(w => w.Text)),
+            StartTime = start,
+            EndTime = end,
+            SingEndTime = end,
+            Units = words.Select(w => new TimedUnit { Text = w.Text, StartTime = w.Start, EndTime = w.End }).ToArray(),
+        };
 
-        LyricLine[] twoLines =
+        LyricLine[] oneLine = [line(0, 4000, ("flame", 0, 1000), ("river", 1000, 2000), ("cider", 2000, 3000), ("amber", 3000, 4000))];
+
+        LyricLine[] fourLines =
         [
-            new LyricLine
-            {
-                RawText = "aaa",
-                StartTime = 0,
-                EndTime = 1000,
-                SingEndTime = 1000,
-                Units = [new TimedUnit { Text = "aaa", StartTime = 0, EndTime = 1000 }],
-            },
-            new LyricLine
-            {
-                RawText = "bbb",
-                StartTime = 1000,
-                EndTime = 2000,
-                SingEndTime = 2000,
-                Units = [new TimedUnit { Text = "bbb", StartTime = 1000, EndTime = 2000 }],
-            },
+            line(0, 1000, ("flame", 0, 1000)),
+            line(1000, 2000, ("river", 1000, 2000)),
+            line(2000, 3000, ("cider", 2000, 3000)),
+            line(3000, 4000, ("amber", 3000, 4000)),
         ];
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(oneLine), Is.EqualTo(1.0692883152142607), "7 cells: aaa + space + bbb");
-            Assert.That(LyricDifficulty.Compute(twoLines), Is.EqualTo(1.0642436566918116), "6 cells: no space over a line break");
+            Assert.That(LyricDifficulty.Compute(oneLine), Is.EqualTo(2.1219807076449064), "23 cells: four words + the 3 spaces between them");
+            Assert.That(LyricDifficulty.Compute(fourLines), Is.EqualTo(1.2898243645309204), "20 cells: no space over a line break");
 
-            Assert.That(LyricDifficulty.Compute(oneLine), Is.GreaterThan(LyricDifficulty.Compute(twoLines)),
-                "the extra keystroke has to be worth something, whatever the axis");
+            Assert.That(LyricDifficulty.Compute(oneLine), Is.GreaterThan(LyricDifficulty.Compute(fourLines)),
+                "the extra keystrokes have to be worth something, whatever the axis");
         });
     }
 
@@ -795,9 +796,10 @@ public class LyricPaceTest
     /// The DT/HT TRIPLE, pinned exactly rather than by inequality, because these three numbers are
     /// what a beatmap row stores as <c>difficulty_rating</c>, <c>sr_dt</c> and <c>sr_ht</c> and what
     /// PerformancePoints prices a rate play from. All three moved to the chunked axis at the rework
-    /// (they read 6.2607 / 8.1643 / 11.7630 on the envelope), and the useful thing about them is that
-    /// the rate PREMIUMS did not: x1.4394 for Double Time and x0.7696 for Half Time here, against
-    /// x1.4409 and x0.7668 on the envelope. The level moved, the shape of the rate response did not.
+    /// (they read 6.2607 / 8.1643 / 11.7630 on the envelope), and again at v22's overlapping profile
+    /// (7.4381 / 9.6646 / 13.9120 before it). The rate PREMIUMS moved less than the level did:
+    /// x1.4657 for Double Time and x0.7883 for Half Time now, against x1.4394 and x0.7696 on the
+    /// v21 chunked axis and x1.4409 and x0.7668 on the envelope.
     /// </summary>
     [Test]
     public void DifficultyRating_TheRateTripleIsPinned()
@@ -806,9 +808,9 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(map, 0.75), Is.EqualTo(7.438084190502364), "sr_ht");
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(9.66458561088384), "difficulty_rating");
-            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(13.912039595496458), "sr_dt");
+            Assert.That(LyricDifficulty.Compute(map, 0.75), Is.EqualTo(6.8819518298858675), "sr_ht");
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(8.7299529590602383), "difficulty_rating");
+            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(12.79553147510407), "sr_dt");
         });
     }
 
@@ -821,15 +823,16 @@ public class LyricPaceTest
         // PerformancePoints prices a Double Time play from, and it is never a badge.
         //
         // The fixture was chosen to sit clear of 10 at 1.00x and pass it at 1.50x, which was the
-        // asymmetry the live catalogue had. Under the chunked axis it passes 10 at BOTH rates, so the
-        // asymmetry is gone from this shape; what the pins still say is the thing the test exists for,
-        // that neither figure is truncated anywhere.
+        // asymmetry the live catalogue had. The v21 chunked axis passed 10 at BOTH rates; v22's
+        // overlapping profile brings the base back under it (9.82), so the asymmetry is back in this
+        // shape. What the pins say is the thing the test exists for, that neither figure is
+        // truncated anywhere.
         var map = denseMap(lineCount: 40, wordsPerLine: 6, lineMs: 2000);
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(10.217918213762749).Within(1e-9), "no ceiling at 1.00x either");
-            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(14.883839360946606).Within(1e-9), "under the old ceiling this read exactly 10.00");
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(9.8175567027913466).Within(1e-9), "clear of 10 at 1.00x");
+            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(14.173383552005099).Within(1e-9), "under the old ceiling this read exactly 10.00");
         });
     }
 
@@ -846,7 +849,9 @@ public class LyricPaceTest
     /// chunks of about 1.35 s and takes a decay-weighted mean with the hardest chunks weighted most,
     /// so "the same 0.75 of record pace" is no longer the same chunk difficulty: 0.75 of the 15
     /// second record is a FASTER raw pace than 0.75 of the 120 second one, and the four-section map's
-    /// hard chunks are individually harder than any of the sustain's. It wins by 1.9%.</para>
+    /// hard chunks are individually harder than any of the sustain's. It wins by 1.7% (1.9% on the
+    /// v21 grid; v22 reads the same map through overlapping windows rather than one anchored grid,
+    /// and every one of the four figures moved with it).</para>
     ///
     /// <para>WHAT SURVIVES, and what the ordering below is now about, is quantity: chopping the same
     /// pace into eight 1.5 second bursts and then into one costs a great deal, because a
@@ -875,10 +880,10 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(sustainSr, Is.EqualTo(9.627184396113153));
-            Assert.That(fourSr, Is.EqualTo(9.811876845183399));
-            Assert.That(eightSr, Is.EqualTo(7.682758103179104));
-            Assert.That(oneSr, Is.EqualTo(4.499169306522629));
+            Assert.That(sustainSr, Is.EqualTo(9.1177770599330294));
+            Assert.That(fourSr, Is.EqualTo(9.2732283200415395));
+            Assert.That(eightSr, Is.EqualTo(8.5110182710289966));
+            Assert.That(oneSr, Is.EqualTo(4.0847007214061071));
 
             Assert.That(fourSr, Is.GreaterThan(sustainSr), "four 15 s sections now edge past the sustain, which the envelope had the other way round");
             Assert.That(sustainSr, Is.GreaterThan(eightSr), "and both beat the same pace split into eight bursts");
@@ -896,7 +901,8 @@ public class LyricPaceTest
     /// LENGTH IS A SOFT SIGNAL AND NOTHING ELSE (backlog 273 deleted backlog 152's flat
     /// <c>0.12 * log10(cells/100)</c>, and nothing on the chunked axis brought a term of that size
     /// back). Sixty seconds of 60 WPM singing bolted onto an already saturated 123 second sustain is
-    /// worth about an eighth of one percent, where the old term paid it a flat 0.02 of a star on top,
+    /// worth about a sixteenth of one percent (an eighth on the v21 grid), where the old term paid it
+    /// a flat 0.02 of a star on top,
     /// and POSITIVE is the claim rather than non-negative: easy padding is worth a little rather than
     /// exactly nothing.
     /// </summary>
@@ -911,11 +917,12 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(bare, Is.EqualTo(9.618212602857364));
-            Assert.That(withPadding, Is.EqualTo(9.629384833948597));
+            Assert.That(bare, Is.EqualTo(9.0960401994831059));
+            Assert.That(withPadding, Is.EqualTo(9.1017823146088102));
 
             Assert.That(withPadding, Is.GreaterThan(bare), "easy padding is worth a little, never nothing");
-            Assert.That(withPadding / bare - 1, Is.EqualTo(0.001162).Within(5e-6), "and a little means an eighth of a percent (it was 0.0856% on the envelope)");
+            Assert.That(withPadding / bare - 1, Is.EqualTo(0.000631).Within(5e-6),
+                "and a little means a sixteenth of a percent (0.1162% on the v21 grid, 0.0856% on the envelope)");
         });
     }
 
@@ -939,9 +946,9 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(gapped), Is.EqualTo(8.165547188541453));
-            Assert.That(LyricDifficulty.Compute(gapped, 1.50), Is.EqualTo(10.921572649222709), "sr_dt");
-            Assert.That(LyricDifficulty.Compute(denseHalf), Is.EqualTo(8.575145813736782), "the dense half alone");
+            Assert.That(LyricDifficulty.Compute(gapped), Is.EqualTo(7.4303440228201012));
+            Assert.That(LyricDifficulty.Compute(gapped, 1.50), Is.EqualTo(10.111577663275279), "sr_dt");
+            Assert.That(LyricDifficulty.Compute(denseHalf), Is.EqualTo(7.7944375322526236), "the dense half alone");
 
             Assert.That(LyricDifficulty.Compute(gapped), Is.LessThan(LyricDifficulty.Compute(denseHalf)),
                 "the chunked axis charges for the easy tail behind the gap");
@@ -1185,6 +1192,84 @@ public class LyricPaceTest
         });
     }
 
+    /// <summary>
+    /// THE PAUSE CONTRACT on the server's parse alone (LyricPace v22; the cross-repo pin is
+    /// WireCompat's LyricParserParityTest, which feeds the game's loader the same bytes). A word's
+    /// rests are read from the <c>pauses</c> array, or from the older single <c>pause</c> object
+    /// when there is no array, and kept only where <c>PausedWord.UsableRests</c> accepts them
+    /// against the CLAMPED word.
+    /// </summary>
+    [Test]
+    public void ParseSection_WordPauses_KeepOnlyTheRestsThatCutTheClampedWord()
+    {
+        var (_, lines) = LyricTiming.ParseSection(
+        [
+            """{"version":2,"song_end_ms":9000}""",
+            """{"text":"together remember wonderful beautiful","start_ms":1000,"end_ms":4600,"words":[""" +
+            // Two valid rests, a third missing its split, and an entry that is not an object.
+            """{"text":"together","start_ms":1000,"end_ms":1900,"pauses":[{"start_ms":1250,"end_ms":1350,"split":2},{"start_ms":1550,"end_ms":1650,"split":5.0},{"start_ms":1750,"end_ms":1800},4]},""" +
+            // Every rest ignored bar the first: no cell before the split, outside the word, inverted,
+            // and one whose split contradicts the time order of the rest before it.
+            """{"text":"remember","start_ms":1900,"end_ms":2800,"pauses":[{"start_ms":2000,"end_ms":2050,"split":5},{"start_ms":2100,"end_ms":2200,"split":0},{"start_ms":2600,"end_ms":2850,"split":4},{"start_ms":2500,"end_ms":2400,"split":3},{"start_ms":2150,"end_ms":2250,"split":3}]},""" +
+            // The legacy single object.
+            """{"text":"wonderful","start_ms":2800,"end_ms":3700,"pause":{"start_ms":3200,"end_ms":3300,"split":5}},""" +
+            // A fractional split is dropped, and with an array present the object is never read.
+            """{"text":"beautiful","start_ms":3700,"end_ms":4600,"pauses":[{"start_ms":3900,"end_ms":4000,"split":6.5}],"pause":{"start_ms":4200,"end_ms":4300,"split":3}}""" +
+            """]}""",
+        ]);
+
+        var units = lines[0].Units;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(units[0].Pauses, Is.EqualTo(new[] { new WordPause(1250, 1350, 2), new WordPause(1550, 1650, 5) }));
+            Assert.That(units[1].Pauses, Is.EqualTo(new[] { new WordPause(2000, 2050, 5) }));
+            Assert.That(units[2].Pauses, Is.EqualTo(new[] { new WordPause(3200, 3300, 5) }));
+            Assert.That(units[3].Pauses, Is.Empty);
+        });
+    }
+
+    /// <summary>
+    /// A rest that fits the word's RAW span but not its CLAMPED one is dropped, exactly as a
+    /// syllable boundary is: the word below overruns its line's hard end (the next line's start),
+    /// is clamped back to it, and the rest past that point no longer sits inside the word.
+    /// </summary>
+    [Test]
+    public void ParseSection_WordPauses_AreValidatedAgainstTheClampedWord()
+    {
+        var (_, lines) = LyricTiming.ParseSection(
+        [
+            """{"version":2,"song_end_ms":9000}""",
+            """{"text":"forever","start_ms":1000,"end_ms":2000,"words":[{"text":"forever","start_ms":1000,"end_ms":2400,"pauses":[{"start_ms":1300,"end_ms":1400,"split":3},{"start_ms":2100,"end_ms":2200,"split":5}]}]}""",
+            """{"text":"after","start_ms":2000,"end_ms":3000}""",
+        ]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines[0].Units[0].EndTime, Is.EqualTo(2000), "the premise: the word is clamped to the next line's start");
+            Assert.That(lines[0].Units[0].Pauses, Is.EqualTo(new[] { new WordPause(1300, 1400, 3) }));
+        });
+    }
+
+    /// <summary>
+    /// SYLLABLES ARE OBJECTS on the wire (<c>{text, start_ms, end_ms}</c>, what the game's encoder,
+    /// SynthesizedTimingJson and the aligner all write), and each one's start inside the word
+    /// becomes a boundary. Until LyricPace v22 this parse read bare NUMBERS, a shape no writer
+    /// produces, so every stored subdivided map was rated here without its boundaries.
+    /// </summary>
+    [Test]
+    public void ParseSection_SyllableObjects_BecomeBoundaries()
+    {
+        var (_, lines) = LyricTiming.ParseSection(
+        [
+            """{"version":2,"song_end_ms":9000}""",
+            """{"text":"wonderful","start_ms":1000,"end_ms":1900,"words":[{"text":"wonderful","start_ms":1000,"end_ms":1900,"syllables":[{"text":"won","start_ms":1000,"end_ms":1300},{"text":"der","start_ms":1300,"end_ms":1600},{"text":"ful","start_ms":1600,"end_ms":1900},1450]}]}""",
+        ]);
+
+        Assert.That(lines[0].Units[0].SyllableBoundaries, Is.EqualTo(new[] { 1300.0, 1600.0 }),
+            "the first syllable starts on the word and adds nothing, and a bare number is not a syllable");
+    }
+
     [Test]
     public void Normalize_MatchesGameAuthority()
     {
@@ -1406,42 +1491,42 @@ public class LyricPaceTest
     [Test]
     public void FreestyleSlot_IsNoLongerACellInThePace_AndStillRaisesTheRating()
     {
-        // The word is six letters long over 1.4 s, rather than the two letters over 3 s it used to
-        // be, because backlog 269 measures a window's PACE: two cells spread over three seconds
-        // barely registers against S(t), and the comparison below wants a real difference rather
-        // than two numbers a hair apart.
-        var freestyle = new LyricLine
+        // Three six-letter words over 1.4 s. Backlog 269 measures a window's PACE, so the map has to
+        // be fast enough to register against S(t), and since v22 it also has to clear the
+        // 16-character floor or both maps rate exactly zero and the comparison below proves
+        // nothing: 18 letters and 2 spaces is 20 cells, where the single "abcdef" it used to be is 6.
+        static LyricLine line(string first) => new()
         {
-            RawText = "abc&def",
+            RawText = first + " ghijkl mnopqr",
             StartTime = 1000,
             EndTime = 5000,
             SingEndTime = 2400,
-            Units = [new TimedUnit { Text = "abc&def", StartTime = 1000, EndTime = 2400 }],
+            Units =
+            [
+                new TimedUnit { Text = first, StartTime = 1000, EndTime = 1467 },
+                new TimedUnit { Text = "ghijkl", StartTime = 1467, EndTime = 1933 },
+                new TimedUnit { Text = "mnopqr", StartTime = 1933, EndTime = 2400 },
+            ],
         };
 
-        var plain = new LyricLine
-        {
-            RawText = "abcdef",
-            StartTime = 1000,
-            EndTime = 5000,
-            SingEndTime = 2400,
-            Units = [new TimedUnit { Text = "abcdef", StartTime = 1000, EndTime = 2400 }],
-        };
+        var freestyle = line("abc&def");
+        var plain = line("abcdef");
 
         var freePace = LyricPace.Compute([freestyle]);
         var plainPace = LyricPace.Compute([plain]);
 
         Assert.Multiple(() =>
         {
-            // SIX either way, where the freestyle map read 7 from v6 to v20.
-            Assert.That(freePace.TypeableCellCount, Is.EqualTo(6));
-            Assert.That(plainPace.TypeableCellCount, Is.EqualTo(6));
+            // TWENTY either way, where the freestyle map read one more from v6 to v20.
+            Assert.That(freePace.TypeableCellCount, Is.EqualTo(20));
+            Assert.That(plainPace.TypeableCellCount, Is.EqualTo(20));
             Assert.That(freePace.AverageCpm, Is.EqualTo(plainPace.AverageCpm).Within(1e-12), "no pace figure can tell the two maps apart");
 
             // And the slot is still published, as an addition to that count rather than a subset.
             Assert.That(freePace.FreestyleCellCount, Is.EqualTo(1), "the map still says it holds a slot");
             Assert.That(plainPace.FreestyleCellCount, Is.Zero, "and a map with no markers says so");
 
+            Assert.That(plainPace.DifficultyRating, Is.GreaterThan(0), "the premise: the map clears the character floor");
             Assert.That(freePace.DifficultyRating, Is.GreaterThan(plainPace.DifficultyRating),
                 "the slot used to be free to the rating too, which is what backlog 211 fixed");
         });
@@ -1467,9 +1552,10 @@ public class LyricPaceTest
     /// marker, and the freestyle weight is a cell COUNT, so all of them are bit-identical whatever
     /// that weight is set to.
     ///
-    /// <para>The values themselves were re-taken at the difficulty rework and are the SHIPPED
-    /// (chunked) readings; on the envelope arm the same six fixtures read 19.6957 / 28.5532 / 4.8962
-    /// / 6.2607 / 8.1643 / 11.7630. The claim did not move, only the baseline.</para>
+    /// <para>The values themselves were re-taken at v22 (PR 2's overlapping chunk profile and
+    /// sandbox dials) and are the SHIPPED (chunked) readings; on the v21 chunked grid the same six
+    /// fixtures read 22.0419 / 31.9733 / 5.6213 / 7.4381 / 9.6646 / 13.9120. The claim did not move,
+    /// only the baseline.</para>
     /// </summary>
     [Test]
     public void DifficultyRating_AMapWithNoFreestyleSlotsRatesBitIdenticallyToBeforeTheyWerePriced()
@@ -1480,14 +1566,14 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(big), Is.EqualTo(22.04194432567679));
-            Assert.That(LyricDifficulty.Compute(big, 1.50), Is.EqualTo(31.97328653117198));
-            Assert.That(LyricDifficulty.Compute(realistic), Is.EqualTo(5.621298124902638));
-            Assert.That(LyricDifficulty.Compute(mid, 0.75), Is.EqualTo(7.438084190502364));
-            Assert.That(LyricDifficulty.Compute(mid), Is.EqualTo(9.66458561088384));
-            Assert.That(LyricDifficulty.Compute(mid, 1.50), Is.EqualTo(13.912039595496458));
+            Assert.That(LyricDifficulty.Compute(big), Is.EqualTo(21.082086838738505));
+            Assert.That(LyricDifficulty.Compute(big, 1.50), Is.EqualTo(30.949092598971315));
+            Assert.That(LyricDifficulty.Compute(realistic), Is.EqualTo(5.1650041718866406));
+            Assert.That(LyricDifficulty.Compute(mid, 0.75), Is.EqualTo(6.8819518298858675));
+            Assert.That(LyricDifficulty.Compute(mid), Is.EqualTo(8.7299529590602383));
+            Assert.That(LyricDifficulty.Compute(mid, 1.50), Is.EqualTo(12.79553147510407));
             // No mark and no capital in the pool, so the Literate stream is the same stream.
-            Assert.That(LyricDifficulty.Compute(mid, 1, literate: true), Is.EqualTo(9.66458561088384));
+            Assert.That(LyricDifficulty.Compute(mid, 1, literate: true), Is.EqualTo(8.7299529590602383));
         });
     }
 

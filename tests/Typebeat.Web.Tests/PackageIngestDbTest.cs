@@ -129,9 +129,19 @@ public class PackageIngestDbTest
     // The pipeline tests share one set and run as a sequence (fresh -> no-op -> new version).
     // NUnit orders [Order]ed tests deterministically within the fixture.
 
+    /// <summary>
+    /// THE SHARED SET'S LYRIC, <see cref="SyntheticPackage.RatedLyrics"/>: every upload of beatmap
+    /// 1001 below carries it. It is not <see cref="SyntheticPackage.PaceRegressionLyrics"/> any more
+    /// because that map rates exactly zero since LyricPace v22 (five cells is under the chunked
+    /// axis's 16-character floor), which made every star-dependent claim in this fixture vacuous:
+    /// sr_dt equal to sr_ht equal to the base rating, a DT play priced the same as a no-mod one
+    /// because both are 0.
+    /// </summary>
+    private const string fixture_lyrics = SyntheticPackage.RatedLyrics;
+
     private (string Name, byte[] Content)[] packageV1() =>
     [
-        ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: 1001, beatmapSetId: setId))),
+        ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: 1001, beatmapSetId: setId, lyrics: fixture_lyrics))),
         ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
         ("bg.jpg", SyntheticPackage.TinyPng()),
     ];
@@ -218,20 +228,21 @@ public class PackageIngestDbTest
         {
             Assert.That(beatmap.Filename, Is.EqualTo("map.osu"));
             Assert.That(beatmap.Checksum, Has.Length.EqualTo(32));
-            Assert.That(beatmap.WordCount, Is.EqualTo(2));
-            Assert.That(beatmap.CharCount, Is.EqualTo(5));
-            // 5 cells / 0.05 min = 100 CPM, stored WPM = 100/5 = 20 (LyricPace v15). The two counts
-            // above are what the stored figure is derived from and neither of them moved.
-            Assert.That((double)beatmap.Wpm, Is.EqualTo(20).Within(1e-6));
-            Assert.That(beatmap.Difficulty, Is.EqualTo(0.82).Within(0.01)); // chunked-axis stars (0.67 under the envelope)
-            Assert.That(beatmap.Lyrics, Is.EqualTo("ab cd")); // the lyrics: search haystack
+            Assert.That(beatmap.WordCount, Is.EqualTo(4));
+            Assert.That(beatmap.CharCount, Is.EqualTo(23));
+            // 23 cells / 0.05 min = 460 CPM, stored WPM = 460/5 = 92 (LyricPace v15). The two counts
+            // above are what the stored figure is derived from.
+            Assert.That((double)beatmap.Wpm, Is.EqualTo(92).Within(1e-6));
+            Assert.That(beatmap.Difficulty, Is.EqualTo(starsAtRate(1)).Within(1e-12), "the model's own reading of the stored blob");
+            Assert.That(beatmap.Difficulty, Is.EqualTo(3.6308745015818906).Within(1e-9)); // chunked-axis stars, LyricPace v22
+            Assert.That(beatmap.Lyrics, Is.EqualTo("neon lights are calling")); // the lyrics: search haystack
 
             // 033_target_wpm.sql: written by the same upsert. Since LyricPace v21 it is the map's
-            // hardest window by raw speed, read off the difficulty model, which finds one on a map
-            // far too short for the 30-cell rolling window: that is why this is a number where
-            // peak_wpm is NULL. The pace_version stamp is what makes the startup sweep skip this
+            // hardest window by raw speed, read off the difficulty model and floored at the whole-map
+            // average, so it is a number on a map far too short for the 30-cell rolling window: that
+            // is why this is a number where peak_wpm is NULL. The pace_version stamp is what makes the startup sweep skip this
             // row, so it has to be the CURRENT version or the new column would be filled twice over.
-            Assert.That(beatmap.TargetWpm, Is.EqualTo(21.84).Within(0.01));
+            Assert.That(beatmap.TargetWpm, Is.EqualTo(97.98935824451091).Within(1e-9), "above the 92 WPM average, so the model's own window");
             Assert.That(beatmap.PaceVersion, Is.EqualTo(LyricPace.VERSION));
 
             // 034_ratings_matrix.sql: the eighteen readings pp prices a play from, written by the
@@ -302,7 +313,7 @@ public class PackageIngestDbTest
         // unchanged blobs must NOT produce new files rows.
         var entries = new (string, byte[])[]
         {
-            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId, previewTime: 1500))),
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId, previewTime: 1500, lyrics: fixture_lyrics))),
             ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
             ("bg.jpg", SyntheticPackage.TinyPng()),
             ("storyboard/extra.txt", SyntheticPackage.Utf8("new file")),
@@ -381,7 +392,7 @@ public class PackageIngestDbTest
 
         var entries = new (string, byte[])[]
         {
-            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId, previewTime: 2500))),
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId, previewTime: 2500, lyrics: fixture_lyrics))),
             ("map2.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(title: "Neon Nights", titleUnicode: "Neon Nights", version: "Hard", beatmapId: 1002, beatmapSetId: setId, lyrics: mixedCaseLyrics))),
             ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
         };
@@ -442,12 +453,12 @@ public class PackageIngestDbTest
 
         Assert.Multiple(() =>
         {
-            // The regression package: "ab cd" over a 3000 ms boundary window.
-            Assert.That((double)row.Wpm, Is.EqualTo(20).Within(1e-6));
-            Assert.That(row.Difficulty, Is.EqualTo(0.82).Within(0.01)); // chunked-axis stars (0.67 under the envelope)
-            Assert.That(row.WordCount, Is.EqualTo(2));
-            Assert.That(row.CharCount, Is.EqualTo(5));
-            Assert.That(row.Lyrics, Is.EqualTo("ab cd")); // v8 fills the lyrics: haystack
+            // The fixture lyric: 23 cells over a 3000 ms sung window.
+            Assert.That((double)row.Wpm, Is.EqualTo(92).Within(1e-6));
+            Assert.That(row.Difficulty, Is.EqualTo(starsAtRate(1)).Within(1e-12)); // chunked-axis stars
+            Assert.That(row.WordCount, Is.EqualTo(4));
+            Assert.That(row.CharCount, Is.EqualTo(23));
+            Assert.That(row.Lyrics, Is.EqualTo("neon lights are calling")); // v8 fills the lyrics: haystack
             Assert.That(row.PaceVersion, Is.EqualTo(LyricPace.VERSION));
         });
 
@@ -533,7 +544,7 @@ public class PackageIngestDbTest
         {
             ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(
                 title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId,
-                language: "Japanese", previewTime: 3500))),
+                language: "Japanese", previewTime: 3500, lyrics: fixture_lyrics))),
             ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
         };
 
@@ -549,7 +560,7 @@ public class PackageIngestDbTest
         {
             ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(
                 title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId,
-                previewTime: 4500))),
+                previewTime: 4500, lyrics: fixture_lyrics))),
             ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
         };
 
@@ -609,8 +620,8 @@ public class PackageIngestDbTest
             Assert.That(row.Ht, Is.Not.Null);
 
             // 029_literate_stars.sql: the same three for the map the client's Literate mod converts
-            // this one into, written at ingest for the same reason. THIS FIXTURE'S LYRIC IS "ab cd",
-            // which carries no mark and no capital, so its converted stream is the same string and
+            // this one into, written at ingest for the same reason. THIS FIXTURE'S LYRIC IS
+            // "neon lights are calling", which carries no mark and no capital, so its converted stream is the same string and
             // all three equal their plain counterparts. That is the correct value, not a missing
             // one, and it is what every map authored before punctuation existed stores; the
             // WireCompat suite is where a genuinely punctuated map pins the difference.
@@ -694,7 +705,7 @@ public class PackageIngestDbTest
         //
         // SPOTLESS SINCE PerformancePoints v22, and the reason is worth stating: the miss penalty is
         // judged against the map's DIFFICULT CHARACTERS now, and this fixture's note count (120) is
-        // a fiction against a five-cell map, so its eight misses read as several times the whole
+        // a fiction against a 23-cell map, so its eight misses read as several times the whole
         // map's difficulty and price every arm to exactly zero. That made the DT/no-mod comparison
         // below 0 against 0, which is the same way this fixture went degenerate at the backlog-97
         // cliff. It is a PLUMBING test (does the DT row read sr_dt), so the flubs are dropped
@@ -720,7 +731,7 @@ public class PackageIngestDbTest
 
         // 120 great = 120 notes; ignore_hit is not a note (see insertPlayAsync). NO MISSES, for the
         // reason given where the plays are inserted: this fixture's note count is unrelated to its
-        // five-cell map, so any miss count at all prices every arm to zero under v22.
+        // 23-cell map, so any miss count at all prices every arm to zero under v22.
         double expectedNoMod = PerformancePoints.Compute(noModCell.Stars, 120, noModCell.DifficultCharacters, 0, 0.9, 100, []);
         double expectedDt = PerformancePoints.Compute(dtCell.Stars, 120, dtCell.DifficultCharacters, 0, 0.9, 100, []);
 
@@ -892,13 +903,13 @@ public class PackageIngestDbTest
         => await conn.ExecuteScalarAsync<int>("SELECT pp_version FROM scores WHERE id = @scoreId", new { scoreId });
 
     /// <summary>
-    /// The seeded difficulty's stars at a given clock rate, straight from the model. The synthetic
-    /// package's [Lyrics] payload is fixed (SyntheticPackage.PaceRegressionLyrics), so this is the
-    /// same input the ingested blob carries.
+    /// The seeded difficulty's stars at a given clock rate, straight from the model. Every upload of
+    /// the shared set carries <see cref="fixture_lyrics"/>, so this is the same input the ingested
+    /// blob carries.
     /// </summary>
     private static double starsAtRate(double rate)
     {
-        var parsed = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
+        var parsed = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: fixture_lyrics)));
 
         return LyricDifficulty.Compute(parsed.Lines, rate);
     }
@@ -906,7 +917,7 @@ public class PackageIngestDbTest
     /// <summary>The same, on the stream the client's Literate mod converts the map to.</summary>
     private static double literateStarsAtRate(double rate)
     {
-        var parsed = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
+        var parsed = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: fixture_lyrics)));
 
         return LyricDifficulty.Compute(parsed.Lines, rate, literate: true);
     }
@@ -1355,7 +1366,7 @@ public class PackageIngestDbTest
     private const string freestyle_lyrics =
         """
         {"version":2,"song_end_ms":9000,"granularity":"Line"}
-        {"text":"me &&& you","start_ms":1000,"end_ms":2600,"freestyle":true}
+        {"text":"take me &&& with you tonight","start_ms":1000,"end_ms":2600,"freestyle":true}
         """;
 
     [Test]
@@ -1407,13 +1418,15 @@ public class PackageIngestDbTest
         Assert.Multiple(() =>
         {
             Assert.That(plainRow.Freestyle, Is.Zero, "a map with no flagged line stores 0, not NULL");
-            // "me &&& you": 5 letters + 2 inter-word spaces = 7 typed cells, plus 3 any-key slots.
+            // "take me &&& with you tonight": 20 letters + 5 inter-word spaces = 25 typed cells, plus
+            // 3 any-key slots. (It was "me &&& you" until LyricPace v22, whose 7 cells rate exactly
+            // zero under the 16-character floor, which made the rating check below vacuous.)
             // The two counts are DISJOINT since LyricPace v21, which reverses what v6 decided: a
             // slot takes any key, so no map can ask for a particular speed in one and the pace does
             // not count it. It is still a cell of the map with a deadline, priced at a quarter by
             // the star rating, which is what freestyle_cell_count is for.
             Assert.That(freeRow.Freestyle, Is.EqualTo(3));
-            Assert.That(freeRow.Chars, Is.EqualTo(7), "the slots are counted beside char_count, not inside it");
+            Assert.That(freeRow.Chars, Is.EqualTo(25), "the slots are counted beside char_count, not inside it");
             Assert.That(freeRow.Rating, Is.GreaterThan(0));
         });
 

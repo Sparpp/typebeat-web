@@ -37,6 +37,25 @@ public static class SyntheticPackage
         {"text":"ab cd","start_ms":1000,"end_ms":3000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1},{"text":"cd","start_ms":2000,"end_ms":3000,"score":1}]}
         """;
 
+    /// <summary>
+    /// A [Lyrics] payload that RATES: one line, four words, 23 cells ("neon" 4 + "lights" 6 +
+    /// "are" 3 + "calling" 7, plus 3 inter-word spaces), sung 1000 to 3000 ms inside a 4000 ms
+    /// song, so its lengths match <see cref="PaceRegressionLyrics"/> exactly.
+    ///
+    /// <para>For a test whose claim needs a NONZERO star rating. Since LyricPace v22
+    /// <see cref="PaceRegressionLyrics"/> rates exactly zero at every rate and on every arm: five
+    /// cells is under the chunked axis's 16-character floor. That is the right answer for that map,
+    /// but it makes any "the rating travels" or "the rate moves the rating" claim vacuous. This
+    /// lyric clears the floor at all three rates and keeps arithmetic a reader can check: the sung
+    /// window is 2000 ms of spans plus the 1000 ms tail to the line's end (exactly the break
+    /// threshold, so still singing), so 23 cells over 3000 ms is 460 CPM, 92 WPM.</para>
+    /// </summary>
+    public const string RatedLyrics =
+        """
+        {"version":2,"song_end_ms":4000,"granularity":"Word"}
+        {"text":"neon lights are calling","start_ms":1000,"end_ms":3000,"words":[{"text":"neon","start_ms":1000,"end_ms":1500,"score":1},{"text":"lights","start_ms":1500,"end_ms":2000,"score":1},{"text":"are","start_ms":2000,"end_ms":2400,"score":1},{"text":"calling","start_ms":2400,"end_ms":3000,"score":1}]}
+        """;
+
     public static string OsuText(
         string title = "Neon Nights",
         string titleUnicode = "Neon Nights",

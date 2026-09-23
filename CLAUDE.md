@@ -105,6 +105,9 @@ WireCompat is where that is provable, because it is the only project that compil
 |---|---|
 | `src/Typebeat.Web/Scoring/PerformancePoints.cs` | `typebeat.Game.Rulesets.TypeBeat/Scoring/PerformancePoints.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/LyricDifficulty.cs` | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricDifficulty.cs` |
+| `src/Typebeat.Web/Packages/Lyrics/ChunkedEndurance.cs` | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/ChunkedEndurance.cs` |
+| `src/Typebeat.Web/Packages/Lyrics/PausedWord.cs` (rest validation and stretch spans only) | `typebeat.Game.Rulesets.TypeBeat/Gameplay/PausedWord.cs` |
+| `src/Typebeat.Web/Packages/Lyrics/LyricTiming.cs` (the stored map's `[Lyrics]` parse: words, `syllables`, `pauses`) | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/TimingJsonLoader.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/LyricWpmCurve.cs` | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricWpmCurve.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/InstrumentalGaps.cs` | `typebeat.Game.Rulesets.TypeBeat/Gameplay/InstrumentalGaps.cs` |
 | `src/Typebeat.Web/wwwroot/js/typebeat-player.js` (`computeGaps` + its four constants) | the same `InstrumentalGaps.cs`, via the row above |
@@ -176,6 +179,16 @@ WireCompat is where that is provable, because it is the only project that compil
   .osu blob desktop decodes, so a one-sided edit gives the two clients different cells on the same
   leaderboards. `PunctuationParityTest` pins the JS copy against the C# one over the same fixture
   at both versions.
+- **A word's AUTHORED PAUSES are parsed twice and rated twice** since PR 2 (LyricPace v22). The
+  game's editor writes each word's rests as a `pauses` array of `{start_ms, end_ms, split}` beside
+  its `syllables` (an older build wrote one `pause` object, still read when no array is present);
+  both loaders keep only the rests `PausedWord.UsableRests` accepts against the CLAMPED word, and
+  both ratings read the survivors as dividers through `PausedWord.Of`. The server's `PausedWord.cs`
+  is deliberately reduced to that (which rests survive, and each stretch's start and end), because
+  the char and cell cuts the engine and the editor also derive there reach no rating. The same
+  parse reads `syllables` as the OBJECTS every writer produces (it read bare numbers until v22).
+  `LyricParserParityTest` feeds both production parsers the same `LyricOsuFormat.GenerateOsu`
+  bytes and pins units, boundaries, rests and all eighteen matrix cells.
 - **`docs/pp.md` is the canonical pp spec**: every constant in `PerformancePoints.cs` is pinned there
   and must not drift from it. `PerformancePoints.VERSION` is shared with the game copy, stamps
   `scores.pp_version`, and drives `Packages/PpBackfill.cs`'s reprice-at-boot sweep, so bumping it is

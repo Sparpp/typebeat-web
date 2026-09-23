@@ -11,6 +11,7 @@ using ClientLine = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricLine;
 using ClientPp = typebeat.Game.Rulesets.TypeBeat.Scoring.PerformancePoints;
 using ClientTypability = typebeat.Game.Rulesets.TypeBeat.Beatmaps.TypabilityIndex;
 using ClientUnit = typebeat.Game.Rulesets.TypeBeat.Beatmaps.TimedUnit;
+using ClientWordPause = typebeat.Game.Rulesets.TypeBeat.Beatmaps.WordPause;
 using ServerArm = Typebeat.Web.Packages.Lyrics.LyricDifficulty.JudgementArm;
 using ServerAxis = Typebeat.Web.Packages.Lyrics.LyricDifficulty.EnduranceAxis;
 using ServerDifficulty = Typebeat.Web.Packages.Lyrics.LyricDifficulty;
@@ -20,6 +21,7 @@ using ServerRates = Typebeat.Web.Scoring.BeatmapRatings;
 using ServerTypability = Typebeat.Web.Packages.Lyrics.TypabilityIndex;
 using ServerTypeability = Typebeat.Web.Packages.Lyrics.Typeability;
 using ServerUnit = Typebeat.Web.Packages.Lyrics.TimedUnit;
+using ServerWordPause = Typebeat.Web.Packages.Lyrics.WordPause;
 
 namespace Typebeat.WireCompat;
 
@@ -990,6 +992,108 @@ public class PerformancePointsParityTest
         return (client, server);
     }
 
+    /// <summary>Which of a paused word's rests <see cref="PausedTwinMaps"/> keeps.</summary>
+    internal enum PauseShape
+    {
+        /// <summary>Every authored rest, valid and invalid alike, exactly as a map would carry them.</summary>
+        All,
+
+        /// <summary>Only the rests the derivation must IGNORE, which has to rate as the bare map.</summary>
+        InvalidOnly,
+
+        /// <summary>No rest at all: the same words, times and syllables as a map written before the feature.</summary>
+        None,
+    }
+
+    /// <summary>
+    /// A twin whose words carry AUTHORED PAUSES (the editor's Insert Pause, PR 2), which nothing else
+    /// here does.
+    ///
+    /// <para>A rest is a DIVIDER for the rating: the word is judged in the stretches it is sung in
+    /// (<c>LyricDifficulty.BuildWords</c> reads them through <c>PausedWord.Of</c>), so a mirror that
+    /// dropped them would rate every paused map as one long word with the rests folded in as free
+    /// time. Each word below reaches a different branch of <c>PausedWord.UsableRests</c>, the rule
+    /// both loaders and both ratings share:</para>
+    /// <list type="bullet">
+    /// <item><description>one valid rest (two stretches);</description></item>
+    /// <item><description>two valid rests (three stretches);</description></item>
+    /// <item><description>a valid rest OVER authored syllable boundaries, where the rest's stretches
+    /// replace the syllable groups in the rating;</description></item>
+    /// <item><description>rests that must be IGNORED: a split with no typeable cell before it, one
+    /// whose end leaves the word, and an inverted one;</description></item>
+    /// <item><description>two rests whose TEXT order contradicts their TIME order, of which only the
+    /// first survives;</description></item>
+    /// <item><description>a plain word, the control.</description></item>
+    /// </list>
+    ///
+    /// <para>The fixture feeds the rests UNVALIDATED (a hand-built unit, not a parsed one), so the
+    /// validation inside <c>PausedWord.Of</c> is what is under test here; the parser's copy of the
+    /// same rule is pinned in <see cref="LyricParserParityTest"/>.</para>
+    /// </summary>
+    internal static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) PausedTwinMaps(PauseShape shape = PauseShape.All)
+    {
+        const double word_ms = 900;
+
+        // Offsets are from each word's own start, so every line lays out identically. CutsAlone says
+        // whether a rest would cut its word ON ITS OWN: the last one on "beautiful" would, and is
+        // dropped only because the rest before it already holds a later character.
+        (string Text, double[] Boundaries, (double Start, double End, int Split, bool CutsAlone)[] Rests)[] words =
+        [
+            ("instrumental", [], [(350, 500, 5, true)]),
+            ("together", [], [(250, 350, 2, true), (550, 650, 5, true)]),
+            ("wonderful", [300, 600], [(400, 500, 5, true)]),
+            ("remember", [450], [(200, 300, 0, false), (700, 950, 4, false), (600, 500, 3, false)]),
+            ("beautiful", [], [(200, 300, 6, true), (500, 600, 3, true)]),
+            ("rhythm", [], []),
+        ];
+
+        var client = new List<ClientLine>();
+        var server = new List<ServerLine>();
+        double t = 2000;
+
+        for (int line = 0; line < 10; line++)
+        {
+            double lineStart = t;
+            var clientUnits = new List<ClientUnit>();
+            var serverUnits = new List<ServerUnit>();
+            var texts = new List<string>();
+
+            foreach ((string text, double[] boundaries, var rests) in words)
+            {
+                var kept = rests.Where(r => shape switch
+                {
+                    PauseShape.All => true,
+                    PauseShape.InvalidOnly => !r.CutsAlone,
+                    _ => false,
+                }).ToArray();
+
+                double[] shifted = boundaries.Select(b => b + t).ToArray();
+                double start = t;
+
+                clientUnits.Add(new ClientUnit
+                {
+                    Text = text, StartTime = t, EndTime = t + word_ms, SyllableBoundaries = shifted,
+                    Pauses = kept.Select(r => new ClientWordPause(start + r.Start, start + r.End, r.Split)).ToArray(),
+                });
+                serverUnits.Add(new ServerUnit
+                {
+                    Text = text, StartTime = t, EndTime = t + word_ms, SyllableBoundaries = shifted,
+                    Pauses = kept.Select(r => new ServerWordPause(start + r.Start, start + r.End, r.Split)).ToArray(),
+                });
+
+                texts.Add(text);
+                t += word_ms;
+            }
+
+            string raw = string.Join(' ', texts);
+
+            client.Add(new ClientLine { RawText = raw, StartTime = lineStart, EndTime = t, SingEndTime = t, Units = clientUnits });
+            server.Add(new ServerLine { RawText = raw, StartTime = lineStart, EndTime = t, SingEndTime = t, Units = serverUnits });
+        }
+
+        return (client, server);
+    }
+
     /// <summary>The one lyric shape, projected into each repo's own <c>LyricLine</c> type.</summary>
     private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) Twin(
         (string Text, double Start, double End, (string Text, double Start, double End)[] Units)[] source)
@@ -1019,6 +1123,8 @@ public class PerformancePointsParityTest
     [TestCase("dense", TestName = "TheEighteenStoredRatingsAreTheClientsOwn(dense, far above an ordinary map)")]
     [TestCase("freestyle", TestName = "TheEighteenStoredRatingsAreTheClientsOwn(freestyle slots)")]
     [TestCase("subdivided", TestName = "TheEighteenStoredRatingsAreTheClientsOwn(authored syllable boundaries)")]
+    [TestCase("paused", TestName = "TheEighteenStoredRatingsAreTheClientsOwn(authored pauses, valid and ignored)")]
+    [TestCase("paused-ignored", TestName = "TheEighteenStoredRatingsAreTheClientsOwn(authored pauses, every one ignored)")]
     public void TheEighteenStoredRatingsAreTheClientsOwn(string fixtureName)
     {
         // THE LOAD-BEARING CLAIM behind pricing a play client-side at all: the game does NOT fetch
@@ -1064,6 +1170,8 @@ public class PerformancePointsParityTest
         "dense" => DenseTwinMaps(),
         "freestyle" => FreestyleTwinMaps(),
         "subdivided" => SubdividedTwinMaps(),
+        "paused" => PausedTwinMaps(),
+        "paused-ignored" => PausedTwinMaps(PauseShape.InvalidOnly),
         _ => TwinMaps(),
     };
 
@@ -1074,7 +1182,7 @@ public class PerformancePointsParityTest
         // still read by both sides for the pace figures' target, so a divergence there shows up on
         // the set page against song select's wedge rather than on a leaderboard. Same fixtures, same
         // exactness, one axis over.
-        foreach (string name in new[] { "plain", "dense", "freestyle", "subdivided" })
+        foreach (string name in new[] { "plain", "dense", "freestyle", "subdivided", "paused", "paused-ignored" })
         {
             var (client, server) = Fixture(name);
 
@@ -1144,6 +1252,51 @@ public class PerformancePointsParityTest
                 "and they have to reach the rating, or a mirror that dropped them would pass every pin above");
             Assert.That(ServerDifficulty.Compute(server), Is.EqualTo(ClientDifficulty.Compute(client)),
                 "and the two sides read the same subdivisions");
+        });
+    }
+
+    [Test]
+    public void AuthoredPausesReachTheRatingOnBothSidesAndIgnoredOnesDoNot()
+    {
+        // The premise of the paused fixtures, stated as its own pin, in both directions. A VALID rest
+        // has to MOVE the rating, or the eighteen-cell parity on that fixture would pass on a server
+        // that still read every paused word as one span. And a rest the derivation must IGNORE has to
+        // move NOTHING, on both sides: the map rates exactly as the same map with no rest at all,
+        // which is what a map written before the feature is.
+        var (client, server) = PausedTwinMaps();
+        var (ignoredClient, ignoredServer) = PausedTwinMaps(PauseShape.InvalidOnly);
+        var (bareClient, bareServer) = PausedTwinMaps(PauseShape.None);
+
+        Assert.Multiple(() =>
+        {
+            foreach ((ClientArm clientArm, ServerArm serverArm, bool literate, double rate, string name) in Combinations())
+            {
+                double paused = ServerDifficulty.ComputeDetail(server, rate, literate, ServerDifficulty.Live, serverArm).Stars;
+                double ignored = ServerDifficulty.ComputeDetail(ignoredServer, rate, literate, ServerDifficulty.Live, serverArm).Stars;
+                double bare = ServerDifficulty.ComputeDetail(bareServer, rate, literate, ServerDifficulty.Live, serverArm).Stars;
+
+                // EASY IS THE EXCEPTION, on both sides and by design: its arm shelters a press by
+                // the WORD rather than the syllable (LyricDifficulty's Shelter.Word, the model's
+                // mirror of the engine's word shelter), so a divider inside a word, a rest as much
+                // as a syllable boundary, moves nothing it reads. The parity pins above still hold
+                // its cells to the client's; only the premise skips it.
+                if (serverArm != ServerArm.Easy)
+                {
+                    Assert.That(paused, Is.Not.EqualTo(bare), $"{name}: the rests have to reach the server's rating");
+                    Assert.That(ClientDifficulty.ComputeDetail(client, rate, literate, ClientDifficulty.Live, clientArm).Stars,
+                        Is.Not.EqualTo(ClientDifficulty.ComputeDetail(bareClient, rate, literate, ClientDifficulty.Live, clientArm).Stars),
+                        $"{name}: the client's premise too");
+                }
+
+                Assert.That(ignored, Is.EqualTo(bare), $"{name}: and an ignored rest has to cost nothing on the server");
+                Assert.That(ClientDifficulty.ComputeDetail(ignoredClient, rate, literate, ClientDifficulty.Live, clientArm).Stars,
+                    Is.EqualTo(bare), $"{name}: and the client's ignored rests read as the server's bare map");
+            }
+
+            // The fixture must hand the server rests at all, or the inequalities above test the
+            // syllable boundaries rather than the pauses.
+            Assert.That(server.Sum(l => l.Units.Sum(u => u.Pauses.Count)), Is.GreaterThan(0));
+            Assert.That(ignoredServer.Sum(l => l.Units.Sum(u => u.Pauses.Count)), Is.GreaterThan(0));
         });
     }
 
