@@ -1,0 +1,91 @@
+@page
+@model Typebeat.Web.Pages.Legal.PrivacyModel
+@{
+    ViewData["Title"] = "Privacy policy";
+}
+
+<div class="stack prose">
+    <h1>Privacy policy</h1>
+
+    <p class="muted">Last updated 26 September 2026.</p>
+
+    <p>
+        type!beat is a free lyric-typing rhythm game and this website (typebeat.mingda.sh) is its
+        online service: accounts, leaderboards, replays and beatmap sharing. This page explains what
+        we store about you, why, and how to get rid of it. Questions go to
+        <a href="mailto:contact@mingda.sh">contact@mingda.sh</a>.
+    </p>
+
+    <div class="card">
+        <h3 class="card-title">What we store</h3>
+        <ul>
+            <li><strong>Your account:</strong> username, email address, and a salted hash of your password (never the password itself). Optionally a profile picture, cover image, "about me" text and country, if you add them.</li>
+            <li><strong>Google sign-in:</strong> if you use "Continue with Google", we receive your Google account ID, email address and whether Google has verified it, and your display name (used only to suggest a username). We do not receive your Google password, contacts, files or anything else, and we never post to or act on your Google account.</li>
+            <li><strong>Gameplay:</strong> the scores and replays you submit, with their mods, statistics and timestamps; which beatmaps you download, favourite or pin; which replays you watch.</li>
+            <li><strong>Things you upload:</strong> beatmaps (lyrics, timing, audio and artwork) and any reports you file.</li>
+            <li><strong>Sign-in state:</strong> short-lived codes we email you, and session tokens for the website and the game.</li>
+            <li><strong>Server logs:</strong> the web server records requests (including IP address and browser) for security and debugging. These logs are rotated and not kept long-term, and are not used to build profiles of anyone.</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h3 class="card-title">What is public</h3>
+        <p>
+            Your username, profile picture, cover, "about me", country, scores, replays, rankings and
+            uploaded beatmaps are shown publicly on the site, in the game and in the type!beat
+            Discord. Your email address and anything tied to Google sign-in are never shown to other
+            players.
+        </p>
+    </div>
+
+    <div class="card">
+        <h3 class="card-title">Cookies</h3>
+        <p>
+            We only use cookies needed to sign you in and keep you signed in (a session cookie, plus
+            short-lived encrypted cookies during an email-code or Google sign-in). There are no
+            advertising cookies, no analytics or tracking scripts, and nothing is shared with ad
+            networks.
+        </p>
+    </div>
+
+    <div class="card">
+        <h3 class="card-title">Who else handles your data</h3>
+        <p>We do not sell your data. A few services process it on our behalf, only to run the site:</p>
+        <ul>
+            <li><strong>Hetzner</strong> hosts the servers and database.</li>
+            <li><strong>Cloudflare</strong> sits in front of the site for security and caching.</li>
+            <li><strong>Resend</strong> delivers our emails (sign-in codes, password resets).</li>
+            <li><strong>Sentry</strong> receives crash reports when something breaks, configured not to include personal data.</li>
+            <li><strong>Google</strong> handles sign-in when you choose "Continue with Google".</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h3 class="card-title">Google user data</h3>
+        <p>
+            Data received from Google is used only to sign you in and to link your Google account to
+            your type!beat account. It is not used for advertising, not sold, and not shared with
+            anyone except as needed to run the service. You can unlink Google in
+            <a href="/settings">Settings</a> (once your account has a password), or revoke type!beat's
+            access from your Google account's security settings at any time.
+        </p>
+    </div>
+
+    <div class="card">
+        <h3 class="card-title">Deleting your account</h3>
+        <p>
+            You can delete your account yourself in <a href="/settings">Settings</a>. This removes
+            your email, password, Google link, profile details, favourites, pins, download and
+            watch history, and sign-in tokens. Your scores and uploaded beatmaps stay on the
+            leaderboards so other players' rankings are not disturbed, but they are anonymised and
+            no longer connected to you. If you can't sign in, email
+            <a href="mailto:contact@mingda.sh">contact@mingda.sh</a> from your account's address
+            and we'll do it for you. You can also ask us for a copy of the data we hold about you.
+        </p>
+    </div>
+
+    <p class="muted">
+        type!beat is not directed at children under 13. If this policy changes in a meaningful way,
+        the date at the top will change and we'll say so on the site or in the Discord.
+    </p>
+</div>

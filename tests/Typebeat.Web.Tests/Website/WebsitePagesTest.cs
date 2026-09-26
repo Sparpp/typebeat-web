@@ -30,6 +30,7 @@ public class WebsitePagesTest
             // Footer: the status-page link must stay reachable (was on the old hardcoded page).
             Assert.That(html, Does.Contain("https://stats.uptimerobot.com/E7XRJ7vfer"));
             Assert.That(html, Does.Contain("href=\"/legal/dmca\""));
+            Assert.That(html, Does.Contain("href=\"/legal/privacy\""));
         });
     }
 
@@ -57,6 +58,19 @@ public class WebsitePagesTest
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(html, Does.Contain("takedown"));
+        });
+    }
+
+    [Test]
+    public async Task PrivacyPage_Renders()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync("/legal/privacy");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(html, Does.Contain("Google user data"));
         });
     }
 }
