@@ -1,0 +1,43 @@
+@page "/auth/google/username"
+@model Typebeat.Web.Pages.GoogleSignIn.UsernameModel
+@{
+    ViewData["Title"] = "Choose a username";
+}
+
+<div class="card auth-card">
+    <h1>Choose a username</h1>
+
+    <p class="muted">
+        You're creating a type!beat account with the Google account <strong>@Model.Email</strong>.
+        Pick the name other players will see.
+    </p>
+
+    @if (Model.Error is not null)
+    {
+        <div class="alert-error">@Model.Error</div>
+    }
+
+    <form method="post" asp-page="/GoogleSignIn/Username">
+        @Html.AntiForgeryToken()
+        <div class="field">
+            <label asp-for="Username">Username</label>
+            <input class="input" asp-for="Username" autocomplete="username" autofocus required />
+            @foreach (string e in Model.UsernameErrors)
+            {
+                <div class="field-error">@e</div>
+            }
+            <div class="field-hint">3&ndash;15 characters: letters, digits, spaces, _ - [ ]</div>
+        </div>
+        @foreach (string e in Model.EmailErrors)
+        {
+            <div class="alert-error">@e</div>
+        }
+        <button type="submit" class="btn btn-primary">Create account</button>
+    </form>
+
+    <p class="card-note">
+        The game client signs in with a username or email and a password. Once you're in, set a
+        password in Settings to play there.
+    </p>
+    <p class="card-note">Changed your mind? <a href="/login">Back to sign in</a>.</p>
+</div>

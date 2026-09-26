@@ -17,19 +17,28 @@ public static class VerificationEmail
         {
             "login" => "finish signing in",
             "reset" => "reset your password",
+            "password" => "set a password for your account",
             _ => "confirm your email",
         };
 
         // A reset gets its own subject and a sharper "ignore this" line: the reassurance that
         // matters for a reset is specifically that the password does not change unless the code is
         // used (the message a worried recipient of an unexpected reset email needs to read).
-        string subject = purpose == "reset"
-            ? $"Reset your type!beat password: {code}"
-            : $"Your type!beat code: {code}";
+        string subject = purpose switch
+        {
+            "reset" => $"Reset your type!beat password: {code}",
+            "password" => $"Set your type!beat password: {code}",
+            _ => $"Your type!beat code: {code}",
+        };
 
-        string ignore = purpose == "reset"
-            ? "If you didn't request a password reset, make sure you secure your email inbox"
-            : "If this wasn't you, make sure you reset your password";
+        // 'password' is a signed-in account (created through Google) adding its first password, so
+        // an unexpected one means someone else is signed in to it, not that the inbox is at risk.
+        string ignore = purpose switch
+        {
+            "reset" => "If you didn't request a password reset, make sure you secure your email inbox",
+            "password" => "If you didn't ask to set a password, someone else may be signed in to your account, so secure the Google account you sign in with",
+            _ => "If this wasn't you, make sure you reset your password",
+        };
 
         string text =
             $"""

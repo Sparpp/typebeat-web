@@ -78,4 +78,73 @@ public static class AccountCreation
 
         return new AccountCreationResult(id, [], [], []);
     }
+
+    /// <summary>
+    /// The account a first-time "Continue with Google" creates, after the user picks a username.
+    /// Same username and email rules and the same uniqueness checks as <see cref="CreateAsync"/>,
+    /// but with NO password (password_hash NULL, 035_google_sign_in.sql; the user can set one in
+    /// Settings to play in the game client) and with the email already verified, because Google
+    /// asserted email_verified for it. The user, their stats row and the Google link are written in
+    /// one transaction, so there is never an account that exists but cannot be signed in to.
+    /// </summary>
+    public static async Task<AccountCreationResult> CreateExternalAsync(Db db, string username, GoogleIdentity identity, CancellationToken ct = default)
+    {
+        string email = identity.Email;
+        var usernameErrors = new List<string>(AccountValidation.ValidateUsername(username));
+        var emailErrors = new List<string>(AccountValidation.ValidateEmail(email));
+
+        await using var conn = await db.OpenAsync(ct);
+
+        if (usernameErrors.Count == 0 &&
+            await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username = @username)", new { username }))
+            usernameErrors.Add("Username is already taken.");
+
+        // The sign-in step only sends someone here when no account has this email, so a hit means
+        // one was created in between. Signing in with Google again takes the email-match branch.
+        if (emailErrors.Count == 0 &&
+            await conn.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM users WHERE email = @email)", new { email }))
+            emailErrors.Add(email_now_taken);
+
+        if (usernameErrors.Count > 0 || emailErrors.Count > 0)
+            return new AccountCreationResult(null, usernameErrors, emailErrors, []);
+
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        long id;
+
+        try
+        {
+            id = await conn.ExecuteScalarAsync<long>(
+                """
+                INSERT INTO users (username, email, password_hash, verified_at)
+                VALUES (@username, @email, NULL, now())
+                RETURNING id
+                """,
+                new { username, email }, tx);
+
+            await conn.ExecuteAsync("INSERT INTO user_stats (user_id) VALUES (@id)", new { id }, tx);
+
+            await conn.ExecuteAsync(
+                "INSERT INTO user_external_logins (user_id, provider, subject, email) VALUES (@id, @provider, @subject, @email)",
+                new { id, provider = ExternalLogins.Google, subject = identity.Subject, email }, tx);
+
+            await tx.CommitAsync(ct);
+        }
+        catch (PostgresException pg) when (pg.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            await tx.RollbackAsync(ct);
+
+            if (pg.ConstraintName == ExternalLogins.SubjectConstraint)
+                emailErrors.Add("This Google account was just linked to another type!beat account. Sign in with Google again.");
+            else if (pg.ConstraintName is not null && pg.ConstraintName.Contains("email"))
+                emailErrors.Add(email_now_taken);
+            else
+                usernameErrors.Add("Username is already taken.");
+
+            return new AccountCreationResult(null, usernameErrors, emailErrors, []);
+        }
+
+        return new AccountCreationResult(id, [], [], []);
+    }
+
+    private const string email_now_taken = "An account with this email already exists. Sign in with Google again to use it.";
 }

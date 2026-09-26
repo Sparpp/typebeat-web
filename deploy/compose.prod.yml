@@ -80,6 +80,12 @@ services:
       # Sender identity for outgoing mail; must be on a Resend-verified domain. Empty falls back to
       # the app default "type!beat <noreply@mingda.sh>".
       TYPEBEAT_EMAIL_FROM: "${TYPEBEAT_EMAIL_FROM:-}"
+      # "Continue with Google" on /login, /register and Settings (OpenID Connect, see
+      # Auth/GoogleOidc.cs). Both come from one Google Cloud OAuth client of type "Web application";
+      # setup is in deploy/README.md. Empty (either one) = the feature is off: no Google buttons,
+      # and every /auth/google route 404s.
+      TYPEBEAT_GOOGLE_CLIENT_ID: "${TYPEBEAT_GOOGLE_CLIENT_ID:-}"
+      TYPEBEAT_GOOGLE_CLIENT_SECRET: "${TYPEBEAT_GOOGLE_CLIENT_SECRET:-}"
     volumes:
       - appdata:/data
     depends_on:

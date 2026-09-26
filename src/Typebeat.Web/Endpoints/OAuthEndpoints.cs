@@ -148,8 +148,10 @@ public static class OAuthEndpoints
 
     private sealed record RateWindow(DateTimeOffset Start, int Count);
 
-    // password_hash is text; restricted gates token issue. Aliased to camelCase per the SELECT idiom.
-    private sealed record UserRow(long Id, string PasswordHash, bool Restricted);
+    // password_hash is text, and NULL for an account created through Google (035), which has no
+    // password and so can never take this grant until it sets one on the website (Verify refuses a
+    // null hash). restricted gates token issue. Aliased to camelCase per the SELECT idiom.
+    private sealed record UserRow(long Id, string? PasswordHash, bool Restricted);
 
     /// <summary>
     /// Success shape. Field order mirrors the task contract; <c>OAuthToken</c> reads by name

@@ -14,8 +14,9 @@ namespace Typebeat.Web.Pages;
 public sealed class RegisterModel(
     Db db, PasswordService passwords, EmailCodeService codes, IEmailSender email, ChallengeCookie challenge, ILogger<RegisterModel> logger) : TypebeatPageModel
 {
-    // Same budget as the in-client registration endpoint: 3 per IP per hour.
-    private static readonly FixedWindowLimiter register_attempts = new(3, TimeSpan.FromHours(1));
+    // Same budget as the in-client registration endpoint: 3 per IP per hour. Shared with the Google
+    // sign-up's username step (GoogleSignIn/Username), so a new account costs the same either way.
+    internal static readonly FixedWindowLimiter RegisterAttempts = new(3, TimeSpan.FromHours(1));
 
     [BindProperty]
     public string Username { get; set; } = string.Empty;
@@ -37,7 +38,7 @@ public sealed class RegisterModel(
 
     public async Task<IActionResult> OnPostAsync()
     {
-        if (!register_attempts.Allow(HttpContext.GetClientIp()))
+        if (!RegisterAttempts.Allow(HttpContext.GetClientIp()))
         {
             Error = "Too many registration attempts. Please try again later.";
             return Page();

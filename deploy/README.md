@@ -345,6 +345,43 @@ un-versioned names, so their keys are set once and never change:
 All three must be declared in `compose.prod.yml`'s `environment:` block: compose does not forward
 undeclared host env vars, so an `.env` entry with no matching declaration is silently ignored.
 
+## Enabling "Continue with Google"
+
+Google sign-in is off until both `TYPEBEAT_GOOGLE_CLIENT_ID` and `TYPEBEAT_GOOGLE_CLIENT_SECRET`
+are set; with either missing, no Google button renders anywhere and every `/auth/google` route
+returns 404. To turn it on:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), pick (or create) a project,
+   then **APIs & Services > OAuth consent screen**: user type **External**, app name `type!beat`,
+   a support email, the authorised domain `mingda.sh`, and the scopes `openid`, `email` and
+   `profile` (all three are non-sensitive, so no Google verification review is needed). Publish the
+   app ("In production"); while it is in "Testing" only the listed test users can sign in.
+2. **APIs & Services > Credentials > Create credentials > OAuth client ID**, application type
+   **Web application**. Leave "Authorised JavaScript origins" empty (the flow is server side) and
+   add exactly one **Authorised redirect URI**:
+   ```
+   https://typebeat.mingda.sh/auth/google/callback
+   ```
+   The app builds the redirect URI from the host the visitor is on, so it must match that host
+   exactly, scheme and all. A local dev run would need `http://localhost:5089/auth/google/callback`
+   added to the same client (or a separate dev client).
+3. Copy the client ID and client secret into `deploy/.env` on the box:
+   ```
+   TYPEBEAT_GOOGLE_CLIENT_ID=1234567890-abc123.apps.googleusercontent.com
+   TYPEBEAT_GOOGLE_CLIENT_SECRET=GOCSPX-...
+   ```
+   then `docker compose -f deploy/compose.prod.yml up -d` to recreate the app container. Both keys
+   are declared in `compose.prod.yml`'s `environment:` block (compose ignores undeclared ones).
+
+What it does once on: a Google sign-in whose Google account is already linked signs straight in
+(it replaces both the password and the emailed code); one whose Google email matches an existing
+account with a CONFIRMED email links that account and signs in; otherwise the visitor picks a
+username and gets a new account with no password. The game client only signs in with a password,
+so those accounts set one in Settings (confirmed by an emailed code). An existing account whose
+email was never confirmed is not auto-linked (anyone can register an unconfirmed address from the
+game client); its owner signs in with the password once, or resets it, then links Google from
+Settings.
+
 ## Notes
 
 - The app auto-migrates (`Data/Migrations/*.sql`) and auto-creates the `citext` extension on

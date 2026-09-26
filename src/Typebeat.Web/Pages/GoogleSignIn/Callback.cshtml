@@ -1,0 +1,14 @@
+@page "/auth/google/callback"
+@model Typebeat.Web.Pages.GoogleSignIn.CallbackModel
+@{
+    ViewData["Title"] = "Sign in with Google";
+}
+
+@* Only ever rendered for a failure; every success redirects. *@
+<div class="card auth-card">
+    <h1>Sign in with Google</h1>
+
+    <div class="alert-error">@Model.Error</div>
+
+    <p class="card-note"><a href="/login">Back to sign in</a></p>
+</div>

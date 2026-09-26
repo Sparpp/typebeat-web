@@ -1,5 +1,6 @@
 @page "/login"
 @model LoginModel
+@inject GoogleOidcOptions Google
 @{
     ViewData["Title"] = "Sign in";
 }
@@ -10,6 +11,11 @@
     @if (Model.Error is not null)
     {
         <div class="alert-error">@Model.Error</div>
+    }
+
+    @if (Google.Enabled)
+    {
+        <partial name="_GoogleButton" />
     }
 
     <form method="post">

@@ -50,6 +50,14 @@ builder.Services.AddSingleton<EmailCodeService>();
 builder.Services.AddSingleton<ChallengeCookie>();
 builder.Services.AddHttpClient();
 
+// "Continue with Google" (OpenID Connect, code flow + PKCE, by hand: see Auth/GoogleOidc.cs). Off
+// unless both TYPEBEAT_GOOGLE_CLIENT_ID and TYPEBEAT_GOOGLE_CLIENT_SECRET are set: the buttons
+// hide and every /auth/google route 404s. The services are registered either way so the pages
+// can ask.
+builder.Services.AddSingleton(_ => GoogleOidcOptions.FromConfiguration(builder.Configuration));
+builder.Services.AddSingleton<GoogleOidc>();
+builder.Services.AddSingleton<GoogleCookies>();
+
 // Real delivery via Resend when TYPEBEAT_RESEND_API_KEY is set; otherwise the LogEmailSender
 // writes the code to the log so dev/tests and a not-yet-configured prod box still work. The
 // chosen sender is logged at startup.

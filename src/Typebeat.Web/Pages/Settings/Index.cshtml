@@ -89,6 +89,76 @@
         </form>
     </div>
 
+    @if (!Model.HasPassword)
+    {
+        <div class="card settings-card">
+            <h2 class="card-title">Password</h2>
+            <p class="muted">
+                Your account signs in with Google and has no password yet. The game client only
+                signs in with a username or email and a password, so set one here to play there.
+            </p>
+            <form method="post" asp-page-handler="SendPasswordCode">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="btn btn-ghost btn-small">Email me a code</button>
+            </form>
+            <form method="post" asp-page-handler="SetPassword">
+                @Html.AntiForgeryToken()
+                <div class="field">
+                    <label asp-for="PasswordCode">6-digit code from the email</label>
+                    <input class="input code-input" asp-for="PasswordCode" inputmode="numeric" autocomplete="one-time-code"
+                           maxlength="6" pattern="[0-9]{6}" required />
+                </div>
+                <div class="field">
+                    <label asp-for="NewPassword">New password</label>
+                    <input class="input" asp-for="NewPassword" type="password" autocomplete="new-password" required />
+                    @foreach (string e in Model.PasswordErrors)
+                    {
+                        <div class="field-error">@e</div>
+                    }
+                    <div class="field-hint">At least 8 characters.</div>
+                </div>
+                <div class="field">
+                    <label asp-for="ConfirmPassword">Confirm new password</label>
+                    <input class="input" asp-for="ConfirmPassword" type="password" autocomplete="new-password" required />
+                </div>
+                <button type="submit" class="btn btn-primary btn-small">Set password</button>
+            </form>
+        </div>
+    }
+
+    @if (Model.GoogleEnabled)
+    {
+        <div class="card settings-card">
+            <h2 class="card-title">Google account</h2>
+            @if (Model.GoogleLinked)
+            {
+                <p class="muted">
+                    Linked to <strong>@(Model.GoogleEmail ?? "a Google account")</strong>. You can sign in
+                    with Google instead of your password and emailed code.
+                </p>
+                @if (Model.HasPassword)
+                {
+                    <form method="post" asp-page-handler="UnlinkGoogle">
+                        @Html.AntiForgeryToken()
+                        <button type="submit" class="btn btn-ghost btn-small">Unlink</button>
+                    </form>
+                }
+                else
+                {
+                    <p class="faint">Set a password above before unlinking; without one you'd have no way to sign in.</p>
+                }
+            }
+            else
+            {
+                <p class="muted">Link a Google account to sign in with Google instead of your password and emailed code.</p>
+                <form method="post" asp-page-handler="LinkGoogle">
+                    @Html.AntiForgeryToken()
+                    <button type="submit" class="btn btn-ghost btn-small">Link Google account</button>
+                </form>
+            }
+        </div>
+    }
+
     <div class="card settings-card settings-danger">
         <h2 class="card-title">Delete account</h2>
         <p class="muted">

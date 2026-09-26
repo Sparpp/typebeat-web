@@ -710,6 +710,41 @@ img { max-width: 100%; }
     margin-inline: auto;
 }
 
+/* "Continue with Google" on the auth cards: a full-width ghost button, so it reads as the
+   alternative to the form's own primary action rather than competing with it. */
+.btn-google {
+    width: 100%;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--line-bright);
+}
+
+.btn-google:hover {
+    border-color: var(--violet);
+    box-shadow: var(--glow-violet);
+}
+
+.btn-google__mark { flex-shrink: 0; }
+
+/* the "or" rule between the Google button and the password form */
+.auth-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin: var(--space-4) 0;
+    color: var(--text-faint);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+    content: "";
+    flex: 1;
+    border-top: 1px solid var(--line);
+}
+
 .stack > * + * { margin-top: var(--space-4); }
 
 /* ---- Mobile ---- */

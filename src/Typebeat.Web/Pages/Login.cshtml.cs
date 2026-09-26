@@ -12,7 +12,9 @@ namespace Typebeat.Web.Pages;
 /// user in: it issues a fresh emailed 'login' code and sets the challenge cookie, then hands off
 /// to /verify (the session is minted only after the code checks out). Failure messaging is a
 /// single generic line, like /oauth/token, the form never distinguishes unknown-user /
-/// wrong-password / restricted, and a bad password sends NO code (no enumeration signal).
+/// wrong-password / restricted, and a bad password sends NO code (no enumeration signal). An account
+/// created through Google has no password (NULL hash) and always fails here the same generic way;
+/// its way in is the "Continue with Google" button (GoogleSignIn/Start), shown when configured.
 /// </summary>
 public sealed class LoginModel(
     Db db, PasswordService passwords, EmailCodeService codes, IEmailSender email, ChallengeCookie challenge, ILogger<LoginModel> logger) : TypebeatPageModel
@@ -95,5 +97,6 @@ public sealed class LoginModel(
         return Redirect("/verify");
     }
 
-    private sealed record UserRow(long Id, string Email, string PasswordHash, bool Restricted);
+    // PasswordHash is NULL for an account created through Google (035); Verify refuses it.
+    private sealed record UserRow(long Id, string Email, string? PasswordHash, bool Restricted);
 }

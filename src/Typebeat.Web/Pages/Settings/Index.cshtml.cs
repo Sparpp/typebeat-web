@@ -4,14 +4,15 @@ using Npgsql;
 using SixLabors.ImageSharp;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Email;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Pages.Settings;
 
 /// <summary>
-/// Account settings (/settings), for the signed-in user only (anonymous → /login). Four
-/// self-contained POST handlers, each re-rendering this page on error and using POST-redirect-GET
+/// Account settings (/settings), for the signed-in user only (anonymous → /login).
+/// Self-contained POST handlers, each re-rendering this page on error and using POST-redirect-GET
 /// on success:
 ///  - Profile: the plain-text description (bio).
 ///  - Avatar / Banner: an uploaded image, resized to a fixed JPEG by <see cref="ProfileMedia"/>
@@ -21,8 +22,19 @@ namespace Typebeat.Web.Pages.Settings;
 ///    download logs), and renames to 'deleted_{id}'. The row is KEPT so the maps they uploaded and the
 ///    (now-anonymous) scores/moderation records referencing them stay valid. Requires typing the
 ///    exact username to confirm, then signs the browser out.
+///  - LinkGoogle / UnlinkGoogle: the "Google account" section (only while Google sign-in is
+///    configured). Link starts the Google flow in link mode, bound to this session's user; the
+///    callback finishes it (<see cref="GoogleSignIn.CallbackModel"/>). Unlink is refused while the
+///    account has no password, since that would leave it no way to sign in.
+///  - SendPasswordCode / SetPassword: an account created through Google has no password, and the
+///    game client signs in with nothing else, so it can set one here. No current password exists to
+///    ask for, so the proof is an emailed code (purpose 'password'), the same code machinery the
+///    reset flow uses; a live session alone is not enough to attach a credential the game accepts.
+///    Only ever sets a FIRST password: an account that has one changes it through /forgot-password.
 /// </summary>
-public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : TypebeatPageModel
+public sealed class IndexModel(
+    Db db, IFileStore store, TokenService tokens, GoogleOidc google, GoogleCookies googleCookies,
+    PasswordService passwords, EmailCodeService codes, IEmailSender email, ILogger<IndexModel> logger) : TypebeatPageModel
 {
     public const int MaxDescriptionLength = 2000;
 
@@ -36,6 +48,22 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
     /// <summary>Preferences &gt; show a map's original (non-romanized) title/artist instead of romanized.</summary>
     [BindProperty] public bool PreferOriginalMetadata { get; set; }
 
+    /// <summary>Set a password (password-less accounts only): the emailed code and the new password twice.</summary>
+    [BindProperty] public string? PasswordCode { get; set; }
+    [BindProperty] public string? NewPassword { get; set; }
+    [BindProperty] public string? ConfirmPassword { get; set; }
+
+    public IReadOnlyList<string> PasswordErrors { get; private set; } = [];
+
+    /// <summary>Whether the "Google account" section shows at all (TYPEBEAT_GOOGLE_* configured).</summary>
+    public bool GoogleEnabled => google.Enabled;
+
+    public bool GoogleLinked { get; private set; }
+    public string? GoogleEmail { get; private set; }
+
+    /// <summary>False for an account created through Google that has not set a password yet.</summary>
+    public bool HasPassword { get; private set; } = true;
+
     /// <summary>Non-null after a failed POST; shown as an inline error.</summary>
     public string? Error { get; private set; }
 
@@ -46,7 +74,7 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
     public string? AvatarUrl { get; private set; }
     public string? BannerUrl { get; private set; }
 
-    public async Task<IActionResult> OnGetAsync(string? saved = null)
+    public async Task<IActionResult> OnGetAsync(string? saved = null, string? google = null)
     {
         if (CurrentUser is null)
             return Redirect("/login");
@@ -57,6 +85,19 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
             "avatar" => "Avatar updated.",
             "banner" => "Banner updated.",
             "preferences" => "Preferences saved.",
+            "google-linked" => "Google account linked. You can now sign in with Google.",
+            "google-unlinked" => "Google account unlinked.",
+            "password-code" => "We emailed you a code. Enter it below with your new password.",
+            "password" => "Password set. You can now sign in to the game client with it.",
+            _ => null,
+        };
+
+        // Outcomes of the Google link flow, which returns here from the callback by redirect.
+        Error = google switch
+        {
+            "taken" => "That Google account is already linked to a different type!beat account.",
+            "already" => "Your account is already linked to a Google account. Unlink it first.",
+            "failed" => "Linking your Google account didn't go through. Please try again.",
             _ => null,
         };
 
@@ -99,6 +140,124 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
 
         return RedirectToPage(new { saved = "preferences" });
     }
+
+    public async Task<IActionResult> OnPostLinkGoogleAsync()
+    {
+        if (!google.Enabled)
+            return NotFound();
+
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        await using (var conn = await db.OpenAsync(HttpContext.RequestAborted))
+        {
+            if ((await ExternalLogins.GetGoogleLinkAsync(conn, CurrentUser.Id)).Linked)
+                return RedirectToPage(new { google = "already" });
+        }
+
+        // Link mode: the flow cookie carries this user's id, and the callback only links while the
+        // same user is still signed in.
+        return Redirect(google.Begin(HttpContext, googleCookies, CurrentUser.Id));
+    }
+
+    public async Task<IActionResult> OnPostUnlinkGoogleAsync()
+    {
+        if (!google.Enabled)
+            return NotFound();
+
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        var result = await ExternalLogins.UnlinkAsync(db, CurrentUser.Id, HttpContext.RequestAborted);
+
+        if (result == ExternalLogins.UnlinkResult.NoPassword)
+            return await failAsync(CurrentUser.Id, "Set a password before unlinking Google. Without one you'd have no way to sign in.");
+
+        return RedirectToPage(new { saved = "google-unlinked" });
+    }
+
+    public async Task<IActionResult> OnPostSendPasswordCodeAsync()
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        long id = CurrentUser.Id;
+
+        (string? Hash, string Address) account;
+        await using (var conn = await db.OpenAsync(HttpContext.RequestAborted))
+        {
+            account = await conn.QuerySingleAsync<(string? Hash, string Address)>(
+                "SELECT password_hash AS Hash, email::text AS Address FROM users WHERE id = @id", new { id });
+        }
+
+        if (PasswordService.HasPassword(account.Hash))
+            return await failAsync(id, already_has_password);
+
+        try
+        {
+            var sent = await EmailCodeFlow.IssueAndSendAsync(codes, email, account.Address, id, set_password_purpose, HttpContext.RequestAborted);
+
+            return sent.Status switch
+            {
+                EmailCodeService.IssueStatus.Sent => RedirectToPage(new { saved = "password-code" }),
+                EmailCodeService.IssueStatus.TooSoon => await failAsync(id, "Please wait a moment before requesting another code."),
+                _ => await failAsync(id, "You've requested too many codes recently. Please try again later."),
+            };
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to send set-password code to user {UserId}", id);
+            return await failAsync(id, "We couldn't send the email. Please try again.");
+        }
+    }
+
+    public async Task<IActionResult> OnPostSetPasswordAsync()
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        long id = CurrentUser.Id;
+        string newPassword = NewPassword ?? string.Empty;
+
+        // Field checks first, as /reset-password does, so a fumbled password never burns the code.
+        if (newPassword != (ConfirmPassword ?? string.Empty))
+            return await failAsync(id, "The passwords do not match.");
+
+        var fieldErrors = AccountValidation.ValidatePassword(newPassword, CurrentUser.Username);
+        if (fieldErrors.Count > 0)
+        {
+            PasswordErrors = fieldErrors;
+            return await failAsync(id, "Choose a different password.");
+        }
+
+        var verified = await codes.VerifyAsync(id, set_password_purpose, (PasswordCode ?? string.Empty).Trim(), HttpContext.RequestAborted);
+        if (verified.Status != EmailCodeService.VerifyStatus.Success)
+        {
+            return await failAsync(id, verified.Status == EmailCodeService.VerifyStatus.Burned
+                ? "Too many incorrect attempts. Request a new code."
+                : "That code is incorrect or has expired.");
+        }
+
+        int updated;
+        await using (var conn = await db.OpenAsync(HttpContext.RequestAborted))
+        {
+            // Only ever a FIRST password: the WHERE makes this a no-op on an account that has one,
+            // even if a second tab set it after the page was rendered.
+            updated = await conn.ExecuteAsync(
+                "UPDATE users SET password_hash = @hash WHERE id = @id AND COALESCE(password_hash, '') = ''",
+                new { hash = passwords.Hash(newPassword), id });
+        }
+
+        if (updated == 0)
+            return await failAsync(id, already_has_password);
+
+        logger.LogInformation("User {UserId} set a first password", id);
+        return RedirectToPage(new { saved = "password" });
+    }
+
+    private const string set_password_purpose = "password";
+
+    private const string already_has_password = "Your account already has a password. To change it, use \"Forgot your password?\" on the sign-in page.";
 
     public Task<IActionResult> OnPostAvatarAsync(IFormFile? avatar) => handleImageUploadAsync(avatar, isBanner: false);
 
@@ -214,8 +373,13 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
 
     private async Task loadCurrentAsync(NpgsqlConnection conn, long id)
     {
-        var row = await conn.QuerySingleOrDefaultAsync<(string Description, string? AvatarKey, string? CoverKey, bool PreferOriginalMetadata)>(
-            "SELECT description AS Description, avatar_key AS AvatarKey, cover_key AS CoverKey, prefer_original_metadata AS PreferOriginalMetadata FROM users WHERE id = @id",
+        var row = await conn.QuerySingleOrDefaultAsync<(string Description, string? AvatarKey, string? CoverKey, bool PreferOriginalMetadata, bool HasPassword)>(
+            """
+            SELECT description AS Description, avatar_key AS AvatarKey, cover_key AS CoverKey,
+                   prefer_original_metadata AS PreferOriginalMetadata,
+                   COALESCE(password_hash, '') <> '' AS HasPassword
+            FROM users WHERE id = @id
+            """,
             new { id });
 
         // Preserve a rejected edit (Description already bound) but fill the rest from the row.
@@ -223,6 +387,8 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
         AvatarUrl = row.AvatarKey is null ? null : $"/{row.AvatarKey}";
         BannerUrl = row.CoverKey is null ? null : $"/{row.CoverKey}";
         PreferOriginalMetadata = row.PreferOriginalMetadata;
+        HasPassword = row.HasPassword;
+        (GoogleLinked, GoogleEmail) = await ExternalLogins.GetGoogleLinkAsync(conn, id);
     }
 
     /// <summary>
@@ -249,6 +415,9 @@ public sealed class IndexModel(Db db, IFileStore store, TokenService tokens) : T
         DELETE FROM score_tokens          WHERE user_id = @id;
         DELETE FROM email_tokens          WHERE user_id = @id;
         DELETE FROM oauth_tokens          WHERE user_id = @id;
+        -- Which Google account this person signed in with is personal data (035_google_sign_in.sql),
+        -- and dropping the link also frees that Google account to sign up afresh.
+        DELETE FROM user_external_logins  WHERE user_id = @id;
 
         UPDATE reports SET reporter_id = NULL WHERE reporter_id = @id;
 
