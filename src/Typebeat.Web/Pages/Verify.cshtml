@@ -23,7 +23,10 @@
         <div class="alert-info">@Model.Status</div>
     }
 
-    <form method="post">
+    @* An explicit action to the DEFAULT handler: after "send a new code" the browser used to sit on
+       /verify?handler=Resend, and a bare form posts back to its own URL, so Sign in re-sent a code
+       instead of checking this one. Resend now redirects back here too (see OnPostResendAsync). *@
+    <form method="post" asp-page="/Verify">
         @Html.AntiForgeryToken()
         <div class="field">
             <label asp-for="Code">6-digit code</label>

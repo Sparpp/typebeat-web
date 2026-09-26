@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using Dapper;
 using Npgsql;
 
@@ -156,6 +157,61 @@ public class EmailVerificationTest
             Assert.That(html, Does.Contain("Please wait"));
             Assert.That(WebsiteFixture.Emails.CountFor(email), Is.EqualTo(1), "cooldown suppresses the second send");
         });
+    }
+
+    /// <summary>
+    /// The resend regression: "send a new code" used to render the page from its own handler, so
+    /// the browser sat on /verify?handler=Resend and the action-less code form posted there too.
+    /// Pressing Sign in then sent yet another email instead of checking the code. Resend now
+    /// redirects (PRG) and the code form names the default handler explicitly.
+    /// </summary>
+    [Test]
+    public async Task Resend_RedirectsBackToVerify_AndTheCodeFormStillChecksTheCode()
+    {
+        const string email = "resend.prg@example.com";
+        await WebsiteFixture.SeedUserAsync("resend prg", email, "hunter2hunter2", verified: true);
+
+        var (client, cookies) = WebsiteFixture.CreateBrowser();
+        using var __ = client;
+
+        using (await postLoginAsync(client, "resend prg", "hunter2hunter2")) { }
+        string code = WebsiteFixture.Emails.LastCodeFor(email)!;
+        int sentBefore = WebsiteFixture.Emails.CountFor(email);
+
+        string page;
+        using (var resend = await postResendAsync(client))
+        {
+            page = await resend.Content.ReadAsStringAsync();
+            Assert.Multiple(() =>
+            {
+                // The POST went to ?handler=Resend; the page we landed on is the redirect target.
+                Assert.That(resend.RequestMessage!.Method, Is.EqualTo(HttpMethod.Get), "resend answers with a redirect, not a rendered page");
+                Assert.That(resend.RequestMessage!.RequestUri!.PathAndQuery, Is.EqualTo("/verify"));
+                // The status line survives the hop (inside the cooldown this is the "wait" line).
+                Assert.That(page, Does.Contain("Please wait"));
+            });
+        }
+
+        // The code form's action is the default handler, never the resend one.
+        var codeForm = Regex.Match(page, "<form method=\"post\" action=\"([^\"]*)\"");
+        Assert.That(codeForm.Success, Is.True, "the code form carries an explicit action");
+        string action = System.Net.WebUtility.HtmlDecode(codeForm.Groups[1].Value);
+        Assert.That(action, Does.Not.Contain("handler"), "the code form must post to the default handler");
+
+        // Posting the code where the form says to signs in, and sends no further email.
+        string token = Regex.Match(page, "__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").Groups[1].Value;
+        using (var verify = await client.PostAsync(action, new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = token,
+            ["Code"] = code,
+        })))
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(cookies.GetCookies(WebsiteFixture.BaseAddress)["typebeat_session"], Is.Not.Null, "the code was checked");
+                Assert.That(WebsiteFixture.Emails.CountFor(email), Is.EqualTo(sentBefore), "no extra code was emailed");
+            });
+        }
     }
 
     [Test]

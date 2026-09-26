@@ -42,8 +42,11 @@ public sealed class ResetPasswordModel(
     public string? Status { get; private set; }
     public IReadOnlyList<string> PasswordErrors { get; private set; } = [];
 
-    // GET is deliberately inert: render the form regardless of any challenge state.
-    public void OnGet() { }
+    // GET is deliberately inert: render the form regardless of any challenge state. The only thing
+    // it reads is the neutral resend line carried across OnPostResendAsync's redirect.
+    public void OnGet() => Status = TempData[status_key] as string;
+
+    private const string status_key = "reset.status";
 
     public async Task<IActionResult> OnPostAsync()
     {
@@ -130,8 +133,10 @@ public sealed class ResetPasswordModel(
             }
         }
 
-        Status = "If an account exists for that email, we've sent a new code.";
-        return Page();
+        // Post/Redirect/Get, like /verify: a refresh must not send another code, and the code form
+        // must not be left sitting on ?handler=Resend.
+        TempData[status_key] = "If an account exists for that email, we've sent a new code.";
+        return Redirect("/reset-password");
     }
 
     // Fails closed like VerifyModel.loadPendingAsync: a since-deleted or restricted user, or the

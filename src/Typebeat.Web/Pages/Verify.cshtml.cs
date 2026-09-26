@@ -48,6 +48,10 @@ public sealed class VerifyModel(
 
         Purpose = pending.Purpose;
         MaskedEmail = EmailCodeFlow.Mask(user.Email);
+
+        // The outcome of a resend, carried across its redirect (see OnPostResendAsync).
+        Status = TempData[status_key] as string;
+        Error = TempData[error_key] as string;
         return Page();
     }
 
@@ -108,13 +112,10 @@ public sealed class VerifyModel(
         if (user is null)
             return Redirect("/login");
 
-        Purpose = pending.Purpose;
-        MaskedEmail = EmailCodeFlow.Mask(user.Email);
-
         try
         {
             var result = await EmailCodeFlow.IssueAndSendAsync(codes, email, user.Email, pending.UserId, pending.Purpose, HttpContext.RequestAborted);
-            Status = result.Status switch
+            TempData[status_key] = result.Status switch
             {
                 EmailCodeService.IssueStatus.Sent => "We sent a new code to your email.",
                 EmailCodeService.IssueStatus.TooSoon => "Please wait a moment before requesting another code.",
@@ -124,11 +125,17 @@ public sealed class VerifyModel(
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to resend {Purpose} code to user {UserId}", pending.Purpose, pending.UserId);
-            Error = "We couldn't send the email. Please try again.";
+            TempData[error_key] = "We couldn't send the email. Please try again.";
         }
 
-        return Page();
+        // Post/Redirect/Get. Rendering the page from this handler used to leave the browser on
+        // /verify?handler=Resend, so a refresh re-sent a code and (before the code form got its
+        // explicit action) so did pressing Sign in. The status line survives the hop in TempData.
+        return Redirect("/verify");
     }
+
+    private const string status_key = "verify.status";
+    private const string error_key = "verify.error";
 
     private static string remainingHint(int attemptsRemaining)
         => attemptsRemaining > 0
