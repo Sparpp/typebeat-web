@@ -104,6 +104,22 @@ public class DownloadPageTest
                 Assert.That(html.IndexOf("/download/game-linux", StringComparison.Ordinal),
                     Is.LessThan(html.IndexOf("/download/game-macos", StringComparison.Ordinal)));
             });
+
+            // This host is also the only one that renders the landing hero's DOWNLOAD variant, so
+            // the third CTA (backlog 288) is pinned here rather than in a third host of its own:
+            // "join discord" must sit under the pair in this variant too, not only the fallback one
+            // LandingPageTest covers.
+            using var landing = await client.GetAsync("/");
+            string hero = LandingPageTest.HeroSlice(await landing.Content.ReadAsStringAsync());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(hero, Does.Contain("download installer"), "the download variant of the hero");
+                Assert.That(hero, Does.Not.Contain("href=\"/register\""));
+                Assert.That(hero, Does.Contain($"href=\"{SiteLinks.DISCORD_INVITE}\""));
+                Assert.That(hero, Does.Contain("join discord"));
+                Assert.That(hero, Does.Contain("hero-actions__under"));
+            });
         }
         finally
         {

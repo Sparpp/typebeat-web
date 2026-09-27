@@ -29,6 +29,8 @@ public class WebsitePagesTest
 
             // Footer: the status-page link must stay reachable (was on the old hardcoded page).
             Assert.That(html, Does.Contain("https://stats.uptimerobot.com/E7XRJ7vfer"));
+            // And the Discord link, which now renders from the shared SiteLinks constant.
+            Assert.That(html, Does.Contain($"href=\"{SiteLinks.DISCORD_INVITE}\""));
             Assert.That(html, Does.Contain("href=\"/legal/dmca\""));
             Assert.That(html, Does.Contain("href=\"/legal/privacy\""));
         });

@@ -74,6 +74,52 @@ public class LandingPageTest
     }
 
     /// <summary>
+    /// The hero's third CTA (backlog 288): "join discord", on its own wrapped line under the pair
+    /// above, pointing at the ONE invite constant. This is the sign-up fallback variant, the only
+    /// one the shared fixture host can render (it configures no build); the download variant is
+    /// rendered by the configured host in
+    /// <see cref="DownloadPageTest.Download_WithStoredBuilds_ShowsAllPlatformCards"/>, which asserts
+    /// the same button beside "download installer" rather than booting a third host here.
+    /// </summary>
+    [Test]
+    public async Task Landing_HeroOffersJoinDiscord_InTheSignUpFallbackVariant()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync("/");
+        string hero = HeroSlice(await response.Content.ReadAsStringAsync());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hero, Does.Contain($"href=\"{SiteLinks.DISCORD_INVITE}\""));
+            Assert.That(hero, Does.Contain("join discord"));
+            Assert.That(hero, Does.Contain("target=\"_blank\""));
+            Assert.That(hero, Does.Contain("rel=\"noopener\""));
+            Assert.That(hero, Does.Contain("<svg"), "inline glyph: the site loads no icon font");
+            Assert.That(hero, Does.Contain("hero-actions__under"), "its own centred line, under the pair");
+
+            // The pair above it in this variant, so the triangle is play + sign up + discord.
+            Assert.That(hero, Does.Contain("href=\"/register\""));
+            Assert.That(hero, Does.Not.Contain("download installer"));
+        });
+    }
+
+    /// <summary>
+    /// The landing hero's markup alone (<c>&lt;section class="hero"&gt;</c> up to its
+    /// <c>&lt;/section&gt;</c>). The footer links to the same Discord invite, so a hero assertion
+    /// has to be scoped or it would pass on the footer's copy. Public because DownloadPageTest
+    /// renders the other hero variant.
+    /// </summary>
+    public static string HeroSlice(string html)
+    {
+        int start = html.IndexOf("class=\"hero\"", StringComparison.Ordinal);
+        Assert.That(start, Is.GreaterThanOrEqualTo(0), "landing hero section");
+
+        int end = html.IndexOf("</section>", start, StringComparison.Ordinal);
+        Assert.That(end, Is.GreaterThan(start), "landing hero section end");
+
+        return html[start..end];
+    }
+
+    /// <summary>
     /// The hero CTA points at /download, which picks the platform, so the gate must ask "is ANY
     /// build available". It used to read the Windows key alone: a deployment publishing only a
     /// macOS or Linux build hid the front-page download entry point while /download happily served

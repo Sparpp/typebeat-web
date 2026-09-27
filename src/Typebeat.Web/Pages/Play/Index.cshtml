@@ -35,7 +35,9 @@
     }
 </div>
 
-<div id="tb-stage" class="play-stage-wrap" hidden>
+@* data-discord-url is the one invite constant reaching the player: the post-clear nudge reads it
+   off this root rather than hardcoding the URL a second time in JavaScript. *@
+<div id="tb-stage" class="play-stage-wrap" data-discord-url="@SiteLinks.DISCORD_INVITE" hidden>
     <button type="button" id="tb-close" class="btn btn-ghost btn-small play-close">✕ close</button>
     <div id="tb-stage-mount"></div>
 </div>

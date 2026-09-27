@@ -133,6 +133,19 @@ public class CardWebplayTest
         });
     }
 
+    /// <summary>
+    /// The stage root carries the Discord invite as <c>data-discord-url</c> (backlog 288), so the
+    /// player's first-clear nudge (backlog 289) reads the one constant instead of hardcoding the URL
+    /// a second time in JavaScript.
+    /// </summary>
+    [Test]
+    public async Task PlayStage_CarriesTheDiscordInvite_ForThePlayerToRead()
+    {
+        string html = await GetHtml("/play");
+
+        Assert.That(html, Does.Contain($"data-discord-url=\"{SiteLinks.DISCORD_INVITE}\""));
+    }
+
     [Test]
     public async Task DeepLink_HandsThePlayableSetToTheScriptAsAutoPlay()
     {

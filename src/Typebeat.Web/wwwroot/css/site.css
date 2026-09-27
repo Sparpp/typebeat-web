@@ -683,6 +683,16 @@ img { max-width: 100%; }
     gap: var(--space-3);
 }
 
+/* The hero's third CTA (join discord). A full basis makes the wrapping row put it on a line of its
+   own, centred under the pair above, and the row's own gap spaces the two lines. */
+.hero-actions__under {
+    flex-basis: 100%;
+    display: flex;
+    justify-content: center;
+}
+
+.hero-discord__mark { flex-shrink: 0; }
+
 .hero-note {
     margin-top: var(--space-4);
     color: var(--text-faint);
