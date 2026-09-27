@@ -258,17 +258,19 @@ hard top-10 cutoff):
 
 ```
 total_pp = Σ pp_i · decay^i     (best play i = 0, over ALL deduped plays)
-decay = 0.85, raised toward osu's 0.95 as the ranked pool grows
+decay = 0.92, raised from the opening 0.85 (backlog 293), toward osu's 0.95 as the pool grows
 ```
 
-With decay 0.85 the tail vanishes fast (the 10th play carries ~20% weight, the 20th ~3.9%), so
-"your top 10 is what matters" is effectively true without a cliff where the 11th-best play
-contributes exactly nothing.
+With decay 0.92 the tail fades without ever hitting a cliff (the 10th play carries ~43% weight,
+the 20th ~19%, the 50th ~1.5%), so a deep pool of clears counts while the best plays stay
+dominant, and there is still no point where the next-best play contributes exactly nothing.
 
-The low decay keeps the top plays dominant while the map count is small; grow it as there are
-more maps for depth to matter. At current scale (tens of users, ~1.5k scores), `total_pp` is
-**computed on read**, not stored, so a decay bump later is a one-line config change with no
-migration or recompute job.
+The decay opened low (0.85, where the 10th play carried ~20% and the 20th ~3.9%) to keep the
+top plays dominant while the map count was small, with the standing instruction to raise it as
+there were more maps for depth to matter; backlog 293 took that step to 0.92. Only totals move
+(everyone's rises, a deeper tail counting for more): per-play pp is untouched, so `VERSION`
+stays put and no stored row reprices. `total_pp` is **computed on read**, not stored, so this
+was, and the next bump stays, a one-line config change with no migration or recompute job.
 
 ## What the system values
 
@@ -294,9 +296,10 @@ the opposite of what cumulative score rewards today.
   2026-09-06 one deleted it; this line is the rule again, without an exception.)
 * Custom DT/HT rates are **pp-ineligible only**; score-leaderboard ranking at every rate is
   preserved, nothing retroactively unranked.
-* Aggregation: **best play per set, weighted sum over all** with decay 0.85; no hard top-10
+* Aggregation: **best play per set, weighted sum over all** with decay 0.92; no hard top-10
   truncation. (Amended by backlog 162: the dedup unit was the beatmap until then, so clearing
-  three difficulties of one song banked three weighted entries.)
+  three difficulties of one song banked three weighted entries. Amended by backlog 293: decay
+  raised 0.85 to 0.92 as the ranked pool grew, moving totals only; per-play pp untouched.)
 * **NF priced at × 0.90** for pp (osu's value); omission would have made it a free mod.
 * `notes` excludes `ignore_hit`; the FL factor carries a floor clamp (so did the length factor,
   until the backlog-152 amendment deleted it).

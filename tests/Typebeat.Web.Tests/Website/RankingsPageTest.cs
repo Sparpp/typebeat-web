@@ -118,7 +118,7 @@ public class RankingsPageTest
 
         // Per-map dedup: only the BEST-pp play on a map counts, and "best" is by pp, not by score.
         // The 120 pp play is deliberately the LOWER-scoring one, so a fold that ordered by
-        // total_score would pick the wrong row and total 50 + 30 x 0.85 instead.
+        // total_score would pick the wrong row and total 50 + 30 x DECAY instead.
         //
         // X and Y are two SONGS, one set each: this fixture is about the retry fold, so the set
         // fold must not also be firing here or the two rules become indistinguishable.
@@ -203,7 +203,7 @@ public class RankingsPageTest
         await insertScoreAsync(conn, oneSongId, oneSongEasy, 150_000, pp: one_song_best_pp);
     }
 
-    /// <summary>Σ pp·decay^i over the seeded equal-value plays: 100 · (1 − 0.85^12) / 0.15.</summary>
+    /// <summary>Σ pp·decay^i over the seeded equal-value plays: 100 · (1 − DECAY^12) / (1 − DECAY).</summary>
     private static double ExpectedDecayTotal
     {
         get
@@ -231,7 +231,7 @@ public class RankingsPageTest
 
         Assert.Multiple(() =>
         {
-            // 120 (map X's best pp, though not its best score) + 30 x 0.85 (map Y).
+            // 120 (map X's best pp, though not its best score) + 30 x DECAY (map Y).
             Assert.That(pp.TotalPp, Is.EqualTo(120 + 30 * PerformancePoints.DECAY).Within(1e-9));
             Assert.That(pp.PpPlayCount, Is.EqualTo(2), "three plays across two songs fold to two");
         });

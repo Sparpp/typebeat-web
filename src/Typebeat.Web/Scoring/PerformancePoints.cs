@@ -456,13 +456,15 @@ public static class PerformancePoints
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
     /// deduped play contributes <c>pp_i · DECAY^i</c>.
     ///
-    /// <para>0.85 is deliberately far below osu's 0.95 while the ranked map pool is small: the tail
-    /// vanishes fast (the 10th play carries ~20%, the 20th ~3.9%), so "your top plays are what
-    /// matters" holds without a hard cutoff where the 11th-best contributes exactly nothing. RAISE
-    /// IT TOWARDS 0.95 AS THE RANKED POOL GROWS, which is a one-line change here: the total is
-    /// computed on read, so nothing is stored and nothing needs recomputing.</para>
+    /// <para>0.92 sits between the 0.85 the ranked pool started on and osu's 0.95: the tail counts
+    /// for real now (the 10th play carries ~43%, the 20th ~19%), so depth in a player's clears
+    /// moves the total while the best plays still dominate, and there is still no hard cutoff
+    /// where the 11th-best contributes exactly nothing. Raised from 0.85 (backlog 293) exactly as
+    /// the note here always said to do once the pool grew, and only totals moved: per-play pp is
+    /// untouched, so VERSION stays put and no stored row reprices. The last step towards 0.95
+    /// stays the same one-line change, the total being computed on read.</para>
     /// </summary>
-    public const double DECAY = 0.85;
+    public const double DECAY = 0.92;
 
     // ---- formula constants (docs/pp.md, which pins the PP Sandbox's active dials) ----
 

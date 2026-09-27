@@ -1409,6 +1409,6 @@ public class PerformancePointsTest
     {
         // Intended to be raised towards osu's 0.95 as the ranked pool grows; if this value moves,
         // docs/pp.md moves with it.
-        Assert.That(PerformancePoints.DECAY, Is.EqualTo(0.85)); // pp[f.decay]
+        Assert.That(PerformancePoints.DECAY, Is.EqualTo(0.92)); // pp[f.decay]
     }
 }
