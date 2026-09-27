@@ -259,7 +259,7 @@ Every service in `compose.prod.yml` declares `logging: driver json-file` with `m
 **A log cap only applies to a container CREATED after it.** Compose recreates a service when its
 definition changes, so:
 
-- `app` and `aligner` pick it up on the next deploy (CI does `up -d` on both).
+- `app` picks it up on the next deploy (CI does `up -d app`).
 - `caddy` picks it up on the next deploy too (CI does `up -d caddy`).
 - **`postgres` does not: CI never touches it.** Recreate it once, by hand, when you are willing to
   take a few seconds of downtime:
@@ -286,6 +286,31 @@ journalctl --vacuum-size=100M
 Do **not** add that file to the repo. Nothing in the deploy consumes `/etc/systemd/*`: the CI tar
 lands in `/opt/typebeat-web` only, so a copy kept here would drift silently and mislead the next
 reader into thinking it is deployed.
+
+### Retired aligner (one-time box cleanup, once)
+
+Backlog 287 retired the server-side aligner: the `aligner` service, `deploy/aligner/` and
+`AlignJobStore` are all gone from the repo, and `POST /api/v2/typebeat/align` is now a 410
+tombstone for the installed clients that still call it. **Deleting it from the repo does not
+remove it from the box.** Compose only knows about services it can still see in the file, and CI
+never passes `--remove-orphans`, so the container keeps running under its `restart:
+unless-stopped` policy, forever, holding its torch/demucs image and its data. One pass, on the
+box, once (a deploy has to have landed first, so the file no longer declares the service):
+
+```
+cd /opt/typebeat-web
+./deploy/up.sh rm -sf aligner          # or: ./deploy/up.sh up -d --remove-orphans
+docker image ls | grep aligner         # find the tag compose built (typebeat-web-aligner)
+docker image rm typebeat-web-aligner
+docker builder prune -f                # its layers are the bulk of the build cache
+./deploy/up.sh exec -T app rm -rf /data/align-jobs /data/align-cache
+```
+
+The last line is a real reclaim, not tidying: `/data/align-jobs` held one directory per job (the
+uploaded audio at up to 64 MB each, never swept) and `/data/align-cache` was the worker's
+`TORCH_HOME`, where the demucs checkpoints landed. Those two directories were half of the
+suspects when the disk filled again for backlog 286, and nothing will ever write to them again.
+Check the result with `GET /api/v2/ops/disk` or `df -h /`.
 
 ### Alerting
 

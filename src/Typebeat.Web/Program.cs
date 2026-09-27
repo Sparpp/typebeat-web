@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Dapper;
 using Npgsql;
 using Typebeat.Web;
-using Typebeat.Web.Align;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
 using Typebeat.Web.Email;
@@ -89,9 +88,6 @@ builder.Services.AddSingleton<PackageIngest>();
 // Chunked BSS uploads: session directories under {TYPEBEAT_FILE_ROOT}/upload-sessions, so a
 // half-sent payload survives a restart and the client resumes instead of starting over.
 builder.Services.AddSingleton<UploadSessionStore>();
-
-// Server-side lyric alignment (file-based job exchange with the aligner worker container).
-builder.Services.AddSingleton<AlignJobStore>();
 
 // The website (M3): server-rendered Razor Pages under Pages/, HTML only; every APIv2/BSS JSON
 // response keeps going through WireJson (Newtonsoft), untouched by this. AddRazorPages also
@@ -287,6 +283,9 @@ ReplayEndpoints.Map(app);
 // other route keeps the default.
 BssEndpoints.Map(app);
 MediaEndpoints.Map(app);
+
+// Retired server-side aligner (backlog 287): one 410 tombstone, kept because installed clients
+// still POST to it. Nothing else is left of the feature.
 AlignEndpoints.Map(app);
 
 // Private score feed for the Discord bot (discord-buddybot). Self-disables (404s) unless

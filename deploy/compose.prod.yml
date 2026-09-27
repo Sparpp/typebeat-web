@@ -94,24 +94,6 @@ services:
     expose:
       - "8080"
 
-  # Server-side lyric alignment (torch/demucs, CPU). File-based job exchange with the app over
-  # the shared appdata volume (/data/align-jobs, see AlignJobStore.cs + deploy/aligner/worker.py).
-  # One job at a time by design; the memory cap keeps a demucs peak from starving postgres/app.
-  aligner:
-    build:
-      context: .
-      dockerfile: deploy/aligner/Dockerfile
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    volumes:
-      - appdata:/data
-    mem_limit: 5g
-    cpus: 3
-
   postgres:
     image: postgres:16
     restart: unless-stopped

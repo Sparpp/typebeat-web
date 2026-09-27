@@ -134,20 +134,12 @@ jobs:
             && ./deploy/up.sh up -d caddy \
             && ./deploy/up.sh exec -T caddy caddy reload --config /etc/caddy/deploy/Caddyfile --adapter caddyfile'
 
-      # The aligner worker (torch/demucs) is a separate long-lived service, deployed AFTER the app
-      # is already live+healthy so its heavy build can never gate an app deploy. Docker layer cache
-      # on the box makes this a no-op fast path unless deploy/aligner/* changed; restart:
-      # unless-stopped keeps it up between deploys regardless. Build then up, both scoped to the
-      # aligner service so postgres/caddy/app are untouched.
-      - name: Build + start aligner worker
-        run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web && ./deploy/up.sh build aligner && ./deploy/up.sh up -d aligner'
-
-      # The build cache is what the box pays for those two image builds, and nothing ever collected
+      # The build cache is what the box pays for the app image build, and nothing ever collected
       # it: on 2026-09-04 it had reached 7 GB and helped fill the 75 GB disk (see deploy/README.md,
-      # "Disk"). Pruned LAST, after both builds, so every layer this deploy could reuse was still
+      # "Disk"). Pruned LAST, after the build, so every layer this deploy could reuse was still
       # there when it mattered; the cost is that the next deploy rebuilds from the image layers
-      # rather than the build cache, which is seconds on the app and only bites when
-      # deploy/aligner/* changed. Deliberately in CI and not in deploy/up.sh: that script exists
-      # only on the box and is not in git, so a change there would be invisible here.
+      # rather than the build cache, which is seconds on the app. Deliberately in CI and not in
+      # deploy/up.sh: that script exists only on the box and is not in git, so a change there
+      # would be invisible here.
       - name: Prune docker build cache
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'docker builder prune -f'

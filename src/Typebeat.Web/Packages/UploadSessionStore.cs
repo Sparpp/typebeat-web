@@ -21,8 +21,8 @@ namespace Typebeat.Web.Packages;
 ///                                      tmp-{guid}     in-flight chunk write, moved into place
 ///
 /// Deliberately NOT on <see cref="IFileStore"/>: that interface has no enumeration, and both the
-/// received-chunk list and the expiry sweep need to enumerate. Plain Directory/File APIs instead,
-/// same precedent as <see cref="Align.AlignJobStore"/>. The root rides the persistent volume, so a
+/// received-chunk list and the expiry sweep need to enumerate. Plain Directory/File APIs instead.
+/// The root rides the persistent volume, so a
 /// half-uploaded session survives an app restart or a deploy and the client can resume it rather
 /// than starting the whole payload again.
 /// </summary>

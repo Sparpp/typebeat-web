@@ -99,8 +99,8 @@ public class ServerFixture
         // Must be set BEFORE the host is built (Db.ResolveConnectionString reads it at startup).
         Environment.SetEnvironmentVariable("TYPEBEAT_DB", ConnectionString);
 
-        // Hermetic file root (align jobs, packages): a fresh temp dir per run, so tests can both
-        // observe and simulate the on-disk side of file-based protocols (AlignJobStore).
+        // Hermetic file root (packages, upload sessions): a fresh temp dir per run, so tests can
+        // both observe and simulate the on-disk side of file-based protocols.
         FileRoot = Path.Combine(Path.GetTempPath(), "typebeat-wirecompat-" + Guid.NewGuid().ToString("N"));
         Environment.SetEnvironmentVariable("TYPEBEAT_FILE_ROOT", FileRoot);
 
