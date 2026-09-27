@@ -167,6 +167,28 @@ if (emailSender is LogEmailSender && app.Configuration.GetValue<bool>("TYPEBEAT_
 else
     app.Logger.LogInformation("Email sender: {Sender}", emailSender.GetType().Name);
 
+// How full the disk is, once, at boot. The box filled twice (2026-09-04 and 2026-09-26) and both
+// times the first symptom was the site being gone: the alert chain added after the first fill needs
+// a key on this side, a running bot, a configured channel AND that bot's code actually deployed,
+// and every one of those failing is silent. A deploy writes this log no matter what, so the number
+// is always somewhere: `docker logs typebeat-web-app-1 | grep Disk:`. Cheap (one statvfs), no
+// threshold (the bot owns that), and never fatal: a boot must not fail over a diagnostic.
+try
+{
+    string diskRoot = OpsEndpoints.FileRoot(app.Configuration);
+    var diskReadout = OpsEndpoints.Measure(diskRoot);
+    string diskLine = OpsEndpoints.StartupLine(diskRoot, diskReadout);
+
+    if (OpsEndpoints.Usable(diskReadout))
+        app.Logger.LogInformation("{DiskLine}", diskLine);
+    else
+        app.Logger.LogWarning("{DiskLine}", diskLine);
+}
+catch (Exception ex) when (ex is IOException or ArgumentException or UnauthorizedAccessException)
+{
+    app.Logger.LogWarning("Disk: could not read usage for the file root ({Reason}), so GET /api/v2/ops/disk will 503 and the Discord disk alert is BLIND.", ex.Message);
+}
+
 // Behind the Caddy reverse proxy, honor X-Forwarded-For / X-Forwarded-Proto so Request.Scheme is
 // "https" (the notification_endpoint must be wss://, cover/avatar URLs must be https://) and
 // Connection.RemoteIpAddress is the real client IP (the rate limiters key on it). Only enabled

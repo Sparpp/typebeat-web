@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Configuration;
 using Typebeat.Web.Endpoints;
+using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Tests;
 
@@ -75,6 +77,77 @@ public class OpsDiskTest
             Assert.That(asked, Is.EqualTo("/data"));
             Assert.That(readout.UsedPercent, Is.EqualTo(75d));
         });
+    }
+
+    [Test]
+    public void Usable_RejectsOnlyTheZeroSizeFilesystem()
+    {
+        // backlog 286: Describe deliberately clamps nonsense into a comparable number, but the ONE
+        // clamp that reads as good news is total = 0 -> "0.00 percent used". A probe that succeeds
+        // and answers zero blocks (statvfs on a filesystem it does not understand) would therefore
+        // hand the bot the most reassuring reading there is, forever. The endpoint 503s on it
+        // instead, and this is the predicate it uses.
+        Assert.Multiple(() =>
+        {
+            Assert.That(OpsEndpoints.Usable(OpsEndpoints.Describe(0, 0)), Is.False);
+            Assert.That(OpsEndpoints.Usable(OpsEndpoints.Describe(-5, -5)), Is.False, "a negative total clamps to 0, which is just as unusable");
+            Assert.That(OpsEndpoints.Usable(OpsEndpoints.Describe(1, 0)), Is.True);
+            Assert.That(OpsEndpoints.Usable(OpsEndpoints.Describe(100, 100)), Is.True, "an EMPTY filesystem is a real one, and 0 percent used is the truth about it");
+        });
+    }
+
+    [Test]
+    public void StartupLine_CarriesThePercentAndTheFreeSpace()
+    {
+        // 75 GiB with 6 GiB left, the shape the box was in on the way down: the line a deploy's own
+        // log has to carry so the number exists without the bot.
+        var readout = OpsEndpoints.Describe(75L * 1024 * 1024 * 1024, 6L * 1024 * 1024 * 1024);
+
+        string line = OpsEndpoints.StartupLine("/data", readout);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(line, Does.StartWith("Disk: 92.0 percent used"));
+            Assert.That(line, Does.Contain("'/data'"));
+            Assert.That(line, Does.Contain("6.0 GiB free of 75.0 GiB"));
+        });
+    }
+
+    [Test]
+    public void StartupLine_SaysTheGuardIsBlindWhenTheReadoutIsUnusable()
+    {
+        string line = OpsEndpoints.StartupLine("/data", OpsEndpoints.Describe(0, 0));
+
+        Assert.Multiple(() =>
+        {
+            // No percentage at all: "0.0 percent used" is exactly the lie this case exists to avoid.
+            Assert.That(line, Does.Not.Contain("percent used"));
+            Assert.That(line, Does.Contain("BLIND"));
+        });
+    }
+
+    [Test]
+    public void FileRoot_FallsBackToTheStoreDefault()
+    {
+        // One answer to "which disk is being watched": the endpoint and the boot line must resolve
+        // the root the same way LocalFileStore does, or the log describes a different filesystem
+        // than the uploads land on.
+        Assert.Multiple(() =>
+        {
+            Assert.That(OpsEndpoints.FileRoot(configWith(null)), Is.EqualTo(LocalFileStore.DefaultRoot));
+            Assert.That(OpsEndpoints.FileRoot(configWith("")), Is.EqualTo(LocalFileStore.DefaultRoot));
+            Assert.That(OpsEndpoints.FileRoot(configWith("/data")), Is.EqualTo("/data"));
+        });
+    }
+
+    private static IConfiguration configWith(string? root)
+    {
+        var values = new Dictionary<string, string?>();
+
+        if (root is not null)
+            values[LocalFileStore.RootConfigKey] = root;
+
+        return new ConfigurationBuilder().AddInMemoryCollection(values).Build();
     }
 
     [Test]

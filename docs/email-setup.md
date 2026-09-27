@@ -51,8 +51,8 @@ TYPEBEAT_EMAIL_FROM=type!beat <noreply@mingda.sh>
 ### 4. Redeploy
 
 ```
-cd /opt/typebeat        # wherever compose.prod.yml lives on the box
-docker compose -f compose.prod.yml up -d
+cd /opt/typebeat-web    # the repo root on the box, where deploy/ sits
+./deploy/up.sh up -d app
 ```
 
 Check `docker logs typebeat-web-app-1` for `Email sender: ResendEmailSender`. Register a throwaway

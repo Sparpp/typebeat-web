@@ -21,6 +21,20 @@ namespace Typebeat.Web.Endpoints;
 /// actually matters, since the release packages, the docker build cache and the container logs
 /// that filled the box all live outside /data.</para>
 ///
+/// <para>WHAT A CONTAINER CAN AND CANNOT SEE, stated honestly because backlog 286 asked whether
+/// this readout had been lying: a process inside the app container cannot run the host's `df` and
+/// has no view of the host mount table. What it CAN see is the filesystem BACKING the path it
+/// statvfs's, and that is a real filesystem, not a container illusion. `appdata` is an ordinary
+/// named docker volume, so its data lives under <c>/var/lib/docker/volumes/…/_data</c> on the
+/// host, and /data inside the container is a bind of that directory: same device, same free
+/// space, so the answer equals the host's `df /`. THE PINNED ASSUMPTION IS THAT THE DOCKER DATA
+/// ROOT AND THE ROOT FILESYSTEM ARE ONE DEVICE. Give `appdata` a driver option or a bind onto a
+/// separate disk (the box already has one: the 100 GB backup volume at /mnt/typebeat-backups) and
+/// this endpoint silently starts watching THAT device while the root filesystem, which is where
+/// the docker images, the build cache, the journal and /root staging all live, goes unwatched.
+/// Nothing in the code can detect that swap, so it is a deploy-time invariant: see the Disk
+/// section of deploy/README.md.</para>
+///
 /// <para>EDGE NOTE: this endpoint is a dumb readout. It holds no threshold, no state and no
 /// memory of what it last answered; it does not know an alert exists. The 80 percent alert is
 /// EDGE-TRIGGERED CLIENT-SIDE by the bot, which remembers whether it was already over the line
@@ -41,11 +55,7 @@ public static class OpsEndpoints
         if (!BuddyEndpoints.Authorised(ctx, config, out IResult? failure))
             return failure!;
 
-        // The file root the app itself writes to, resolved exactly as LocalFileStore resolves it,
-        // so the readout can never describe a different filesystem than the uploads land on.
-        string root = config[LocalFileStore.RootConfigKey] is { Length: > 0 } configured
-            ? configured
-            : LocalFileStore.DefaultRoot;
+        string root = FileRoot(config);
 
         DiskReadout readout;
 
@@ -62,6 +72,18 @@ public static class OpsEndpoints
                 statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
+        // The same rule one level down, and the hole backlog 286 found in it: a probe can SUCCEED
+        // and still answer nonsense. statvfs on a filesystem it does not understand reports zero
+        // blocks, and Describe then clamps that to "0.00 percent used", which is the single most
+        // reassuring number this endpoint can emit. The bot compares it against 80 and stays quiet
+        // forever. A zero-size filesystem does not exist, so treat it as the failed probe it is.
+        if (!Usable(readout))
+        {
+            return Results.Problem(
+                $"disk usage for '{root}' read back as a zero-size filesystem, which cannot be true: treating it as a failed probe rather than an empty disk",
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
         return Results.Json(new
         {
             totalBytes = readout.TotalBytes,
@@ -69,6 +91,53 @@ public static class OpsEndpoints
             usedPercent = readout.UsedPercent,
         });
     }
+
+    /// <summary>
+    /// The file root the app itself writes to, resolved exactly as <see cref="LocalFileStore"/>
+    /// resolves it, so the readout can never describe a different filesystem than the uploads land
+    /// on. Public because the boot-time log line in Program.cs measures the same root, and two
+    /// copies of this fallback would be two answers to "which disk is being watched".
+    /// </summary>
+    public static string FileRoot(IConfiguration config)
+        => config[LocalFileStore.RootConfigKey] is { Length: > 0 } configured ? configured : LocalFileStore.DefaultRoot;
+
+    /// <summary>
+    /// Whether a readout describes a real filesystem. Only a zero total fails: every other
+    /// degenerate input <see cref="Describe"/> clamps stays comparable, but a zero total makes the
+    /// percentage meaningless AND maximally reassuring, which is the one direction an alert path
+    /// must never fail in.
+    /// </summary>
+    public static bool Usable(DiskReadout readout) => readout.TotalBytes > 0;
+
+    /// <summary>
+    /// The one line the app logs about free space at boot.
+    ///
+    /// <para>Exists because of the second fill (backlog 286): the alert chain has four separate
+    /// ways to be silent (key unset, bot container down, alert channel unset, poller never
+    /// deployed) and in every one of them NOTHING anywhere states a number. A deploy always writes
+    /// its own log, so this puts the disk in it for free: `docker logs typebeat-web-app-1 | grep
+    /// Disk:` answers "how full was the box at the last deploy" with no bot, no key and no
+    /// network.</para>
+    ///
+    /// <para>Deliberately carries no threshold. The 80 percent line lives in the bot
+    /// (<c>BUDDY_DISK_THRESHOLD_PCT</c>) and is configurable there; a second copy here to colour a
+    /// log level would be a number that could drift from the one that actually alerts. The only
+    /// judgement it makes is the unusable case, which is not a threshold but a broken instrument.</para>
+    /// </summary>
+    public static string StartupLine(string root, DiskReadout readout)
+    {
+        if (!Usable(readout))
+        {
+            return FormattableString.Invariant(
+                $"Disk: the readout for '{root}' came back as a zero-size filesystem, so GET /api/v2/ops/disk will 503 and the Discord disk alert is BLIND. Check TYPEBEAT_FILE_ROOT and its mount.");
+        }
+
+        return FormattableString.Invariant(
+            $"Disk: {readout.UsedPercent:0.0} percent used on the filesystem holding '{root}' ({gib(readout.FreeBytes)} GiB free of {gib(readout.TotalBytes)} GiB). On the prod box that filesystem is the root disk, because the appdata volume lives on it.");
+    }
+
+    private static string gib(long bytes)
+        => (bytes / (double)(1024L * 1024 * 1024)).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Reads the filesystem holding <paramref name="path"/>. The probe is injectable so the

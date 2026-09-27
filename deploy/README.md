@@ -3,19 +3,57 @@
 Single Hetzner box, Docker Compose. Caddy terminates TLS for `typebeat.mingda.sh` and
 reverse-proxies to the ASP.NET app; Postgres lives on the private compose network.
 
+## Running compose on the box
+
+**Every compose command on the box goes through `./deploy/up.sh` from `/opt/typebeat-web`.** That is
+what CI itself calls for the build, the swap and the caddy reload (`.github/workflows/ci.yml`), and
+the commands in this file are written that way.
+
+```
+cd /opt/typebeat-web
+./deploy/up.sh up -d app          # the shape every example below uses
+```
+
+**`docker compose -f deploy/compose.prod.yml …` is WRONG and this file used to tell you to run it.**
+With `-f` alone, compose takes the project directory from the compose FILE's directory, which has
+two consequences, both bad:
+
+- the app's build context `.` resolves to `deploy/` instead of the repo root, so the image build
+  reads the wrong tree;
+- the project name defaults to that directory's name, `deploy`, so the containers become
+  `deploy-app-1` and the volumes `deploy_appdata`. That is a **second, empty stack**: a fresh
+  Postgres with no data, next to the real `typebeat-web-*` one, on the same disk.
+
+Without `up.sh`, the equivalent is to state both explicitly, from anywhere:
+
+```
+docker compose -p typebeat-web --project-directory /opt/typebeat-web \
+  -f /opt/typebeat-web/deploy/compose.prod.yml up -d app
+```
+
+`-p typebeat-web` is the project name the live containers and volumes already carry
+(`typebeat-web-app-1`, `typebeat-web_appdata`), and `--project-directory` is what puts the build
+context back on the repo root. Getting either wrong is the failure above.
+
+**`up.sh` exists only on the box and is NOT in this repo**, so nothing here can review it, and a
+change to it is invisible to CI (which is why the prune steps live in `ci.yml` instead). Its
+contents are not reproduced here because they have never been read into git. **Owner action: copy
+`/opt/typebeat-web/deploy/up.sh` into the repo and commit it**, after which this section can point
+at the file instead of describing its invocation.
+
 ## First deploy
 
 1. DNS: an `A` record `typebeat.mingda.sh -> <server ip>` must resolve (DNS-only at first, so
    Caddy's ACME HTTP challenge reaches the box; switch Cloudflare to proxied afterwards).
 2. On the box, in the repo root (`/opt/typebeat-web`):
    ```
-   docker compose -f deploy/compose.prod.yml up -d --build
+   ./deploy/up.sh up -d --build
    ```
    `deploy/.env` (git-ignored) must define `POSTGRES_PASSWORD`. Compose reads it automatically
    when named `.env` in the compose file's directory, or pass `--env-file deploy/.env`.
 3. Watch Caddy obtain the certificate:
    ```
-   docker compose -f deploy/compose.prod.yml logs -f caddy
+   ./deploy/up.sh logs -f caddy
    ```
 4. Verify: `curl https://typebeat.mingda.sh/health` returns `ok`.
 
@@ -23,16 +61,16 @@ reverse-proxies to the ASP.NET app; Postgres lives on the private compose networ
 
 ```
 git pull   # once the repo is under version control
-docker compose -f deploy/compose.prod.yml up -d --build
+./deploy/up.sh up -d --build
 ```
 
 After any `deploy/Caddyfile` change, verify the running container actually sees the new content
-(CI reloads caddy on every deploy, but if the md5s below ever differ, `docker compose -f
-deploy/compose.prod.yml up -d --force-recreate caddy` and re-check):
+(CI reloads caddy on every deploy, but if the md5s below ever differ, run
+`./deploy/up.sh up -d --force-recreate caddy` and re-check):
 
 ```
 md5sum deploy/Caddyfile
-docker compose -f deploy/compose.prod.yml exec -T caddy md5sum /etc/caddy/deploy/Caddyfile
+./deploy/up.sh exec -T caddy md5sum /etc/caddy/deploy/Caddyfile
 ```
 
 ## Takedown runbook (DMCA / removed sets)
@@ -76,7 +114,7 @@ the app container over the compose network, holding a short-lived token that act
 `BssUpload` category:
 
 ```
-docker compose -f deploy/compose.prod.yml logs --since 24h app | grep BssUpload
+./deploy/up.sh logs --since 24h app | grep BssUpload
 ```
 
 Lines naming the user's set (422 / 413 / missing `beatmapArchive`) mean the app DID receive the
@@ -216,8 +254,10 @@ Verify with `crontab -l`, and after the first scheduled night check
 The box has ONE 75 GB disk and everything shares it: Postgres, the `/data` uploads volume, the
 docker images and their build cache, and the logs. On 2026-09-04 it reached 100 percent, Postgres
 went unhealthy and refused connections, every page 500'd, and nothing anywhere said "disk". The
-clean-up was entirely manual. This section is what fills it, what is capped automatically now, and
-the parts that still need you.
+clean-up was entirely manual. **It filled AGAIN on 2026-09-26**, this time announcing itself as
+journald writing "No space left on device" on the console, with the 80 percent Discord alert added
+after the first fill never having posted anything. This section is what fills it, what is capped
+automatically now, and the parts that still need you.
 
 **What actually filled it, and what holds each one down now:**
 
@@ -225,6 +265,7 @@ the parts that still need you.
 |---|---|---|
 | `/data/downloads/releases/*.nupkg` (Velopack update feed) | 44 GB | the ship path prunes after every upload |
 | docker build cache | 7 GB | `docker builder prune -f`, last step of every CI deploy |
+| dangling `<none>` app images, one per deploy | not measured | `docker image prune -f`, added after the SECOND fill, below |
 | container json logs (caddy's alone) | 352 MB | `logging:` caps in `compose.prod.yml`, 10m x 3 per service |
 | systemd journal | 488 MB | a ONE-TIME manual cap, below |
 
@@ -232,6 +273,18 @@ Uploaded beatmap packages are not on that list and never were: `PackageIngest` a
 the latest 2 assembled packages per set (see Backups above). That prune is per SET and about
 re-submissions; the release prune below is per CHANNEL and about client builds. They are unrelated,
 and neither covers the other.
+
+**What has NO retention at all**, so it grows with use and no code here will ever shrink it:
+
+- `/data/files/` content-addressed blobs. Write-once by design (`IFileStore`: "Blobs are write-once
+  and never deleted here"), which is what makes old package versions reconstructible. It grows with
+  every distinct uploaded file, forever, and a takedown deliberately leaves the blobs behind.
+- `/data/replays/{scoreId}.osr`, one per score, capped at 5 MB each (`ReplayEndpoints.MaxReplayBytes`)
+  and never pruned. Bounded only by how many scores exist.
+- `/data/covers/{setId}/{versionNo}/`, one cover set per submitted VERSION. The per-version package
+  prune does not cover these.
+- Postgres (`pgdata`). No cap, and it is the component a full disk kills first.
+- `/root` release staging from the client ship path, and the systemd journal: both manual, below.
 
 ### Release retention (automatic, in the ship path)
 
@@ -264,12 +317,33 @@ definition changes, so:
 - **`postgres` does not: CI never touches it.** Recreate it once, by hand, when you are willing to
   take a few seconds of downtime:
   ```
-  cd /opt/typebeat-web && docker compose -f deploy/compose.prod.yml up -d postgres
+  cd /opt/typebeat-web && ./deploy/up.sh up -d postgres
   ```
   Check it took with `docker inspect --format '{{.HostConfig.LogConfig}}' typebeat-web-postgres-1`.
 
 An existing oversized log file is not truncated by any of this. Delete or truncate it once (find it
 with `du -sh /var/lib/docker/containers/*/*-json.log`), or just recreate the container.
+
+### Docker images (automatic, added after the SECOND fill)
+
+Every deploy builds a new app image and MOVES the `typebeat-web-app` tag onto it. The previous image
+is not deleted, it just loses its tag and becomes a dangling `<none>`, and until 2026-09-26 nothing
+on the box ever collected those: one leaked image per push to `main`, on the root filesystem,
+forever. `docker builder prune -f` does not touch images, only the build cache.
+
+Worse, the build-cache prune made each leak BIGGER. With the cache gone, the next deploy re-runs the
+Dockerfile's `apt-get install … ffmpeg` from scratch, so the new image's base layers get fresh
+digests and stop being shared with the dangling old one, which then holds its own full copy of them
+(the apt layer is the bulk of an app image, not the published DLLs).
+
+`.github/workflows/ci.yml` now ends with `docker image prune -f`, right after the build-cache prune.
+Dangling only (no `-a`): nothing tagged is removed, and an image still used by a container cannot be
+pruned at all. It runs after the health check and the caddy reload, so the image being served is
+tagged and in use by then.
+
+Check what is actually there with `docker system df` (the `RECLAIMABLE` column) and
+`docker image ls -f dangling=true`. Old images from BEFORE this step landed are not cleaned by the
+deploy: `docker image prune -f` once, by hand, reclaims them.
 
 ### Journal (one manual step, once)
 
@@ -315,22 +389,93 @@ Check the result with `GET /api/v2/ops/disk` or `df -h /`.
 ### Alerting
 
 `GET /api/v2/ops/disk` (see `src/Typebeat.Web/Endpoints/OpsEndpoints.cs`) reports
-`{ totalBytes, freeBytes, usedPercent }` for the filesystem holding `TYPEBEAT_FILE_ROOT`. That
-volume is a directory on the host filesystem, so the numbers are the host disk's, the same ones
-`df -h /` shows. It is gated by `TYPEBEAT_BUDDY_KEY` exactly like the bot's score feed (404 when the
-key is unset, 401 on a wrong key), and it is a dumb readout: no threshold, no state.
+`{ totalBytes, freeBytes, usedPercent }` for the filesystem holding `TYPEBEAT_FILE_ROOT`. It is gated
+by `TYPEBEAT_BUDDY_KEY` exactly like the bot's score feed (404 when the key is unset, 401 on a wrong
+key), and it is a dumb readout: no threshold, no state.
 
-The Discord bot polls it and posts when usage crosses 80 percent, edge-triggered on its side so a
-full disk does not spam the channel every poll. Its keys (`BUDDY_DISK_CHANNEL_ID` and its
-threshold/interval siblings) go in the bot's own `.env` next to `BUDDY_API_KEY`, which must equal
-this box's `TYPEBEAT_BUDDY_KEY`. The `discord-buddybot` README is the authority on the exact key
-names and defaults; nothing on this box needs configuring for the alert beyond that shared key.
+**What that number is, precisely.** A process in the app container cannot run the host's `df` and
+cannot see the host mount table. What it CAN see is the filesystem backing the path it measures, and
+that is a real filesystem: `appdata` is an ordinary named docker volume, so its data sits under
+`/var/lib/docker/volumes/typebeat-web_appdata/_data` on the host and `/data` in the container is a
+bind of that directory. Same device, so the answer equals `df /` on the host.
 
+**THE PINNED ASSUMPTION: the docker data root and `/` are one device.** Point `appdata` at a separate
+disk (the box already has one, the 100 GB backup volume at `/mnt/typebeat-backups`) and this endpoint
+silently starts describing THAT device while `/` goes unwatched, which is where the images, the build
+cache, the journal and `/root` staging all live. No code can detect the swap. If you ever move the
+volume, move the measurement with it.
+
+Two smaller honesty notes:
+
+- `usedPercent` divides by the TOTAL size while `freeBytes` is what a non-root writer can have, so on
+  ext4's 5 percent root reserve it reads a few points above `df`'s `Use%`. That direction is
+  deliberate: it fires early, not late.
+- A probe that fails answers **503**, and since the second fill a readout of "zero-size filesystem"
+  is treated as a failed probe too, for the same reason: `0.00 percent used` is the most reassuring
+  number this endpoint could possibly emit, and it would mute the alert permanently.
+
+**The boot line, which needs nothing but a deploy.** Every app start logs the reading once:
+
+```
+docker logs typebeat-web-app-1 | grep 'Disk:'
+Disk: 61.4 percent used on the filesystem holding '/data' (28.9 GiB free of 75.0 GiB). ...
+```
+
+That exists because the alert chain below has four independent ways to be silent and all four are
+silent by construction. The boot line has none of them.
+
+**The alert chain, and every way it goes quiet.** The Discord bot polls the endpoint and posts when
+usage crosses 80 percent, edge-triggered on its side so a full disk does not spam the channel. Its
+keys (`BUDDY_DISK_CHANNEL_ID` and its threshold/interval siblings) live in the bot's own `.env` next
+to `BUDDY_API_KEY`, which must equal this box's `TYPEBEAT_BUDDY_KEY`. The `discord-buddybot` README is
+the authority on the key names. Nothing posts, with no error visible anywhere, when any of these is
+true:
+
+1. `TYPEBEAT_BUDDY_KEY` is unset on the app: the endpoint 404s by design, and the bot logs "feed
+   returned 404" as a retry warning, forever.
+2. `BUDDY_DISK_CHANNEL_ID` is blank or unreadable in the bot's `.env`: the disk poller never starts
+   at all (the score poller keeps working, so the bot LOOKS healthy in its channel).
+3. The bot's container is not running, or is running an image built before the disk poller existed.
+   The bot is a separate stack from this one and is not deployed by this repo's CI.
+4. The endpoint answers 503, or the bot cannot reach the site: every failure is a warning line in the
+   bot's log and the next tick retries. Nothing is posted.
+
+So the alert firing is never evidence the guard works; only a test crossing or a deliberate check is.
 Quick manual check, from anywhere:
 
 ```
 curl -sS -H "X-Buddy-Key: $TYPEBEAT_BUDDY_KEY" https://typebeat.mingda.sh/api/v2/ops/disk
 ```
+
+### Diagnosing a fill (owner, on the box)
+
+In order. This is the 2026-09-26 sequence: it finds where the space went before touching anything,
+then answers why the alert was silent.
+
+```
+df -h /                                                   # the number that matters, host side
+docker system df                                          # images / containers / volumes / cache, with RECLAIMABLE
+docker image ls -f dangling=true                          # leaked per-deploy app images
+journalctl --disk-usage                                   # has the SystemMaxUse cap been applied?
+du -sh /var/lib/docker/volumes/typebeat-web_appdata/_data/*   # which /data subtree grew
+du -sh /root/* 2>/dev/null                                # leftover release staging from the client ship path
+du -sh /var/lib/docker/containers/*/*-json.log            # container logs, in case a cap never took
+```
+
+Then the two checks for why nothing warned:
+
+```
+docker ps --filter name=buddy                             # is the bot even running?
+docker exec typebeat-web-app-1 printenv TYPEBEAT_BUDDY_KEY   # empty = the endpoint 404s by design
+grep BUDDY_DISK_CHANNEL_ID /path/to/buddybot/.env         # blank = the disk poller never started
+docker logs --tail 200 <buddy container> | grep -i disk   # 'disk feed error' = it polled and failed
+```
+
+`docker logs typebeat-web-app-1 | grep 'Disk:'` is the cross-check that does not depend on any of
+that. Reclaim, in the order that is safest: `docker image prune -f`, then `docker builder prune -f`,
+then `journalctl --vacuum-size=100M`, then the one-time cleanups above (retired aligner, `/root`
+staging), and only then look at `/data` itself. Free space FIRST, restart Postgres, then fix the
+cause: a wedged Postgres is the symptom, never the cause.
 
 ## Monitoring
 
@@ -353,7 +498,7 @@ The `/download` page shows "coming soon" until both of these are true:
    ```
    (create the `downloads/` directory first if needed).
 2. `deploy/.env` on the box sets `TYPEBEAT_GAME_DOWNLOAD=typebeat-win-x64.zip`, then
-   `docker compose -f deploy/compose.prod.yml up -d` recreates the app container so the
+   `./deploy/up.sh up -d app` recreates the app container so the
    variable (forwarded by compose.prod.yml's environment block) reaches the app.
 
 Each platform card is independent and has its own key; a platform with no key set (or no file
@@ -395,7 +540,7 @@ returns 404. To turn it on:
    TYPEBEAT_GOOGLE_CLIENT_ID=1234567890-abc123.apps.googleusercontent.com
    TYPEBEAT_GOOGLE_CLIENT_SECRET=GOCSPX-...
    ```
-   then `docker compose -f deploy/compose.prod.yml up -d` to recreate the app container. Both keys
+   then `./deploy/up.sh up -d app` to recreate the app container. Both keys
    are declared in `compose.prod.yml`'s `environment:` block (compose ignores undeclared ones).
 
 What it does once on: a Google sign-in whose Google account is already linked signs straight in

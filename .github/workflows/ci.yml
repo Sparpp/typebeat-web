@@ -143,3 +143,24 @@ jobs:
       # would be invisible here.
       - name: Prune docker build cache
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'docker builder prune -f'
+
+      # The disk filled a SECOND time on 2026-09-26, and this is the growth the first round of
+      # guards (backlog 268) never covered. Every deploy rebuilds the app image and MOVES the
+      # typebeat-web-app tag onto the new one, which leaves the previous image behind as a
+      # dangling <none>. `docker builder prune` above does not touch images, nothing else on the
+      # box collects them, and their `restart: unless-stopped` containers are long gone, so they
+      # accumulate one per push to main, forever, on the ROOT filesystem.
+      #
+      # The step above makes that worse rather than better, which is why they are adjacent: with
+      # the build cache wiped, the next deploy re-runs the Dockerfile's `apt-get install ffmpeg`
+      # from scratch instead of reusing a cached layer, so the new image's base layers get FRESH
+      # digests and stop being shared with the old dangling one. Each leaked image then holds its
+      # own full copy (the apt layer is the bulk of it) rather than just the published-app diff.
+      #
+      # Dangling only: no `-a`, so nothing tagged is ever removed (the retired aligner image is
+      # tagged, so it survives for the owner to remove deliberately, per deploy/README.md), and an
+      # image a container still uses cannot be pruned at all. Runs LAST, after the health check
+      # and the caddy reload, so the image this deploy is actually serving from is tagged and in
+      # use by then.
+      - name: Prune dangling docker images
+        run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'docker image prune -f'
