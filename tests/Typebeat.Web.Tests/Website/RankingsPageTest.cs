@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using Dapper;
 using Npgsql;
+using Typebeat.Web.Pages.Rankings;
 using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Tests.Website;
@@ -70,6 +71,13 @@ public class RankingsPageTest
 
     /// <summary>Their other difficulty of the SAME song: bigger score, less pp, must bank nothing.</summary>
     private const double one_song_weak_pp = 45;
+
+    /// <summary>
+    /// How many filler players the pagination seeds add (backlog 299): enough that every board's
+    /// population is comfortably past two 50-row pages, cheap enough (two inserts each) that the
+    /// suite does not feel it.
+    /// </summary>
+    private const int paging_users = 120;
 
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
@@ -201,6 +209,24 @@ public class RankingsPageTest
 
         await insertScoreAsync(conn, oneSongId, oneSongHard, 950_000, pp: one_song_weak_pp);
         await insertScoreAsync(conn, oneSongId, oneSongEasy, 150_000, pp: one_song_best_pp);
+
+        // ---- pagination (backlog 299) ----
+        //
+        // 120 filler players, one small play each on one shared ranked song, so every board's
+        // population is past two full pages. The figures are tiny ON PURPOSE: they sort below
+        // every seed above, so no page-1 ordering assertion in this fixture moves, and no
+        // pagination test ever names one of these players, only the rank numbers and pager links
+        // their volume forces into existence. (For the shapes volume cannot force on a shared
+        // database, a one-page board and a deep ellipsis window, the tests below move
+        // IndexModel.PageSize instead of seeding hundreds more.)
+        long pagingSet = await insertSetAsync(conn, "Rankings Paging Set", "ranked");
+        long pagingMap = await insertBeatmapAsync(conn, pagingSet);
+
+        for (int i = 0; i < paging_users; i++)
+        {
+            long fillerId = await insertUserAsync(conn, $"rk page {i:000}");
+            await insertScoreAsync(conn, fillerId, pagingMap, 1_000 + i, pp: 0.5 + i * 0.001);
+        }
     }
 
     /// <summary>Σ pp·decay^i over the seeded equal-value plays: 100 · (1 − DECAY^12) / (1 − DECAY).</summary>
@@ -622,6 +648,266 @@ public class RankingsPageTest
 
         Assert.That(rows, Is.EqualTo(2),
             "a player with two eligible maps holds two rows: this board ranks plays, not players");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Pagination (backlog 299): ?page=N, offset paging, ranks continuing across pages.
+    // ---------------------------------------------------------------------------------------------
+
+    [Test]
+    public void PagerWindow_RendersTheConventionalEllipsisShapes()
+    {
+        Assert.Multiple(() =>
+        {
+            // One page is just itself (the page hides the pager entirely then, asserted below).
+            Assert.That(IndexModel.PagerWindow(1, 1), Is.EqualTo(new int?[] { 1 }));
+            Assert.That(IndexModel.PagerWindow(1, 2), Is.EqualTo(new int?[] { 1, 2 }));
+
+            // Small counts elide nothing.
+            Assert.That(IndexModel.PagerWindow(3, 6), Is.EqualTo(new int?[] { 1, 2, 3, 4, 5, 6 }));
+
+            // A gap of exactly one page shows that page: never an ellipsis wider than it hides.
+            Assert.That(IndexModel.PagerWindow(5, 9), Is.EqualTo(new int?[] { 1, 2, 3, 4, 5, 6, 7, 8, 9 }));
+
+            // The head shape, the middle shape (a gap each side) and the tail shape.
+            Assert.That(IndexModel.PagerWindow(1, 50), Is.EqualTo(new int?[] { 1, 2, 3, null, 50 }));
+            Assert.That(IndexModel.PagerWindow(25, 50), Is.EqualTo(new int?[] { 1, null, 23, 24, 25, 26, 27, null, 50 }));
+            Assert.That(IndexModel.PagerWindow(50, 50), Is.EqualTo(new int?[] { 1, null, 48, 49, 50 }));
+
+            // Near an edge the ellipsis appears on the far side only.
+            Assert.That(IndexModel.PagerWindow(4, 50), Is.EqualTo(new int?[] { 1, 2, 3, 4, 5, 6, null, 50 }));
+            Assert.That(IndexModel.PagerWindow(47, 50), Is.EqualTo(new int?[] { 1, null, 45, 46, 47, 48, 49, 50 }));
+        });
+    }
+
+    /// <summary>
+    /// Rank numbers CONTINUE across pages on all three boards: page 2's first row is #51, not a
+    /// second #1. The paging seeds guarantee page 2 is full everywhere, so #100 is there too.
+    /// </summary>
+    [Test]
+    public async Task Rankings_PageTwo_ContinuesTheRankNumbers_OnEveryBoard()
+    {
+        foreach (string url in new[] { "/rankings", "/rankings?board=score", "/rankings?board=plays" })
+        {
+            string separator = url.Contains('?') ? "&" : "?";
+
+            using var first = await WebsiteFixture.Client.GetAsync(url);
+            using var second = await WebsiteFixture.Client.GetAsync(url + separator + "page=2");
+
+            string firstHtml = await first.Content.ReadAsStringAsync();
+            string secondHtml = await second.Content.ReadAsStringAsync();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.OK), url);
+                Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK), url);
+
+                Assert.That(firstHtml, Does.Contain(">#1<"), url);
+                Assert.That(firstHtml, Does.Contain(">#50<"), url);
+                Assert.That(firstHtml, Does.Not.Contain(">#51<"), url);
+
+                Assert.That(secondHtml, Does.Contain(">#51<"), url);
+                Assert.That(secondHtml, Does.Contain(">#100<"), url);
+                Assert.That(secondHtml, Does.Not.Contain(">#1<"), url);
+            });
+        }
+    }
+
+    [Test]
+    public async Task Rankings_Pager_PreservesTheBoardAndUnlinksTheCurrentPage()
+    {
+        using var score = await WebsiteFixture.Client.GetAsync("/rankings?board=score&page=2");
+        using var performance = await WebsiteFixture.Client.GetAsync("/rankings?page=2");
+
+        string scoreHtml = await score.Content.ReadAsStringAsync();
+        string performanceHtml = await performance.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            // Numbered neighbours keep the board selector (& renders HTML-encoded in the href).
+            Assert.That(scoreHtml, Does.Contain("href=\"/rankings?board=score&amp;page=3\""));
+
+            // Page 1 is the board's canonical URL with no redundant page=1, so the prev arrow's
+            // target is byte-identical to the Score tab's own href.
+            Assert.That(scoreHtml, Does.Contain("rel=\"prev\" aria-label=\"Previous page\" href=\"/rankings?board=score\""));
+
+            // The current page is a highlighted span, not a link: nothing links to page 2.
+            Assert.That(scoreHtml, Does.Contain("<span class=\"pager-item is-current\" aria-current=\"page\">2</span>"));
+            Assert.That(scoreHtml, Does.Not.Contain("page=2\""));
+
+            // The main board's pager carries no board param at all.
+            Assert.That(performanceHtml, Does.Contain("href=\"/rankings?page=3\""));
+            Assert.That(performanceHtml, Does.Contain("rel=\"prev\" aria-label=\"Previous page\" href=\"/rankings\""));
+            Assert.That(performanceHtml, Does.Not.Contain("board=performance"));
+        });
+    }
+
+    /// <summary>
+    /// A bad ?page never 404s, the same stance the board fallback takes on a bad ?board: zero,
+    /// negative and unparseable values land on page 1, and a page past the end lands on the LAST
+    /// page, whose number is computed from the same count the page itself uses.
+    /// </summary>
+    [Test]
+    public async Task Rankings_Pager_ClampsOutOfRangeAndGarbagePages()
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        long total = await conn.ExecuteScalarAsync<long>(IndexModel.PerformanceCountSql);
+        int last = (int)((total + IndexModel.PageSize - 1) / IndexModel.PageSize);
+        int lastPageFirstRank = (last - 1) * IndexModel.PageSize + 1;
+
+        using var over = await WebsiteFixture.Client.GetAsync("/rankings?page=999999");
+        using var zero = await WebsiteFixture.Client.GetAsync("/rankings?page=0");
+        using var negative = await WebsiteFixture.Client.GetAsync("/rankings?page=-3");
+        using var garbage = await WebsiteFixture.Client.GetAsync("/rankings?page=pearl");
+
+        string overHtml = await over.Content.ReadAsStringAsync();
+        string zeroHtml = await zero.Content.ReadAsStringAsync();
+        string negativeHtml = await negative.Content.ReadAsStringAsync();
+        string garbageHtml = await garbage.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(over.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(overHtml, Does.Contain($">#{lastPageFirstRank}<"), "past the end clamps to the last page");
+            Assert.That(overHtml, Does.Contain($"aria-current=\"page\">{last}</span>"));
+
+            foreach ((HttpResponseMessage response, string html) in new[]
+                     { (zero, zeroHtml), (negative, negativeHtml), (garbage, garbageHtml) })
+            {
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(html, Does.Contain(">#1<"), "everything unusable clamps to page 1");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Each board's page count comes from a count(*) over the very fragment its rows are read
+    /// from, so the two cannot disagree: the count equals the row population, and a delisted
+    /// account is missing from both (its exclusion from the rows is pinned above, in
+    /// <see cref="TotalPp_DelistsRestrictedAndDeletedAccounts"/> and friends).
+    /// </summary>
+    [Test]
+    public async Task BoardCounts_MatchTheRowPopulations_AndExcludeTheDelisted()
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        long performanceCount = await conn.ExecuteScalarAsync<long>(IndexModel.PerformanceCountSql);
+        long scoreCount = await conn.ExecuteScalarAsync<long>(IndexModel.ScoreCountSql);
+        long playsCount = await conn.ExecuteScalarAsync<long>(IndexModel.PlaysCountSql);
+
+        var performanceUsers = (await conn.QueryAsync<long>(
+            $"SELECT user_id FROM ({PpRanking.PerUserTotalSql}) totals")).ToList();
+        var scoreUsers = (await conn.QueryAsync<long>(
+            $"SELECT user_id FROM ({GlobalRanking.PerUserCumulativeSql}) totals")).ToList();
+        var plays = await topPlaysAsync(conn);
+
+        long restrictedId = await conn.ExecuteScalarAsync<long>(
+            "SELECT id FROM users WHERE username = 'rk restricted'");
+        long deletedId = await conn.ExecuteScalarAsync<long>(
+            "SELECT id FROM users WHERE username = 'rk deleted'");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(performanceCount, Is.EqualTo(performanceUsers.Count));
+            Assert.That(scoreCount, Is.EqualTo(scoreUsers.Count));
+            Assert.That(playsCount, Is.EqualTo(plays.Count));
+
+            foreach (var users in new[] { performanceUsers, scoreUsers, plays.Select(p => p.UserId).ToList() })
+            {
+                Assert.That(users, Does.Not.Contain(restrictedId));
+                Assert.That(users, Does.Not.Contain(deletedId));
+            }
+
+            // The paging seeds did their job: every board really has more than two pages, so the
+            // page-2 assertions above cannot be passing vacuously.
+            Assert.That(performanceCount, Is.GreaterThan(100));
+            Assert.That(scoreCount, Is.GreaterThan(100));
+            Assert.That(playsCount, Is.GreaterThan(100));
+        });
+    }
+
+    /// <summary>
+    /// A one-page board shows no pager at all. A shared database's population cannot be steered
+    /// under 50 rows, so the one-page shape is produced by GROWING the page instead: PageSize is
+    /// settable for exactly this (and restored whatever happens; the fixture is NonParallelizable
+    /// and this class is the only one that requests /rankings, so nothing else sees the window).
+    /// </summary>
+    [Test]
+    public async Task Rankings_Pager_HiddenWhenEverythingFitsOnOnePage()
+    {
+        int normal = IndexModel.PageSize;
+
+        try
+        {
+            IndexModel.PageSize = 1_000_000;
+
+            using var response = await WebsiteFixture.Client.GetAsync("/rankings");
+            string html = await response.Content.ReadAsStringAsync();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(html, Does.Contain(">#1<"));
+                Assert.That(html, Does.Not.Contain("class=\"pager\""));
+                Assert.That(html, Does.Not.Contain("pager-item"));
+            });
+        }
+        finally
+        {
+            IndexModel.PageSize = normal;
+        }
+    }
+
+    /// <summary>
+    /// The full pager end to end, at ten rows a page so the deep-middle shape exists on the real
+    /// population: &lt; 1 ... 4 5 [6] 7 8 ... last &gt;, current unlinked, one ellipsis per side,
+    /// and the rank numbers still continuing (page 6 of ten-row pages opens at #51).
+    /// </summary>
+    [Test]
+    public async Task Rankings_Pager_RendersTheEllipsisWindowEndToEnd()
+    {
+        int normal = IndexModel.PageSize;
+
+        try
+        {
+            IndexModel.PageSize = 10;
+
+            await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+            await conn.OpenAsync();
+
+            long total = await conn.ExecuteScalarAsync<long>(IndexModel.PerformanceCountSql);
+            int last = (int)((total + 9) / 10);
+
+            using var response = await WebsiteFixture.Client.GetAsync("/rankings?page=6");
+            string html = await response.Content.ReadAsStringAsync();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(last, Is.GreaterThanOrEqualTo(13), "the paging seeds alone force thirteen ten-row pages");
+
+                Assert.That(html, Does.Contain("rel=\"prev\" aria-label=\"Previous page\" href=\"/rankings?page=5\""));
+                Assert.That(html, Does.Contain("href=\"/rankings?page=4\">4</a>"));
+                Assert.That(html, Does.Contain("href=\"/rankings?page=5\">5</a>"));
+                Assert.That(html, Does.Contain("aria-current=\"page\">6</span>"));
+                Assert.That(html, Does.Contain("href=\"/rankings?page=7\">7</a>"));
+                Assert.That(html, Does.Contain("href=\"/rankings?page=8\">8</a>"));
+                Assert.That(html, Does.Contain($"href=\"/rankings?page={last}\">{last}</a>"));
+                Assert.That(html, Does.Contain("rel=\"next\" aria-label=\"Next page\" href=\"/rankings?page=7\""));
+
+                Assert.That(Regex.Matches(html, Regex.Escape("class=\"pager-gap\"")).Count, Is.EqualTo(2),
+                    "exactly one ellipsis on each side of the window");
+
+                Assert.That(html, Does.Contain(">#51<"), "ranks continue: page 6 of ten-row pages opens at #51");
+            });
+        }
+        finally
+        {
+            IndexModel.PageSize = normal;
+        }
     }
 
     [Test]

@@ -1,4 +1,5 @@
 using Dapper;
+using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json.Linq;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
@@ -26,12 +27,44 @@ namespace Typebeat.Web.Pages.Rankings;
 /// restricted or deleted accounts are delisted like everywhere else. The plays board reuses
 /// <see cref="PpRanking.BestPerSetSql"/> outright, which is literally the row set the performance
 /// board's total is summed over, so a play can never appear on one and be invisible to the other.
+///
+/// <para>
+/// PAGED BY OFFSET (<c>?page=N</c>, 1-based), deliberately unlike the set listing's keyset
+/// paging: rankings are small (hundreds of rows), the order is a computed rank rather than a
+/// stored column, and numbered random access is the point of the page. Each board's page count
+/// comes from a <c>count(*)</c> over THE SAME shared fragment its rows are read from
+/// (<see cref="PerformanceCountSql"/> and friends), so the pager and the rows cannot disagree
+/// about the population. An out-of-range or unparseable <c>?page</c> clamps into range rather
+/// than 404ing, for the same reason an unknown <c>?board</c> falls back to the main board: the
+/// URL is linked-to and shareable, and a stale query string must still render something.
+/// </para>
 /// </summary>
 public sealed class IndexModel(Db db) : TypebeatPageModel
 {
     public const string PerformanceBoard = "performance";
     public const string ScoreBoard = "score";
     public const string PlaysBoard = "plays";
+
+    /// <summary>
+    /// Rows per page, on every board. Settable ONLY so the page tests can force the shapes a
+    /// shared database cannot be steered into at 50 rows a page (a one-page board, a deep
+    /// ellipsis window) without seeding thousands of users; production never writes it.
+    /// </summary>
+    public static int PageSize { get; set; } = 50;
+
+    /// <summary>
+    /// Each board's population count, one <c>count(*)</c> over EXACTLY the fragment its rows are
+    /// read from, so the pager's last page and the rows on it cannot drift apart: a user or play
+    /// the fragment delists (restricted, deleted, unranked, failed, non-ranked set) is missing
+    /// from both or neither.
+    /// </summary>
+    public static readonly string PerformanceCountSql = $"SELECT count(*) FROM ({PpRanking.PerUserTotalSql}) totals";
+
+    /// <inheritdoc cref="PerformanceCountSql"/>
+    public static readonly string ScoreCountSql = $"SELECT count(*) FROM ({GlobalRanking.PerUserCumulativeSql}) totals";
+
+    /// <inheritdoc cref="PerformanceCountSql"/>
+    public static readonly string PlaysCountSql = $"SELECT count(*) FROM ({PpRanking.BestPerSetSql}) plays";
 
     public sealed record PerformanceRow(
         long UserId,
@@ -193,9 +226,66 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         _ => PerformanceRows.Count == 0,
     };
 
-    private const int page_size = 50;
+    /// <summary>The showing page, 1-based, already clamped into <c>1..LastPage</c>.</summary>
+    public int PageNumber { get; private set; } = 1;
 
-    public async Task OnGetAsync(string? board)
+    /// <summary>The showing board's last page: <c>ceil(population / PageSize)</c>, never below 1.</summary>
+    public int LastPage { get; private set; } = 1;
+
+    /// <summary>
+    /// What rank the page's first row holds. Ranks CONTINUE across pages (row i of page p is rank
+    /// <c>(p - 1) * PageSize + i + 1</c>): the rank cell is the row's position in the board's total
+    /// order, not its position on the screen.
+    /// </summary>
+    public int RankOffset => (PageNumber - 1) * PageSize;
+
+    /// <summary>The pager renders only when there is somewhere else to go.</summary>
+    public bool ShowPager => LastPage > 1;
+
+    /// <summary>
+    /// A page link that keeps the board selector: the bare canonical URL for the main board's
+    /// first page, and no redundant <c>page=1</c> anywhere, so a pager link to a board's first
+    /// page is byte-identical to its tab link.
+    /// </summary>
+    public string PageUrl(int page)
+    {
+        string baseUrl = Board == PerformanceBoard ? "/rankings" : $"/rankings?board={Board}";
+
+        if (page <= 1)
+            return baseUrl;
+
+        return Board == PerformanceBoard ? $"/rankings?page={page}" : $"{baseUrl}&page={page}";
+    }
+
+    /// <summary>
+    /// The numbered links the pager shows: first, last and current plus-or-minus two, with a null
+    /// wherever a run of pages is elided (rendered as an ellipsis). A gap of exactly one page is
+    /// filled with the page itself rather than an ellipsis wider than the number it hides.
+    /// </summary>
+    public static IReadOnlyList<int?> PagerWindow(int current, int last)
+    {
+        var items = new List<int?>();
+        int previous = 0;
+
+        for (int page = 1; page <= last; page++)
+        {
+            if (page != 1 && page != last && Math.Abs(page - current) > 2)
+                continue;
+
+            if (previous != 0 && page - previous > 1)
+                items.Add(page - previous == 2 ? previous + 1 : null);
+
+            items.Add(page);
+            previous = page;
+        }
+
+        return items;
+    }
+
+    // [FromQuery] is LOAD-BEARING on the page parameter: "page" is Razor Pages' reserved route
+    // value (it holds the page path, "/Rankings/Index"), so an unattributed int? named page reads
+    // the route value first, fails to parse it, and arrives null on every request.
+    public async Task OnGetAsync(string? board, [FromQuery(Name = "page")] int? page)
     {
         // Anything unrecognised falls back to the main board rather than 404ing: /rankings is a
         // linked-to, shareable URL and a stale query string must still render something.
@@ -207,6 +297,20 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         };
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        // The pager's population, counted over the very fragment the rows below are read from.
+        // Counted FIRST because the page number clamps against it: ?page=0, ?page=garbage (which
+        // fails binding and arrives null) and ?page=999999 all land on a real page, the same
+        // never-404 stance the board fallback above takes.
+        long total = await conn.ExecuteScalarAsync<long>(Board switch
+        {
+            ScoreBoard => ScoreCountSql,
+            PlaysBoard => PlaysCountSql,
+            _ => PerformanceCountSql,
+        });
+
+        LastPage = (int)Math.Max(1, (total + PageSize - 1) / PageSize);
+        PageNumber = Math.Clamp(page ?? 1, 1, LastPage);
 
         if (Board == PerformanceBoard)
         {
@@ -226,9 +330,9 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                      JOIN users u ON u.id = p.user_id
                      LEFT JOIN ({GlobalRanking.PerUserCumulativeSql}) t ON t.user_id = p.user_id
                      ORDER BY p.total_pp DESC, u.id ASC
-                     LIMIT @limit
+                     LIMIT @limit OFFSET @offset
                      """,
-                    new { limit = page_size }))
+                    new { limit = PageSize, offset = RankOffset }))
                 .ToList();
 
             return;
@@ -246,9 +350,10 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
             // player (or one clear each of a song's Easy, Normal and Insane) collapse to the single
             // best of them instead of filling the page.
             //
-            // The LIMIT lands BEFORE the display joins: the inner select reads only four of the
-            // five columns the pp fragments carry (id / user_id / beatmap_id / pp; set_id has done
-            // its job in the fold), and just the 50 survivors are hydrated by primary key. The
+            // The LIMIT and OFFSET land BEFORE the display joins: the inner select reads only four
+            // of the five columns the pp fragments carry (id / user_id / beatmap_id / pp; set_id
+            // has done its job in the fold), and just the page's survivors are hydrated by primary
+            // key. The
             // per-map stage underneath the set
             // fold is served by ix_scores_pp (020_performance_points.sql); this board's global pp
             // ordering is NOT, since that index leads with user_id, so the folded set is sorted. It
@@ -286,7 +391,7 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                          SELECT best.id, best.user_id, best.beatmap_id, best.pp
                          FROM ({PpRanking.BestPerSetSql}) best
                          ORDER BY {PpRanking.TopPlaysOrder("best")}
-                         LIMIT @limit
+                         LIMIT @limit OFFSET @offset
                      ) top
                      JOIN scores sc ON sc.id = top.id
                      JOIN users u ON u.id = top.user_id
@@ -294,7 +399,7 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                      JOIN beatmapsets bs ON bs.id = b.set_id
                      ORDER BY {PpRanking.TopPlaysOrder("top")}
                      """,
-                    new { limit = page_size }))
+                    new { limit = PageSize, offset = RankOffset }))
                 .ToList();
 
             return;
@@ -315,9 +420,9 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                  JOIN users u ON u.id = t.user_id
                  LEFT JOIN user_stats us ON us.user_id = u.id
                  ORDER BY t.ranked_score DESC, u.id ASC
-                 LIMIT @limit
+                 LIMIT @limit OFFSET @offset
                  """,
-                new { limit = page_size }))
+                new { limit = PageSize, offset = RankOffset }))
             .ToList();
     }
 }

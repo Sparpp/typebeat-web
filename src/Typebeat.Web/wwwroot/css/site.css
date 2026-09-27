@@ -1383,6 +1383,42 @@ img { max-width: 100%; }
     margin-top: var(--space-5);
 }
 
+/* Numbered pagination (rankings): plain links in the filter-pill capsule language, the
+   current page wearing the same lime fill as an active pill. */
+.pager {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: var(--space-5);
+}
+
+.pager-item {
+    min-width: 2rem;
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-full);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 700;
+}
+
+a.pager-item:hover {
+    color: var(--text);
+    background: var(--surface-2);
+    text-decoration: none;
+}
+
+.pager-item.is-current {
+    background: rgba(201, 242, 77, 0.16);
+    color: var(--violet-bright);
+}
+
+.pager-item.is-disabled { color: var(--text-faint); }
+
+.pager-gap { color: var(--text-faint); font-size: var(--text-sm); }
+
 .empty-state {
     text-align: center;
     color: var(--text-muted);

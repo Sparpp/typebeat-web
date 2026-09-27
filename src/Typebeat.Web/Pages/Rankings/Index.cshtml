@@ -63,7 +63,7 @@
                 {
                     var row = Model.PerformanceRows[i];
                     <tr>
-                        <td class="num">#@(i + 1)</td>
+                        <td class="num">#@(Model.RankOffset + i + 1)</td>
                         <td><a href="/users/@row.UserId">@row.Username</a></td>
                         <td class="num">@row.TotalPp.ToString("N0", CultureInfo.InvariantCulture)pp</td>
                         <td class="num">@row.PpPlayCount.ToString("N0", CultureInfo.InvariantCulture)</td>
@@ -113,7 +113,7 @@
                     string displayTitle = row.DisplayTitle(preferOriginal);
                     string displayArtist = row.DisplayArtist(preferOriginal);
                     <tr>
-                        <td class="num">#@(i + 1)</td>
+                        <td class="num">#@(Model.RankOffset + i + 1)</td>
                         <td><a href="/users/@row.UserId">@row.Username</a></td>
                         <td>
                             <a href="/beatmapsets/@row.SetId" title="@displayTitle [@displayArtist]">@displayTitle</a>
@@ -177,7 +177,7 @@
                 {
                     var row = Model.ScoreRows[i];
                     <tr>
-                        <td class="num">#@(i + 1)</td>
+                        <td class="num">#@(Model.RankOffset + i + 1)</td>
                         <td><a href="/users/@row.UserId">@row.Username</a></td>
                         <td class="num">@row.CumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
                         <td class="num">@row.TotalCumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
@@ -187,5 +187,45 @@
                 </tbody>
             </table>
         </div>
+    }
+
+    @* One pager for all three boards, plain links, no JS: numbered random access is the point.
+       Hidden outright on a one-page board. The rank cells above continue across pages because
+       they add Model.RankOffset, so page 2's first row is #51, not a second #1. *@
+    @if (!Model.IsEmpty && Model.ShowPager)
+    {
+        <nav class="pager" aria-label="Pages">
+            @if (Model.PageNumber > 1)
+            {
+                <a class="pager-item pager-step" rel="prev" aria-label="Previous page" href="@Model.PageUrl(Model.PageNumber - 1)">&lt;</a>
+            }
+            else
+            {
+                <span class="pager-item pager-step is-disabled" aria-hidden="true">&lt;</span>
+            }
+            @foreach (int? item in IndexModel.PagerWindow(Model.PageNumber, Model.LastPage))
+            {
+                if (item is not int number)
+                {
+                    <span class="pager-gap" aria-hidden="true">&hellip;</span>
+                }
+                else if (number == Model.PageNumber)
+                {
+                    <span class="pager-item is-current" aria-current="page">@number</span>
+                }
+                else
+                {
+                    <a class="pager-item" href="@Model.PageUrl(number)">@number</a>
+                }
+            }
+            @if (Model.PageNumber < Model.LastPage)
+            {
+                <a class="pager-item pager-step" rel="next" aria-label="Next page" href="@Model.PageUrl(Model.PageNumber + 1)">&gt;</a>
+            }
+            else
+            {
+                <span class="pager-item pager-step is-disabled" aria-hidden="true">&gt;</span>
+            }
+        </nav>
     }
 </section>
