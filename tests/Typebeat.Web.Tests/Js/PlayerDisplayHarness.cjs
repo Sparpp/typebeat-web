@@ -27,8 +27,17 @@ global.window = {};
 require(corePath);
 require(nodePath.join(nodePath.dirname(corePath), 'typebeat-player.js'));
 
+// play.js is the PAGE glue, and it owns the one thing the player deliberately does not: the
+// localStorage flag behind the first-clear Discord nudge (backlog 289). It is an IIFE with no module
+// exports, and it publishes window.TypeBeatPlayPage BEFORE its own stage guard precisely so this
+// harness can drive that decision. A document whose getElementById answers null takes that guard's
+// early return, so nothing else in the file runs and no DOM is needed.
+global.document = { getElementById: function () { return null; } };
+require(nodePath.join(nodePath.dirname(corePath), 'play.js'));
+
 const TB = global.window.TypeBeatCore;
 const D = TB.display;
+const PAGE = global.window.TypeBeatPlayPage;
 
 const OSU_HEADER =
     '[General]\n' +
@@ -503,6 +512,36 @@ function spaceIsAWordGapCharacter() {
     };
 }
 
+// --- the first-clear Discord nudge (backlog 289) ---
+//
+// Two halves, driven together because neither is the feature on its own: play.js decides (and spends
+// the per-browser flag), typebeat-player.js renders what it is handed. A DISTINCTIVE invite goes in
+// here, so the C# side can prove the href is the one that came from the page's data-discord-url and
+// not a second hardcoded copy of the real invite.
+const NUDGE_URL = 'https://discord.test/invite-from-the-data-attribute';
+
+function fakeStorage() {
+    const values = new Map();
+    return {
+        getItem: (k) => (values.has(k) ? values.get(k) : null),
+        setItem: (k, v) => { values.set(k, String(v)); },
+        size: () => values.size
+    };
+}
+
+// A private window / blocked storage: every call throws, including the read.
+const blockedStorage = {
+    getItem: () => { throw new Error('storage is blocked'); },
+    setItem: () => { throw new Error('storage is blocked'); }
+};
+
+// The whole chain exactly as showResults runs it: play.js's decision behind the player's own hook
+// wrapper, then the markup the card renders for the answer (null html = no block on the card).
+function nudgeOn(storage, passed) {
+    const url = D.nudgeUrlFor((results) => PAGE.takeDiscordNudge(storage, results.passed, NUDGE_URL), { passed: passed });
+    return { url: url, html: url === null ? null : D.nudgeHtml(url) };
+}
+
 // --- rolling WPM ring ---
 function ring(pushes) {
     const r = D.makeRollingWpm(D.constants.ROLLING_WPM_WINDOW);
@@ -702,6 +741,56 @@ const out = {
     spaceParked: spaceInState(playGapMapComplete(), 3000),
     spaceTyping: spaceInState(playGapMapIncomplete(), 3000),
     spaceAsWordGap: spaceIsAWordGapCharacter(),
+
+    // ---- the first-clear Discord nudge (backlog 289) ----
+    discordNudgeKey: PAGE.DISCORD_NUDGE_KEY,
+    nudgeUrl: NUDGE_URL,
+
+    // A fresh browser clearing its first map, and then clearing another one.
+    nudgeFirstClear: (() => {
+        const s = fakeStorage();
+        const first = nudgeOn(s, true);
+        return { first: first, flag: s.getItem(PAGE.DISCORD_NUDGE_KEY), second: nudgeOn(s, true) };
+    })(),
+
+    // A FAIL shows nothing and spends nothing, so the clear that comes after it still gets the one
+    // invitation this browser is owed.
+    nudgeAfterFail: (() => {
+        const s = fakeStorage();
+        const failed = nudgeOn(s, false);
+        return {
+            failed: failed,
+            flagAfterFail: s.getItem(PAGE.DISCORD_NUDGE_KEY),
+            storedKeys: s.size(),
+            thenCleared: nudgeOn(s, true)
+        };
+    })(),
+
+    // Storage that throws, and no storage at all: no nudge, no exception out of the decision.
+    nudgeBlockedStorage: nudgeOn(blockedStorage, true),
+    nudgeNoStorage: nudgeOn(null, true),
+
+    // A stage root with no data-discord-url: nothing to link, so nothing shown and the flag is left
+    // unspent rather than burnt on a nudge the player never saw.
+    nudgeNoUrl: (() => {
+        const s = fakeStorage();
+        const url = PAGE.takeDiscordNudge(s, true, '');
+        return { url: url, storedKeys: s.size() };
+    })(),
+
+    // The player's own wrapper around the host hook: a host that throws, and a host that passes no
+    // hook at all, both render nothing rather than taking the results card down with them.
+    nudgeHookThrew: (() => {
+        // The wrapper reports the host's error to the console, which is right in a browser and pure
+        // noise on this harness's stderr (the C# side prints stderr when a run fails), so silence it
+        // for the one call that is supposed to throw.
+        const report = console.error;
+        console.error = () => {};
+        try { return D.nudgeUrlFor(() => { throw new Error('the host blew up'); }, { passed: true }); }
+        finally { console.error = report; }
+    })(),
+    nudgeNoHook: D.nudgeUrlFor(undefined, { passed: true }),
+    nudgeHtml: D.nudgeHtml(NUDGE_URL),
 
     // THE WPM-CLOCK PIN. Crossing the gap with the line COMPLETE (the only state a skip is offered
     // in) must not move activeTimeMs at all; crossing it with the line still owed does, which is

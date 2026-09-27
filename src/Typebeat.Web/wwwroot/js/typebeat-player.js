@@ -8,6 +8,10 @@
  *   title, artist      : strings  (for the results header; falls back to the map)
  *   onFinish(results, api) : called once when a play ends (pass or fail)
  *   onExit()           : called when the player wants to leave (back button)
+ *   discordNudge(results) : optional. Consulted once per results card; answers with an invite URL
+ *                      to show the player, or null for "show nothing". The decision is the host
+ *                      page's because it turns on localStorage and on a server-rendered invite
+ *                      constant, neither of which belongs in this layer.
  *
  * Timing is driven by the Web AudioContext clock (sample-accurate); gameplay
  * time = (ctx.currentTime - startedAt) * 1000, matching the desktop's
@@ -528,6 +532,31 @@
 
     function fmtInt(n) { return Math.round(n).toLocaleString('en-US'); }
     function fmtPct(x) { return (x * 100).toFixed(2) + '%'; }
+
+    // ---------------------------------------------------------------------------
+    // The first-clear Discord nudge (backlog 289), render half.
+    // ---------------------------------------------------------------------------
+    // The results card can carry one invitation to the project's Discord server. WHETHER it does is
+    // not decided here: "has this browser been asked already" is localStorage and the invite itself
+    // is a server-rendered constant on the /play stage root, so both belong to the host page. The
+    // host hands mountPlayer a decision hook (opts.discordNudge), this layer consults it once per
+    // results card and renders whatever it answers. That is what keeps the presentation layer free
+    // of storage, so the display harness can drive the whole chain with no browser at all.
+
+    // The answer, normalised: a URL string to link, or null for "show nothing".
+    function nudgeUrlFor(hook, results) {
+        if (typeof hook !== 'function') return null;
+        let url;
+        // A host that throws costs the player the nudge and nothing else. The card behind it is the
+        // record of a play that already happened, and it still has to render.
+        try { url = hook(results); } catch (e) { console.error(e); return null; }
+        return typeof url === 'string' && url !== '' ? url : null;
+    }
+
+    function nudgeHtml(url) {
+        return '<span class="tb-result-nudge-text">Did you enjoy playing? Then join the official Discord server</span>'
+            + `<a class="tb-btn tb-btn-primary" href="${escapeHtml(url)}" target="_blank" rel="noopener">join discord</a>`;
+    }
 
     function mountPlayer(container, opts) {
         const beatmap = Core.buildBeatmap(Core.parseLyricOsu(opts.osuText));
@@ -1537,6 +1566,11 @@
                 // rank all still fall), it is just no longer counted at the player twice.
                 statCell('typos', results.counts.mistypes);
             card.appendChild(grid);
+            // One invitation to the Discord server, between the numbers and the submit line: it
+            // reads as part of the result, and 'play again' / 'back to maps' stay exactly where the
+            // player last left them instead of being pushed down a row.
+            const nudgeUrl = nudgeUrlFor(opts.discordNudge, results);
+            if (nudgeUrl) card.appendChild(el('div', 'tb-result-nudge', nudgeHtml(nudgeUrl)));
             const status = el('div', 'tb-submit-status', '');
             card.appendChild(status);
             const actions = el('div', 'tb-result-actions');
@@ -1628,6 +1662,11 @@
         sweepFillFor,
         caretsVisible,
         outQuint,
+        // The results card's Discord nudge (backlog 289). Both halves are pure, so the harness can
+        // drive the render decision and the markup without a DOM: the storage half of the same
+        // feature lives in play.js, which publishes it as window.TypeBeatPlayPage.
+        nudgeUrlFor,
+        nudgeHtml,
         // The instrumental-skip rule (a third copy of a cross-repo-pinned one), exported so
         // WebplayDisplayTest can hold it against the server's own InstrumentalGaps.Compute.
         firstVocalTime,

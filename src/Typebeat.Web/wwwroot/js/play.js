@@ -25,10 +25,52 @@
     const Core = window.TypeBeatCore;
     const CFG = window.TYPEBEAT_PLAY || { signedIn: false, csrf: '' };
 
+    // ---- the first-clear Discord nudge (backlog 289) ------------------------
+    // Once per browser, on the first map it CLEARS, the results card invites the player to the
+    // Discord server. typebeat-player.js renders it but decides nothing: the decision turns on
+    // localStorage, which is a page concern and the only thing here that can throw, so it lives in
+    // this file and reaches the player as a hook (opts.discordNudge).
+    //
+    // The flag is spent when the nudge is SHOWN, not when it is clicked. The point is to ask once,
+    // and asking again because the first ask went unclicked is exactly the nagging this avoids.
+    const DISCORD_NUDGE_KEY = 'tb_discord_nudged';
+
+    // Pure but for the storage handed in, so the display harness can drive it with a fake one.
+    // Answers with the invite URL to show, or null for "show nothing": a FAILED run neither shows
+    // the nudge nor spends the flag, and a storage that refuses to answer (a private window, a
+    // browser with storage blocked) reads as "already asked" rather than as an error, so blocked
+    // storage costs the player the nudge and nothing else.
+    function takeDiscordNudge(storage, passed, url) {
+        if (!passed || !url) return null;
+        try {
+            if (!storage || storage.getItem(DISCORD_NUDGE_KEY)) return null;
+            storage.setItem(DISCORD_NUDGE_KEY, '1');
+        } catch (e) {
+            return null;
+        }
+        return url;
+    }
+
+    // Reading window.localStorage can itself throw where storage is blocked, hence a guard around
+    // the property access and not only around the calls.
+    function nudgeStorage() {
+        try { return window.localStorage; } catch (e) { return null; }
+    }
+
+    // Published BEFORE the stage guard below, so the display harness (which has no DOM at all, and
+    // therefore takes that early return) can still drive the decision. Distinct from
+    // window.TYPEBEAT_PLAY, which is the server-rendered page config read above.
+    window.TypeBeatPlayPage = { takeDiscordNudge: takeDiscordNudge, DISCORD_NUDGE_KEY: DISCORD_NUDGE_KEY };
+
     const picker = document.getElementById('tb-picker');
     const stageWrap = document.getElementById('tb-stage');
     const stageMount = document.getElementById('tb-stage-mount');
     if (!picker || !stageWrap || !stageMount || !Core) return;
+
+    // The one invite URL reaching the player, rendered onto the stage root from
+    // SiteLinks.DISCORD_INVITE. Absent (an older cached page) means no nudge, and the flag stays
+    // unspent so the browser is still asked once the attribute is there.
+    const discordUrl = stageWrap.dataset.discordUrl || '';
 
     let current = null; // active player controller
 
@@ -185,6 +227,9 @@
                 artist: artist,
                 onExit: showPicker,
                 onPlayStart: () => { tokenPromise = createToken(setId, diffId); },
+                // Consulted while the results card is being built, once per card, so a "play again"
+                // that clears again asks the same question of the same flag and is answered no.
+                discordNudge: (results) => takeDiscordNudge(nudgeStorage(), results.passed, discordUrl),
                 onFinish: async (results, api) => {
                     if (!CFG.signedIn) {
                         api.setSubmitStatus('<a href="/login">sign in</a> to submit your score to the leaderboard.', 'tb-status-muted');

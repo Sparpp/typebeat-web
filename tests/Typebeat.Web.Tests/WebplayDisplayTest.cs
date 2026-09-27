@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Typebeat.Web;
 using Typebeat.Web.Packages.Lyrics;
 
 namespace Typebeat.Web.Tests;
@@ -906,6 +907,163 @@ public class WebplayDisplayTest
 
             Assert.That(Num(typing, "moved"), Is.EqualTo(6000).Within(1e-9),
                 "the same span with the line owed is real typing time, which is why the gate matters");
+        });
+    }
+
+    // ---- the first-clear Discord nudge (backlog 289) ----
+    //
+    // Two files, one feature: play.js decides (it owns the localStorage flag and the invite URL the
+    // stage root carries) and typebeat-player.js renders the answer inside showResults. The harness
+    // drives both halves in the order a real results card does, with a fake storage, so these are
+    // pins on the actual shipped scripts rather than on a description of them.
+
+    /// <summary>
+    /// A browser's FIRST cleared map gets the invitation, and only that once: showing it spends the
+    /// flag (<c>tb_discord_nudged</c>), so the next clear, including a "play again" on the same
+    /// mounted player, renders no block at all. The flag is spent on SHOW rather than on click,
+    /// which is why the second clear is silent even though nobody followed the link.
+    /// </summary>
+    [Test]
+    public void TheFirstClearedMapShowsTheDiscordNudgeExactlyOnce()
+    {
+        var root = Harness();
+        var observed = root.GetProperty("nudgeFirstClear");
+        string invite = root.GetProperty("nudgeUrl").GetString()!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(root.GetProperty("discordNudgeKey").GetString(), Is.EqualTo("tb_discord_nudged"));
+
+            Assert.That(observed.GetProperty("first").GetProperty("url").GetString(), Is.EqualTo(invite),
+                "the first clear is invited");
+            Assert.That(observed.GetProperty("first").GetProperty("html").GetString(), Is.Not.Null,
+                "and the card gets a block to render");
+            Assert.That(observed.GetProperty("flag").GetString(), Is.EqualTo("1"),
+                "showing it is what spends the flag");
+
+            Assert.That(observed.GetProperty("second").GetProperty("url").ValueKind, Is.EqualTo(JsonValueKind.Null),
+                "a second clear is not asked again");
+            Assert.That(observed.GetProperty("second").GetProperty("html").ValueKind, Is.EqualTo(JsonValueKind.Null));
+        });
+    }
+
+    /// <summary>
+    /// A FAILED run neither shows the nudge nor consumes it: nothing is written to storage at all, so
+    /// the clear that follows is still the browser's first clear and still gets its one invitation.
+    /// </summary>
+    [Test]
+    public void AFailedRunNeitherShowsTheNudgeNorSpendsIt()
+    {
+        var root = Harness();
+        var observed = root.GetProperty("nudgeAfterFail");
+        string invite = root.GetProperty("nudgeUrl").GetString()!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(observed.GetProperty("failed").GetProperty("url").ValueKind, Is.EqualTo(JsonValueKind.Null),
+                "a fail is not the moment to ask");
+            Assert.That(observed.GetProperty("flagAfterFail").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(Num(observed, "storedKeys"), Is.Zero, "a fail writes nothing at all");
+
+            Assert.That(observed.GetProperty("thenCleared").GetProperty("url").GetString(), Is.EqualTo(invite),
+                "so the clear after it is still the first clear");
+        });
+    }
+
+    /// <summary>
+    /// The storage arm that must never cost the player their results: a private window or a browser
+    /// with storage blocked throws on the read as well as the write, and no storage object at all is
+    /// the same case. Both read as "already asked", so the card renders without a nudge instead of
+    /// dying halfway through. The last two arms are the player's own wrapper: a host hook that throws,
+    /// and no hook at all.
+    /// </summary>
+    [Test]
+    public void BlockedStorageShowsNothingAndBreaksNothing()
+    {
+        var root = Harness();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(root.GetProperty("nudgeBlockedStorage").GetProperty("url").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(root.GetProperty("nudgeBlockedStorage").GetProperty("html").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(root.GetProperty("nudgeNoStorage").GetProperty("url").ValueKind, Is.EqualTo(JsonValueKind.Null));
+
+            Assert.That(root.GetProperty("nudgeHookThrew").ValueKind, Is.EqualTo(JsonValueKind.Null),
+                "a host hook that throws costs the nudge, not the card");
+            Assert.That(root.GetProperty("nudgeNoHook").ValueKind, Is.EqualTo(JsonValueKind.Null),
+                "and a player mounted without the hook shows nothing");
+        });
+    }
+
+    /// <summary>
+    /// The invite is the one the page handed over (<c>#tb-stage</c>'s <c>data-discord-url</c>, rendered
+    /// from <see cref="SiteLinks.DISCORD_INVITE"/>), never a second copy hardcoded in JavaScript: the
+    /// harness feeds a distinctive URL through, and it is that URL the button links. It opens in a new
+    /// tab, with rel=noopener, and carries the results card's own primary button styling.
+    /// </summary>
+    [Test]
+    public void TheNudgeButtonLinksTheInviteItWasHandedInANewTab()
+    {
+        var root = Harness();
+        string invite = root.GetProperty("nudgeUrl").GetString()!;
+        string html = root.GetProperty("nudgeHtml").GetString()!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(html, Does.Contain($"href=\"{invite}\""));
+            Assert.That(html, Does.Contain("target=\"_blank\""));
+            Assert.That(html, Does.Contain("rel=\"noopener\""));
+            Assert.That(html, Does.Contain("class=\"tb-btn tb-btn-primary\""));
+            Assert.That(html, Does.Contain("Did you enjoy playing? Then join the official Discord server"));
+
+            // No hardcoded second copy: the real invite only ever reaches the scripts through the
+            // data attribute, so neither shipped file may contain it.
+            string js = File.ReadAllText(Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "js", "play.js"))
+                + File.ReadAllText(Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "js", "typebeat-player.js"));
+            Assert.That(js, Does.Not.Contain(SiteLinks.DISCORD_INVITE));
+        });
+    }
+
+    /// <summary>
+    /// A stage root with no <c>data-discord-url</c> (an older cached page) has nothing to link, so the
+    /// nudge is not shown AND the flag is left unspent: the browser is still owed its one invitation
+    /// once the attribute is there.
+    /// </summary>
+    [Test]
+    public void NoInviteOnThePageMeansNoNudgeAndAnUnspentFlag()
+    {
+        var root = Harness();
+        var observed = root.GetProperty("nudgeNoUrl");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(observed.GetProperty("url").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(Num(observed, "storedKeys"), Is.Zero);
+        });
+    }
+
+    /// <summary>
+    /// Placement, which no pure function can report: the nudge block is appended to the results card
+    /// AFTER the stat grid and BEFORE the submit status line, so it reads as part of the result and
+    /// leaves "play again" / "back to maps" (.tb-result-actions, appended last) where they were.
+    /// </summary>
+    [Test]
+    public void TheNudgeSitsBetweenTheResultGridAndTheSubmitStatus()
+    {
+        string player = File.ReadAllText(
+            Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "js", "typebeat-player.js"));
+
+        int grid = player.IndexOf("card.appendChild(grid)", StringComparison.Ordinal);
+        int nudge = player.IndexOf("'tb-result-nudge'", StringComparison.Ordinal);
+        int status = player.IndexOf("card.appendChild(status)", StringComparison.Ordinal);
+        int actions = player.IndexOf("'tb-result-actions'", StringComparison.Ordinal);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(grid, Is.GreaterThan(-1), "the stat grid is still appended to the card");
+            Assert.That(nudge, Is.GreaterThan(grid), "the nudge comes after the grid");
+            Assert.That(status, Is.GreaterThan(nudge), "and before the submit status");
+            Assert.That(actions, Is.GreaterThan(status), "with the action buttons still last");
         });
     }
 
