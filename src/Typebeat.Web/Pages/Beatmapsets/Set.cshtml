@@ -239,17 +239,6 @@
                         {
                             <div class="stat-row"><span class="stat-row__label">Chars/word</span><span class="stat-row__value">@paceCharsPerWord.ToString("0.0", CultureInfo.InvariantCulture)</span></div>
                         }
-                        <p class="wpm-graph__caption faint">
-                            Rolling 30-keystroke pace, from the first typed character to the last.
-                            A word is five keystrokes here, the typing-test convention, and the row
-                            above says how long this map's own words actually run. Target is not off
-                            this graph: it is the average WPM across the fastest fifth of the map's
-                            lyric lines of three words or more, so it is the pace to hold through the
-                            hard stretches rather than the one window at the peak. Shorter lines are
-                            left out of that fifth because a two-word interjection is over almost as
-                            soon as it starts, which reads as a rate nothing on the map asks anyone
-                            to sustain.
-                        </p>
                     }
                     else
                     {
@@ -343,7 +332,6 @@
         @* Pending (and owner-viewed hidden/removed) sets take plays but rank nothing. *@
         <div class="empty-state">
             <h3>Not ranked yet</h3>
-            <p>Leaderboard unlocks when this map is ranked.</p>
         </div>
     }
     else if (Model.Scores.Count == 0 && Model.Board == "unranked")
@@ -497,14 +485,7 @@
     {
         <p class="set-comments__notice">That comment is over 2000 characters, so nothing was posted. Trim it down and try again.</p>
     }
-    @if (Model.Comments.Count == 0)
-    {
-        <div class="empty-state">
-            <h3>No comments yet</h3>
-            <p>Nobody has said anything about this map. Be the first.</p>
-        </div>
-    }
-    else
+    @if (Model.Comments.Count > 0)
     {
         <div class="comment-list">
             @foreach (var comment in Model.Comments)
@@ -524,8 +505,7 @@
         <form class="comment-compose" method="post" asp-page-handler="Comment" asp-route-id="@Model.Set.Id">
             <div class="field">
                 <label for="comment-body">Add a comment</label>
-                <textarea class="input" id="comment-body" name="body" rows="3" required maxlength="2000"
-                          placeholder="thoughts on the map, the timing, the difficulty&hellip;"></textarea>
+                <textarea class="input" id="comment-body" name="body" rows="3" required maxlength="2000"></textarea>
             </div>
             <button type="submit" class="btn btn-ghost btn-small">Post comment</button>
         </form>

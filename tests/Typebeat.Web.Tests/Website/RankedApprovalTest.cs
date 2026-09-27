@@ -299,7 +299,7 @@ public class RankedApprovalTest
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(status, Is.EqualTo("pending"));
-            Assert.That(html, Does.Contain("Leaderboard unlocks when this map is ranked."));
+            Assert.That(html, Does.Contain("Not ranked yet"));
             Assert.That(html, Does.Contain(">Rank this map</button>"));
 
             // The ranked-era score keeps its flag, but the set page must not render a podium
@@ -338,11 +338,11 @@ public class RankedApprovalTest
         {
             Assert.That(pendingResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), "pending sets are publicly viewable");
             Assert.That(pending, Does.Contain(">Pending</span>"));
-            Assert.That(pending, Does.Contain("Leaderboard unlocks when this map is ranked."));
+            Assert.That(pending, Does.Contain("Not ranked yet"));
             Assert.That(pending, Does.Not.Contain("podium"));
 
             Assert.That(ranked, Does.Contain("podium"));
-            Assert.That(ranked, Does.Not.Contain("Leaderboard unlocks when this map is ranked."));
+            Assert.That(ranked, Does.Not.Contain("Not ranked yet"));
         });
     }
 

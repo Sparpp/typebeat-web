@@ -2,10 +2,6 @@
 @model Typebeat.Web.Pages.WatchingModel
 
 <h1>Notifications</h1>
-<p class="faint">
-    Everything the bell has caught, newest first, plus the mappers you watch and what they have
-    been uploading. Ring the bell on anyone's profile to add them here.
-</p>
 
 @* The notification list, page 1 only (page 2+ is somebody walking back through the upload feed
    below, where repeating the newest-first notifications above it would be noise). This is the
@@ -27,8 +23,7 @@
         @if (Model.Notes.Count == 0)
         {
             <p class="profile-empty muted">
-                Nothing here yet. Notifications start when a mapper you watch publishes a new map;
-                anything uploaded before then is in the feed below.
+                Nothing here yet. Notifications start when a mapper you watch publishes a new map.
             </p>
         }
         else

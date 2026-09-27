@@ -35,7 +35,6 @@
             }
             <form method="post" asp-page-handler="Avatar" enctype="multipart/form-data" class="settings-upload">
                 @Html.AntiForgeryToken()
-                <p class="faint">A square image works best (PNG or JPEG, up to 8&nbsp;MB). It's cropped to a square.</p>
                 <input class="input" type="file" name="avatar" accept="image/png,image/jpeg,image/webp" required />
                 <button type="submit" class="btn btn-primary btn-small">Upload avatar</button>
             </form>
