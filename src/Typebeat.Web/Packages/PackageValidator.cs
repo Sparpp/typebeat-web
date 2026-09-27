@@ -13,6 +13,13 @@ public static class PackageValidator
     /// <summary>~95 MB: Cloudflare-proxied request bodies cap at 100 MB; leave multipart headroom.</summary>
     public const long MaxPackageBytes = 95L * 1024 * 1024;
 
+    /// <summary>
+    /// Per-file cap for a bundled lyric font (backlog 291), mirroring the game editor's own
+    /// bundling rule (TypeBeatSetupSection.MAX_BUNDLED_FONT_BYTES): the client refuses to bundle
+    /// a font over 5 MiB, so a bigger one in a package never came from the editor.
+    /// </summary>
+    public const long MaxFontBytes = 5 * 1024 * 1024;
+
     /// <param name="package">The parsed upload.</param>
     /// <param name="targetSetId">The set being submitted to (route id).</param>
     /// <param name="allocatedBeatmapIds">Beatmap ids the server has allocated for this set.</param>
@@ -42,6 +49,32 @@ public static class PackageValidator
         {
             if (!seenFilenames.Add(file.Filename))
                 throw new PackageValidationException($"The package contains \"{file.Filename}\" more than once.");
+        }
+
+        // The bundled lyric font (backlog 291), on the game editor's own bundling rules
+        // (TypeBeatSetupSection): single-face .ttf/.otf/.woff2 only, at most ONE per set, each
+        // under MaxFontBytes. A .ttc/.otc collection never leaves the editor (one file carrying
+        // several faces has no single family to register), so one here is hand-made and refused
+        // outright rather than admitted as an ordinary set file.
+        string? fontFilename = null;
+
+        foreach (var file in package.Files)
+        {
+            string extension = Path.GetExtension(file.Filename).ToLowerInvariant();
+
+            if (extension is ".ttc" or ".otc")
+                throw new PackageValidationException($"\"{file.Filename}\" is a font collection (.ttc/.otc); bundle a single-face .ttf, .otf or .woff2 instead.");
+
+            if (extension is not (".ttf" or ".otf" or ".woff2"))
+                continue;
+
+            if (file.Size > MaxFontBytes)
+                throw new PackageValidationException($"Font file \"{file.Filename}\" exceeds the {MaxFontBytes / (1024 * 1024)} MiB font size limit.");
+
+            if (fontFilename != null)
+                throw new PackageValidationException($"The package contains more than one font file (\"{fontFilename}\" and \"{file.Filename}\"); a set may bundle at most one.");
+
+            fontFilename = file.Filename;
         }
 
         // Cross-difficulty metadata must be a single value (recon: BeatmapPackageParser

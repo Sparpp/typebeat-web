@@ -193,7 +193,10 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
                    -- 033_target_wpm.sql; NULL only until the v18 sweep fills it, since a per-line
                    -- figure needs no rolling window the way the two above do.
                    b.target_wpm            AS TargetWpm,
-                   b.wpm_curve             AS WpmCurve
+                   b.wpm_curve             AS WpmCurve,
+                   -- 037_lyric_font.sql. NULL means "no font chosen", which hides the row; the
+                   -- name is informational (only the desktop client renders the font).
+                   b.lyric_font            AS LyricFont
             FROM beatmaps b
             WHERE b.set_id = @id AND b.filename IS NOT NULL
             ORDER BY b.difficulty_rating DESC, b.id ASC
@@ -605,6 +608,14 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         public double? TargetWpm { get; init; }
 
         public float[]? WpmCurve { get; init; }
+
+        /// <summary>
+        /// The mapper-chosen lyric font family (037_lyric_font.sql, backlog 291), or null when the
+        /// difficulty names none, which hides the stats row entirely. Display only: the desktop
+        /// client is what renders the font; the browser player deliberately does not (its layout
+        /// runs on JetBrains Mono's fixed advance).
+        /// </summary>
+        public string? LyricFont { get; init; }
 
         /// <summary>A non-zero bar is never invisible, however small it is next to the peak
         /// (<c>BarChartModel</c>'s min_visible_height, in the percentage units used here).</summary>

@@ -75,7 +75,11 @@ public static class SyntheticPackage
         string? background = "bg.jpg",
         string? video = null,
         string lyrics = PaceRegressionLyrics,
-        int formatVersion = CurrentFormatVersion)
+        int formatVersion = CurrentFormatVersion,
+        // The mapper-chosen lyric font (backlog 291), written in [General] only when set,
+        // exactly like the Language line below: an unset map emits neither key.
+        string lyricFont = "",
+        string lyricFontFile = "")
     {
         var sb = new StringBuilder();
 
@@ -87,6 +91,12 @@ public static class SyntheticPackage
         sb.Append($"PreviewTime: {previewTime.ToString(System.Globalization.CultureInfo.InvariantCulture)}\n");
         sb.Append("Countdown: 0\n");
         sb.Append("SampleSet: None\n");
+
+        if (lyricFont.Length > 0)
+            sb.Append($"LyricFont: {lyricFont}\n");
+        if (lyricFontFile.Length > 0)
+            sb.Append($"LyricFontFile: {lyricFontFile}\n");
+
         sb.Append('\n');
         sb.Append("[Metadata]\n");
         sb.Append($"Title:{title}\n");

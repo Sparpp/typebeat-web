@@ -74,6 +74,35 @@ public class SetPageTest
         });
     }
 
+    /// <summary>
+    /// The stats box names the mapper-chosen lyric font (backlog 291, 037_lyric_font.sql) only
+    /// when the selected difficulty carries one. Per difficulty, like every other stat in the box:
+    /// Twin Peaks' hard diff stores a family and its easy diff does not, so one set covers both
+    /// arms through the same ?diff= re-render the rest of the box already uses.
+    /// </summary>
+    [Test]
+    public async Task StatsBox_NamesTheLyricFont_OnlyWhenTheDifficultyHasOne()
+    {
+        using var hard = await WebsiteFixture.Client.GetAsync(
+            $"/beatmapsets/{PublicSiteSeed.MultiDiffSetId}?diff={PublicSiteSeed.MultiDiffHardId}");
+        string hardHtml = await hard.Content.ReadAsStringAsync();
+
+        using var easy = await WebsiteFixture.Client.GetAsync(
+            $"/beatmapsets/{PublicSiteSeed.MultiDiffSetId}?diff={PublicSiteSeed.MultiDiffEasyId}");
+        string easyHtml = await easy.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hard.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(hardHtml, Does.Contain("Lyric font"));
+            Assert.That(hardHtml, Does.Contain(PublicSiteSeed.MultiDiffFontFamily));
+
+            Assert.That(easy.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(easyHtml, Does.Not.Contain("Lyric font"),
+                "a difficulty with no font renders no row at all, not an empty one");
+        });
+    }
+
     [Test]
     public async Task Leaderboard_BestPerUser_RankedOnly_EngineJudgementNames()
     {

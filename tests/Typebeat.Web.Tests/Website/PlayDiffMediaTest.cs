@@ -100,9 +100,40 @@ public class PlayDiffMediaTest
     }
 
     /// <summary>
+    /// The bundled lyric font route (backlog 291): /play/map/{setId}/font streams the file the
+    /// chosen difficulty's own .osu names in [General] LyricFontFile, with the content type its
+    /// extension implies, exactly as /audio streams that .osu's AudioFilename. A difficulty that
+    /// names no font is a 404, which is nearly every map, and the browser player does not consume
+    /// the route yet (its layout runs on JetBrains Mono's fixed advance); it exists so the
+    /// per-glyph rework can adopt it without a server change.
+    /// </summary>
+    [Test]
+    public async Task Font_ServedForTheDifficultyThatBundlesOne_404ForTheOneThatDoesNot()
+    {
+        using var hard = await WebsiteFixture.Client.GetAsync($"/play/map/{SetId}/font?diff={PublicSiteSeed.MultiDiffHardId}");
+        string hardBytes = await hard.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hard.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(hard.Content.Headers.ContentType?.MediaType, Is.EqualTo("font/ttf"),
+                "content type follows the bundled file's extension");
+            Assert.That(hardBytes, Is.EqualTo("fake-font-bytes"), "the manifest blob the .osu names");
+        });
+
+        // The easy diff (and therefore the no-?diff= primary) bundles no font: 404, never a 500
+        // and never the other difficulty's font.
+        await AssertNotFound($"/play/map/{SetId}/font?diff={PublicSiteSeed.MultiDiffEasyId}", "a difficulty with no font");
+        await AssertNotFound($"/play/map/{SetId}/font", "the primary difficulty has no font either");
+
+        // Same media gate as /osu and /audio: an unpublished set advertises nothing.
+        await AssertNotFound($"/play/map/{PublicSiteSeed.HiddenId}/font", "hidden set");
+    }
+
+    /// <summary>
     /// THE NEGATIVE PIN. A beatmap id the caller was not served is not addressable through a set
     /// whose media they may see: another set's difficulty, a dropped one, and an id that is not a
-    /// difficulty at all are all 404, on both byte routes.
+    /// difficulty at all are all 404, on every byte route.
     ///
     /// <para>The load-bearing case is "off the record hard", whose archive filename deliberately
     /// COLLIDES with this set's own hard.osu. Every other foreign id fails twice over (its filename
@@ -117,7 +148,9 @@ public class PlayDiffMediaTest
         long foreign = PublicSiteSeed.LeaderboardBeatmapId;      // another set's diff, filename map.osu
         long dropped = PublicSiteSeed.MultiDiffDroppedId;        // this set's row, filename NULL
 
-        foreach (string route in new[] { "osu", "audio" })
+        // "font" rides the same bound: the colliding case would otherwise resolve THIS set's
+        // hard.osu, which really does bundle a font, and serve it for another set's beatmap id.
+        foreach (string route in new[] { "osu", "audio", "font" })
         {
             await AssertNotFound($"/play/map/{SetId}/{route}?diff={colliding}", $"{route}: another set's difficulty, colliding filename");
             await AssertNotFound($"/play/map/{SetId}/{route}?diff={foreign}", $"{route}: another set's difficulty");

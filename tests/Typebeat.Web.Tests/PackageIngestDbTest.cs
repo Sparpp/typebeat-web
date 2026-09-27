@@ -1446,6 +1446,62 @@ public class PackageIngestDbTest
         });
     }
 
+    [Test]
+    [Order(26)]
+    public async Task Ingest_StoresTheLyricFont_TheSweepRefillsIt_AndAnUploadWithoutOneClearsIt()
+    {
+        // 037_lyric_font.sql: the mapper-chosen font family off [General] LyricFont, stored per
+        // difficulty like the rest of the parsed metadata. The bundled file itself is an ordinary
+        // set file (admitted by the validator's font rules) and gets no column.
+        await using var conn = await db.OpenAsync();
+
+        long id = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO beatmapsets (owner_id, status, intended_status) VALUES (@uploaderId, 'hidden', 'pending') RETURNING id",
+            new { uploaderId });
+
+        long mapId = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO beatmaps (set_id, checksum_md5) VALUES (@id, md5(random()::text)) RETURNING id", new { id });
+
+        async Task upload(params (string Name, byte[] Content)[] entries)
+        {
+            using var zip = SyntheticPackage.Zip(entries);
+            var parsed = BeatmapPackageParser.Parse(zip);
+            PackageValidator.Validate(parsed, id, [mapId], "uploader");
+
+            await using var scope = await ingest.BeginSetScopeAsync(id);
+            await ingest.IngestAsync(scope, zip, parsed, id, uploaderId);
+        }
+
+        async Task<string?> fontOf() => await conn.ExecuteScalarAsync<string?>(
+            "SELECT lyric_font FROM beatmaps WHERE id = @mapId", new { mapId });
+
+        await upload(
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+                beatmapId: mapId, beatmapSetId: id, lyricFont: "Blocky Pixels", lyricFontFile: "lyricfont.ttf"))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("lyricfont.ttf", SyntheticPackage.Utf8("fake font bytes")));
+
+        Assert.That(await fontOf(), Is.EqualTo("Blocky Pixels"), "ingest stores the family the .osu names");
+
+        // The pace sweep rewrites it from the stored blob beside everything else it reparses.
+        await conn.ExecuteAsync(
+            "UPDATE beatmaps SET lyric_font = NULL, pace_version = 15 WHERE id = @mapId", new { mapId });
+
+        await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        Assert.That(await fontOf(), Is.EqualTo("Blocky Pixels"), "the sweep refills the column from the blob");
+
+        // Per-difficulty parsed metadata, rewritten each upload: an upload whose .osu carries no
+        // LyricFont key means the mapper removed the font, so the stored value goes with it. This
+        // is deliberately NOT the language's coalesce rule; the encoder always writes the key when
+        // a font is set, so absence is a statement rather than an old client's silence.
+        await upload(
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: mapId, beatmapSetId: id))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")));
+
+        Assert.That(await fontOf(), Is.Null, "an upload without the key clears the stored font");
+    }
+
     private static string readEmbeddedMigration(string name)
     {
         var assembly = typeof(Db).GetTypeInfo().Assembly;

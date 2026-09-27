@@ -186,6 +186,13 @@
                     {
                         <div class="stat-row"><span class="stat-row__label">Chars/word</span><span class="stat-row__value">@charsPerWord.ToString("0.0", CultureInfo.InvariantCulture)</span></div>
                     }
+                    @* The mapper-chosen lyric font (backlog 291), named only when the map carries
+                       one. Informational: the desktop client renders it; the browser player keeps
+                       its fixed-advance font, so the page names the font rather than using it. *@
+                    @if (!string.IsNullOrEmpty(Model.Diff.LyricFont))
+                    {
+                        <div class="stat-row"><span class="stat-row__label">Lyric font</span><span class="stat-row__value">@Model.Diff.LyricFont</span></div>
+                    }
                     <div class="stat-row">
                         <span class="stat-row__label">Stars</span>
                         <span class="stat-row__value" style="color:@DifficultyColour.ForStars(Model.Diff.Stars)">&#9733; @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>

@@ -114,6 +114,7 @@ public static class PaceBackfill
                         wpm_curve = @wpmCurve,
                         freestyle_cell_count = @freestyleCellCount,
                         ratings = @ratings::jsonb,
+                        lyric_font = @lyricFont,
                         pace_version = @paceVersion
                     WHERE id = @id;
 
@@ -171,6 +172,11 @@ public static class PaceBackfill
                         // play cannot be priced without, so the third staleness arm above names it
                         // explicitly rather than trusting the version bump alone.
                         ratings = diff.RatingsJson,
+                        // 037: the mapper-chosen lyric font family, re-read off the same blob as
+                        // everything else here. No staleness arm and no VERSION bump for it:
+                        // every pre-291 blob simply has no LyricFont key, so NULL (the column's
+                        // birth value) is already correct for every row this sweep never visits.
+                        lyricFont = string.IsNullOrEmpty(diff.LyricFont) ? null : diff.LyricFont,
                         paceVersion = LyricPace.VERSION,
                     });
 

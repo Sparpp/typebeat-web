@@ -102,6 +102,15 @@ public static class PublicSiteSeed
     public const string MultiDiffEasyAudio = "easy.mp3";
     public const string MultiDiffHardAudio = "hard.mp3";
 
+    /// <summary>The hard difficulty's mapper-chosen lyric font (backlog 291): the family stored in
+    /// beatmaps.lyric_font AND written into hard.osu's [General] LyricFont line, so the set page
+    /// row and the /play font route are fed by one fixture. The easy diff carries none, covering
+    /// the hidden-row / 404 arm.</summary>
+    public const string MultiDiffFontFamily = "Blocky Pixels";
+
+    /// <summary>The bundled font file hard.osu names (LyricFontFile) and the manifest stores.</summary>
+    public const string MultiDiffFontFile = "lyricfont.ttf";
+
     /// <summary>
     /// "Video Clip Anthem": the one seeded set with has_video true and a real video entry in its
     /// manifest (an .osu naming <see cref="VideoClipFile"/> in [Events], the clip itself, and a
@@ -299,7 +308,8 @@ public static class PublicSiteSeed
             // which is what lets the fixture take a shape the arithmetic never produces.
             MultiDiffHardId = await InsertBeatmapAsync(conn, MultiDiffSetId,
                 totalLengthS: 100, stars: 6.0, wpm: 180, wordCount: 260, charCount: 1300,
-                targetWpm: 165, versionName: "twin hard", filename: "hard.osu");
+                targetWpm: 165, versionName: "twin hard", filename: "hard.osu",
+                lyricFont: MultiDiffFontFamily);
 
             MultiDiffDroppedId = await InsertBeatmapAsync(conn, MultiDiffSetId,
                 totalLengthS: 100, stars: 4.0, wpm: 120, wordCount: 150, charCount: 700,
@@ -440,24 +450,24 @@ public static class PublicSiteSeed
         double totalLengthS, double stars, double wpm, int wordCount, int charCount,
         string lyrics = "", double? peakWpm = null, double? peakCpm = null, float[]? wpmCurve = null,
         double? targetWpm = null,
-        string versionName = "type!beat", string? filename = "map.osu")
+        string versionName = "type!beat", string? filename = "map.osu", string? lyricFont = null)
         => await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmaps
                 (set_id, version_name, checksum_md5, total_length_s, drain_length_s,
                  difficulty_rating, filename, word_count, char_count, wpm, lyrics,
-                 peak_wpm, peak_cpm, wpm_curve, target_wpm)
+                 peak_wpm, peak_cpm, wpm_curve, target_wpm, lyric_font)
             VALUES
                 (@setId, @versionName, @checksum, @totalLengthS, @drainLengthS,
                  @stars, @filename, @wordCount, @charCount, @wpm, @lyrics,
-                 @peakWpm, @peakCpm, @wpmCurve, @targetWpm)
+                 @peakWpm, @peakCpm, @wpmCurve, @targetWpm, @lyricFont)
             RETURNING id
             """,
             new
             {
                 setId, versionName, checksum = Guid.NewGuid().ToString("N"), totalLengthS,
                 drainLengthS = totalLengthS * 0.9, stars, filename, wordCount, charCount, wpm, lyrics,
-                peakWpm, peakCpm, wpmCurve, targetWpm,
+                peakWpm, peakCpm, wpmCurve, targetWpm, lyricFont,
             });
 
     /// <summary>
@@ -475,15 +485,22 @@ public static class PublicSiteSeed
                 title: "Twin Peaks Typing", artist: "The Two Ways", version: "twin easy",
                 audioFilename: MultiDiffEasyAudio, background: null, beatmapId: 2001)));
 
+        // The hard diff also names the set's bundled lyric font (backlog 291), so /play's font
+        // route has a difficulty that serves one and a difficulty (easy) that 404s.
         await StoreFileAsync(conn, versionId, "hard.osu",
             Encoding.UTF8.GetBytes(SyntheticPackage.OsuText(
                 title: "Twin Peaks Typing", artist: "The Two Ways", version: "twin hard",
-                audioFilename: MultiDiffHardAudio, background: null, beatmapId: 2002)));
+                audioFilename: MultiDiffHardAudio, background: null, beatmapId: 2002,
+                lyricFont: MultiDiffFontFamily, lyricFontFile: MultiDiffFontFile)));
 
         // Not decodable audio, and deliberately so: these routes stream bytes, they never parse
         // them, and the two blobs only have to be DIFFERENT for a test to tell which one it got.
         await StoreFileAsync(conn, versionId, MultiDiffEasyAudio, Encoding.UTF8.GetBytes("easy-audio-bytes"));
         await StoreFileAsync(conn, versionId, MultiDiffHardAudio, Encoding.UTF8.GetBytes("hard-audio-bytes"));
+
+        // Same rule for the font: the route streams whatever the manifest resolves, so fake bytes
+        // are enough to prove which blob (and which content type) came back.
+        await StoreFileAsync(conn, versionId, MultiDiffFontFile, Encoding.UTF8.GetBytes("fake-font-bytes"));
     }
 
     /// <summary>

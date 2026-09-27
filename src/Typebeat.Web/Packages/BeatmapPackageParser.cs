@@ -211,6 +211,7 @@ public static class BeatmapPackageParser
         string artist = string.Empty, artistUnicode = string.Empty;
         string creator = string.Empty, versionName = string.Empty;
         string source = string.Empty, tags = string.Empty, language = string.Empty;
+        string lyricFont = string.Empty, lyricFontFile = string.Empty;
         long? beatmapId = null, beatmapSetId = null;
         string? background = null, video = null;
         double? bpm = null;
@@ -260,6 +261,14 @@ public static class BeatmapPackageParser
                         // means "not stated" and never "not a language". Kept as the raw text;
                         // PackageIngest folds it onto the canonical vocabulary.
                         case "Language": language = value; break;
+                        // The mapper-chosen lyric font (backlog 291): [General] "LyricFont: <family>"
+                        // and "LyricFontFile: <filename in the set>", both written by the game's
+                        // encoders only when set, so absence means "no font chosen" and never "no
+                        // font". The family is free text; the file value is a bare filename
+                        // (the editor writes lyricfont.<ext>), normalized like every other archive
+                        // path so the version-manifest lookup matches it.
+                        case "LyricFont": lyricFont = value; break;
+                        case "LyricFontFile": lyricFontFile = NormalizeFilename(value); break;
                         case "BeatmapID": beatmapId = parseLong(value); break;
                         case "BeatmapSetID": beatmapSetId = parseLong(value); break;
                     }
@@ -328,6 +337,8 @@ public static class BeatmapPackageParser
             Source = source,
             Tags = tags,
             Language = language,
+            LyricFont = lyricFont,
+            LyricFontFile = lyricFontFile,
             BeatmapId = beatmapId,
             BeatmapSetId = beatmapSetId,
             BackgroundFilename = background,

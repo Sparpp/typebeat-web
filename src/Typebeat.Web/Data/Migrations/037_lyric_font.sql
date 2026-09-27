@@ -1,0 +1,17 @@
+-- typebeat-web migration 037: the mapper-chosen lyric font family (backlog 291). The game's
+-- editor writes two [General] keys into the .osu: "LyricFont: <family>", the typing font the map
+-- asks the desktop client to render its lyrics in, and "LyricFontFile: <filename>", the bundled
+-- font file inside the set (the editor writes lyricfont.<ext>, one font per set, 5 MiB cap,
+-- .ttf/.otf/.woff2 only). This column stores the FAMILY per difficulty, parsed at ingest like
+-- title/source/bpm, so the set page can name the font without reparsing a .osu blob per request.
+--
+-- The FILE name is deliberately not stored: the only consumer is /play/map/{setId}/font, which
+-- already reads the difficulty's .osu text to find its AudioFilename and reads LyricFontFile off
+-- the same bytes, so a column would be a second copy of the manifest with nothing reading it.
+--
+-- NULL means "no font chosen", which is every map authored before the picker existed and every
+-- map whose mapper left it alone; the set page renders no row for those. No DEFAULT, no index
+-- (nothing filters on it), no backfill needed: a pre-291 .osu simply has no key to read, so NULL
+-- is already the correct value for every existing row. PackageIngest writes it on upload and
+-- PaceBackfill rewrites it whenever a row's blob is reparsed, like the other parsed metadata.
+ALTER TABLE beatmaps ADD COLUMN lyric_font text;

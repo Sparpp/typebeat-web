@@ -149,6 +149,82 @@ public class PackageValidationTest
         Assert.DoesNotThrow(() => PackageValidator.Validate(package, set_id, allocated, "uploader"));
     }
 
+    // ---- the bundled lyric font (backlog 291): .ttf/.otf/.woff2, one per set, 5 MiB cap ----
+
+    [TestCase("lyricfont.ttf")]
+    [TestCase("lyricfont.otf")]
+    [TestCase("lyricfont.woff2")]
+    public void FontFile_AdmittedFormatsWithinTheCap_Pass(string filename)
+    {
+        var package = parse(
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText())),
+            ("audio.mp3", SyntheticPackage.Utf8("audio")),
+            (filename, SyntheticPackage.Utf8("fake font bytes")));
+
+        Assert.DoesNotThrow(() => PackageValidator.Validate(package, set_id, allocated, "uploader"));
+    }
+
+    [TestCase("lyricfont.ttc")]
+    [TestCase("lyricfont.otc")]
+    public void FontCollection_Throws(string filename)
+    {
+        // The game's editor refuses to bundle a collection (one file, several faces), so one in a
+        // package never came from the editor and is rejected rather than admitted as a set file.
+        var package = parse(
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText())),
+            ("audio.mp3", SyntheticPackage.Utf8("audio")),
+            (filename, SyntheticPackage.Utf8("fake font bytes")));
+
+        var ex = Assert.Throws<PackageValidationException>(
+            () => PackageValidator.Validate(package, set_id, allocated, "uploader"));
+
+        Assert.That(ex!.Message, Does.Contain("collection"));
+    }
+
+    [Test]
+    public void FontFile_OverTheCap_Throws()
+    {
+        // 5 MiB + 1 of zeros: compresses to almost nothing, so the fixture stays cheap while the
+        // decompressed per-file size (what PackageFileEntry.Size carries) is over the cap.
+        var package = parse(
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText())),
+            ("audio.mp3", SyntheticPackage.Utf8("audio")),
+            ("lyricfont.ttf", new byte[PackageValidator.MaxFontBytes + 1]));
+
+        var ex = Assert.Throws<PackageValidationException>(
+            () => PackageValidator.Validate(package, set_id, allocated, "uploader"));
+
+        Assert.That(ex!.Message, Does.Contain("font size limit"));
+    }
+
+    [Test]
+    public void FontFile_ExactlyAtTheCap_Passes()
+    {
+        var package = parse(
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText())),
+            ("audio.mp3", SyntheticPackage.Utf8("audio")),
+            ("lyricfont.otf", new byte[PackageValidator.MaxFontBytes]));
+
+        Assert.DoesNotThrow(() => PackageValidator.Validate(package, set_id, allocated, "uploader"));
+    }
+
+    [Test]
+    public void SecondFontFile_Throws()
+    {
+        // One font per set, matching the editor (it writes exactly one lyricfont.<ext>); mixed
+        // extensions do not evade the rule.
+        var package = parse(
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText())),
+            ("audio.mp3", SyntheticPackage.Utf8("audio")),
+            ("lyricfont.ttf", SyntheticPackage.Utf8("fake font bytes")),
+            ("another.woff2", SyntheticPackage.Utf8("more fake font bytes")));
+
+        var ex = Assert.Throws<PackageValidationException>(
+            () => PackageValidator.Validate(package, set_id, allocated, "uploader"));
+
+        Assert.That(ex!.Message, Does.Contain("at most one"));
+    }
+
     [Test]
     public void OversizedPackage_Throws()
     {

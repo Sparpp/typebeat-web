@@ -12,18 +12,19 @@ namespace Typebeat.Web.Endpoints;
 
 /// <summary>
 /// The in-browser web player's backend (additive; the bearer game-client score flow in
-/// <see cref="ScoreEndpoints"/> is untouched). Five routes:
+/// <see cref="ScoreEndpoints"/> is untouched). Six routes:
 ///
 ///  - GET  /play/map/{setId}/diffs  → the set's live .osu difficulties (anonymous, same media gate)
 ///  - GET  /play/map/{setId}/osu    → one difficulty's .osu text (anonymous, same media gate as downloads)
 ///  - GET  /play/map/{setId}/audio  → that difficulty's audio blob, range-capable (anonymous, same gate)
+///  - GET  /play/map/{setId}/font   → that difficulty's bundled lyric font, if it names one (anonymous, same gate)
 ///  - POST /play/token              → issue a score token (cookie session + antiforgery)
 ///  - POST /play/submit             → complete a score token (cookie session + antiforgery)
 ///
-/// <para>WHICH DIFFICULTY. The two media routes take an optional <c>?diff={beatmapId}</c>; without
+/// <para>WHICH DIFFICULTY. The media routes take an optional <c>?diff={beatmapId}</c>; without
 /// it they serve the set's primary (lowest-id) difficulty, which is all the picker could address
-/// before backlog 230. The audio name is read out of THAT difficulty's own .osu, so two diffs
-/// pointing at different audio files each get their own.</para>
+/// before backlog 230. The audio and font names are read out of THAT difficulty's own .osu, so
+/// two diffs pointing at different files each get their own.</para>
 ///
 /// <para>TAMPER BOUND ON A NAMED DIFFICULTY. Once the client names a beatmap, "we serve the exact
 /// map" stops being true by construction, so every route that takes a beatmap id resolves it as
@@ -52,6 +53,7 @@ public static class PlayEndpoints
         app.MapGet("/play/map/{setId:long}/diffs", GetDiffsAsync);
         app.MapGet("/play/map/{setId:long}/osu", GetOsuAsync);
         app.MapGet("/play/map/{setId:long}/audio", GetAudioAsync);
+        app.MapGet("/play/map/{setId:long}/font", GetFontAsync);
         app.MapPost("/play/token", CreateTokenAsync);
         app.MapPost("/play/submit", SubmitScoreAsync);
     }
@@ -141,21 +143,9 @@ public static class PlayEndpoints
             return Results.NotFound();
 
         // Read the .osu text to discover its AudioFilename, then resolve THAT to a blob.
-        byte[]? osuSha = await ResolveManifestShaAsync(conn, setId, osuName);
-        if (osuSha is null)
+        string? osuText = await ReadOsuTextAsync(conn, store, setId, osuName, ctx.RequestAborted);
+        if (osuText is null)
             return Results.NotFound();
-
-        string osuText;
-        try
-        {
-            await using var osuStream = await store.OpenBlobReadAsync(osuSha, ctx.RequestAborted);
-            using var reader = new StreamReader(osuStream);
-            osuText = await reader.ReadToEndAsync(ctx.RequestAborted);
-        }
-        catch (FileNotFoundException)
-        {
-            return Results.NotFound();
-        }
 
         string? audioName = ParseAudioFilename(osuText);
         if (string.IsNullOrEmpty(audioName))
@@ -166,6 +156,42 @@ public static class PlayEndpoints
             return Results.NotFound();
 
         return Results.Stream(stream, AudioContentType(audioName), enableRangeProcessing: true);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // GET /play/map/{setId}/font[?diff={beatmapId}]: the bundled lyric font THAT difficulty's .osu
+    // names in [General] LyricFontFile (backlog 291), streamed exactly as /audio streams the
+    // AudioFilename it names. 404 when the difficulty bundles no font, which is nearly every map.
+    //
+    // SERVE-ONLY IN V1: typebeat-player.js does NOT consume this. Its whole layout (measureRow,
+    // the caret, sweep and cue-bar x positions) runs on JetBrains Mono's fixed advance, and a
+    // proportional map font would move every one of them; the per-glyph-advance rework is its own
+    // follow-up. The route exists now so the player can adopt it without a server deploy then.
+    // ---------------------------------------------------------------------------------------------
+    private static async Task<IResult> GetFontAsync(long setId, HttpContext ctx, Db db, IFileStore store)
+    {
+        await using var conn = await db.OpenAsync(ctx.RequestAborted);
+
+        if (!await CanSeeSetMediaAsync(ctx, conn, setId))
+            return Results.NotFound();
+
+        string? osuName = await ResolveOsuFilenameAsync(conn, setId, RequestedDiff(ctx));
+        if (osuName is null)
+            return Results.NotFound();
+
+        string? osuText = await ReadOsuTextAsync(conn, store, setId, osuName, ctx.RequestAborted);
+        if (osuText is null)
+            return Results.NotFound();
+
+        string? fontName = ParseLyricFontFilename(osuText);
+        if (string.IsNullOrEmpty(fontName))
+            return Results.NotFound();
+
+        var stream = await OpenManifestBlobAsync(conn, store, setId, fontName, ctx.RequestAborted);
+        if (stream is null)
+            return Results.NotFound();
+
+        return Results.Stream(stream, FontContentType(fontName), enableRangeProcessing: true);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -588,8 +614,36 @@ public static class PlayEndpoints
         }
     }
 
+    /// <summary>Reads a difficulty's .osu blob as text via the set's current version manifest,
+    /// or null when the manifest row or blob is missing.</summary>
+    private static async Task<string?> ReadOsuTextAsync(NpgsqlConnection conn, IFileStore store, long setId, string osuName, CancellationToken ct)
+    {
+        byte[]? osuSha = await ResolveManifestShaAsync(conn, setId, osuName);
+        if (osuSha is null)
+            return null;
+
+        try
+        {
+            await using var osuStream = await store.OpenBlobReadAsync(osuSha, ct);
+            using var reader = new StreamReader(osuStream);
+            return await reader.ReadToEndAsync(ct);
+        }
+        catch (FileNotFoundException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Extracts the [General] AudioFilename value (rest of the line after the first ':').</summary>
-    private static string? ParseAudioFilename(string osuText)
+    private static string? ParseAudioFilename(string osuText) => ParseGeneralValue(osuText, "AudioFilename");
+
+    /// <summary>Extracts the [General] LyricFontFile value: the bundled lyric font's name inside
+    /// the set (backlog 291), or null when the map bundles none. An EXACT key match, which matters
+    /// here more than for the audio: "LyricFont" (the family) is a prefix of this key, so a prefix
+    /// match would hand back the family for a map that sets one without bundling a file.</summary>
+    private static string? ParseLyricFontFilename(string osuText) => ParseGeneralValue(osuText, "LyricFontFile");
+
+    private static string? ParseGeneralValue(string osuText, string key)
     {
         using var reader = new StringReader(osuText);
         bool inGeneral = false;
@@ -604,12 +658,13 @@ public static class PlayEndpoints
                 continue;
             }
 
-            if (inGeneral && trimmed.StartsWith("AudioFilename", StringComparison.OrdinalIgnoreCase))
-            {
-                int colon = trimmed.IndexOf(':');
-                if (colon >= 0)
-                    return trimmed[(colon + 1)..].Trim();
-            }
+            if (!inGeneral)
+                continue;
+
+            int colon = trimmed.IndexOf(':');
+
+            if (colon > 0 && string.Equals(trimmed[..colon].Trim(), key, StringComparison.OrdinalIgnoreCase))
+                return trimmed[(colon + 1)..].Trim();
         }
 
         return null;
@@ -622,6 +677,16 @@ public static class PlayEndpoints
         ".wav" => "audio/wav",
         ".mp4" => "video/mp4",
         ".webm" => "video/webm",
+        _ => "application/octet-stream",
+    };
+
+    /// <summary>By extension, over the three formats PackageValidator admits as fonts; anything
+    /// else in the column position falls back like an unknown audio extension does above.</summary>
+    private static string FontContentType(string filename) => Path.GetExtension(filename).ToLowerInvariant() switch
+    {
+        ".ttf" => "font/ttf",
+        ".otf" => "font/otf",
+        ".woff2" => "font/woff2",
         _ => "application/octet-stream",
     };
 

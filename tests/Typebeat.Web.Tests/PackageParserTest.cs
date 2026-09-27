@@ -65,6 +65,31 @@ public class PackageParserTest
         });
     }
 
+    /// <summary>
+    /// The two map-font keys (backlog 291): [General] "LyricFont: &lt;family&gt;" and
+    /// "LyricFontFile: &lt;filename&gt;", surfaced like Title/Source, both empty when the file states
+    /// none (every map authored before the editor's picker existed writes neither line).
+    /// </summary>
+    [Test]
+    public void Parse_LyricFontKeys_AreExposedWhenPresent_AndEmptyWhenAbsent()
+    {
+        var with = BeatmapPackageParser.ParseDifficulty("map.osu",
+            SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+                lyricFont: "Blocky Pixels", lyricFontFile: "lyricfont.woff2")));
+
+        var without = BeatmapPackageParser.ParseDifficulty("map.osu",
+            SyntheticPackage.Utf8(SyntheticPackage.OsuText()));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(with.LyricFont, Is.EqualTo("Blocky Pixels"));
+            Assert.That(with.LyricFontFile, Is.EqualTo("lyricfont.woff2"));
+
+            Assert.That(without.LyricFont, Is.Empty, "no key means no font, never a fabricated one");
+            Assert.That(without.LyricFontFile, Is.Empty);
+        });
+    }
+
     [Test]
     public void Parse_LyricsSection_DrivesPaceAndLengths()
     {

@@ -28,6 +28,23 @@ public sealed class ParsedDifficulty
     /// <summary>Menu/website preview start in ms; -1 = unset (osu default).</summary>
     public double PreviewTime { get; init; } = -1;
 
+    /// <summary>
+    /// The mapper-chosen lyric font family (<c>[General] LyricFont:</c>, backlog 291), a free
+    /// single-line string; empty when the file states none, which is every map authored before
+    /// the editor's picker existed. Stored per difficulty as <c>beatmaps.lyric_font</c>
+    /// (037_lyric_font.sql) so the set page can name it; only the desktop client renders it.
+    /// </summary>
+    public string LyricFont { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The bundled font file's name inside the set (<c>[General] LyricFontFile:</c>): the game's
+    /// editor writes <c>lyricfont.&lt;ext&gt;</c>, extension lowercased, at most one per set.
+    /// Empty when the map bundles none (a family alone is legal: it then resolves from the
+    /// player's system fonts or falls back). Not stored; <c>/play/map/{setId}/font</c> re-reads
+    /// it off the difficulty's .osu text exactly as the audio route reads AudioFilename.
+    /// </summary>
+    public string LyricFontFile { get; init; } = string.Empty;
+
     // [Metadata]
     public string Title { get; init; } = string.Empty;
     public string TitleUnicode { get; init; } = string.Empty;

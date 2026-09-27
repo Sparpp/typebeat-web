@@ -361,13 +361,13 @@ public sealed class PackageIngest(
                      difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics,
                      sr_dt, sr_ht, sr_literate, sr_literate_dt, sr_literate_ht,
                      peak_wpm, peak_cpm, target_wpm, wpm_curve, gameplay_fingerprint, freestyle_cell_count,
-                     ratings)
+                     ratings, lyric_font)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
                      @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
                      @srDt, @srHt, @srLiterate, @srLiterateDt, @srLiterateHt,
                      @peakWpm, @peakCpm, @targetWpm, @wpmCurve, @gameplayFingerprint, @freestyleCellCount,
-                     @ratings::jsonb)
+                     @ratings::jsonb, @lyricFont)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -393,7 +393,8 @@ public sealed class PackageIngest(
                     wpm_curve = EXCLUDED.wpm_curve,
                     gameplay_fingerprint = EXCLUDED.gameplay_fingerprint,
                     freestyle_cell_count = EXCLUDED.freestyle_cell_count,
-                    ratings = EXCLUDED.ratings;
+                    ratings = EXCLUDED.ratings,
+                    lyric_font = EXCLUDED.lyric_font;
 
                 -- A re-upload can move this difficulty's star ratings, and the stored per-score pp
                 -- is a function of them, so hand every score set on this map back to PpBackfill
@@ -453,6 +454,12 @@ public sealed class PackageIngest(
                     // with no flagged freestyle line); NULL there means only that the pace backfill
                     // has not reached the row yet.
                     freestyleCellCount = diff.Pace.FreestyleCellCount,
+                    // The mapper-chosen lyric font family (037_lyric_font.sql), a plain [General]
+                    // key like the metadata above. UNLIKE the set's language it is rewritten each
+                    // upload rather than coalesced: it is per-difficulty parsed metadata (the
+                    // encoder always writes it when set), so an upload without the key means the
+                    // mapper removed the font, not that the client predates it.
+                    lyricFont = string.IsNullOrEmpty(diff.LyricFont) ? null : diff.LyricFont,
                     // THE RATING MATRIX (034_ratings_matrix.sql): the eighteen (judgement arm,
                     // stream, rate) readings, each carrying its star rating AND the map's difficult
                     // characters, which is what pp prices a play from since PerformancePoints v22.

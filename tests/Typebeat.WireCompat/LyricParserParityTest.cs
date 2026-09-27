@@ -167,21 +167,57 @@ public class LyricParserParityTest
     private static string Osu(bool withRests = true)
         => LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(withRests));
 
-    /// <summary>The map as the game's production decoder reads it.</summary>
-    private static IReadOnlyList<ClientLine> ClientParse(string osu)
+    /// <summary>The whole beatmap as the game's production decoder reads it.</summary>
+    private static Beatmap ClientDecode(string osu)
     {
         LyricBeatmapDecoder.Register();
 
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(osu));
         using var reader = new LineBufferedReader(stream);
-        var decoded = typebeat.Game.Beatmaps.Formats.Decoder.GetDecoder<Beatmap>(reader).Decode(reader);
-
-        return decoded.HitObjects.OfType<TypeBeatHitObject>().OrderBy(h => h.LineIndex).Select(h => h.Line).ToArray();
+        return typebeat.Game.Beatmaps.Formats.Decoder.GetDecoder<Beatmap>(reader).Decode(reader);
     }
+
+    /// <summary>The map's lines as the game's production decoder reads them.</summary>
+    private static IReadOnlyList<ClientLine> ClientParse(string osu)
+        => ClientDecode(osu).HitObjects.OfType<TypeBeatHitObject>().OrderBy(h => h.LineIndex).Select(h => h.Line).ToArray();
 
     /// <summary>The map as the server's ingest reads it.</summary>
     private static ParsedDifficulty ServerParse(string osu)
         => BeatmapPackageParser.ParseDifficulty("map.osu", Encoding.UTF8.GetBytes(osu));
+
+    /// <summary>
+    /// The map-font keys (backlog 291) through the same one-file-both-parsers lens: the .osu the
+    /// game's writer produces with a LyricFont/LyricFontFile carries them to BOTH production
+    /// readers, and a file without them reads as fontless on both sides. The keys are plain
+    /// [General] text, so what this pins is the SPELLING and placement: a renamed or moved key on
+    /// either side reads as absent on the other, which would silently strip every map's font in
+    /// one client while the other keeps showing it.
+    /// </summary>
+    [Test]
+    public void BothParsersReadTheMapFontKeysFromTheSameFile()
+    {
+        string withFont = LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(),
+            lyricFont: "Blocky Pixels", lyricFontFile: "lyricfont.woff2");
+
+        var clientMeta = ClientDecode(withFont).Metadata;
+        var server = ServerParse(withFont);
+
+        var clientMetaWithout = ClientDecode(Osu()).Metadata;
+        var serverWithout = ServerParse(Osu());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(clientMeta.LyricFont, Is.EqualTo("Blocky Pixels"), "client: family");
+            Assert.That(server.LyricFont, Is.EqualTo("Blocky Pixels"), "server: family");
+            Assert.That(clientMeta.LyricFontFile, Is.EqualTo("lyricfont.woff2"), "client: file");
+            Assert.That(server.LyricFontFile, Is.EqualTo("lyricfont.woff2"), "server: file");
+
+            Assert.That(clientMetaWithout.LyricFont, Is.Empty, "client: a fontless map stays fontless");
+            Assert.That(clientMetaWithout.LyricFontFile, Is.Empty);
+            Assert.That(serverWithout.LyricFont, Is.Empty, "server: no key, no font");
+            Assert.That(serverWithout.LyricFontFile, Is.Empty);
+        });
+    }
 
     [Test]
     public void BothParsersReadTheSameUnitsPausesAndSyllablesFromTheSameFile()
