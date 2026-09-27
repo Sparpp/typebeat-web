@@ -999,7 +999,8 @@ public class WebplayDisplayTest
     /// The invite is the one the page handed over (<c>#tb-stage</c>'s <c>data-discord-url</c>, rendered
     /// from <see cref="SiteLinks.DISCORD_INVITE"/>), never a second copy hardcoded in JavaScript: the
     /// harness feeds a distinctive URL through, and it is that URL the button links. It opens in a new
-    /// tab, with rel=noopener, and carries the results card's own primary button styling.
+    /// tab, with rel=noopener, and carries the Discord-branded button styling (not the card's own
+    /// primary button, since it is meant to read as a Discord button).
     /// </summary>
     [Test]
     public void TheNudgeButtonLinksTheInviteItWasHandedInANewTab()
@@ -1013,7 +1014,7 @@ public class WebplayDisplayTest
             Assert.That(html, Does.Contain($"href=\"{invite}\""));
             Assert.That(html, Does.Contain("target=\"_blank\""));
             Assert.That(html, Does.Contain("rel=\"noopener\""));
-            Assert.That(html, Does.Contain("class=\"tb-btn tb-btn-primary\""));
+            Assert.That(html, Does.Contain("class=\"tb-btn tb-btn-discord\""));
             Assert.That(html, Does.Contain("Did you enjoy playing? Then join the official Discord server"));
 
             // No hardcoded second copy: the real invite only ever reaches the scripts through the

@@ -555,7 +555,7 @@
 
     function nudgeHtml(url) {
         return '<span class="tb-result-nudge-text">Did you enjoy playing? Then join the official Discord server</span>'
-            + `<a class="tb-btn tb-btn-primary" href="${escapeHtml(url)}" target="_blank" rel="noopener">join discord</a>`;
+            + `<a class="tb-btn tb-btn-discord" href="${escapeHtml(url)}" target="_blank" rel="noopener">join discord</a>`;
     }
 
     function mountPlayer(container, opts) {

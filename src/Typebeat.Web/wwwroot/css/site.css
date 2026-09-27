@@ -379,6 +379,23 @@ img { max-width: 100%; }
     box-shadow: var(--glow-violet);
 }
 
+/* Discord blurple (backlog: join-discord restyle): Discord's own brand color and its own darker
+   hover shade, not the site's lime accent, so the button reads as a Discord button rather than a
+   themed one. The site is dark theme only (see the "Dark theme only" note in the :root comment
+   above), and this blurple sits comfortably on that charcoal ground; it is also one of the colours
+   Discord's own brand guidelines call legible on a light ground, so it needs no separate light-mode
+   rule if the site ever grows one. The inline SVG glyph next to it uses fill="currentColor", so it
+   goes white for free from the color rule below. */
+.btn-discord {
+    background: #5865F2;
+    color: #fff;
+}
+
+.btn-discord:hover {
+    background: #4752C4;
+    box-shadow: 0 0 16px rgba(88, 101, 242, 0.35);
+}
+
 .btn-small {
     padding: var(--space-1) var(--space-4);
     font-size: var(--text-sm);
@@ -2874,6 +2891,11 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .tb-btn-primary:hover { filter: brightness(1.06); }
 .tb-btn-ghost { background: transparent; border-color: var(--line-bright); color: var(--text); }
 .tb-btn-ghost:hover { border-color: var(--violet); }
+/* Discord blurple, same brand color and hover shade as .btn-discord above: the results-card nudge
+   button (typebeat-player.js's nudgeHtml) reads as a Discord button rather than the card's own
+   primary action. */
+.tb-btn-discord { background: #5865F2; color: #fff; font-weight: 700; }
+.tb-btn-discord:hover { background: #4752C4; }
 
 .tb-rank { font-size: 4rem; font-weight: 800; line-height: 1; font-family: var(--font-display); }
 .tb-rank-X { color: var(--violet-bright); }
