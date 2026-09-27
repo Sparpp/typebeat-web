@@ -370,6 +370,20 @@ public static class PublicSiteSeed
         }
     }
 
+    /// <summary>
+    /// Inserts one set comment directly (036_beatmapset_comments.sql), bypassing the page
+    /// handler: for fixtures that need volume (pagination) or authors who could never post
+    /// through the UI (a restricted account). Returns the comment's id.
+    /// </summary>
+    public static async Task<long> SeedCommentAsync(NpgsqlConnection conn, long setId, long userId, string body)
+        => await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapset_comments (set_id, user_id, body)
+            VALUES (@setId, @userId, @body)
+            RETURNING id
+            """,
+            new { setId, userId, body });
+
     private static async Task<long> InsertUserAsync(NpgsqlConnection conn, string username)
         => await conn.ExecuteScalarAsync<long>(
             """

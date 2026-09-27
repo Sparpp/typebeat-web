@@ -1,0 +1,35 @@
+@using Typebeat.Web.Social
+@model CommentRowView
+@*
+    One comment on a beatmapset: avatar (initial-letter fallback, the podium's idiom), author
+    link, compact relative age, plain-text body (default Razor encoding + pre-line, the
+    description's XSS discipline), and, when the viewer may remove it (author, set owner or
+    reviewer), a delete form. No JavaScript: the delete is a plain POST that reloads the page.
+*@
+<div class="comment-row" id="comment-@Model.Comment.Id">
+    <a href="/users/@Model.Comment.UserId" class="comment-row__avatar-link" aria-label="@Model.Comment.Username">
+        @if (Model.Comment.AvatarUrl is string avatar)
+        {
+            <img class="comment-row__avatar" src="@avatar" alt="" loading="lazy" />
+        }
+        else
+        {
+            <span class="avatar-fallback comment-row__avatar" aria-hidden="true">@Model.Comment.Username[..1]</span>
+        }
+    </a>
+    <div class="comment-row__main">
+        <div class="comment-row__meta">
+            <a class="comment-row__name" href="/users/@Model.Comment.UserId">@Model.Comment.Username</a>
+            <span class="faint">@Model.Comment.AgeLabel()</span>
+            @if (Model.CanDelete)
+            {
+                <form class="comment-row__delete" method="post"
+                      asp-page="/Beatmapsets/Set" asp-page-handler="DeleteComment" asp-route-id="@Model.SetId">
+                    <input type="hidden" name="commentId" value="@Model.Comment.Id" />
+                    <button type="submit" class="btn-link">delete</button>
+                </form>
+            }
+        </div>
+        <div class="comment-row__body">@Model.Comment.Body</div>
+    </div>
+</div>

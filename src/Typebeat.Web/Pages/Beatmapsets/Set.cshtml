@@ -1,5 +1,6 @@
 @page "/beatmapsets/{id:long}"
 @using System.Globalization
+@using Typebeat.Web.Social
 @model Typebeat.Web.Pages.Beatmapsets.SetModel
 
 @{
@@ -266,6 +267,30 @@
         @* Plain text by design: default Razor encoding + pre-line = XSS-safe line breaks. *@
         <div class="set-description">@Model.Set.Description</div>
     }
+    @if (Model.CanEditDescription)
+    {
+        @* Owner/reviewer only (the POST's WHERE clause is the boundary; this is honesty about
+           it). Collapsed by default like the report box: editing is the rare act here. *@
+        <details class="description-box" @(Model.DescriptionSaved || Model.DescriptionTooLong ? "open" : null)>
+            <summary>@(Model.Set.Description.Length > 0 ? "Edit description" : "Add a description")</summary>
+            @if (Model.DescriptionSaved)
+            {
+                <p class="description-box__saved">Description saved.</p>
+            }
+            @if (Model.DescriptionTooLong)
+            {
+                <p class="description-box__error">That description is over 2000 characters, so nothing was saved. Trim it down and try again.</p>
+            }
+            <form method="post" asp-page-handler="Description" asp-route-id="@Model.Set.Id">
+                <div class="field">
+                    <label for="set-description-input">Plain text; line breaks survive, markup never renders.</label>
+                    <textarea class="input" id="set-description-input" name="description" rows="6"
+                              maxlength="2000">@Model.Set.Description</textarea>
+                </div>
+                <button type="submit" class="btn btn-ghost btn-small">Save description</button>
+            </form>
+        </details>
+    }
     @if (Model.Set.TagList.Any() || Model.Set.Source.Length > 0 || Model.Set.LanguageDisplay is not null)
     {
         <div class="tag-chips">
@@ -452,3 +477,54 @@
         <div class="set-lyrics__text">@Model.Diff.Lyrics</div>
     </section>
 }
+
+@* Comments, the page's last section (below the lyrics). One page of 50, oldest first, keyset
+   paged; deliberately no JavaScript: a comment post reloads the page it lands on. *@
+<section class="set-comments" id="comments">
+    <h2>Comments (@Model.CommentCount.ToString("N0", CultureInfo.InvariantCulture))</h2>
+    @if (Model.CommentFlag == "slow")
+    {
+        <p class="set-comments__notice">You're commenting faster than the site accepts. Give it a few minutes.</p>
+    }
+    else if (Model.CommentFlag == "long")
+    {
+        <p class="set-comments__notice">That comment is over 2000 characters, so nothing was posted. Trim it down and try again.</p>
+    }
+    @if (Model.Comments.Count == 0)
+    {
+        <div class="empty-state">
+            <h3>No comments yet</h3>
+            <p>Nobody has said anything about this map. Be the first.</p>
+        </div>
+    }
+    else
+    {
+        <div class="comment-list">
+            @foreach (var comment in Model.Comments)
+            {
+                <partial name="_CommentRow" model="new CommentRowView(comment, Model.Set.Id, Model.CanDeleteComment(comment))" />
+            }
+        </div>
+        @if (Model.HasMoreComments)
+        {
+            <div class="show-more">
+                <a class="btn btn-ghost" href="@(Model.BuildUrl(commentsAfter: Model.Comments[^1].Id))#comments">Show more comments</a>
+            </div>
+        }
+    }
+    @if (Model.CurrentUser is not null)
+    {
+        <form class="comment-compose" method="post" asp-page-handler="Comment" asp-route-id="@Model.Set.Id">
+            <div class="field">
+                <label for="comment-body">Add a comment</label>
+                <textarea class="input" id="comment-body" name="body" rows="3" required maxlength="2000"
+                          placeholder="thoughts on the map, the timing, the difficulty&hellip;"></textarea>
+            </div>
+            <button type="submit" class="btn btn-ghost btn-small">Post comment</button>
+        </form>
+    }
+    else
+    {
+        <a class="btn btn-ghost" href="/login" title="Sign in to comment">Sign in to comment</a>
+    }
+</section>

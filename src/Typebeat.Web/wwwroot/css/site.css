@@ -1674,6 +1674,95 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     max-width: 68ch;
 }
 
+/* ---- Set page: description edit box (owner/reviewer only, the report-box idiom) ---- */
+
+.description-box {
+    margin-top: var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+.description-box summary { cursor: pointer; }
+
+.description-box form { margin-top: var(--space-3); max-width: 68ch; }
+
+.description-box__saved { margin-top: var(--space-3); color: var(--good); }
+
+.description-box__error { margin-top: var(--space-3); color: var(--bad); }
+
+/* ---- Set page: comments (below the lyrics) ---- */
+
+.set-comments { margin-top: var(--space-6); }
+
+.set-comments__notice {
+    margin-top: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--warn);
+}
+
+.comment-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+    max-width: 68ch;                 /* reads like the description it sits under */
+}
+
+.comment-row {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
+}
+
+/* Smaller than the podium's 56px disc; the img and the fallback share the box. */
+.comment-row__avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+    font-size: var(--text-base);
+    flex-shrink: 0;
+}
+
+.comment-row__avatar-link { display: inline-flex; flex-shrink: 0; }
+
+.comment-row__avatar-link:hover { text-decoration: none; }
+
+.comment-row__main { flex: 1; min-width: 0; }
+
+.comment-row__meta {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+}
+
+.comment-row__name { font-weight: 700; }
+
+/* Inline delete that reads as a link, the resend-form idiom. */
+.comment-row__delete { display: inline; margin-left: auto; }
+
+.comment-row__delete .btn-link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text-faint);
+    font: inherit;
+    font-size: var(--text-xs);
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.comment-row__delete .btn-link:hover { color: var(--bad); }
+
+.comment-row__body {
+    white-space: pre-line;           /* plain text with line breaks, no markup pipeline */
+    overflow-wrap: anywhere;
+    margin-top: 2px;
+}
+
+.comment-compose { margin-top: var(--space-5); max-width: 68ch; }
+
 /* ---- Set page: leaderboard ---- */
 
 .set-leaderboard { margin-top: var(--space-6); }

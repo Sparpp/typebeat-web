@@ -32,6 +32,12 @@
                     <span>uploaded</span>
                     <span class="notif-row__subject">@Model.DisplayArtist(preferOriginal) - @Model.DisplayTitle(preferOriginal)</span>
                 }
+                else if (Model.Kind == Notifications.MapCommentKind)
+                {
+                    <span class="notif-row__actor">@(Model.ActorName ?? "Someone")</span>
+                    <span>commented on</span>
+                    <span class="notif-row__subject">@Model.DisplayArtist(preferOriginal) - @Model.DisplayTitle(preferOriginal)</span>
+                }
                 else
                 {
                     @* Unknown kind: a row written by a newer deploy than this template. Say

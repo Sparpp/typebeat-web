@@ -14,7 +14,8 @@ per-section files under the session scratchpad
 - **In-editor beatmap submission** compatible with lazer's BSS flow (three endpoints), implemented
   by this monolith at the `/bss` path prefix.
 - Out of scope: in-game beatmap listing (osu!direct), protocol deep links ("open in type!beat"
-  buttons), comments/discussions, email verification (M2), R2 migration.
+  buttons), comments/discussions, email verification (M2), R2 migration. (Amended 2026-09-27:
+  set-page comments shipped after M3 as backlog 295, website-only; in-game discussions stay out.)
 
 ## User decisions (2026-07-16)
 
@@ -146,7 +147,9 @@ migrations are embedded resources applied at startup in filename order.
   WPM chip, favourite + download rail).
 - `/beatmapsets/{id}`: cover header + scrim, stats box (Length · Words · Chars · WPM bar),
   description, tags, global leaderboard (podium + table, judgement names, no PP), download +
-  favourite buttons, report link.
+  favourite buttons, report link. (Amended 2026-09-27, backlog 295: the description became
+  editable on the page by the set owner or a map reviewer, and a user comments section sits
+  below the lyrics, with a 'map_comment' notification to the mapper.)
 - `/users/{id}`: cover band + avatar, joined/last-seen, Global Rank (by total score) + stats grid
   (Total Score · Play Count · Play Time · Accuracy), grade-count row, sections: Best scores /
   Recent scores / Most played / Uploaded maps + Favourites (listing card partial reuse).

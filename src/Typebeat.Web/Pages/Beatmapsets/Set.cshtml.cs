@@ -2,9 +2,11 @@ using System.Globalization;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json.Linq;
+using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
+using Typebeat.Web.Social;
 
 namespace Typebeat.Web.Pages.Beatmapsets;
 
@@ -15,6 +17,8 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// and, below the leaderboard, the selected difficulty's lyrics (beatmaps.lyrics, hidden
 /// when empty).
 /// POST handlers: Favourite (toggle + denormalized counter bump), Report (reports table),
+/// Description (owner/reviewer edit of the set's plain-text description), Comment and
+/// DeleteComment (the comments section below the lyrics, backlog 295),
 /// and the reviewer-only Rank/Unrank pair (pending ⇄ ranked, nothing else).
 /// Hidden sets are visible to their owner only. Removed sets 404 for the public but stay
 /// viewable by their owner and by admins (the owner's profile deliberately lists them, and a
@@ -24,6 +28,14 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageModel
 {
     private const int max_report_reason_length = 4000;
+
+    /// <summary>
+    /// Comment-post speed bump, keyed on the signed-in user's id: 10 comments per 5 minutes is
+    /// generous for a conversation and useless for a flood. Same in-memory pattern as the
+    /// login/register limiters; a refusal bounces back as the ?comment=slow notice (the pin
+    /// handlers' ?pin=limit idiom).
+    /// </summary>
+    private static readonly FixedWindowLimiter comment_posts = new(10, TimeSpan.FromMinutes(5));
 
     public SetDetails Set { get; private set; } = null!;
 
@@ -41,9 +53,69 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
     /// <summary>Set by the post-report redirect (?reported=1) to swap the form for a thanks note.</summary>
     public bool Reported { get; private set; }
 
-    public async Task<IActionResult> OnGetAsync(long id, bool reported = false, long diff = 0, string board = "ranked")
+    /// <summary>Set by the post-edit redirect (?saved=description): the edit box's saved note.</summary>
+    public bool DescriptionSaved { get; private set; }
+
+    /// <summary>Set by the description PRG when the posted text was over budget: rejected, not
+    /// truncated (the Settings bio rule), so the note has to say nothing was saved.</summary>
+    public bool DescriptionTooLong { get; private set; }
+
+    /// <summary>The comments section's inline notice: "slow" (rate limited) or "long" (over
+    /// budget, rejected). Null renders nothing.</summary>
+    public string? CommentFlag { get; private set; }
+
+    /// <summary>This page of the set's comments, oldest first (?comments_after= keyset cursor).</summary>
+    public IReadOnlyList<CommentRowModel> Comments { get; private set; } = [];
+
+    /// <summary>Live visible comments on the whole set (the section heading's count).</summary>
+    public int CommentCount { get; private set; }
+
+    public bool HasMoreComments { get; private set; }
+
+    /// <summary>The ?diff= this request actually asked for (0 when it didn't, or asked for a
+    /// difficulty that is not in this set), so <see cref="BuildUrl"/> preserves only what the
+    /// visitor chose rather than pinning the default into every link.</summary>
+    private long requestedDiff;
+
+    /// <summary>Owner or reviewer: whether the description edit box renders. The POST handler is
+    /// the boundary (its UPDATE carries the same predicate); this is just honesty about it.</summary>
+    public bool CanEditDescription
+        => CurrentUser is not null && (CurrentUser.Id == Set.OwnerId || CurrentUser.CanReviewMaps);
+
+    /// <summary>Whether this viewer may delete this comment: its author, the set's owner, or a
+    /// reviewer. Mirrors <see cref="BeatmapsetComments.SoftDeleteAsync"/>'s WHERE clause.</summary>
+    public bool CanDeleteComment(CommentRowModel comment)
+        => CurrentUser is not null
+           && (comment.UserId == CurrentUser.Id || Set.OwnerId == CurrentUser.Id || CurrentUser.CanReviewMaps);
+
+    /// <summary>
+    /// Set-page URL preserving the visitor's diff/board choices; the comments cursor only when
+    /// paging (the listing's BuildUrl shape). The caller appends #comments where it wants the
+    /// scroll.
+    /// </summary>
+    public string BuildUrl(long? commentsAfter = null)
+    {
+        var parts = new List<string>();
+
+        if (requestedDiff != 0)
+            parts.Add("diff=" + requestedDiff.ToString(CultureInfo.InvariantCulture));
+
+        if (Board != "ranked")
+            parts.Add("board=" + Board);
+
+        if (commentsAfter is long after)
+            parts.Add("comments_after=" + after.ToString(CultureInfo.InvariantCulture));
+
+        return $"/beatmapsets/{Set.Id}" + (parts.Count > 0 ? "?" + string.Join("&", parts) : "");
+    }
+
+    public async Task<IActionResult> OnGetAsync(long id, bool reported = false, long diff = 0, string board = "ranked",
+        long comments_after = 0, string? saved = null, string? description = null, string? comment = null)
     {
         Reported = reported;
+        DescriptionSaved = saved == "description";
+        DescriptionTooLong = description == "long";
+        CommentFlag = comment is "slow" or "long" ? comment : null;
         Board = board == "unranked" ? "unranked" : "ranked";
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
@@ -129,6 +201,7 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
             new { id })).ToList();
 
         Diff = Diffs.FirstOrDefault(d => d.Id == diff) ?? Diffs.FirstOrDefault();
+        requestedDiff = diff != 0 && Diff?.Id == diff ? diff : 0;
 
         // Global leaderboard: best ranked+passed score per user across the set's difficulties
         // (the same eligibility and ordering the game-facing endpoint in ScoreEndpoints reads,
@@ -171,6 +244,18 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
             LIMIT 50
             """,
                 new { beatmapId = Diff.Id, wantRanked })).ToList();
+
+        // The comments section (below the lyrics): live rows by non-delisted authors, oldest
+        // first, keyset-paged. PageSize + 1 sentinel tells us whether a show-more link renders.
+        CommentCount = await BeatmapsetComments.CountAsync(conn, id, HttpContext.RequestAborted);
+
+        var comments = await BeatmapsetComments.ListAsync(
+            conn, id, comments_after, BeatmapsetComments.PageSize + 1, HttpContext.RequestAborted);
+
+        HasMoreComments = comments.Count > BeatmapsetComments.PageSize;
+        if (HasMoreComments)
+            comments.RemoveAt(BeatmapsetComments.PageSize);
+        Comments = comments;
 
         ViewData["Title"] = $"{Set.Artist} - {Set.Title}";
         ViewData["MetaDescription"] =
@@ -260,6 +345,123 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         // "true" not "1": the bool handler parameter binds via the default TypeConverter,
         // which rejects numeric strings.
         return Redirect($"/beatmapsets/{id}?reported=true");
+    }
+
+    // ---- description (owner or reviewer) ----
+
+    /// <summary>
+    /// Saves the set's plain-text description. Permission IS the UPDATE's WHERE clause
+    /// (owner or map reviewer): an unpermitted or nonexistent target matches no row and answers
+    /// NotFound, the page's convention (the custom cookie auth has no scheme for Forbid).
+    /// Over-budget text is REJECTED, not truncated (the Settings bio rule: silently cutting
+    /// someone's words is worse than making them shorten). updated_at is deliberately NOT
+    /// bumped: the listing sorts on it, and a free re-newest lever on a text edit is the abuse
+    /// vector the Discord feed already refuses to be (BuddyEndpoints).
+    /// </summary>
+    public async Task<IActionResult> OnPostDescriptionAsync(long id, string? description)
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        description = (description ?? string.Empty).Trim();
+
+        if (description.Length > Settings.IndexModel.MaxDescriptionLength)
+            return Redirect($"/beatmapsets/{id}?description=long");
+
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        int changed = await conn.ExecuteAsync(
+            """
+            UPDATE beatmapsets
+            SET description = @description
+            WHERE id = @id AND (owner_id = @uid OR @canReview)
+            """,
+            new { id, description, uid = CurrentUser.Id, canReview = CurrentUser.CanReviewMaps });
+
+        if (changed == 0)
+            return NotFound();
+
+        return Redirect($"/beatmapsets/{id}?saved=description");
+    }
+
+    // ---- comments ----
+
+    /// <summary>
+    /// Posts one comment: any signed-in user (a restricted account can never reach here, the
+    /// cookie middleware treats it as signed out), on a set that is visible and not removed
+    /// (the favourite handler's status check). The insert and its owner notification share one
+    /// transaction (<see cref="BeatmapsetComments.PostAsync"/>). No progressive enhancement:
+    /// a comment post legitimately reloads the page.
+    /// </summary>
+    public async Task<IActionResult> OnPostCommentAsync(long id, string? body)
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        string normalized = BeatmapsetComments.Normalize(body);
+
+        if (normalized.Length == 0)
+            return Redirect($"/beatmapsets/{id}#comments");
+        if (normalized.Length > BeatmapsetComments.MaxBodyLength)
+            return Redirect($"/beatmapsets/{id}?comment=long#comments");
+
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        string? status = await conn.ExecuteScalarAsync<string?>(
+            "SELECT status FROM beatmapsets WHERE id = @id", new { id });
+
+        if (status is null or "removed")
+            return NotFound();
+
+        // After the checks, so a 404 or an over-long refusal never burns comment budget.
+        if (!comment_posts.Allow(CurrentUser.Id.ToString(CultureInfo.InvariantCulture)))
+            return Redirect($"/beatmapsets/{id}?comment=slow#comments");
+
+        await BeatmapsetComments.PostAsync(conn, id, CurrentUser.Id, normalized, HttpContext.RequestAborted);
+
+        return Redirect($"/beatmapsets/{id}#comments");
+    }
+
+    /// <summary>
+    /// Soft-deletes one comment. Permission is <see cref="BeatmapsetComments.SoftDeleteAsync"/>'s
+    /// WHERE clause (author, set owner, or reviewer); no row means NotFound, whether the comment
+    /// never existed, is already gone, or is simply not the caller's to remove
+    /// (indistinguishable on purpose, the pin handlers' rule). A REVIEWER removing somebody
+    /// else's comment on somebody else's set is moderation and writes the audit row, best-effort
+    /// like the rank/unrank audit; deleting your own comment, or tidying your own set's thread,
+    /// is not.
+    /// </summary>
+    public async Task<IActionResult> OnPostDeleteCommentAsync(long id, long commentId)
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        var deleted = await BeatmapsetComments.SoftDeleteAsync(
+            conn, id, commentId, CurrentUser.Id, CurrentUser.CanReviewMaps, HttpContext.RequestAborted);
+
+        if (deleted is null)
+            return NotFound();
+
+        if (CurrentUser.CanReviewMaps && deleted.AuthorId != CurrentUser.Id && deleted.OwnerId != CurrentUser.Id)
+        {
+            try
+            {
+                await conn.ExecuteAsync(
+                    """
+                    INSERT INTO moderation_actions (actor_id, set_id, action, note)
+                    VALUES (@actorId, @id, 'comment_delete', @note)
+                    """,
+                    new { actorId = CurrentUser.Id, id, note = $"comment {commentId}" });
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning(e, "Comment {CommentId} on set {SetId} was removed but the audit row failed.", commentId, id);
+            }
+        }
+
+        return Redirect($"/beatmapsets/{id}#comments");
     }
 
     // ---- reviewer controls (map_reviewer or admin only) ----

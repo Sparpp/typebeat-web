@@ -11,17 +11,24 @@ namespace Typebeat.Web.Social;
 /// counts, which is the property that makes the badge clearable at all.
 ///
 /// <para>
-/// The site has exactly one kind today, <see cref="MapperUploadKind"/>, written by
-/// <see cref="FanOutMapperUploadAsync"/> from inside the ingest transaction that publishes a set.
-/// Everything else here is kind-agnostic on purpose: the reads project a nullable set/actor pair
-/// and the rendering decides what to say about it, so a second kind is a CHECK edit, a row
-/// partial branch, and nothing else.
+/// Two kinds today: <see cref="MapperUploadKind"/>, written by
+/// <see cref="FanOutMapperUploadAsync"/> from inside the ingest transaction that publishes a set,
+/// and <see cref="MapCommentKind"/>, written by <see cref="BeatmapsetComments.FanOutCommentAsync"/>
+/// inside the comment insert's transaction. Everything else here is kind-agnostic on purpose: the
+/// reads project nullable reference columns and the rendering decides what to say about them,
+/// which is what made the second kind a CHECK edit, a row partial branch, and nothing else,
+/// exactly as promised when there was one.
 /// </para>
 /// </summary>
 public static class Notifications
 {
     /// <summary>A mapper this user watches published a new set. actor = mapper, set = the set.</summary>
     public const string MapperUploadKind = "mapper_upload";
+
+    /// <summary>Someone commented on this user's set (036_beatmapset_comments.sql). actor = the
+    /// commenter, set = the set, comment_id = the comment. Written by
+    /// <see cref="BeatmapsetComments.FanOutCommentAsync"/> inside the insert's transaction.</summary>
+    public const string MapCommentKind = "map_comment";
 
     /// <summary>
     /// How many unread rows the badge query is willing to look at. The badge cannot render a
@@ -222,7 +229,8 @@ public static class Notifications
                         s.title_unicode AS SetTitleUnicode,
                         s.artist        AS SetArtist,
                         s.artist_unicode AS SetArtistUnicode,
-                        CASE WHEN s.cover_key IS NOT NULL THEN '/' || s.cover_key || '/list.jpg' END AS SetCoverUrl
+                        CASE WHEN s.cover_key IS NOT NULL THEN '/' || s.cover_key || '/list.jpg' END AS SetCoverUrl,
+                        n.comment_id    AS CommentId
                  {joins}
                  WHERE n.user_id = @userId
                    AND {visible_predicate}
@@ -239,9 +247,12 @@ public sealed record NotificationTarget(string Kind, long? SetId)
 {
     /// <summary>
     /// The page a click lands on. A kind with no set falls back to the notifications home rather
-    /// than dead-ending, so adding a kind can never produce a link to nowhere.
+    /// than dead-ending, so adding a kind can never produce a link to nowhere. A comment
+    /// notification lands on the set page's comments section rather than its header.
     /// </summary>
-    public string Url => SetId is long setId ? $"/beatmapsets/{setId}" : "/watching";
+    public string Url => SetId is long setId
+        ? Kind == Notifications.MapCommentKind ? $"/beatmapsets/{setId}#comments" : $"/beatmapsets/{setId}"
+        : "/watching";
 }
 
 /// <summary>
@@ -252,6 +263,7 @@ public sealed record NotificationTarget(string Kind, long? SetId)
 /// <param name="SetId">The set it points at, null for a kind that points at none.</param>
 /// <param name="ReadAt">Null = unread (rendered with the unread marker).</param>
 /// <param name="ActorName">The user who caused it, null if the kind has no actor.</param>
+/// <param name="CommentId">The comment it points at ('map_comment'), null for every other kind.</param>
 public sealed record NotificationRowModel(
     long Id,
     string Kind,
@@ -264,7 +276,8 @@ public sealed record NotificationRowModel(
     string? SetTitleUnicode,
     string? SetArtist,
     string? SetArtistUnicode,
-    string? SetCoverUrl)
+    string? SetCoverUrl,
+    long? CommentId)
 {
     public bool IsUnread => ReadAt is null;
 
@@ -276,29 +289,6 @@ public sealed record NotificationRowModel(
     public string DisplayArtist(bool preferOriginal)
         => MetadataDisplay.Pick(SetArtist ?? "", SetArtistUnicode, preferOriginal);
 
-    /// <summary>
-    /// Compact relative age ("3m", "5h", "2d"), the same glanceable shape osu-web's notification
-    /// list uses. Deliberately not the profile's prose "n days ago": a notification row is narrow
-    /// and the timestamp is a suffix, not a sentence.
-    /// </summary>
-    public string AgeLabel()
-    {
-        var elapsed = DateTime.UtcNow - CreatedAt;
-
-        if (elapsed < TimeSpan.Zero)
-            elapsed = TimeSpan.Zero;
-
-        if (elapsed < TimeSpan.FromMinutes(1))
-            return "now";
-        if (elapsed < TimeSpan.FromHours(1))
-            return $"{(int)elapsed.TotalMinutes}m";
-        if (elapsed < TimeSpan.FromDays(1))
-            return $"{(int)elapsed.TotalHours}h";
-        if (elapsed < TimeSpan.FromDays(30))
-            return $"{(int)elapsed.TotalDays}d";
-        if (elapsed < TimeSpan.FromDays(365))
-            return $"{(int)(elapsed.TotalDays / 30)}mo";
-
-        return $"{(int)(elapsed.TotalDays / 365)}y";
-    }
+    /// <summary>Compact relative age (see <see cref="RelativeAge"/>).</summary>
+    public string AgeLabel() => RelativeAge.Label(CreatedAt);
 }

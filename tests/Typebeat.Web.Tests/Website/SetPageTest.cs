@@ -213,6 +213,54 @@ public class SetPageTest
     }
 
     [Test]
+    public async Task SectionOrder_DescriptionAboveLeaderboard_CommentsBelowLyrics()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync($"/beatmapsets/{PublicSiteSeed.LeaderboardSetId}");
+        string html = await response.Content.ReadAsStringAsync();
+
+        int description = html.IndexOf("set-description", StringComparison.Ordinal);
+        int leaderboard = html.IndexOf("set-leaderboard", StringComparison.Ordinal);
+        int lyrics = html.IndexOf("set-lyrics", StringComparison.Ordinal);
+        int comments = html.IndexOf("set-comments", StringComparison.Ordinal);
+
+        Assert.Multiple(() =>
+        {
+            // The description kept its pre-comments position above the leaderboard, and the new
+            // comments section is the page's last, below the lyrics.
+            Assert.That(description, Is.GreaterThanOrEqualTo(0));
+            Assert.That(comments, Is.GreaterThanOrEqualTo(0));
+            Assert.That(description, Is.LessThan(leaderboard));
+            Assert.That(comments, Is.GreaterThan(lyrics));
+
+            // Anonymous chrome: no edit box, and a sign-in link instead of the compose form.
+            Assert.That(html, Does.Not.Contain("description-box"));
+            Assert.That(html, Does.Contain("Sign in to comment"));
+            Assert.That(html, Does.Not.Contain("id=\"comment-body\""));
+        });
+    }
+
+    [Test]
+    public async Task DescriptionEditBox_HiddenFromASignedInNonOwner()
+    {
+        // A dedicated user, NOT the shared "web player": every LoginAndVerifyAsync issues an
+        // email code, and the shared account's hourly code budget (EmailCodeService.MaxPerHour)
+        // is already spoken for by the older tests.
+        const string name = "set page bystander";
+        await WebsiteFixture.SeedUserAsync(name, "set.page.bystander@example.com", "hunter2hunter2");
+
+        using var client = await SignedInBrowserAsync(name, "hunter2hunter2");
+        using var response = await client.GetAsync($"/beatmapsets/{PublicSiteSeed.LeaderboardSetId}");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            // Not their set (and they are no reviewer): no edit box, but the compose form shows.
+            Assert.That(html, Does.Not.Contain("description-box"));
+            Assert.That(html, Does.Contain("id=\"comment-body\""));
+        });
+    }
+
+    [Test]
     public async Task Favourite_Post_TogglesRowAndCounter()
     {
         long setId = PublicSiteSeed.LeaderboardSetId;
