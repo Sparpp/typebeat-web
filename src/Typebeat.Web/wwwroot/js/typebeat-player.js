@@ -233,27 +233,91 @@
         };
     }
 
-    // completion: hits / cells seen so far (how "typed %" reads mid-play, and what rank keys off).
+    // THE LIVE HUD (backlog 319): the two numbers the desktop's default HUD shows, both read off the
+    // score processor mirror, so neither is a second account of the play.
     //
-    // Backlog 251 removed the browser's sync HUD readout and its per-cell tint (the desktop's own
-    // metric is off by default too, and the results grade never read either). This still folds
-    // sealed misses into `seen` the same way it always has; only the sync half of the old two-stat
-    // pass is gone. judgedDelta itself is untouched (see typebeat-core.js): it stays engine data
-    // for WireCompat parity, this function just no longer reads it back for a display readout.
-    function liveStats(engine) {
-        let hit = 0, seen = 0;
-        const lines = engine.lines;
-        for (let li = 0; li < lines.length; li++) {
-            const cells = lines[li].cells;
-            for (let ci = 0; ci < cells.length; ci++) {
-                const c = cells[ci];
-                const scored = c.state === 'correct' &&
-                    (c.judgeType === 'Great' || c.judgeType === 'Ok' || c.judgeType === 'Meh');
-                if (scored) { hit++; seen++; }
-                else if (c.state === 'correct' || c.state === 'missed') seen++;
-            }
+    // score: the standardised total climbing live (GameplayScoreCounter, bound to
+    // ScoreProcessor.TotalScore). ScoreProcessor.updateScore runs the very formula computeScore
+    // does, so the HUD asks computeScore rather than restating it, and the last frame's figure is
+    // the one the card shows and /play submits. engine.score, the combo-weighted internal points,
+    // stays engine data (the fuzz harnesses pin it for parity) and is no longer on screen: it is
+    // on a different scale from the 1,000,000 total.
+    //
+    // accuracy: JUDGED-only accuracy (GameplayAccuracyCounter's Standard mode, bound to
+    // ScoreProcessor.Accuracy = currentBaseScore / currentMaximumBaseScore), 1 before anything is
+    // judged. Not engine.liveAccuracy, which is a keypress ratio and blind to tier.
+    //
+    // It replaces the old 'typed' readout (liveStats), which counted correct cells over cells seen,
+    // ignored tier, counted an off-time press as unhit and never counted a sealed typo, so it could
+    // disagree with the card's own completion. The desktop HUD has no completion readout at all;
+    // the card keeps completion, read off computeScore, where rank is decided.
+    function hudReadouts(engine) {
+        const processor = engine.processor;
+        return {
+            score: Core.computeScore(engine).totalScore,
+            accuracy: processor.maximumBaseScore > 0 ? processor.baseScore / processor.maximumBaseScore : 1
+        };
+    }
+
+    // FormatUtils.FormatAccuracy: floored to four decimal digits so 89.99999% never reads as 90%
+    // (the rank cutoffs sit on whole numbers), then shown to two decimals of a percent.
+    function fmtAccuracy(accuracy) {
+        return (Math.floor(accuracy * 10000) / 100).toFixed(2) + '%';
+    }
+
+    // SONG PROGRESS (backlog 319), SongProgress over the playable bounds rather than the decoded
+    // file: FirstHitTime is the first hit object's StartTime (line 0's startTime) and LastHitTime
+    // the latest GetEndTime (a TypeBeatHitObject ends at Line.EndTime + SealGraceMs). Before
+    // FirstHitTime the bar is in its INTRO phase, which runs from the clock's own start
+    // (GameplayClock.StartTime, i.e. gameplayStartTime, negative on a pre-roll) to FirstHitTime.
+    function songProgressBounds(lines, clockStart) {
+        if (!lines || lines.length === 0) return { clockStart: clockStart || 0, first: 0, last: 0 };
+        let last = -Infinity;
+        for (const line of lines) last = Math.max(last, line.endTime + line.sealGraceMs);
+        return { clockStart: clockStart, first: lines[0].startTime, last: last };
+    }
+
+    // SongProgress.Update's split plus ArgonSongProgress's reading of it: the bar holds at 0 through
+    // the intro (UpdateProgress's isIntro arm) and then runs 0..1 over the playable span, with the
+    // time clamped to LastHitTime. introProgress is the desktop's intro fraction, which the Argon bar
+    // does not draw; it is exposed for the pin and the intro styling.
+    //
+    // The time text is SongProgressInfo, which counts from FirstHitTime and does NOT clamp: elapsed
+    // is floor((time - first) / 1000) whole seconds (negative through the intro), remaining is
+    // last - time, and both freeze once elapsed reaches the span's length (the desktop only
+    // rewrites them while songCurrentTime < songLength), which the caller honours through
+    // `textLive`.
+    function songProgressAt(bounds, time) {
+        const current = Math.min(time, bounds.last);
+        const isIntro = current < bounds.first;
+        let barProgress, introProgress;
+        if (isIntro) {
+            const introDuration = bounds.first - bounds.clockStart;
+            introProgress = introDuration > 0 ? (current - bounds.clockStart) / introDuration : 1;
+            barProgress = 0;
+        } else {
+            const duration = bounds.last - bounds.first;
+            introProgress = 1;
+            barProgress = duration === 0 ? 0 : (current - bounds.first) / duration;
         }
-        return { completion: seen > 0 ? hit / seen : 1 };
+        const songCurrentTime = time - bounds.first;
+        return {
+            isIntro: isIntro,
+            introProgress: introProgress,
+            barProgress: Math.max(0, Math.min(1, barProgress)),
+            textLive: songCurrentTime < bounds.last - bounds.first,
+            elapsedText: fmtSongTime(Math.floor(songCurrentTime / 1000) * 1000),
+            remainingText: fmtSongTime(bounds.last - time)
+        };
+    }
+
+    // SongProgressInfo.formatTime: a sign, whole minutes and zero-padded seconds of the magnitude,
+    // both truncated (TimeSpan.Duration().TotalMinutes floored, .Seconds).
+    function fmtSongTime(ms) {
+        const abs = Math.abs(ms);
+        const minutes = Math.floor(abs / 60000);
+        const seconds = Math.floor(abs / 1000) % 60;
+        return (ms < 0 ? '-' : '') + minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
     }
 
     // THE HP BAR (backlog 306). The fill is the engine's health account (engine.health, the port of
@@ -1028,7 +1092,7 @@
         const hud = el('div', 'tb-hud');
         const hudScore = el('div', 'tb-hud-stat', '<span class="tb-hud-val" id="tb-score">0</span><span class="tb-hud-lbl">score</span>');
         const hudCombo = el('div', 'tb-hud-stat', '<span class="tb-hud-val" id="tb-combo">0</span><span class="tb-hud-lbl">combo</span>');
-        const hudAcc = el('div', 'tb-hud-stat', '<span class="tb-hud-val" id="tb-acc">100%</span><span class="tb-hud-lbl">typed</span>');
+        const hudAcc = el('div', 'tb-hud-stat', '<span class="tb-hud-val" id="tb-acc">100.00%</span><span class="tb-hud-lbl">accuracy</span>');
         const hudWpm = el('div', 'tb-hud-stat', '<span class="tb-hud-val" id="tb-wpm">0</span><span class="tb-hud-lbl">wpm</span>');
         hud.append(hudScore, hudCombo, hudAcc, hudWpm);
 
@@ -1080,11 +1144,17 @@
         const progress = el('div', 'tb-progress');
         const progressFill = el('div', 'tb-progress-fill');
         progress.appendChild(progressFill);
+        // The bar runs over the playable span, not the decoded file (songProgressBounds).
+        const progressBounds = songProgressBounds(beatmap.lines, clockStart);
+        const progressTime = el('div', 'tb-progress-time');
+        const progressElapsed = el('span', 'tb-progress-elapsed', '');
+        const progressRemaining = el('span', 'tb-progress-remaining', '');
+        progressTime.append(progressElapsed, progressRemaining);
 
         const meta = el('div', 'tb-meta', `<span class="tb-meta-title">${escapeHtml(title)}</span>${artist ? ' <span class="tb-meta-artist">' + escapeHtml(artist) + '</span>' : ''}`);
 
         const overlay = el('div', 'tb-overlay');
-        root.append(hud, health, stage, progress, meta, overlay);
+        root.append(hud, health, stage, progress, progressTime, meta, overlay);
 
         const scoreEl = root.querySelector('#tb-score');
         const comboEl = root.querySelector('#tb-combo');
@@ -1736,22 +1806,25 @@
             updatePushWarning(time);
             updateGap(time);
 
-            const stats = liveStats(engine);
-            scoreEl.textContent = fmtInt(engine.score);
+            const readouts = hudReadouts(engine);
+            scoreEl.textContent = fmtInt(readouts.score);
             // The engine's own live combo, which breaks on a wrong key as you watch. The results
             // screen shows the SUBMITTED peak instead (computeScore's maxCombo, off the score
             // processor mirror); the two agree in strict vanilla play, which is all /play has.
             comboEl.textContent = engine.combo + 'x';
-            accEl.textContent = Math.round(stats.completion * 100) + '%';
+            accEl.textContent = fmtAccuracy(readouts.accuracy);
             wpmEl.textContent = Math.round(rolling.value(engine.liveWpm));
 
             const bar = healthBar(engine.health);
             healthFill.style.width = bar.widthPct + '%';
             healthFill.classList.toggle('tb-health-danger', bar.danger);
 
-            if (audioBuffer) {
-                const p = Math.max(0, Math.min(1, time / (audioBuffer.duration * 1000)));
-                progressFill.style.width = (p * 100) + '%';
+            const songProgress = songProgressAt(progressBounds, time);
+            progressFill.style.width = (songProgress.barProgress * 100) + '%';
+            progress.classList.toggle('tb-progress-intro', songProgress.isIntro);
+            if (songProgress.textLive) {
+                progressElapsed.textContent = songProgress.elapsedText;
+                progressRemaining.textContent = songProgress.remainingText;
             }
 
             if (wrongFlash > 0) { root.classList.add('tb-shake'); wrongFlash--; }
@@ -1983,7 +2056,6 @@
         makeRollingWpm,
         cellClass,
         cellGlyph,
-        liveStats,
         cueTargetLine,
         sungLineFor,
         sweepFillFor,
@@ -2022,6 +2094,13 @@
         healthBar,
         START_GATE_HINT,
         LOW_HEALTH_THRESHOLD,
+        // The live HUD's readouts and song progress (backlog 319), pure, so the display harness
+        // pins them off real runs.
+        hudReadouts,
+        fmtAccuracy,
+        songProgressBounds,
+        songProgressAt,
+        fmtSongTime,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,

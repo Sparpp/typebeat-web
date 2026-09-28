@@ -3005,6 +3005,8 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 .tb-progress { height: 4px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
 .tb-progress-fill { height: 100%; width: 0; background: var(--violet-deep); border-radius: inherit; }
+/* Elapsed and remaining song time under the bar (SongProgressInfo). */
+.tb-progress-time { display: flex; justify-content: space-between; margin-top: var(--space-1); font-size: var(--text-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 .tb-meta { margin-top: var(--space-3); font-size: var(--text-sm); color: var(--text-muted); text-align: center; }
 .tb-meta-title { color: var(--text); font-weight: 700; }

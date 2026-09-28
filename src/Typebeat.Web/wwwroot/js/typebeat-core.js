@@ -4699,6 +4699,35 @@
         return 'D';
     }
 
+    // The all-Great combo portion over the typeable cells, the one term of computeScore that
+    // depends on nothing the play does. The live HUD (backlog 319) calls computeScore every frame,
+    // so the loop is run once per engine and remembered here, OUTSIDE the engine: a WeakMap the
+    // engine never sees, keyed on the engine and checked against the lines array it walked, so a
+    // cache can never answer for cells it did not count. Which cells are typeable is fixed when the
+    // beatmap is built, and play only ever writes a cell's state, never its typeable flag.
+    // uncachedMaxComboPortion is the loop itself, exported so a harness can hold the two equal.
+    const maxComboPortionCache = new WeakMap();
+
+    function uncachedMaxComboPortion(lines) {
+        let maxComboCounter = 0, maxComboPortion = 0;
+        for (const line of lines) {
+            for (const cell of line.cells) {
+                if (!cell.typeable) continue;
+                maxComboCounter++;
+                maxComboPortion += MAX_RESULT_BASE_SCORE * Math.pow(maxComboCounter, COMBO_EXPONENT);
+            }
+        }
+        return maxComboPortion;
+    }
+
+    function maxComboPortionOf(engine) {
+        const hit = maxComboPortionCache.get(engine);
+        if (hit && hit.lines === engine.lines) return hit.value;
+        const value = uncachedMaxComboPortion(engine.lines);
+        maxComboPortionCache.set(engine, { lines: engine.lines, value: value });
+        return value;
+    }
+
     function computeScore(engine) {
         const beatmap = engine.beatmap;
         const total = beatmap.totalCells;
@@ -4720,15 +4749,9 @@
         // The maximum combo portion, i.e. what an all-Great run of the whole map accumulates
         // (ScoreProcessor.maximumComboPortion, stored from the autoplay simulation). One nested
         // char object exists per TYPEABLE cell (TypeBeatHitObject.CreateNestedHitObjects skips the
-        // rest), so the simulated combo runs 1..N over exactly those cells.
-        let maxComboCounter = 0, maxComboPortion = 0;
-        for (const line of engine.lines) {
-            for (const cell of line.cells) {
-                if (!cell.typeable) continue;
-                maxComboCounter++;
-                maxComboPortion += MAX_RESULT_BASE_SCORE * Math.pow(maxComboCounter, COMBO_EXPONENT);
-            }
-        }
+        // rest), so the simulated combo runs 1..N over exactly those cells. Memoised per engine
+        // (maxComboPortionOf), since the live HUD asks every frame.
+        const maxComboPortion = maxComboPortionOf(engine);
 
         const comboProgress = maxComboPortion > 0 ? processor.comboPortion / maxComboPortion : 1;
         const accuracyProgress = total > 0 ? judged / total : 1;
@@ -4857,6 +4880,9 @@
         // PausedWord (PR 2): the authored-pause derivation, exported so the harnesses can hold it
         // against the game's own PausedWord and TypingLine.
         usableRests, pausedWordOf, tokenCellTargets,
+        // computeScore's read-side memo (backlog 319), exported so a harness can hold the cached
+        // answer against the loop it replaces.
+        uncachedMaxComboPortion, maxComboPortionOf,
         // the renderer/high-level mount is attached in typebeat-player.js
     };
 })(window);

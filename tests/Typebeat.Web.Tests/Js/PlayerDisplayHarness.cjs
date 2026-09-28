@@ -1088,10 +1088,11 @@ const out = {
     gapTypoErasedPaint: paint(playGapTypoErased(), 0),
     midWordSpacePaint: paint(playMidWordSpaceTypo(), 0),
 
-    // Live HUD readouts off real engine runs.
-    perfectStats: D.liveStats(perfect),
-    partialStats: D.liveStats(partial),
-    lateStats: D.liveStats(late),
+    // Live HUD readouts off real engine runs (backlog 319: the standardised total and judged
+    // accuracy, which replaced the old 'typed' completion readout).
+    perfectHud: hudOf(perfect),
+    partialHud: hudOf(partial),
+    lateHud: hudOf(late),
 
     // The display layer must not have moved the score: the same run through the untouched
     // scorer still reads a clean X.
@@ -1281,8 +1282,165 @@ const out = {
             f(false, 1000), f(false, 1060), f(false, 1120),
             f(true, 2000), f(false, 2060), f(false, 2120), f(false, 2180)
         ];
-    })()
+    })(),
+
+    // ---- the live HUD (backlog 319) ----
+    hudMehRun: hudMehRun(),
+    hudClimb: hudClimb(),
+    progressIntro: progressIntro(),
+    progressLongIntro: progressLongIntro(),
+    songTimeFormat: [0, 999, 1000, 59999, 60000, 61500, 3600000, -1, -1000, -1001, -61000].map(D.fmtSongTime),
+    accuracyFormat: [1, 0.99999, 0.899999, 1 / 3, 0.5, 0].map(D.fmtAccuracy),
+    maxComboCache: maxComboCache()
 };
+
+// What the HUD cells show for an engine, beside the numbers they must agree with.
+function hudOf(engine) {
+    const r = D.hudReadouts(engine);
+    const s = TB.computeScore(engine);
+    const p = engine.processor;
+    return {
+        score: r.score,
+        accuracy: r.accuracy,
+        accuracyText: D.fmtAccuracy(r.accuracy),
+        computeTotalScore: s.totalScore,
+        cardAccuracy: s.accuracy,
+        completion: s.completion,
+        engineScore: engine.score,
+        liveAccuracy: engine.liveAccuracy,
+        baseScore: p.baseScore,
+        maximumBaseScore: p.maximumBaseScore,
+        judged: p.judgementCount
+    };
+}
+
+// A Meh-heavy run on abcdOsu, sampled after every press. Every lyric cell is pressed 400 ms off
+// its span (the opening cells 'a' and 'c' late of their spans' START, the others late of their
+// spans' END), which is Meh on the one ladder; the word gap is untimed and lands Great. So the
+// judged accuracy reads 50/300 after the first press, and 500/1500 at the end.
+function hudMehRun() {
+    const engine = engineFor(build(abcdOsu));
+    engine.update(1000);
+    const presses = [['a', 1400], ['b', 2400], [' ', 2400], ['c', 2400], ['d', 3400]];
+    const samples = [];
+    for (const [c, t] of presses) {
+        engine.update(t);
+        engine.processKey(c, t);
+        samples.push(Object.assign({ key: c, time: t }, hudOf(engine)));
+    }
+    engine.update(5000);
+    return {
+        samples: samples,
+        judgeTypes: engine.lines[0].cells.map(cell => cell.judgeType),
+        counts: engine.processor.counts,
+        final: hudOf(engine),
+        finished: engine.finished
+    };
+}
+
+// The perfect run again, sampled after every press: the HUD total climbs, and ends on the card's.
+function hudClimb() {
+    const engine = engineFor(build(abcdOsu));
+    engine.update(1000);
+    const samples = [hudOf(engine)];
+    const keys = [['a', 1000], ['b', 1500], [' ', 2000], ['c', 2000], ['d', 2500]];
+    for (const [c, t] of keys) { engine.update(t); engine.processKey(c, t); samples.push(hudOf(engine)); }
+    engine.update(5000);
+    samples.push(hudOf(engine));
+    return samples;
+}
+
+function progressSamples(map, times) {
+    const start = D.gameplayStartTime(map);
+    const bounds = D.songProgressBounds(map.lines, start);
+    return {
+        bounds: bounds,
+        lineEnds: map.lines.map(l => l.endTime + l.sealGraceMs),
+        samples: times.map(t => Object.assign({ time: t }, D.songProgressAt(bounds, t)))
+    };
+}
+
+// backlog 308's pre-roll: a first line at 500, so the clock starts at -1500 and runs through
+// negative time, which is the intro phase, into a two-line map that ends on its last line.
+function progressIntro() {
+    const map = build(OSU_HEADER +
+        '{"version":2,"song_end_ms":20000,"granularity":"Word"}\n' +
+        '{"text":"ab","start_ms":500,"end_ms":1500,"words":[{"text":"ab","start_ms":500,"end_ms":1500,"score":1}]}\n' +
+        '{"text":"cd","start_ms":4000,"end_ms":6000,"words":[{"text":"cd","start_ms":4000,"end_ms":6000,"score":1}]}\n');
+    return progressSamples(map, [-1500, -1000, -1, 0, 499, 500, 1000, 5000, 6500, 99999]);
+}
+
+// A 30 s intro with the clock starting at 0.
+function progressLongIntro() {
+    const map = build(OSU_HEADER + GAP_FIXTURES.longIntro);
+    return progressSamples(map, [0, 15000, 29999, 30000]);
+}
+
+// THE CACHE IS A PURE READ-SIDE MEMO. Over a real run (the key-order map's scripted presses and
+// every tick between them), the cached all-Great combo portion equals the loop it replaced at every
+// frame, and so computeScore's total equals the total restated here on the UNCACHED portion. Then:
+// a fresh engine on the same (shared) beatmap starts its own entry, and swapping the engine's
+// lines for a different map's recomputes rather than answering for cells it never counted.
+function maxComboCache() {
+    const map = build(KEY_ORDER_OSU);
+    const engine = new TB.TypingEngine(map);
+    // Hits across the tiers, a wrong key typed through, an erase and its retype, a skipped line
+    // (L3, sealed with misses) and an off-time press, so the account moves every way it can.
+    const presses = [
+        ['a', 1000], ['b', 1500], [' ', 2000], ['c', 2300], ['d', 3100],
+        ['x', 4000], ['\b', 4100], ['e', 4200], ['f', 5400],
+        ['i', 12000], ['j', 12900],
+        ['k', 20000], ['l', 21500]
+    ];
+    let frames = 0, portionMismatches = 0, totalMismatches = 0, minTotal = Infinity, maxTotal = -Infinity;
+    for (let t = 0; t <= KEY_ORDER_END; t += 50) {
+        engine.update(t);
+        while (presses.length && presses[0][1] <= t) {
+            const [c, at] = presses.shift();
+            if (c === '\b') engine.processBackspace();
+            else engine.processKey(c, at);
+        }
+        frames++;
+        const cached = TB.maxComboPortionOf(engine);
+        const uncached = TB.uncachedMaxComboPortion(engine.lines);
+        if (cached !== uncached) portionMismatches++;
+        const total = TB.computeScore(engine).totalScore;
+        if (total !== restatedTotal(engine, uncached)) totalMismatches++;
+        minTotal = Math.min(minTotal, total);
+        maxTotal = Math.max(maxTotal, total);
+    }
+
+    const other = build(abcdOsu);
+    const before = TB.maxComboPortionOf(engine);
+    const saved = engine.lines;
+    engine.lines = other.lines;
+    const swapped = TB.maxComboPortionOf(engine);
+    engine.lines = saved;
+
+    return {
+        frames: frames,
+        judged: engine.processor.judgementCount,
+        minTotal: minTotal,
+        maxTotal: maxTotal,
+        portionMismatches: portionMismatches,
+        totalMismatches: totalMismatches,
+        portion: before,
+        swappedPortion: swapped,
+        swappedExpected: TB.uncachedMaxComboPortion(other.lines),
+        restoredPortion: TB.maxComboPortionOf(engine),
+        freshEnginePortion: TB.maxComboPortionOf(new TB.TypingEngine(map))
+    };
+}
+
+// computeScore's total, restated on a portion the caller supplies (ScoreProcessor.updateScore).
+function restatedTotal(engine, maxComboPortion) {
+    const p = engine.processor;
+    const total = engine.beatmap.totalCells;
+    const comboProgress = maxComboPortion > 0 ? p.comboPortion / maxComboPortion : 1;
+    const accuracyProgress = total > 0 ? p.judgementCount / total : 1;
+    const accJudged = p.maximumBaseScore > 0 ? p.baseScore / p.maximumBaseScore : 1;
+    return Math.round(500000 * accJudged * comboProgress + 500000 * Math.pow(accJudged, 5) * accuracyProgress);
+}
 
 // THE HP BAR READS THE ACCOUNT (backlog 306). Two plays that never reject a key, so the rejection
 // streak the bar used to read stays at 0 throughout: abcdOsu with a wrong letter on every lyric

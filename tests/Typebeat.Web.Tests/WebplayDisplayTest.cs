@@ -497,20 +497,187 @@ public class WebplayDisplayTest
     [Test]
     public void LiveHudReadoutsTrackTheRun()
     {
+        // Backlog 319: the score cell is the standardised total (ScoreProcessor.TotalScore, what the
+        // card shows and /play submits), not engine.score's internal points, and the accuracy cell
+        // is JUDGED-only accuracy (ScoreProcessor.Accuracy), not the old 'typed' completion.
         var root = Harness();
-        var perfect = root.GetProperty("perfectStats");
-        var partial = root.GetProperty("partialStats");
-        var late = root.GetProperty("lateStats");
+        var perfect = root.GetProperty("perfectHud");
+        var partial = root.GetProperty("partialHud");
+        var late = root.GetProperty("lateHud");
 
         Assert.Multiple(() =>
         {
-            Assert.That(Num(perfect, "completion"), Is.EqualTo(1));
+            foreach (var hud in new[] { perfect, partial, late })
+            {
+                Assert.That(Num(hud, "score"), Is.EqualTo(Num(hud, "computeTotalScore")));
+                Assert.That(Num(hud, "accuracy"), Is.EqualTo(Num(hud, "baseScore") / Num(hud, "maximumBaseScore")).Within(1e-12));
+            }
 
-            // One of FIVE cells typed (completion counts the word gap).
-            Assert.That(Num(partial, "completion"), Is.EqualTo(0.2).Within(1e-12));
+            Assert.That(Num(perfect, "score"), Is.EqualTo(1_000_000));
+            Assert.That(Num(perfect, "engineScore"), Is.Not.EqualTo(1_000_000), "the internal points are on another scale");
+            Assert.That(perfect.GetProperty("accuracyText").GetString(), Is.EqualTo("100.00%"));
 
-            // Two presses, one on target and one off-time but still correct: both count as typed.
-            Assert.That(Num(late, "completion"), Is.EqualTo(1));
+            // One Great and four seal misses, all five judged: 300 / 1500.
+            Assert.That(Num(partial, "accuracy"), Is.EqualTo(0.2).Within(1e-12));
+
+            // Two judged: a Great and a Meh (+600 past its span), 350 / 600, while the card's
+            // whole-map figure is 350 / 1500 and the keypress ratio reads a flat 1 (tier-blind).
+            Assert.That(Num(late, "judged"), Is.EqualTo(2));
+            Assert.That(Num(late, "accuracy"), Is.EqualTo(350.0 / 600).Within(1e-12));
+            Assert.That(late.GetProperty("accuracyText").GetString(), Is.EqualTo("58.33%"));
+            Assert.That(Num(late, "cardAccuracy"), Is.EqualTo(350.0 / 1500).Within(1e-12));
+            Assert.That(Num(late, "liveAccuracy"), Is.EqualTo(1));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 319: every lyric cell of the workhorse line pressed 400 ms off its span (Meh), the
+    /// word gap untimed (Great). The accuracy cell reads the judged-only ratio after every press,
+    /// floored the way FormatUtils.FormatAccuracy floors, and the score cell climbs on the card's
+    /// scale and ends on exactly the total the card shows and /play submits.
+    /// </summary>
+    [Test]
+    public void AMehHeavyRunReadsItsJudgedAccuracyLive()
+    {
+        var run = Harness().GetProperty("hudMehRun");
+        var samples = run.GetProperty("samples");
+        var expected = new[] { 50.0 / 300, 100.0 / 600, 400.0 / 900, 450.0 / 1200, 500.0 / 1500 };
+        var texts = new[] { "16.66%", "16.66%", "44.44%", "37.50%", "33.33%" };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(run.GetProperty("judgeTypes").EnumerateArray().Select(j => j.GetString()),
+                Is.EqualTo(new[] { "Meh", "Meh", "Great", "Meh", "Meh" }));
+            Assert.That(samples.GetArrayLength(), Is.EqualTo(5));
+
+            double lastScore = -1;
+            for (int i = 0; i < expected.Length; i++)
+            {
+                var s = samples[i];
+                Assert.That(Num(s, "accuracy"), Is.EqualTo(expected[i]).Within(1e-12), $"press {i}");
+                Assert.That(s.GetProperty("accuracyText").GetString(), Is.EqualTo(texts[i]), $"press {i}");
+                Assert.That(Num(s, "score"), Is.EqualTo(Num(s, "computeTotalScore")), $"press {i}");
+                Assert.That(Num(s, "score"), Is.GreaterThan(lastScore), $"press {i}");
+                lastScore = Num(s, "score");
+            }
+
+            var final = run.GetProperty("final");
+            Assert.That(Flag(run, "finished"), Is.True);
+            Assert.That(Num(final, "score"), Is.EqualTo(Num(final, "computeTotalScore")));
+            Assert.That(Num(final, "score"), Is.EqualTo(168724), "cross-check: 500000 * (1/3) * comboProgress + 500000 * (1/3)^5");
+            // A completed run judged every cell, so the judged ratio and the card's whole-map one agree.
+            Assert.That(Num(final, "accuracy"), Is.EqualTo(Num(final, "cardAccuracy")).Within(1e-12));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 319: the perfect run sampled before any press, after each, and after the seal. The
+    /// score cell climbs strictly and lands on the card's 1,000,000.
+    /// </summary>
+    [Test]
+    public void TheHudScoreClimbsToTheCardsTotal()
+    {
+        var samples = Harness().GetProperty("hudClimb").EnumerateArray().ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(samples, Has.Length.EqualTo(7));
+            Assert.That(Num(samples[0], "score"), Is.EqualTo(0));
+            Assert.That(samples[0].GetProperty("accuracyText").GetString(), Is.EqualTo("100.00%"), "nothing judged reads 1");
+            for (int i = 1; i < 6; i++)
+                Assert.That(Num(samples[i], "score"), Is.GreaterThan(Num(samples[i - 1], "score")), $"press {i}");
+            foreach (var s in samples)
+                Assert.That(Num(s, "score"), Is.EqualTo(Num(s, "computeTotalScore")));
+            Assert.That(Num(samples[6], "score"), Is.EqualTo(1_000_000));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 319: SongProgress over the PLAYABLE bounds (line 0's start to the latest line end
+    /// plus seal grace), with an intro phase from the clock's own start. The fixture is backlog
+    /// 308's pre-roll shape: a first line at 500, so the clock starts at -1500 and the intro runs
+    /// through negative time. The Argon bar holds at 0 through the intro; the time text counts from
+    /// the first line (negative in the intro) and freezes once the span has elapsed.
+    /// </summary>
+    [Test]
+    public void SongProgressIsBoundedByTheLinesWithAnIntroPhase()
+    {
+        var root = Harness();
+        var intro = root.GetProperty("progressIntro");
+        var bounds = intro.GetProperty("bounds");
+        var s = intro.GetProperty("samples").EnumerateArray().ToDictionary(e => Num(e, "time"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(bounds, "clockStart"), Is.EqualTo(-1500));
+            Assert.That(Num(bounds, "first"), Is.EqualTo(500));
+            var lineEnds = intro.GetProperty("lineEnds").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            Assert.That(Num(bounds, "last"), Is.EqualTo(lineEnds.Max()));
+
+            // The intro: -1500..500, a quarter of the way at -1000, three quarters at 0.
+            Assert.That(Flag(s[-1500], "isIntro"), Is.True);
+            Assert.That(Num(s[-1500], "introProgress"), Is.EqualTo(0));
+            Assert.That(Num(s[-1000], "introProgress"), Is.EqualTo(0.25).Within(1e-12));
+            Assert.That(Num(s[0], "introProgress"), Is.EqualTo(0.75).Within(1e-12));
+            Assert.That(Flag(s[499], "isIntro"), Is.True);
+            foreach (var t in new[] { -1500.0, -1000, -1, 0, 499 })
+                Assert.That(Num(s[t], "barProgress"), Is.EqualTo(0), $"intro at {t}");
+            Assert.That(s[-1500].GetProperty("elapsedText").GetString(), Is.EqualTo("-0:02"));
+            Assert.That(s[0].GetProperty("elapsedText").GetString(), Is.EqualTo("-0:01"));
+
+            // The playable span: 500..last.
+            double last = Num(bounds, "last");
+            Assert.That(Flag(s[500], "isIntro"), Is.False);
+            Assert.That(Num(s[500], "barProgress"), Is.EqualTo(0));
+            Assert.That(s[500].GetProperty("elapsedText").GetString(), Is.EqualTo("0:00"));
+            Assert.That(Num(s[5000], "barProgress"), Is.EqualTo((5000 - 500) / (last - 500)).Within(1e-12));
+            Assert.That(s[5000].GetProperty("elapsedText").GetString(), Is.EqualTo("0:04"));
+            Assert.That(s[5000].GetProperty("remainingText").GetString(), Is.EqualTo("0:04"), "cross-check: last 9000 - 5000");
+            Assert.That(Flag(s[6500], "textLive"), Is.True);
+
+            // Past the last line: the bar is full and the text stops being rewritten.
+            Assert.That(Num(s[99999], "barProgress"), Is.EqualTo(1));
+            Assert.That(Flag(s[99999], "textLive"), Is.False);
+
+            // A 30 s intro from a clock at 0.
+            var longIntro = root.GetProperty("progressLongIntro");
+            var ls = longIntro.GetProperty("samples").EnumerateArray().ToDictionary(e => Num(e, "time"));
+            Assert.That(Num(longIntro.GetProperty("bounds"), "clockStart"), Is.EqualTo(0));
+            Assert.That(Num(ls[15000], "introProgress"), Is.EqualTo(0.5).Within(1e-12));
+            Assert.That(ls[15000].GetProperty("elapsedText").GetString(), Is.EqualTo("-0:15"));
+            Assert.That(Flag(ls[30000], "isIntro"), Is.False);
+
+            // SongProgressInfo.formatTime and FormatUtils.FormatAccuracy.
+            Assert.That(root.GetProperty("songTimeFormat").EnumerateArray().Select(e => e.GetString()),
+                Is.EqualTo(new[] { "0:00", "0:00", "0:01", "0:59", "1:00", "1:01", "60:00", "-0:00", "-0:01", "-0:01", "-1:01" }));
+            Assert.That(root.GetProperty("accuracyFormat").EnumerateArray().Select(e => e.GetString()),
+                Is.EqualTo(new[] { "100.00%", "99.99%", "89.99%", "33.33%", "50.00%", "0.00%" }));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 319: computeScore's all-Great combo portion is memoised per engine because the HUD
+    /// asks every frame. The memo must not change what computeScore answers: over a real run, at
+    /// every frame, the cached portion equals the loop it replaced and the total equals the total
+    /// restated on the uncached portion; a fresh engine gets the same value; and an engine whose
+    /// lines are swapped recomputes instead of answering for cells it never counted.
+    /// </summary>
+    [Test]
+    public void TheCachedComputeScoreEqualsTheUncachedOne()
+    {
+        var c = Harness().GetProperty("maxComboCache");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(c, "frames"), Is.GreaterThan(500));
+            Assert.That(Num(c, "judged"), Is.GreaterThan(0));
+            Assert.That(Num(c, "maxTotal"), Is.GreaterThan(Num(c, "minTotal")), "the run must move the total");
+            Assert.That(Num(c, "portionMismatches"), Is.EqualTo(0));
+            Assert.That(Num(c, "totalMismatches"), Is.EqualTo(0));
+            Assert.That(Num(c, "freshEnginePortion"), Is.EqualTo(Num(c, "portion")));
+            Assert.That(Num(c, "swappedPortion"), Is.EqualTo(Num(c, "swappedExpected")));
+            Assert.That(Num(c, "swappedPortion"), Is.Not.EqualTo(Num(c, "portion")));
+            Assert.That(Num(c, "restoredPortion"), Is.EqualTo(Num(c, "portion")));
         });
     }
 
