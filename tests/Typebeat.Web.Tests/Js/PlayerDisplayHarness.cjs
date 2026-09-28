@@ -861,6 +861,101 @@ function keyOrderRun() {
     };
 }
 
+// --- keystroke to character (backlog 309) ---
+//
+// The pinned table, one row per [e.key, e.code, shiftKey, prevWasDead]: keyToChar's answer for
+// each (null = dropped). WebplayDisplayTest holds the answers; WireCompat's KeyToCharParityTest
+// generates a far larger table from the game's KeyCharMap and runs it through KeyToCharHarness.cjs.
+const KEY_TO_CHAR_ROWS = [
+    // rule 1: e.key is already typeable, whatever the position (Dvorak 'e' sits on KeyD)
+    ['a', 'KeyA', false, false], ['A', 'KeyA', true, false], ['e', 'KeyD', false, false],
+    ['7', 'Digit7', false, false], ['5', 'Numpad5', false, false], ['a', 'KeyQ', false, true],
+    // rule 2: the vowel after a dead key, folded; only on a letter position, only after a dead key
+    ['ê', 'KeyE', false, true], ['Ê', 'KeyE', true, true], ['â', 'KeyQ', false, true],
+    ['ë', 'KeyE', false, true], ['ý', 'KeyY', false, true],
+    ['ê', 'KeyE', false, false], ['ö', 'Semicolon', false, true], ['ù', 'Quote', false, true],
+    ['ç', 'Digit9', false, true], ['ß', 'Minus', false, true], ['Dead', 'BracketLeft', false, true],
+    // rule 3: the digit row and keypad by position, whatever Shift or the layout says
+    ['!', 'Digit1', true, false], ['@', 'Digit2', true, false], ['é', 'Digit2', false, false],
+    ['à', 'Digit0', false, false], ['&', 'Digit1', false, false], ['§', 'Digit3', true, false],
+    ['End', 'Numpad1', false, false], ['Insert', 'Numpad0', true, false],
+    // rule 4: a non-Latin letter types its position, cased as e.key is
+    ['ф', 'KeyA', false, false], ['Ф', 'KeyA', true, false], ['я', 'KeyZ', false, false],
+    ['ς', 'KeyW', false, false], ['Σ', 'KeyS', true, false], ['ب', 'KeyF', false, false],
+    // rule 5: dropped
+    [',', 'KeyM', false, false], ['?', 'KeyM', true, false], [';', 'KeyQ', false, false],
+    ['Dead', 'BracketLeft', false, false], ['Dead', 'Equal', true, false],
+    ['ö', 'Semicolon', false, false], ['ü', 'BracketLeft', false, false], ['ß', 'Minus', false, false],
+    ['ж', 'Semicolon', false, false], ['б', 'Comma', false, false], ['ù', 'Quote', false, false],
+    ['é', 'KeyE', false, false], ['Unidentified', 'KeyA', false, false], ['Process', 'KeyA', false, false],
+    ['Shift', 'ShiftLeft', true, false], ['.', 'Period', false, false], ['ñ', 'Semicolon', false, false]
+];
+
+function keyToCharTable() {
+    return KEY_TO_CHAR_ROWS.map(([key, code, shift, dead]) => ({
+        key: key, code: code, shift: shift, dead: dead,
+        ch: D.keyToChar({ key: key, code: code, shiftKey: shift }, dead)
+    }));
+}
+
+function keyEv(key, code, mods) {
+    const e = fakeKey(key, mods);
+    e.code = code;
+    return e;
+}
+
+// The dead-key state through the SHIPPED router, on "ab cd": an Azerty circumflex, then Shift (a
+// modifier, which must not end the sequence), then the composed capital on the KeyQ position, is
+// the lyric's 'a'; 'b' follows on its own cell rather than one cell early.
+function routedDeadKeyComposes() {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    const host = keyHostFor(engine, map);
+    const calls = spyOnOps(engine);
+    const trail = [];
+
+    host.clock = 1000;
+    D.routeKeyDown(keyEv('Dead', 'BracketLeft'), host); trail.push(host.prevWasDead);
+    D.routeKeyDown(keyEv('Shift', 'ShiftLeft', { shift: true }), host); trail.push(host.prevWasDead);
+    D.routeKeyDown(keyEv('Â', 'KeyQ', { shift: true }), host); trail.push(host.prevWasDead);
+    host.clock = 1500;
+    D.routeKeyDown(keyEv('b', 'KeyB'), host); trail.push(host.prevWasDead);
+
+    return {
+        chars: calls.filter(c => c.fn === 'key').map(c => c.c),
+        states: engine.lines[0].cells.slice(0, 2).map(c => c.state),
+        deadTrail: trail
+    };
+}
+
+// A dead key followed by any OTHER key ends the sequence: a composed vowel after that is dropped.
+function routedDeadKeyEnds() {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    const host = keyHostFor(engine, map);
+    const calls = spyOnOps(engine);
+
+    host.clock = 1000;
+    D.routeKeyDown(keyEv('Dead', 'BracketLeft'), host);
+    D.routeKeyDown(keyEv('a', 'KeyQ'), host);
+    host.clock = 1500;
+    D.routeKeyDown(keyEv('ê', 'KeyE'), host);
+
+    return { chars: calls.filter(c => c.fn === 'key').map(c => c.c), prevWasDead: host.prevWasDead };
+}
+
+// The digit row by position through the router: Shift+1 reaches processKey as '1'.
+function routedShiftDigit() {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    const host = keyHostFor(engine, map);
+    const calls = spyOnOps(engine);
+    const e = keyEv('!', 'Digit1', { shift: true });
+    host.clock = 1000;
+    D.routeKeyDown(e, host);
+    return { chars: calls.filter(c => c.fn === 'key').map(c => c.c), prevented: e.prevented };
+}
+
 const perfect = playPerfect();
 const partial = playOneKeyThenSeal();
 const late = playOneLatePress();
@@ -1161,7 +1256,13 @@ const out = {
     clockLongIntro: (() => {
         const map = build(OSU_HEADER + GAP_FIXTURES.longIntro);
         return { gameplayStartTime: D.gameplayStartTime(map), introSkipTarget: D.introSkipTarget(map.lines, D.gameplayStartTime(map)) };
-    })()
+    })(),
+
+    // ---- keystroke to character (backlog 309) ----
+    keyToChar: keyToCharTable(),
+    routedDeadKeyComposes: routedDeadKeyComposes(),
+    routedDeadKeyEnds: routedDeadKeyEnds(),
+    routedShiftDigit: routedShiftDigit()
 };
 
 process.stdout.write(JSON.stringify(out));

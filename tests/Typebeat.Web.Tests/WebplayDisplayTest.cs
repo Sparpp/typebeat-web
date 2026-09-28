@@ -1329,4 +1329,89 @@ public class WebplayDisplayTest
 
     private static IReadOnlyList<LyricLine> Lines(string lyrics)
         => LyricTiming.ParseSection(lyrics.ReplaceLineEndings("\n").Split('\n')).Lines;
+
+    /// <summary>
+    /// Keystroke to character (backlog 309): keyToChar's answer per (e.key, e.code, Shift, previous
+    /// keydown was dead), null meaning dropped. The desktop reasoning behind each row lives on
+    /// keyToChar itself; WireCompat's KeyToCharParityTest holds a generated table against the
+    /// game's KeyCharMap.
+    /// </summary>
+    private static readonly (string Key, string Code, bool Shift, bool Dead, string? Expected)[] keyToCharPins =
+    [
+        // rule 1: e.key already typeable
+        ("a", "KeyA", false, false, "a"), ("A", "KeyA", true, false, "A"), ("e", "KeyD", false, false, "e"),
+        ("7", "Digit7", false, false, "7"), ("5", "Numpad5", false, false, "5"), ("a", "KeyQ", false, true, "a"),
+        // rule 2: the composed vowel after a dead key, on a letter position only
+        ("ê", "KeyE", false, true, "e"), ("Ê", "KeyE", true, true, "E"), ("â", "KeyQ", false, true, "a"),
+        ("ë", "KeyE", false, true, "e"), ("ý", "KeyY", false, true, "y"),
+        ("ê", "KeyE", false, false, null), ("ö", "Semicolon", false, true, null), ("ù", "Quote", false, true, null),
+        ("ç", "Digit9", false, true, "9"), ("ß", "Minus", false, true, null), ("Dead", "BracketLeft", false, true, null),
+        // rule 3: digit row and keypad by position
+        ("!", "Digit1", true, false, "1"), ("@", "Digit2", true, false, "2"), ("é", "Digit2", false, false, "2"),
+        ("à", "Digit0", false, false, "0"), ("&", "Digit1", false, false, "1"), ("§", "Digit3", true, false, "3"),
+        ("End", "Numpad1", false, false, "1"), ("Insert", "Numpad0", true, false, "0"),
+        // rule 4: a non-Latin letter types its position, in e.key's case
+        ("ф", "KeyA", false, false, "a"), ("Ф", "KeyA", true, false, "A"), ("я", "KeyZ", false, false, "z"),
+        ("ς", "KeyW", false, false, "w"), ("Σ", "KeyS", true, false, "S"), ("ب", "KeyF", false, false, "f"),
+        // rule 5: dropped (the Azerty comma on KeyM and the Greek ';' on KeyQ are Latin punctuation)
+        (",", "KeyM", false, false, null), ("?", "KeyM", true, false, null), (";", "KeyQ", false, false, null),
+        ("Dead", "BracketLeft", false, false, null), ("Dead", "Equal", true, false, null),
+        ("ö", "Semicolon", false, false, null), ("ü", "BracketLeft", false, false, null), ("ß", "Minus", false, false, null),
+        ("ж", "Semicolon", false, false, null), ("б", "Comma", false, false, null), ("ù", "Quote", false, false, null),
+        ("é", "KeyE", false, false, null), ("Unidentified", "KeyA", false, false, null), ("Process", "KeyA", false, false, null),
+        ("Shift", "ShiftLeft", true, false, null), (".", "Period", false, false, null), ("ñ", "Semicolon", false, false, null),
+    ];
+
+    [Test]
+    public void KeyToChar_TranslatesEachRowOfThePinnedTable()
+    {
+        var rows = Harness().GetProperty("keyToChar");
+        var observed = new Dictionary<(string, string, bool, bool), string?>();
+
+        foreach (var row in rows.EnumerateArray())
+        {
+            var ch = row.GetProperty("ch");
+            observed[(row.GetProperty("key").GetString()!, row.GetProperty("code").GetString()!,
+                      row.GetProperty("shift").GetBoolean(), row.GetProperty("dead").GetBoolean())]
+                = ch.ValueKind == JsonValueKind.Null ? null : ch.GetString();
+        }
+
+        Assert.That(observed, Has.Count.EqualTo(keyToCharPins.Length), "the harness rows and the pins are the same table");
+
+        Assert.Multiple(() =>
+        {
+            foreach (var (key, code, shift, dead, expected) in keyToCharPins)
+            {
+                Assert.That(observed.TryGetValue((key, code, shift, dead), out string? got), Is.True, $"row {key}/{code} is in the harness");
+                Assert.That(got, Is.EqualTo(expected), $"keyToChar({key}, {code}, shift={shift}, prevDead={dead})");
+            }
+        });
+    }
+
+    [Test]
+    public void KeyToChar_TheRouterCarriesTheDeadKeyStateAcrossShift()
+    {
+        var root = Harness();
+        var composes = root.GetProperty("routedDeadKeyComposes");
+        var ends = root.GetProperty("routedDeadKeyEnds");
+        var digit = root.GetProperty("routedShiftDigit");
+
+        Assert.Multiple(() =>
+        {
+            // Dead, Shift, 'Â' on KeyQ: the Shift keeps the sequence open, the capital lands on 'a',
+            // and 'b' lands on its own cell.
+            Assert.That(JsHarness.Strings(composes, "chars"), Is.EqualTo(new[] { "A", "b" }));
+            Assert.That(JsHarness.Strings(composes, "states"), Is.EqualTo(new[] { "correct", "correct" }));
+            Assert.That(composes.GetProperty("deadTrail").EnumerateArray().Select(e => e.GetBoolean()),
+                Is.EqualTo(new[] { true, true, false, false }));
+
+            // Any other key ends it: 'ê' after an intervening 'a' is dropped.
+            Assert.That(JsHarness.Strings(ends, "chars"), Is.EqualTo(new[] { "a" }));
+            Assert.That(ends.GetProperty("prevWasDead").GetBoolean(), Is.False);
+
+            // Shift+1 reaches the engine as the digit, and is swallowed.
+            Assert.That(JsHarness.Strings(digit, "chars"), Is.EqualTo(new[] { "1" }));
+            Assert.That(digit.GetProperty("prevented").GetBoolean(), Is.True);
+        });
+    }
 }

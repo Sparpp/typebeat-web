@@ -609,6 +609,67 @@
 
     function isSpace(e) { return e.key === ' ' || e.code === 'Space'; }
 
+    // KEYSTROKE TO CHARACTER (backlog 309), for every key that is not Space. The desktop maps
+    // PHYSICAL positions through KeyCharMap under the player's KeyboardLayout setting; on the
+    // non-Literate surface /play plays that means Shift and Caps change a letter's case and nothing
+    // else, the digit row types digits whatever the modifier or layout, a dead-key position is
+    // inert and the vowel after it types its base letter, and a non-Latin OS layout still types by
+    // position. The browser reads the OS layout's own e.key instead, which is the better answer for
+    // Dvorak, Colemak and a default-setting Azerty player, so it is kept as rule 1 and the
+    // positional model is only borrowed where e.key has nothing typeable to say:
+    //
+    //   1. e.key itself, when it is already a letter or digit.
+    //   2. After a DEAD keydown, the composed vowel folded to its base letter ('ê' to 'e'), which
+    //      is right because the lyric is diacritic-folded on both sides (typebeat-core.js's
+    //      normalizer). Without this the vowel was dropped and every key after it landed one cell
+    //      early as a typo. Only on a LETTER position: a dead key followed by a key it cannot
+    //      compose with reports that key's own character, and folding the QWERTZ 'ö' (Semicolon)
+    //      or the Azerty 'ù' (Quote) or 'ç' (Digit9) there would type a letter where the desktop
+    //      types nothing, or a digit.
+    //   3. The digit row and keypad give their digit whatever e.key says: Shift+1 ('!'), an Azerty
+    //      digit key unshifted ('é'), a keypad key with Num Lock off ('End'). KeyCharMap.cs's
+    //      tryMapLower answers the digit for all of these, since Shift only cases letters.
+    //   4. A letter POSITION gives its letter only when e.key is a letter outside Latin script (a
+    //      Cyrillic or Greek layout), cased as e.key is. Never for Latin punctuation: the Azerty
+    //      ',' on KeyM stays inert exactly as KeyCharMap keeps it inert, so a habitual comma is
+    //      never a wrong key.
+    //   5. Everything else is dropped (null), including the QWERTZ umlaut and eszett positions,
+    //      which KeyCharMap leaves unmapped too.
+    //
+    // prevWasDead: whether the previous non-modifier keydown was a dead key (routeKeyDown tracks it
+    // on the host).
+    const DIGIT_CODE_RE = /^(?:Digit|Numpad)([0-9])$/;
+    const LETTER_CODE_RE = /^Key([A-Z])$/;
+    const NON_LATIN_LETTER_RE = /^(?=\p{L}$)\P{Script=Latin}$/u;
+
+    function keyToChar(e, prevWasDead) {
+        const key = typeof e.key === 'string' ? e.key : '';
+        const code = typeof e.code === 'string' ? e.code : '';
+
+        if (key.length === 1 && KEY_RE.test(key)) return key;
+
+        const letter = LETTER_CODE_RE.exec(code);
+
+        if (prevWasDead && letter && key.length === 1) {
+            const folded = key.normalize('NFD').replace(/[̀-ͯ]/g, '');
+            if (folded.length === 1 && KEY_RE.test(folded)) return folded;
+        }
+
+        const digit = DIGIT_CODE_RE.exec(code);
+        if (digit) return digit[1];
+
+        if (letter && NON_LATIN_LETTER_RE.test(key)) {
+            const lower = letter[1].toLowerCase();
+            return key !== key.toLowerCase() ? lower.toUpperCase() : lower;
+        }
+
+        return null;
+    }
+
+    // The keys that never end a dead-key sequence: pressing Shift (or AltGr, which Windows reports
+    // as Control then AltGraph) between the dead key and its vowel is how a capital is composed.
+    const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'OS']);
+
     // TypeBeatPlayfield's narrow Space carve-out for the UNPINNED caret: finishing a line parks the
     // caret at the head of the next one, and a habitual trailing space there must not be typed into
     // it (where it would skip the line's first word, break combo and arm the WPM clock early). Only
@@ -664,9 +725,16 @@
     //   gaps, introTarget,      the map's skip windows (computeGaps / introSkipTarget)
     //   getSelection(), setSelection(sel),   the retype selection (backlog 182)
     //   performSkip(target)     the seek
+    //   prevWasDead             written here: whether the last non-modifier keydown was a dead
+    //                           key (keyToChar's rule 2)
     // }
     function routeKeyDown(e, host) {
         const engine = host.engine;
+
+        // Read and advance the dead-key state FIRST, before any branch can return, so every
+        // non-modifier keydown (a gesture, an Enter, a repeat, a dropped key) ends a sequence.
+        const prevWasDead = !!host.prevWasDead;
+        if (!MODIFIER_KEYS.has(e.key)) host.prevWasDead = e.key === 'Dead';
 
         // The two word-level gestures the player owns (backlog 182), and Enter's line skip, are
         // carved out BEFORE the modifier fall-through: every other Ctrl/Alt/Meta combo is left to
@@ -794,7 +862,7 @@
 
         let ch = null;
         if (isSpace(e)) ch = ' ';
-        else if (e.key && e.key.length === 1 && KEY_RE.test(e.key)) ch = e.key;
+        else ch = keyToChar(e, prevWasDead);
         if (ch !== null) {
             e.preventDefault();
             // A retype selection is consumed FIRST, so this key lands on the anchor cell: mass
@@ -1012,7 +1080,8 @@
             introTarget: introTarget,
             getSelection: function () { return selection; },
             setSelection: setSelection,
-            performSkip: function (target) { performSkip(target); }
+            performSkip: function (target) { performSkip(target); },
+            prevWasDead: false
         };
 
         function onKeyDown(e) {
@@ -1833,6 +1902,9 @@
         isWordGesture,
         spaceIsDropped,
         routeKeyDown,
+        // Keystroke to character (backlog 309), pinned by the display harness and held against
+        // the game's KeyCharMap by WireCompat's KeyToCharParityTest.
+        keyToChar,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,
