@@ -485,14 +485,14 @@ function generate(name, seed, spaceSkipsWord) {
                 const pressTime = t + Math.floor(nl() * 1500);
                 let ch;
 
-                // A letter only onto a line that has a typeable cell to land on. Onto one with none
-                // (parkedLine's hand-built cell-less middle line) the C# TypingEngine.ProcessKey
-                // indexes past the end of the landed line and throws, so there is no desktop outcome
-                // to hold the browser against; the space and the Enter cover that hand-over.
+                // A letter onto a line with no typeable cell (parkedLine's hand-built cell-less
+                // middle line) is rolled too, as a random one: the move lands and the letter is
+                // dropped, on both engines since backlog 326 (the C# used to throw there).
                 const head = next.cells.find(c => c.typeable);
 
-                if (r < 0.3 || (r >= 0.5 && !head)) ch = ' ';
+                if (r < 0.3) ch = ' ';
                 else if (r < 0.5) ch = ENTER;
+                else if (!head) ch = LETTERS[Math.floor(nl() * LETTERS.length)];
                 else {
                     ch = head.expected;
                     if (nl() < 0.25 || ch === ' ') ch = LETTERS[Math.floor(nl() * LETTERS.length)];
@@ -827,6 +827,8 @@ function play(name, keys, spaceSkipsWord) {
     //
     //   manualHandOvers      rollForwardManually MOVED the caret (a space, an Enter or a letter).
     //   typedLetterNewlines  of those, the ones a LETTER made (newlineOnTypedLetter).
+    //   cellLessLetterNewlines  of THOSE, the ones that landed on a line with no cells at all, where
+    //                        the letter has no slot and is dropped (backlog 326).
     //   awaitingSwallows     a key or an Enter the engine refused because the caret was awaiting
     //                        its line's entry window (awaitingEntryAt answering true inside a press).
     //   holdExtensions       a finished line held past its own deadline by manualNewlineHoldsLineOpen
@@ -836,6 +838,7 @@ function play(name, keys, spaceSkipsWord) {
     // sides agreeing on the AUTOMATIC hand-over, green, and covering nothing.
     let manualHandOvers = 0;
     let typedLetterNewlines = 0;
+    let cellLessLetterNewlines = 0;
     let awaitingSwallows = 0;
     let holdExtensions = 0;
     let inPress = false;
@@ -869,7 +872,10 @@ function play(name, keys, spaceSkipsWord) {
         inPress = true;
         let handled;
         try { handled = keyForNewlines.call(engine, c, time); } finally { inPress = false; }
-        if (complete && c !== ' ' && engine.activeLineIndex === before + 1) typedLetterNewlines++;
+        if (complete && c !== ' ' && engine.activeLineIndex === before + 1) {
+            typedLetterNewlines++;
+            if (engine.lines[engine.activeLineIndex].cells.length === 0) cellLessLetterNewlines++;
+        }
         return handled;
     };
 
@@ -997,6 +1003,7 @@ function play(name, keys, spaceSkipsWord) {
         // Backlog 307, the manual newline.
         manualHandOvers: manualHandOvers,
         typedLetterNewlines: typedLetterNewlines,
+        cellLessLetterNewlines: cellLessLetterNewlines,
         awaitingSwallows: awaitingSwallows,
         holdExtensions: holdExtensions,
         // The health arm (backlog 306).

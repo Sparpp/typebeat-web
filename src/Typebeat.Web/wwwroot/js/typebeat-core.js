@@ -4082,9 +4082,10 @@
                     if (this.awaitingEntryAt(time)) return true;
 
                     // A landed line with nothing typeable on it (every cell auto-skipped) leaves the
-                    // caret past its end with no slot for the letter. The C# reads Cells[caretIndex]
-                    // here and throws, so there is no desktop outcome to match: the move is kept and
-                    // the letter goes nowhere, the answer the awaiting branch above already gives.
+                    // caret past its end with no slot for the letter: the move is kept and the letter
+                    // goes nowhere, the answer the awaiting branch above already gives. The C# takes
+                    // the same answer since backlog 326 (it used to read Cells[caretIndex] and throw),
+                    // and KeyHandlerOrderLiveParityTest's cell-less section holds the two together.
                     if (this.caretIndex >= line.cells.length) return true;
                 } else {
                     // Every other key stays inert here: the parked dead zone.

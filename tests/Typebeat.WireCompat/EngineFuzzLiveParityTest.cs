@@ -680,6 +680,7 @@ public class EngineFuzzLiveParityTest
         int ownCreditBreaks = 0;
         int leadInOpens = 0, pauseJudgements = 0;
         int manualHandOvers = 0, typedLetterNewlines = 0, awaitingSwallows = 0, holdExtensions = 0, enters = 0;
+        int cellLessLetterNewlines = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -712,6 +713,7 @@ public class EngineFuzzLiveParityTest
             pauseJudgements += browserCase.GetProperty("pauseJudgements").GetInt32();
             manualHandOvers += browserCase.GetProperty("manualHandOvers").GetInt32();
             typedLetterNewlines += browserCase.GetProperty("typedLetterNewlines").GetInt32();
+            cellLessLetterNewlines += browserCase.GetProperty("cellLessLetterNewlines").GetInt32();
             awaitingSwallows += browserCase.GetProperty("awaitingSwallows").GetInt32();
             holdExtensions += browserCase.GetProperty("holdExtensions").GetInt32();
             enters += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "\n");
@@ -857,6 +859,11 @@ public class EngineFuzzLiveParityTest
             // Enter as well, so the frame kind the replay feed hands to ProcessEnter is exercised too.
             Assert.That(manualHandOvers, Is.GreaterThan(0), "no run handed a finished line over by its own press");
             Assert.That(typedLetterNewlines, Is.GreaterThan(0), "no run handed a finished line over by typing the next one");
+
+            // Backlog 326: of those, a letter that landed the caret on a line with NO cells (only
+            // parkedLine's hand-built middle line has none), where the move stands and the letter is
+            // dropped. The C# threw there until 326, so the generator used to steer clear of it.
+            Assert.That(cellLessLetterNewlines, Is.GreaterThan(0), "no run typed a letter onto a line with nothing to type");
             Assert.That(awaitingSwallows, Is.GreaterThan(0), "no run pressed into a line whose entry window had not opened");
             Assert.That(holdExtensions, Is.GreaterThan(0), "no run held a finished line open past its deadline");
             Assert.That(enters, Is.GreaterThan(0), "no run pressed Enter");

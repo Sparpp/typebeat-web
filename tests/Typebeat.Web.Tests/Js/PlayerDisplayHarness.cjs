@@ -862,8 +862,63 @@ const KEY_ORDER_MANUAL_PRESSES = [
     { t: 17000.5, key: 'Enter' }, { t: 20000.2, key: 'k' }, { t: 20500.2, key: 'l' }
 ];
 
-function keyOrderRun(presses = KEY_ORDER_PRESSES) {
-    const map = build(KEY_ORDER_OSU);
+// THE TYPED-LETTER NEWLINE ONTO A LINE WITH NOTHING TO TYPE (backlog 326), the same router and tick
+// on a different map: the game's FletcherEngineTest.parkedLineMap, whose middle line has NO cells.
+// The browser's loader drops a cell-less line outright, so it is spliced in by hand exactly as
+// CoreFuzzHarness.cjs's withParkedMiddleLine does, and TheTwoLoadersAgreeOnTheCellLessFixture
+// holds every number against the TypingLine the game builds from the same three lines:
+//
+//   L0 "ab"  [1000, 3000):   a = 1000, b = 1500.
+//   L1 "..." [3000, 20000):  no cells, activation 3000, so entry into it opens at 1500.
+//   L2 "cd"  [10000, 30000): c = 12000, d = 12500, activation 10500, entry opens at 9000.
+//
+// 1000.2 'a', 1500.7 'b': L0 typed out and parked (the manual arm does not roll).
+// 2000.3 'x': the TYPED-LETTER newline onto the cell-less L1. The move lands and the letter has no
+//        slot to go to, so it is dropped: nothing judged, no typo. The desktop threw here until
+//        backlog 326 guarded it.
+// 2100.3 'c': the caret stands on a complete line again, so the letter is the newline once more,
+//        onto L2, which AWAITS its window: the character is refused.
+// 9000.4 'c': L2's window opened between the last tick and the press; this one is typed (early).
+// 12500.3 'd': typed out, parked on the last line, and the map runs on to its end.
+const KEY_ORDER_CELL_LESS_OSU = OSU_HEADER +
+    '{"granularity":"line","version":2,"song_end_ms":30000}\n' +
+    '{"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n' +
+    '{"text":"cd","start_ms":10000,"end_ms":13000,"words":[{"text":"cd","start_ms":12000,"end_ms":13000,"score":1}]}\n';
+
+const KEY_ORDER_CELL_LESS_PRESSES = [
+    { t: 1000.2, key: 'a' }, { t: 1500.7, key: 'b' },
+    { t: 2000.3, key: 'x' },
+    { t: 2100.3, key: 'c' },
+    { t: 9000.4, key: 'c' }, { t: 12500.3, key: 'd' }
+];
+
+function cellLessMap() {
+    const map = build(KEY_ORDER_CELL_LESS_OSU);
+
+    map.lines[0].endTime = 3000;
+    map.lines.splice(1, 0, {
+        index: 1,
+        text: '',
+        startTime: 3000,
+        endTime: 20000,
+        singEndTime: 19000,
+        activationTime: 3000,
+        firstVocalTime: 3000,
+        sealGraceMs: 0,
+        estimated: false,
+        cells: [],
+        syllables: [],
+        cellSyllable: [],
+        charTimedStretch: []
+    });
+    map.lines[2].index = 2;
+    map.lines[2].endTime = 30000;
+    map.totalCells = map.lines.reduce((n, l) => n + l.cells.length, 0);
+
+    return map;
+}
+
+function keyOrderRun(presses = KEY_ORDER_PRESSES, map = build(KEY_ORDER_OSU), end = KEY_ORDER_END) {
     const engine = new TB.TypingEngine(map); // the browser's own defaults, exactly as begin() builds it
     const host = keyHostFor(engine, map);
     const calls = spyOnOps(engine);
@@ -942,7 +997,7 @@ function keyOrderRun(presses = KEY_ORDER_PRESSES) {
             }, reading()));
         }
 
-        if (tick > KEY_ORDER_END) break;
+        if (tick > end) break;
 
         engine.update(tick);
         steps.push(Object.assign({ op: 'update', t: tick }, reading()));
@@ -1320,6 +1375,7 @@ const out = {
     roundHalfEven: [2000.5, 2001.5, 2000.49, 2000.51, 5510.5, 9600.5, -0.5, -1.5, 3.3].map(D.roundHalfEven),
     keyOrder: keyOrderRun(),
     keyOrderManual: keyOrderRun(KEY_ORDER_MANUAL_PRESSES),
+    keyOrderCellLess: keyOrderRun(KEY_ORDER_CELL_LESS_PRESSES, cellLessMap(), 33000),
     spaceNewlineBeforeTheSkip: spaceNewlineBeforeTheSkip(),
 
     // ---- the clock start and the intro skip anchor (backlog 308) ----

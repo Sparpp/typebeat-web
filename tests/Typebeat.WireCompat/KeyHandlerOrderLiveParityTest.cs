@@ -67,8 +67,34 @@ public class KeyHandlerOrderLiveParityTest
         Granularity = TimingGranularity.Line,
     };
 
+    /// <summary>
+    /// The harness's CELL-LESS map (backlog 326), the game's own FletcherEngineTest.parkedLineMap:
+    /// L0 "ab" [1000, 3000), L1 "..." [3000, 20000), pure punctuation the default stream strips so it
+    /// has NO cells (activation 3000, entry open from 1500), and L2 "cd" [10000, 30000) with its first
+    /// vocal at 12000 (activation 10500, entry open from 9000). The browser's loader drops a cell-less
+    /// line, so its harness splices the same three lines in by hand, and
+    /// <see cref="TheTwoLoadersAgreeOnTheCellLessFixture"/> holds those numbers against this.
+    /// </summary>
+    private static LyricBeatmap CellLessMap() => new LyricBeatmap
+    {
+        Metadata = new LyricBeatmapMetadata
+        {
+            Artist = "a",
+            Title = "t",
+            FolderPath = @"X:\nowhere",
+            AudioFileName = "a.mp3",
+        },
+        Lines =
+        [
+            Line("ab", 1000, 3000, 2000, Unit("ab", 1000, 2000)),
+            Line("...", 3000, 20000, 19000, Unit("...", 3000, 19000)),
+            Line("cd", 10000, 30000, 13000, Unit("cd", 12000, 13000)),
+        ],
+        Granularity = TimingGranularity.Line,
+    };
+
     /// <summary>A started engine under every LIVE rule, the only arm the browser can be held against.</summary>
-    private static TypingEngine LiveEngine() => new TypingEngine(Map())
+    private static TypingEngine LiveEngine(LyricBeatmap map) => new TypingEngine(map)
     {
         SyllableTiming = true,
         CharTimedStretch = true,
@@ -151,11 +177,22 @@ public class KeyHandlerOrderLiveParityTest
     /// fixture that drifted would otherwise be read below as an engine divergence.
     /// </summary>
     [Test]
-    public void TheTwoLoadersAgreeOnTheKeyOrderFixture()
+    public void TheTwoLoadersAgreeOnTheKeyOrderFixture() => TheTwoLoadersAgree(KeyOrder(), Map());
+
+    /// <summary>The same check for the cell-less section, whose middle line the browser splices in by hand.</summary>
+    [Test]
+    public void TheTwoLoadersAgreeOnTheCellLessFixture()
     {
-        var engine = LiveEngine();
-        var lines = KeyOrder().GetProperty("lines");
-        var entryOpensAt = KeyOrder().GetProperty("entryOpensAt");
+        Assert.That(CellLessMap().Lines.Count, Is.EqualTo(3));
+        Assert.That(LiveEngine(CellLessMap()).Lines[1].Cells, Is.Empty, "the game's middle line must have no cells at all");
+        TheTwoLoadersAgree(CellLessKeyOrder(), CellLessMap());
+    }
+
+    private static void TheTwoLoadersAgree(JsonElement section, LyricBeatmap map)
+    {
+        var engine = LiveEngine(map);
+        var lines = section.GetProperty("lines");
+        var entryOpensAt = section.GetProperty("entryOpensAt");
 
         Assert.Multiple(() =>
         {
@@ -196,7 +233,7 @@ public class KeyHandlerOrderLiveParityTest
     /// passed.
     /// </summary>
     [Test]
-    public void TheGameEngineMakesTheSameRunOfTheBrowsersKeystrokes() => ReplayTheBrowsersRun(KeyOrder());
+    public void TheGameEngineMakesTheSameRunOfTheBrowsersKeystrokes() => ReplayTheBrowsersRun(KeyOrder(), Map());
 
     /// <summary>
     /// The MANUAL NEWLINE's keystrokes (backlog 307) through the same router on the same map and
@@ -206,13 +243,66 @@ public class KeyHandlerOrderLiveParityTest
     /// press, the hold cutoff, and the Enter newline.
     /// </summary>
     [Test]
-    public void TheGameEngineMakesTheSameRunOfTheBrowsersManualNewlines() => ReplayTheBrowsersRun(ManualKeyOrder());
+    public void TheGameEngineMakesTheSameRunOfTheBrowsersManualNewlines() => ReplayTheBrowsersRun(ManualKeyOrder(), Map());
 
     private static JsonElement ManualKeyOrder() => harness.Value.GetProperty("keyOrderManual");
 
-    private static void ReplayTheBrowsersRun(JsonElement section)
+    /// <summary>
+    /// THE TYPED-LETTER NEWLINE ONTO A LINE WITH NOTHING TO TYPE (backlog 326), on the cell-less
+    /// map: a letter at a finished caret hands it to the cell-less middle line, where the move is
+    /// kept and the letter DROPPED (nothing judged, no typo), then a second letter hands it on to
+    /// the last line, which awaits its window, and the run goes on to the end of the map. The
+    /// desktop engine read <c>Cells[caretIndex]</c> past the end of the landed line and threw, so
+    /// the browser's matching guard had nothing to be held against until the game took the same
+    /// answer; every step after the landing is compared too, so the caret, the dropped letter and
+    /// everything downstream of it are pinned.
+    /// </summary>
+    [Test]
+    public void TheGameEngineMakesTheSameRunOfTheBrowsersCellLessNewline() => ReplayTheBrowsersRun(CellLessKeyOrder(), CellLessMap());
+
+    private static JsonElement CellLessKeyOrder() => harness.Value.GetProperty("keyOrderCellLess");
+
+    /// <summary>
+    /// NON-VACUITY for the cell-less section, on the browser's own record: some press has to be a
+    /// LETTER the engine took as the newline and landed on a line with no cells, having judged
+    /// nothing and typo'd nothing, or the comparison above passes on a run that never met the shape.
+    /// </summary>
+    [Test]
+    public void TheCellLessKeystrokesLandALetterOnALineWithNothingToType()
     {
-        var engine = LiveEngine();
+        var section = CellLessKeyOrder();
+        var lines = section.GetProperty("lines");
+        int dropped = 0;
+        JsonElement? previous = null;
+
+        foreach (var step in section.GetProperty("steps").EnumerateArray())
+        {
+            if (step.GetProperty("op").GetString() == "press" && previous is JsonElement before)
+            {
+                string key = step.GetProperty("key").GetString()!;
+                var calls = step.GetProperty("calls").EnumerateArray().ToArray();
+                int line = step.GetProperty("line").GetInt32();
+
+                if (key.Length == 1 && key != " "
+                    && calls.Length == 1 && calls[0].GetProperty("fn").GetString() == "key" && calls[0].GetProperty("result").GetBoolean()
+                    && line > step.GetProperty("judgedAgainst").GetProperty("line").GetInt32()
+                    && lines[line].GetProperty("cells").GetArrayLength() == 0
+                    && step.GetProperty("mistypes").GetInt32() == before.GetProperty("mistypes").GetInt32()
+                    && step.GetProperty("counts").ToString() == before.GetProperty("counts").ToString())
+                {
+                    dropped++;
+                }
+            }
+
+            previous = step;
+        }
+
+        Assert.That(dropped, Is.GreaterThan(0), "no letter handed a finished line over onto a line with no cells");
+    }
+
+    private static void ReplayTheBrowsersRun(JsonElement section, LyricBeatmap map)
+    {
+        var engine = LiveEngine(map);
         var steps = section.GetProperty("steps");
 
         int breaks = 0;
