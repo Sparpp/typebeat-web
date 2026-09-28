@@ -670,11 +670,20 @@ const out = {};
             time: t,
             at: at(engine),
             songWindowOpen: engine.songWindowOpen,
-            songIsOnTheCaretsLine: engine.songIsOnTheCaretsLine
+            songIsOnTheCaretsLine: engine.songIsOnTheCaretsLine,
+            // Backlog 305's other half of the Space drop: nothing typed into the caret's line yet.
+            activeLineUntouched: engine.activeLineUntouched
         });
     }
 
-    out.songOnTheCaretsLine = { entryOpensAt: engine.entryOpensAt(1), readings: readings };
+    // One press into line 1, and the line is touched: the drop is over for it.
+    engine.processKey('c', 20000);
+
+    out.songOnTheCaretsLine = {
+        entryOpensAt: engine.entryOpensAt(1),
+        readings: readings,
+        afterAPress: { at: at(engine), activeLineUntouched: engine.activeLineUntouched }
+    };
 }
 
 // THE WPM CLOCK is suspended through BOTH parked states, which since backlog 218 is what this run

@@ -2874,6 +2874,26 @@
             return this.activeLineIndex >= 0 && this.activeLineIndex === this.nextSealIndex && this.songWindowOpen;
         }
 
+        // TypingEngine.ActiveLineUntouched. True while the player has put nothing into the active
+        // line yet: no cell behind the caret is 'correct' or 'wrong' (leading auto-skipped
+        // punctuation, and cells a word skip abandoned, are not progress). A PURE READ, changing
+        // nothing. The key handler (typebeat-player.js, routeKeyDown) pairs it with
+        // songIsOnTheCaretsLine to drop a habitual Space on a caret parked at the head of a line
+        // the song has not reached, exactly as TypeBeatPlayfield's key handler does.
+        get activeLineUntouched() {
+            if (this.activeLineIndex < 0) return false;
+
+            const cells = this.lines[this.activeLineIndex].cells;
+            const end = Math.min(this.caretIndex, cells.length);
+
+            for (let i = 0; i < end; i++) {
+                const state = cells[i].state;
+                if (state === 'correct' || state === 'wrong') return false;
+            }
+
+            return true;
+        }
+
         // TypingEngine.DragCutoffAt. THE PUSH (backlog 263), read out for DISPLAY ONLY: the instant
         // the caret's own line will be force-sealed out from under it and the caret landed on the
         // next line, or null when no such push is coming. Nothing here decides anything, it only

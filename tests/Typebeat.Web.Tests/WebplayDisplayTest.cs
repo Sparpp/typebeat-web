@@ -884,6 +884,105 @@ public class WebplayDisplayTest
             Assert.That(wordGap.GetProperty("gapCellState").GetString(), Is.EqualTo("correct"));
             Assert.That(Num(wordGap, "caretAfter"), Is.EqualTo(Num(wordGap, "caretBefore") + 1));
         });
+
+        // THE PARKED UNTOUCHED HEAD (backlog 305), the row the table above cannot express: line 0
+        // typed out, the rush bound has handed the caret to the head of line 1 at 10500, and the
+        // song is still far behind it. skipAllowed reads "typing" (a line is active and
+        // incomplete), which is why the old handler typed the space into line 1 as a word skip.
+        // TypeBeatPlayfield drops it instead (FletcherEnabled, !SongIsOnTheCaretsLine,
+        // ActiveLineUntouched), and so does the router now: swallowed, no engine call, no skip
+        // (none is live this close to the line), line 1 untouched, and the next letter types.
+        var head = root.GetProperty("spaceParkedHead");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(head.GetProperty("at").GetProperty("line").GetInt32(), Is.EqualTo(1));
+            Assert.That(head.GetProperty("at").GetProperty("cell").GetInt32(), Is.EqualTo(0));
+            Assert.That(Flag(head, "activeLineUntouched"), Is.True);
+            Assert.That(Flag(head, "songIsOnTheCaretsLine"), Is.False);
+            Assert.That(Flag(head, "skipAllowed"), Is.False, "the fall-through predicate alone would have typed it");
+            Assert.That(Flag(head, "dropped"), Is.True);
+            Assert.That(Flag(head, "spacePrevented"), Is.True, "the key is swallowed, not left to scroll the page");
+            Assert.That(Num(head, "spaceEngineCalls"), Is.Zero, "no processKey for the dropped space");
+            Assert.That(Num(head, "skipsTaken"), Is.Zero);
+            Assert.That(JsHarness.Strings(head, "cellsAfterSpace"), Is.EqualTo(new[] { "correct", "untyped" }),
+                "line 1's first word is intact: no abandoned cells, no word skip");
+            Assert.That(head.GetProperty("letterLanded").GetString(), Is.EqualTo("correct"));
+            Assert.That(Flag(head, "untouchedAfterLetter"), Is.False);
+            Assert.That(Num(head, "combo"), Is.EqualTo(3), "a, b and c: the dropped space broke nothing");
+        });
+    }
+
+    /// <summary>
+    /// The modifier rules of the router (backlog 305), against the desktop's default bindings under
+    /// KeyCombinationMatchingMode.Any: Ctrl+Backspace and Ctrl+A fire with Alt or AltGr (Ctrl plus
+    /// Alt in a browser) or Shift also held, never with Meta; Enter reaches the line skip under Ctrl
+    /// or Alt, never under Meta (backlog 283).
+    /// </summary>
+    [Test]
+    public void TheGesturesMatchTheDesktopsAnyModifierBindings()
+    {
+        var root = Harness();
+        var matrix = root.GetProperty("gestureMatrix").EnumerateArray()
+                         .ToDictionary(r => r.GetProperty("key").GetString() + ":" + r.GetProperty("mods").GetString(), r => r.GetProperty("gesture").GetBoolean());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(matrix["Backspace:"], Is.False, "plain Backspace is the single erase, not the gesture");
+            Assert.That(matrix["Backspace:ctrl"], Is.True);
+            Assert.That(matrix["Backspace:alt+ctrl"], Is.True, "AltGr+Backspace");
+            Assert.That(matrix["Backspace:alt"], Is.False, "Alt alone does not satisfy a Ctrl binding");
+            Assert.That(matrix["Backspace:ctrl+meta"], Is.False);
+            Assert.That(matrix["Backspace:ctrl+shift"], Is.True);
+            Assert.That(matrix["a:ctrl"], Is.True);
+            Assert.That(matrix["a:alt+ctrl"], Is.True, "Ctrl+Alt+A");
+            Assert.That(matrix["A:ctrl+shift"], Is.True);
+            Assert.That(matrix["a:alt"], Is.False);
+            Assert.That(matrix["a:meta"], Is.False);
+            Assert.That(matrix["a:ctrl+meta"], Is.False);
+
+            foreach (var name in new[] { "enterPlain", "enterCtrl", "enterAlt" })
+            {
+                var enter = root.GetProperty(name);
+                Assert.That(Flag(enter, "reached"), Is.True, $"{name}: reaches processEnter");
+                Assert.That(Flag(enter, "prevented"), Is.True, $"{name}: an effective skip is swallowed");
+                Assert.That(Num(enter, "caret"), Is.EqualTo(5), $"{name}: the caret parks past the line");
+            }
+
+            var meta = root.GetProperty("enterMeta");
+            Assert.That(Flag(meta, "reached"), Is.False, "Meta+Enter is the browser's");
+            Assert.That(Flag(meta, "prevented"), Is.False);
+            Assert.That(Num(meta, "caret"), Is.EqualTo(1));
+
+            var altGr = root.GetProperty("altGrBackspace");
+            Assert.That(Num(altGr, "before"), Is.EqualTo(2));
+            Assert.That(Num(altGr, "after"), Is.EqualTo(0), "AltGr+Backspace takes the whole word");
+            Assert.That(Flag(altGr, "prevented"), Is.True);
+        });
+    }
+
+    /// <summary>
+    /// The router's two small mirrors of the desktop key handler (backlog 305): C# Math.Round's
+    /// banker's rounding (JS Math.round sends every half up), and the Gatekeeper erase gate
+    /// (!AllowWrongInput and no live selection), under which a plain erase is inert while an erase
+    /// over a selection still collapses it.
+    /// </summary>
+    [Test]
+    public void TheRouterRoundsAndGatesErasesAsTheDesktopDoes()
+    {
+        var root = Harness();
+        var gate = root.GetProperty("gatekeeperErase");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(JsHarness.Doubles(root, "roundHalfEven"),
+                Is.EqualTo(new[] { 2000.5, 2001.5, 2000.49, 2000.51, 5510.5, 9600.5, -0.5, -1.5, 3.3 }.Select(x => Math.Round(x))));
+
+            Assert.That(Num(gate, "plainErases"), Is.Zero, "no engine erase under Gatekeeper without a selection");
+            Assert.That(Num(gate, "caretAfterPlain"), Is.EqualTo(2));
+            Assert.That(Num(gate, "caretAfterSelection"), Is.EqualTo(1), "the selection is still collapsed");
+            Assert.That(gate.GetProperty("selectionLeft").ValueKind, Is.EqualTo(JsonValueKind.Null));
+        });
     }
 
     /// <summary>

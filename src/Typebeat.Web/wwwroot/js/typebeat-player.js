@@ -486,11 +486,14 @@
     }
 
     // TypeBeatPlayfield's key-handler fall-through, which is what decides whether Space is a skip or
-    // a character. The desktop swallows every typeable key while a line is active and INCOMPLETE, so
-    // a skip can never eat a live keystroke; it lets the key fall through to GlobalAction.SkipCutscene
-    // when no line is active at all, and when the active line IsLineComplete with no live retype
-    // SELECTION (backlog 182: collapsing a selection re-opens the cells it covers, so the key
-    // consuming it is a typing key again even though the line reads complete).
+    // a character. The desktop lets the key fall through to GlobalAction.SkipCutscene when no line
+    // is active at all (outside the first line's head start), and when the active line
+    // IsLineComplete with no live retype SELECTION (backlog 182: collapsing a selection re-opens the
+    // cells it covers, so the key consuming it is a typing key again even though the line reads
+    // complete). On an active INCOMPLETE line it swallows every typeable key with ONE exception,
+    // which this predicate does not cover and routeKeyDown carries on its own: a Space on a caret
+    // parked at the head of a line it has not touched, while the song is not on that line (see
+    // spaceIsDropped). Everywhere else on an incomplete line a skip can never eat a live keystroke.
     //
     // This is also the WPM-CLOCK GUARD, and that is the load-bearing half. TypingEngine accrues
     // activeTimeMs only while the active line is incomplete (and, under the flexible caret, only
@@ -517,6 +520,266 @@
         }
 
         return null;
+    }
+
+    // Whether Space is a skip right now rather than a character, on the desktop's own predicate.
+    //
+    // The FIRST LINE'S HEAD START (PR 2) counts as a live line here, as it does in
+    // TypeBeatPlayfield's key handler (`!engine.LineIsActive && !engine.FirstLineTypingOpensAt`):
+    // a press inside it opens the line and types, rather than falling through to the skip.
+    // Unreachable as a skip today (the intro target sits SKIP_LEAD_MS before the first vocal, far
+    // outside the head start), and mirrored so the two predicates cannot drift.
+    function skipAllowedFor(engine, time, hasSelection) {
+        const active = engine.activeLineIndex >= 0;
+        const typing = active || engine.firstLineTypingOpensAt(time);
+        return skipAllowed(typing, active && engine.isLineComplete(engine.activeLineIndex), hasSelection);
+    }
+
+    // The skip target live at `time`, or null. Kept apart from the chip so the key path and the
+    // button path answer to exactly one rule.
+    function pendingSkipTargetFor(engine, gaps, introTarget, time) {
+        if (engine.finished || engine.failed) return null;
+
+        const active = engine.activeLineIndex >= 0;
+        const upcoming = upcomingLineIndex(
+            engine.activeLineIndex, active && engine.isLineComplete(engine.activeLineIndex), engine.nextSealIndex);
+
+        if (upcoming < 0 || upcoming >= engine.lines.length) return null;
+
+        return skipTargetAt(gaps, introTarget, upcoming, time);
+    }
+
+    // ---------------------------------------------------------------------------
+    // THE KEY HANDLER, as a pure router (backlog 305). mountPlayer's keydown listener is a thin
+    // wrapper around routeKeyDown; everything that decides what a press does lives here, over a
+    // `host` that supplies the engine, the clock and the few pieces of player state the routing
+    // reads (the retype selection, the skip gaps, the seek). That is what lets the display harness
+    // send keydowns between fake ticks and the cross-repo parity test hold the result against the
+    // desktop's key handler.
+    // ---------------------------------------------------------------------------
+
+    // C# Math.Round(double): MidpointRounding.ToEven, "banker's rounding". JS Math.round sends every
+    // .5 up, so 2000.5 would be 2001 here and 2000 on the desktop, a millisecond apart on the very
+    // value a press is judged at.
+    function roundHalfEven(x) {
+        const f = Math.floor(x);
+        const d = x - f;
+        if (d < 0.5) return f;
+        if (d > 0.5) return f + 1;
+        return f % 2 === 0 ? f : f + 1;
+    }
+
+    // TypeBeatKeyHandler.OnKeyDown's word-gesture resolution against the default bindings
+    // (Ctrl+Backspace, Ctrl+A). The desktop's gesture container matches under
+    // KeyCombinationMatchingMode.Any, so a binding is satisfied with EXTRA modifiers held: Alt, and
+    // with it AltGr (which browsers report as Ctrl plus Alt), and Shift all still fire the gesture.
+    // Meta is excluded where the desktop does not name it, because a Cmd combo on macOS is the
+    // browser's own shortcut surface and gameplay must not start eating it.
+    function isWordGesture(e) {
+        if (!e.ctrlKey || e.metaKey) return false;
+        return e.key === 'Backspace' || e.key === 'a' || e.key === 'A' || e.code === 'KeyA';
+    }
+
+    function isSpace(e) { return e.key === ' ' || e.code === 'Space'; }
+
+    // TypeBeatPlayfield's narrow Space carve-out for the UNPINNED caret: finishing a line parks the
+    // caret at the head of the next one, and a habitual trailing space there must not be typed into
+    // it (where it would skip the line's first word, break combo and arm the WPM clock early). Only
+    // while the song is not on the caret's line and only before the player has started it; one
+    // keystroke in, or once the song reaches the line, Space is a typing key again.
+    function spaceIsDropped(engine) {
+        return engine.fletcherEnabled && !engine.songIsOnTheCaretsLine && engine.activeLineUntouched;
+    }
+
+    // TypeBeatKeyHandler.eraseBackTo. Erase back to target with ordinary processBackspace
+    // calls: the same run of erases a player holding the plain key down would have made, which
+    // is the whole point of composing the gesture rather than teaching the engine a wider one.
+    //
+    // The trailing check is defensive termination only. Every erase that reports a mutation
+    // moves the caret back, but one that reclaimed abandoned cells at the head of a line can
+    // land on 0 and be auto-skipped forward again, and a gesture must never spin.
+    //
+    // THE PARKED EXCEPTION IS NOT THAT CASE (PR 2): clearing a PARKED typo is a real mutation
+    // of the cell the caret is on with the caret deliberately unmoved, so breaking there would
+    // leave the rest of the selection standing. Read BEFORE the press, which is the only
+    // iteration the guard has to let through; the next press steps back normally.
+    //
+    // No time is passed down: the engine's backspace takes none (it is judged at no instant), and
+    // the desktop's time argument here only stamps the replay frame the browser does not write.
+    // The press's time has already been applied by routeKeyDown's update.
+    function eraseBackTo(engine, target) {
+        while (engine.caretIndex > target) {
+            const before = engine.caretIndex;
+            const parked = engine.caretOnParkedTypo;
+            if (!engine.processBackspace()) break;
+            if (engine.caretIndex >= before && !parked) break;
+        }
+    }
+
+    // TypeBeatKeyHandler.collapseSelection. Collapse a live retype selection: a mass backspace
+    // to its anchor. Returns whether there was one to collapse, so the caller can tell "the
+    // selection ate this key" from "there was nothing there". The selection is dropped BEFORE
+    // the erases so the staleness check cannot race them.
+    function collapseSelection(host) {
+        const selection = host.getSelection();
+        if (!selection) return false;
+        const start = selection.startCell;
+        host.setSelection(null);
+        eraseBackTo(host.engine, start);
+        return true;
+    }
+
+    // TypeBeatPlayfield's key handler (TypeBeatKeyHandler.OnKeyDown), for one keydown.
+    //
+    // host: {
+    //   engine,                 the live TypingEngine
+    //   now(),                  the audio clock in (fractional) ms
+    //   gaps, introTarget,      the map's skip windows (computeGaps / introSkipTarget)
+    //   getSelection(), setSelection(sel),   the retype selection (backlog 182)
+    //   performSkip(target)     the seek
+    // }
+    function routeKeyDown(e, host) {
+        const engine = host.engine;
+
+        // The two word-level gestures the player owns (backlog 182), and Enter's line skip, are
+        // carved out BEFORE the modifier fall-through: every other Ctrl/Alt/Meta combo is left to
+        // the browser. Enter reaches its gesture under Ctrl or Alt because the desktop's SkipLine
+        // binding matches with KeyCombinationMatchingMode.Any (TypeBeatInputManager); Meta stays
+        // excluded for the reason isWordGesture gives (backlog 283).
+        const wordGesture = isWordGesture(e);
+        const enter = e.key === 'Enter' && !e.metaKey;
+        if ((e.ctrlKey || e.altKey || e.metaKey) && !wordGesture && !enter) return;
+
+        // THE KEYSTROKE PROTOCOL (backlog 20's replay-determinism contract, which the desktop has
+        // always followed and the browser now does too): quantise the press to whole milliseconds
+        // ONCE, with the desktop's rounding, and advance the engine to that instant BEFORE any gate
+        // or judgement reads it. Without this every decision below was taken against engine state
+        // last advanced by the render tick, so anything that fell due between that frame and the
+        // press (a seal, a drag cutoff, a rush snap, a line's activation) was applied AFTER the
+        // key: a press was judged on a line the desktop had already sealed, lost against a caret
+        // the desktop had already moved on, or dropped in a dead zone the desktop had already left.
+        //
+        // A rounded time can sit up to 0.5 ms under the last tick; both engines clamp the WPM
+        // clock's accrual at zero for that, and nothing else reads a backwards step.
+        const t = roundHalfEven(host.now());
+        engine.update(t);
+
+        // Backspace, gated exactly as TypeBeatPlayfield's key handler gates it: erasing only
+        // ever has something to undo where a wrong char can land, so it reads the engine's
+        // allowWrongInput flag rather than a rule of its own. That flag is on for every browser
+        // play (the browser has no mods payload and so can never be Gatekeeper), which means
+        // backspace is LIVE here. Under Gatekeeper the one thing an erase key still does is
+        // consume a live SELECTION (backlog 244), which is why the gate reads it too. The key is
+        // still swallowed either way, and the engine is still where the erase is decided:
+        // processBackspace no-ops when there is nothing behind the caret.
+        //
+        // preventDefault covers the plain key (which navigates back on older browsers) and the
+        // Ctrl combo (which the browser reads as "delete the previous word"). Repeat is honoured
+        // for BOTH widths, exactly as on the desktop: this branch returns above the e.repeat
+        // guard, so holding either erases.
+        //
+        // CTRL takes the whole word. A live SELECTION takes precedence over either width: an
+        // erase key over one collapses it and types nothing, which is the same mass erase a
+        // letter would do before landing.
+        if (e.key === 'Backspace') {
+            e.preventDefault();
+            if (!engine.allowWrongInput && !host.getSelection()) return;
+            if (!collapseSelection(host)) {
+                if (wordGesture) eraseBackTo(engine, engine.wordBackspaceTarget);
+                else engine.processBackspace();
+            }
+            return;
+        }
+
+        if (wordGesture) {
+            // CTRL+A: offer the run back to the earliest unfixed mistake for retyping (backlog
+            // 184 widened it from the nearest one, so one press offers every mistake).
+            // preventDefault because the browser's own Ctrl+A selects the whole page. NOT gated
+            // on allowWrongInput, unlike the erase above: backlog 244 is where that stopped being
+            // the same question, since a word skip is orthogonal to the input model and can leave
+            // abandoned cells behind under Gatekeeper even with no typo possible.
+            e.preventDefault();
+
+            const anchor = engine.retypeSelectionAnchor;
+
+            // No typo behind the caret: a genuine no-op, nothing to select and nothing to clear
+            // (a selection can only exist where the query just answered). Pressing it again with
+            // one already open simply recomputes the same range.
+            if (anchor >= 0) {
+                host.setSelection({ lineIndex: engine.activeLineIndex, startCell: anchor, endCell: engine.caretIndex });
+            }
+            return;
+        }
+
+        // ENTER GIVES UP THE REST OF THE LINE (backlog 241), the desktop's
+        // TypeBeatAction.SkipLine on its default key. One engine call, which parks the caret
+        // past the last cell and lets the roll or the snap carry it onward; the cells left
+        // behind are judged by the seal at the line's own deadline, exactly as they would be
+        // for a player who just stopped typing.
+        //
+        // Placed above the repeat guard because the desktop's gesture branches sit above its
+        // own (holding the key repeats there too).
+        //
+        // A live retype SELECTION is deliberately NOT collapsed first: collapsing erases back
+        // to the anchor, and a player abandoning the line is not asking to unmake the
+        // characters they got right. Moving the caret makes it stale and the render loop drops
+        // it. Nothing is gated on allowWrongInput either, unlike the two erasing gestures: a
+        // skip writes nothing into a cell.
+        //
+        // Only an EFFECTIVE press is swallowed, which is the desktop's swallow rule: on a caret
+        // already parked (or a line typed out) the engine no-ops and the key is left to the
+        // browser exactly as it was before. Nothing else on this page is listening for Enter
+        // during play; the pre-play start gate is its own capturing listener and is removed
+        // when play begins.
+        if (enter) {
+            if (engine.processEnter(t)) e.preventDefault();
+            return;
+        }
+
+        if (e.repeat) return;
+
+        if (isSpace(e)) {
+            // THE PARKED-HEAD DROP (spaceIsDropped). The desktop returns the key unconsumed here, so
+            // it reaches GlobalAction.SkipCutscene; the browser's counterpart is the seek, taken only
+            // if a skip window is live, and otherwise the press is simply swallowed and does nothing.
+            if (spaceIsDropped(engine)) {
+                e.preventDefault();
+                const target = pendingSkipTargetFor(engine, host.gaps, host.introTarget, t);
+                if (target !== null) host.performSkip(target);
+                return;
+            }
+
+            // SPACE AS THE SKIP KEY, on exactly the desktop's terms (see skipAllowed): only where
+            // TypeBeatPlayfield's key handler would let the press fall through to
+            // GlobalAction.SkipCutscene, and only while a skip window is actually live. Anywhere
+            // else it falls straight into the typeable branch below and is a word-gap character,
+            // which is the ONE thing that must not change: a skip that could fire mid-line would
+            // both eat a keystroke and inject the skipped span into the WPM clock.
+            if (skipAllowedFor(engine, t, host.getSelection() !== null)) {
+                const target = pendingSkipTargetFor(engine, host.gaps, host.introTarget, t);
+                if (target !== null) {
+                    e.preventDefault();
+                    host.performSkip(target);
+                    return;
+                }
+            }
+        }
+
+        let ch = null;
+        if (isSpace(e)) ch = ' ';
+        else if (e.key && e.key.length === 1 && KEY_RE.test(e.key)) ch = e.key;
+        if (ch !== null) {
+            e.preventDefault();
+            // A retype selection is consumed FIRST, so this key lands on the anchor cell: mass
+            // backspace, then the ordinary judged keypress. Space is not special here, nor is any
+            // other typeable key: "collapse, then process normally" is the whole rule. The
+            // desktop suspends its line-complete fall-through to the skip overlay while a
+            // selection is live, and so does this file: skipAllowed() takes the selection, so a
+            // key arriving over one is a typing key even on a line that reads complete, and
+            // control has already fallen through to here.
+            collapseSelection(host);
+            engine.processKey(ch, t);
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -704,165 +967,22 @@
         // queries that say where each one stops.
         let selection = null;
 
-        // TypeBeatKeyHandler.OnKeyDown's word-gesture carve-out: Control without Alt, on exactly
-        // two keys, so every other browser and OS shortcut still reaches the browser. Meta is
-        // excluded here where the desktop does not name it, because a Cmd combo on macOS is the
-        // browser's own shortcut surface and gameplay must not start eating it.
-        function isWordGesture(e) {
-            if (!e.ctrlKey || e.altKey || e.metaKey) return false;
-            return e.key === 'Backspace' || e.key === 'a' || e.key === 'A' || e.code === 'KeyA';
-        }
-
-        // TypeBeatKeyHandler.eraseBackTo. Erase back to target with ordinary processBackspace
-        // calls: the same run of erases a player holding the plain key down would have made, which
-        // is the whole point of composing the gesture rather than teaching the engine a wider one.
-        //
-        // The trailing check is defensive termination only. Every erase that reports a mutation
-        // moves the caret back, but one that reclaimed abandoned cells at the head of a line can
-        // land on 0 and be auto-skipped forward again, and a gesture must never spin.
-        //
-        // THE PARKED EXCEPTION IS NOT THAT CASE (PR 2): clearing a PARKED typo is a real mutation
-        // of the cell the caret is on with the caret deliberately unmoved, so breaking there would
-        // leave the rest of the selection standing. Read BEFORE the press, which is the only
-        // iteration the guard has to let through; the next press steps back normally.
-        function eraseBackTo(target) {
-            while (engine.caretIndex > target) {
-                const before = engine.caretIndex;
-                const parked = engine.caretOnParkedTypo;
-                if (!engine.processBackspace()) break;
-                if (engine.caretIndex >= before && !parked) break;
-            }
-        }
-
-        // TypeBeatKeyHandler.collapseSelection. Collapse a live retype selection: a mass backspace
-        // to its anchor. Returns whether there was one to collapse, so the caller can tell "the
-        // selection ate this key" from "there was nothing there". The selection is dropped BEFORE
-        // the erases so the staleness check cannot race them.
-        function collapseSelection() {
-            if (!selection) return false;
-            const start = selection.startCell;
-            setSelection(null);
-            eraseBackTo(start);
-            return true;
-        }
+        // The one keydown listener, a thin wrapper: routeKeyDown (above mountPlayer) is the whole
+        // key handler, over this host. The engine is read through a getter because begin() makes a
+        // fresh one for every play.
+        const keyHost = {
+            get engine() { return engine; },
+            now: nowMs,
+            gaps: gaps,
+            introTarget: introTarget,
+            getSelection: function () { return selection; },
+            setSelection: setSelection,
+            performSkip: function (target) { performSkip(target); }
+        };
 
         function onKeyDown(e) {
             if (!running || !engine) return;
-
-            // The two word-level gestures the player owns (backlog 182). Carved out BEFORE the
-            // fall-through below, which is otherwise unchanged: every other Ctrl/Alt/Meta combo is
-            // left to the browser.
-            const wordGesture = isWordGesture(e);
-            if ((e.ctrlKey || e.altKey || e.metaKey) && !wordGesture) return;
-
-            // Backspace, gated exactly as TypeBeatPlayfield's key handler gates it: erasing only
-            // ever has something to undo where a wrong char can land, so it reads the engine's
-            // allowWrongInput flag rather than a rule of its own. That flag is on for every browser
-            // play (the browser has no mods payload and so can never be Gatekeeper), which means
-            // backspace is LIVE here, where under the old strict-only model it was inert. The key is
-            // still swallowed either way, and the engine is still where the erase is decided:
-            // processBackspace no-ops when there is nothing behind the caret.
-            //
-            // preventDefault covers the plain key (which navigates back on older browsers) and the
-            // Ctrl combo (which the browser reads as "delete the previous word"). Repeat is honoured
-            // for BOTH widths, exactly as on the desktop: this branch returns above the e.repeat
-            // guard, so holding either erases.
-            //
-            // CTRL takes the whole word. A live SELECTION takes precedence over either width: an
-            // erase key over one collapses it and types nothing, which is the same mass erase a
-            // letter would do before landing.
-            if (e.key === 'Backspace') {
-                e.preventDefault();
-                if (!engine.allowWrongInput) return;
-                if (!collapseSelection()) {
-                    if (wordGesture) eraseBackTo(engine.wordBackspaceTarget);
-                    else engine.processBackspace();
-                }
-                return;
-            }
-
-            if (wordGesture) {
-                // CTRL+A: offer the run back to the earliest unfixed mistake for retyping (backlog
-                // 184 widened it from the nearest one, so one press offers every mistake).
-                // preventDefault because the browser's own Ctrl+A selects the whole page. NOT gated
-                // on allowWrongInput, unlike the erase above: that used to be true here too, but
-                // backlog 244 is where it stopped being the same question, since a word skip is
-                // orthogonal to the input model and can leave abandoned cells behind under
-                // Gatekeeper even with no typo possible. Behaviourally inert in the browser today
-                // (allowWrongInput is hardcoded true, the browser having no mods payload), but kept
-                // dropped to mirror the desktop honestly.
-                e.preventDefault();
-
-                const anchor = engine.retypeSelectionAnchor;
-
-                // No typo behind the caret: a genuine no-op, nothing to select and nothing to clear
-                // (a selection can only exist where the query just answered). Pressing it again with
-                // one already open simply recomputes the same range.
-                if (anchor >= 0) {
-                    setSelection({ lineIndex: engine.activeLineIndex, startCell: anchor, endCell: engine.caretIndex });
-                }
-                return;
-            }
-
-            // ENTER GIVES UP THE REST OF THE LINE (backlog 241), the desktop's
-            // TypeBeatAction.SkipLine on its default key. One engine call, which parks the caret
-            // past the last cell and lets the roll or the snap carry it onward; the cells left
-            // behind are judged by the seal at the line's own deadline, exactly as they would be
-            // for a player who just stopped typing.
-            //
-            // Placed above the repeat guard because the desktop's gesture branches sit above its
-            // own (holding the key repeats there too), and left of the typeable branch below, which
-            // never saw Enter anyway: e.key is 'Enter', five characters, so the length-one test
-            // rejected it and the press did nothing at all.
-            //
-            // A live retype SELECTION is deliberately NOT collapsed first: collapsing erases back
-            // to the anchor, and a player abandoning the line is not asking to unmake the
-            // characters they got right. Moving the caret makes it stale and the render loop drops
-            // it. Nothing is gated on allowWrongInput either, unlike the two erasing gestures: a
-            // skip writes nothing into a cell.
-            //
-            // Only an EFFECTIVE press is swallowed, which is the desktop's swallow rule: on a caret
-            // already parked (or a line typed out) the engine no-ops and the key is left to the
-            // browser exactly as it was before. Nothing else on this page is listening for Enter
-            // during play; the pre-play start gate is its own capturing listener and is removed
-            // when play begins.
-            if (e.key === 'Enter') {
-                if (engine.processEnter(nowMs())) e.preventDefault();
-                return;
-            }
-
-            if (e.repeat) return;
-
-            // SPACE AS THE SKIP KEY, on exactly the desktop's terms (see skipAllowed): only where
-            // TypeBeatPlayfield's key handler would let the press fall through to
-            // GlobalAction.SkipCutscene, and only while a skip window is actually live. Anywhere
-            // else it falls straight into the typeable branch below and is a word-gap character,
-            // which is the ONE thing that must not change: a skip that could fire mid-line would
-            // both eat a keystroke and inject the skipped span into the WPM clock.
-            if ((e.key === ' ' || e.code === 'Space') && skipAllowedNow(nowMs())) {
-                const target = pendingSkipTarget(nowMs());
-                if (target !== null) {
-                    e.preventDefault();
-                    performSkip(target);
-                    return;
-                }
-            }
-
-            let ch = null;
-            if (e.key === ' ' || e.code === 'Space') ch = ' ';
-            else if (e.key && e.key.length === 1 && KEY_RE.test(e.key)) ch = e.key;
-            if (ch !== null) {
-                e.preventDefault();
-                // A retype selection is consumed FIRST, so this key lands on the anchor cell: mass
-                // backspace, then the ordinary judged keypress. Space is not special here, nor is any
-                // other typeable key: "collapse, then process normally" is the whole rule. The
-                // desktop suspends its line-complete fall-through to the skip overlay while a
-                // selection is live, and since backlog 230 so does this file: skipAllowed() takes
-                // the selection, so a key arriving over one is a typing key even on a line that
-                // reads complete, and control has already fallen through to here.
-                collapseSelection();
-                engine.processKey(ch, nowMs());
-            }
+            routeKeyDown(e, keyHost);
         }
 
         // --- row plumbing -----------------------------------------------------
@@ -1308,31 +1428,10 @@
             setSkipAffordance(skipAllowedNow(time) ? skipTargetAt(gaps, introTarget, upcoming, time) : null);
         }
 
-        // Whether Space is a skip right now rather than a character, on the desktop's own predicate.
-        //
-        // The FIRST LINE'S HEAD START (PR 2) counts as a live line here, as it does in
-        // TypeBeatPlayfield's key handler (`!engine.LineIsActive && !engine.FirstLineTypingOpensAt`):
-        // a press inside it opens the line and types, rather than falling through to the skip.
-        // Unreachable as a skip today (the intro target sits SKIP_LEAD_MS before the first vocal, far
-        // outside the head start), and mirrored so the two predicates cannot drift.
+        // The chip's half of the skip-or-character predicate (skipAllowedFor), over the live
+        // selection. The key's half is routeKeyDown's, over the same function.
         function skipAllowedNow(time) {
-            const active = engine.activeLineIndex >= 0;
-            const typing = active || engine.firstLineTypingOpensAt(time);
-            return skipAllowed(typing, active && engine.isLineComplete(engine.activeLineIndex), selection !== null);
-        }
-
-        // The skip target live at `time`, or null. Kept apart from the chip so the key path and the
-        // button path answer to exactly one rule.
-        function pendingSkipTarget(time) {
-            if (!running || engine.finished || engine.failed) return null;
-
-            const active = engine.activeLineIndex >= 0;
-            const upcoming = upcomingLineIndex(
-                engine.activeLineIndex, active && engine.isLineComplete(engine.activeLineIndex), engine.nextSealIndex);
-
-            if (upcoming < 0 || upcoming >= beatmap.lines.length) return null;
-
-            return skipTargetAt(gaps, introTarget, upcoming, time);
+            return skipAllowedFor(engine, time, selection !== null);
         }
 
         function setSkipAffordance(target) {
@@ -1677,6 +1776,15 @@
         upcomingLineIndex,
         skipAllowed,
         skipTargetAt,
+        skipAllowedFor,
+        pendingSkipTargetFor,
+        // The key handler (backlog 305), exported so the display harness can drive keydowns
+        // between fake ticks and the cross-repo parity test can hold its protocol against the
+        // desktop's.
+        roundHalfEven,
+        isWordGesture,
+        spaceIsDropped,
+        routeKeyDown,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,

@@ -598,22 +598,32 @@ public class FlexibleLinesParityTest
                 Assert.That(reading.GetProperty("songWindowOpen").GetBoolean(), Is.True,
                     $"{time}: a line window is open the whole way, which is exactly why it is the wrong question");
 
+                bool untouched = reading.GetProperty("activeLineUntouched").GetBoolean();
+
                 if (time < 18500)
                 {
                     Assert.That(At(reading.GetProperty("at")), Is.EqualTo((0, 2)), $"{time}: the rush bound still has the caret parked past line 0's end");
                     Assert.That(onTheCaretsLine, Is.True, $"{time}: and the song IS on that line, which is the honest answer while the bound holds");
+                    Assert.That(untouched, Is.False, $"{time}: both cells behind the parked caret are Correct");
                 }
                 else if (time < 20000)
                 {
                     Assert.That(At(reading.GetProperty("at")), Is.EqualTo((1, 0)), $"{time}: the bound opened and the deferred roll moved the caret");
                     Assert.That(onTheCaretsLine, Is.False, $"{time}: the song is still on line 0, and asking nothing of the caret ahead of it");
+                    Assert.That(untouched, Is.True, $"{time}: nothing typed into line 1 yet, so this is the state the desktop drops Space in");
                 }
                 else
                 {
                     Assert.That(At(reading.GetProperty("at")), Is.EqualTo((1, 0)));
                     Assert.That(onTheCaretsLine, Is.True, $"{time}: the song has reached the line the caret was waiting on");
+                    Assert.That(untouched, Is.True, $"{time}: still untouched, but the song being on the line makes Space a typing key again");
                 }
             }
+
+            // TypingEngine.ActiveLineUntouched after one press into line 1: touched.
+            var afterAPress = gap.GetProperty("afterAPress");
+            Assert.That(At(afterAPress.GetProperty("at")), Is.EqualTo((1, 1)));
+            Assert.That(afterAPress.GetProperty("activeLineUntouched").GetBoolean(), Is.False, "one Correct cell behind the caret");
         });
     }
 

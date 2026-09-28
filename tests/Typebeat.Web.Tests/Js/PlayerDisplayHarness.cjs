@@ -549,6 +549,318 @@ function ring(pushes) {
     return r.value(-1);
 }
 
+// --- the key handler (backlog 305), driven through the shipped router ---
+//
+// routeKeyDown is the whole of mountPlayer's keydown listener, over a host. This one stands in for
+// the page: a settable clock, the map's skip windows, a selection slot, and a seek that is only
+// recorded (nothing here plays audio, so a skip is a fact to report rather than a clock jump).
+
+function fakeKey(key, mods) {
+    const m = mods || {};
+    const e = {
+        key: key,
+        code: key === ' ' ? 'Space' : (key.length === 1 && /[a-z]/i.test(key) ? 'Key' + key.toUpperCase() : key),
+        ctrlKey: !!m.ctrl,
+        altKey: !!m.alt,
+        metaKey: !!m.meta,
+        shiftKey: !!m.shift,
+        repeat: !!m.repeat,
+        prevented: false,
+        preventDefault: function () { this.prevented = true; }
+    };
+    return e;
+}
+
+function keyHostFor(engine, map) {
+    const host = {
+        engine: engine,
+        clock: 0,
+        now: function () { return host.clock; },
+        gaps: D.computeGaps(map.lines),
+        introTarget: D.introSkipTarget(map.lines),
+        selection: null,
+        getSelection: function () { return host.selection; },
+        setSelection: function (s) { host.selection = s; },
+        skips: [],
+        performSkip: function (target) { host.skips.push(target); }
+    };
+    return host;
+}
+
+// Every engine op the router makes, recorded with the arguments it was handed. The spies forward
+// EVERY argument (the CLAUDE.md rule for harness spies: a dropped one silently changes the engine).
+function spyOnOps(engine) {
+    const calls = [];
+    const key = engine.processKey.bind(engine);
+    const enter = engine.processEnter.bind(engine);
+    const backspace = engine.processBackspace.bind(engine);
+    engine.processKey = function (c, t) { const r = key.apply(null, arguments); calls.push({ fn: 'key', c: c, t: t, result: r }); return r; };
+    engine.processEnter = function (t) { const r = enter.apply(null, arguments); calls.push({ fn: 'enter', t: t, result: r }); return r; };
+    engine.processBackspace = function () { const r = backspace.apply(null, arguments); calls.push({ fn: 'backspace', result: r }); return r; };
+    return calls;
+}
+
+// The skip truth table's missing row: the caret PARKED at the head of a line it has not touched,
+// with the song still on the line behind it. gapOsu with line 0 typed out: entry into line 1 opens
+// at 10500 (its 12000 cue less FLETCHER_DRAG_GRACE_MS), so at 10600 the rush bound has handed the
+// caret on and the song is nowhere near it. skipAllowed says "typing" here (a line is active and
+// incomplete), which is exactly why the old handler typed the space into it as a word skip.
+function spaceOnAParkedUntouchedHead() {
+    const map = build(gapOsu);
+    const engine = new TB.TypingEngine(map); // the browser's own defaults: word skip ON
+    const host = keyHostFor(engine, map);
+    const calls = spyOnOps(engine);
+
+    host.clock = 1000; D.routeKeyDown(fakeKey('a'), host);
+    host.clock = 2000; D.routeKeyDown(fakeKey('b'), host);
+    engine.update(10600);
+    calls.length = 0;
+
+    const before = { line: engine.activeLineIndex, cell: engine.caretIndex };
+    const untouched = engine.activeLineUntouched;
+    const songOnIt = engine.songIsOnTheCaretsLine;
+    const allowed = D.skipAllowedFor(engine, 10600, false);
+
+    const e = fakeKey(' ');
+    host.clock = 10600.25;
+    D.routeKeyDown(e, host);
+
+    // And the first real letter afterwards types normally: the drop is not a lockout.
+    const letter = fakeKey('c');
+    host.clock = 10700;
+    D.routeKeyDown(letter, host);
+
+    return {
+        at: before,
+        activeLineUntouched: untouched,
+        songIsOnTheCaretsLine: songOnIt,
+        skipAllowed: allowed,
+        dropped: D.spaceIsDropped({ fletcherEnabled: engine.fletcherEnabled, songIsOnTheCaretsLine: songOnIt, activeLineUntouched: untouched }),
+        spacePrevented: e.prevented,
+        spaceEngineCalls: calls.filter(c => c.fn === 'key' && c.c === ' ').length,
+        skipsTaken: host.skips.length,
+        cellsAfterSpace: engine.lines[1].cells.map(c => c.state),
+        letterLanded: engine.lines[1].cells[0].state,
+        untouchedAfterLetter: engine.activeLineUntouched,
+        combo: engine.combo
+    };
+}
+
+// The modifier matrix: which chords reach which gesture. Ctrl+Backspace and Ctrl+A match with
+// extra modifiers held (the desktop's KeyCombinationMatchingMode.Any), AltGr arriving as Ctrl plus
+// Alt; Meta never. Enter reaches the line skip under Ctrl or Alt, never under Meta.
+function gestureMatrix() {
+    const rows = [
+        ['Backspace', {}], ['Backspace', { ctrl: true }], ['Backspace', { ctrl: true, alt: true }],
+        ['Backspace', { alt: true }], ['Backspace', { ctrl: true, meta: true }], ['Backspace', { ctrl: true, shift: true }],
+        ['a', { ctrl: true }], ['a', { ctrl: true, alt: true }], ['A', { ctrl: true, shift: true }],
+        ['a', { alt: true }], ['a', { meta: true }], ['a', { ctrl: true, meta: true }]
+    ];
+    return rows.map(([key, mods]) => ({ key: key, mods: Object.keys(mods).sort().join('+'), gesture: D.isWordGesture(fakeKey(key, mods)) }));
+}
+
+// Enter under each modifier, on a line with something left to give up: whether the router handed
+// it to processEnter at all.
+function enterUnder(mods) {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    const host = keyHostFor(engine, map);
+    host.clock = 1000; D.routeKeyDown(fakeKey('a'), host);
+    const calls = spyOnOps(engine);
+    const e = fakeKey('Enter', mods);
+    host.clock = 1200;
+    D.routeKeyDown(e, host);
+    return { reached: calls.some(c => c.fn === 'enter'), prevented: e.prevented, caret: engine.caretIndex };
+}
+
+// AltGr+Backspace erases a whole word, as Ctrl+Backspace does: "ab" typed, then the chord.
+function altGrBackspace() {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    const host = keyHostFor(engine, map);
+    host.clock = 1000; D.routeKeyDown(fakeKey('a'), host);
+    host.clock = 1500; D.routeKeyDown(fakeKey('b'), host);
+    const before = engine.caretIndex;
+    const e = fakeKey('Backspace', { ctrl: true, alt: true });
+    host.clock = 1600;
+    D.routeKeyDown(e, host);
+    return { before: before, after: engine.caretIndex, prevented: e.prevented };
+}
+
+// The Gatekeeper erase gate (TypeBeatPlayfield: !AllowWrongInput && no selection): a plain erase is
+// inert, while an erase over a live selection still collapses it. Latent in the browser (it is
+// never Gatekeeper), which is why it is driven with the flag set by hand.
+function gatekeeperErase() {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    engine.allowWrongInput = false;
+    const host = keyHostFor(engine, map);
+    host.clock = 1000; D.routeKeyDown(fakeKey('a'), host);
+    host.clock = 1500; D.routeKeyDown(fakeKey('b'), host);
+    const calls = spyOnOps(engine);
+
+    host.clock = 1600; D.routeKeyDown(fakeKey('Backspace'), host);
+    const plainErases = calls.filter(c => c.fn === 'backspace').length;
+    const caretAfterPlain = engine.caretIndex;
+
+    host.setSelection({ lineIndex: 0, startCell: 1, endCell: engine.caretIndex });
+    host.clock = 1700; D.routeKeyDown(fakeKey('Backspace'), host);
+
+    return { plainErases: plainErases, caretAfterPlain: caretAfterPlain, caretAfterSelection: engine.caretIndex, selectionLeft: host.selection };
+}
+
+// THE KEYSTROKE PROTOCOL, live (KeyHandlerOrderLiveParityTest's browser arm). A five-line map
+// played on a 60 Hz tick whose phase (3.3 ms) keeps every tick off a whole millisecond, with every
+// press landing BETWEEN two ticks and just after an instant the engine owes a transition, so the
+// press is only judged where the desktop judges it if the router advances the engine to the press
+// before anything else:
+//
+//   L0 "ab cd" [1000, 4000)  a 1000, b 1500, ' ' 2000, c 2000, d 2500
+//   L1 "ef"    [4000, 8000)  e 4000, f 4500      (entry opens 2500)
+//   L2 "gh"    [8000, 12000) g 8000, h 8500      (entry opens 6500)
+//   L3 "ij"    [12000, 16000) i 12000, j 12500   (entry opens 10500)
+//   L4 "kl"    [16000, ...)  k 20000, l 20500, activation 18500 (entry opens 17000)
+//
+// 1000.2 'a': L0's ACTIVATION falls between the tick and the press (the pre-roll dead zone; the
+//        first line's head start covers the press either way, so this is the benign arm).
+// 2500.3 Enter: gives L0 up with three cells owed; entry into L1 is open, so the caret rolls on.
+// 3000.5 Space: the parked-untouched-head DROP (the song is still on L0).
+// 5500.4 Backspace: L0's held deadline (4000 + the 1500 drag grace) fell between the tick and the
+//        press. The desktop has SEALED it, so the head-of-line backspace is inert; judged against
+//        the stale tick it steps back up into L0.
+// 5510.5 'e': a MIDPOINT, which banker's rounding sends to 5510 where Math.round sends it to
+//        5511 (a late press, so the judged delta moves with it).
+// 9500.4 'g': L1's DRAG CUTOFF (8000 + 1500) fell between the tick and the press. The desktop has
+//        pushed the caret to L2 cell 0, so 'g' is L2's first letter; against the stale tick it is a
+//        wrong key on L1's 'f'.
+// 9600.5 'h': another midpoint (9600 on the desktop), which finishes L2 ahead of L3's entry.
+// 10500.5 'i': the RUSH SNAP. L2 finished early, so the caret sat parked past its end until entry
+//        into L3 opened at 10500; against the stale tick the press hits the "line fully typed"
+//        guard and is lost.
+// 10600.2 'j': an ordinary press, finishing L3.
+// 18500.4 'x': a WRONG key into L4 (typed through, as allow-wrong-input does), so a 'wrong' cell
+//        sits behind the caret and ActiveLineUntouched has its second clause to answer.
+// 20500.7 'l': L4's last letter, typed with the Wrong cell behind it.
+const KEY_ORDER_OSU = OSU_HEADER +
+    '{"granularity":"line","version":2,"song_end_ms":30000}\n' +
+    '{"text":"ab cd","start_ms":1000,"end_ms":3000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1},{"text":"cd","start_ms":2000,"end_ms":3000,"score":1}]}\n' +
+    '{"text":"ef","start_ms":4000,"end_ms":5000,"words":[{"text":"ef","start_ms":4000,"end_ms":5000,"score":1}]}\n' +
+    '{"text":"gh","start_ms":8000,"end_ms":9000,"words":[{"text":"gh","start_ms":8000,"end_ms":9000,"score":1}]}\n' +
+    '{"text":"ij","start_ms":12000,"end_ms":13000,"words":[{"text":"ij","start_ms":12000,"end_ms":13000,"score":1}]}\n' +
+    '{"text":"kl","start_ms":16000,"end_ms":21000,"words":[{"text":"kl","start_ms":20000,"end_ms":21000,"score":1}]}\n';
+
+const KEY_ORDER_PRESSES = [
+    { t: 1000.2, key: 'a' }, { t: 1500.7, key: 'b' },
+    { t: 2500.3, key: 'Enter' },
+    { t: 3000.5, key: ' ' },
+    { t: 5500.4, key: 'Backspace' },
+    { t: 5510.5, key: 'e' },
+    { t: 9500.4, key: 'g' }, { t: 9600.5, key: 'h' },
+    { t: 10500.5, key: 'i' }, { t: 10600.2, key: 'j' },
+    { t: 18500.4, key: 'x' }, { t: 20500.7, key: 'l' }
+];
+
+const KEY_ORDER_TICK_PHASE = 3.3;
+const KEY_ORDER_TICK_MS = 1000 / 60;
+const KEY_ORDER_END = 26000;
+
+function keyOrderRun() {
+    const map = build(KEY_ORDER_OSU);
+    const engine = new TB.TypingEngine(map); // the browser's own defaults, exactly as begin() builds it
+    const host = keyHostFor(engine, map);
+    const calls = spyOnOps(engine);
+
+    let breaks = 0;
+    engine.onComboBroken = () => { breaks++; };
+
+    const where = () => ({ line: engine.activeLineIndex, cell: engine.caretIndex, seal: engine.nextSealIndex });
+
+    function reading() {
+        return {
+            line: engine.activeLineIndex,
+            cell: engine.caretIndex,
+            nextSealIndex: engine.nextSealIndex,
+            finished: engine.finished,
+            combo: engine.combo,
+            maxCombo: engine.maxCombo,
+            comboBreaks: breaks,
+            mistypes: engine.mistypes,
+            score: engine.score,
+            liveWpm: engine.liveWpm,
+            counts: Object.assign({}, engine.counts),
+            activeLineUntouched: engine.activeLineUntouched,
+            songIsOnTheCaretsLine: engine.songIsOnTheCaretsLine,
+            states: engine.lines.map(l => l.cells.map(c => c.state)),
+            deltas: engine.lines.map(l => l.cells.map(c => (c.judgedDelta === null || c.judgedDelta === undefined) ? null : c.judgedDelta))
+        };
+    }
+
+    // The state the router judged the press against, read at the moment its own update returns.
+    // Observed through a spy rather than reproduced here: an update made by the harness would
+    // advance the engine for the router and hide exactly the defect this section exists to catch.
+    // A router that never advances the engine leaves it null.
+    let pressing = false;
+    let judgedAgainst = null;
+    const update = engine.update.bind(engine);
+    engine.update = function (t) {
+        const r = update.apply(null, arguments);
+        if (pressing && judgedAgainst === null) {
+            judgedAgainst = {
+                t: t, line: engine.activeLineIndex, cell: engine.caretIndex, seal: engine.nextSealIndex,
+                untouched: engine.activeLineUntouched, songOnIt: engine.songIsOnTheCaretsLine
+            };
+        }
+        return r;
+    };
+
+    const steps = [];
+    let next = 0;
+
+    for (let k = 0; ; k++) {
+        const tick = KEY_ORDER_TICK_PHASE + k * KEY_ORDER_TICK_MS;
+
+        while (next < KEY_ORDER_PRESSES.length && KEY_ORDER_PRESSES[next].t < tick) {
+            const press = KEY_ORDER_PRESSES[next++];
+            const before = where();
+
+            calls.length = 0;
+            judgedAgainst = null;
+            pressing = true;
+            const e = fakeKey(press.key);
+            host.clock = press.t;
+            D.routeKeyDown(e, host);
+            pressing = false;
+
+            steps.push(Object.assign({
+                op: 'press',
+                key: press.key,
+                t: press.t,
+                prevented: e.prevented,
+                calls: calls.slice(),
+                before: before,
+                judgedAgainst: judgedAgainst
+            }, reading()));
+        }
+
+        if (tick > KEY_ORDER_END) break;
+
+        engine.update(tick);
+        steps.push(Object.assign({ op: 'update', t: tick }, reading()));
+    }
+
+    return {
+        lines: map.lines.map(l => ({
+            activationTime: l.activationTime,
+            endTime: l.endTime,
+            sealGraceMs: l.sealGraceMs,
+            cells: l.cells.map(c => ({ expected: c.expected, target: c.target }))
+        })),
+        entryOpensAt: map.lines.slice(1).map((_, i) => engine.entryOpensAt(i + 1)),
+        steps: steps,
+        skips: host.skips
+    };
+}
+
 const perfect = playPerfect();
 const partial = playOneKeyThenSeal();
 const late = playOneLatePress();
@@ -796,7 +1108,21 @@ const out = {
     // in) must not move activeTimeMs at all; crossing it with the line still owed does, which is
     // exactly the divergence the gating exists to prevent.
     activeTimeParked: activeTimeAcrossSkip(playGapMapComplete()),
-    activeTimeTyping: activeTimeAcrossSkip(playGapMapIncomplete())
+    activeTimeTyping: activeTimeAcrossSkip(playGapMapIncomplete()),
+
+    // ---- the key handler (backlog 305) ----
+    spaceParkedHead: spaceOnAParkedUntouchedHead(),
+    gestureMatrix: gestureMatrix(),
+    enterPlain: enterUnder({}),
+    enterCtrl: enterUnder({ ctrl: true }),
+    enterAlt: enterUnder({ alt: true }),
+    enterMeta: enterUnder({ meta: true }),
+    altGrBackspace: altGrBackspace(),
+    gatekeeperErase: gatekeeperErase(),
+    // C# Math.Round's MidpointRounding.ToEven, on the halves either side of an even and an odd
+    // integer, one off a half each way, and a negative half.
+    roundHalfEven: [2000.5, 2001.5, 2000.49, 2000.51, 5510.5, 9600.5, -0.5, -1.5, 3.3].map(D.roundHalfEven),
+    keyOrder: keyOrderRun()
 };
 
 process.stdout.write(JSON.stringify(out));
