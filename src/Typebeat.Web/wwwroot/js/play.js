@@ -57,10 +57,56 @@
         try { return window.localStorage; } catch (e) { return null; }
     }
 
+    // ---- what the player is told after /play/submit (backlog 321) ----------
+    // Pure over the submit response `d`, the picked map's card data (its status) and the run's
+    // results (passed), so the harness can drive every wording without a DOM. Answers
+    // { html, cls } for api.setSubmitStatus; every value interpolated is a number the server
+    // produced or one of the fixed strings below, never free text.
+    //
+    // pp follows the desktop results panel's contract (ScoreEndpoints.SubmitScore): a number is
+    // the price, and a null is NEVER printed as 0 (backlog 83). A null on a RANKED play is a
+    // price still owed (pp_pending: the map's rating cell is not stored yet, a later boot fills
+    // it), and a null on an unranked play has no price at all and prints as a dash.
+    //
+    // The position is the player's BEST row on the board this play landed on, and personal_best
+    // says whether this play IS that row, so a run that did not beat it is told its best's
+    // standing as such rather than as its own. A pending or unranked map serves the UNRANKED
+    // board (as the game client's leaderboard does), which is said as not counting.
+    function ppText(d) {
+        if (typeof d.pp === 'number') return Math.round(d.pp).toLocaleString('en-US') + 'pp';
+        return d.pp_pending ? 'pp pending' : '- pp';
+    }
+
+    function standingText(d) {
+        if (!d.position) return '';
+        const where = d.board === 'unranked' ? ' on the unranked board, not counted' : '';
+        return d.personal_best ? 'new best, #' + d.position + where : 'your best is #' + d.position + where;
+    }
+
+    function submitStatus(d, map, results) {
+        const standing = standingText(d);
+        const tail = ' · ' + ppText(d) + (standing ? ' · ' + standing : '');
+        if (d.ranked) return { html: 'submitted ✓ ranked' + tail, cls: 'tb-status-good' };
+        return { html: 'recorded, not ranked (' + notRankedReason(map, results) + ')' + tail, cls: 'tb-status-muted' };
+    }
+
+    // Why the server stored this play unranked, said honestly. Since backlog 230 the picker offers
+    // every PUBLISHED map, so "map not ranked" is the ordinary case rather than an edge one, and the
+    // card that launched the play already told us which it is (data-status). Only a run on a map
+    // that IS ranked leaves the vaguer wording, where the reason really is one of the tamper/gate
+    // checks and the client cannot know which. A pending or unranked map HAS a board (the unranked
+    // one the game client shows), so the reason says the play does not count, not that there is
+    // nowhere for it to go.
+    function notRankedReason(map, results) {
+        if (!results.passed) return 'you failed this run';
+        if (map.status && map.status !== 'ranked') return 'this map is ' + map.status + ', so it does not count';
+        return 'checks failed';
+    }
+
     // Published BEFORE the stage guard below, so the display harness (which has no DOM at all, and
     // therefore takes that early return) can still drive the decision. Distinct from
     // window.TYPEBEAT_PLAY, which is the server-rendered page config read above.
-    window.TypeBeatPlayPage = { takeDiscordNudge: takeDiscordNudge, DISCORD_NUDGE_KEY: DISCORD_NUDGE_KEY };
+    window.TypeBeatPlayPage = { takeDiscordNudge: takeDiscordNudge, DISCORD_NUDGE_KEY: DISCORD_NUDGE_KEY, submitStatus: submitStatus };
 
     const picker = document.getElementById('tb-picker');
     const stageWrap = document.getElementById('tb-stage');
@@ -255,13 +301,8 @@
                             api.setSubmitStatus('submit failed: ' + ((r.data && r.data.error) || r.status), 'tb-status-bad');
                             return;
                         }
-                        const d = r.data || {};
-                        if (d.ranked) {
-                            const pos = d.position ? ' · #' + d.position + ' on the board' : '';
-                            api.setSubmitStatus('submitted ✓ ranked' + pos, 'tb-status-good');
-                        } else {
-                            api.setSubmitStatus('recorded, not ranked (' + notRankedReason(map, results) + ').', 'tb-status-muted');
-                        }
+                        const status = submitStatus(r.data || {}, map, results);
+                        api.setSubmitStatus(status.html, status.cls);
                     } catch (e) {
                         console.error(e);
                         api.setSubmitStatus('submit failed (network).', 'tb-status-bad');
@@ -272,17 +313,6 @@
             console.error(e);
             loadError();
         }
-    }
-
-    // Why the server stored this play unranked, said honestly. Since backlog 230 the picker offers
-    // every PUBLISHED map, so "map not ranked" is the ordinary case rather than an edge one, and the
-    // card that launched the play already told us which it is (data-status). Only a run on a map
-    // that IS ranked leaves the vaguer wording, where the reason really is one of the tamper/gate
-    // checks and the client cannot know which.
-    function notRankedReason(map, results) {
-        if (!results.passed) return 'you failed this run';
-        if (map.status && map.status !== 'ranked') return 'this map is ' + map.status + ', so it has no leaderboard';
-        return 'checks failed';
     }
 
     function loadError() {

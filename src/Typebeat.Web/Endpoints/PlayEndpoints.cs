@@ -299,7 +299,8 @@ public static class PlayEndpoints
     // ---------------------------------------------------------------------------------------------
     // POST /play/submit: complete a score token. Mirrors ScoreEndpoints.SubmitScore with the
     // session user substituted for the bearer user. Body shape below; response:
-    // { ranked, rank, total_score, accuracy, completion, position }.
+    // { ranked, rank, total_score, accuracy, completion, pp, pp_pending, board, position,
+    //   personal_best } (each field is documented where the response is built).
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> SubmitScoreAsync(HttpContext ctx, Db db, IAntiforgery antiforgery, ILoggerFactory loggerFactory)
     {
@@ -366,13 +367,14 @@ public static class PlayEndpoints
             return WireJson.Error(status_unprocessable, "invalid token");
 
         // Re-read set status NOW: a set un-ranked mid-play must resolve against its current state.
-        bool setRanked = await conn.ExecuteScalarAsync<bool>(
+        string? setStatus = await conn.ExecuteScalarAsync<string?>(
             """
-            SELECT bs.status = 'ranked'
+            SELECT bs.status
             FROM beatmaps b JOIN beatmapsets bs ON bs.id = b.set_id
             WHERE b.id = @beatmapId
             """,
             new { beatmapId }, tx);
+        bool setRanked = setStatus == "ranked";
 
         var statistics = submission.Statistics ?? new Dictionary<string, int>();
         var maximumStatistics = submission.MaximumStatistics ?? new Dictionary<string, int>();
@@ -518,7 +520,26 @@ public static class PlayEndpoints
             "UPDATE score_tokens SET score_id = @scoreId WHERE id = @tokenId",
             new { scoreId, tokenId = token.Id }, tx);
 
-        int? position = ranked ? await ComputeUserPosition(conn, tx, beatmapId, user.Id) : null;
+        // WHICH BOARD this play sits on, by the set's CURRENT status, the same switch the game
+        // client's leaderboard makes (ScoreEndpoints.Leaderboard): a ranked set serves the ranked
+        // board, a pending or unranked set serves the unranked one. A play is only ON a board when
+        // it passed and its stored flag matches (BeatmapLeaderboard.OnBoard), so a fail, and a
+        // gate-refused play on a ranked set (stored unranked, but its map serves the RANKED board),
+        // sit on none and are told no position.
+        bool? board = setStatus switch
+        {
+            "ranked" => true,
+            "pending" or "unranked" => false,
+            _ => null,
+        };
+        bool? onBoard = board is bool wantRanked && passed && ranked == wantRanked ? wantRanked : null;
+
+        // The position reported is the player's BEST row on that board (what the board itself
+        // lists), and personal_best says whether that best is THIS play, so a run that did not
+        // beat it is never told its best's rank as though it had earned it.
+        var standing = onBoard is bool boardRanked
+            ? await ComputeUserPosition(conn, tx, beatmapId, user.Id, boardRanked)
+            : null;
 
         await tx.CommitAsync(ctx.RequestAborted);
 
@@ -529,7 +550,18 @@ public static class PlayEndpoints
             total_score = storedTotal,
             accuracy = storedAccuracy,
             completion = recomputed.Completion,
-            position,
+            // Sent EXACTLY as PerformancePoints.ForScore returned it, the contract the game's
+            // submit response already has (ScoreEndpoints.SubmitScore): a number means the formula
+            // ran and this is the price, and null is never "worth zero". pp_pending tells the two
+            // nulls apart: true is a ranked play on a map whose rating cell is not stored yet
+            // (docs/pp.md, "NULL IS THE UNFILLED STATE"), priced by PpBackfill on a later boot;
+            // false with a null pp is a refused (unranked) play, which has no price at all.
+            pp,
+            pp_pending = pp is null && !ppSettled,
+            // "ranked" or "unranked" (the board this play is listed on), or null for none.
+            board = onBoard switch { true => "ranked", false => "unranked", null => null },
+            position = standing?.Position,
+            personal_best = standing is { } s && s.BestScoreId == scoreId,
         });
     }
 
@@ -690,36 +722,45 @@ public static class PlayEndpoints
         _ => "application/octet-stream",
     };
 
-    // ---- scoring helpers (mirror of ScoreEndpoints) ----
+    // ---- scoring helpers (the board rules come from BeatmapLeaderboard, as ScoreEndpoints' do) ----
 
-    private static async Task<int?> ComputeUserPosition(NpgsqlConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long userId)
+    /// <summary>
+    /// The user's best row on one board of a map (the ranked board when <paramref name="wantRanked"/>,
+    /// the unranked one otherwise) and its 1-based position among every player's best there, or
+    /// null when they have no row on it. Built entirely from the <see cref="BeatmapLeaderboard"/>
+    /// fragments, so eligibility, the per-player fold and the tie-break are the board's own rules
+    /// rather than a copy of them.
+    /// </summary>
+    private static async Task<(long BestScoreId, int Position)?> ComputeUserPosition(
+        NpgsqlConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long userId, bool wantRanked)
     {
         var best = await conn.QuerySingleOrDefaultAsync<BestScoreRow>(
-            """
+            $"""
             SELECT s.id AS id, s.total_score AS totalScore
             FROM scores s
-            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND s.ranked AND s.passed
-            ORDER BY s.total_score DESC, s.id ASC
+            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND {BeatmapLeaderboard.OnBoard("s")}
+            ORDER BY {BeatmapLeaderboard.Order("s")}
             LIMIT 1
             """,
-            new { beatmapId, userId }, tx);
+            new { beatmapId, userId, wantRanked }, tx);
 
         if (best is null)
             return null;
 
-        return await conn.ExecuteScalarAsync<int>(
-            """
+        int position = await conn.ExecuteScalarAsync<int>(
+            $"""
             SELECT 1 + COUNT(*)
             FROM (
                 SELECT DISTINCT ON (s.user_id) s.user_id, s.total_score, s.id
                 FROM scores s
-                WHERE s.beatmap_id = @beatmapId AND s.ranked AND s.passed
-                ORDER BY s.user_id, s.total_score DESC, s.id ASC
+                WHERE s.beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("s")}
+                ORDER BY s.user_id, {BeatmapLeaderboard.Order("s")}
             ) b
-            WHERE b.total_score > @totalScore
-               OR (b.total_score = @totalScore AND b.id < @scoreId)
+            WHERE {BeatmapLeaderboard.Outranks("b")}
             """,
-            new { beatmapId, totalScore = best.TotalScore, scoreId = best.Id }, tx);
+            new { beatmapId, totalScore = best.TotalScore, scoreId = best.Id, wantRanked }, tx);
+
+        return (best.Id, position);
     }
 
     private static string MergeHitCounts(string existingJson, IReadOnlyDictionary<string, int> add)

@@ -350,7 +350,207 @@ public class PlayHistoryTest
         });
     }
 
+    // ---- what /play/submit answers (backlog 321) ----
+    //
+    // Each case signs in a DEDICATED user: EmailCodeService caps login codes per (user, purpose) per
+    // hour, and the shared history player is already at that budget. A fresh user also means "is
+    // this the player's best" starts from nothing.
+
+    /// <summary>
+    /// A ranked, PRICED browser play reports its pp exactly as the formula returned it, and its
+    /// board position is the player's BEST row's, with personal_best saying whether that row is this
+    /// play. A rival sits between the best and the worse run, so a regression that reported the
+    /// worse run's own placement would read one place (or more) lower and fail.
+    /// </summary>
+    [Test]
+    public async Task BrowserSubmitResponse_RankedPricedMap_CarriesPp_AndTheBestRowsPosition()
+    {
+        long me = await WebsiteFixture.SeedUserAsync("submit priced", "submit.priced@example.com", "submitpriced-123456", verified: true);
+        long hardId = PublicSiteSeed.MultiDiffHardId;
+
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        long rival = await insertUserAsync(conn, "submit priced rival");
+        await insertBoardScoreAsync(conn, rival, hardId, 80_000, ranked: true);
+
+        await conn.ExecuteAsync("UPDATE beatmaps SET ratings = @ratings::jsonb WHERE id = @hardId",
+            new { hardId, ratings = TestRatings.Json(2.0) });
+
+        try
+        {
+            var (client, _) = WebsiteFixture.CreateBrowser();
+            await WebsiteFixture.LoginAndVerifyAsync(client, "submit priced", "submitpriced-123456");
+            string csrf = await browserCsrfAsync(client);
+
+            var (best, bestId) = await browserPlayAsync(client, csrf, PublicSiteSeed.MultiDiffSetId, hardId, totalScore: 90_000);
+            var (worse, worseId) = await browserPlayAsync(client, csrf, PublicSiteSeed.MultiDiffSetId, hardId, totalScore: 50_000);
+            var (better, betterId) = await browserPlayAsync(client, csrf, PublicSiteSeed.MultiDiffSetId, hardId, totalScore: 95_000);
+
+            double expectedPp = PerformancePoints.Compute(2.0, 10, TestRatings.DEFAULT_DIFFICULT_CHARACTERS, 0, 1.0, 10, []);
+
+            int bestPosition = await boardPositionAsync(conn, hardId, me, 90_000, bestId, ranked: true);
+            int worseOwnPlacement = await boardPositionAsync(conn, hardId, me, 50_000, worseId, ranked: true);
+            int betterPosition = await boardPositionAsync(conn, hardId, me, 95_000, betterId, ranked: true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That((bool)best["ranked"]!, Is.True);
+                Assert.That((double)best["pp"]!, Is.EqualTo(expectedPp).Within(1e-9), "the price the formula returned");
+                Assert.That(expectedPp, Is.GreaterThan(0), "a priced play, not a placeholder");
+                Assert.That((bool)best["pp_pending"]!, Is.False);
+                Assert.That((string?)best["board"], Is.EqualTo("ranked"));
+                Assert.That((bool)best["personal_best"]!, Is.True);
+                Assert.That((int)best["position"]!, Is.EqualTo(bestPosition));
+
+                Assert.That((bool)worse["personal_best"]!, Is.False, "50k did not beat the 90k best");
+                Assert.That((int)worse["position"]!, Is.EqualTo(bestPosition), "the BEST row's position, still");
+                Assert.That(worseOwnPlacement, Is.GreaterThan(bestPosition), "non-vacuity: the rival sits between the two runs");
+
+                Assert.That((bool)better["personal_best"]!, Is.True, "95k is the new best");
+                Assert.That((int)better["position"]!, Is.EqualTo(betterPosition));
+            });
+        }
+        finally
+        {
+            await conn.ExecuteAsync("UPDATE beatmaps SET ratings = NULL WHERE id = @hardId", new { hardId });
+        }
+    }
+
+    /// <summary>
+    /// A ranked play on a map whose rating cell is not stored yet is PENDING: pp null with
+    /// pp_pending true, never a confident 0 (the stored column's 0 is a placeholder PpBackfill
+    /// overwrites).
+    /// </summary>
+    [Test]
+    public async Task BrowserSubmitResponse_RankedUnpricedMap_IsPpPending()
+    {
+        await WebsiteFixture.SeedUserAsync("submit pending", "submit.pending@example.com", "submitpending-123456", verified: true);
+
+        await using var conn = await dataSource.OpenConnectionAsync();
+        Assert.That(await conn.ExecuteScalarAsync<bool>("SELECT ratings IS NULL FROM beatmaps WHERE id = @beatmapId", new { beatmapId }),
+            Is.True, "precondition: the covered set's map carries no rating matrix");
+
+        var (client, _) = WebsiteFixture.CreateBrowser();
+        await WebsiteFixture.LoginAndVerifyAsync(client, "submit pending", "submitpending-123456");
+        string csrf = await browserCsrfAsync(client);
+
+        var (played, _) = await browserPlayAsync(client, csrf, PublicSiteSeed.CoveredSetId, beatmapId, totalScore: 100_000);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((bool)played["ranked"]!, Is.True);
+            Assert.That(played["pp"]!.Type, Is.EqualTo(JTokenType.Null), "no price yet, and not a 0");
+            Assert.That((bool)played["pp_pending"]!, Is.True);
+            Assert.That((string?)played["board"], Is.EqualTo("ranked"));
+            Assert.That((bool)played["personal_best"]!, Is.True);
+        });
+    }
+
+    /// <summary>
+    /// A play of an UNRANKED set lands on that map's unranked board (the one the game API serves
+    /// for pending and unranked sets) and is positioned there, against the unranked rows only. Its
+    /// pp is a refused null (a dash), not pending. A failed run is on no board and gets no position.
+    /// </summary>
+    [Test]
+    public async Task BrowserSubmitResponse_UnrankedSet_IsPlacedOnTheUnrankedBoard()
+    {
+        long me = await WebsiteFixture.SeedUserAsync("submit unranked", "submit.unranked@example.com", "submitunranked-123456", verified: true);
+
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        long unrankedMap = await conn.ExecuteScalarAsync<long>(
+            "SELECT id FROM beatmaps WHERE set_id = @setId AND filename LIKE '%.osu' ORDER BY id LIMIT 1",
+            new { setId = PublicSiteSeed.UnrankedSetId });
+
+        long rival = await insertUserAsync(conn, "submit unranked rival");
+        await insertBoardScoreAsync(conn, rival, unrankedMap, 50_000, ranked: false);
+        // RANKED-flag rows on the same map, outscoring everything: they belong to the other board
+        // and must not move this play (the boards are counted separately). Three of them, so a
+        // position counted against the wrong board cannot coincide with the right one however many
+        // unranked rows earlier tests left above this play.
+        for (int i = 0; i < 3; i++)
+            await insertBoardScoreAsync(conn, await insertUserAsync(conn, $"submit unranked ghost {i}"), unrankedMap, 999_999, ranked: true);
+
+        var (client, _) = WebsiteFixture.CreateBrowser();
+        await WebsiteFixture.LoginAndVerifyAsync(client, "submit unranked", "submitunranked-123456");
+        string csrf = await browserCsrfAsync(client);
+
+        var (first, firstId) = await browserPlayAsync(client, csrf, PublicSiteSeed.UnrankedSetId, unrankedMap, totalScore: 60_000);
+        var (lower, _) = await browserPlayAsync(client, csrf, PublicSiteSeed.UnrankedSetId, unrankedMap, totalScore: 40_000);
+        var (failed, _) = await browserPlayAsync(client, csrf, PublicSiteSeed.UnrankedSetId, unrankedMap, totalScore: 70_000, passed: false);
+
+        int firstPosition = await boardPositionAsync(conn, unrankedMap, me, 60_000, firstId, ranked: false);
+        int wrongBoardPosition = await boardPositionAsync(conn, unrankedMap, me, 60_000, firstId, ranked: true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((bool)first["ranked"]!, Is.False);
+            Assert.That(first["pp"]!.Type, Is.EqualTo(JTokenType.Null));
+            Assert.That((bool)first["pp_pending"]!, Is.False, "refused, not pending: the player sees a dash");
+            Assert.That((string?)first["board"], Is.EqualTo("unranked"));
+            Assert.That((bool)first["personal_best"]!, Is.True);
+            Assert.That((int)first["position"]!, Is.EqualTo(firstPosition));
+            Assert.That(wrongBoardPosition, Is.Not.EqualTo(firstPosition), "non-vacuity: the ranked-flag rows would move it");
+
+            Assert.That((string?)lower["board"], Is.EqualTo("unranked"));
+            Assert.That((bool)lower["personal_best"]!, Is.False);
+            Assert.That((int)lower["position"]!, Is.EqualTo(firstPosition), "the best row's position");
+
+            Assert.That(failed["board"]!.Type, Is.EqualTo(JTokenType.Null), "a fail is on no board");
+            Assert.That(failed["position"]!.Type, Is.EqualTo(JTokenType.Null));
+            Assert.That((bool)failed["personal_best"]!, Is.False);
+        });
+    }
+
     // ---- helpers ----
+
+    /// <summary>A token for the named difficulty, backdated past the play-time gate, then submitted.
+    /// Returns the response and the stored score id.</summary>
+    private static async Task<(JObject Response, long ScoreId)> browserPlayAsync(
+        HttpClient client, string csrf, long setId, long diffId, long totalScore, bool passed = true)
+    {
+        long tokenId = await browserTokenAsync(client, csrf, setId, diffId);
+        await backdateTokenAsync(tokenId, 300);
+        var response = await browserSubmitAsync(client, csrf, tokenId, totalScore, passed);
+
+        await using var conn = await dataSource.OpenConnectionAsync();
+        long scoreId = await conn.ExecuteScalarAsync<long>("SELECT score_id FROM score_tokens WHERE id = @tokenId", new { tokenId });
+        return (response, scoreId);
+    }
+
+    /// <summary>A passed score row written straight in, for a rival on a board.</summary>
+    private static Task insertBoardScoreAsync(NpgsqlConnection conn, long userId, long mapId, long totalScore, bool ranked)
+        => conn.ExecuteAsync(
+            """
+            INSERT INTO scores
+                (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
+                 mods, statistics, maximum_statistics)
+            VALUES
+                (@userId, @mapId, @totalScore, 1.0, 1.0, 10, 'X', true, @ranked,
+                 '[]'::jsonb, '{"great":10}'::jsonb, '{"great":10}'::jsonb)
+            """,
+            new { userId, mapId, totalScore, ranked });
+
+    /// <summary>
+    /// The ORACLE for a board position, written out by hand rather than through BeatmapLeaderboard
+    /// so it cannot share a bug with the endpoint: 1 + the other players whose best passed row on
+    /// that board (flag = <paramref name="ranked"/>) beats (total, id), higher total first and the
+    /// earlier id winning a tie.
+    /// </summary>
+    private static Task<int> boardPositionAsync(NpgsqlConnection conn, long mapId, long me, long total, long scoreId, bool ranked)
+        => conn.ExecuteScalarAsync<int>(
+            """
+            SELECT 1 + COUNT(*)
+            FROM (
+                SELECT DISTINCT ON (user_id) user_id, total_score, id
+                FROM scores
+                WHERE beatmap_id = @mapId AND passed AND ranked = @ranked
+                ORDER BY user_id, total_score DESC, id ASC
+            ) b
+            WHERE b.user_id <> @me
+              AND (b.total_score > @total OR (b.total_score = @total AND b.id < @scoreId))
+            """,
+            new { mapId, me, total, scoreId, ranked });
 
     private static DateTime firstOfThisMonth()
     {
@@ -496,15 +696,15 @@ public class PlayHistoryTest
         return (long)JObject.Parse(await response.Content.ReadAsStringAsync())["id"]!;
     }
 
-    private static async Task<JObject> browserSubmitAsync(HttpClient client, string csrf, long tokenId)
+    private static async Task<JObject> browserSubmitAsync(HttpClient client, string csrf, long tokenId, long totalScore = 100_000, bool passed = true)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/play/submit");
         request.Headers.Add("X-CSRF-TOKEN", csrf);
         request.Content = new StringContent(JsonConvert.SerializeObject(new
         {
             token = tokenId,
-            passed = true,
-            totalScore = 100_000,
+            passed,
+            totalScore,
             maxCombo = 10,
             statistics = new Dictionary<string, int> { ["great"] = 10 },
             maximumStatistics = new Dictionary<string, int> { ["great"] = 10 },
