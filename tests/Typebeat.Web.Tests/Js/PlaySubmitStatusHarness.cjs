@@ -46,4 +46,12 @@ const out = {
         { ranked: false, pp: null, pp_pending: false, board: null, position: null, personal_best: false }, ranked, cleared)
 };
 
+// Submission integrity (backlog 312): the token body, and what a refused token is said as.
+out.tokenBodyFull = PAGE.tokenBody('7', 12, '0123456789abcdef', 'd41d8cd98f00b204e9800998ecf8427e');
+out.tokenBodyBare = PAGE.tokenBody(7, 0, null, null);
+out.refusedOutdated = PAGE.tokenFailureStatus('outdated client');
+out.refusedStaleMap = PAGE.tokenFailureStatus('invalid or missing beatmap_hash');
+out.refusedOther = PAGE.tokenFailureStatus(null);
+out.playbackInvalid = PAGE.PLAYBACK_INVALID_STATUS;
+
 process.stdout.write(JSON.stringify(out));

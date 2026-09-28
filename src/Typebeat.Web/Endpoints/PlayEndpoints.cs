@@ -1,5 +1,9 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Newtonsoft.Json;
 using Npgsql;
 using Typebeat.Web.Auth;
@@ -38,18 +42,71 @@ namespace Typebeat.Web.Endpoints;
 /// CreateToken/SubmitScore: identical recompute + tamper-bounds via <see cref="ScoringContract"/>,
 /// identical scores/user_stats side effects, but authenticated by the website session cookie
 /// (<see cref="SessionCookieAuth.SessionUser"/>) and CSRF-protected via <see cref="IAntiforgery"/>
-/// rather than a bearer token. There is no client-sent beatmap_hash to cross-check, so
-/// score_tokens.beatmap_hash is populated from the server's stored checksum for the resolved
-/// beatmap (the column is NOT NULL). Tamper-shaped input on the mutating routes always resolves to
-/// a 4xx, never a 500.
+/// rather than a bearer token. Tamper-shaped input on the mutating routes always resolves to a 4xx,
+/// never a 500.
+///
+/// <para>SUBMISSION INTEGRITY (backlog 312), the browser's half of the desktop token's two
+/// identities. BUILD: the server hashes the three /play scripts once at startup
+/// (<see cref="Revision"/>), the page renders it, and the token route registers what the player
+/// sends back as its own build <c>web-&lt;revision&gt;</c>, so a tab left open across a deploy
+/// submits under its OWN build row, which an admin can block alone. MAP: the /osu route answers the
+/// served difficulty's checksum in <see cref="ChecksumHeader"/>; the player hands it back with the
+/// token and a mismatch (the map was re-uploaded after the tab fetched it) is refused with the
+/// desktop's 422. A body without either (a tab from before this change) keeps the old behaviour:
+/// the synthetic <c>web-player</c> build and the server's own checksum.</para>
 /// </summary>
 public static class PlayEndpoints
 {
     private const int status_unprocessable = StatusCodes.Status422UnprocessableEntity;
     private const string web_build_hash = "web-player";
 
+    /// <summary>The response header GET /play/map/{setId}/osu carries the served difficulty's
+    /// stored checksum in (<c>beatmaps.checksum_md5</c>, the desktop's beatmap_hash).</summary>
+    public const string ChecksumHeader = "X-Beatmap-Checksum";
+
+    /// <summary>The scripts whose content IS the browser client: the engine, the player, the page
+    /// glue. Their order is part of the hash.</summary>
+    private static readonly string[] revision_scripts = ["/js/typebeat-core.js", "/js/typebeat-player.js", "/js/play.js"];
+
+    /// <summary>What a client-sent revision must look like to be registered (the shape
+    /// <see cref="ComputeRevision"/> produces). Anything else is refused rather than written into
+    /// <c>builds</c>, so the table cannot be filled with arbitrary text.</summary>
+    private static readonly Regex revision_shape = new("^[0-9a-f]{16}$", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// The content hash of the /play scripts this server is serving, computed once at startup
+    /// (<see cref="Map"/>) and rendered into the /play page, which sends it back on POST /play/token.
+    /// Null when it could not be computed (a script missing from the web root): the page then sends
+    /// none and the token falls back to <c>web-player</c>.
+    /// </summary>
+    public static string? Revision { get; private set; }
+
+    /// <summary>
+    /// Combines the per-file values asp-append-version stamps onto each script tag (the
+    /// <see cref="IFileVersionProvider"/>'s SHA-256 of the file's content) into one 16-hex-digit id.
+    /// Any byte of any of the three scripts changing changes it; nothing else does.
+    /// </summary>
+    public static string? ComputeRevision(IFileVersionProvider versions)
+    {
+        var sb = new StringBuilder();
+        foreach (string script in revision_scripts)
+        {
+            string stamped = versions.AddFileVersionToPath(PathString.Empty, script);
+            int at = stamped.IndexOf("?v=", StringComparison.Ordinal);
+            if (at < 0)
+                return null; // the provider leaves a path it cannot find unstamped
+            sb.Append(script).Append(':').Append(stamped[(at + 3)..]).Append('\n');
+        }
+
+        byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
+        return Convert.ToHexString(digest, 0, 8).ToLowerInvariant();
+    }
+
     public static void Map(IEndpointRouteBuilder app)
     {
+        var versions = app.ServiceProvider.GetService<IFileVersionProvider>();
+        Revision = versions is null ? null : ComputeRevision(versions);
+
         app.MapGet("/play/map/{setId:long}/diffs", GetDiffsAsync);
         app.MapGet("/play/map/{setId:long}/osu", GetOsuAsync);
         app.MapGet("/play/map/{setId:long}/audio", GetAudioAsync);
@@ -114,14 +171,18 @@ public static class PlayEndpoints
         if (!await CanSeeSetMediaAsync(ctx, conn, setId))
             return Results.NotFound();
 
-        string? osuName = await ResolveOsuFilenameAsync(conn, setId, RequestedDiff(ctx));
-        if (osuName is null)
+        var served = await ResolveOsuAsync(conn, setId, RequestedDiff(ctx));
+        if (served is null)
             return Results.NotFound();
 
-        var stream = await OpenManifestBlobAsync(conn, store, setId, osuName, ctx.RequestAborted);
+        var stream = await OpenManifestBlobAsync(conn, store, setId, served.Filename, ctx.RequestAborted);
         if (stream is null)
             return Results.NotFound();
 
+        // The checksum of exactly the difficulty served, which the player hands back with its
+        // token (backlog 312): a map re-uploaded after this response is then refused, rather than
+        // boarding a run of the old lyrics on the new version's leaderboard.
+        ctx.Response.Headers[ChecksumHeader] = served.ChecksumMd5;
         return Results.Stream(stream, "text/plain; charset=utf-8");
     }
 
@@ -196,8 +257,9 @@ public static class PlayEndpoints
 
     // ---------------------------------------------------------------------------------------------
     // POST /play/token: issue a score token for the signed-in website user.
-    // Body: { "setId": <long>, "beatmapId": <long> } (the player sends both since backlog 230; a
-    // set-only body still resolves the set's primary difficulty). Response: { "id": <long> }.
+    // Body: { "setId": <long>, "beatmapId": <long>, "revision": <string?>, "beatmapHash": <string?> }
+    // (the player sends both ids since backlog 230, and the last two since backlog 312; a set-only
+    // body still resolves the set's primary difficulty). Response: { "id": <long> }.
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> CreateTokenAsync(HttpContext ctx, Db db, IAntiforgery antiforgery)
     {
@@ -227,6 +289,16 @@ public static class PlayEndpoints
         }
 
         if (request is null || (request.SetId <= 0 && request.BeatmapId <= 0))
+            return WireJson.Error(StatusCodes.Status400BadRequest, "invalid request body");
+
+        // The build this run is played on: the revision of the scripts the tab loaded, or the
+        // synthetic web-player build for a body that names none (a tab from before backlog 312).
+        string versionHash;
+        if (string.IsNullOrEmpty(request.Revision))
+            versionHash = web_build_hash;
+        else if (revision_shape.IsMatch(request.Revision))
+            versionHash = "web-" + request.Revision;
+        else
             return WireJson.Error(StatusCodes.Status400BadRequest, "invalid request body");
 
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
@@ -272,19 +344,29 @@ public static class PlayEndpoints
         if (beatmap is null)
             return WireJson.Error(status_unprocessable, "beatmap not found or not playable");
 
-        // Register the web player's synthetic build on sight (record-don't-reject, like the bearer
-        // path). blocked is enforced at submission time (buildBlocked → unranked), not here; an
-        // admin blocking the web build stops new ranks, not play.
+        // The map the tab is holding must still be the map this difficulty IS. The player fetched
+        // the .osu once, at load, and "play again" re-mints against that same text for as long as
+        // the tab stays open, so a re-upload in between would otherwise board the old lyrics on the
+        // new version. Same check and same wording as the desktop (ScoreEndpoints.CreateToken). A
+        // body that sends no checksum (an older tab) is filled from the stored one, as before.
+        if (!string.IsNullOrEmpty(request.BeatmapHash)
+            && !string.Equals(beatmap.ChecksumMd5, request.BeatmapHash, StringComparison.OrdinalIgnoreCase))
+            return WireJson.Error(status_unprocessable, "invalid or missing beatmap_hash");
+
+        // Record-don't-reject, exactly as the bearer path: register the build on sight, then refuse
+        // a BLOCKED one with the desktop's wording (play.js turns it into a reload prompt). The
+        // submit route re-reads blocked as well, so a build blocked mid-play still lands unranked.
         await conn.ExecuteAsync(
             "INSERT INTO builds (version_hash) VALUES (@versionHash) ON CONFLICT (version_hash) DO NOTHING",
-            new { versionHash = web_build_hash });
+            new { versionHash });
 
         var build = await conn.QuerySingleAsync<BuildRow>(
             "SELECT id, blocked FROM builds WHERE version_hash = @versionHash",
-            new { versionHash = web_build_hash });
+            new { versionHash });
 
-        // No client beatmap_hash to cross-check (we served the exact map); the NOT NULL column is
-        // filled from the server's stored checksum for this beatmap.
+        if (build.Blocked)
+            return WireJson.Error(status_unprocessable, "outdated client");
+
         long tokenId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO score_tokens (user_id, beatmap_id, ruleset_id, beatmap_hash, build_id)
@@ -615,6 +697,28 @@ public static class PlayEndpoints
                 """,
                 new { setId });
 
+    /// <summary>
+    /// <see cref="ResolveOsuFilenameAsync"/> for the /osu route, which also answers the resolved
+    /// difficulty's stored checksum (same predicate, same primary-difficulty fallback).
+    /// </summary>
+    private static async Task<ServedOsuRow?> ResolveOsuAsync(NpgsqlConnection conn, long setId, long beatmapId = 0)
+        => beatmapId > 0
+            ? await conn.QuerySingleOrDefaultAsync<ServedOsuRow>(
+                """
+                SELECT filename, checksum_md5 AS checksumMd5 FROM beatmaps
+                WHERE id = @beatmapId AND set_id = @setId
+                  AND filename IS NOT NULL AND filename LIKE '%.osu'
+                """,
+                new { setId, beatmapId })
+            : await conn.QuerySingleOrDefaultAsync<ServedOsuRow>(
+                """
+                SELECT filename, checksum_md5 AS checksumMd5 FROM beatmaps
+                WHERE set_id = @setId AND filename IS NOT NULL AND filename LIKE '%.osu'
+                ORDER BY id
+                LIMIT 1
+                """,
+                new { setId });
+
     /// <summary>Resolves a filename to its blob sha256 within the set's current version manifest.</summary>
     private static async Task<byte[]?> ResolveManifestShaAsync(NpgsqlConnection conn, long setId, string filename)
         => await conn.ExecuteScalarAsync<byte[]?>(
@@ -789,6 +893,8 @@ public static class PlayEndpoints
 
     private sealed record BuildRow(long Id, bool Blocked);
 
+    private sealed record ServedOsuRow(string Filename, string ChecksumMd5);
+
     /// <summary>One live difficulty, as the picker's difficulty step renders it.</summary>
     private sealed record DiffRow(long Id, string VersionName, double Stars, double? Wpm);
 
@@ -807,6 +913,14 @@ public static class PlayEndpoints
 
         [JsonProperty("beatmapId")]
         public long BeatmapId { get; set; }
+
+        /// <summary>The page's <see cref="Revision"/>, as rendered when the tab loaded.</summary>
+        [JsonProperty("revision")]
+        public string? Revision { get; set; }
+
+        /// <summary>The <see cref="ChecksumHeader"/> value of the .osu the tab is playing.</summary>
+        [JsonProperty("beatmapHash")]
+        public string? BeatmapHash { get; set; }
     }
 
     private sealed class SubmitRequest

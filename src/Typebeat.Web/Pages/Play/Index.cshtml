@@ -47,6 +47,10 @@
         signedIn: @(user is not null ? "true" : "false"),
         username: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(user?.Username ?? "")),
         csrf: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CsrfToken)),
+        // The content hash of the three scripts below (backlog 312), computed once at startup.
+        // play.js sends it with every token, and the server registers it as this run's build
+        // ('web-' + revision), so a tab left open across a deploy keeps its own build identity.
+        revision: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Typebeat.Web.Endpoints.PlayEndpoints.Revision)),
         // ?set={id}[&diff={beatmapId}] deep link (the beatmapset card's play rail): load this map
         // immediately. diffId 0 means "not named, or named something this set does not have", and
         // the player then opens on its difficulty step exactly as a card click does.

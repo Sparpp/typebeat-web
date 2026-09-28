@@ -103,10 +103,45 @@
         return 'checks failed';
     }
 
+    // ---- submission integrity (backlog 312) ---------------------------------
+    // The token body. `revision` is the page's script hash (TYPEBEAT_PLAY.revision), which the
+    // server registers as this run's build ('web-' + revision); `beatmapHash` is the checksum the
+    // /osu response carried for the exact text this tab is playing, so a map re-uploaded since
+    // the tab loaded is refused rather than boarded. Either may be missing (an older cached page,
+    // a response without the header) and is then left off, which the server answers as before.
+    function tokenBody(setId, beatmapId, revision, beatmapHash) {
+        const body = { setId: Number(setId), beatmapId: Number(beatmapId) || 0 };
+        if (revision) body.revision = String(revision);
+        if (beatmapHash) body.beatmapHash = String(beatmapHash);
+        return body;
+    }
+
+    // What the player is told when no token could be minted, keyed off the server's error wording
+    // (the desktop's two refusals, ScoreEndpoints.CreateToken). Both are fixed by a RELOAD: the
+    // page then carries the current scripts and fetches the current map.
+    function tokenFailureStatus(error) {
+        if (error === 'outdated client')
+            return { html: 'score not submitted: this page is out of date. <a href="">reload</a> to play on the current version.', cls: 'tb-status-bad' };
+        if (error === 'invalid or missing beatmap_hash')
+            return { html: 'score not submitted: this map was updated after it loaded. <a href="">reload</a> to play the current version.', cls: 'tb-status-bad' };
+        return { html: 'score not submitted (could not open a play session).', cls: 'tb-status-bad' };
+    }
+
+    // The desktop's playback-validity veto (SubmittingPlayer.submitScore): the player flags a run
+    // whose audio clock drifted from wall time (results.playbackValid === false, see
+    // makePlaybackValidity in typebeat-player.js) and it is never sent.
+    const PLAYBACK_INVALID_STATUS = {
+        html: 'score not submitted: audio playback was not running at the right speed. check your audio device, then play again.',
+        cls: 'tb-status-bad'
+    };
+
     // Published BEFORE the stage guard below, so the display harness (which has no DOM at all, and
     // therefore takes that early return) can still drive the decision. Distinct from
     // window.TYPEBEAT_PLAY, which is the server-rendered page config read above.
-    window.TypeBeatPlayPage = { takeDiscordNudge: takeDiscordNudge, DISCORD_NUDGE_KEY: DISCORD_NUDGE_KEY, submitStatus: submitStatus };
+    window.TypeBeatPlayPage = {
+        takeDiscordNudge: takeDiscordNudge, DISCORD_NUDGE_KEY: DISCORD_NUDGE_KEY, submitStatus: submitStatus,
+        tokenBody: tokenBody, tokenFailureStatus: tokenFailureStatus, PLAYBACK_INVALID_STATUS: PLAYBACK_INVALID_STATUS
+    };
 
     const picker = document.getElementById('tb-picker');
     const stageWrap = document.getElementById('tb-stage');
@@ -145,14 +180,17 @@
     }
 
     // Both ids go on the wire. beatmapId is what the token keys off; setId is sent with it so the
-    // server can refuse a beatmap that does not belong to the set whose media it served.
-    async function createToken(setId, beatmapId) {
+    // server can refuse a beatmap that does not belong to the set whose media it served. The
+    // revision and the served checksum ride along (backlog 312, see tokenBody). Answers
+    // { id } on success, else { error } carrying the server's wording (null for a network failure).
+    async function createToken(setId, beatmapId, beatmapHash) {
         if (!CFG.signedIn) return null;
         try {
-            const r = await postJson('/play/token', { setId: Number(setId), beatmapId: Number(beatmapId) || 0 });
-            if (r.ok && r.data && (r.data.id != null)) return r.data.id;
+            const r = await postJson('/play/token', tokenBody(setId, beatmapId, CFG.revision, beatmapHash));
+            if (r.ok && r.data && (r.data.id != null)) return { id: r.data.id };
+            return { error: (r.data && r.data.error) || null };
         } catch (e) { console.error(e); }
-        return null;
+        return { error: null };
     }
 
     async function submitScore(token, results) {
@@ -246,7 +284,7 @@
         showStage();
         stageMount.innerHTML = '<div class="tb-loading">loading map…</div>';
 
-        let osuText, audioBuf;
+        let osuText, audioBuf, beatmapHash = null;
         try {
             const [osuRes, audioRes] = await Promise.all([
                 fetch(`/play/map/${setId}/osu${query}`, { credentials: 'same-origin' }),
@@ -254,6 +292,8 @@
             ]);
             if (!osuRes.ok || !audioRes.ok) throw new Error('map fetch failed');
             osuText = await osuRes.text();
+            // The checksum of exactly this text, handed back with every token minted from it.
+            beatmapHash = osuRes.headers.get('X-Beatmap-Checksum');
             audioBuf = await audioRes.arrayBuffer();
         } catch (e) {
             console.error(e);
@@ -272,7 +312,7 @@
                 title: title,
                 artist: artist,
                 onExit: showPicker,
-                onPlayStart: () => { tokenPromise = createToken(setId, diffId); },
+                onPlayStart: () => { tokenPromise = createToken(setId, diffId, beatmapHash); },
                 // Consulted while the results card is being built, once per card, so a "play again"
                 // that clears again asks the same question of the same flag and is answered no.
                 discordNudge: (results) => takeDiscordNudge(nudgeStorage(), results.passed, discordUrl),
@@ -289,9 +329,17 @@
                         api.setSubmitStatus('score not submitted (no notes hit).', 'tb-status-muted');
                         return;
                     }
-                    const token = tokenPromise ? await tokenPromise : null;
-                    if (!token) {
-                        api.setSubmitStatus('score not submitted (could not open a play session).', 'tb-status-bad');
+                    // The playback-validity veto (backlog 312): a run the audio clock did not play
+                    // at wall speed is never sent, like the desktop's.
+                    if (results.playbackValid === false) {
+                        api.setSubmitStatus(PLAYBACK_INVALID_STATUS.html, PLAYBACK_INVALID_STATUS.cls);
+                        return;
+                    }
+                    const minted = tokenPromise ? await tokenPromise : null;
+                    const token = minted && minted.id != null ? minted.id : null;
+                    if (token == null) {
+                        const refused = tokenFailureStatus(minted && minted.error);
+                        api.setSubmitStatus(refused.html, refused.cls);
                         return;
                     }
                     api.setSubmitStatus('submitting…', 'tb-status-muted');

@@ -954,6 +954,56 @@
             + `<a class="tb-btn tb-btn-discord" href="${escapeHtml(url)}" target="_blank" rel="noopener">join discord</a>`;
     }
 
+    // ---- the playback-validity veto (backlog 312) ------------------------------
+    // A port of MasterGameplayClockContainer.checkPlaybackValidity: the gameplay clock (here the
+    // audio clock, nowMs()) is held against wall time (performance.now()) frame by frame. Each
+    // frame adds the clock's delta to one running total and the wall's delta to the other; once
+    // the two totals disagree by more than PLAYBACK_DISCREPANCY_MS the frame is a DISCREPANCY and
+    // the wall total re-seeds from the clock's. The desktop's `count++ > allowed` is kept exactly:
+    // the check reads the count BEFORE incrementing, so the first ALLOWED_PLAYBACK_DISCREPANCIES + 1
+    // discrepancies are tolerated and the next one trips it. A tripped run stays tripped.
+    //
+    // DISCONTINUITIES. A seek (startSourceAt: the start, the intro skip, every gap skip) moves the
+    // clock on purpose, and a frame whose audio context is not 'running' (still resuming from the
+    // start gate's gesture, or suspended/interrupted by the browser) is the desktop's
+    // !GameplayClock.IsRunning. Both drop the baseline: the next frame only re-seeds, so neither
+    // the jump nor the frozen stretch is ever measured. They do NOT clear the count; the desktop
+    // never forgets a discrepancy within a play, and a seek that did would launder a stalled clock.
+    //
+    // HIDDEN TABS need no special case, and that is deliberate. A hidden tab loses rAF and its
+    // interval backstop is throttled (to 1 s, and in Chrome's intensive mode to 1 min), but the
+    // audio keeps playing, so the frame after the gap sees BOTH clocks jump by the same wall time
+    // and the difference stays ~0. Pinned by PlaybackValidityTest.
+    const PLAYBACK_DISCREPANCY_MS = 300;
+    const ALLOWED_PLAYBACK_DISCREPANCIES = 5;
+
+    function makePlaybackValidity() {
+        let lastClock = null, lastWall = null;
+        let elapsedClock = 0, elapsedWall = null;
+        const state = { valid: true, discrepancies: 0 };
+        state.discontinuity = function () {
+            lastClock = null;
+            lastWall = null;
+            elapsedWall = null;
+        };
+        state.observe = function (clockMs, wallMs, running) {
+            if (!running) { state.discontinuity(); return state.valid; }
+            if (lastClock === null) { lastClock = clockMs; lastWall = wallMs; return state.valid; }
+            const clockDelta = clockMs - lastClock, wallDelta = wallMs - lastWall;
+            lastClock = clockMs;
+            lastWall = wallMs;
+            elapsedClock += clockDelta;
+            if (elapsedWall === null) elapsedWall = elapsedClock;
+            else elapsedWall += wallDelta; // the desktop scales by GameplayClock.Rate; /play is 1.0
+            if (Math.abs(elapsedClock - elapsedWall) > PLAYBACK_DISCREPANCY_MS) {
+                if (state.discrepancies++ > ALLOWED_PLAYBACK_DISCREPANCIES) state.valid = false;
+                elapsedWall = null;
+            }
+            return state.valid;
+        };
+        return state;
+    }
+
     function mountPlayer(container, opts) {
         const beatmap = Core.buildBeatmap(Core.parseLyricOsu(opts.osuText));
         const title = opts.title || beatmap.title || 'untitled';
@@ -1048,6 +1098,10 @@
 
         function nowMs() { return audioCtx ? (audioCtx.currentTime - startedAt) * 1000 : 0; }
 
+        // The desktop's playback-validity accumulator (makePlaybackValidity), fresh per play in
+        // begin(), fed once per tick(), told of every seek by startSourceAt.
+        let validity = makePlaybackValidity();
+
         function cleanupAudio() {
             if (source) { try { source.stop(); } catch (e) {} try { source.disconnect(); } catch (e) {} source = null; }
         }
@@ -1076,6 +1130,7 @@
             const offsetSec = offsetMs / 1000;
             const when = audioCtx.currentTime + 0.06; // small scheduling lead
             startedAt = when - offsetSec;
+            validity.discontinuity(); // the clock jumps on purpose here
             if (offsetSec >= 0) source.start(when, offsetSec);
             else source.start(startedAt, 0);
         }
@@ -1710,6 +1765,7 @@
         // with the still-playing audio instead of freezing.
         function tick() {
             if (!running) return;
+            validity.observe(nowMs(), performance.now(), audioCtx.state === 'running');
             engine.update(nowMs());
             render();
             if ((engine.finished || engine.failed) && !concluded) conclude();
@@ -1728,12 +1784,15 @@
             document.removeEventListener('keydown', onKeyDown, true);
             if (engine.failed) cleanupAudio();
             const results = Core.computeScore(engine);
+            // The veto's verdict rides on the results; play.js declines to submit a false one.
+            results.playbackValid = validity.valid;
             showResults(results);
             if (opts.onFinish) { try { opts.onFinish(results, publicApi); } catch (e) { console.error(e); } }
         }
 
         function begin() {
             engine = new Core.TypingEngine(beatmap);
+            validity = makePlaybackValidity();
             // Display-only hooks. Neither reads anything back into the engine, so nothing here
             // can move a judgement or a score.
             engine.onWrongKey = function (c) { wrongFlash = 6; popWrongKey(c); };
@@ -1901,6 +1960,12 @@
     }
 
     Core.mountPlayer = mountPlayer;
+    // The playback-validity veto (backlog 312), for PlaybackValidityHarness's fake-clock pins.
+    Core.playbackValidity = {
+        makePlaybackValidity,
+        PLAYBACK_DISCREPANCY_MS,
+        ALLOWED_PLAYBACK_DISCREPANCIES
+    };
     Core.escapeHtml = escapeHtml;
 
     // Read-only surface for the display-math fidelity harness. Nothing in typebeat-core.js

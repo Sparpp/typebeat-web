@@ -61,4 +61,39 @@ public class PlaySubmitStatusTest
             Assert.That(status("pendingMap").Html, Does.Not.Contain("no leaderboard"));
         });
     }
+
+    /// <summary>
+    /// Backlog 312's wire additions from the player's side: the token carries the page's revision
+    /// and the served checksum when it has them, and leaves each off when it does not (the server
+    /// then answers as it did before: web-player, its own checksum).
+    /// </summary>
+    [Test]
+    public void TheTokenBody_CarriesTheRevisionAndChecksum_OnlyWhenKnown()
+    {
+        var full = root.GetProperty("tokenBodyFull");
+        var bare = root.GetProperty("tokenBodyBare");
+        Assert.Multiple(() =>
+        {
+            Assert.That(full.GetProperty("setId").GetInt64(), Is.EqualTo(7));
+            Assert.That(full.GetProperty("beatmapId").GetInt64(), Is.EqualTo(12));
+            Assert.That(full.GetProperty("revision").GetString(), Is.EqualTo("0123456789abcdef"));
+            Assert.That(full.GetProperty("beatmapHash").GetString(), Is.EqualTo("d41d8cd98f00b204e9800998ecf8427e"));
+            Assert.That(bare.TryGetProperty("revision", out _), Is.False);
+            Assert.That(bare.TryGetProperty("beatmapHash", out _), Is.False);
+        });
+    }
+
+    /// <summary>The server's two refusals (the desktop's wording) each become a reload prompt;
+    /// anything else keeps the generic line. A vetoed playback says why it was not sent.</summary>
+    [Test]
+    public void ARefusedToken_IsAReloadPrompt_AndAVetoedPlayback_SaysWhy()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(status("refusedOutdated").Html, Does.Contain("out of date").And.Contain("reload"));
+            Assert.That(status("refusedStaleMap").Html, Does.Contain("map was updated").And.Contain("reload"));
+            Assert.That(status("refusedOther"), Is.EqualTo(("score not submitted (could not open a play session).", "tb-status-bad")));
+            Assert.That(status("playbackInvalid").Html, Does.StartWith("score not submitted: audio playback"));
+        });
+    }
 }
