@@ -231,16 +231,17 @@ function playMidWordSpaceTypo() {
 
 // --- the push warning (backlog 263) ---
 // One frame of the red bar that counts down the drag cutoff (updatePushWarning): which line it hangs
-// off, and the bar it draws there. It is the SAME cueBar() the blue cue-in bars are drawn with, at
-// full opacity, so the only new statements are the line it belongs to (the ACTIVE one, the one about
-// to be taken, rather than the upcoming one a cue belongs to) and the window it covers, which is the
-// final CUE_LEAD_MS before TypingEngine.dragCutoffAt.
+// off, and the bar it draws there. The line it belongs to is the ACTIVE one, the one about to be
+// taken, rather than the upcoming one a cue belongs to. Since backlog 318 the bar is
+// pushWarningBar's (LyricStage.updatePushWarning after PR 2): the window opens on the next line's
+// first word (or CUE_LEAD_MS before the cutoff where there is none), runs a fixed CUE_LEAD_MS, is cut
+// off by the push, and fades in over PUSH_FADE_IN_MS.
 function pushWarningAt(engine, time) {
     const cutoff = engine.dragCutoffAt;
     return {
         cutoff: cutoff,
         line: cutoff === null ? -1 : engine.activeLineIndex,
-        bar: cutoff === null ? null : D.cueBar(cutoff - time, 1)
+        bar: cutoff === null ? null : D.pushWarningBar(engine.lines, engine.activeLineIndex, cutoff, time)
     };
 }
 
@@ -1569,5 +1570,124 @@ function healthBarRuns() {
         idle: run(idleOsu, [], 20000)
     };
 }
+
+// ---- cue and sweep timing (backlog 318, PR 2's three display rules) ----
+//
+// (a) The SUNG ROW flips where the SONG leaves a line, max(endTime, sweep end), not at the typing
+// deadline endTime + sealGraceMs. rollMap carries no grace at all, so it cannot tell the two apart;
+// these fixtures can. graceOsu is rollOsu with an AUTHORED seal grace of 500 on line 0, so its
+// typing deadline is 3500 while its song window closes at the boundary, 3000 (its one word ends at
+// 2000). derivedGraceOsu reaches a grace the other way, a word overrunning the boundary by 400
+// (1000..3400 against line 1's start at 3000): the loader clamps the word into the line, so the
+// sweep still ends at 3000, and derives sealGraceMs = 400 from the raw overrun.
+const graceOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":20000}\n' +
+    '{"text":"ab","start_ms":1000,"end_ms":2000,"seal_grace_ms":500,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n' +
+    '{"text":"cd","start_ms":3000,"end_ms":4000,"words":[{"text":"cd","start_ms":3000,"end_ms":4000,"score":1}]}\n';
+const derivedGraceOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":20000}\n' +
+    '{"text":"ab","start_ms":1000,"end_ms":3400,"words":[{"text":"ab","start_ms":1000,"end_ms":3400,"score":1}]}\n' +
+    '{"text":"cd","start_ms":3000,"end_ms":4000,"words":[{"text":"cd","start_ms":3000,"end_ms":4000,"score":1}]}\n';
+const graceMap = build(graceOsu);
+const derivedGraceMap = build(derivedGraceOsu);
+
+out.sungGrace = {
+    line0EndTime: graceMap.lines[0].endTime,
+    line0SealGraceMs: graceMap.lines[0].sealGraceMs,
+    line0SongWindowClosesAt: D.songWindowClosesAt(graceMap.lines[0]),
+    // The rule alone, the cursor pinned at line 0 by drag protection throughout.
+    times: [2999, 3000, 3200, 3499, 3500],
+    lines: [2999, 3000, 3200, 3499, 3500].map(t => D.sungLineFor(true, 0, 0, graceMap.lines, t)),
+    derivedLine0SealGraceMs: derivedGraceMap.lines[0].sealGraceMs,
+    derivedLine0SongWindowClosesAt: D.songWindowClosesAt(derivedGraceMap.lines[0]),
+    derivedAt3200: D.sungLineFor(true, 0, 0, derivedGraceMap.lines, 3200),
+    // And on a real run: one key of line 0, so the line is owed and held; at 3200 the song is
+    // 200 ms into line 1, which must carry the sweep from its head (0.4 of a cell in, c at 3000 and
+    // d at 3500), not line 0 at its clamped end.
+    dragging: (function () {
+        const engine = engineFor(build(graceOsu));
+        engine.update(1000);
+        engine.processKey('a', 1000);
+        engine.update(3200);
+        return sungPlacement(engine, graceMap, 3200);
+    })()
+};
+
+// The reachable coincident case: line 0 sealed at its boundary (3000) and the song on line 1 at
+// 3500. The 1600 arm sungLineCoincident keeps is a state no run reaches (line 0 cannot seal before
+// 3000), and the step-back now answers it with the line the song is really on.
+out.sungLineCoincidentAfterSeal = D.sungLineFor(true, 1, 1, rollMap.lines, 3500);
+
+// The word-anchor map of TestSceneTypeBeatPushWarning: line 1's boundary (6000) sits on line 0's end
+// while its vocals only start at 6800. Read by the push warning below.
+//   L0 "ab" [1000, 6000), word 1000..2000.   L1 "cd" [6000, 12000), word 6800..9000.
+const wordAnchorOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":30000}\n' +
+    '{"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n' +
+    '{"text":"cd","start_ms":6000,"end_ms":9000,"words":[{"text":"cd","start_ms":6800,"end_ms":9000,"score":1}]}\n';
+
+// (b) THE FIRST-WORD CUE, on a map whose line 1 boundary (6000) sits 2000 ms before its first word
+// (8000). Nobody types: line 0 is drag-held to its cutoff (6000 + 1500 = 7500) and then pushed, which
+// lands the caret on line 1 while its own first word is still 500 ms ahead, so line 1 cues ITSELF.
+// Reached through the push rather than through typing line 0 out, so it does not depend on which
+// newline arm (automatic roll or manual park) the engine runs.
+//   L0 "ab" [1000, 6000), word 1000..2000.   L1 "cd" [6000, 12000), word 8000..9000.
+const lateWordOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":30000}\n' +
+    '{"text":"ab","start_ms":1000,"end_ms":2000,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n' +
+    '{"text":"cd","start_ms":6000,"end_ms":9000,"words":[{"text":"cd","start_ms":8000,"end_ms":9000,"score":1}]}\n';
+
+function cueFrame(osu, time) {
+    const engine = engineFor(build(osu));
+    engine.update(1000);
+    engine.update(time);
+    const target = D.cueTargetLine(engine.lines, engine.activeLineIndex, engine.nextSealIndex, time);
+    return {
+        active: engine.activeLineIndex,
+        target: target,
+        bars: D.approachCueBars(engine.lines, target, engine.activeLineIndex, !engine.fletcherEnabled, time)
+    };
+}
+
+out.wordCue = {
+    // 7000: line 0 still active (drag-held), so the cue is line 1's, a line still to come: the 50%
+    // whisper, 1000 ms out (width 140 * 1000 / 1500, alpha (0.85 - 0.35 * 2/3) * 0.5).
+    upcoming: cueFrame(lateWordOsu, 7000),
+    // 7600: the push has landed the player ON line 1, inside its own lead-in: the cue is the line
+    // under the caret, so FULL strength, 400 ms out (width 140 * 400 / 1500, alpha 0.85 - 0.35 * 4/15).
+    ownLine: cueFrame(lateWordOsu, 7600)
+};
+
+// (c) THE PUSH WARNING on the game's two two-line fixtures (TestSceneTypeBeatPushWarning.cs's
+// TestWarningOpensWithTheNextLinesWordNotItsBoundary and TestWarningIsAFixedLeadFromTheWordNotThe
+// SpanToThePush). One key of line 0 goes in and the player goes nowhere.
+//   word anchor: cutoff 6000 + 0 + 1500 = 7500; opens on line 1's word at 6800, NOT at 6000 (the
+//     boundary, and also where the old final-1500-before-the-cutoff window opened).
+//   fixed lead: line 0 authors the 700 ms maximum grace, cutoff 6000 + 700 + 1500 = 8200; line 1's
+//     word is at 6100, so the bar is [6100, 7600) and out well before the push.
+const fixedLeadOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":30000}\n' +
+    '{"text":"ab","start_ms":1000,"end_ms":2000,"seal_grace_ms":700,"words":[{"text":"ab","start_ms":1000,"end_ms":2000,"score":1}]}\n' +
+    '{"text":"cd","start_ms":6000,"end_ms":9000,"words":[{"text":"cd","start_ms":6100,"end_ms":9000,"score":1}]}\n';
+
+function pushSweep(osu, times) {
+    const engine = engineFor(build(osu));
+    engine.update(1000);
+    engine.processKey('a', 1000);
+    return times.map(t => { engine.update(t); return Object.assign({ time: t }, pushWarningAt(engine, t)); });
+}
+
+out.pushWarning318 = {
+    fadeInMs: D.PUSH_FADE_IN_MS,
+    wordAnchorOpensAt: D.pushWarningOpensAt(build(wordAnchorOsu).lines, 0, 7500),
+    fixedLeadOpensAt: D.pushWarningOpensAt(build(fixedLeadOsu).lines, 0, 8200),
+    // No next line: the fallback, CUE_LEAD_MS before the cutoff.
+    lastLineOpensAt: D.pushWarningOpensAt(abcd.lines, 0, 5500),
+    // A next word at or after the push itself: the fallback too, so the player gets a short
+    // warning rather than none.
+    wordAtCutoffOpensAt: D.pushWarningOpensAt(build(wordAnchorOsu).lines, 0, 6800),
+    wordAnchor: pushSweep(wordAnchorOsu, [5999, 6000, 6799, 6800, 7000, 7499]),
+    fixedLead: pushSweep(fixedLeadOsu, [6099, 6100, 7599, 7600, 8199])
+};
 
 process.stdout.write(JSON.stringify(out));

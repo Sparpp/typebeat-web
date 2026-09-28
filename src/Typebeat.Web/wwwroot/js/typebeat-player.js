@@ -49,6 +49,7 @@
     // the cue bar can never disagree with the window the engine actually activates a line in.
     const CUE_LEAD_MS = (Core.constants && Core.constants.CUE_LEAD_MS) || 1500;
     const CUE_BAR_MAX_PX = 140;             // LyricStage.approach_bar_max_width
+    const PUSH_FADE_IN_MS = 400;            // LyricStage.push_fade_in_ms: the push warning's entrance
     const CARET_DAMP_HALF_TIME = 35;        // TypeBeatStyle.CARET_DAMP_HALF_TIME (ms)
     const SUNG_DAMP_HALF_TIME = 45;         // TypeBeatStyle.SUNG_DAMP_HALF_TIME (ms)
     const CARET_BLINK_PERIOD = 530;         // TypeBeatStyle.CARET_BLINK_PERIOD (ms)
@@ -170,6 +171,91 @@
                 shown: true,
                 width: CUE_BAR_MAX_PX * progress,
                 alpha: (0.85 - 0.35 * progress) * opacityScale
+            };
+        }
+        return { shown: false, width: 0, alpha: 0 };
+    }
+
+    // The first TYPEABLE cell of a line, or -1 when it has none (mirrors
+    // LyricStage.firstTypeableIndex). Every cell of the default stream /play builds is typeable, so
+    // on a served map this is always 0 for a non-empty line; it is read through the flag anyway so
+    // the cue and the push warning anchor where the desktop's do on any line that ever carries one
+    // that is not.
+    function firstTypeableIndex(line) {
+        for (let i = 0; i < line.cells.length; i++) {
+            if (line.cells[i].typeable) return i;
+        }
+        return -1;
+    }
+
+    // The two "get ready" bars for the line `target` (mirrors LyricStage.updateApproachCue's
+    // drawing half): the first-word bar lands on the FIRST TYPEABLE cell's target, and the boundary
+    // bar on the line's startTime, pinned caret only. Returns null when there is nothing to anchor
+    // on (no such line, or a line with no typeable cell), which hides both.
+    //
+    // The first-word bar is the 50%-opaque whisper while the line is still to come, and FULL
+    // strength when the cued line is the one the player is already on (target === the active line:
+    // the line self-activated into its own lead-in, or the pinned caret was handed it). That cue is
+    // not a hint about a line they cannot type yet, it is the line under their caret.
+    function approachCueBars(lines, target, activeLineIndex, pinnedCaret, time) {
+        if (target < 0 || target >= lines.length) return null;
+        const line = lines[target];
+        const firstCell = firstTypeableIndex(line);
+        if (firstCell < 0) return null;
+
+        const wordOpacity = target === activeLineIndex ? 1 : 0.5;
+        return {
+            firstCell: firstCell,
+            word: cueBar(line.cells[firstCell].target - time, wordOpacity),
+            boundary: pinnedCaret ? cueBar(line.startTime - time, 1) : { shown: false, width: 0, alpha: 0 }
+        };
+    }
+
+    // The instant the PUSH WARNING opens (mirrors LyricStage.pushWarningOpensAt): when the line
+    // about to take the player counts as starting, which is that line's FIRST WORD (its first
+    // typeable cell's target, the instant the first-word cue lands on) and not the boundary a mapper
+    // may have set earlier. The caret is unpinned wherever a cutoff exists at all, and an unpinned
+    // caret cannot type an unopened line, so that boundary is no moment the player acts on.
+    //
+    // Falls back to CUE_LEAD_MS before the cutoff when there is no next typeable line to anchor on
+    // (the map's last line, a line of pure punctuation) or when its first word begins at or after
+    // the push itself, where a word-anchored window would have no width and the player would get no
+    // warning at all rather than a short one.
+    function pushWarningOpensAt(lines, activeLineIndex, cutoff) {
+        const fallback = cutoff - CUE_LEAD_MS;
+        const next = activeLineIndex + 1;
+        if (next < 0 || next >= lines.length) return fallback;
+
+        const firstCell = firstTypeableIndex(lines[next]);
+        if (firstCell < 0) return fallback;
+
+        const wordStart = lines[next].cells[firstCell].target;
+        return wordStart < cutoff ? wordStart : fallback;
+    }
+
+    // One frame of the push warning (mirrors LyricStage.updatePushWarning's bar). The window runs
+    // from pushWarningOpensAt for a FIXED CUE_LEAD_MS, so the bar always drains at the one rate the
+    // player has learned from the cues; it is not stretched to fill a longer span to the push, and
+    // the push (the cutoff) cuts it short rather than reshaping it. Width and brightness are the
+    // cue's own depleting shape measured to the window's close, and the whole alpha is multiplied by
+    // a PUSH_FADE_IN_MS linear fade-in: a cue may snap on, a warning the player did not ask for may
+    // not. So the opening frame is `shown` (the window is open) at full width and alpha 0.
+    //
+    // `cutoff` is TypingEngine.dragCutoffAt, null wherever no push is coming, which hides the bar.
+    function pushWarningBar(lines, activeLineIndex, cutoff, time) {
+        if (cutoff === null || activeLineIndex < 0 || activeLineIndex >= lines.length) {
+            return { shown: false, width: 0, alpha: 0 };
+        }
+
+        const opensAt = pushWarningOpensAt(lines, activeLineIndex, cutoff);
+        const closesAt = opensAt + CUE_LEAD_MS;
+        if (time >= opensAt && time < cutoff && time < closesAt) {
+            const progress = (closesAt - time) / CUE_LEAD_MS;   // 1 -> 0 as it lands
+            const fadeIn = Math.min(1, Math.max(0, (time - opensAt) / PUSH_FADE_IN_MS));
+            return {
+                shown: true,
+                width: CUE_BAR_MAX_PX * progress,
+                alpha: (0.85 - 0.35 * progress) * fadeIn
             };
         }
         return { shown: false, width: 0, alpha: 0 };
@@ -412,11 +498,13 @@
     // Which line the cue-in bars belong to (mirrors LyricStage.updateApproachCue). A line
     // activates at the very moment its cue window opens, so in a continuous map the PREVIOUS
     // line is still active and carries the cue; but after a gap the line self-activates with
-    // nobody before it, and while its own first char is still ahead the cue is its own.
+    // nobody before it, and while its own first word (first TYPEABLE cell) is still ahead the cue
+    // is its own.
     function cueTargetLine(lines, activeLineIndex, nextSealIndex, time) {
         if (activeLineIndex < 0) return nextSealIndex;
         const active = lines[activeLineIndex];
-        const inOwnLeadIn = active.cells.length > 0 && active.cells[0].target > time;
+        const activeFirst = firstTypeableIndex(active);
+        const inOwnLeadIn = activeFirst >= 0 && active.cells[activeFirst].target > time;
         return inOwnLeadIn ? activeLineIndex : activeLineIndex + 1;
     }
 
@@ -428,14 +516,11 @@
     // behind, so only the typing caret follows the player. Falls back to the active line once every
     // line has sealed.
     //
-    // The rule, exactly (backlog 223): the index the seal cursor WOULD have if drag protection did
-    // not defer the seal. It starts at the cursor (nextUnsealedLineIndex) and walks off every line
-    // the playhead has already left, stepping on endTime + sealGraceMs. That instant is the upper
-    // bound of TypingEngine.songWindowOpen and the deadline canSeal uses, so while the playhead is
-    // inside the first unsealed line's window the loop does not run at all and the answer is the
-    // cursor's, byte for byte what shipped before. It also cannot fire on an ordinary hand-over: a
-    // line with nothing left untyped seals on its own endTime and is never drag-deferred, so the
-    // cursor has already moved before this could.
+    // The rule, exactly (backlog 223, re-based on the SONG's own times by backlog 318 to follow the
+    // desktop's PR 2): start at the seal cursor (nextUnsealedLineIndex), step BACK to whatever line
+    // the song has not finished, then walk FORWARD off every line the song has left, both loops
+    // judging a line by songWindowClosesAt. They cannot fight: neither moves past a line whose own
+    // song window is still open.
     //
     // Reading the cursor alone (what this did before 223) can never report the row the song has
     // moved to, because drag protection (TypingEngine.sealPermitted) deliberately holds the caret's
@@ -445,6 +530,20 @@
     // actually being sung got no head, no sweep and no caret. The walk is pure presentation, a read
     // of line times against the gameplay clock; it writes no engine state and must never be turned
     // into one, since which line may still be typed is judgement-bearing.
+    //
+    // The forward walk used to step on endTime + sealGraceMs, the TYPING deadline, and that was the
+    // defect 318 fixes: a line with any seal grace (authored, derived from a word overrun, or the
+    // boundary bump) kept the sung row for that long after the next line had started singing, so the
+    // sweep and the sung caret sat on the previous row and then opened part way along the next one,
+    // as if it had begun mid-word. It now steps where the song leaves the line, so on an ordinary
+    // hand-over it fires at the boundary, while a line still inside its grace keeps the cursor.
+    //
+    // The STEP BACK is the other half of the desktop's rule: there a player who types an OVERRUN
+    // line out early seals it at its own boundary while the song is still singing its tail, and
+    // taking the cursor at its word would blank the sweep that is running. It is ported literally
+    // but is inert on /play: both loaders clamp every word's end into its line, so a line's sweep
+    // never ends after its endTime, songWindowClosesAt is exactly endTime, and no line can seal
+    // before its endTime passes.
     //
     // A multi-step walk is reachable, hence a while rather than an if: the seal loop stops at the
     // first line it may not seal, so while the head of the queue is drag-deferred (up to
@@ -457,14 +556,26 @@
         let songLine = nextUnsealedLineIndex;
         if (songLine < 0 || songLine >= lines.length) return activeLineIndex;
 
+        while (songLine > 0 && nowMs < songWindowClosesAt(lines[songLine - 1])) songLine--;
+
         while (songLine + 1 < lines.length && nowMs >= songWindowClosesAt(lines[songLine])) songLine++;
 
         return songLine;
     }
 
-    // The instant the playhead leaves `line`: its hard deadline plus whatever grace its overrunning
-    // vocals were given, the same sum TypingEngine.songWindowOpen ends on.
-    function songWindowClosesAt(line) { return line.endTime + line.sealGraceMs; }
+    // The instant the playhead leaves `line` (mirrors LyricStage.songWindowClosesAt): the LATER of
+    // the line's own boundary and the moment its sweep reaches its last character (the tail of
+    // buildSungPoints, TypingLine.SweepEndTime), which runs past the boundary only when the line's
+    // vocals genuinely overrun it. NOT the line's typing deadline: a seal grace is time the PLAYER is
+    // still allowed to type the line in, and the song's line answers to the song's times alone.
+    function songWindowClosesAt(line) { return Math.max(line.endTime, sweepEndTimeOf(line)); }
+
+    // TypingLine.SweepEndTime: the time of the sung polyline's closing anchor, so the one formula
+    // for it lives in buildSungPoints.
+    function sweepEndTimeOf(line) {
+        const points = buildSungPoints(line);
+        return points[points.length - 1].t;
+    }
 
     // How much of a row's underline is filled: the vocal position on the row the SONG is on, and
     // nothing at all on any other row (mirrors LyricStage.setSungSweep, which feeds one display and
@@ -1460,10 +1571,16 @@
             if (p >= 1) scrollStart = -1;
         }
 
-        // Two depleting bars under the upcoming line's first char: a SOLID one landing on the
-        // line boundary (StartTime) and a 50%-opaque one landing on the FIRST WORD. A mapper may
+        // Two depleting bars under the upcoming line's first TYPEABLE char: a SOLID one landing on
+        // the line boundary (StartTime) and a first-word one landing on the FIRST WORD. A mapper may
         // set the boundary earlier than the first word, so the two can be distinct signals; when
-        // they coincide they read as one solid bar. Mirrors LyricStage.updateApproachCue.
+        // they coincide they read as one solid bar. Mirrors LyricStage.updateApproachCue, with the
+        // bars themselves computed by approachCueBars.
+        //
+        // The first-word bar is 50% opaque while its line is still to come, and FULL strength when
+        // the cued line is the engine's active line (it self-activated into its own lead-in): that is
+        // the line under the player's caret, not a hint about one they cannot type yet (backlog 318,
+        // which ported this and the first-typeable anchor from PR 2).
         //
         // Since PR 2 the BOUNDARY bar belongs to the PINNED caret only (FletcherEnabled false): a
         // pinned caret is handed the line at its boundary, so that moment is one the player acts on,
@@ -1472,25 +1589,23 @@
         // practice only the first-word bar is drawn; the gate reads the engine flag rather than being
         // deleted so it stays a line-for-line mirror of the desktop's.
         function updateCue(time, active) {
+            const activeIndex = active ? engine.activeLineIndex : -1;
             const target = engine.finished ? -1
-                : cueTargetLine(beatmap.lines, active ? engine.activeLineIndex : -1, engine.nextSealIndex, time);
+                : cueTargetLine(beatmap.lines, activeIndex, engine.nextSealIndex, time);
             const rowObj = (target >= 0 && target < beatmap.lines.length) ? rowFor(target) : null;
 
             for (const r of rows) {
                 if (r !== rowObj) r.cue.style.display = 'none';
             }
-            if (!rowObj || !rowObj.line || rowObj.line.cells.length === 0) return;
+            if (!rowObj || !rowObj.line) return;
 
-            const line = rowObj.line;
-            const word = cueBar(line.cells[0].target - time, 0.5);
-            const pinnedCaret = !engine.fletcherEnabled;
-            const boundary = pinnedCaret ? cueBar(line.startTime - time, 1) : { shown: false, width: 0, alpha: 0 };
-            if (!word.shown && !boundary.shown) { rowObj.cue.style.display = 'none'; return; }
+            const bars = approachCueBars(beatmap.lines, target, activeIndex, !engine.fletcherEnabled, time);
+            if (!bars || (!bars.word.shown && !bars.boundary.shown)) { rowObj.cue.style.display = 'none'; return; }
 
             rowObj.cue.style.display = '';
-            rowObj.cue.style.left = xAt(rowObj, 0).toFixed(2) + 'px';
-            applyCueBar(rowObj.cueWord, word);
-            applyCueBar(rowObj.cueBoundary, boundary);
+            rowObj.cue.style.left = xAt(rowObj, bars.firstCell).toFixed(2) + 'px';
+            applyCueBar(rowObj.cueWord, bars.word);
+            applyCueBar(rowObj.cueBoundary, bars.boundary);
         }
 
         function applyCueBar(bar, state) {
@@ -1506,11 +1621,10 @@
         // corner and the opposite colour from a cue, because it is the opposite message, a line
         // about to be taken rather than a line about to be given.
         //
-        // Driven through the very same cueBar() the cues are, at full opacity, so it covers the
-        // final CUE_LEAD_MS before the cutoff. With CUE_LEAD_MS and FLETCHER_DRAG_GRACE_MS both
-        // 1500 the first frame it draws is endTime + sealGraceMs: the instant the song leaves the
-        // line's own grace and the seal becomes permitted but for drag protection, so the player
-        // watches precisely the borrowed time drain away.
+        // WHEN it shows is pushWarningBar's (backlog 318, porting PR 2): it opens on the NEXT line's
+        // first word (falling back to CUE_LEAD_MS before the cutoff), drains for a fixed CUE_LEAD_MS
+        // from there, is cut off by the push itself, and fades in over PUSH_FADE_IN_MS rather than
+        // snapping on. It used to be the final CUE_LEAD_MS before the cutoff, snapped on.
         //
         // Display only. It reads a nullable engine readout and nothing else, so every path where no
         // push is coming (the line typed out, the caret rolled on ahead of an abandoned line, the
@@ -1519,7 +1633,7 @@
             const cutoff = engine.dragCutoffAt;
             const target = cutoff === null ? -1 : engine.activeLineIndex;
             const rowObj = (target >= 0 && target < beatmap.lines.length) ? rowFor(target) : null;
-            const bar = rowObj && rowObj.line ? cueBar(cutoff - time, 1) : null;
+            const bar = rowObj && rowObj.line ? pushWarningBar(beatmap.lines, target, cutoff, time) : null;
             const shown = bar !== null && bar.shown;
 
             for (const r of rows) {
@@ -2133,6 +2247,14 @@
         songProgressBounds,
         songProgressAt,
         fmtSongTime,
+        // The cue and push-warning timing (backlog 318), pinned by the display harness against the
+        // desktop's LyricStage.
+        firstTypeableIndex,
+        approachCueBars,
+        pushWarningOpensAt,
+        pushWarningBar,
+        songWindowClosesAt,
+        PUSH_FADE_IN_MS,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,

@@ -161,12 +161,15 @@ public class WebplayDisplayTest
     /// than the start of the line they are about to gain, and painted in the error red rather than
     /// the sung blue, because it is the opposite message: a line about to be taken.
     ///
-    /// <para>The bar's own shape is already pinned above, so what is pinned here is the WINDOW, which
-    /// is the thing a drift would silently move. The bar covers the final <c>CUE_LEAD_MS</c> before
-    /// <c>TypingEngine.dragCutoffAt</c>, and the cutoff is the line's deadline plus its seal grace
-    /// plus <c>FLETCHER_DRAG_GRACE_MS</c>; the two constants are both 1500, so the first frame drawn
-    /// is the line's own deadline exactly, the instant the seal becomes permitted but for drag
-    /// protection. The whole of the borrowed time is what the player watches drain.</para>
+    /// <para>What is pinned here is the WINDOW, which is the thing a drift would silently move. The
+    /// cutoff is the line's deadline plus its seal grace plus <c>FLETCHER_DRAG_GRACE_MS</c>. This
+    /// map has ONE line, so there is no next line's first word for the window to open on and it takes
+    /// <c>pushWarningOpensAt</c>'s fallback, <c>CUE_LEAD_MS</c> before the cutoff (the two constants
+    /// are both 1500, so that is the line's own deadline exactly). Since backlog 318 (PR 2's
+    /// <c>push_fade_in_ms</c>) the bar fades in over 400 ms rather than snapping on, so the OPENING
+    /// frame is shown at full width and alpha 0; by halfway the fade is long done and the cue's own
+    /// ramp is back. The word-anchored window of a two-line map is pinned in
+    /// <see cref="PushWarningOpensOnTheNextLinesWordAndDrainsAFixedLead"/>.</para>
     ///
     /// <para>And it is silent wherever the engine says no push is coming: once the push has landed
     /// (here the run's end), and on a line typed out with time to spare, where the readout goes null
@@ -193,12 +196,13 @@ public class WebplayDisplayTest
             // One millisecond before the window opens: the cutoff is known, but nothing is drawn.
             Assert.That(Flag(samples[0].GetProperty("bar"), "shown"), Is.False);
 
-            // The line's own deadline, which is where the window opens because CUE_LEAD_MS and
-            // FLETCHER_DRAG_GRACE_MS are the same 1500.
+            // The line's own deadline, which is where the fallback window opens because CUE_LEAD_MS
+            // and FLETCHER_DRAG_GRACE_MS are the same 1500. The window is open, at full width, and
+            // the fade-in has not started: alpha 0 (it was 0.5 while the bar snapped on).
             var opening = samples[1].GetProperty("bar");
             Assert.That(Flag(opening, "shown"), Is.True);
             Assert.That(Num(opening, "width"), Is.EqualTo(140), "full width, the same CUE_BAR_MAX_PX a cue starts at");
-            Assert.That(Num(opening, "alpha"), Is.EqualTo(0.5).Within(1e-12));
+            Assert.That(Num(opening, "alpha"), Is.EqualTo(0).Within(1e-12), "the warning fades in, it does not snap on");
 
             // Halfway through the borrowed time, and one frame from the end of it: the width depletes
             // while the alpha ramps 0.50 -> 0.85, which is the cue's own solid ramp.
@@ -248,9 +252,12 @@ public class WebplayDisplayTest
     /// follow the first UNSEALED line or it sits at position 0 of a line the vocal has not reached.
     /// Once everything has sealed there is no unsealed line left and it falls back to the active one.
     ///
-    /// <para>Every arm here reads at 1600, inside the first unsealed line's own window, which is
-    /// where backlog 223's walk provably does not run: these are the four answers exactly as they
-    /// were before it.</para>
+    /// <para>Every arm here but the last reads at 1600, inside line 0's own song window, where the
+    /// forward walk does not run. The coincident arm hands the rule a cursor already past line 0 at
+    /// that instant, a state no run reaches, and since backlog 318 the desktop's step-back answers it
+    /// with the line the song is actually on rather than with the cursor. It is kept as the one pin
+    /// of that literally ported, otherwise inert loop; the reachable coincident case (read once line
+    /// 0 has sealed) is pinned beside it and is unchanged.</para>
     /// </summary>
     [Test]
     public void SungPlayheadRidesTheSongsLineNotTheCarets()
@@ -261,7 +268,13 @@ public class WebplayDisplayTest
         {
             Assert.That(Num(root, "sungLinePinned"), Is.EqualTo(1));      // pinned: the active line, always
             Assert.That(Num(root, "sungLineParked"), Is.EqualTo(0));      // parked ahead: the line behind
-            Assert.That(Num(root, "sungLineCoincident"), Is.EqualTo(1));  // the normal case: one line, unchanged
+            // The cursor AHEAD of the song: line 0 sealed at 1600, while it is still being sung. No
+            // run reaches this (a line cannot seal before its boundary, 3000 here), and it is the
+            // one arm the desktop's step-back answers differently from the cursor: the song is on
+            // line 0, so line 0 carries the sweep (backlog 318). Before the step-back it read 1.
+            Assert.That(Num(root, "sungLineCoincident"), Is.EqualTo(0));
+            // The reachable coincident case, line 0 sealed at its boundary and the song on line 1.
+            Assert.That(Num(root, "sungLineCoincidentAfterSeal"), Is.EqualTo(1));
             Assert.That(Num(root, "sungLineAllSealed"), Is.EqualTo(1));   // nothing unsealed: back to the active line
         });
     }
@@ -272,13 +285,14 @@ public class WebplayDisplayTest
     /// is still typing it, and the seal loop hands the caret on whenever it seals the caret's line,
     /// so the cursor is structurally never AHEAD of the caret and the row the song had moved to was
     /// unreachable. So the sung line is read from the CLOCK: start at the cursor and walk off every
-    /// line the playhead has already left, stepping on endTime + sealGraceMs.
+    /// line the song has already left, stepping on the line's song window, max(endTime, sweep end).
     ///
-    /// <para>That instant is the upper bound of TypingEngine.songWindowOpen and the deadline canSeal
-    /// uses, which is what makes the walk conservative: inside the first unsealed line's window it
-    /// does not run at all. The fixture's line 0 closes at 3000 (its window runs to line 1's start,
-    /// with no seal grace), so 2999 is still line 0 and 3000 has already left it, and the walk stops
-    /// at the last line rather than running off the end of the map.</para>
+    /// <para>The fixture's line 0 closes at 3000 (its boundary, line 1's start; its one word ends
+    /// at 2000), so 2999 is still line 0 and 3000 has already left it, and the walk stops at the
+    /// last line rather than running off the end of the map. This map carries no seal grace, so the
+    /// step it pins is the same under the old typing-deadline rule (endTime + sealGraceMs); the grace
+    /// that tells the two apart is pinned in
+    /// <see cref="SungRowFlipsWhereTheSongLeavesTheLineNotAtTheEndOfItsSealGrace"/>.</para>
     /// </summary>
     [Test]
     public void SungPlayheadWalksOffEveryLineTheSongHasLeft()
@@ -1831,6 +1845,153 @@ public class WebplayDisplayTest
             Assert.That(css, Does.Contain("100%    { translate: calc(-50% + var(--dir) * 64em / 30) calc(-50% + 76em / 30); }"));
             Assert.That(css, Does.Contain("to   { rotate: calc(var(--dir) * 18deg); }"));
             Assert.That(css, Does.Contain("23.333% { opacity: 1; animation-timing-function: cubic-bezier(0.11, 0, 0.5, 0); }"));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 318, rule (a), the desktop's PR 2 sung-row rule (LyricStage.songWindowClosesAt). The
+    /// sung row used to flip at endTime + sealGraceMs, the TYPING deadline, so on any line carrying a
+    /// seal grace the sweep and sung caret sat on the previous row while the next line was already
+    /// being sung, then opened part way along it. It now flips where the SONG leaves the line,
+    /// max(endTime, sweep end).
+    ///
+    /// <para>Two graces, both on lines whose boundary and song window close at 3000: an AUTHORED 500
+    /// (typing deadline 3500) and one DERIVED from a word overrunning the boundary by 400 (the loader
+    /// clamps the word into the line, so the sweep still ends at 3000). At 3200 both read line 1,
+    /// where the old rule read line 0. On a real dragging run the sweep then rides line 1 from its
+    /// head, 0.4 of a cell in, with line 0 unfilled.</para>
+    /// </summary>
+    [Test]
+    public void SungRowFlipsWhereTheSongLeavesTheLineNotAtTheEndOfItsSealGrace()
+    {
+        var g = Harness().GetProperty("sungGrace");
+        var lines = g.GetProperty("lines").EnumerateArray().Select(e => e.GetInt32()).ToArray();
+        var dragging = g.GetProperty("dragging");
+
+        Assert.Multiple(() =>
+        {
+            // The fixture really carries the grace, or the pins below prove nothing.
+            Assert.That(Num(g, "line0EndTime"), Is.EqualTo(3000));
+            Assert.That(Num(g, "line0SealGraceMs"), Is.EqualTo(500));
+            Assert.That(Num(g, "line0SongWindowClosesAt"), Is.EqualTo(3000), "max(3000, 2000), not 3000 + 500");
+            Assert.That(Num(g, "derivedLine0SealGraceMs"), Is.EqualTo(400));
+            Assert.That(Num(g, "derivedLine0SongWindowClosesAt"), Is.EqualTo(3000));
+
+            // 2999, 3000, 3200, 3499, 3500: the old rule read 0, 0, 0, 0, 1.
+            Assert.That(lines, Is.EqualTo(new[] { 0, 1, 1, 1, 1 }));
+            Assert.That(Num(g, "derivedAt3200"), Is.EqualTo(1));
+
+            Assert.That(Num(dragging, "active"), Is.Zero, "the player is still on line 0, drag-held");
+            Assert.That(Num(dragging, "nextUnsealed"), Is.Zero);
+            Assert.That(Num(dragging, "sungLine"), Is.EqualTo(1));
+            Assert.That(Num(dragging, "sungPos"), Is.EqualTo(0.4).Within(1e-9), "200 ms into c (3000) .. d (3500)");
+            var fills = dragging.GetProperty("sweepFills").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            Assert.That(fills[0], Is.Zero);
+            Assert.That(fills[1], Is.EqualTo(0.4).Within(1e-9));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 318, rule (b), LyricStage.updateApproachCue after PR 2. The first-word cue is the
+    /// 50%-opaque whisper while its line is still to come, and FULL strength when the cued line is the
+    /// one the player is already on (it self-activated into its own lead-in): that is the line under
+    /// the caret. It anchors on the first TYPEABLE cell. The map's line 1 boundary (6000) sits 2000 ms
+    /// before its first word (8000) and nobody types: at 7000 line 0 is still active (drag-held) and
+    /// cues line 1 at 0.5 (1000 ms out); at 7600 the push has landed the player on line 1, which
+    /// cues itself at 1 (400 ms out).
+    /// </summary>
+    [Test]
+    public void FirstWordCueIsFullStrengthOnTheLineUnderTheCaret()
+    {
+        var cue = Harness().GetProperty("wordCue");
+        var upcoming = cue.GetProperty("upcoming");
+        var own = cue.GetProperty("ownLine");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(upcoming, "active"), Is.EqualTo(0));
+            Assert.That(Num(upcoming, "target"), Is.EqualTo(1));
+            var upWord = upcoming.GetProperty("bars").GetProperty("word");
+            Assert.That(Num(upcoming.GetProperty("bars"), "firstCell"), Is.EqualTo(0));
+            Assert.That(Num(upWord, "width"), Is.EqualTo(140.0 * 1000 / 1500).Within(1e-9));
+            Assert.That(Num(upWord, "alpha"), Is.EqualTo((0.85 - 0.35 * 1000 / 1500) * 0.5).Within(1e-9), "a line still to come: half strength");
+
+            Assert.That(Num(own, "active"), Is.EqualTo(1));
+            Assert.That(Num(own, "target"), Is.EqualTo(1), "the line self-activated into its own lead-in cues itself");
+            var ownWord = own.GetProperty("bars").GetProperty("word");
+            Assert.That(Num(ownWord, "width"), Is.EqualTo(140.0 * 400 / 1500).Within(1e-9));
+            Assert.That(Num(ownWord, "alpha"), Is.EqualTo(0.85 - 0.35 * 400 / 1500).Within(1e-9), "the line under the caret: full strength");
+
+            // The flexible caret draws no boundary bar either way.
+            Assert.That(Flag(own.GetProperty("bars").GetProperty("boundary"), "shown"), Is.False);
+        });
+    }
+
+    /// <summary>
+    /// Backlog 318, rule (c), LyricStage.updatePushWarning / pushWarningOpensAt after PR 2, on the two
+    /// two-line maps of the game's TestSceneTypeBeatPushWarning. The window opens on the NEXT line's
+    /// first word (falling back to CUE_LEAD_MS before the cutoff), drains a FIXED 1500 ms from there,
+    /// is cut off by the push, and fades in over 400 ms.
+    ///
+    /// <para>Word anchor (the game's TestWarningOpensWithTheNextLinesWordNotItsBoundary): cutoff 7500,
+    /// line 1's boundary 6000 and word 6800. Dark at 6000, which is both the boundary and where the
+    /// old final-1500-before-the-cutoff window opened; open from 6800 and still counting at 7499,
+    /// where the push cuts it off part way. Fixed lead (TestWarningIsAFixedLeadFromTheWordNotTheSpanToThePush):
+    /// line 0 authors the 700 ms maximum grace, cutoff 8200, word 6100, so the bar is [6100, 7600)
+    /// and out well before the push, where the old window was [6700, 8200).</para>
+    /// </summary>
+    [Test]
+    public void PushWarningOpensOnTheNextLinesWordAndDrainsAFixedLead()
+    {
+        var p = Harness().GetProperty("pushWarning318");
+        var anchor = p.GetProperty("wordAnchor");
+        var fixedLead = p.GetProperty("fixedLead");
+
+        static bool Shown(JsonElement sample) => sample.GetProperty("bar").GetProperty("shown").GetBoolean();
+        static JsonElement Bar(JsonElement sample) => sample.GetProperty("bar");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(p, "fadeInMs"), Is.EqualTo(400), "LyricStage.push_fade_in_ms");
+            Assert.That(Num(p, "wordAnchorOpensAt"), Is.EqualTo(6800));
+            Assert.That(Num(p, "fixedLeadOpensAt"), Is.EqualTo(6100));
+            Assert.That(Num(p, "lastLineOpensAt"), Is.EqualTo(4000), "no next line: cutoff - 1500");
+            Assert.That(Num(p, "wordAtCutoffOpensAt"), Is.EqualTo(5300), "a word at the push itself: cutoff - 1500");
+
+            foreach (var sample in anchor.EnumerateArray())
+            {
+                Assert.That(Num(sample, "cutoff"), Is.EqualTo(7500));
+                Assert.That(sample.GetProperty("line").GetInt32(), Is.Zero);
+            }
+            foreach (var sample in fixedLead.EnumerateArray())
+            {
+                Assert.That(Num(sample, "cutoff"), Is.EqualTo(8200));
+                Assert.That(sample.GetProperty("line").GetInt32(), Is.Zero);
+            }
+
+            // Word anchor: 5999, 6000, 6799 dark; 6800 open at alpha 0; 7000 half faded; 7499 cut short.
+            Assert.That(Shown(anchor[0]), Is.False);
+            Assert.That(Shown(anchor[1]), Is.False, "the boundary at 6000 is no moment the unpinned caret acts on");
+            Assert.That(Shown(anchor[2]), Is.False);
+            Assert.That(Shown(anchor[3]), Is.True, "opens on line 1's first word");
+            Assert.That(Num(Bar(anchor[3]), "width"), Is.EqualTo(140));
+            Assert.That(Num(Bar(anchor[3]), "alpha"), Is.EqualTo(0).Within(1e-12));
+            // 7000: progress (8300 - 7000) / 1500, fade 200 / 400.
+            Assert.That(Num(Bar(anchor[4]), "width"), Is.EqualTo(140.0 * 1300 / 1500).Within(1e-9));
+            Assert.That(Num(Bar(anchor[4]), "alpha"), Is.EqualTo((0.85 - 0.35 * 1300 / 1500) * 0.5).Within(1e-9));
+            // 7499: progress 801 / 1500, fully faded in, and still well short of empty when the push lands.
+            Assert.That(Shown(anchor[5]), Is.True);
+            Assert.That(Num(Bar(anchor[5]), "width"), Is.EqualTo(140.0 * 801 / 1500).Within(1e-9));
+            Assert.That(Num(Bar(anchor[5]), "alpha"), Is.EqualTo(0.85 - 0.35 * 801 / 1500).Within(1e-9));
+
+            // Fixed lead: 6099 dark, [6100, 7600) lit, 7600 and 8199 dark with the push still ahead.
+            Assert.That(Shown(fixedLead[0]), Is.False);
+            Assert.That(Shown(fixedLead[1]), Is.True);
+            Assert.That(Num(Bar(fixedLead[1]), "alpha"), Is.EqualTo(0).Within(1e-12));
+            Assert.That(Shown(fixedLead[2]), Is.True);
+            Assert.That(Num(Bar(fixedLead[2]), "width"), Is.LessThan(0.1));
+            Assert.That(Shown(fixedLead[3]), Is.False, "a fixed 1500 ms from the word, not stretched to the push");
+            Assert.That(Shown(fixedLead[4]), Is.False);
         });
     }
 }
