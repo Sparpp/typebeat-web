@@ -6,7 +6,8 @@
  *   osuText            : string   (the .osu lyric text)
  *   audioArrayBuffer   : ArrayBuffer (raw encoded audio bytes; decoded here)
  *   title, artist      : strings  (for the results header; falls back to the map)
- *   onFinish(results, api) : called once when a play ends (pass or fail)
+ *   onFinish(results, api) : called once when a play ends (pass or fail), with the card, after
+ *                      the results delay or fail wind-down (the results are taken at the end itself)
  *   onExit()           : called when the player wants to leave (back button)
  *   discordNudge(results) : optional. Consulted once per results card; answers with an invite URL
  *                      to show the player, or null for "show nothing". The decision is the host
@@ -1575,6 +1576,48 @@
         return false;
     }
 
+    // END OF PLAY (backlog 314), the desktop's hand-over from gameplay to the results:
+    //   RESULTS_DISPLAY_DELAY    Player.RESULTS_DISPLAY_DELAY: a completed run's score is taken the
+    //                            instant the engine finishes, and the card (and onFinish, so the
+    //                            submit) follows this long after. Escape asks for it at once
+    //                            (Player.PerformExit's progressToResults(false)).
+    //   LINES_FADE_OUT_MS        TypeBeatStyle.SCREEN_FADE_DURATION, LyricStage's OutQuint fade of
+    //                            every row once the last line has sealed (the CSS carries it).
+    //   FAIL_WIND_DOWN_MS        FailAnimationContainer's duration: the track's frequency ramped
+    //                            linearly to 0, a low-pass swept to FAIL_FILTER_CUTOFF_HZ OutCubic
+    //                            beside a high-pass set straight to it, and the volume at
+    //                            FAIL_VOLUME. The fail card follows the wind-down, and Escape
+    //                            finishes it early (PerformExitWithConfirmation's FinishTransforms).
+    //                            The desktop's Gameplay/failsound sample is NOT played: its asset is
+    //                            CC-BY-NC, so the browser's wind-down is silent by decision.
+    //   LOWPASS_OPEN_HZ          AudioFilter.MAX_LOWPASS_CUTOFF, where the low-pass sweep starts.
+    const RESULTS_DISPLAY_DELAY_MS = 1000;
+    const LINES_FADE_OUT_MS = 300;
+    const FAIL_WIND_DOWN_MS = 2500;
+    const FAIL_FILTER_CUTOFF_HZ = 300;
+    const FAIL_VOLUME = 0.5;
+    const LOWPASS_OPEN_HZ = 22049;
+    const FAIL_SWEEP_POINTS = 64;
+    const RESULTS_HINT = 'hold ` to retry · esc to go back';
+
+    // Easing.OutCubic from `from` to `to`, sampled at `n` evenly spaced points (both ends included),
+    // for AudioParam.setValueCurveAtTime.
+    function outCubicCurve(from, to, n) {
+        const curve = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+            const p = n === 1 ? 1 : i / (n - 1);
+            const e = 1 - Math.pow(1 - p, 3);
+            curve[i] = from + (to - from) * e;
+        }
+        return curve;
+    }
+
+    // A key the results wait swallows: anything that could type or scroll, i.e. no Ctrl/Alt/Meta
+    // chord (those stay the browser's, F5 and Ctrl+R included).
+    function isSwallowedDuringWait(e) {
+        return !(e.ctrlKey || e.altKey || e.metaKey);
+    }
+
     function mountPlayer(container, opts) {
         const beatmap = Core.buildBeatmap(Core.parseLyricOsu(opts.osuText));
         const title = opts.title || beatmap.title || 'untitled';
@@ -1685,6 +1728,14 @@
         let blurred = false;           // the window lost focus (a hidden tab is document.hidden)
         let ctxInterrupted = false;    // the BROWSER suspended or interrupted the context mid-play
         let hold = null;               // the live hold-` / hold-Ctrl+` gesture: { kind, timer }
+        // The end of play (backlog 314, see RESULTS_DISPLAY_DELAY_MS above).
+        let sourceGain = null;         // the live source's gain node, halved by the fail wind-down
+        let failNodes = [];            // the wind-down's filters, torn down with the source
+        let resultsTimer = 0;          // the pending hand-over to the card
+        let pendingResults = null;     // the results taken at the finish or fail instant
+        let waitKeyHandler = null;     // capturing keydown listener during the results wait
+        let cardKeyHandler = null;     // capturing keydown listener while the results card is up
+        let cardKeyUpHandler = null;
 
         function nowMs() { return audioCtx ? (audioCtx.currentTime - startedAt) * 1000 : 0; }
 
@@ -1694,6 +1745,9 @@
 
         function cleanupAudio() {
             if (source) { try { source.stop(); } catch (e) {} try { source.disconnect(); } catch (e) {} source = null; }
+            for (const n of failNodes) { try { n.disconnect(); } catch (e) {} }
+            failNodes = [];
+            if (sourceGain) { try { sourceGain.disconnect(); } catch (e) {} sourceGain = null; }
         }
 
         // Start (or restart) the buffer at `offsetMs` into the track and rebase the clock onto it,
@@ -1721,6 +1775,7 @@
             gainNode.gain.value = 0.1;
             source.connect(gainNode);
             gainNode.connect(audioCtx.destination);
+            sourceGain = gainNode;
             const offsetSec = offsetMs / 1000;
             const when = audioCtx.currentTime + 0.06; // small scheduling lead
             startedAt = when - offsetSec;
@@ -1740,6 +1795,8 @@
             abortHold();
             stopLoops();
             detachRunListeners();
+            cancelResultsWait();
+            removeCardKeys();
             window.removeEventListener('resize', onResize);
             removeStartKey();
             cleanupAudio();
@@ -1935,12 +1992,14 @@
 
         // HoldToConfirmContainer: the action fires once the key has been held HOLD_TO_CONFIRM_MS,
         // with a fill that runs over the same span; letting go, a blur or a hide aborts it.
-        function beginHold(kind) {
+        // `action`, when given, replaces the mid-play retry/quit (the results card's retry uses it).
+        function beginHold(kind, action) {
             abortHold();
             const timer = setTimeout(function () {
                 hold = null;
                 holdBox.className = 'tb-hold';
-                if (kind === 'retry') retry(); else quit();
+                if (action) action();
+                else if (kind === 'retry') retry(); else quit();
             }, HOLD_TO_CONFIRM_MS);
             hold = { kind: kind, timer: timer };
             // A fresh fill element restarts its CSS animation from empty.
@@ -2732,18 +2791,87 @@
             if (running && !paused) raf = requestAnimationFrame(rafLoop);
         }
 
+        // The score is taken HERE, at the instant the engine finished or failed, exactly as it always
+        // was; only the card and onFinish wait (backlog 314). A completed run fades its rows out and
+        // keeps its audio playing through RESULTS_DISPLAY_DELAY_MS; a failed one runs the silent
+        // wind-down and hands over when it ends. Either wait ends early on Escape.
         function conclude() {
             concluded = true;
             running = false;
             abortHold();
             stopLoops();
             detachRunListeners();
-            if (engine.failed) cleanupAudio();
+            const failed = !!engine.failed;
             const results = Core.computeScore(engine);
             // The veto's verdict rides on the results; play.js declines to submit a false one.
             results.playbackValid = validity.valid;
+            pendingResults = results;
+            root.classList.add(failed ? 'tb-failing' : 'tb-concluded');
+            if (failed) startFailWindDown();
+            waitKeyHandler = function (e) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    if (e.stopPropagation) e.stopPropagation();
+                    if (!e.repeat) finishConclusion();
+                    return;
+                }
+                if (isSwallowedDuringWait(e)) {
+                    e.preventDefault();
+                    if (e.stopPropagation) e.stopPropagation();
+                }
+            };
+            document.addEventListener('keydown', waitKeyHandler, true);
+            resultsTimer = setTimeout(finishConclusion, failed ? FAIL_WIND_DOWN_MS : RESULTS_DISPLAY_DELAY_MS);
+        }
+
+        // The hand-over: the card, then onFinish (and so the submit), once per concluded run.
+        function finishConclusion() {
+            const results = pendingResults;
+            if (!results) return;
+            cancelResultsWait();
+            // A failed track has wound down to a standstill; an early Escape skips the rest of it.
+            if (engine && engine.failed) cleanupAudio();
             showResults(results);
             if (opts.onFinish) { try { opts.onFinish(results, publicApi); } catch (e) { console.error(e); } }
+        }
+
+        function cancelResultsWait() {
+            if (resultsTimer) { clearTimeout(resultsTimer); resultsTimer = 0; }
+            if (waitKeyHandler) { document.removeEventListener('keydown', waitKeyHandler, true); waitKeyHandler = null; }
+            pendingResults = null;
+        }
+
+        // FailAnimationContainer.Start, on the Web Audio graph: source -> low-pass -> high-pass ->
+        // the source's own gain. The playback rate (the desktop's track frequency) ramps linearly to
+        // 0, the low-pass sweeps OutCubic from fully open to the cutoff, the high-pass goes straight
+        // to it, and the gain is halved at once. No sample plays.
+        function startFailWindDown() {
+            if (!audioCtx || !source || !sourceGain) return;
+            const t = audioCtx.currentTime;
+            const dur = FAIL_WIND_DOWN_MS / 1000;
+            try {
+                const lowPass = audioCtx.createBiquadFilter();
+                lowPass.type = 'lowpass';
+                const highPass = audioCtx.createBiquadFilter();
+                highPass.type = 'highpass';
+                highPass.frequency.setValueAtTime(FAIL_FILTER_CUTOFF_HZ, t);
+                lowPass.frequency.setValueAtTime(LOWPASS_OPEN_HZ, t);
+                lowPass.frequency.setValueCurveAtTime(outCubicCurve(LOWPASS_OPEN_HZ, FAIL_FILTER_CUTOFF_HZ, FAIL_SWEEP_POINTS), t, dur);
+                source.disconnect();
+                source.connect(lowPass);
+                lowPass.connect(highPass);
+                highPass.connect(sourceGain);
+                failNodes = [lowPass, highPass];
+            } catch (e) { console.error(e); }
+            try {
+                const rate = source.playbackRate;
+                rate.setValueAtTime(rate.value, t);
+                rate.linearRampToValueAtTime(0, t + dur);
+            } catch (e) { console.error(e); }
+            try {
+                const g = sourceGain.gain;
+                g.setValueAtTime(g.value * FAIL_VOLUME, t);
+            } catch (e) { console.error(e); }
         }
 
         function begin() {
@@ -2752,6 +2880,11 @@
             // focus state start over as a fresh desktop Player's do.
             abortHold();
             stopLoops();
+            // A retry from the results card (or its wait) drops the old run's hand-over and keys.
+            cancelResultsWait();
+            removeCardKeys();
+            root.classList.remove('tb-concluded');
+            root.classList.remove('tb-failing');
             paused = false;
             lastPauseWall = null;
             blurred = false;
@@ -2825,6 +2958,7 @@
                 begin(); // begin() removes the start-key listener and mints a fresh token
             };
             btn.addEventListener('click', go);
+            removeCardKeys();
             removeStartKey();
             startKeyHandler = (e) => { if (e.key === ' ' || e.code === 'Space' || e.key === 'Enter') { e.preventDefault(); go(); } };
             document.addEventListener('keydown', startKeyHandler, true);
@@ -2866,17 +3000,73 @@
             const status = el('div', 'tb-submit-status', '');
             card.appendChild(status);
             const actions = el('div', 'tb-result-actions');
-            const again = el('button', 'tb-btn tb-btn-primary', 'play again');
-            again.addEventListener('click', () => showStartGate('press space to start'));
+            const again = el('button', 'tb-btn tb-btn-primary tb-result-again', 'play again');
+            again.type = 'button';
+            // ResultsScreen's RetryButton: straight back into play, no start gate. The click is a
+            // user gesture, so the context may be resumed from it.
+            again.addEventListener('click', retryFromResults);
             actions.appendChild(again);
             if (opts.onExit) {
-                const back = el('button', 'tb-btn tb-btn-ghost', 'back to maps');
-                back.addEventListener('click', () => { destroy(); opts.onExit(); });
+                const back = el('button', 'tb-btn tb-btn-ghost tb-result-back', 'back to maps');
+                back.type = 'button';
+                back.addEventListener('click', leaveResults);
                 actions.appendChild(back);
             }
             card.appendChild(actions);
+            card.appendChild(el('div', 'tb-card-hint tb-result-hint', escapeHtml(RESULTS_HINT)));
             overlay.appendChild(card);
             publicApi._status = status;
+            attachCardKeys();
+            // Nothing was focused before: Enter and Space now play again from the keyboard.
+            if (typeof again.focus === 'function') again.focus();
+        }
+
+        // THE RESULTS CARD'S KEYS (backlog 314), ResultsScreen's: hold ` (HotkeyRetryOverlay, the
+        // same hold and fill as mid-play) retries straight into begin(); Escape (GlobalAction.Back)
+        // and Ctrl+` (QuickExit, on press) go back. Everything else is left to the browser, so Tab,
+        // Enter and Space work the focused button.
+        function attachCardKeys() {
+            removeCardKeys();
+            cardKeyHandler = function (e) {
+                if (isHoldKey(e)) {
+                    e.preventDefault();
+                    if (e.repeat || e.metaKey) return;
+                    if (e.ctrlKey) { abortHold(); leaveResults(); }
+                    else beginHold('retry', retryFromResults);
+                    return;
+                }
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    if (!e.repeat) leaveResults();
+                }
+            };
+            cardKeyUpHandler = function (e) { if (hold && isHoldKey(e)) abortHold(); };
+            document.addEventListener('keydown', cardKeyHandler, true);
+            document.addEventListener('keyup', cardKeyUpHandler, true);
+            window.addEventListener('blur', abortHold);
+        }
+
+        function removeCardKeys() {
+            if (cardKeyHandler) { document.removeEventListener('keydown', cardKeyHandler, true); cardKeyHandler = null; }
+            if (cardKeyUpHandler) { document.removeEventListener('keyup', cardKeyUpHandler, true); cardKeyUpHandler = null; }
+            window.removeEventListener('blur', abortHold);
+        }
+
+        function retryFromResults() {
+            if (running || !audioCtx) return;
+            removeCardKeys();
+            if (audioCtx.state !== 'running') {
+                try { const p = audioCtx.resume(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+            }
+            begin();
+        }
+
+        // Back: to the host when there is one, else to the player's own start gate.
+        function leaveResults() {
+            removeCardKeys();
+            abortHold();
+            if (opts.onExit) { destroy(); opts.onExit(); return; }
+            showStartGate('press space to start');
         }
 
         function statCellOf(cell) {
@@ -2962,6 +3152,17 @@
         PAUSE_HINT,
         pauseCooldownActive,
         inSkippableInstrumental
+    };
+    // The end of play (backlog 314), for the same harness.
+    Core.endOfPlay = {
+        RESULTS_DISPLAY_DELAY_MS,
+        LINES_FADE_OUT_MS,
+        FAIL_WIND_DOWN_MS,
+        FAIL_FILTER_CUTOFF_HZ,
+        FAIL_VOLUME,
+        LOWPASS_OPEN_HZ,
+        RESULTS_HINT,
+        outCubicCurve
     };
     Core.escapeHtml = escapeHtml;
 

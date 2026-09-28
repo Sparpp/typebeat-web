@@ -589,4 +589,318 @@ out.constants = {
     out.skipAndUnload = { skipWhilePaused, skipAfterResume, skipTarget: g.skipTarget, guard, afterDestroy: winListeners.count('beforeunload') };
 })();
 
+// =============================================================================================
+// THE END OF PLAY (backlog 314): the results delay, the fail wind-down and the results card's
+// keys. The fakes below are widened in place (focus is recorded, and the audio graph's nodes and
+// AudioParam automation are logged) so the scenarios above run exactly as they did.
+// =============================================================================================
+
+const E = TB.endOfPlay;
+
+FakeElement.prototype.focus = function () { global.document.activeElement = this; };
+
+function fakeParam(v) {
+    return {
+        value: v,
+        events: [],
+        setValueAtTime(x, t) { this.events.push({ op: 'set', value: x, at: t }); this.value = x; },
+        linearRampToValueAtTime(x, t) { this.events.push({ op: 'linear', value: x, at: t }); },
+        setValueCurveAtTime(c, t, d) {
+            this.events.push({ op: 'curve', first: c[0], last: c[c.length - 1], points: c.length, at: t, duration: d });
+        }
+    };
+}
+function fakeNode(kind, extra) {
+    return Object.assign({
+        kind,
+        targets: [],
+        stops: 0,
+        connect(n) { this.targets.push(n); return n; },
+        disconnect() { this.targets = []; }
+    }, extra || {});
+}
+FakeAudioContext.prototype.createBufferSource = function () {
+    this.sourcesCreated++;
+    const n = fakeNode('source', { buffer: null, playbackRate: fakeParam(1), start() {}, stop() { this.stops++; } });
+    (this.nodes = this.nodes || []).push(n);
+    return n;
+};
+FakeAudioContext.prototype.createGain = function () {
+    const n = fakeNode('gain', { gain: fakeParam(1) });
+    (this.nodes = this.nodes || []).push(n);
+    return n;
+};
+FakeAudioContext.prototype.createBiquadFilter = function () {
+    const n = fakeNode('biquad', { type: 'lowpass', frequency: fakeParam(350) });
+    (this.nodes = this.nodes || []).push(n);
+    return n;
+};
+
+function mountFull(osu, withExit) {
+    global.document.hidden = false;
+    global.document.activeElement = null;
+    timers.clear();
+    rafQueue = new Map();
+    const log = { finishes: [], finishWalls: [], playStarts: 0, exits: 0 };
+    const container = new FakeElement('div');
+    const opts = {
+        osuText: osu,
+        audioArrayBuffer: new ArrayBuffer(8),
+        title: 't',
+        artist: 'a',
+        onPlayStart() { log.playStarts++; },
+        onFinish(results) { log.finishes.push(JSON.stringify(results)); log.finishWalls.push(wall); }
+    };
+    if (withExit !== false) opts.onExit = function () { log.exits++; };
+    const api = TB.mountPlayer(container, opts);
+    const ctx = lastCtx;
+    keydown(' ');
+    return { api, ctx, log, container };
+}
+
+// Advance frame by frame until the engine ends; returns the wall time and the score read off the
+// engine at that very frame (the tick that ended it has already concluded the run).
+function playToEnd(run, limitMs) {
+    for (let t = 0; t < limitMs; t += 16) {
+        advance(16);
+        const e = run.api.engine;
+        if (e.finished || e.failed) return { wall, results: TB.computeScore(e) };
+    }
+    return null;
+}
+
+// Script "ab cd" through to a clear: each key on its target.
+function typeAbcd(run) {
+    const plan = [[1000, 'a'], [1500, 'b'], [2000, ' '], [2000, 'c'], [2500, 'd']];
+    for (const [at, k] of plan) { advanceClockTo(run.api, at); keydown(k); }
+}
+
+function sansValidity(json) { const o = JSON.parse(json); delete o.playbackValid; return JSON.stringify(o); }
+
+function rootOf(run) { return findByClass(run.container, 'tb-player'); }
+
+// ---- 7. a completed run: the score is taken at the end, the card follows 1000 ms later ---------
+(function () {
+    const run = mountFull(abcdOsu);
+    typeAbcd(run);
+    const end = playToEnd(run, 20000);
+    const atEnd = JSON.stringify(end.results);
+    const cardAtEnd = !!findByClass(run.container, 'tb-results');
+    const finishesAtEnd = run.log.finishes.length;
+    const concludedClass = rootOf(run).classList.contains('tb-concluded');
+    const listenersAtEnd = live();
+
+    // Every key pressed during the wait is swallowed, and none of them moves the engine.
+    const presses = ['a', 'b', ' ', 'Backspace', 'Enter', '`'].map(k => keydown(k));
+    const swallowed = presses.every(ev => ev.defaultPrevented);
+    const chord = keydown('r', { ctrlKey: true });
+    const afterKeys = JSON.stringify(TB.computeScore(run.api.engine));
+
+    advance(900);
+    const cardAt900 = !!findByClass(run.container, 'tb-results');
+    const finishesAt900 = run.log.finishes.length;
+    advance(200);
+    const delayed = run.log.finishes[0];
+    const delayMs = run.log.finishWalls[0] - end.wall;
+    const focused = global.document.activeElement;
+    out.resultsDelay = {
+        cardAtEnd,
+        finishesAtEnd,
+        concludedClass,
+        listenersAtEnd,
+        swallowed,
+        chordLeftToBrowser: !chord.defaultPrevented,
+        keysMovedEngine: afterKeys !== atEnd,
+        cardAt900,
+        finishesAt900,
+        delayMs,
+        finishes: run.log.finishes.length,
+        passed: JSON.parse(delayed).passed,
+        identical: sansValidity(delayed) === atEnd,
+        playbackValid: JSON.parse(delayed).playbackValid,
+        focusedClass: focused ? focused.className : null,
+        cardListeners: live()
+    };
+    run.api.destroy();
+
+    // The same run with Escape pressed 100 ms into the wait: the card is up at once, with the same
+    // results, and the cancelled timer never delivers a second one.
+    const esc = mountFull(abcdOsu);
+    typeAbcd(esc);
+    const escEnd = playToEnd(esc, 20000);
+    advance(100);
+    const escEv = keydown('Escape');
+    const escCard = !!findByClass(esc.container, 'tb-results');
+    const escFinishes = esc.log.finishes.length;
+    const escDelay = esc.log.finishWalls[0] - escEnd.wall;
+    advance(3000);
+    out.resultsEscape = {
+        prevented: escEv.defaultPrevented,
+        card: escCard,
+        finishesAtEscape: escFinishes,
+        delayMs: escDelay,
+        finishesLater: esc.log.finishes.length,
+        sameAsDelayed: esc.log.finishes[0] === delayed
+    };
+    esc.api.destroy();
+})();
+
+// ---- 8. a failed run: the engine stays frozen, the track winds down, the card follows ----------
+// The health harness's AFK shape: an idle player empties the bar on the second seal.
+const afkOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":22000}\n' +
+    [['the quick brown fox jumps over', 1000], ['the lazy dog sleeps all day', 9000], ['then wakes up', 17000]]
+        .map(function (pair) {
+            const words = pair[0].split(' ');
+            return JSON.stringify({
+                text: pair[0], start_ms: pair[1], end_ms: pair[1] + words.length * 1000,
+                words: words.map((w, i) => ({ text: w, start_ms: pair[1] + i * 1000, end_ms: pair[1] + (i + 1) * 1000, score: 1 }))
+            });
+        }).join('\n') + '\n';
+
+(function () {
+    const run = mountFull(afkOsu);
+    const { ctx } = run;
+    const end = playToEnd(run, 60000);
+    const failed = !!run.api.engine.failed;
+    const atFail = JSON.stringify(end.results);
+    const failT = ctx.currentTime;
+
+    const source = ctx.nodes.filter(n => n.kind === 'source').pop();
+    const gains = ctx.nodes.filter(n => n.kind === 'gain');
+    const gain = gains[gains.length - 1];
+    const filters = ctx.nodes.filter(n => n.kind === 'biquad');
+    const lowPass = filters.find(f => f.type === 'lowpass');
+    const highPass = filters.find(f => f.type === 'highpass');
+    const rel = ev => Object.assign({}, ev, { at: ev.at - failT });
+    const graph = {
+        sourceTo: source.targets.map(n => n === lowPass ? 'lowpass' : n.kind),
+        lowPassTo: lowPass ? lowPass.targets.map(n => n === highPass ? 'highpass' : n.kind) : [],
+        highPassTo: highPass ? highPass.targets.map(n => n === gain ? 'gain' : n.kind) : []
+    };
+    const audio = {
+        filters: filters.length,
+        rate: source.playbackRate.events.map(rel),
+        lowPass: lowPass ? lowPass.frequency.events.map(rel) : [],
+        highPass: highPass ? highPass.frequency.events.map(rel) : [],
+        gain: gain.gain.events.map(rel),
+        // The only sources ever made are the track's: no fail sample is played.
+        sources: ctx.sourcesCreated,
+        stoppedAtFail: source.stops
+    };
+
+    // Mid wind-down: no card, nothing submitted, the statistics are the ones taken at the fail.
+    advance(1500);
+    const mid = {
+        card: !!findByClass(run.container, 'tb-results'),
+        finishes: run.log.finishes.length,
+        stats: JSON.stringify(TB.computeScore(run.api.engine)) === atFail,
+        failingClass: rootOf(run).classList.contains('tb-failing'),
+        swallowed: keydown('a').defaultPrevented
+    };
+    advance(1100);
+    const delivered = run.log.finishes[0];
+    const delayMs = run.log.finishWalls[0] - end.wall;
+    const stoppedAtCard = source.stops;
+    advance(10000);
+    out.failWindDown = {
+        failed,
+        graph,
+        audio,
+        mid,
+        delayMs,
+        finishes: run.log.finishes.length,
+        identical: delivered !== undefined && sansValidity(delivered) === atFail,
+        passed: delivered !== undefined && JSON.parse(delivered).passed,
+        stoppedAtCard,
+        curveMid: E.outCubicCurve(E.LOWPASS_OPEN_HZ, E.FAIL_FILTER_CUTOFF_HZ, 3)[1]
+    };
+    run.api.destroy();
+
+    // Escape during the wind-down finishes it early, with the same statistics, once.
+    const esc = mountFull(afkOsu);
+    const escEnd = playToEnd(esc, 60000);
+    advance(500);
+    keydown('Escape');
+    const early = { finishes: esc.log.finishes.length, delayMs: esc.log.finishWalls[0] - escEnd.wall };
+    advance(5000);
+    early.finishesLater = esc.log.finishes.length;
+    early.identical = esc.log.finishes[0] !== undefined && sansValidity(esc.log.finishes[0]) === JSON.stringify(escEnd.results);
+    out.failEscape = early;
+    esc.api.destroy();
+})();
+
+// ---- 9. the results card's keys -------------------------------------------------------------
+(function () {
+    function toCard(withExit) {
+        const run = mountFull(abcdOsu, withExit);
+        typeAbcd(run);
+        playToEnd(run, 20000);
+        keydown('Escape');
+        return run;
+    }
+
+    // Hold ` retries straight into a new play: no start gate, a fresh token, the card's keys gone.
+    const r = toCard();
+    const onCard = live();
+    const firstEngine = r.api.engine;
+    keydown('`');
+    advance(100);
+    keyup('`');
+    advance(300);
+    const abortedOnCard = { running: r.api.running, playStarts: r.log.playStarts };
+    keydown('`');
+    advance(150);
+    const at150 = r.api.running;
+    advance(100);
+    const overlay = overlayOf(r);
+    out.cardRetry = {
+        onCard,
+        abortedOnCard,
+        runningAt150: at150,
+        running: r.api.running,
+        freshEngine: r.api.engine !== firstEngine,
+        playStarts: r.log.playStarts,
+        overlayOn: overlay.classList.contains('tb-overlay-on'),
+        concludedClass: rootOf(r).classList.contains('tb-concluded'),
+        listeners: live(),
+        finishes: r.log.finishes.length
+    };
+    // The retried play runs and concludes on its own, once more (idle, then the full wait).
+    advance(12000);
+    out.cardRetry.finishesAfterSecondPlay = r.log.finishes.length;
+    // Clicking 'play again' goes straight in too.
+    const again = findByClass(r.container, 'tb-result-again');
+    if (again) again.click();
+    out.cardRetry.clickRunning = r.api.running;
+    out.cardRetry.clickPlayStarts = r.log.playStarts;
+    r.api.destroy();
+
+    // Escape goes back to the host, and so does Ctrl+` (on press, no hold).
+    const b = toCard();
+    keydown('Escape');
+    const escBack = { exits: b.log.exits, ctx: b.ctx.state, listeners: live() };
+    const c = toCard();
+    keydown('`', { ctrlKey: true });
+    const ctrlBack = { exits: c.log.exits, ctx: c.ctx.state, listeners: live() };
+    // Without a host, back is the player's own start gate.
+    const n = toCard(false);
+    keydown('Escape');
+    const noHost = { exits: n.log.exits, startGate: !!findByClass(n.container, 'tb-btn-primary') && !findByClass(n.container, 'tb-results'), listeners: live() };
+    n.api.destroy();
+    // A card torn down by its host leaves nothing behind.
+    const d = toCard();
+    d.api.destroy();
+    out.cardBack = { escBack, ctrlBack, noHost, afterDestroy: live() };
+})();
+
+out.endOfPlayConstants = {
+    resultsDelayMs: E.RESULTS_DISPLAY_DELAY_MS,
+    linesFadeMs: E.LINES_FADE_OUT_MS,
+    windDownMs: E.FAIL_WIND_DOWN_MS,
+    cutoffHz: E.FAIL_FILTER_CUTOFF_HZ,
+    volume: E.FAIL_VOLUME,
+    lowPassOpenHz: E.LOWPASS_OPEN_HZ
+};
+
 process.stdout.write(JSON.stringify(out));

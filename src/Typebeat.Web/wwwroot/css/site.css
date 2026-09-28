@@ -3603,3 +3603,17 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .tb-hold-on .tb-hold-fill { animation: tbHoldFill .2s ease-out forwards; }
 .tb-hold-exit .tb-hold-fill { background: var(--text); }
 @keyframes tbHoldFill { from { width: 0; } to { width: 100%; } }
+
+/* ---- /play end of play (backlog 314) ---- */
+/* A completed run: LyricStage fades every row to 0 over SCREEN_FADE_DURATION (300 ms, OutQuint)
+   while the results wait out Player.RESULTS_DISPLAY_DELAY. */
+.tb-concluded .tb-stack { opacity: 0; transition: opacity .3s cubic-bezier(0.23, 1, 0.32, 1); }
+/* A failed run: FailAnimationContainer fades the playfield over half its 2.5 s, and shrinks,
+   tilts and greys the content over the whole of it (OutQuart). */
+.tb-failing .tb-stack { opacity: 0; transition: opacity 1.25s linear; }
+.tb-failing .tb-stage {
+    transform: scale(.85) rotate(1deg);
+    filter: grayscale(1);
+    transition: transform 2.5s cubic-bezier(0.25, 1, 0.5, 1), filter 2.5s linear;
+}
+.tb-result-hint { margin-top: var(--space-2); }

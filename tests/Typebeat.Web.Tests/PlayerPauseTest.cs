@@ -216,4 +216,186 @@ public class PlayerPauseTest
             Assert.That(num("skipAndUnload", "afterDestroy"), Is.Zero);
         });
     }
+
+    // ---- the end of play (backlog 314) ----------------------------------------------------------
+
+    /// <summary>
+    /// Player.RESULTS_DISPLAY_DELAY, TypeBeatStyle.SCREEN_FADE_DURATION, and FailAnimationContainer's
+    /// duration, cutoffs and volume adjustment (AudioFilter.MAX_LOWPASS_CUTOFF is the sweep's start).
+    /// </summary>
+    [Test]
+    public void TheEndOfPlayConstants_AreTheDesktops()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(num("endOfPlayConstants", "resultsDelayMs"), Is.EqualTo(1000));
+            Assert.That(num("endOfPlayConstants", "linesFadeMs"), Is.EqualTo(300));
+            Assert.That(num("endOfPlayConstants", "windDownMs"), Is.EqualTo(2500));
+            Assert.That(num("endOfPlayConstants", "cutoffHz"), Is.EqualTo(300));
+            Assert.That(real("endOfPlayConstants", "volume"), Is.EqualTo(0.5));
+            Assert.That(num("endOfPlayConstants", "lowPassOpenHz"), Is.EqualTo(22049));
+        });
+    }
+
+    /// <summary>
+    /// A completed run's score is taken the instant the engine finishes, and the card and onFinish
+    /// (the only road to /play/submit) follow 1000 ms later with those very results. Keys pressed
+    /// during the wait are swallowed and never reach the engine; a browser chord is left alone.
+    /// </summary>
+    [Test]
+    public void ACompletedRun_HoldsTheCardForTheResultsDelay_WithTheResultsTakenAtTheEnd()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(flag("resultsDelay", "cardAtEnd"), Is.False);
+            Assert.That(num("resultsDelay", "finishesAtEnd"), Is.Zero);
+            Assert.That(flag("resultsDelay", "concludedClass"), Is.True, "the rows fade");
+            // Only the wait's own listener is live; the run's are gone and no loop runs.
+            assertNothingLive(at("resultsDelay", "listenersAtEnd"), keydown: 1);
+            Assert.That(flag("resultsDelay", "swallowed"), Is.True);
+            Assert.That(flag("resultsDelay", "chordLeftToBrowser"), Is.True);
+            Assert.That(flag("resultsDelay", "keysMovedEngine"), Is.False);
+            Assert.That(flag("resultsDelay", "cardAt900"), Is.False);
+            Assert.That(num("resultsDelay", "finishesAt900"), Is.Zero);
+            // The tick that ended the run is the frame the delay is measured from.
+            Assert.That(real("resultsDelay", "delayMs"), Is.InRange(1000, 1016));
+            Assert.That(num("resultsDelay", "finishes"), Is.EqualTo(1));
+            Assert.That(flag("resultsDelay", "passed"), Is.True);
+            Assert.That(flag("resultsDelay", "identical"), Is.True, "submitted results are the end instant's");
+            Assert.That(flag("resultsDelay", "playbackValid"), Is.True);
+        });
+    }
+
+    [Test]
+    public void EscapeDuringTheWait_ShowsTheCardAtOnce_WithTheSameResults()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(flag("resultsEscape", "prevented"), Is.True);
+            Assert.That(flag("resultsEscape", "card"), Is.True);
+            Assert.That(num("resultsEscape", "finishesAtEscape"), Is.EqualTo(1));
+            Assert.That(real("resultsEscape", "delayMs"), Is.EqualTo(100));
+            Assert.That(num("resultsEscape", "finishesLater"), Is.EqualTo(1), "the cancelled timer submits nothing");
+            Assert.That(flag("resultsEscape", "sameAsDelayed"), Is.True);
+        });
+    }
+
+    /// <summary>
+    /// FailAnimationContainer on the Web Audio graph: source to low-pass to high-pass to the gain, the
+    /// playback rate ramped linearly to 0 over 2.5 s, the low-pass swept OutCubic from fully open to
+    /// 300 Hz, the high-pass straight to 300 Hz and the gain halved. No fail sample (the only source is
+    /// the track's). The engine stays frozen, the statistics are the fail instant's, and the fail
+    /// card follows the wind-down, once.
+    /// </summary>
+    [Test]
+    public void AFailedRun_WindsDownSilently_KeepingTheStatisticsOfTheFailInstant()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(flag("failWindDown", "failed"), Is.True);
+            Assert.That(at("failWindDown", "graph", "sourceTo")[0].GetString(), Is.EqualTo("lowpass"));
+            Assert.That(at("failWindDown", "graph", "lowPassTo")[0].GetString(), Is.EqualTo("highpass"));
+            Assert.That(at("failWindDown", "graph", "highPassTo")[0].GetString(), Is.EqualTo("gain"));
+            Assert.That(num("failWindDown", "audio", "filters"), Is.EqualTo(2));
+
+            var rate = at("failWindDown", "audio", "rate");
+            Assert.That(rate.GetArrayLength(), Is.EqualTo(2));
+            Assert.That(rate[1].GetProperty("op").GetString(), Is.EqualTo("linear"));
+            Assert.That(rate[1].GetProperty("value").GetDouble(), Is.Zero);
+            Assert.That(rate[1].GetProperty("at").GetDouble(), Is.EqualTo(2.5).Within(1e-9));
+
+            var lp = at("failWindDown", "audio", "lowPass");
+            Assert.That(lp[1].GetProperty("op").GetString(), Is.EqualTo("curve"));
+            Assert.That(lp[1].GetProperty("first").GetDouble(), Is.EqualTo(22049));
+            Assert.That(lp[1].GetProperty("last").GetDouble(), Is.EqualTo(300));
+            Assert.That(lp[1].GetProperty("duration").GetDouble(), Is.EqualTo(2.5));
+            // OutCubic at its midpoint: 22049 + (300 - 22049) * (1 - 0.5^3) = 3018.625.
+            Assert.That(real("failWindDown", "curveMid"), Is.EqualTo(3018.625).Within(1e-3));
+
+            var hp = at("failWindDown", "audio", "highPass");
+            Assert.That(hp.GetArrayLength(), Is.EqualTo(1));
+            Assert.That(hp[0].GetProperty("value").GetDouble(), Is.EqualTo(300));
+            Assert.That(hp[0].GetProperty("at").GetDouble(), Is.EqualTo(0).Within(1e-9));
+
+            var gain = at("failWindDown", "audio", "gain");
+            Assert.That(gain.GetArrayLength(), Is.EqualTo(1));
+            Assert.That(gain[0].GetProperty("value").GetDouble(), Is.EqualTo(0.05).Within(1e-9), "0.1 halved");
+
+            Assert.That(num("failWindDown", "audio", "sources"), Is.EqualTo(1), "no fail sample");
+            Assert.That(num("failWindDown", "audio", "stoppedAtFail"), Is.Zero, "the track winds down, it is not cut");
+
+            Assert.That(flag("failWindDown", "mid", "card"), Is.False);
+            Assert.That(num("failWindDown", "mid", "finishes"), Is.Zero);
+            Assert.That(flag("failWindDown", "mid", "stats"), Is.True);
+            Assert.That(flag("failWindDown", "mid", "failingClass"), Is.True);
+            Assert.That(flag("failWindDown", "mid", "swallowed"), Is.True);
+
+            Assert.That(real("failWindDown", "delayMs"), Is.InRange(2500, 2516));
+            Assert.That(num("failWindDown", "finishes"), Is.EqualTo(1), "submitted once");
+            Assert.That(flag("failWindDown", "identical"), Is.True);
+            Assert.That(flag("failWindDown", "passed"), Is.False);
+            Assert.That(num("failWindDown", "stoppedAtCard"), Is.EqualTo(1));
+
+            // Escape finishes the wind-down early (FinishTransforms), with the same results, once.
+            Assert.That(num("failEscape", "finishes"), Is.EqualTo(1));
+            Assert.That(real("failEscape", "delayMs"), Is.EqualTo(500));
+            Assert.That(num("failEscape", "finishesLater"), Is.EqualTo(1));
+            Assert.That(flag("failEscape", "identical"), Is.True);
+        });
+    }
+
+    [Test]
+    public void TheResultsCard_FocusesItsPrimaryButton()
+    {
+        Assert.That(at("resultsDelay", "focusedClass").GetString(), Does.Contain("tb-result-again"));
+        Assert.That(at("resultsDelay", "focusedClass").GetString(), Does.Contain("tb-btn-primary"));
+    }
+
+    /// <summary>
+    /// ResultsScreen's HotkeyRetryOverlay: hold ` for the hold delay and the next play starts at
+    /// once (a fresh token, no start gate), with the card's own keys gone before it does, so nothing
+    /// is doubled. Released early it aborts. 'play again' goes straight in too.
+    /// </summary>
+    [Test]
+    public void HoldingBackquoteOnTheCard_RetriesWithoutTheStartGate()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(num("cardRetry", "onCard", "keydown"), Is.EqualTo(1));
+            Assert.That(num("cardRetry", "onCard", "keyup"), Is.EqualTo(1));
+            Assert.That(flag("cardRetry", "abortedOnCard", "running"), Is.False, "released early aborts");
+            Assert.That(num("cardRetry", "abortedOnCard", "playStarts"), Is.EqualTo(1));
+            Assert.That(flag("cardRetry", "runningAt150"), Is.False, "not before the hold delay");
+            Assert.That(flag("cardRetry", "running"), Is.True);
+            Assert.That(flag("cardRetry", "freshEngine"), Is.True);
+            Assert.That(num("cardRetry", "playStarts"), Is.EqualTo(2), "a fresh token");
+            Assert.That(flag("cardRetry", "overlayOn"), Is.False, "no start gate");
+            Assert.That(flag("cardRetry", "concludedClass"), Is.False, "the rows are back");
+            foreach (string k in new[] { "keydown", "keyup", "visibility", "blur", "beforeunload", "raf", "intervals" })
+                Assert.That(num("cardRetry", "listeners", k), Is.EqualTo(1), k);
+            Assert.That(num("cardRetry", "finishes"), Is.EqualTo(1));
+            Assert.That(num("cardRetry", "finishesAfterSecondPlay"), Is.EqualTo(2));
+            Assert.That(flag("cardRetry", "clickRunning"), Is.True);
+            Assert.That(num("cardRetry", "clickPlayStarts"), Is.EqualTo(3));
+        });
+    }
+
+    /// <summary>Escape (Back) and Ctrl+` (QuickExit, on press) leave the card, and leave nothing live.</summary>
+    [Test]
+    public void EscapeAndCtrlBackquoteOnTheCard_GoBack()
+    {
+        Assert.Multiple(() =>
+        {
+            foreach (string how in new[] { "escBack", "ctrlBack" })
+            {
+                Assert.That(num("cardBack", how, "exits"), Is.EqualTo(1), how);
+                Assert.That(at("cardBack", how, "ctx").GetString(), Is.EqualTo("closed"), how);
+                assertNothingLive(at("cardBack", how, "listeners"));
+            }
+            Assert.That(num("cardBack", "noHost", "exits"), Is.Zero);
+            Assert.That(flag("cardBack", "noHost", "startGate"), Is.True);
+            assertNothingLive(at("cardBack", "noHost", "listeners"), keydown: 1);
+            assertNothingLive(at("cardBack", "afterDestroy"));
+        });
+    }
 }
