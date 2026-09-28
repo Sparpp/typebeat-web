@@ -150,6 +150,8 @@ public class HealthLiveParityTest
         LosslessSkipReclaim = true,
         FoldsDisplacedClaim = true,
         FirstLineLeadIn = true,
+        ManualNewlines = true,
+        NewlineOnTypedLetter = true,
     };
 
     /// <summary>The game's counts as the wire spells them, minus the line containers' ignore_hit.</summary>
@@ -448,7 +450,7 @@ public class HealthLiveParityTest
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: SpaceSkipsWord(name), syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
-            firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, firstLineLeadIn: true));
+            firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
 
         foreach (var step in Scenario(name).GetProperty("script").EnumerateArray())
         {

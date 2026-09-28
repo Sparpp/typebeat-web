@@ -513,7 +513,10 @@ public class WordSkipParityTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(Int(afterTheSnap, "activeLineIndex"), Is.EqualTo(1), "the snap moved the play on to the second line");
+            // Since backlog 307 the browser runs the MANUAL NEWLINE, under which no snap exists: the
+            // caret is still parked on line 0 at 6000, and it is the player's own 'h' (the typed-through
+            // newline) that hands it on and lands on line 1's first cell. Nothing in the account moves.
+            Assert.That(Int(afterTheSnap, "activeLineIndex"), Is.EqualTo(0), "the manual newline: nothing but the player's own press moves the caret on");
             Assert.That(Int(afterTheSnap, "processorMisses"), Is.Zero,
                 "and line 0 is still unsealed, the rush bound having kept the caret on it through its own deadline");
 

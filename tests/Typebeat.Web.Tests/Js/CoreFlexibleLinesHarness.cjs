@@ -36,6 +36,19 @@ global.window = {};
 require(corePath);
 const TB = global.window.TypeBeatCore;
 
+// BACKLOG 307: the browser engine runs the MANUAL NEWLINE by default (the desktop's shipped setting),
+// while every section from RUSH FREEDOM through the WPM clock transcribes the game's
+// FletcherEngineTest, whose bare engines run the AUTOMATIC hand-over (ManualNewlines off). Those
+// sections declare that arm here rather than inheriting the browser's, the way backlog 198's
+// harnesses declared their space-skip arm. The sections replayed by WireCompat against the browser's
+// own arm (the clock arm's manual runs, the line skip, the seal break, the reclaim and the fold)
+// take the default.
+function automaticArm(engine) {
+    engine.manualNewlines = false;
+    engine.newlineOnTypedLetter = false;
+    return engine;
+}
+
 function osu(lines, songEndMs) {
     return '[General]\nAudioFilename: a.mp3\n[Metadata]\nTitle: t\nArtist: a\n[Lyrics]\n' +
         JSON.stringify({ granularity: 'line', version: 2, song_end_ms: songEndMs }) + '\n' +
@@ -161,6 +174,8 @@ const out = {};
         fletcherEnabled: engine.fletcherEnabled,
         flexibleLineSnap: engine.flexibleLineSnap,
         boundedRush: engine.boundedRush,
+        manualNewlines: engine.manualNewlines,
+        newlineOnTypedLetter: engine.newlineOnTypedLetter,
         maxCharsAhead: TB.constants.FLETCHER_MAX_CHARS_AHEAD,
         dragGraceMs: TB.constants.FLETCHER_DRAG_GRACE_MS
     };
@@ -173,7 +188,7 @@ const out = {};
 // it. A press then lands on L1's first cell. Under a pinned caret the same press is inert (no line
 // is active until 4000) and L1's 'e' would seal a miss.
 {
-    const engine = new TB.TypingEngine(build(TWO_LINES));
+    const engine = automaticArm(new TB.TypingEngine(build(TWO_LINES)));
 
     engine.update(1000);
     for (const [t, c] of [[1000, 'a'], [1500, 'b'], [2000, ' '], [2000, 'c'], [2500, 'd']]) {
@@ -208,7 +223,7 @@ const out = {};
 // on L1 a second and a half before its cue, and the press is judged early (target 14000) exactly as
 // rushing always was.
 {
-    const engine = new TB.TypingEngine(build(INSTRUMENTAL_GAP));
+    const engine = automaticArm(new TB.TypingEngine(build(INSTRUMENTAL_GAP)));
 
     let breaks = 0;
     engine.onComboBroken = () => { breaks++; };
@@ -260,7 +275,7 @@ const out = {};
 // 2500; the drag half of the same statement is the dragFreedom section above, which holds L0 to 5499
 // and force-seals it at 5500.
 {
-    const engine = new TB.TypingEngine(build(TWO_LINES));
+    const engine = automaticArm(new TB.TypingEngine(build(TWO_LINES)));
 
     engine.update(2000);
     for (const c of ['a', 'b', ' ', 'c', 'd']) engine.processKey(c, 2000);
@@ -288,7 +303,7 @@ const out = {};
 // countable chars ('a' and 'b') and so has the caret, so five chars of L1 keep it inside the cap and
 // the sixth is over it.
 {
-    const engine = new TB.TypingEngine(build(INSTRUMENTAL_GAP));
+    const engine = automaticArm(new TB.TypingEngine(build(INSTRUMENTAL_GAP)));
 
     let breaks = 0;
     engine.onComboBroken = () => { breaks++; };
@@ -324,7 +339,7 @@ const out = {};
 // refusal window on this fixture (entry opens at 9000, L0 seals at 3000 and its drag cutoff is
 // 4500), which is what makes the two observations mean anything.
 {
-    const finished = new TB.TypingEngine(holed());
+    const finished = automaticArm(new TB.TypingEngine(holed()));
 
     finished.update(1000);
     finished.processKey('a', 1000);
@@ -335,7 +350,7 @@ const out = {};
 
     finished.update(3000);
 
-    const lagging = new TB.TypingEngine(holed());
+    const lagging = automaticArm(new TB.TypingEngine(holed()));
 
     lagging.update(1000);
     lagging.processKey('a', 1000);
@@ -373,7 +388,7 @@ const out = {};
 // untyped cell becomes a miss (one combo break for the line, however many cells) and the caret is
 // handed to L1 rather than left in a dead zone.
 {
-    const engine = new TB.TypingEngine(build(TWO_LINES));
+    const engine = automaticArm(new TB.TypingEngine(build(TWO_LINES)));
 
     let breaks = 0;
     engine.onComboBroken = () => { breaks++; };
@@ -407,7 +422,7 @@ const out = {};
 // The same drag, finished INSIDE the grace: the press lands on its own cell (late, which the ladder
 // grades honestly) and the ordinary roll-forward then takes over, so nothing is missed at all.
 {
-    const engine = new TB.TypingEngine(build(TWO_LINES));
+    const engine = automaticArm(new TB.TypingEngine(build(TWO_LINES)));
 
     for (const [t, c] of [[1000, 'a'], [1500, 'b'], [2000, ' '], [2000, 'c']]) {
         engine.update(t);
@@ -432,26 +447,26 @@ const out = {};
 // against and SILENT wherever no push is coming. The four arms below are the browser half of the
 // game's own pins (NonVisual/FletcherEngineTest.cs, region "The push warning readout").
 {
-    const fixture = new TB.TypingEngine(build(TWO_LINES));
-    const gapFixture = new TB.TypingEngine(build(GAPPED));
+    const fixture = automaticArm(new TB.TypingEngine(build(TWO_LINES)));
+    const gapFixture = automaticArm(new TB.TypingEngine(build(GAPPED)));
 
     // (1) SILENT WHERE NO PUSH CAN HAPPEN. A PINNED caret is snatched at the boundary rather than
     // pushed, so there is no borrowed time to count down; and nothing is warned about before a line
     // is active at all. The browser never reaches the pinned arm on its own (fletcherEnabled is
     // unconditionally true here), so it is asked for explicitly: the condition is part of the mirror.
-    const pinned = new TB.TypingEngine(build(TWO_LINES));
+    const pinned = automaticArm(new TB.TypingEngine(build(TWO_LINES)));
     pinned.fletcherEnabled = false;
     const pinnedBeforeAnything = pinned.dragCutoffAt;
     pinned.update(1000);
     pinned.processKey('a', 1000);
     pinned.update(3999);
 
-    const flexibleIdle = new TB.TypingEngine(build(TWO_LINES));
+    const flexibleIdle = automaticArm(new TB.TypingEngine(build(TWO_LINES)));
 
     // (2) THE CUTOFF ITSELF, then the caret carried through it. The value is a property of the LINE,
     // not of how far past it the clock has got, so it does not move as the song leaves the line; it
     // is the PLAYER (typebeat-player.js) that only draws the final CUE_LEAD_MS of it.
-    const dragging = new TB.TypingEngine(build(TWO_LINES));
+    const dragging = automaticArm(new TB.TypingEngine(build(TWO_LINES)));
     dragging.update(1000);
     dragging.processKey('a', 1000);
     const afterFirstPress = dragging.dragCutoffAt;
@@ -469,7 +484,7 @@ const out = {};
     // the line no longer owes a character. GAPPED holds the other two still, because its second line
     // is eighteen seconds off and the rush bound therefore PARKS the finished caret on L0 rather
     // than rolling it off.
-    const typedOut = new TB.TypingEngine(build(GAPPED));
+    const typedOut = automaticArm(new TB.TypingEngine(build(GAPPED)));
     typedOut.update(1000);
     typedOut.processKey('a', 1000);
     const owedOne = typedOut.dragCutoffAt;
@@ -480,7 +495,7 @@ const out = {};
     // it to be pushed: the seal loop's hand-over arm only fires for the line the caret is on. So the
     // stale line warns nobody, and the warning appears only once the seal cursor catches up to the
     // line the player really is on.
-    const abandoned = new TB.TypingEngine(build(TWO_LINES));
+    const abandoned = automaticArm(new TB.TypingEngine(build(TWO_LINES)));
     abandoned.update(1000);
     abandoned.processKey('a', 1000);
     const beforeTheSkip = abandoned.dragCutoffAt;
@@ -535,7 +550,7 @@ const out = {};
 // FLETCHER_DRAG_GRACE_MS before the line's own activation, because that is the head start the rush
 // bound grants any finished caret and this is the arm that performs it. 10500 - 1500 = 9000.
 {
-    const engine = new TB.TypingEngine(parked());
+    const engine = automaticArm(new TB.TypingEngine(parked()));
 
     engine.update(1000);
     engine.processKey('a', 1000);
@@ -579,7 +594,7 @@ const out = {};
     beatmap.lines[0].endTime = 20000;
     beatmap.lines[1].endTime = 30000;
 
-    const engine = new TB.TypingEngine(beatmap);
+    const engine = automaticArm(new TB.TypingEngine(beatmap));
 
     engine.update(1000);
     engine.processKey('a', 1000);
@@ -610,7 +625,7 @@ const out = {};
 // The clock then catches up to 8000, where the playhead has passed eight countable characters, and
 // 'i' lands back inside the cap and the run RE-ARMS.
 {
-    const engine = new TB.TypingEngine(build(RUSH_LINE));
+    const engine = automaticArm(new TB.TypingEngine(build(RUSH_LINE)));
 
     let breaks = 0;
     engine.onComboBroken = () => { breaks++; };
@@ -655,7 +670,7 @@ const out = {};
 // ahead of the song and the predicate is what the consumers need: the window is contiguous, so
 // songWindowOpen could never have answered it.
 {
-    const engine = new TB.TypingEngine(build(GAPPED));
+    const engine = automaticArm(new TB.TypingEngine(build(GAPPED)));
 
     engine.update(1000);
     engine.processKey('a', 1000);
@@ -694,7 +709,7 @@ const out = {};
 // caret is complete by definition) and the second by clockRunsFrom, and the two must agree or the
 // readout halves.
 {
-    const engine = new TB.TypingEngine(build(GAPPED));
+    const engine = automaticArm(new TB.TypingEngine(build(GAPPED)));
 
     engine.update(1000);
     engine.processKey('a', 1000);
@@ -815,12 +830,40 @@ const out = {};
                 { op: 'update', t: 2700 }, { op: 'key', c: 'g', t: 2700 },
             ]
         },
+        // BACKLOG 307, THE MANUAL NEWLINE (the browser's own arm). The four scripts above transcribe
+        // the game's FletcherEngineTest, whose engines run the AUTOMATIC hand-over (the 'd' that
+        // finishes line 0 rolls the caret), so they declare that arm (`manual: false`). These two
+        // are the same shapes on the arm /play actually runs: the 'd' PARKS the caret, and the
+        // player's own Space at 2550 is the newline.
+        typedManual: {
+            map: 'twoLine', manual: true,
+            steps: [
+                ...finishLineZero,
+                { op: 'update', t: 2550 }, { op: 'key', c: ' ', t: 2550 },
+                { op: 'update', t: 2600 }, { op: 'key', c: 'e', t: 2600 },
+                { op: 'update', t: 2700 }, { op: 'key', c: 'f', t: 2700 },
+            ]
+        },
+        // ...and nobody presses it: line 0 is HELD to its drag cutoff (4000 + 1500), the caret sits
+        // parked on a complete line meanwhile (no accrual), and the seal hands it to line 1 at 5500,
+        // past that line's cue, where the clock runs on the ordinary rule.
+        idleManual: {
+            map: 'twoLine', manual: true,
+            steps: [
+                ...finishLineZero,
+                { op: 'update', t: 3000 }, { op: 'update', t: 4000 }, { op: 'update', t: 5000 },
+                { op: 'update', t: 5500 }, { op: 'update', t: 6000 },
+            ]
+        },
     };
 
     const runs = {};
 
     for (const name of Object.keys(scripts)) {
         const engine = new TB.TypingEngine(build(CLOCK_ARM_MAPS[scripts[name].map]));
+        const manual = scripts[name].manual === true;
+        engine.manualNewlines = manual;
+        engine.newlineOnTypedLetter = manual;
         const readings = [];
 
         let breaks = 0;
@@ -845,6 +888,7 @@ const out = {};
 
         runs[name] = {
             map: scripts[name].map,
+            manual: manual,
             script: scripts[name].steps,
             readings: readings,
             combo: engine.combo,
@@ -911,6 +955,15 @@ const out = {};
     // L0's untyped tail would seal at 4000 flat with the caret gone and does not seal until 5500
     // with the grace held, and L1's at 8000 against 9500: both windows contain a keypress on the
     // NEXT line, which is precisely where an early seal would show up as a different combo.
+    //
+    // SINCE BACKLOG 307 this section runs the browser's MANUAL NEWLINE (the engine default, and bits
+    // 14 and 15 on the C# arm), under which an Enter that gives a line up is the player's own
+    // newline: it hands the caret over on the press in EITHER case. Inside the window (2500) the
+    // landed line is typeable at once; outside it (5600) the caret lands on L2 AWAITING its window,
+    // greyed, the 5700 Enter is swallowed by the wait rather than inert on a park, and the clock
+    // alone opens L2 at 6500. Every reading carries `awaiting` so the cross-repo arm holds that wait
+    // against TypingEngine.AwaitingEntry step for step. The seals are untouched: the abandoned lines
+    // still sit untyped at their deadlines and seal a grace later.
     const LINE_SKIP = osu([
         { text: 'ab cd', start_ms: 1000, end_ms: 3000, words: [word('ab', 1000, 2000), word('cd', 2000, 3000)] },
         { text: 'ef', start_ms: 4000, end_ms: 5000, words: [word('ef', 4000, 5000)] },
@@ -999,7 +1052,8 @@ const out = {};
             maxCombo: engine.maxCombo,
             comboBreaks: breaks,
             mistypes: engine.mistypes,
-            finished: engine.finished
+            finished: engine.finished,
+            awaiting: engine.awaitingEntry
         });
     }
 
@@ -1644,6 +1698,230 @@ const out = {};
         },
         runs: runs
     };
+}
+
+// MANUAL NEWLINES (backlog 307), the arm the browser runs since it took the desktop's shipped
+// default: the named cases of typebeat-osu's NonVisual/ManualNewlinesTest.cs, played on the same
+// three-line map and read at the same instants. Each case records its observations in order as
+// [label, value] pairs, and ManualNewlinesParityTest holds every one against the value the game's
+// own test asserts, so the two suites pin one trace.
+//
+//   L0 "ab" [1000, 7000), sung to 2000: a = 1000, b = 1500.
+//   L1 "cd" [7000, 12000), words [8000, 9000]: c = 8000, d = 8500. Activation 7000 (a line never
+//        activates before its own start), so entry opens at 5500.
+//   L2 "ef" [12000, 17000), words [13000, 14000].
+// L0's drag cutoff is 7000 + 0 + 1500 = 8500, L1's 12000 + 0 + 1500 = 13500.
+//
+// Every engine is built the way the game's started() builds its own: the setting as the case asks,
+// the caret unpinned with the snap and the bound, and NewlineOnTypedLetter off unless the case turns
+// it on (the C# fixture leaves it off, and one case is about exactly that).
+{
+    const THREE_LINES = osu([
+        { text: 'ab', start_ms: 1000, end_ms: 2000, words: [word('ab', 1000, 2000)] },
+        { text: 'cd', start_ms: 7000, end_ms: 9000, words: [word('cd', 8000, 9000)] },
+        { text: 'ef', start_ms: 12000, end_ms: 14000, words: [word('ef', 13000, 14000)] }
+    ], 17000);
+
+    const GAPPED = osu([
+        { text: 'ab cd', start_ms: 1000, end_ms: 3000, words: [word('ab', 1000, 2000), word('cd', 2000, 3000)] },
+        { text: 'ef', start_ms: 4000, end_ms: 6000, words: [word('ef', 5000, 6000)] }
+    ], 8000);
+
+    function started(manualNewlines, pinned) {
+        const engine = new TB.TypingEngine(build(THREE_LINES));
+        engine.manualNewlines = manualNewlines;
+        engine.newlineOnTypedLetter = false;
+        engine.fletcherEnabled = !pinned;
+        engine.flexibleLineSnap = !pinned;
+        engine.boundedRush = true;
+        engine.update(1000);
+        return engine;
+    }
+
+    function typeLine0(engine) {
+        engine.processKey('a', 1000);
+        engine.processKey('b', 1500);
+    }
+
+    function misses(engine) {
+        let n = 0;
+        for (const line of engine.lines) for (const cell of line.cells) if (cell.state === 'missed') n++;
+        return n;
+    }
+
+    const cases = {};
+
+    function record(name, body) {
+        const trace = [];
+        body((label, value) => trace.push([label, value === undefined ? null : value]));
+        cases[name] = trace;
+    }
+
+    const fixture = started(true, false);
+    const fixtureRow = {
+        entryOpensAt: fixture.entryOpensAt(1),
+        lines: fixture.lines.map(l => ({
+            activationTime: l.activationTime,
+            endTime: l.endTime,
+            sealGraceMs: l.sealGraceMs,
+            cells: l.cells.map(c => ({ expected: c.expected, target: c.target }))
+        }))
+    };
+
+    record('OffKeepsTheAutomaticHandOver', r => {
+        const e = started(false, false);
+        typeLine0(e);
+        r('line', e.activeLineIndex); r('complete', e.isLineComplete(e.activeLineIndex));
+        e.update(5499); r('line', e.activeLineIndex);
+        e.update(5500); r('line', e.activeLineIndex); r('caret', e.caretIndex);
+    });
+
+    record('OnParksAFinishedLineUntilTheCutoff', r => {
+        const e = started(true, false);
+        typeLine0(e);
+        r('line', e.activeLineIndex); r('complete', e.isLineComplete(e.activeLineIndex)); r('awaiting', e.awaitingEntry);
+        r('letter', e.processKey('c', 1600)); r('line', e.activeLineIndex);
+        e.update(2000); r('line', e.activeLineIndex);
+        e.update(5500); r('line', e.activeLineIndex);
+        e.update(7000); r('line', e.activeLineIndex); r('nextUnsealed', e.nextUnsealedLineIndex);
+        e.update(8499); r('line', e.activeLineIndex);
+    });
+
+    record('AnEarlyNewlineLandsAndTheNextLineWaits', r => {
+        const e = started(true, false);
+        typeLine0(e);
+        r('space', e.processKey(' ', 1600)); r('line', e.activeLineIndex); r('caret', e.caretIndex);
+        e.update(1600); r('awaiting', e.awaitingEntry);
+        r('c', e.processKey('c', 1600)); r('x', e.processKey('x', 3000)); r('caret', e.caretIndex);
+        e.update(3000); r('awaiting', e.awaitingEntry);
+        e.update(5499); r('awaiting', e.awaitingEntry);
+        e.update(5500); r('awaiting', e.awaitingEntry);
+        r('c', e.processKey('c', 5500)); r('caret', e.caretIndex);
+    });
+
+    record('ATypedLetterHandsTheLineOnOnceTheWindowOpens', r => {
+        const e = started(true, false);
+        e.newlineOnTypedLetter = true;
+        typeLine0(e);
+        e.update(1600);
+        r('c', e.processKey('c', 1600)); r('line', e.activeLineIndex); r('caret', e.caretIndex);
+        e.update(5500);
+        r('c', e.processKey('c', 5500)); r('line', e.activeLineIndex); r('caret', e.caretIndex);
+    });
+
+    record('ATypedLetterIsInertWithoutItsEraBit', r => {
+        const e = started(true, false);
+        typeLine0(e);
+        e.update(5500);
+        r('c', e.processKey('c', 5500)); r('line', e.activeLineIndex); r('caret', e.caretIndex);
+    });
+
+    record('BackspaceStepsBackUpWhileTheOldLineIsStillOpen', r => {
+        const e = started(true, false);
+        typeLine0(e);
+        r('space', e.processKey(' ', 1600)); r('line', e.activeLineIndex);
+        e.update(1600);
+        r('backspace', e.processBackspace()); r('line', e.activeLineIndex); r('caret', e.caretIndex);
+        r('backspace', e.processBackspace()); r('caret', e.caretIndex); r('complete', e.isLineComplete(e.activeLineIndex));
+    });
+
+    record('EnterClosesAFinishedLine', r => {
+        const early = started(true, false);
+        typeLine0(early);
+        r('enter', early.processEnter(1600)); r('line', early.activeLineIndex);
+        early.update(1600); r('awaiting', early.awaitingEntry);
+
+        const inWindow = started(true, false);
+        typeLine0(inWindow);
+        r('enter', inWindow.processEnter(5500)); r('line', inWindow.activeLineIndex);
+        inWindow.update(5500); r('awaiting', inWindow.awaitingEntry);
+    });
+
+    record('EnterMidLineSkipsAndStillMovesOnInOnePress', r => {
+        const early = started(true, false);
+        r('enter', early.processEnter(100)); r('line', early.activeLineIndex);
+        r('awaiting', early.awaitingEntry); // read at the last update (1000), as the C# property is
+
+        const inWindow = started(true, false);
+        inWindow.processKey('a', 1000);
+        r('enter', inWindow.processEnter(5500)); r('line', inWindow.activeLineIndex); r('caret', inWindow.caretIndex);
+    });
+
+    record('TheSongHandsTheCaretOnAtThePushCutoff', r => {
+        const e = started(true, false);
+        typeLine0(e);
+        e.update(7001); r('line', e.activeLineIndex);
+        e.update(8499); r('line', e.activeLineIndex);
+        e.update(8500); r('line', e.activeLineIndex); r('caret', e.caretIndex); r('awaiting', e.awaitingEntry);
+        r('c', e.processKey('c', 8500)); r('caret', e.caretIndex);
+        r('nextUnsealed', e.nextUnsealedLineIndex);
+    });
+
+    record('ThePushWarningCountsDownToTheManualCutoff', r => {
+        const e = started(true, false);
+        typeLine0(e);
+        r('cutoff', e.dragCutoffAt);
+        e.update(7000); r('cutoff', e.dragCutoffAt);
+        e.update(8500); r('line', e.activeLineIndex); r('cutoff', e.dragCutoffAt);
+    });
+
+    record('TheStepBackClosesWithTheLine', r => {
+        const e = started(true, false);
+        typeLine0(e);
+        r('space', e.processKey(' ', 1600)); r('line', e.activeLineIndex);
+        e.update(7001);
+        r('backspace', e.processBackspace()); r('line', e.activeLineIndex);
+        e.update(8500); r('line', e.activeLineIndex);
+        r('backspace', e.processBackspace()); r('line', e.activeLineIndex); r('caret', e.caretIndex);
+    });
+
+    record('BackspaceIntoASkippedLineLandsOnTheLastTypedCharacter', r => {
+        const e = started(true, false);
+        r('a', e.processKey('a', 1000));
+        r('enter', e.processEnter(1100)); r('line', e.activeLineIndex);
+        r('backspace', e.processBackspace()); r('line', e.activeLineIndex); r('caret', e.caretIndex);
+        r('complete', e.isLineComplete(e.activeLineIndex));
+        r('b', e.processKey('b', 1500)); r('complete', e.isLineComplete(e.activeLineIndex));
+        e.update(8500); r('line', e.activeLineIndex); r('misses', misses(e));
+    });
+
+    record('TheStepBackReopensAWordTheSkipLeftPhantom', r => {
+        const e = new TB.TypingEngine(build(GAPPED));
+        e.manualNewlines = true;
+        e.newlineOnTypedLetter = false;
+        e.fletcherEnabled = true;
+        e.flexibleLineSnap = true;
+        e.boundedRush = true;
+        e.spaceSkipsWord = true;
+
+        // AbandonReclaimed, counted where the browser raises it: the health account's refund of the
+        // drain the skip took (every argument forwarded, the harness spy rule).
+        let refunded = 0;
+        const refund = e.healthAccount.refundDeferredDrain.bind(e.healthAccount);
+        e.healthAccount.refundDeferredDrain = function (cells, ...rest) { if (cells > 0) refunded++; return refund(cells, ...rest); };
+
+        e.update(1000);
+        e.processKey('a', 1000);
+        e.processKey('b', 1500);
+        e.processKey(' ', 2000);
+        r('skip', e.processKey(' ', 2200)); r('cell3', e.lines[0].cells[3].state);
+        r('enter', e.processEnter(2300)); r('line', e.activeLineIndex);
+        r('backspace', e.processBackspace()); r('line', e.activeLineIndex); r('caret', e.caretIndex);
+        r('cell3', e.lines[0].cells[3].state); r('cell4', e.lines[0].cells[4].state);
+        r('refunded', refunded);
+        r('c', e.processKey('c', 2400));
+    });
+
+    record('APinnedCaretIgnoresTheSetting', r => {
+        const e = started(true, true);
+        typeLine0(e);
+        r('line', e.activeLineIndex);
+        r('space', e.processKey(' ', 5500)); r('awaiting', e.awaitingEntry);
+        e.update(6000); r('line', e.activeLineIndex);
+        e.update(7001); r('line', e.activeLineIndex);
+    });
+
+    out.manualNewlines = { fixture: fixtureRow, cases: cases };
 }
 
 process.stdout.write(JSON.stringify(out));

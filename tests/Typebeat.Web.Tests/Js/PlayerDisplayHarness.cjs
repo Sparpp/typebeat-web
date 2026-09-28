@@ -298,6 +298,9 @@ function playRolledForward() {
     engine.processKey('a', 1000);
     engine.processKey('b', 1500);   // line 0 finished, and 1500 is the instant entry into line 1
                                     // opens, so the caret rolls on and line 0 stays UNSEALED
+    // Since backlog 307 the browser runs the MANUAL NEWLINE, so the 'b' parks the caret and the
+    // player's own Space is what rolls it on, at the same instant.
+    engine.processKey(' ', 1500);
     engine.update(1600);
     return engine;
 }
@@ -308,6 +311,11 @@ function playRolledForward() {
 // 3000 however early it was typed, and 3500 is half a character into line 1's own vocal.
 function playRolledForwardThenSealed() {
     const engine = playRolledForward();
+    // Since backlog 307 (the MANUAL NEWLINE) a typed-out line stays HELD while the caret stands at
+    // the head of the line after it, so the player could still step back up into it; the first
+    // letter typed on line 1 ends that, and line 0 then seals on its own 3000 deadline as before.
+    engine.update(3000);
+    engine.processKey('c', 3000);
     engine.update(3500);
     return engine;
 }
@@ -613,6 +621,10 @@ function spaceOnAParkedUntouchedHead() {
 
     host.clock = 1000; D.routeKeyDown(fakeKey('a'), host);
     host.clock = 2000; D.routeKeyDown(fakeKey('b'), host);
+    // Since backlog 307 (the MANUAL NEWLINE) the rush bound no longer hands the caret on by itself:
+    // the player's own Space at 10550, just after entry opened, is the newline. The press measured
+    // below is therefore the SECOND space, which is exactly where the desktop's carve-out drops it.
+    host.clock = 10550; D.routeKeyDown(fakeKey(' '), host);
     engine.update(10600);
     calls.length = 0;
 
@@ -643,6 +655,53 @@ function spaceOnAParkedUntouchedHead() {
         letterLanded: engine.lines[1].cells[0].state,
         untouchedAfterLetter: engine.activeLineUntouched,
         combo: engine.combo
+    };
+}
+
+// THE MANUAL NEWLINE'S SPACE BEFORE THE SKIP (backlog 307). gapOsu with line 0 typed out, inside the
+// instrumental's live skip window ([3000, 9000), target 9000), long before entry into line 1 opens
+// at 10500. The desktop's key handler offers the Space on the complete line to the ENGINE first
+// (TypeBeatPlayfield's IsLineComplete arm under ManualNewlines), so it is the newline: the caret
+// lands on line 1, which AWAITS its window, and no skip is taken. The SECOND Space then meets the
+// parked-head drop (line 1 untouched, the song not on it) and that one falls through to the skip.
+// Before 307 the first Space was the skip, the router's skip gate sitting in front of the engine.
+function spaceNewlineBeforeTheSkip() {
+    const map = build(gapOsu);
+    const engine = new TB.TypingEngine(map); // the browser's own defaults: manual newlines ON
+    const host = keyHostFor(engine, map);
+
+    host.clock = 1000; D.routeKeyDown(fakeKey('a'), host);
+    host.clock = 2000; D.routeKeyDown(fakeKey('b'), host);
+    engine.update(5000);
+    const calls = spyOnOps(engine);
+
+    const parkedOn = { line: engine.activeLineIndex, cell: engine.caretIndex, complete: engine.isLineComplete(engine.activeLineIndex) };
+    const skipLiveBefore = D.pendingSkipTargetFor(engine, host.gaps, host.introTarget, 5000);
+
+    const first = fakeKey(' ');
+    host.clock = 5000.2;
+    D.routeKeyDown(first, host);
+
+    const afterFirst = {
+        line: engine.activeLineIndex, cell: engine.caretIndex, awaiting: engine.awaitingEntry,
+        prevented: first.prevented, skips: host.skips.length,
+        spaceCalls: calls.filter(c => c.fn === 'key' && c.c === ' ').map(c => c.result)
+    };
+
+    calls.length = 0;
+    const second = fakeKey(' ');
+    host.clock = 5100.2;
+    D.routeKeyDown(second, host);
+
+    return {
+        parkedOn: parkedOn,
+        skipLiveBefore: skipLiveBefore,
+        afterFirst: afterFirst,
+        afterSecond: {
+            line: engine.activeLineIndex, cell: engine.caretIndex, prevented: second.prevented,
+            engineCalls: calls.length, skips: host.skips.slice()
+        },
+        cellsOfLineOne: engine.lines[1].cells.map(c => c.state)
     };
 }
 
@@ -764,7 +823,39 @@ const KEY_ORDER_TICK_PHASE = 3.3;
 const KEY_ORDER_TICK_MS = 1000 / 60;
 const KEY_ORDER_END = 26000;
 
-function keyOrderRun() {
+// THE MANUAL NEWLINE through the same router (backlog 307), on the same map and the same tick:
+// KeyHandlerOrderLiveParityTest's second browser arm. Every press is one the desktop's key handler
+// routes under ManualNewlines, its shipped default:
+//
+// 1000.2 .. 2500.6: "ab cd" typed out. The 'd' does NOT roll the caret: it parks past L0's end.
+// 2600.3 Space: the NEWLINE. The line reads complete and the player has typed it, so the parked-head
+//        drop does not apply, the engine takes the space (before the skip gate), and the caret lands
+//        on L1, whose entry opened at 2500.
+// 2700.3 Space: the SECOND space. The caret sits at L1's untouched head with the song still on L0,
+//        so it is the parked-head DROP, exactly where the desktop drops it.
+// 4000.2 'e', 4500.2 'f': L1 typed out, two seconds before L2's entry opens at 6500.
+// 4600.3 'g': the TYPED-LETTER newline. The caret moves to L2, which AWAITS its window, so the
+//        letter itself is refused (reported handled: the move happened).
+// 4700.3 'g', 4800.3 Enter: presses INTO the wait, both swallowed by the engine.
+// 4900.3 Space: the awaited head is untouched and the song is not on it, so the drop comes first.
+// 6500.4 'g': L2's window opened between the last tick and the press (6500); typed.
+// 8500.3 'h': L2 typed out and parked. Nobody presses the newline, so the typed-out line is HELD to
+//        its drag cutoff (12000 + 1500) and the seal hands the caret to L3 there.
+// 13500.4 'i': the press lands just past that HOLD CUTOFF, judged on L3's head; 13600.2 'j' types it
+//        out, parked.
+// 17000.5 Enter: the Enter NEWLINE on a finished line (the midpoint rounds to 17000, where entry into
+//        L4 opens), then 'k' and 'l' on their targets.
+const KEY_ORDER_MANUAL_PRESSES = [
+    { t: 1000.2, key: 'a' }, { t: 1500.7, key: 'b' }, { t: 2000.2, key: ' ' }, { t: 2000.4, key: 'c' }, { t: 2500.6, key: 'd' },
+    { t: 2600.3, key: ' ' }, { t: 2700.3, key: ' ' },
+    { t: 4000.2, key: 'e' }, { t: 4500.2, key: 'f' },
+    { t: 4600.3, key: 'g' }, { t: 4700.3, key: 'g' }, { t: 4800.3, key: 'Enter' }, { t: 4900.3, key: ' ' },
+    { t: 6500.4, key: 'g' }, { t: 8500.3, key: 'h' },
+    { t: 13500.4, key: 'i' }, { t: 13600.2, key: 'j' },
+    { t: 17000.5, key: 'Enter' }, { t: 20000.2, key: 'k' }, { t: 20500.2, key: 'l' }
+];
+
+function keyOrderRun(presses = KEY_ORDER_PRESSES) {
     const map = build(KEY_ORDER_OSU);
     const engine = new TB.TypingEngine(map); // the browser's own defaults, exactly as begin() builds it
     const host = keyHostFor(engine, map);
@@ -773,7 +864,7 @@ function keyOrderRun() {
     let breaks = 0;
     engine.onComboBroken = () => { breaks++; };
 
-    const where = () => ({ line: engine.activeLineIndex, cell: engine.caretIndex, seal: engine.nextSealIndex });
+    const where = () => ({ line: engine.activeLineIndex, cell: engine.caretIndex, seal: engine.nextSealIndex, awaiting: engine.awaitingEntry });
 
     function reading() {
         return {
@@ -790,6 +881,7 @@ function keyOrderRun() {
             counts: Object.assign({}, engine.counts),
             activeLineUntouched: engine.activeLineUntouched,
             songIsOnTheCaretsLine: engine.songIsOnTheCaretsLine,
+            awaiting: engine.awaitingEntry,
             states: engine.lines.map(l => l.cells.map(c => c.state)),
             deltas: engine.lines.map(l => l.cells.map(c => (c.judgedDelta === null || c.judgedDelta === undefined) ? null : c.judgedDelta))
         };
@@ -807,7 +899,8 @@ function keyOrderRun() {
         if (pressing && judgedAgainst === null) {
             judgedAgainst = {
                 t: t, line: engine.activeLineIndex, cell: engine.caretIndex, seal: engine.nextSealIndex,
-                untouched: engine.activeLineUntouched, songOnIt: engine.songIsOnTheCaretsLine
+                untouched: engine.activeLineUntouched, songOnIt: engine.songIsOnTheCaretsLine,
+                awaiting: engine.awaitingEntry
             };
         }
         return r;
@@ -819,8 +912,8 @@ function keyOrderRun() {
     for (let k = 0; ; k++) {
         const tick = KEY_ORDER_TICK_PHASE + k * KEY_ORDER_TICK_MS;
 
-        while (next < KEY_ORDER_PRESSES.length && KEY_ORDER_PRESSES[next].t < tick) {
-            const press = KEY_ORDER_PRESSES[next++];
+        while (next < presses.length && presses[next].t < tick) {
+            const press = presses[next++];
             const before = where();
 
             calls.length = 0;
@@ -1219,6 +1312,8 @@ const out = {
     // integer, one off a half each way, and a negative half.
     roundHalfEven: [2000.5, 2001.5, 2000.49, 2000.51, 5510.5, 9600.5, -0.5, -1.5, 3.3].map(D.roundHalfEven),
     keyOrder: keyOrderRun(),
+    keyOrderManual: keyOrderRun(KEY_ORDER_MANUAL_PRESSES),
+    spaceNewlineBeforeTheSkip: spaceNewlineBeforeTheSkip(),
 
     // ---- the clock start and the intro skip anchor (backlog 308) ----
     // A line 0 stamped at 10000 whose first word is not sung until 14000: the two anchors the intro

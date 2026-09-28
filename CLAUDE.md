@@ -145,11 +145,24 @@ WireCompat is where that is provable, because it is the only project that compil
   fully corrected cost the run nothing and the newest of the broken cells redeems the whole chain,
   transitively), so every such parity fixture also sets `FoldsDisplacedClaim = true`.
   `DisplacedClaimFoldLiveParityTest` is the pin, and unlike bits 10 and 11 the generated sweep DOES
-  roll this shape, so `EngineFuzzLiveParityTest` needs the bit as well. **Bit 14 (manual newlines)
-  is the one caret bit the fixtures must LEAVE CLEAR**: it is a desktop SETTING and `/play` has no
-  settings surface, so the browser runs the automatic hand-over a clear bit means. **Bit 15**
-  (PR 2's typed-through newline, `NewlineOnTypedLetter`) rides the same setting and is gated on
-  `ManualNewlines` in the engine, so it stays clear too. **Bit 16** (PR 2's first-line head start,
+  roll this shape, so `EngineFuzzLiveParityTest` needs the bit as well. Since backlog 307 **bits 14
+  and 15 are SET too** (`manualNewlines: true, newlineOnTypedLetter: true` on the CONFIG frame,
+  `ManualNewlines = true, NewlineOnTypedLetter = true` on every bare live engine). They are a desktop
+  SETTING rather than a live-stack rule, but the setting has defaulted ON since PR 2 and `/play` has
+  no settings surface, so the browser takes that shipped default unconditionally
+  (`this.manualNewlines` / `this.newlineOnTypedLetter`, the same move backlog 198 made for
+  `spaceSkipsWord`), while the C# engine property stays off so stored automatic-arm runs re-derive.
+  Under it a finished line PARKS (no keypress roll, no line-start snap), Space, Enter or a typed
+  letter on the finished caret is the newline (`rollForwardManually`), a typed-out line is HELD to
+  its drag cutoff (`manualNewlineHoldsLineOpen`, which also keeps the push warning up), and a line
+  handed over before its entry window opens WAITS (`awaitingEntry`, greyed at 0.6 alpha by
+  `typebeat-player.js`, every key and Enter swallowed). `routeKeyDown` offers a Space on a complete
+  line to the engine BEFORE the skip gate, after the parked-head drop, which is the desktop order.
+  The fuzz sweep counts `manualHandOvers`, `typedLetterNewlines`, `awaitingSwallows` and
+  `holdExtensions` and pins `rollForwards`/`lineSnaps` at ZERO; `ManualNewlinesParityTest` carries
+  the game's `ManualNewlinesTest` cases. A Js harness that transcribes an AUTOMATIC-arm game test
+  must declare that arm (`CoreFlexibleLinesHarness.cjs`'s `automaticArm`), as the backlog 198
+  harnesses declare their space-skip arm. **Bit 16** (PR 2's first-line head start,
   `FirstLineLeadIn`: a press up to `FIRST_LINE_LEAD_MS` = 300 before the map's first vocal opens
   the first line) is the opposite: the live playfield sets it for every stack and the browser takes
   it unconditionally (`firstLineTypingOpensAt`), so every parity fixture that feeds the C# arm sets

@@ -2546,24 +2546,9 @@
             // the pinned one is. The C# arm of the fuzz parity test therefore has to SET bits 5 and
             // 7 in the frames it feeds, the same treatment bits 2, 3, 4 and 6 already get.
             //
-            // MANUAL NEWLINES (TypingEngine.ManualNewlines, CONFIG frame bit 14) is the third caret
-            // axis and is NOT mirrored, because it is a SETTING and the browser has no settings
-            // surface: /play mounts this engine from typebeat-player.js with nothing but the map,
-            // and the whole of what the setting does (the two time-driven hand-overs going quiet, a
-            // finished line being held open to its drag cutoff, a space or Enter on a finished line
-            // becoming the newline, the greyed AwaitingEntry wait before a line's entry window
-            // opens) is gated on it in the C# too. The browser therefore runs the AUTOMATIC
-            // hand-over, which is the C# default and what a CONFIG frame with bit 14 clear means, so
-            // the parity harnesses leave the bit alone rather than setting it the way they set 2, 3,
-            // 4, 5, 6, 7, 8, 10, 11, 12 and 16. PR 2's TYPED-THROUGH NEWLINE
-            // (TypingEngine.NewlineOnTypedLetter, bit 15: a letter at a finished caret hands the line
-            // on and types) rides the same setting on the desktop and is gated on ManualNewlines in
-            // the engine too, so it is unreachable here for the same reason and its bit stays clear.
-            // (The desktop's default for that setting flipped to ON in PR 2; the browser's automatic
-            // hand-over is unchanged, because it has no setting to flip.) What IS reachable here, and is mirrored, is the backspace
-            // at the head of a line stepping back up into the line behind it: the C# gates that on
-            // FletcherEnabled alone, with no era bit, so it is live rule on an ordinary /play run
-            // (see processBackspace and stepBackIntoLine).
+            // The backspace at the head of a line stepping back up into the line behind it is
+            // mirrored too: the C# gates that on FletcherEnabled alone, with no era bit, so it is
+            // live rule on an ordinary /play run (see processBackspace and stepBackIntoLine).
             this.fletcherEnabled = true;
             this.flexibleLineSnap = true;
             // THE SYMMETRIC RUSH BOUND (backlog 218): a finished caret may enter the next line only
@@ -2584,7 +2569,36 @@
             // moment the bound opens. The DRAG side is untouched, and neither the drag cutoff's
             // hand-over nor the seal loop's ordinary one is refused: those are the SONG arriving, an
             // entry that is late rather than early.
+            //
+            // Under manualNewlines (below, the browser's arm since backlog 307) neither roll nor snap
+            // runs: a finished caret parks for the player's own newline, and the bound instead
+            // decides whether the line that newline lands on may be TYPED yet (awaitingEntryAt).
             this.boundedRush = true;
+            // MANUAL NEWLINES (TypingEngine.ManualNewlines, CONFIG frame bit 14, backlog 307): the
+            // player closes a finished line themselves. The press that finishes a line does not
+            // roll the caret (rollForwardIfFinishedEarly) and the line-start snap goes quiet
+            // (snapForwardOnLineStart); a SPACE or ENTER on the finished caret is the newline
+            // (rollForwardManually), and a finished line is HELD open to its drag cutoff
+            // (manualNewlineHoldsLineOpen, read by sealPermitted and dragCutoffAt), so a player who
+            // never presses is handed on exactly when the push warning's red bar completes. The
+            // newline always lands, and a line handed over before its entry window opens WAITS
+            // (awaitingEntry): its keys and Enter are swallowed and typebeat-player.js greys it.
+            //
+            // It is a desktop SETTING rather than a live-stack rule, and it has defaulted ON there
+            // since PR 2 (TypeBeatRulesetConfigManager). The browser has no settings surface, so it
+            // takes the desktop's SHIPPED default unconditionally, exactly as spaceSkipsWord does
+            // above (backlog 198). The C# ENGINE property stays FALSE by default, because that
+            // engine must also re-derive every run stored with the automatic hand-over; so the
+            // parity harnesses SET bit 14 on the CONFIG frames they feed (and ManualNewlines on the
+            // bare engines they build), the treatment bits 2, 3, 4, 5, 6, 7, 8, 10, 11, 12 and 16
+            // already get.
+            //
+            // NEWLINE ON A TYPED LETTER (TypingEngine.NewlineOnTypedLetter, bit 15): a letter on a
+            // finished caret hands the line over and lands on the next line's first slot. It rides
+            // the same desktop setting (TypeBeatPlayfield sets it from ManualNewlines) and is gated
+            // on manualNewlines here as there, so it is set with it and its bit travels with 14.
+            this.manualNewlines = true;
+            this.newlineOnTypedLetter = true;
             // THE FIRST LINE'S HEAD START (PR 2, TypingEngine.FirstLineLeadIn, CONFIG frame bit 16):
             // a press up to FIRST_LINE_LEAD_MS before the map's first vocal opens the first line (see
             // firstLineTypingOpensAt). Defaulted FALSE in the C# so a replay stored before it
@@ -2746,7 +2760,7 @@
         // that the line seals as usual (untyped cells become misses, one combo break) and the caret
         // is moved on. Always true with a pinned caret, and true under a flexible one for any line
         // the player is not currently on, so a finished-early line still seals exactly on its own
-        // deadline.
+        // deadline, unless manualNewlines is holding it (see manualNewlineHoldsLineOpen).
         //
         // Its mirror is entryPermitted below (backlog 218): this one is how far past a line's
         // natural END a dragging player may still be on it, that one is how far before a line's
@@ -2758,6 +2772,17 @@
         // reach its misses and its one combo break at the very instant it would have with the
         // player still sitting there doing nothing.
         sealPermitted(index, time) {
+            // MANUAL NEWLINES: a line the player has TYPED OUT and not closed is held to the drag
+            // cutoff rather than left to seal on its own deadline. That deadline is the next line's
+            // first word in any ordinary map, so sealing there is exactly the pull the setting
+            // exists to prevent; the cutoff is the instant the push warning's red bar completes.
+            // Held together, the seal, the seal loop's hand-over of the caret and the closed step
+            // back (see processBackspace) all land on that one instant.
+            if (this.manualNewlineHoldsLineOpen(index)) {
+                const held = this.lines[index];
+                return time >= held.endTime + held.sealGraceMs + FLETCHER_DRAG_GRACE_MS;
+            }
+
             if (!this.fletcherEnabled || (this.activeLineIndex !== index && !this.lineAbandoned[index])) return true;
 
             const line = this.lines[index];
@@ -2768,6 +2793,38 @@
             if (this.noTypeableUntyped(line)) return true;
 
             return time >= line.endTime + line.sealGraceMs + FLETCHER_DRAG_GRACE_MS;
+        }
+
+        // TypingEngine.manualNewlineHoldsLineOpen. Whether manualNewlines is holding `index` open:
+        // a FINISHED line the player is still standing on, or one immediately behind a caret that
+        // has been handed to the next line's head and could still step back up to it. The hold
+        // ends at the drag cutoff, so a player who never presses is handed on exactly when they
+        // would have been forced on with the setting off, not at the line's own deadline.
+        //
+        // A line that still owes a character is NOT held here (the drag rule already holds the
+        // caret's own line, and holding one the player merely left behind untyped would put its
+        // misses later than the song's own punishment), and neither is the LAST line, whose seal
+        // is what ends the run.
+        manualNewlineHoldsLineOpen(index) {
+            if (!this.manualNewlines || !this.fletcherEnabled) return false;
+            if (index + 1 >= this.lines.length || !this.noTypeableUntyped(this.lines[index])) return false;
+
+            return this.activeLineIndex === index || (this.activeLineIndex === index + 1 && this.caretIndex === 0);
+        }
+
+        // TypingEngine.awaitingEntry. Whether the caret is on a line it may not TYPE on yet at
+        // `time`: the player (or the song) has handed it on and that line's entry window has not
+        // opened. The manual-newline era only, and only for a live line. processKey and
+        // processEnter swallow presses while it holds; the getter below is the display's read.
+        awaitingEntryAt(time) {
+            return this.manualNewlines && this.fletcherEnabled && this.activeLineIndex >= 0
+                && !this.entryPermitted(this.activeLineIndex, time);
+        }
+
+        // TypingEngine.AwaitingEntry, at the last update's time. typebeat-player.js greys the
+        // current row while it is true (LyricStage's SetLineDim(0.4)).
+        get awaitingEntry() {
+            return this.awaitingEntryAt(this.lastUpdateTime === null ? -Infinity : this.lastUpdateTime);
         }
 
         // TypingEngine.entryPermitted. THE RUSH BOUND (see boundedRush), and the exact mirror of
@@ -2829,6 +2886,14 @@
             // that can move a caret the bound parked, and a live stack always sets both anyway.
             if (!this.fletcherEnabled || (!this.flexibleLineSnap && !this.boundedRush) || this.finished) return false;
 
+            // MANUAL NEWLINES: a finished caret is the PLAYER's to hand over, so this arm does
+            // nothing for them. What hands them on otherwise is the seal itself, the instant the
+            // engine takes the line away (sealPermitted), and a FINISHED line is held to that
+            // instant (manualNewlineHoldsLineOpen), which is when the push warning's red bar
+            // completes: the seal loop's own hand-over moves a manual caret exactly when a dragging
+            // one would be moved.
+            if (this.manualNewlines) return false;
+
             let snapped = false;
 
             while (this.activeLineIndex >= 0
@@ -2861,6 +2926,13 @@
         // else here and the desktop's replay of the same run reproduces it exactly.
         rollForwardIfFinishedEarly(time) {
             if (!this.fletcherEnabled || this.finished || this.activeLineIndex < 0) return;
+
+            // MANUAL NEWLINES: the press that finished the line does NOT hand the caret on. The
+            // caret parks past the last cell and waits for the player's own newline
+            // (rollForwardManually), or for the seal to force it, which is the same parked state a
+            // refused rush leaves and therefore the same state every arm downstream understands.
+            if (this.manualNewlines) return;
+
             if (this.caretIndex < this.lines[this.activeLineIndex].cells.length) return;
             if (this.activeLineIndex + 1 >= this.lines.length) return;
             if (!this.entryPermitted(this.activeLineIndex + 1, time)) return;
@@ -2871,6 +2943,28 @@
             this.activeLineIndex++;
             this.caretIndex = 0;
             this.autoSkipForward();
+        }
+
+        // TypingEngine.rollForwardManually. THE MANUAL NEWLINE (see manualNewlines): the player's
+        // own space-on-a-finished-line, Enter, or (under newlineOnTypedLetter) letter, which is the
+        // ONLY thing that hands a parked caret on while the setting is armed. Returns whether the
+        // caret moved, so a caller swallows only an effective press.
+        //
+        // Two conditions, and deliberately NOT the automatic roll's third: the caret must be
+        // FINISHED and there must be a next line. The entry window does not gate the press: the
+        // newline always lands, and the line it lands on waits greyed and untypeable
+        // (awaitingEntry) until its window opens. No WPM clock work, for the reason processEnter
+        // gives: a newline is not typing, so the landed line's clock arms lazily on its first real
+        // press.
+        rollForwardManually(time) {
+            if (!this.manualNewlines || !this.fletcherEnabled || this.finished || this.activeLineIndex < 0) return false;
+            if (this.caretIndex < this.lines[this.activeLineIndex].cells.length) return false;
+            if (this.activeLineIndex + 1 >= this.lines.length) return false;
+
+            this.activeLineIndex++;
+            this.caretIndex = 0;
+            this.autoSkipForward();
+            return true;
         }
 
         // TypingEngine.clockRunsFrom. The instant from which the WPM/active-time clock runs across
@@ -3101,13 +3195,18 @@
         // seal asks), because a line with nothing left untyped seals on its ordinary deadline with
         // no drag to protect and no punishment to warn about: typing the last cell out calls the
         // push off there and then.
+        //
+        // ONE EXCEPTION, and it warns about a push that really is coming: under manualNewlines a
+        // line the player has typed out but not closed is held to its own cutoff
+        // (manualNewlineHoldsLineOpen), so the bar keeps counting down to the instant that line is
+        // taken from them, the press being what moves the caret on and the cutoff the backstop.
         get dragCutoffAt() {
             if (this.finished || !this.fletcherEnabled || this.activeLineIndex === -1
                 || this.activeLineIndex !== this.nextSealIndex) return null;
 
             const line = this.lines[this.activeLineIndex];
 
-            if (this.noTypeableUntyped(line)) return null;
+            if (this.noTypeableUntyped(line) && !this.manualNewlineHoldsLineOpen(this.activeLineIndex)) return null;
 
             return line.endTime + line.sealGraceMs + FLETCHER_DRAG_GRACE_MS;
         }
@@ -3828,8 +3927,11 @@
         //
         // NO-OP when there is nothing to skip: no active line, the run finished, or the caret
         // already past the last cell (a line typed out, or one already skipped). In particular
-        // Enter on a COMPLETE line does NOT perform the roll the next keypress would: the two
-        // time-driven arms already own that caret, so a second way in could only duplicate them.
+        // Enter on a COMPLETE line does NOT perform the roll the next keypress would UNDER THE
+        // AUTOMATIC hand-over: the two time-driven arms already own that caret, so a second way in
+        // could only duplicate them. Under manualNewlines (the browser's arm) there is no
+        // time-driven arm left to duplicate and Enter IS the newline, so on a complete line it does
+        // the same hand-over a space does (rollForwardManually).
         //
         // The WPM clock needs nothing here and is deliberately NOT armed: an Enter is not typing.
         // Accrual stops by itself the moment the caret parks (update accrues only while the active
@@ -3855,13 +3957,20 @@
             // that build a pinned engine by hand do reach it.
             if (!this.fletcherEnabled) return false;
 
+            // A line handed to the player before its window opens waits rather than judging: the
+            // press is swallowed, exactly as a keypress on it is (see awaitingEntryAt).
+            if (this.awaitingEntryAt(time)) return false;
+
             const line = this.lines[this.activeLineIndex];
 
             // Hop auto-skip cells before measuring, exactly as processKey does, so "the caret is at
             // the end" is asked of the same frontier a keypress would see.
             this.autoSkipForward();
 
-            if (this.caretIndex >= line.cells.length) return false; // parked already, or fully typed
+            // Nothing left to give up: parked already, or the line is fully typed. That second
+            // state is the manual newline's own, so Enter closes it here (and reports the move so
+            // the caller swallows the key); under the automatic hand-over it stays inert.
+            if (this.caretIndex >= line.cells.length) return this.rollForwardManually(time);
 
             // Only a line with something still untyped is ABANDONED. A caret walked to the end over
             // nothing but wrong cells owes no misses, so the seal has no drag to protect and the
@@ -3871,8 +3980,10 @@
             this.caretIndex = line.cells.length;
 
             // The same call the last character of a line makes, so an Enter inside the next line's
-            // entry window rolls on at once and one outside it parks, with no second rule.
-            this.rollForwardIfFinishedEarly(time);
+            // entry window rolls on at once and one outside it parks, with no second rule. Under
+            // manualNewlines that roll is the PLAYER'S own, so the skip hands the line over the way
+            // the newline key does: one Enter still means "I am done with this line, move me on".
+            if (!this.rollForwardManually(time)) this.rollForwardIfFinishedEarly(time);
 
             return true;
         }
@@ -3891,9 +4002,41 @@
             }
 
             if (this.activeLineIndex < 0) return false; // dead zone / pre-roll: harmless
-            const line = this.lines[this.activeLineIndex];
+
+            // WAITING FOR THE WINDOW (see awaitingEntryAt): the player was handed this line early,
+            // so nothing here is judged, not the character and not a typo, until the window opens.
+            if (this.awaitingEntryAt(time)) return false;
+
+            let line = this.lines[this.activeLineIndex];
             this.autoSkipForward();
-            if (this.caretIndex >= line.cells.length) return false; // line fully typed
+
+            if (this.caretIndex >= line.cells.length) {
+                // MANUAL NEWLINES: on a finished line the SPACEBAR is the newline, so it hands the
+                // caret on instead of being inert.
+                if (c === ' ') return this.rollForwardManually(time);
+
+                // OR BY TYPING (newlineOnTypedLetter): ANY letter hands the caret on and then lands
+                // on the next line's first slot, right or wrong. It moves on the space's own terms,
+                // with NO window gate on the press, and the window then refuses the CHARACTER
+                // exactly as it refuses every other press on a line that has not opened yet: the
+                // move is reported (true) and the player types the letter again when it does.
+                if (this.newlineOnTypedLetter && this.manualNewlines && this.fletcherEnabled
+                    && this.activeLineIndex + 1 < this.lines.length
+                    && this.rollForwardManually(time)) {
+                    line = this.lines[this.activeLineIndex];
+
+                    if (this.awaitingEntryAt(time)) return true;
+
+                    // A landed line with nothing typeable on it (every cell auto-skipped) leaves the
+                    // caret past its end with no slot for the letter. The C# reads Cells[caretIndex]
+                    // here and throws, so there is no desktop outcome to match: the move is kept and
+                    // the letter goes nowhere, the answer the awaiting branch above already gives.
+                    if (this.caretIndex >= line.cells.length) return true;
+                } else {
+                    // Every other key stays inert here: the parked dead zone.
+                    return false;
+                }
+            }
 
             // The press is going to do something, so the player is typing on this line; if the song
             // has not reached it yet, that is the instant the WPM clock starts counting (backlog

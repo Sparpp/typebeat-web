@@ -54,6 +54,10 @@ const TB = global.window.TypeBeatCore;
 const FRAME_MS = 1000.0 / 60;
 const TAIL_MS = 10000;
 
+// The replay feed's ENTER sentinel (TypeBeatReplayFrame.ENTER), which ReplayEngineFeed.Apply feeds to
+// ProcessEnter: the line skip, and under the manual newline (backlog 307) the newline itself.
+const ENTER = '\n';
+
 // ---------------------------------------------------------------------------------------------
 // Fixtures. Each is written as the JSON a real map carries AND rebuilt on the C# side as the
 // LyricLine/TimedUnit shape the game's own tests use; the test asserts the two loaders agree on
@@ -421,6 +425,9 @@ function generate(name, seed, spaceSkipsWord) {
     const lead = lcg(seed ^ 0x5bd1e995);
     let leadDecided = false;
 
+    // Backlog 307's manual-newline presses, on their own stream for the same reason (see below).
+    const nl = lcg(seed ^ 0x2545f491);
+
     for (let step = 0; step < 140 && !engine.finished && !engine.failed; step++) {
         engine.update(t);
 
@@ -462,8 +469,65 @@ function generate(name, seed, spaceSkipsWord) {
 
         const cell = engine.caretCell;
 
+        // BACKLOG 307, THE MANUAL NEWLINE (the browser's arm, the desktop's shipped default). Rolled
+        // on a stream of its own so every decision the generator already made keeps its roll. A
+        // caret parked past the last cell of a finished line is the player's to hand over, so the
+        // parked state now presses as well as idles: a SPACE, an ENTER or a LETTER (the next
+        // line's own first character, a quarter of the time a wrong one), each a short random
+        // wait after the caret parked, so the hand-over often lands before the next line's entry
+        // window opens and leaves the caret AWAITING it.
         if (cell === null) {
+            const next = engine.activeLineIndex >= 0 && engine.activeLineIndex + 1 < engine.lines.length
+                ? engine.lines[engine.activeLineIndex + 1] : null;
+            const r = nl();
+
+            if (next !== null && r < 0.75) {
+                const pressTime = t + Math.floor(nl() * 1500);
+                let ch;
+
+                // A letter only onto a line that has a typeable cell to land on. Onto one with none
+                // (parkedLine's hand-built cell-less middle line) the C# TypingEngine.ProcessKey
+                // indexes past the end of the landed line and throws, so there is no desktop outcome
+                // to hold the browser against; the space and the Enter cover that hand-over.
+                const head = next.cells.find(c => c.typeable);
+
+                if (r < 0.3 || (r >= 0.5 && !head)) ch = ' ';
+                else if (r < 0.5) ch = ENTER;
+                else {
+                    ch = head.expected;
+                    if (nl() < 0.25 || ch === ' ') ch = LETTERS[Math.floor(nl() * LETTERS.length)];
+                }
+
+                keys.push([pressTime, ch]);
+                engine.update(pressTime);
+                if (ch === ENTER) engine.processEnter(pressTime);
+                else engine.processKey(ch, pressTime);
+                t = pressTime;
+                continue;
+            }
+
             t += 120 + Math.floor(rnd() * 900);
+            continue;
+        }
+
+        // A caret AWAITING a line it was handed early: some of the time the player presses into the
+        // wait anyway (a letter, a space or an Enter), which the engine swallows until the window
+        // opens. And an occasional ENTER mid-line, the line skip, which under the manual arm hands
+        // the line over at once instead of parking for the automatic roll.
+        if (engine.awaitingEntry && nl() < 0.35) {
+            const w = nl();
+            const ch = w < 0.6 ? cell.expected : (w < 0.8 ? ' ' : ENTER);
+
+            keys.push([t, ch]);
+            if (ch === ENTER) engine.processEnter(t);
+            else engine.processKey(ch, t);
+            t += 50 + Math.floor(nl() * 600);
+            continue;
+        }
+
+        if (nl() < 0.02) {
+            keys.push([t, ENTER]);
+            engine.processEnter(t);
             continue;
         }
 
@@ -758,6 +822,62 @@ function play(name, keys, spaceSkipsWord) {
         return stepBackIntoLine(...args);
     };
 
+    // Backlog 307 coverage, one counter per rule the manual newline adds, on the engine's own seams:
+    //
+    //   manualHandOvers      rollForwardManually MOVED the caret (a space, an Enter or a letter).
+    //   typedLetterNewlines  of those, the ones a LETTER made (newlineOnTypedLetter).
+    //   awaitingSwallows     a key or an Enter the engine refused because the caret was awaiting
+    //                        its line's entry window (awaitingEntryAt answering true inside a press).
+    //   holdExtensions       a finished line held past its own deadline by manualNewlineHoldsLineOpen
+    //                        (sealPermitted refusing a line the hold covers).
+    //
+    // The C# arm sets CONFIG bits 14 and 15, so a port that lost any of these would leave the two
+    // sides agreeing on the AUTOMATIC hand-over, green, and covering nothing.
+    let manualHandOvers = 0;
+    let typedLetterNewlines = 0;
+    let awaitingSwallows = 0;
+    let holdExtensions = 0;
+    let inPress = false;
+
+    const rollManually = engine.rollForwardManually.bind(engine);
+    engine.rollForwardManually = function (...args) {
+        const moved = rollManually(...args);
+        if (moved) manualHandOvers++;
+        return moved;
+    };
+
+    const awaitingEntryAt = engine.awaitingEntryAt.bind(engine);
+    engine.awaitingEntryAt = function (...args) {
+        const awaiting = awaitingEntryAt(...args);
+        if (awaiting && inPress) awaitingSwallows++;
+        return awaiting;
+    };
+
+    const holds = engine.manualNewlineHoldsLineOpen.bind(engine);
+    const sealPermittedForHold = engine.sealPermitted;
+    engine.sealPermitted = function (index, time) {
+        const permitted = sealPermittedForHold.call(engine, index, time);
+        if (!permitted && holds(index)) holdExtensions++;
+        return permitted;
+    };
+
+    const keyForNewlines = engine.processKey;
+    engine.processKey = function (c, time) {
+        const before = engine.activeLineIndex;
+        const complete = before >= 0 && engine.caretIndex >= engine.lines[before].cells.length;
+        inPress = true;
+        let handled;
+        try { handled = keyForNewlines.call(engine, c, time); } finally { inPress = false; }
+        if (complete && c !== ' ' && engine.activeLineIndex === before + 1) typedLetterNewlines++;
+        return handled;
+    };
+
+    const enterForNewlines = engine.processEnter.bind(engine);
+    engine.processEnter = function (time) {
+        inPress = true;
+        try { return enterForNewlines(time); } finally { inPress = false; }
+    };
+
     const rushesPastCap = engine.rushesPastCap.bind(engine);
 
     // EVERY argument forwarded, not just the two this counter reads: backlog 260 gave the cap a third
@@ -820,6 +940,7 @@ function play(name, keys, spaceSkipsWord) {
         clock = frame[0];
         engine.update(frame[0]);
         if (frame[1] === '\b') engine.processBackspace();
+        else if (frame[1] === ENTER) engine.processEnter(frame[0]);
         else engine.processKey(frame[1], frame[0]);
         healthAfterKeys.push(engine.health);
         minHealth = Math.min(minHealth, engine.health);
@@ -872,6 +993,11 @@ function play(name, keys, spaceSkipsWord) {
         lineStepBacks: lineStepBacks,
         leadInOpens: leadInOpens,
         pauseJudgements: pauseJudgements,
+        // Backlog 307, the manual newline.
+        manualHandOvers: manualHandOvers,
+        typedLetterNewlines: typedLetterNewlines,
+        awaitingSwallows: awaitingSwallows,
+        holdExtensions: holdExtensions,
         // The health arm (backlog 306).
         health: {
             afterKeys: healthAfterKeys,

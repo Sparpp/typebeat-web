@@ -311,10 +311,16 @@ public class EngineFuzzLiveParityTest
     /// <see cref="TypingEngine.FIRST_LINE_LEAD_MS"/> before the map's first vocal opens the first line.
     /// The live playfield sets it for every stack and the browser takes it unconditionally; without it
     /// the C# arm would refuse every head-start press the generator rolls, the browser would open the
-    /// line on it, and every keystroke after it would land on a different cell. Bits 14 and 15
-    /// (manual newlines, and the typed-through newline riding on it) stay CLEAR: they are a desktop
-    /// SETTING the browser has no surface for, and a clear bit is the automatic hand-over the browser
-    /// runs.</para>
+    /// line on it, and every keystroke after it would land on a different cell.</para>
+    ///
+    /// <para>Since backlog 307 they set BITS 14 AND 15 too, the manual newline and the typed-through
+    /// newline riding on it (<see cref="TypingEngine.ManualNewlines"/>,
+    /// <see cref="TypingEngine.NewlineOnTypedLetter"/>). Both are a desktop SETTING that has defaulted
+    /// ON since PR 2, and the browser takes that shipped default unconditionally, having no settings
+    /// surface; the C# engine property stays off so a run stored with the automatic hand-over
+    /// re-derives on it. Without the bits the C# arm would roll a finished caret on the press that
+    /// finished its line while the browser parks it for the player's own newline, and every
+    /// keystroke after it would land on a different line.</para>
     ///
     /// <para>Bit 5 is the one that cannot be read as a single fact, which is why it is a parameter
     /// here rather than a constant: bit 5 CLEAR means a PINNED caret for a plain old replay, but an
@@ -323,11 +329,11 @@ public class EngineFuzzLiveParityTest
     /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>. The sweep passes no mods, so the frame is
     /// the whole of the answer here.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true, bool manualNewlines = true)
     {
         var replay = new Replay();
 
-        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming, backDatedSealBreak: backDatedSealBreak, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: foldsDisplacedClaim, firstLineLeadIn: firstLineLeadIn));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming, backDatedSealBreak: backDatedSealBreak, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: foldsDisplacedClaim, manualNewlines: manualNewlines, newlineOnTypedLetter: manualNewlines, firstLineLeadIn: firstLineLeadIn));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -673,6 +679,7 @@ public class EngineFuzzLiveParityTest
         int lineStepBacks = 0;
         int ownCreditBreaks = 0;
         int leadInOpens = 0, pauseJudgements = 0;
+        int manualHandOvers = 0, typedLetterNewlines = 0, awaitingSwallows = 0, holdExtensions = 0, enters = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -703,6 +710,11 @@ public class EngineFuzzLiveParityTest
             lineStepBacks += browserCase.GetProperty("lineStepBacks").GetInt32();
             leadInOpens += browserCase.GetProperty("leadInOpens").GetInt32();
             pauseJudgements += browserCase.GetProperty("pauseJudgements").GetInt32();
+            manualHandOvers += browserCase.GetProperty("manualHandOvers").GetInt32();
+            typedLetterNewlines += browserCase.GetProperty("typedLetterNewlines").GetInt32();
+            awaitingSwallows += browserCase.GetProperty("awaitingSwallows").GetInt32();
+            holdExtensions += browserCase.GetProperty("holdExtensions").GetInt32();
+            enters += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "\n");
             backspaces += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "");
         }
 
@@ -787,8 +799,14 @@ public class EngineFuzzLiveParityTest
             // line has already started, which needs the overlapping-window fixture (see
             // "parkedLine"), because on a contiguous map the seal's own hand-over always gets there
             // first. Every other fixture would read zero forever.
-            Assert.That(rollForwards, Is.GreaterThan(0), "no run finished a line early and rolled the caret straight on");
-            Assert.That(lineSnaps, Is.GreaterThan(0), "no run had a parked finished caret taken by the next line starting");
+            //
+            // Since backlog 307 the sweep runs the MANUAL NEWLINE (CONFIG bits 14 and 15, the browser's
+            // only arm), under which those two time-driven hand-overs are dead code on both sides: the
+            // press that finishes a line parks the caret, and the snap never fires. So their counters
+            // are pinned at ZERO rather than above it, which is the non-vacuity check for the arm
+            // itself: a port that quietly fell back to the automatic hand-over reads non-zero here.
+            Assert.That(rollForwards, Is.Zero, "a finished line rolled the caret on by itself: the sweep is not on the manual arm");
+            Assert.That(lineSnaps, Is.Zero, "a parked caret was snapped on by the next line starting: the sweep is not on the manual arm");
             Assert.That(dragHolds, Is.GreaterThan(0), "no run held a line open past its deadline for a player still typing it");
             Assert.That(rushCapBreaks, Is.GreaterThan(0), "no run put the caret out past the rush cap");
 
@@ -827,6 +845,21 @@ public class EngineFuzzLiveParityTest
             // same press on the same map with every pause taken away. Only the pausedWords fixture can
             // reach it, and scripted/pausedSpans presses inside every stretch on purpose.
             Assert.That(pauseJudgements, Is.GreaterThan(0), "no run was judged differently for a word's authored pauses");
+
+            // Backlog 307, THE MANUAL NEWLINE, one counter per rule it brings, each measured on the
+            // browser engine's own seam: a hand-over the player's own space, Enter or letter made
+            // (rollForwardManually moved the caret); of those, one a LETTER made
+            // (newlineOnTypedLetter); a press the engine SWALLOWED because the caret was waiting on a
+            // line whose entry window had not opened (awaitingEntry); and a finished line held past
+            // its own deadline toward the drag cutoff (manualNewlineHoldsLineOpen). The CONFIG frame
+            // here sets bits 14 and 15, so a port that lost any of them would leave the two sides
+            // agreeing on the automatic hand-over, green, and covering nothing. The generator rolls
+            // Enter as well, so the frame kind the replay feed hands to ProcessEnter is exercised too.
+            Assert.That(manualHandOvers, Is.GreaterThan(0), "no run handed a finished line over by its own press");
+            Assert.That(typedLetterNewlines, Is.GreaterThan(0), "no run handed a finished line over by typing the next one");
+            Assert.That(awaitingSwallows, Is.GreaterThan(0), "no run pressed into a line whose entry window had not opened");
+            Assert.That(holdExtensions, Is.GreaterThan(0), "no run held a finished line open past its deadline");
+            Assert.That(enters, Is.GreaterThan(0), "no run pressed Enter");
         });
     }
 
@@ -1365,6 +1398,8 @@ public class EngineFuzzLiveParityTest
 
             if (frame.key == TypeBeatReplayFrame.BACKSPACE)
                 engine.ProcessBackspace();
+            else if (frame.key == TypeBeatReplayFrame.ENTER)
+                engine.ProcessEnter(frame.time);
             else
                 engine.ProcessKey(frame.key, frame.time);
 

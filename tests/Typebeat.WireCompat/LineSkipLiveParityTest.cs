@@ -99,6 +99,8 @@ public class LineSkipLiveParityTest
         LosslessSkipReclaim = true,
         FoldsDisplacedClaim = true,
         FirstLineLeadIn = true,
+        ManualNewlines = true,
+        NewlineOnTypedLetter = true,
     };
 
     /// <summary>The cell states as the JS mirror spells them (its own vocabulary, one for one).</summary>
@@ -238,6 +240,7 @@ public class LineSkipLiveParityTest
                 Assert.That(breaks, Is.EqualTo(reading.GetProperty("comboBreaks").GetInt32()), $"{where}: combo breaks");
                 Assert.That(engine.Mistypes, Is.EqualTo(reading.GetProperty("mistypes").GetInt32()), $"{where}: mistypes");
                 Assert.That(engine.IsFinished, Is.EqualTo(reading.GetProperty("finished").GetBoolean()), $"{where}: finished");
+                Assert.That(engine.AwaitingEntry, Is.EqualTo(reading.GetProperty("awaiting").GetBoolean()), $"{where}: awaiting the line's window");
 
                 var states = reading.GetProperty("states");
                 Assert.That(states.GetArrayLength(), Is.EqualTo(engine.Lines.Count), $"{where}: one state row per line");
@@ -266,8 +269,11 @@ public class LineSkipLiveParityTest
     /// <list type="bullet">
     /// <item>An Enter was EFFECTIVE while the line it left still had untyped typeable cells, and it
     /// moved the caret onto the next line on the press (the immediate hand-over).</item>
-    /// <item>An Enter was effective and did NOT move the caret off its line (the refused roll), and
-    /// a later step with no press of its own carried it across (the deferred snap).</item>
+    /// <item>An Enter was effective outside the next line's entry window and, the browser running
+    /// the MANUAL NEWLINE since backlog 307 (bits 14 and 15 here), still moved the caret on, onto a
+    /// line it then AWAITED; and a later step with no press of its own opened that line (the clock
+    /// reaching the window). Under the automatic hand-over the same Enter parked the caret for the
+    /// line-start snap, which is dead code under the manual arm.</item>
     /// <item>An Enter was INEFFECTIVE on a caret with nothing left to give up, which is the state
     /// that keeps the desktop's key falling through to its global binding.</item>
     /// <item>The abandoned lines sealed LATE: at the instant each one's own deadline passed its
@@ -284,8 +290,9 @@ public class LineSkipLiveParityTest
 
         int handedOverOnThePress = 0;
         int parkedByTheBound = 0;
-        int carriedByASnap = 0;
         int ineffective = 0;
+        int landedAwaiting = 0;
+        int openedByTheClock = 0;
 
         for (int i = 0; i < readings.GetArrayLength(); i++)
         {
@@ -317,15 +324,29 @@ public class LineSkipLiveParityTest
             }
 
             parkedByTheBound++;
+            continue;
+        }
+
+        // THE MANUAL ARM'S HALF of the same two arms: an Enter outside the window lands AWAITING, and
+        // the wait is lifted by the clock alone.
+        for (int i = 0; i < readings.GetArrayLength(); i++)
+        {
+            var reading = readings[i];
+
+            if (reading.GetProperty("op").GetString() != "enter" || !reading.GetProperty("handled").GetBoolean()
+                || !reading.GetProperty("awaiting").GetBoolean())
+                continue;
+
+            landedAwaiting++;
 
             for (int j = i + 1; j < readings.GetArrayLength(); j++)
             {
-                if (readings[j].GetProperty("at").GetProperty("line").GetInt32() <= lineLeft)
+                if (readings[j].GetProperty("awaiting").GetBoolean())
                     continue;
 
                 Assert.That(readings[j].GetProperty("op").GetString(), Is.EqualTo("update"),
-                    $"[{i}]: the parked caret was carried by a press rather than by the snap");
-                carriedByASnap++;
+                    $"[{i}]: the awaited line was opened by a press rather than by the clock");
+                openedByTheClock++;
                 break;
             }
         }
@@ -355,8 +376,9 @@ public class LineSkipLiveParityTest
         Assert.Multiple(() =>
         {
             Assert.That(handedOverOnThePress, Is.GreaterThan(0), "no Enter landed inside the next line's entry window");
-            Assert.That(parkedByTheBound, Is.GreaterThan(0), "no Enter landed outside it, so the deferred park was never reached");
-            Assert.That(carriedByASnap, Is.EqualTo(parkedByTheBound), "a parked caret was never collected by the line-start snap");
+            Assert.That(parkedByTheBound, Is.Zero, "an Enter left the caret on its own line: the script is not on the manual arm");
+            Assert.That(landedAwaiting, Is.GreaterThan(0), "no Enter landed outside the window, so the awaiting hand-over was never reached");
+            Assert.That(openedByTheClock, Is.EqualTo(landedAwaiting), "an awaited line was never opened by the clock");
             Assert.That(ineffective, Is.GreaterThan(0), "no Enter was ever refused, so the fall-through state is untested");
             Assert.That(sealedLate, Is.EqualTo(2), "the abandoned lines did not sit untyped at their own deadlines and seal a grace later");
         });

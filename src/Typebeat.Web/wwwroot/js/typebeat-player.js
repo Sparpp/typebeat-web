@@ -781,6 +781,15 @@
         return engine.fletcherEnabled && !engine.songIsOnTheCaretsLine && engine.activeLineUntouched;
     }
 
+    // TypeBeatPlayfield's `engine.IsLineComplete && CurrentRetypeSelection is null` block under
+    // ManualNewlines (backlog 307): the state in which a Space is offered to the engine as the
+    // newline before anything may treat it as a skip. A live selection suspends it exactly as it
+    // suspends the skip (the key consuming the selection is a typing key).
+    function completeLineTakesNewline(engine, host) {
+        return engine.manualNewlines && engine.activeLineIndex >= 0
+            && engine.isLineComplete(engine.activeLineIndex) && !host.getSelection();
+    }
+
     // TypeBeatKeyHandler.eraseBackTo. Erase back to target with ordinary processBackspace
     // calls: the same run of erases a player holding the plain key down would have made, which
     // is the whole point of composing the gesture rather than teaching the engine a wider one.
@@ -931,6 +940,22 @@
         if (enter) {
             if (engine.processEnter(t)) e.preventDefault();
             return;
+        }
+
+        // THE MANUAL NEWLINE'S SPACE (backlog 307, TypeBeatPlayfield's IsLineComplete arm under
+        // ManualNewlines). On a finished line with no live selection, Space is LIVE input, the
+        // newline, and it reaches the ENGINE before the skip below, in the desktop's order: the
+        // parked-head drop first (a caret whose line reads untouched and is not the song's keeps
+        // falling through to the skip, which is also where a SECOND Space after a hand-over goes),
+        // then the engine, then the skip only for a press the engine refused. So the skip's
+        // WPM-clock guard is kept: it still fires only from a line that reads complete after the
+        // engine has declined the press. That desktop arm carries no repeat guard, so neither does
+        // this one; a repeat that is dropped, or that the engine refuses, still ends here as before.
+        if (isSpace(e) && !spaceIsDropped(engine) && completeLineTakesNewline(engine, host)) {
+            if (engine.processKey(' ', t)) {
+                e.preventDefault();
+                return;
+            }
         }
 
         if (e.repeat) return;
@@ -1784,6 +1809,13 @@
             // Only the current row repaints per frame; the neighbours were painted at the line
             // change and hold a still freestyle glyph until they become current.
             paintRow(rowCur, caretIndex, shimmerTick, time);
+            // GREY WHILE THE WINDOW IS SHUT (backlog 307, LyricStage's SetLineDim(awaiting ? 0.4 :
+            // 0), alpha = 1 - dim): a line the player has been handed by a manual newline but may
+            // not type on yet (engine.awaitingEntry) waits at the upcoming-line grey, and undims the
+            // moment its window opens. On the glyphs only, as the desktop fades the line's content
+            // and not the bars drawn over it.
+            const awaitingAlpha = active && engine.awaitingEntry ? '0.6' : '';
+            if (rowCur.cellsBox.style.opacity !== awaitingAlpha) rowCur.cellsBox.style.opacity = awaitingAlpha;
 
             // The row the vocal is on, resolved AFTER any rebuild above, since rowFor() reads the
             // stack's current focus. null while nothing is active, and null when the song is more

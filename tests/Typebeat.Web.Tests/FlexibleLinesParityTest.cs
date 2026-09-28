@@ -66,6 +66,8 @@ public class FlexibleLinesParityTest
             Assert.That(defaults.GetProperty("fletcherEnabled").GetBoolean(), Is.True, "the browser plays live, and live means unpinned");
             Assert.That(defaults.GetProperty("flexibleLineSnap").GetBoolean(), Is.True, "and live means the line-start snap too");
             Assert.That(defaults.GetProperty("boundedRush").GetBoolean(), Is.True, "and live means the bounded rush, the pre-218 era being unreachable here");
+            Assert.That(defaults.GetProperty("manualNewlines").GetBoolean(), Is.True, "and the manual newline, the desktop's shipped default since PR 2 (backlog 307)");
+            Assert.That(defaults.GetProperty("newlineOnTypedLetter").GetBoolean(), Is.True, "and the typed-through newline, which rides the same setting");
             Assert.That(defaults.GetProperty("maxCharsAhead").GetInt32(), Is.EqualTo(5), "TypingEngine.FLETCHER_MAX_CHARS_AHEAD");
             Assert.That(defaults.GetProperty("dragGraceMs").GetDouble(), Is.EqualTo(1500), "TypingEngine.FLETCHER_DRAG_GRACE_MS");
         });

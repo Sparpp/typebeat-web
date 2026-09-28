@@ -1163,6 +1163,42 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
+    /// THE MANUAL NEWLINE'S SPACE REACHES THE ENGINE BEFORE THE SKIP (backlog 307), in the desktop's
+    /// order: line 0 typed out and parked inside the instrumental's live skip window, the first Space
+    /// is the newline (the engine takes it, no skip), the caret lands on line 1 AWAITING its window,
+    /// and only the SECOND Space, meeting the parked-head drop, falls through to the skip. The skip's
+    /// WPM-clock guard is untouched: it still fires only from a state the clock does not run in.
+    /// </summary>
+    [Test]
+    public void TheManualNewlineTakesTheSpaceBeforeTheSkipDoes()
+    {
+        var run = Harness().GetProperty("spaceNewlineBeforeTheSkip");
+        var parkedOn = run.GetProperty("parkedOn");
+        var first = run.GetProperty("afterFirst");
+        var second = run.GetProperty("afterSecond");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(parkedOn, "line"), Is.EqualTo(0));
+            Assert.That(Flag(parkedOn, "complete"), Is.True, "the finished caret parks: no roll, no snap");
+            Assert.That(Num(run, "skipLiveBefore"), Is.EqualTo(9000), "and the skip is live, so the order is what decides");
+
+            Assert.That(first.GetProperty("spaceCalls").EnumerateArray().Select(v => v.GetBoolean()), Is.EqualTo(new[] { true }),
+                "the first Space went to the engine, once, and was the newline");
+            Assert.That(Num(first, "skips"), Is.Zero, "so it was not the skip");
+            Assert.That(Flag(first, "prevented"), Is.True);
+            Assert.That(Num(first, "line"), Is.EqualTo(1));
+            Assert.That(Num(first, "cell"), Is.EqualTo(0));
+            Assert.That(Flag(first, "awaiting"), Is.True, "entry into line 1 opens at 10500, so the line waits");
+
+            Assert.That(Num(second, "engineCalls"), Is.Zero, "the second Space is the parked-head drop");
+            Assert.That(JsHarness.Doubles(second, "skips"), Is.EqualTo(new[] { 9000d }), "and it is that one that takes the skip");
+            Assert.That(Num(second, "line"), Is.EqualTo(1));
+            Assert.That(JsHarness.Strings(run, "cellsOfLineOne"), Is.EqualTo(new[] { "untyped", "untyped" }), "nothing was typed into the waiting line");
+        });
+    }
+
+    /// <summary>
     /// The modifier rules of the router (backlog 305), against the desktop's default bindings under
     /// KeyCombinationMatchingMode.Any: Ctrl+Backspace and Ctrl+A fire with Alt or AltGr (Ctrl plus
     /// Alt in a browser) or Shift also held, never with Meta; Enter reaches the line skip under Ctrl

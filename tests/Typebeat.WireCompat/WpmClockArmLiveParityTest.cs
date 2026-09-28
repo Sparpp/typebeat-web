@@ -86,8 +86,13 @@ public class WpmClockArmLiveParityTest
     /// against: it has no mods payload, writes no replay frames and re-derives no stored row. The
     /// era flags the C# defaults OFF for replay decoding have to be set by hand, exactly as
     /// <see cref="EngineFuzzLiveParityTest"/> sets the equivalent CONFIG frame bits.
+    ///
+    /// <para>MANUAL NEWLINES are the one flag a run chooses (backlog 307): the browser runs them
+    /// always, at the desktop's shipped default, but the harness's first four scripts transcribe the
+    /// game's FletcherEngineTest, whose bare engines run the automatic hand-over, so each run says
+    /// which arm it declared and this side follows it.</para>
     /// </summary>
-    private static TypingEngine LiveEngine(string map) => new TypingEngine(Map(map))
+    private static TypingEngine LiveEngine(string map, bool manualNewlines = true) => new TypingEngine(Map(map))
     {
         SyllableTiming = true,
         CharTimedStretch = true,
@@ -102,6 +107,8 @@ public class WpmClockArmLiveParityTest
         LosslessSkipReclaim = true,
         FoldsDisplacedClaim = true,
         FirstLineLeadIn = true,
+        ManualNewlines = manualNewlines,
+        NewlineOnTypedLetter = manualNewlines,
     };
 
     #endregion
@@ -188,7 +195,7 @@ public class WpmClockArmLiveParityTest
         {
             foreach (var run in runs.EnumerateObject())
             {
-                var engine = LiveEngine(run.Value.GetProperty("map").GetString()!);
+                var engine = LiveEngine(run.Value.GetProperty("map").GetString()!, run.Value.GetProperty("manual").GetBoolean());
                 var script = run.Value.GetProperty("script");
                 var readings = run.Value.GetProperty("readings");
 

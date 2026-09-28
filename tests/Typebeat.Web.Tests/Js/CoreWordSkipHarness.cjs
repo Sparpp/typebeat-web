@@ -538,7 +538,10 @@ function skipThenTheNextLine() {
     engine.processKey('o', O_TARGET);
     engine.processKey('g', G_TARGET);
 
-    engine.update(6000); // the snap opens line 1; line 0 is still unsealed, the caret having been on it
+    // The snap opened line 1 here under the automatic hand-over. Since backlog 307 the browser runs
+    // the MANUAL NEWLINE, so the caret waits on line 0 and the 'h' below is the typed-through newline;
+    // line 0 is still unsealed either way, the caret having been on it.
+    engine.update(6000);
 
     const afterTheSnap = snapshot(engine);
 

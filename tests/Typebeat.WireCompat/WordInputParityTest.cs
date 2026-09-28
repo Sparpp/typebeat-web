@@ -571,6 +571,8 @@ public class WordInputParityTest
             LosslessSkipReclaim = true,
             FoldsDisplacedClaim = true,
             FirstLineLeadIn = true,
+            ManualNewlines = true,
+            NewlineOnTypedLetter = true,
         };
 
         engine.Update(scenario.StartTime);

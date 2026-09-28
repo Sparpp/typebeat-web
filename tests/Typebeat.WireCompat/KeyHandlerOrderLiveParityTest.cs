@@ -83,6 +83,8 @@ public class KeyHandlerOrderLiveParityTest
         LosslessSkipReclaim = true,
         FoldsDisplacedClaim = true,
         FirstLineLeadIn = true,
+        ManualNewlines = true,
+        NewlineOnTypedLetter = true,
         AllowWrongInput = true,
     };
 
@@ -102,7 +104,16 @@ public class KeyHandlerOrderLiveParityTest
     /// <summary>
     /// The desktop key handler's routing for one press (TypeBeatPlayfield's OnKeyDown, default
     /// bindings, no modifiers), AFTER its update: which engine op it makes, if any. Returns the op's
-    /// result, or null when the handler makes no engine call at all.
+    /// result, or null when the handler makes no EFFECTIVE engine call and lets the key fall through.
+    ///
+    /// <para>The line-complete arm is the MANUAL NEWLINE's (backlog 307, the setting the browser
+    /// takes at the desktop's shipped default): with no selection live, a Space goes to
+    /// <see cref="TypingEngine.ProcessKey"/> as the newline, and a letter goes there as the
+    /// typed-through newline, each consumed only if the engine reports it did something. A refused
+    /// one falls through, which the desktop reaches after calls that changed nothing; the comparison
+    /// tolerates the browser's matching refused calls for exactly that reason. Enter never reaches
+    /// that arm: the SkipLine binding above it hands a finished line to
+    /// <see cref="TypingEngine.ProcessEnter"/>, which is where its newline lives.</para>
     /// </summary>
     private static bool? DesktopPress(TypingEngine engine, string key, double time)
     {
@@ -122,7 +133,15 @@ public class KeyHandlerOrderLiveParityTest
         }
 
         if (engine.IsLineComplete)
+        {
+            if (engine.ManualNewlines && key == " " && engine.ProcessKey(' ', time))
+                return true;
+
+            if (engine.NewlineOnTypedLetter && key.Length == 1 && engine.ProcessKey(key[0], time))
+                return true;
+
             return null;
+        }
 
         return engine.ProcessKey(key[0], time);
     }
@@ -177,10 +196,24 @@ public class KeyHandlerOrderLiveParityTest
     /// passed.
     /// </summary>
     [Test]
-    public void TheGameEngineMakesTheSameRunOfTheBrowsersKeystrokes()
+    public void TheGameEngineMakesTheSameRunOfTheBrowsersKeystrokes() => ReplayTheBrowsersRun(KeyOrder());
+
+    /// <summary>
+    /// The MANUAL NEWLINE's keystrokes (backlog 307) through the same router on the same map and
+    /// tick, held against the desktop the same way: the newline Space before the skip gate, the
+    /// second Space dropped at the parked head, the typed-letter newline landing on a line that
+    /// awaits its window, presses swallowed by that wait, the window opening between a tick and a
+    /// press, the hold cutoff, and the Enter newline.
+    /// </summary>
+    [Test]
+    public void TheGameEngineMakesTheSameRunOfTheBrowsersManualNewlines() => ReplayTheBrowsersRun(ManualKeyOrder());
+
+    private static JsonElement ManualKeyOrder() => harness.Value.GetProperty("keyOrderManual");
+
+    private static void ReplayTheBrowsersRun(JsonElement section)
     {
         var engine = LiveEngine();
-        var steps = KeyOrder().GetProperty("steps");
+        var steps = section.GetProperty("steps");
 
         int breaks = 0;
         engine.ComboBroken += () => breaks++;
@@ -226,6 +259,7 @@ public class KeyHandlerOrderLiveParityTest
                     Eq(engine.NextUnsealedLineIndex < 0 ? engine.Lines.Count : engine.NextUnsealedLineIndex, judged.GetProperty("seal").GetInt32(), "seal judged against");
                     Eq(engine.ActiveLineUntouched, judged.GetProperty("untouched").GetBoolean(), "ActiveLineUntouched at the press");
                     Eq(engine.SongIsOnTheCaretsLine, judged.GetProperty("songOnIt").GetBoolean(), "SongIsOnTheCaretsLine at the press");
+                    Eq(engine.AwaitingEntry, judged.GetProperty("awaiting").GetBoolean(), "AwaitingEntry at the press");
                 }
 
                 bool? result = DesktopPress(engine, key, rounded);
@@ -267,6 +301,7 @@ public class KeyHandlerOrderLiveParityTest
             Eq(engine.LiveWpm, step.GetProperty("liveWpm").GetDouble(), "live WPM (the WPM clock)");
             Eq(engine.ActiveLineUntouched, step.GetProperty("activeLineUntouched").GetBoolean(), "ActiveLineUntouched");
             Eq(engine.SongIsOnTheCaretsLine, step.GetProperty("songIsOnTheCaretsLine").GetBoolean(), "SongIsOnTheCaretsLine");
+            Eq(engine.AwaitingEntry, step.GetProperty("awaiting").GetBoolean(), "AwaitingEntry");
 
             // The keypress statistics. The browser's engine counts only what a PRESS is judged
             // (a seal's misses live on the cells, compared below), so Miss is left out here.
@@ -313,7 +348,12 @@ public class KeyHandlerOrderLiveParityTest
     /// <item>A SEAL (the seal cursor advanced with the caret staying put): the backspace after an
     /// abandoned line's held deadline.</item>
     /// <item>A DRAG CUTOFF (the seal advanced AND carried the caret onto the next line).</item>
-    /// <item>A RUSH SNAP (the caret moved onto the next line with the seal NOT advancing).</item>
+    /// <item>NO RUSH SNAP: since backlog 307 the browser runs the manual newline, under which the
+    /// line-start snap is dead code, so the press at 10500.5 that used to land just past one is now
+    /// the typed-through newline, made BY the press rather than before it. Pinned at zero, so a
+    /// router or engine that fell back to the automatic hand-over reads non-zero; the manual
+    /// section's own transition (a window opening between a tick and a press) is counted in
+    /// <see cref="TheManualNewlineKeystrokesReachEveryArm"/>.</item>
     /// <item>An ACTIVATION (no line active at the tick, one active at the press).</item>
     /// <item>The parked-untouched-head Space DROP, swallowed with no engine op.</item>
     /// <item>A MIDPOINT press, where banker's rounding and Math.round disagree.</item>
@@ -358,10 +398,68 @@ public class KeyHandlerOrderLiveParityTest
         {
             Assert.That(seals, Is.GreaterThan(0), "no press landed just past a seal");
             Assert.That(cutoffs, Is.GreaterThan(0), "no press landed just past a drag cutoff");
-            Assert.That(snaps, Is.GreaterThan(0), "no press landed just past a rush snap");
+            Assert.That(snaps, Is.Zero, "a press landed just past a rush snap: the run is not on the manual arm");
             Assert.That(activations, Is.GreaterThan(0), "no press landed just past a line's activation");
             Assert.That(drops, Is.GreaterThan(0), "no Space was dropped on a parked untouched head");
             Assert.That(midpoints, Is.GreaterThan(0), "no press sat on a midpoint the two roundings disagree on");
+        });
+    }
+
+    /// <summary>
+    /// NON-VACUITY for the manual section, on the browser's own record: every arm the desktop's
+    /// manual key handling has must be reached, or the comparison above passes on a run that never
+    /// met them.
+    /// </summary>
+    [Test]
+    public void TheManualNewlineKeystrokesReachEveryArm()
+    {
+        int spaceNewlines = 0, letterNewlines = 0, enterNewlines = 0, secondSpaceDrops = 0, awaitingDrops = 0;
+        int swallowedKeys = 0, swallowedEnters = 0, windowOpenings = 0, holdCutoffs = 0;
+
+        foreach (var step in ManualKeyOrder().GetProperty("steps").EnumerateArray())
+        {
+            if (step.GetProperty("op").GetString() != "press")
+                continue;
+
+            string key = step.GetProperty("key").GetString()!;
+            var before = step.GetProperty("before");
+            var judged = step.GetProperty("judgedAgainst");
+            var calls = step.GetProperty("calls").EnumerateArray().ToArray();
+            int lineAt = judged.GetProperty("line").GetInt32();
+            bool movedOn = step.GetProperty("line").GetInt32() > lineAt;
+            bool effective = calls.Length == 1 && calls[0].GetProperty("result").GetBoolean();
+
+            if (key == " " && movedOn && effective) spaceNewlines++;
+            if (key.Length == 1 && key != " " && movedOn && effective) letterNewlines++;
+            if (key == "Enter" && movedOn && effective && !judged.GetProperty("untouched").GetBoolean()) enterNewlines++;
+
+            if (key == " " && calls.Length == 0 && step.GetProperty("prevented").GetBoolean())
+            {
+                if (judged.GetProperty("awaiting").GetBoolean()) awaitingDrops++;
+                else secondSpaceDrops++;
+            }
+
+            if (judged.GetProperty("awaiting").GetBoolean() && calls.Length == 1 && !calls[0].GetProperty("result").GetBoolean())
+            {
+                if (key == "Enter") swallowedEnters++;
+                else swallowedKeys++;
+            }
+
+            if (before.GetProperty("awaiting").GetBoolean() && !judged.GetProperty("awaiting").GetBoolean()) windowOpenings++;
+            if (judged.GetProperty("seal").GetInt32() > before.GetProperty("seal").GetInt32() && lineAt > before.GetProperty("line").GetInt32()) holdCutoffs++;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(spaceNewlines, Is.GreaterThan(0), "no Space handed a finished line over");
+            Assert.That(letterNewlines, Is.GreaterThan(0), "no letter handed a finished line over");
+            Assert.That(enterNewlines, Is.GreaterThan(0), "no Enter handed a finished line over");
+            Assert.That(secondSpaceDrops, Is.GreaterThan(0), "no second Space was dropped at the head it landed on");
+            Assert.That(awaitingDrops, Is.GreaterThan(0), "no Space was dropped at the head of an awaited line");
+            Assert.That(swallowedKeys, Is.GreaterThan(0), "no letter was swallowed by the wait");
+            Assert.That(swallowedEnters, Is.GreaterThan(0), "no Enter was swallowed by the wait");
+            Assert.That(windowOpenings, Is.GreaterThan(0), "no awaited window opened between a tick and a press");
+            Assert.That(holdCutoffs, Is.GreaterThan(0), "no press landed just past a held line's cutoff");
         });
     }
 }

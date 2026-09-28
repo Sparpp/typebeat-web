@@ -114,6 +114,11 @@ const STEP_BACK = [
 // (late, two Mehs: 0.365), which finishes line 1 two seconds before entry into line 2 opens at
 // 11500. The snap carries the caret on to the slot, five rejected spaces take the bar to 0 with a
 // streak of 5, and line 1 seals at its 13000 deadline with nothing left untyped.
+//
+// Since backlog 307 (the MANUAL NEWLINE, the browser's arm) the snap is dead: a space at 11500 is
+// the player's own newline onto the slot, and the typed-out line 1 is HELD open while the caret
+// stands at the slot's head, so it seals at its drag cutoff (13000 + 1500) rather than at 13000.
+// The script presses that newline and ticks the cutoff; everything else about the fail is unchanged.
 const REJECT = [
     line('the quick brown fox jumps over', 1000, 1000),
     line('go', 8000, 500),
@@ -174,11 +179,14 @@ const scenarios = {
     // (one drain) and, the word running to the end of the line, parks the caret: entry into line 1
     // opens at 3500. The snap carries the caret on, and a backspace at the head of line 1 walks back
     // into line 0 (stepBackIntoLine), reclaiming the abandoned 'd' and refunding its drain. A typo on
-    // line 1 is then erased the ordinary way.
+    // line 1 is then erased the ordinary way. Since backlog 307 the browser runs the MANUAL NEWLINE,
+    // under which the snap is dead: the caret waits on the finished line 0 for the player's own
+    // newline, so the space at 3500 (the instant entry opens) is that hand-over, and the backspace
+    // after it is the step back.
     stepBackReclaim: {
         lines: STEP_BACK, songEnd: 12000, spaceSkipsWord: true,
         steps: [U(1000), K('a', 1000), U(1500), K('b', 1500), U(2000), K(' ', 2000), K('c', 2000), U(2100), K(' ', 2100),
-            U(3500), B(3600), K('d', 3700), U(5000), K('e', 5000), U(5500), K('x', 5500), B(5600), K('f', 5600),
+            U(3500), K(' ', 3500), B(3600), K('d', 3700), U(5000), K('e', 5000), U(5500), K('x', 5500), B(5600), K('f', 5600),
             U(6000), K(' ', 6000), K('g', 6000), U(6500), K('h', 6500), U(20000)]
     },
 
@@ -220,9 +228,9 @@ const scenarios = {
     // REJECTIONS TO AN EMPTY BAR, and the inert result that then fails it (see REJECT).
     rejectionsEmptyTheBarAndTheSealFailsIt: {
         lines: REJECT, songEnd: 20000, spaceSkipsWord: false,
-        steps: [U(0), U(5000), U(9500), U(9600), K('g', 9600), U(9700), K('o', 9700), U(11500)]
+        steps: [U(0), U(5000), U(9500), U(9600), K('g', 9600), U(9700), K('o', 9700), U(11500), K(' ', 11500)]
             .concat([11600, 11650, 11700, 11750, 11800].map(t => K(' ', t)))
-            .concat([U(12000), U(13000), U(13500), U(30000)])
+            .concat([U(12000), U(13000), U(13500), U(14500), U(30000)])
     },
 
     // THE MASH: thirteen rejected spaces on a freestyle slot from a full bar fail on the thirteenth,
