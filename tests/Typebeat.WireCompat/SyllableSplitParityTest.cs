@@ -537,6 +537,43 @@ public class SyllableSplitParityTest
     }
 
     /// <summary>
+    /// The display's mid-word subdivision marks (backlog 317): the browser's
+    /// <c>syllableMarkerCells</c> equals <see cref="TypingLine.SyllableMarkerCells"/> on every
+    /// variant of every authored case, so /play marks exactly the splits it judges on. The total is
+    /// asserted non-zero so the sweep cannot pass vacuously on fixtures that stopped carrying any
+    /// subtimed word.
+    /// </summary>
+    [Test]
+    public void TheTwoLoadersPlaceTheSameSyllableMarkers()
+    {
+        int totalMarkers = 0;
+
+        Assert.Multiple(() =>
+        {
+            foreach (var one in all_cases)
+            {
+                var browserCase = BrowserCase(one.Name);
+
+                foreach (string variant in new[] { "a", "b" })
+                {
+                    var (_, lines) = Decode(variant == "a" ? one.Authored : one.Comparison, one.Literate);
+                    var browserLines = browserCase.GetProperty(variant).GetProperty("lines");
+
+                    for (int i = 0; i < lines.Length && i < browserLines.GetArrayLength(); i++)
+                    {
+                        int[] browserMarkers = browserLines[i].GetProperty("syllableMarkerCells").EnumerateArray().Select(e => e.GetInt32()).ToArray();
+
+                        Assert.That(browserMarkers, Is.EqualTo(lines[i].SyllableMarkerCells.ToArray()), $"{one.Name}.{variant}[{i}]: syllable marker cells");
+                        totalMarkers += lines[i].SyllableMarkerCells.Count;
+                    }
+                }
+            }
+        });
+
+        Assert.That(totalMarkers, Is.GreaterThan(0), "the authored fixtures exercise at least one syllable marker");
+    }
+
+    /// <summary>
     /// COVERAGE, and the fallback pin in one: how far the authored split MOVED the map, counted
     /// identically on both sides.
     ///

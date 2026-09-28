@@ -1217,6 +1217,13 @@
         // resolved from cell targets (NaN start; NaN end = "the next group's start").
         const starts = [];
         const ends = [];
+
+        // Parallel to the two above, for the display marks (backlog 317, mirrors TypingLine's
+        // subtimedInterior / groupTokenBase): whether this group opens a MAPPER-AUTHORED subdivision
+        // inside its word (a non-first group of a subtimed or paused token), and which group its
+        // token started at. A naturally syllabified word produces groups too and is never marked.
+        const subtimedInterior = [];
+        const groupTokenBase = [];
         const tokens = text.split(' ');
         let tokStart = 0;
 
@@ -1249,6 +1256,9 @@
                 const groupCount = splits.length + 1;
 
                 for (let g = 0; g < groupCount; g++) {
+                    subtimedInterior.push((subtimed || paused !== null) && g > 0);
+                    groupTokenBase.push(groupBase);
+
                     if (paused !== null) {
                         // The run's own span, rest's gap and all: no run covers a rest.
                         const run = paused.runSpans[Math.min(g, paused.runSpans.length - 1)];
@@ -1333,7 +1343,38 @@
             cellSyllable[i] = cellSyllable[i] >= 0 ? remap[cellSyllable[i]] : -1;
         }
 
-        return { syllables: groups, cellSyllable: cellSyllable };
+        // The display marks (backlog 317, mirrors TypingLine.SyllableMarkerCells), read off the
+        // groups that survived: a flagged group's startCell IS the gap its boundary falls in. A mark
+        // needs a surviving EARLIER group of the same token (something rendered to its left inside
+        // the word), and a cut landing on or just after a word-gap SPACE cell (a dash the default
+        // stream turned into a space) is suppressed. Write-only: nothing above reads it, so no
+        // target, span or group moves and no judgement can.
+        const syllableMarkerCells = [];
+        let tokenBase = -1;
+        let lastSurvivor = -1;
+
+        for (let g = 0; g < provisional; g++) {
+            if (groupTokenBase[g] !== tokenBase) {
+                tokenBase = groupTokenBase[g];
+                lastSurvivor = -1;
+            }
+
+            if (subtimedInterior[g] && remap[g] >= 0 && lastSurvivor >= 0) {
+                const startCell = groups[remap[g]].startCell;
+
+                if (!isWordGapCell(cells, startCell) && !isWordGapCell(cells, startCell - 1)) syllableMarkerCells.push(startCell);
+            }
+
+            if (remap[g] >= 0) lastSurvivor = g;
+        }
+
+        return { syllables: groups, cellSyllable: cellSyllable, syllableMarkerCells: syllableMarkerCells };
+    }
+
+    // Whether the display cell at index is a SPACE the player types (false off either end of the
+    // line). Mirrors TypingLine.isWordGapCell, the marker derivation's word-gap guard.
+    function isWordGapCell(cells, index) {
+        return index >= 0 && index < cells.length && cells[index].expected === ' ';
     }
 
     // How many identical characters in a row make a STRETCH (backlog 209, mirrors
@@ -1758,6 +1799,13 @@
                 startTime: start,
                 endTime: endTime,
                 singEndTime: singEndTime,
+                // TypingLine's lastUnitEnd (backlog 317): the LAST token's own unit end (the same
+                // malformed-count clamp as the target walk), or the sung end with no units at all.
+                // The sung polyline closes on it (TypingLine.SweepEndTime) and so does the underline
+                // pace hue's last band. Read by typebeat-player.js's lastUnitEndOf; the group-derived
+                // reading it replaces missed it whenever the last token owned no group (a stylised
+                // "uWooouououooo"), falling back to singEndTime where the desktop never does.
+                lastUnitEnd: units.length > 0 ? units[Math.min(tokens.length - 1, units.length - 1)].end : singEndTime,
                 activationTime: activationTime,
                 firstVocalTime: firstVocalTime,
                 sealGraceMs: grace,
@@ -1772,7 +1820,10 @@
                 // TypingLine.charTimedStretch: per display cell, whether the span rule is NARROWED
                 // back to the cell's own target for it (backlog 209). Derived from the cells and the
                 // membership map above, which it only reads, so nothing it touches moves.
-                charTimedStretch: buildCharTimedStretch(cells, grouped.cellSyllable)
+                charTimedStretch: buildCharTimedStretch(cells, grouped.cellSyllable),
+                // TypingLine.SyllableMarkerCells (backlog 317): the display's mid-word subdivision
+                // marks, one cell per mapper-authored boundary. Display only, read by no judgement.
+                syllableMarkerCells: grouped.syllableMarkerCells
             });
         }
 

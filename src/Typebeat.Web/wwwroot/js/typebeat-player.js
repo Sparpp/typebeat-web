@@ -113,7 +113,14 @@
     // group unless it is a stylised triple-letter run (isSyllabifiable), so this recovers the true
     // value for real content. Falls back to singEndTime only when the line produced no groups at
     // all, mirroring the game's Units.Count == 0 fallback for a line with no word timing.
+    //
+    // Since backlog 317 the built line carries the true value (typebeat-core.js's lastUnitEnd, the
+    // walk the desktop captures), which is read first: the group reading above disagrees with the
+    // desktop whenever the last token is stylised and owns no group, and the pace hue's parity pin
+    // against UnderlinePace.SungEndOf is what caught it. The group reading stays as the fallback for
+    // a hand-built line that carries no lastUnitEnd.
     function lastUnitEndOf(line) {
+        if (typeof line.lastUnitEnd === 'number') return line.lastUnitEnd;
         return line.syllables.length > 0
             ? line.syllables[line.syllables.length - 1].endTime
             : line.singEndTime;
@@ -475,7 +482,7 @@
     }
 
     /// The class list for a cell's span. Pure (state in, string out).
-    function cellClass(cell, isCaret, popping, shaking) {
+    function cellClass(cell, isCaret, popping, shaking, inSung) {
         let cls = 'tb-c';
         if (cell.state === 'correct') {
             const jt = cell.judgeType;
@@ -516,6 +523,12 @@
             cls += ' tb-c-todo tb-c-abandoned';
         } else {
             cls += ' tb-c-todo';
+            // The SUNG-SYLLABLE HIGHLIGHT (backlog 317, LyricLineDisplay.CellFillColour): an UNTYPED
+            // cell of the group the vocal is inside lifts to the lighter SungChar grey. Untyped only,
+            // since the highlight is for characters that can still be typed on time (abandoned,
+            // missed and auto-skipped cells stay put), and never a freestyle slot, whose violet is
+            // an identity that nothing repaints.
+            if (inSung && cell.state === 'untyped' && !cell.freestyle) cls += ' tb-c-sung';
         }
         // A FREESTYLE cell never shows the authoring marker: while it is still open it
         // shimmers through the glyph pool (the desktop client's exact sequence), and once
@@ -557,6 +570,173 @@
         return cell.expected === ' ' && cell.state === 'wrong' && cell.typedChar !== null
             ? cell.typedChar
             : cell.expected;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Syllable and pace reading aids (backlog 317). Pure, no DOM; exported on Core.display.
+    // ---------------------------------------------------------------------------
+
+    /// The SUNG-SYLLABLE HIGHLIGHT's feed (mirrors LyricStage.currentSyllableIn): the index of the
+    /// group of `line` whose [startTime, endTime] span contains `time`, or -1 between spans (and over
+    /// a stylised token, which owns no group). The desktop feeds this every frame under every
+    /// playhead style, and the untyped, non-freestyle cells of that group lift to SungChar
+    /// (LyricLineDisplay.CellFillColour); cellClass() is where the lift lands here.
+    function currentSyllableIn(line, time) {
+        const groups = line ? line.syllables : null;
+        if (!groups) return -1;
+        for (let g = 0; g < groups.length; g++) {
+            if (time >= groups[g].startTime && time <= groups[g].endTime) return g;
+        }
+        return -1;
+    }
+
+    // THE UNDERLINE PACE HUE (backlog 228 on the desktop, 317 here), a port of UI/UnderlinePace.cs.
+    // The rail under a line is cut into one band per WORD (the word gap that closes it included) and
+    // each band is tinted by its MAP-WIDE mid-rank percentile of countable cells per millisecond:
+    // the middle half stays the neutral rail, the fast quartile shades toward the error red and the
+    // slow one toward the slow green, both lifting from 0.20 to 0.34 alpha. Display only; nothing
+    // judges, scores or submits off it. Pinned against UnderlinePace.BuildBands in WireCompat.
+    const PACE_NEUTRAL_ALPHA = 0.20;      // UnderlinePace.NEUTRAL_ALPHA
+    const PACE_HUED_ALPHA = 0.34;         // UnderlinePace.HUED_ALPHA
+    const PACE_NEUTRAL_LO_RANK = 0.25;    // UnderlinePace.NEUTRAL_LO_RANK
+    const PACE_NEUTRAL_HI_RANK = 0.75;    // UnderlinePace.NEUTRAL_HI_RANK
+    const PACE_MIN_SEGMENT_SPAN_MS = 30;  // UnderlinePace.MIN_SEGMENT_SPAN_MS
+    // TypeBeatStyle.SungAccent (#7ec8e3), ErrorChar (#ca4754) and PaceSlowAccent (#6ed26e), as the
+    // desktop's byte-constructed Color4s: channels in [0, 1].
+    const PACE_SUNG_ACCENT = { r: 126 / 255, g: 200 / 255, b: 227 / 255 };
+    const PACE_FAST_END = { r: 202 / 255, g: 71 / 255, b: 84 / 255 };
+    const PACE_SLOW_END = { r: 110 / 255, g: 210 / 255, b: 110 / 255 };
+
+    // osu.Framework's Color4Extensions.ToLinear / ToSRGB (gamma 2.4 with the linear toe), which is
+    // what Interpolation.ValueAt blends a colour through.
+    function srgbToLinear(c) {
+        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+
+    function linearToSrgb(c) {
+        return c < 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+    }
+
+    /// UnderlinePace.ColourForRank: the band colour { r, g, b, a } (channels in [0, 1]) for a
+    /// map-wide percentile rank. Neutral (the pre-hue rail, exactly) inside [p25, p75] inclusive,
+    /// otherwise a linear-light blend from the sung accent toward the end colour, linear in RANK,
+    /// with the alpha lifted linearly alongside. Exact at t = 1; a NaN rank is neutral.
+    function paceColourForRank(percentileRank) {
+        const r = isNaN(percentileRank) ? 0.5 : Math.min(1, Math.max(0, percentileRank));
+        if (r >= PACE_NEUTRAL_LO_RANK && r <= PACE_NEUTRAL_HI_RANK) {
+            return { r: PACE_SUNG_ACCENT.r, g: PACE_SUNG_ACCENT.g, b: PACE_SUNG_ACCENT.b, a: PACE_NEUTRAL_ALPHA };
+        }
+        const fast = r > PACE_NEUTRAL_HI_RANK;
+        const t = fast
+            ? (r - PACE_NEUTRAL_HI_RANK) / (1 - PACE_NEUTRAL_HI_RANK)
+            : (PACE_NEUTRAL_LO_RANK - r) / PACE_NEUTRAL_LO_RANK;
+        const end = fast ? PACE_FAST_END : PACE_SLOW_END;
+        if (t >= 1) return { r: end.r, g: end.g, b: end.b, a: PACE_HUED_ALPHA };
+        // Interpolation.ValueAt(t, start, end, 0, 1): t = 0 is the start colour untouched, anything
+        // else is blended channelwise in linear light and brought back to sRGB.
+        const blend = function (a, b) {
+            if (t === 0) return a;
+            const la = srgbToLinear(a);
+            return linearToSrgb(la + t * (srgbToLinear(b) - la));
+        };
+        return {
+            r: blend(PACE_SUNG_ACCENT.r, end.r),
+            g: blend(PACE_SUNG_ACCENT.g, end.g),
+            b: blend(PACE_SUNG_ACCENT.b, end.b),
+            a: PACE_NEUTRAL_ALPHA + (PACE_HUED_ALPHA - PACE_NEUTRAL_ALPHA) * t
+        };
+    }
+
+    /// UnderlinePace.firstVocalTime: the first TYPEABLE cell's target in [from, toExclusive), else
+    /// the range's first cell's (0 past the end).
+    function paceFirstVocalTime(cells, from, toExclusive) {
+        for (let i = from; i < toExclusive; i++) {
+            if (cells[i].typeable) return cells[i].target;
+        }
+        return from < cells.length ? cells[from].target : 0;
+    }
+
+    /// UnderlinePace.SegmentLine: one { startCell, endCellExclusive, speed } per word, a segment
+    /// running through the word gap that closes it, its span reaching the NEXT segment's first vocal
+    /// target (the line's sung end for the last), and its speed in COUNTABLE cells (typeable, not a
+    /// space) per millisecond with the span floored at PACE_MIN_SEGMENT_SPAN_MS.
+    function paceSegmentLine(cells, lineSungEndMs) {
+        const n = cells.length;
+        if (n === 0) return [];
+        const starts = [0];
+        for (let i = 0; i < n; i++) {
+            if (isWordGap(cells[i]) && i + 1 < n) starts.push(i + 1);
+        }
+        const result = new Array(starts.length);
+        for (let k = 0; k < starts.length; k++) {
+            const start = starts[k];
+            const endExclusive = k + 1 < starts.length ? starts[k + 1] : n;
+            const startTime = paceFirstVocalTime(cells, start, endExclusive);
+            const endTime = k + 1 < starts.length
+                ? paceFirstVocalTime(cells, endExclusive, k + 2 < starts.length ? starts[k + 2] : n)
+                : lineSungEndMs;
+            let countable = 0;
+            for (let i = start; i < endExclusive; i++) {
+                if (cells[i].typeable && cells[i].expected !== ' ') countable++;
+            }
+            let span = endTime - startTime;
+            if (!(span >= PACE_MIN_SEGMENT_SPAN_MS)) span = PACE_MIN_SEGMENT_SPAN_MS;
+            result[k] = { startCell: start, endCellExclusive: endExclusive, speed: countable / span };
+        }
+        return result;
+    }
+
+    /// UnderlinePace.RanksOf: the MID-RANK percentile of each speed in the whole set (count strictly
+    /// below plus half the count equal, over the total), so ties share a rank and a uniformly paced
+    /// map ranks every segment at 0.5.
+    function paceRanksOf(speeds) {
+        const n = speeds.length;
+        const ranks = new Array(n).fill(0);
+        if (n === 0) return ranks;
+        const order = new Array(n);
+        for (let i = 0; i < n; i++) order[i] = i;
+        order.sort(function (a, b) { return speeds[a] < speeds[b] ? -1 : speeds[a] > speeds[b] ? 1 : 0; });
+        let at = 0;
+        while (at < n) {
+            let last = at;
+            while (last + 1 < n && speeds[order[last + 1]] === speeds[order[at]]) last++;
+            const rank = (at + last + 1) * 0.5 / n;
+            for (let k = at; k <= last; k++) ranks[order[k]] = rank;
+            at = last + 1;
+        }
+        return ranks;
+    }
+
+    /// UnderlinePace.BuildBands, the whole-map precompute: one array of { startCell,
+    /// endCellExclusive, colour } per line. Each line's last segment closes on the END of its sung
+    /// polyline (UnderlinePace.SungEndOf reads TypingLine.SweepEndTime, which is that anchor), taken
+    /// from buildSungPoints so the band and the fill drawn over it cannot drift apart. Run ONCE per
+    /// map, beside sungPoints; never per frame.
+    function buildPaceBands(lines, sungPointsPerLine) {
+        const perLine = new Array(lines.length);
+        const speeds = [];
+        for (let k = 0; k < lines.length; k++) {
+            const points = sungPointsPerLine ? sungPointsPerLine[k] : buildSungPoints(lines[k]);
+            perLine[k] = paceSegmentLine(lines[k].cells, points[points.length - 1].t);
+            for (const segment of perLine[k]) speeds.push(segment.speed);
+        }
+        const ranks = paceRanksOf(speeds);
+        let at = 0;
+        return perLine.map(function (segments) {
+            return segments.map(function (segment) {
+                return {
+                    startCell: segment.startCell,
+                    endCellExclusive: segment.endCellExclusive,
+                    colour: paceColourForRank(ranks[at++])
+                };
+            });
+        });
+    }
+
+    /// A band colour as a CSS rgba() string.
+    function paceColourCss(c) {
+        const byte = function (v) { return Math.round(Math.min(1, Math.max(0, v)) * 255); };
+        return 'rgba(' + byte(c.r) + ', ' + byte(c.g) + ', ' + byte(c.b) + ', ' + c.a.toFixed(3) + ')';
     }
 
     // Which line the cue-in bars belong to (mirrors LyricStage.updateApproachCue). A line
@@ -1403,6 +1583,10 @@
         // The SONG's playhead, per line, precomputed once: independent of where the player is,
         // which is the whole point (you can see yourself rushing or dragging against it).
         const sungPoints = beatmap.lines.map(buildSungPoints);
+        // The underline PACE HUE's bands (backlog 317, UnderlinePace.BuildBands), one array per line,
+        // precomputed once beside the playhead: the colours are map constants, ranked across the
+        // whole map, so no per-frame path may ever reach this.
+        const paceBands = buildPaceBands(beatmap.lines, sungPoints);
 
         // The skippable stretches of this map, computed once: the qualifying instrumental gaps
         // (the mirror of what the server priced into beatmaps.skippable_s) and the intro run-up.
@@ -1822,7 +2006,10 @@
             row.append(sweep, cellsBox, cue, push);
             return {
                 row, cellsBox, sweep, sweepFill, sweepGlow, cue, cueWord, cueBoundary, push, pushBar,
-                spans: [], offsets: [0], line: null, index: -1, scale: 1
+                spans: [], offsets: [0], line: null, index: -1, scale: 1,
+                // The syllable group lit on this row (backlog 317), -1 for none: only the sung row
+                // ever carries one, and updateSungSyllable moves it off a row as it moves on.
+                litSyllable: -1
             };
         }
 
@@ -1846,7 +2033,49 @@
             }
             rowObj.dotsBox.textContent = '';
             rowObj.dots = [];
+            // The SYLLABLE MARKERS (backlog 317, LyricLineDisplay.addSyllableMarkers): one small
+            // apex-up triangle per mid-word boundary of a SUBTIMED word, read straight off the line's
+            // own syllableMarkerCells (the same derivation as the judgement groups), in a layer of
+            // the row's own like the dots. Only a real inter-character gap is drawable, never the
+            // line's leading edge nor past its last cell.
+            if (!rowObj.marksBox) {
+                rowObj.marksBox = el('div', 'tb-marks');
+                rowObj.row.appendChild(rowObj.marksBox);
+            }
+            rowObj.marksBox.textContent = '';
+            rowObj.marks = [];
+            // The PACE BANDS (backlog 317, LyricLineDisplay.buildPaceTracks): the rail becomes one
+            // div per word band, inside the sweep and BEFORE the fill and the glow so both paint
+            // over it, exactly as the desktop's track boxes sit under its fill.
+            if (!rowObj.bandsBox) {
+                rowObj.bandsBox = el('div', 'tb-bands');
+                rowObj.sweep.insertBefore(rowObj.bandsBox, rowObj.sweepFill);
+            }
+            rowObj.bandsBox.textContent = '';
+            rowObj.bands = [];
+            rowObj.sweep.classList.remove('tb-sweep-banded');
+            rowObj.litSyllable = -1;
             if (!line) return;
+
+            const n = line.cells.length;
+            for (const i of line.syllableMarkerCells || []) {
+                if (!(i > 0 && i < n)) continue;
+                const mark = el('span', 'tb-mark');
+                rowObj.marks.push({ index: i, el: mark });
+                rowObj.marksBox.appendChild(mark);
+            }
+            // Clamped rather than trusted, as the desktop does: a stale band list can only
+            // under-paint. A line with no band at all keeps the sweep's own flat neutral rail.
+            for (const band of paceBands[index] || []) {
+                const lo = Math.min(Math.max(band.startCell, 0), n);
+                const hi = Math.min(Math.max(band.endCellExclusive, lo), n);
+                if (hi <= lo) continue;
+                const box = el('div', 'tb-band');
+                box.style.background = paceColourCss(band.colour);
+                rowObj.bands.push({ lo: lo, hi: hi, el: box });
+                rowObj.bandsBox.appendChild(box);
+            }
+            if (rowObj.bands.length > 0) rowObj.sweep.classList.add('tb-sweep-banded');
 
             const frag = document.createDocumentFragment();
             for (let i = 0; i < line.cells.length; i++) {
@@ -1873,6 +2102,25 @@
             }
         }
 
+        // Each marker sits on its cell's LEFT EDGE, the inter-character gap the boundary falls in
+        // (LyricLineDisplay.measureAndLayout: X = cellX[i], Origin TopCentre), and each band spans
+        // exactly its own cells' measured extent, so the bands tile the line. Both read the same
+        // getBoundingClientRect offsets as the caret and the sweep, so no advance is assumed.
+        function placeMarks(rowObj) {
+            for (const m of rowObj.marks || []) {
+                const x = rowObj.offsets[m.index];
+                m.el.style.left = (isFinite(x) ? x : 0).toFixed(2) + 'px';
+            }
+            for (const b of rowObj.bands || []) {
+                const left = rowObj.offsets[b.lo];
+                const right = rowObj.offsets[b.hi];
+                const l = isFinite(left) ? left : 0;
+                const w = isFinite(right) ? Math.max(0, right - l) : 0;
+                b.el.style.left = l.toFixed(2) + 'px';
+                b.el.style.width = w.toFixed(2) + 'px';
+            }
+        }
+
         function cellText(cell, shimmerTick, i, dotted) {
             let ch = cellGlyph(cell, dotted);
             if (cell.freestyle) ch = cell.typedChar !== null ? cell.typedChar : Core.freestyleGlyph(shimmerTick, i);
@@ -1892,12 +2140,14 @@
             // The dot rule is a whole-line read, so it runs once per repaint and not per cell.
             const dots = SPACE_ERROR_DOTS_ENABLED ? spaceErrorDots(line.cells) : null;
             const isCur = rowObj === rowCur;
+            const lit = rowObj.litSyllable;
             for (let i = 0; i < rowObj.spans.length; i++) {
                 const span = rowObj.spans[i];
                 const cell = line.cells[i];
                 const popping = popEnd[i] > time && isCur;
                 const shaking = shakeEnd[i] > time && isCur;
-                const cls = cellClass(cell, i === caretIndex, popping, shaking);
+                const inSung = lit >= 0 && line.cellSyllable[i] === lit;
+                const cls = cellClass(cell, i === caretIndex, popping, shaking, inSung);
                 if (span.className !== cls) span.className = cls;
                 const txt = cellText(cell, shimmerTick, i, dots !== null && dots[i]);
                 if (span.textContent !== txt) span.textContent = txt;
@@ -2005,6 +2255,7 @@
             for (const r of rows) fitRow(r, avail);
             for (const r of rows) measureRow(r);
             for (const r of rows) placeDots(r);
+            for (const r of rows) placeMarks(r);
             caretSnap = true;
             sungSnap = true;
         }
@@ -2120,6 +2371,21 @@
         // desktop's per-display fill does when Update takes its no-active-line branch. Tracked by
         // LINE index rather than by row, because the three rows are recycled: keying on the row
         // would leave a stale fill on the element the next line was just built into.
+        // THE SUNG-SYLLABLE HIGHLIGHT (backlog 317), mirrors LyricStage.setSungSyllable: every frame,
+        // whatever the playhead does, the group the vocal is inside lights on the SUNG row, which
+        // since backlogs 217/223 need not be the caret's row, and the row it leaves is cleared. A row
+        // repaints only when its lit group changes, so the steady state costs one scan of the sung
+        // line's groups per frame.
+        function updateSungSyllable(time, sungRow, caretIndex, shimmerTick) {
+            const lit = sungRow ? currentSyllableIn(sungRow.line, time) : -1;
+            for (const r of rows) {
+                const want = r === sungRow ? lit : -1;
+                if (r.litSyllable === want) continue;
+                r.litSyllable = want;
+                paintRow(r, r === rowCur ? caretIndex : -1, shimmerTick, time);
+            }
+        }
+
         function updateSweeps(time, sungRow) {
             if (sungRow) sweptLine = sungRow.index;
 
@@ -2407,6 +2673,7 @@
             const sungRow = sungRowCandidate && sungRowCandidate.line ? sungRowCandidate : null;
 
             updateScroll(time);
+            updateSungSyllable(time, sungRow, caretIndex, shimmerTick);
             updateSweeps(time, sungRow);
             updateCarets(time, elapsed, active, sungRow);
             // Repainted per frame like the caret, and for the same reason: a fit or a resize moves
@@ -2713,6 +2980,15 @@
         makeRollingWpm,
         cellClass,
         cellGlyph,
+        // The syllable and pace reading aids (backlog 317): the sung-syllable feed and the underline
+        // pace hue's port of UnderlinePace, pinned by PlayerDisplayHarness and, for the bands,
+        // against UnderlinePace.BuildBands in WireCompat.
+        currentSyllableIn,
+        paceColourForRank,
+        paceSegmentLine,
+        paceRanksOf,
+        buildPaceBands,
+        paceColourCss,
         // The cell-state feedback (backlog 316): the space error dot rule and its pulse curve,
         // pure, so the display harness pins them against the desktop's SpaceErrorDotTest cases.
         isWordGap,

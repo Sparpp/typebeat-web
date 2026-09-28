@@ -48,7 +48,8 @@ function read(osuText, literate) {
             syllables: line.syllables.map(g => ({
                 startCell: g.startCell, endCellExclusive: g.endCellExclusive, startTime: g.startTime, endTime: g.endTime
             })),
-            cellSyllable: line.cellSyllable.slice()
+            cellSyllable: line.cellSyllable.slice(),
+            syllableMarkerCells: line.syllableMarkerCells.slice()
         }))
     };
 }

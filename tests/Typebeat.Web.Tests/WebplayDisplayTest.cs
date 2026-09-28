@@ -2296,4 +2296,45 @@ public class WebplayDisplayTest
             Assert.That(Num(rejected, "typos"), Is.Zero, "and landed no typo");
         });
     }
+
+    /// <summary>
+    /// THE SUNG-SYLLABLE HIGHLIGHT's feed (backlog 317), a port of <c>LyricStage.currentSyllableIn</c>,
+    /// on a SUBTIMED fixture: "abcd" [1000, 2000] with a mapper boundary at 1200, a breath, then
+    /// "ef" [2200, 2600]. The lit group is the FIRST whose inclusive [start, end] holds the time, so
+    /// the shared 1200 edge belongs to the earlier group, the breath between the words and the time
+    /// either side of the line light nothing. The same fixture pins the line's one syllable marker
+    /// (the subtimed word's interior boundary; the natural "ef" group is never marked), and the
+    /// class the lift adds: Untyped only, never a freestyle slot, and nothing on an abandoned, missed
+    /// or typed cell (LyricLineDisplay.CellFillColour).
+    /// </summary>
+    [Test]
+    public void TheSungSyllableFeedLightsTheGroupTheVocalIsInside()
+    {
+        var aids = Harness().GetProperty("syllableAids");
+        var groups = aids.GetProperty("groups").EnumerateArray().ToArray();
+
+        Assert.Multiple(() =>
+        {
+            // Cross-check of the fixture itself: the forced two-way split of "abcd", its group spans,
+            // and the natural "ef" group, with the space in no group.
+            Assert.That(groups.Select(g => g.GetProperty("startCell").GetInt32()), Is.EqualTo(new[] { 0, 1, 5 }));
+            Assert.That(groups.Select(g => g.GetProperty("endCellExclusive").GetInt32()), Is.EqualTo(new[] { 1, 4, 7 }));
+            Assert.That(groups.Select(g => g.GetProperty("startTime").GetDouble()), Is.EqualTo(new[] { 1000d, 1200d, 2200d }));
+            Assert.That(groups.Select(g => g.GetProperty("endTime").GetDouble()), Is.EqualTo(new[] { 1200d, 2000d, 2600d }));
+            Assert.That(JsHarness.Doubles(aids, "cellSyllable"), Is.EqualTo(new[] { 0d, 1d, 1d, 1d, -1d, 2d, 2d }));
+            Assert.That(JsHarness.Doubles(aids, "markers"), Is.EqualTo(new[] { 1d }), "one marker, at the subtimed word's interior boundary");
+
+            // Probes: 900, 999.9, 1000, 1100, 1200, 1200.1, 1999, 2000, 2100, 2199.9, 2200, 2600, 2600.1, 5000.
+            Assert.That(JsHarness.Doubles(aids, "sung"),
+                Is.EqualTo(new[] { -1d, -1d, 0d, 0d, 0d, 1d, 1d, 1d, -1d, -1d, 2d, 2d, -1d, -1d }));
+            Assert.That(Num(aids, "noLine"), Is.EqualTo(-1), "no line, nothing lit");
+
+            Assert.That(aids.GetProperty("classUntypedLit").GetString(), Is.EqualTo("tb-c tb-c-todo tb-c-sung"));
+            Assert.That(aids.GetProperty("classUntypedUnlit").GetString(), Is.EqualTo("tb-c tb-c-todo"));
+            Assert.That(aids.GetProperty("classAbandonedLit").GetString(), Does.Not.Contain("tb-c-sung"));
+            Assert.That(aids.GetProperty("classMissedLit").GetString(), Does.Not.Contain("tb-c-sung"));
+            Assert.That(aids.GetProperty("classCorrectLit").GetString(), Does.Not.Contain("tb-c-sung"));
+            Assert.That(aids.GetProperty("classFreestyleLit").GetString(), Does.Not.Contain("tb-c-sung"));
+        });
+    }
 }

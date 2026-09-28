@@ -1874,4 +1874,41 @@ out.cellFeedback = {
     rejectedKey: rejectedKeyRun()
 };
 
+// ---- syllable and pace reading aids (backlog 317) ----
+// A SUBTIMED word followed by a plain one: "abcd" [1000, 2000] carries mapper syllables ab
+// [1000, 1200] and cd [1200, 2000], then a 200 ms breath, then "ef" [2200, 2600]. The sung-syllable
+// feed (LyricStage.currentSyllableIn) is read at every edge: before the line, each group's own
+// inclusive edges (the shared 1200 goes to the EARLIER group, first match wins), the gap between
+// the words, and past the end.
+const subtimedOsu = OSU_HEADER +
+    '{"granularity":"syllable","version":2,"song_end_ms":4000}\n' +
+    '{"text":"abcd ef","start_ms":1000,"end_ms":2600,"words":[' +
+    '{"text":"abcd","start_ms":1000,"end_ms":2000,"score":1,"syllables":[{"text":"ab","start_ms":1000,"end_ms":1200},{"text":"cd","start_ms":1200,"end_ms":2000}]},' +
+    '{"text":"ef","start_ms":2200,"end_ms":2600,"score":1}]}\n';
+
+function syllableAids() {
+    const line = TB.buildBeatmap(TB.parseLyricOsu(subtimedOsu)).lines[0];
+    const probes = [900, 999.9, 1000, 1100, 1200, 1200.1, 1999, 2000, 2100, 2199.9, 2200, 2600, 2600.1, 5000];
+    const untyped = letterCell('c', 'untyped');
+    const freeCell = Object.assign(letterCell('c', 'untyped'), { freestyle: true });
+    return {
+        groups: line.syllables.map(g => ({ startCell: g.startCell, endCellExclusive: g.endCellExclusive, startTime: g.startTime, endTime: g.endTime })),
+        cellSyllable: line.cellSyllable.slice(),
+        markers: line.syllableMarkerCells.slice(),
+        probes: probes,
+        sung: probes.map(t => D.currentSyllableIn(line, t)),
+        noLine: D.currentSyllableIn(null, 1100),
+        // Which states the lift reaches (LyricLineDisplay.CellFillColour): Untyped only, and
+        // never a freestyle slot.
+        classUntypedLit: D.cellClass(untyped, false, false, false, true),
+        classUntypedUnlit: D.cellClass(untyped, false, false, false, false),
+        classAbandonedLit: D.cellClass(letterCell('c', 'abandoned'), false, false, false, true),
+        classMissedLit: D.cellClass(letterCell('c', 'missed'), false, false, false, true),
+        classCorrectLit: D.cellClass(Object.assign(letterCell('c', 'correct'), { judgeType: 'Great' }), false, false, false, true),
+        classFreestyleLit: D.cellClass(freeCell, false, false, false, true)
+    };
+}
+
+out.syllableAids = syllableAids();
+
 process.stdout.write(JSON.stringify(out));
