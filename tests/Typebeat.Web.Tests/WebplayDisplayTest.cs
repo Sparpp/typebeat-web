@@ -1388,6 +1388,30 @@ public class WebplayDisplayTest
         });
     }
 
+    /// <summary>
+    /// THE HP BAR (backlog 306): the fill is the health value in percent, clamped to the bar, and the
+    /// danger tint is on strictly below the desktop FailingLayer's low-health fraction, 0.2.
+    /// </summary>
+    [Test]
+    public void HealthBarFillsToTheHealthAndTintsBelowTheLowHealthThreshold()
+    {
+        var root = Harness();
+
+        Assert.That(Num(root, "lowHealthThreshold"), Is.EqualTo(0.2), "FailingLayer.low_health_threshold");
+
+        Assert.Multiple(() =>
+        {
+            foreach (var sample in root.GetProperty("healthBarSamples").EnumerateArray())
+            {
+                double health = Num(sample, "health");
+                double clamped = Math.Clamp(health, 0, 1);
+
+                Assert.That(Num(sample, "widthPct"), Is.EqualTo(clamped * 100), $"health {health}: width");
+                Assert.That(Flag(sample, "danger"), Is.EqualTo(clamped < 0.2), $"health {health}: danger tint");
+            }
+        });
+    }
+
     [Test]
     public void KeyToChar_TheRouterCarriesTheDeadKeyStateAcrossShift()
     {
@@ -1412,6 +1436,54 @@ public class WebplayDisplayTest
             // Shift+1 reaches the engine as the digit, and is swallowed.
             Assert.That(JsHarness.Strings(digit, "chars"), Is.EqualTo(new[] { "1" }));
             Assert.That(digit.GetProperty("prevented").GetBoolean(), Is.True);
+        });
+    }
+
+    /// <summary>
+    /// The bar reads the ACCOUNT and not the rejection streak it used to (backlog 306). Neither play
+    /// rejects a key, so the old read would have drawn both at 100% and untinted, which is what a
+    /// /play bar did through runs the desktop fails. A run of typos drains it, and a line nobody
+    /// typed takes it into the danger tint while the play is still alive.
+    /// </summary>
+    [Test]
+    public void HealthBarReadsTheAccountNotTheRejectionStreak()
+    {
+        var runs = Harness().GetProperty("healthBarRuns");
+        var typos = runs.GetProperty("typos");
+        var idle = runs.GetProperty("idle");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(typos, "streak"), Is.Zero, "typos: nothing was rejected");
+            Assert.That(Num(typos, "health"), Is.LessThan(1), "typos: the drain never reached the account");
+            Assert.That(Num(typos, "widthPct"), Is.EqualTo(Num(typos, "health") * 100), "typos: the bar is not the account");
+
+            Assert.That(Num(idle, "streak"), Is.Zero, "idle: nothing was rejected");
+            Assert.That(Flag(idle, "failed"), Is.False, "idle: the run should still be alive");
+            Assert.That(Num(idle, "widthPct"), Is.EqualTo(Num(idle, "health") * 100), "idle: the bar is not the account");
+            Assert.That(Flag(idle, "danger"), Is.True, "idle: the bar should be tinted below 20%");
+        });
+    }
+
+    /// <summary>
+    /// The start gate describes the HP bar the play really runs on (backlog 306), not the
+    /// 13-wrong-keys fail, which belongs to the rejection model a /play run cannot reach.
+    /// </summary>
+    [Test]
+    public void StartGateCopyDescribesTheHealthBar()
+    {
+        string hint = Harness().GetProperty("startGateHint").GetString()!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hint, Does.Not.Contain("13 wrong keys"), "the retired mash-streak promise");
+            Assert.That(hint, Does.Contain("your health"), "the bar is named");
+            Assert.That(hint, Does.Contain("refill"), "what fills it");
+            Assert.That(hint, Does.Contain("typos"), "what drains it: typos");
+            Assert.That(hint, Does.Contain("missed characters"), "what drains it: misses");
+            Assert.That(hint, Does.Contain("skipped words"), "what drains it: word skips");
+            Assert.That(hint, Does.Contain("fails if it empties"), "what an empty bar does");
+            Assert.That(hint, Does.StartWith("type the lyrics as they are sung"), "the rest of the brief is unchanged");
         });
     }
 }

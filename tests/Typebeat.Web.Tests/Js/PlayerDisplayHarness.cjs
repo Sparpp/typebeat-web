@@ -1262,7 +1262,46 @@ const out = {
     keyToChar: keyToCharTable(),
     routedDeadKeyComposes: routedDeadKeyComposes(),
     routedDeadKeyEnds: routedDeadKeyEnds(),
-    routedShiftDigit: routedShiftDigit()
+    routedShiftDigit: routedShiftDigit(),
+
+    // ---- the HP bar and the start gate (backlog 306) ----
+    healthBarSamples: [1, 0.5, 0.2, 0.19999, 0.05, 0, -0.1, 1.2].map(h => Object.assign({ health: h }, D.healthBar(h))),
+    lowHealthThreshold: D.LOW_HEALTH_THRESHOLD,
+    healthBarRuns: healthBarRuns(),
+    startGateHint: D.START_GATE_HINT
 };
+
+// THE HP BAR READS THE ACCOUNT (backlog 306). Two plays that never reject a key, so the rejection
+// streak the bar used to read stays at 0 throughout: abcdOsu with a wrong letter on every lyric
+// character, and a 43-cell line nobody types, whose seal takes the bar to 1 - 43 * 0.0225 = 0.0325,
+// alive and under the danger threshold. The bar has to follow the health account in both.
+function healthBarRuns() {
+    const idleOsu = OSU_HEADER +
+        '{"granularity":"word","version":2,"song_end_ms":12000}\n' +
+        JSON.stringify({
+            text: 'the quick brown fox jumps over the lazy dog', start_ms: 1000, end_ms: 10000,
+            words: 'the quick brown fox jumps over the lazy dog'.split(' ').map((w, i) => ({ text: w, start_ms: 1000 + i * 1000, end_ms: 2000 + i * 1000, score: 1 }))
+        }) + '\n';
+
+    function run(osuText, keys, until) {
+        const engine = new TB.TypingEngine(TB.buildBeatmap(TB.parseLyricOsu(osuText)));
+        engine.update(1000);
+
+        for (const [c, t] of keys) {
+            engine.update(t);
+            engine.processKey(c, t);
+        }
+
+        engine.update(until);
+
+        const bar = D.healthBar(engine.health);
+        return { health: engine.health, widthPct: bar.widthPct, danger: bar.danger, streak: engine.consecutiveWrongKeys, failed: engine.failed };
+    }
+
+    return {
+        typos: run(abcdOsu, [['x', 1000], ['x', 1500], [' ', 2000], ['x', 2000], ['x', 2500]], 9000),
+        idle: run(idleOsu, [], 20000)
+    };
+}
 
 process.stdout.write(JSON.stringify(out));

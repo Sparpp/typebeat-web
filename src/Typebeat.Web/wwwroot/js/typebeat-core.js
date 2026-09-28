@@ -2015,9 +2015,9 @@
     //      like the break in 2 it travels on no judgement result, so it is mirrored by hand at the
     //      same seam. Applied as a DELTA and pushing HighestCombo itself, for the reasons written on
     //      restoreCombo below.
-    //   4. TypeBeatPlayfield.onWrongKeyRejected -> the mash-guard HP drain only, which is why this
-    //      mirror has no counterpart for it beyond engine.consecutiveWrongKeys: the browser models
-    //      health as a derived read (see `health`), not as an account.
+    //   4. TypeBeatPlayfield.onWrongKeyRejected -> the mash-guard HP drain only, which moves
+    //      nothing in THIS account: it lands on the health account instead (HealthAccount below,
+    //      applyWrongKeyStreak), the browser's port of TypeBeatHealthProcessor.
     //   5. DrawableTypeBeatHitObject.ApplySealResults, when the engine seals a line: every
     //      still-unjudged cell resolves, in cell order, and then the LINE object itself resolves
     //      as IgnoreHit. IgnoreHit is not scorable, does not affect combo and does not affect
@@ -2045,8 +2045,8 @@
     //      it has no result to carry its break and mirrors it by hand; and the Misses those cells
     //      finally take at the seal must not take that break a second time, which is the same ledger
     //      as the typo in 5, redeemed in the same place but in the opposite direction (a break to
-    //      suppress rather than an increment). onAbandonReclaimed is not mirrored at all: it carries
-    //      health, and health here is a derived read rather than an account.
+    //      suppress rather than an increment). onAbandonReclaimed moves nothing here: it carries
+    //      health alone, and lands on the health account (HealthAccount below).
     //
     // Judgement rewind (ScoreProcessor.RevertResultInternal) has no counterpart: gameplay here is
     // never rewound, and neither is the desktop client's outside replay seeking.
@@ -2210,10 +2210,130 @@
     }
 
     // ---------------------------------------------------------------------------
+    // HealthAccount: the HP pool, mirroring TypeBeatHealthProcessor on top of osu's
+    // HealthProcessor (backlog 306). Before it the browser had no account at all: health was a
+    // read of the rejection streak, and the only fail was the 13-rejection branch, which a /play
+    // run can no longer reach. So a near-AFK or typo-drowned run played out and submitted
+    // passed=true, where the desktop fails the identical input (rank F, unranked, pp 0).
+    //
+    // HP moves NO score, accuracy or combo on either side: it only decides whether the run is
+    // allowed to finish, and from which result on the score stops counting (FailedAtJudgement, see
+    // applyCellResult). A surviving run's account is therefore untouched by it.
+    //
+    // RULE BY RULE, in the C#'s own order (TypeBeatHealthProcessor.cs):
+    //   applyResult          HealthProcessor.ApplyResultInternal: frozen once failed, else move
+    //                        by GetHealthIncreaseFor (Great/Ok/Meh recover, Miss drains, the unfixed
+    //                        typo and the line container are inert), clamp, then the default fail
+    //                        test. EVERY applied result runs the test, the inert ones included,
+    //                        which is why the seal's line container is applied here too.
+    //   applyWrongKeyStreak  ApplyWrongKeyStreak: 1/13 off the bar, and a fail at the streak
+    //                        threshold. NO freeze guard and NO empty test, exactly as the C#: a
+    //                        rejection can take the bar to 0 without failing, and the next
+    //                        result or deferred drain is what then notices.
+    //   applyDeferredDrain   applyDeferredDrain: one MISS_HEALTH_DRAIN per cell whose osu result is
+    //                        deferred (the typo at its keypress, the word skip per abandoned cell),
+    //                        then the empty test.
+    //   refundDeferredDrain  refundDeferredDrain: the same amount given back (typo erased, skipped
+    //                        cells reclaimed or about to take their seal Miss), clamped at full.
+    //
+    // THE CLAMP is BindableDouble's own ([0, 1], Health.MinValue / MaxValue), applied on every
+    // write, so a refund into a full bar banks nothing and a drain past empty stops at 0.
+    //
+    // THE EMPTY TEST is osu-framework's Precision.AlmostBigger(Health.MinValue, Health.Value),
+    // i.e. `0 > value - DOUBLE_EPSILON`: the bar counts as empty within 1e-7 of zero.
+    //
+    // THE VETO is HealthProcessor.Failed (`Failed?.Invoke() != false`): a handler answering false
+    // refuses the fail and leaves the bar live, which is how osu's No Fail works. /play sets no
+    // handler, so every fail it reaches is taken; the parity sweep sets one that refuses, so its
+    // runs play out in full against a desktop scorer that simulates no health at all.
+    // ---------------------------------------------------------------------------
+    const WRONG_KEY_FAIL_STREAK = 13;                        // TypeBeatHealthProcessor.WRONG_KEY_FAIL_STREAK
+    const GREAT_HEALTH_INCREASE = 0.03;                      // TypeBeatHealthProcessor.GREAT_HEALTH_INCREASE
+    const OK_HEALTH_INCREASE = 0.025;                        // TypeBeatHealthProcessor.OK_HEALTH_INCREASE
+    const MEH_HEALTH_INCREASE = 0.02;                        // TypeBeatHealthProcessor.MEH_HEALTH_INCREASE
+    const MISS_HEALTH_DRAIN = 0.0225;                        // TypeBeatHealthProcessor.MISS_HEALTH_DRAIN
+    const WRONG_KEY_HP_DRAIN = 1.0 / WRONG_KEY_FAIL_STREAK;  // TypeBeatHealthProcessor.WRONG_KEY_HP_DRAIN
+    const HEALTH_EPSILON = 1e-7;                             // osu.Framework.Utils.Precision.DOUBLE_EPSILON
+
+    // Precision.AlmostBigger(double, double), with its default acceptable difference.
+    function almostBigger(value1, value2) { return value1 > value2 - HEALTH_EPSILON; }
+
+    // TypeBeatHealthProcessor.GetHealthIncreaseFor, keyed on the osu RESULT alone (the same five
+    // keys the score mirror uses, plus null for the line container's IgnoreHit). 'good' is the
+    // unfixed typo (TypeBeatResultMapping.UNFIXED_TYPO), HP-inert because its whole cost was
+    // charged at the keypress that typed it.
+    function healthIncreaseFor(result) {
+        switch (result) {
+            case 'great': return GREAT_HEALTH_INCREASE;
+            case 'ok': return OK_HEALTH_INCREASE;
+            case 'meh': return MEH_HEALTH_INCREASE;
+            case 'miss': return -MISS_HEALTH_DRAIN;
+            default: return 0;
+        }
+    }
+
+    class HealthAccount {
+        constructor(onFailed) {
+            this.value = 1;              // HealthProcessor.Health
+            this.hasFailed = false;      // HealthProcessor.HasFailed
+            // HealthProcessor.Failed: an optional veto. Null, or anything but `false`, lets the fail
+            // through (see THE VETO above).
+            this.failed = null;
+            this.onFailed = onFailed || null;
+        }
+
+        // Health.Value = v, through the bindable's [0, 1] clamp.
+        set(v) { this.value = Math.min(1, Math.max(0, v)); }
+
+        // HealthProcessor.TriggerFailure.
+        triggerFailure() {
+            if (this.hasFailed) return;
+            if (this.failed !== null && this.failed() === false) return;
+
+            this.hasFailed = true;
+            if (this.onFailed) this.onFailed();
+        }
+
+        // HealthProcessor.ApplyResultInternal + CheckDefaultFailCondition. `result` is the cell's
+        // osu result key, or null for the line container a seal resolves last.
+        applyResult(result) {
+            if (this.hasFailed) return;
+
+            this.set(this.value + healthIncreaseFor(result));
+
+            if (almostBigger(0, this.value)) this.triggerFailure();
+        }
+
+        // TypeBeatHealthProcessor.ApplyWrongKeyStreak.
+        applyWrongKeyStreak(streak) {
+            this.set(this.value - WRONG_KEY_HP_DRAIN);
+
+            if (streak >= WRONG_KEY_FAIL_STREAK) this.triggerFailure();
+        }
+
+        // TypeBeatHealthProcessor.applyDeferredDrain (ApplyTypoDrain is one cell,
+        // ApplyAbandonDrain is the abandoned count).
+        applyDeferredDrain(cells) {
+            if (this.hasFailed || cells <= 0) return;
+
+            this.set(this.value - MISS_HEALTH_DRAIN * cells);
+
+            if (almostBigger(0, this.value)) this.triggerFailure();
+        }
+
+        // TypeBeatHealthProcessor.refundDeferredDrain (RefundTypoDrain is one cell,
+        // RefundAbandonDrain is the count that left the abandoned state).
+        refundDeferredDrain(cells) {
+            if (this.hasFailed || cells <= 0) return;
+
+            this.set(this.value + MISS_HEALTH_DRAIN * cells);
+        }
+    }
+
+    // ---------------------------------------------------------------------------
     // TypingEngine: the frame-driven gameplay/judgement core.
     // ---------------------------------------------------------------------------
     const COMBO_CAP = 50;
-    const WRONG_KEY_FAIL_STREAK = 13;
 
     // TypingEngine.FLETCHER_MAX_CHARS_AHEAD: how many COUNTABLE characters (typeable and not a
     // space) the caret may sit ahead of the playhead before a keypress stops earning combo. The
@@ -2347,7 +2467,10 @@
             this.wpmClockArmedAt = 0;
             this.lastUpdateTime = null;
             this.finished = false;
-            this.failed = false;
+            // The HP pool (backlog 306, see HealthAccount): the stand-in for the
+            // TypeBeatHealthProcessor a Player would cache, fed at the seams TypeBeatPlayfield and
+            // TypeBeatHealthFeed feed the real one. `failed` below is read off it.
+            this.healthAccount = new HealthAccount(() => { if (this.onFailed) this.onFailed(); });
             this.counts = {};                 // JudgementType -> count (scored only)
             // The osu-side account the SUBMITTED score is read off (computeScore); the stand-in for
             // the TypeBeatScoreProcessor a Player would cache. Fed incrementally from here, exactly
@@ -2566,16 +2689,15 @@
             this.onFailed = null;
         }
 
-        // The mash guard. The streak only ever grows on the REJECTION path, and backlog 184 took the
-        // last key the browser could reach it with off that path: a mid-word space is typed through
-        // now, so a browser player mashing the spacebar spells the line wrong rather than failing at
-        // 13. That is the desktop's live behaviour too, and the guard is not weakened by it: it
-        // belongs to Gatekeeper, where every wrong key is still rejected, and the browser can never
-        // be in that model. It used to be three cases, and the other two went the same way: a wrong
-        // letter on the WORD GAP moved onto the type-through path in backlog 181, and a wrong letter
-        // anywhere else in backlog 107. What still rejects here is the space key on a FREESTYLE slot,
-        // which is not a key a player can mash a fail out of (the slot takes every other character).
-        get health() { return Math.max(0, 1 - this.consecutiveWrongKeys / WRONG_KEY_FAIL_STREAK); }
+        // The HP bar the HUD draws: the health account's value (HealthProcessor.Health), in [0, 1].
+        // Until backlog 306 this was a read of the rejection streak, which a /play run can no longer
+        // grow (every wrong letter and every mid-word space is typed through or consumed by the word
+        // skip), so the bar sat at full whatever the player did.
+        get health() { return this.healthAccount.value; }
+
+        // Whether the run has failed (HealthProcessor.HasFailed). Read by processKey, update and
+        // computeScore, and by typebeat-player.js, which concludes the play on it.
+        get failed() { return this.healthAccount.hasFailed; }
 
         // Wrong KEYPRESSES so far: the play's persisted mistype stat (TypingEngine.Mistypes).
         // Counted per keypress in BOTH models, so it means the same thing whether the key was
@@ -2994,10 +3116,27 @@
         // result and every later attempt on the same cell is dropped (`if (Judged) return;`). Every
         // processor.applyResult in this engine goes through here, so the submitted account can never
         // hold two entries for one cell however the play reaches it.
+        //
+        // The same one result is the one the HEALTH processor takes, so this is also where HP
+        // recovers and where a seal Miss drains. The result is the AWARDED tier's, so a fix the
+        // backlog 210 cap holds to Ok recovers OK_HEALTH_INCREASE however well it was timed, exactly
+        // as on the desktop.
+        //
+        // HEALTH FIRST, then score, which is Player's own order (DrawableRuleset.NewResult) and is
+        // not cosmetic: HealthProcessor stamps every result with JudgementResult.FailedAtJudgement
+        // (whether the play had ALREADY failed when it arrived), and ScoreProcessor drops a result
+        // so stamped. So the result that empties the bar still counts, and every result after it
+        // (the rest of a failing seal, the word gap a failing skip's space lands on) reaches the
+        // cell but not the submitted account.
         applyCellResult(cell, result) {
             if (cell.judged) return;
             cell.judged = true;
-            this.processor.applyResult(result, cell);
+
+            const failedAtJudgement = this.healthAccount.hasFailed;
+
+            this.healthAccount.applyResult(result);
+
+            if (!failedAtJudgement) this.processor.applyResult(result, cell);
         }
 
         sealLine(idx) {
@@ -3013,6 +3152,10 @@
             // (backlog 259, see runPositions). Meaningless while unforeseen is 0, which is exactly
             // when nothing reads it.
             let lastUnforeseenCell = -1;
+
+            // The cells a word skip had abandoned and nobody reclaimed (the C#'s `abandoned` list,
+            // raised as AbandonSealed): their skip drain is refunded before their Miss results land.
+            let phantoms = 0;
 
             // PASS ONE, the C#'s own seal loop (TypingEngine.Update): resolve the STATES and count,
             // and nothing else. The results are a second pass now, because the seal's one combo
@@ -3047,6 +3190,8 @@
                     if (!phantom) {
                         unforeseen++;
                         lastUnforeseenCell = i;
+                    } else {
+                        phantoms++;
                     }
                 }
             }
@@ -3110,12 +3255,24 @@
             // caret never going back.
             if (this.restorable !== null && this.restorable.lineIndex === idx) this.restorable = null;
 
+            // TypeBeatPlayfield.onAbandonSealed -> TypeBeatHealthFeed: the skip drained each phantom
+            // cell at the keypress, and the Miss each is about to take below drains again, so the
+            // skip's drain is given back FIRST (the C# raises AbandonSealed before LineSealed). The
+            // pair nets to one charge per cell, unless the bar was clamped at full in between.
+            this.healthAccount.refundDeferredDrain(phantoms);
+
             for (const c of line.cells) {
                 if (!c.typeable || c.judged) continue;
 
                 this.processor.markComboNeutral(c);
                 this.applyCellResult(c, c.state === 'wrong' ? 'good' : 'miss');
             }
+
+            // DrawableTypeBeatHitObject.ApplySealResults' last act: the LINE object resolves as
+            // IgnoreHit. Inert on the score account (not modelled there at all), but not on the
+            // health one: HealthProcessor runs its fail test on EVERY applied result, so a bar a
+            // run of rejections left at 0 fails here even if the line took nothing else.
+            this.healthAccount.applyResult(null);
         }
 
         // TypingEngine.discardRestorableStreak. A combo break that is nobody's fixable typo just
@@ -3440,11 +3597,15 @@
             // TypeBeatPlayfield.onWordAbandoned: the skip's one break on the SUBMITTED account, by
             // hand. It used to ride on the Miss the first abandoned cell took here; those results
             // now arrive at the seal, a whole line later, so with nothing left to carry the break
-            // this seam carries it, exactly as the wrong-keypress path carries its own. The other
-            // half of the C# seam is HEALTH (MISS_HEALTH_DRAIN per cell, refunded at either exit
-            // from the phantom state), which has no counterpart here: the browser models health as
-            // a derived read off consecutiveWrongKeys (see `health`), not as an account.
+            // this seam carries it, exactly as the wrong-keypress path carries its own.
             this.processor.breakCombo();
+
+            // The other half of the same C# seam (TypeBeatHealthFeed on WordAbandoned): HEALTH
+            // drains MISS_HEALTH_DRAIN per abandoned cell now, at the skip, and gives it back at
+            // whichever exit the cells take (the backspace that reclaims them, or the seal about to
+            // miss them). Taken HERE, before the same press is judged on the word gap below, because
+            // the C# drains before it recovers and the bar clamps at full in between.
+            this.healthAccount.applyDeferredDrain(abandoned.length);
 
             // NO onCharJudged for the abandoned cells, deliberately, and the omission mirrors the
             // wrong-char path above: that hook is this renderer's rolling-WPM tap, and the C#
@@ -3457,6 +3618,17 @@
         }
 
         update(time) {
+            // (0) A FAILED run is frozen (backlog 306). The desktop fails inside whatever is being
+            // processed (a keypress, or one of a seal's results), and Player.PerformFail SCHEDULES
+            // ConcludeFailedScore rather than running it, so the step that failed runs to its end:
+            // the rest of that seal pass, and every other line the same Engine.Update seals, is still
+            // judged. None of it reaches the SUBMITTED account, though: each of those results arrives
+            // stamped FailedAtJudgement and ScoreProcessor drops it (see applyCellResult). That is
+            // this update() call running to its end, which is why the guard sits HERE, at the entry
+            // of the NEXT one, and not inside the seal loop. processKey carries the same guard, and
+            // typebeat-player.js concludes at the end of the tick.
+            if (this.failed) return;
+
             // (1) accrue active typing time using this frame's span.
             //
             // The C# TypingEngine.Update takes a clockRate here and accrues dt / rate, because a
@@ -3667,9 +3839,9 @@
         // left.
         //
         // The guard is the C# one verbatim, with no `failed` arm even though processKey has one:
-        // that flag is this file's own (the desktop fails a masher outside the engine), and a skip
-        // moves nothing judged, so refusing it there would buy nothing and would be a rule the C#
-        // does not have.
+        // that flag is the health account's (the desktop freezes a failed play outside the engine,
+        // in Player), and a skip moves nothing judged, so refusing it there would buy nothing and
+        // would be a rule the C# does not have.
         processEnter(time) {
             if (this.finished || this.activeLineIndex < 0) return false;
 
@@ -3951,6 +4123,15 @@
                     // are in, so logging a wrong char here would drift the browser's WPM readout
                     // away from the desktop's.
                     //
+                    // HEALTH is charged here, at the keypress (backlog 166: TypeBeatHealthFeed on
+                    // CharJudged(WrongChar) -> ApplyTypoDrain), and refunded if the character is
+                    // erased; the unfixed typo the seal resolves later is HP-inert. It cannot hang
+                    // off onCharJudged, which this branch never raises (see above). The C# raises that
+                    // judgement for EVERY typed-through wrong key, a second letter overwriting a
+                    // PARKED gap typo included, so the drain is taken every time too, and the erase
+                    // later refunds one.
+                    this.healthAccount.applyDeferredDrain(1);
+                    //
                     // A typo on the line's LAST cell finishes it exactly as a correct press would
                     // (the character is finished, it is simply wrong), so this path rolls the caret
                     // forward too, at the same seam the C# does it.
@@ -3981,10 +4162,10 @@
                 this.counts.WrongChar = (this.counts.WrongChar || 0) + 1;
                 if (this.onComboBroken) this.onComboBroken();
                 if (this.onWrongKey) this.onWrongKey(c, this.caretIndex);
-                if (this.consecutiveWrongKeys >= WRONG_KEY_FAIL_STREAK) {
-                    this.failed = true;
-                    if (this.onFailed) this.onFailed();
-                }
+                // TypeBeatPlayfield.onWrongKeyRejected -> TypeBeatHealthFeed -> ApplyWrongKeyStreak:
+                // 1/13 of the bar, and the mash fail at WRONG_KEY_FAIL_STREAK. The fail is the
+                // account's (a No Fail veto can refuse it), where this branch used to set it itself.
+                this.healthAccount.applyWrongKeyStreak(this.consecutiveWrongKeys);
                 return true;
             }
 
@@ -4206,11 +4387,10 @@
         // The line's own abandonment goes with the skip (lineAbandoned): the flag exists to hold the
         // line open, past its deadline, for the misses the player walked away from, and there is
         // nothing left to hold it open for once they have walked back. An ABANDONED word caught in
-        // the tail is re-opened the way processBackspace's own walk re-opens one; the C# raises
-        // AbandonReclaimed for the HEALTH refund there, which this mirror has no counterpart for on
-        // either backspace path, because the browser models health off consecutiveWrongKeys rather
-        // than as an account. Its combo still comes back at the retype, which is what the claim left
-        // in place is for.
+        // the tail is re-opened the way processBackspace's own walk re-opens one, and the C# raises
+        // AbandonReclaimed for it, which carries the HEALTH refund of what the skip drained (landed
+        // on the account below, after the caret has moved, where the C# raises it). Its combo still
+        // comes back at the retype, which is what the claim left in place is for.
         stepBackIntoLine(index) {
             const cells = this.lines[index].cells;
 
@@ -4225,7 +4405,11 @@
                 }
             }
 
+            let reclaimed = 0;
+
             for (let i = frontier; i < cells.length; i++) {
+                if (cells[i].state === 'abandoned') reclaimed++;
+
                 if (cells[i].state === 'abandoned' || cells[i].state === 'autoskip') {
                     cells[i].state = 'untyped';
                     cells[i].judgeType = null;
@@ -4237,6 +4421,9 @@
             this.activeLineIndex = index;
             this.caretIndex = frontier;
             this.autoSkipForward();
+
+            // AbandonReclaimed -> TypeBeatHealthFeed -> RefundAbandonDrain.
+            this.healthAccount.refundDeferredDrain(reclaimed);
         }
 
         // TypingEngine.ProcessBackspace. Erase the most recent typed cell within the active line,
@@ -4311,10 +4498,9 @@
             //
             // Keyed on the STATE rather than on an era flag, exactly as the C# keys it: only the park
             // ever leaves the caret sitting on a wrong cell, because everywhere else resolving a cell
-            // is how the caret got past it. The C# raises TypoErased here, which this mirror has no
-            // counterpart for on either backspace path: that event carries the HEALTH refund of the
-            // drain a typo took, and the browser models health as a read off consecutiveWrongKeys
-            // rather than as an account.
+            // is how the caret got past it. The C# raises TypoErased here, which carries the HEALTH
+            // refund of the drain the typo took (TypeBeatHealthFeed -> RefundTypoDrain): ONE drain
+            // back, however many letters the park took, since the C# drained on each of them.
             if (this.caretIndex < cells.length && cells[this.caretIndex].state === 'wrong') {
                 const parked = cells[this.caretIndex];
 
@@ -4323,6 +4509,7 @@
                 parked.judgedDelta = null;
                 parked.judgeType = null;
                 // firstCorrectDelta intentionally retained, as on the erase below.
+                this.healthAccount.refundDeferredDrain(1);
                 return true;
             }
 
@@ -4338,8 +4525,7 @@
 
             // Un-skip the punctuation and re-open the abandoned cells we stepped back over. The C#
             // announces the reclaimed ones on AbandonReclaimed, which carries HEALTH alone (the
-            // refund of what the skip drained); the browser has no health account, so there is
-            // nothing for this mirror to raise.
+            // refund of what the skip drained, landed on the account below at the C#'s raise sites).
             for (let i = target + 1; i < this.caretIndex; i++) {
                 if (cells[i].state === 'autoskip' || cells[i].state === 'abandoned') {
                     cells[i].state = 'untyped';
@@ -4355,16 +4541,27 @@
                 // caret back at the head of the word it just re-opened.
                 this.caretIndex = 0;
                 this.autoSkipForward();
+                this.healthAccount.refundDeferredDrain(reclaimed);
                 return true;
             }
 
             const cell = cells[target];
+
+            // Read BEFORE the cell is cleared, as the C# reads it: a wrong character is being taken
+            // back, which is the erase TypoErased (and so the health refund) is raised for.
+            const erasedTypo = cell.state === 'wrong';
+
             cell.state = 'untyped';
             cell.typedChar = null;
             cell.judgedDelta = null;
             cell.judgeType = null;
             // firstCorrectDelta intentionally retained (inert-retype guard).
             this.caretIndex = target;
+
+            // The C#'s raise order, reclaim first and then the typo, which the clamp at full makes
+            // observable in the last bit of the bar.
+            this.healthAccount.refundDeferredDrain(reclaimed);
+            if (erasedTypo) this.healthAccount.refundDeferredDrain(1);
             return true;
         }
 
@@ -4648,8 +4845,15 @@
             // the same numbers the game's own FletcherEngineTest does rather than transcribing them.
             FLETCHER_MAX_CHARS_AHEAD, FLETCHER_DRAG_GRACE_MS,
             // The first line's head start (PR 2), exported for the same reason.
-            FIRST_LINE_LEAD_MS
+            FIRST_LINE_LEAD_MS,
+            // The HP pool (backlog 306), exported so the cross-repo parity test holds each one
+            // against the TypeBeatHealthProcessor constant it mirrors, and the empty test's
+            // epsilon against osu-framework's own Precision.DOUBLE_EPSILON.
+            GREAT_HEALTH_INCREASE, OK_HEALTH_INCREASE, MEH_HEALTH_INCREASE, MISS_HEALTH_DRAIN,
+            WRONG_KEY_HP_DRAIN, HEALTH_EPSILON
         },
+        // Precision.AlmostBigger with its default difference, exported for the same pin.
+        almostBigger,
         // PausedWord (PR 2): the authored-pause derivation, exported so the harnesses can hold it
         // against the game's own PausedWord and TypingLine.
         usableRests, pausedWordOf, tokenCellTargets,

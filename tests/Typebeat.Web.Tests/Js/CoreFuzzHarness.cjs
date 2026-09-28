@@ -21,14 +21,18 @@
 // feed consumes frames in list order as the clock passes them, so an out-of-order frame would be
 // applied at a time the recorded run never had, on both sides equally but for no useful reason.
 //
-// THE SECOND IS A CAP ON REJECTED KEYS, and it is back. The browser fails a play at 13 consecutive
-// rejections (WRONG_KEY_FAIL_STREAK) while TypeBeatReplayScorer simulates no health at all and would
-// carry on, so the generator stays clear of that streak rather than pinning a difference that is by
-// design. Backlog 184 had made it moot (the mid-word space was the last key any fixture could be
-// rejected on, and it is typed through now), and the note left behind said a fixture with a
-// FREESTYLE slot, the one cell that still refuses the space key, would need it back. Backlog 209
-// added exactly that fixture, so the cap is restored, in the narrowest form that reaches it: a space
-// about to be the streak's last rejection is swapped for a key the slot accepts.
+// THERE IS NO LONGER A CAP ON REJECTED KEYS (backlog 306). There used to be one: the browser failed a
+// play at 13 consecutive rejections while TypeBeatReplayScorer simulates no health at all and carries
+// on, so the generator swapped the space that would have been the 13th for a key the slot accepts.
+// Since backlog 306 the browser has a real HP pool, and a fail can come from far more than the mash
+// streak, so a cap on one road to it would have been the wrong tool anyway. Instead every engine here
+// plays under the pool's own NO FAIL veto (HealthAccount.failed answering false, osu's
+// HealthProcessor.Failed): the bar keeps moving, nothing freezes, and every run plays out in full on
+// both sides whatever it does to the bar. What the veto REFUSED is counted, and the HEALTH ARM
+// (EngineFuzzLiveParityTest.EveryGeneratedRunDrainsTheSameBar) holds the bar after every keystroke,
+// the refusals and the first one's instant against the desktop's real TypeBeatHealthProcessor under
+// the same veto. The cap had never fired on the committed seeds (no generated run got past a streak
+// of two), so removing it changed no stream.
 //
 // Usage: node CoreFuzzHarness.cjs <absolute path to typebeat-core.js>
 
@@ -404,6 +408,9 @@ function generate(name, seed, spaceSkipsWord) {
     const engine = new TB.TypingEngine(build(name));
     engine.spaceSkipsWord = spaceSkipsWord;
 
+    // NO FAIL (see the header): the throwaway engine never stops generating on a fail either.
+    engine.healthAccount.failed = () => false;
+
     const keys = [];
     let skipPresses = 0;
     let t = 0;
@@ -499,17 +506,6 @@ function generate(name, seed, spaceSkipsWord) {
             ch = LETTERS[Math.floor(rnd() * LETTERS.length)];
         } else {
             ch = cell.expected;
-        }
-
-        // The rejection cap (see the header): a space is the one key a FREESTYLE slot still refuses,
-        // and the browser fails a play at WRONG_KEY_FAIL_STREAK consecutive rejections while the C#
-        // scorer simulates no health at all. Stop one short of that streak by pressing a key the slot
-        // takes instead, which also resets the count rather than merely dodging it. With the skip
-        // setting on the space never reaches the slot at all (the word skip consumes it), so the
-        // guard is scoped to the arm that can reject.
-        if (ch === ' ' && cell.freestyle && !spaceSkipsWord
-            && engine.consecutiveWrongKeys + 1 >= TB.constants.WRONG_KEY_FAIL_STREAK) {
-            ch = LETTERS[Math.floor(rnd() * LETTERS.length)];
         }
 
         // Press at the cell's own target plus an offset, never earlier than the clock already is.
@@ -774,23 +770,72 @@ function play(name, keys, spaceSkipsWord) {
         return rushed;
     };
 
+    // THE HEALTH ARM (backlog 306). The run plays under the pool's NO FAIL veto (see the header), so
+    // it finishes in full like the desktop scorer's; what the veto refused is counted, and the instant
+    // (the clock of the engine call it happened inside) of the first refusal kept. The bar is read
+    // after every keystroke and once at the end, and the lowest it went, and the account's five
+    // moves are counted so the C# side can prove the sweep reaches each of them. The spies forward
+    // every argument (the rule rushesPastCap's spy below states).
+    let failRequests = 0;
+    let firstFailRequestAt = null;
+    let clock = 0;
+    const healthAfterKeys = [];
+    let minHealth = 1;
+    let oneCellDrains = 0, multiCellDrains = 0, refunds = 0, clampedRefunds = 0, rejectionDrains = 0;
+    const account = engine.healthAccount;
+
+    account.failed = () => {
+        failRequests++;
+        if (firstFailRequestAt === null) firstFailRequestAt = clock;
+        return false;
+    };
+
+    const applyDeferredDrain = account.applyDeferredDrain.bind(account);
+    account.applyDeferredDrain = function (cells, ...rest) {
+        if (cells === 1) oneCellDrains++;
+        else if (cells > 1) multiCellDrains++;
+        return applyDeferredDrain(cells, ...rest);
+    };
+
+    const refundDeferredDrain = account.refundDeferredDrain.bind(account);
+    account.refundDeferredDrain = function (cells, ...rest) {
+        if (cells > 0) {
+            refunds++;
+            if (account.value + TB.constants.MISS_HEALTH_DRAIN * cells > 1) clampedRefunds++;
+        }
+        return refundDeferredDrain(cells, ...rest);
+    };
+
+    const applyWrongKeyStreak = account.applyWrongKeyStreak.bind(account);
+    account.applyWrongKeyStreak = function (...args) {
+        rejectionDrains++;
+        return applyWrongKeyStreak(...args);
+    };
+
     const end = endTimeFor(beatmap, keys);
     let next = 0;
 
     // ReplayEngineFeed.Apply: update(frame time) FIRST, then the key.
     function apply(frame) {
+        clock = frame[0];
         engine.update(frame[0]);
         if (frame[1] === '\b') engine.processBackspace();
         else engine.processKey(frame[1], frame[0]);
+        healthAfterKeys.push(engine.health);
+        minHealth = Math.min(minHealth, engine.health);
     }
 
     for (let now = 0; now <= end; now += FRAME_MS) {
         while (next < keys.length && keys[next][0] <= now) { apply(keys[next]); next++; }
+        clock = now;
         engine.update(now);
+        minHealth = Math.min(minHealth, engine.health);
     }
 
     while (next < keys.length) { apply(keys[next]); next++; }
+    clock = end;
     engine.update(end);
+    minHealth = Math.min(minHealth, engine.health);
 
     const score = TB.computeScore(engine);
 
@@ -826,7 +871,20 @@ function play(name, keys, spaceSkipsWord) {
         refusedRolls: refusedRolls,
         lineStepBacks: lineStepBacks,
         leadInOpens: leadInOpens,
-        pauseJudgements: pauseJudgements
+        pauseJudgements: pauseJudgements,
+        // The health arm (backlog 306).
+        health: {
+            afterKeys: healthAfterKeys,
+            atEnd: engine.health,
+            min: minHealth,
+            failRequests: failRequests,
+            firstFailRequestAt: firstFailRequestAt,
+            oneCellDrains: oneCellDrains,
+            multiCellDrains: multiCellDrains,
+            refunds: refunds,
+            clampedRefunds: clampedRefunds,
+            rejectionDrains: rejectionDrains
+        }
     };
 }
 
@@ -1207,6 +1265,16 @@ const SCRIPTED = [
         name: 'scripted/pausedSpans', fixture: 'pausedWords', spaceSkipsWord: false, skipPresses: 0,
         keys: [[950, 't'], [1100, 'o'], [1200, 'n'], [1290, 'i'], [1750, 'g'], [2000, 'h'], [2300, 't'],
                [2400, ' '], [2400, 'f'], [2600, 'o'], [2900, 'r'], [2940, 'e'], [3150, 'v'], [3500, 'e'], [3700, 'r']]
+    },
+    {
+        // Backlog 306, THE MASH UNDER NO FAIL: fifteen spaces rejected by the freestyle slot the
+        // instant it opens. The pool drains 1/13 on each and asks to fail on the 13th, 14th and 15th,
+        // which the veto refuses, so the bar sits at 0 and the run plays on: the slot is then filled,
+        // and every press after it recovers from EMPTY. The generator never rolls a streak past two,
+        // so without this case the sweep would never reach the fail request or a bar at 0.
+        name: 'scripted/mashUnderNoFail', fixture: 'freestyleStretch', spaceSkipsWord: false, skipPresses: 0,
+        keys: Array.from({ length: 15 }, (_, i) => [1000 + i, ' '])
+            .concat([[1100, 'q'], [2000, 'q'], [3000, 'q'], [4000, 'q'], [5000, ' '], [5000, 'a'], [6000, 'a']])
     }
 ];
 

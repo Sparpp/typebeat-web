@@ -237,6 +237,25 @@
         return { completion: seen > 0 ? hit / seen : 1 };
     }
 
+    // THE HP BAR (backlog 306). The fill is the engine's health account (engine.health, the port of
+    // TypeBeatHealthProcessor's Health), and the danger tint comes on below LOW_HEALTH_THRESHOLD,
+    // the fraction the desktop's FailingLayer calls low health. Only the tint is borrowed: that
+    // layer's red vignette never shows for a processor with no passive drain, which this one is, so
+    // the browser adds none either. It used to read the rejection streak, which no /play key can
+    // grow any more, so the bar sat full through a run the desktop would fail.
+    const LOW_HEALTH_THRESHOLD = 0.2;       // FailingLayer.low_health_threshold
+
+    function healthBar(health) {
+        const clamped = Math.min(1, Math.max(0, health));
+        return { widthPct: clamped * 100, danger: clamped < LOW_HEALTH_THRESHOLD };
+    }
+
+    // The start gate's one-line brief. The HP clause describes the account the play really runs on
+    // (see healthBar): it used to promise a 13-wrong-keys fail, the rejection model's mash guard,
+    // which a /play run cannot reach.
+    const START_GATE_HINT = 'type the lyrics as they are sung · the blue underline is the vocal, the bar under the next line counts you in · '
+        + 'the thin bar under the stats is your health: characters typed right refill it, missed characters, typos and skipped words drain it, and the run fails if it empties';
+
     /// The class list for a cell's span. Pure (state in, string out).
     function cellClass(cell, isCaret, popping) {
         let cls = 'tb-c';
@@ -1645,8 +1664,9 @@
             accEl.textContent = Math.round(stats.completion * 100) + '%';
             wpmEl.textContent = Math.round(rolling.value(engine.liveWpm));
 
-            healthFill.style.width = (engine.health * 100) + '%';
-            healthFill.classList.toggle('tb-health-danger', engine.consecutiveWrongKeys >= 8);
+            const bar = healthBar(engine.health);
+            healthFill.style.width = bar.widthPct + '%';
+            healthFill.classList.toggle('tb-health-danger', bar.danger);
 
             if (audioBuffer) {
                 const p = Math.max(0, Math.min(1, time / (audioBuffer.duration * 1000)));
@@ -1735,7 +1755,7 @@
             const card = el('div', 'tb-card');
             card.appendChild(el('div', 'tb-card-title', escapeHtml(title)));
             if (artist) card.appendChild(el('div', 'tb-card-sub', escapeHtml(artist)));
-            card.appendChild(el('div', 'tb-card-hint', 'type the lyrics as they are sung · the blue underline is the vocal, the bar under the next line counts you in · 13 wrong keys in a row and you fail'));
+            card.appendChild(el('div', 'tb-card-hint', START_GATE_HINT));
             const btn = el('button', 'tb-btn tb-btn-primary', label || 'press space to start');
             card.appendChild(btn);
             overlay.appendChild(card);
@@ -1905,6 +1925,11 @@
         // Keystroke to character (backlog 309), pinned by the display harness and held against
         // the game's KeyCharMap by WireCompat's KeyToCharParityTest.
         keyToChar,
+        // The HP bar and the start gate's copy (backlog 306), exported so the display harness pins
+        // the bar's read of the health account and the copy's HP clause.
+        healthBar,
+        START_GATE_HINT,
+        LOW_HEALTH_THRESHOLD,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,

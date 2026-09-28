@@ -1324,4 +1324,156 @@ public class EngineFuzzLiveParityTest
 
         return TypeBeatReplayScorer.Score(Map(GranularityOf("syllableWords"), Fixture("syllableWords")), Array.Empty<Mod>(), replay, TypoRule.Deferred, ComboRestoreRule.OnFix);
     }
+
+    #region The health arm (backlog 306)
+
+    /// <summary>
+    /// One case played through <see cref="LiveHealthArm"/> under NO FAIL, fed exactly as
+    /// <see cref="TypeBeatReplayScorer"/> feeds its engine (the display-cadence loop, each due key as
+    /// <c>Update(time)</c> then the key), which is also exactly how the harness plays the browser's.
+    /// </summary>
+    private sealed record HealthRun(List<double> AfterKeys, double AtEnd, double Min, int FailRequests, double? FirstFailRequestAt, ScoreInfo Account);
+
+    private static HealthRun PlayHealth(string fixture, JsonElement keys, bool spaceSkipsWord)
+    {
+        var lines = Fixture(fixture);
+        var engine = HealthLiveParityTest.LiveEngine(new LyricBeatmap
+        {
+            Metadata = new LyricBeatmapMetadata { Artist = "a", Title = "t", FolderPath = @"X:\nowhere", AudioFileName = "a.mp3" },
+            Lines = lines,
+            Granularity = GranularityOf(fixture),
+        }, spaceSkipsWord);
+
+        using var arm = new LiveHealthArm(Map(GranularityOf(fixture), lines), engine, noFail: true);
+
+        double clock = 0;
+        double? firstFailRequestAt = null;
+        arm.FailRequested += () => firstFailRequestAt ??= clock;
+
+        var frames = keys.EnumerateArray().Select(k => (time: k[0].GetDouble(), key: k[1].GetString()![0])).ToList();
+        var afterKeys = new List<double>();
+        double min = 1;
+
+        double end = engine.Lines.Count > 0 ? engine.Lines[^1].EndTime + engine.Lines[^1].SealGraceMs + 10000 : 10000;
+        if (frames.Count > 0)
+            end = Math.Max(end, frames[^1].time + 10000);
+
+        void apply((double time, char key) frame)
+        {
+            clock = frame.time;
+            engine.Update(frame.time);
+
+            if (frame.key == TypeBeatReplayFrame.BACKSPACE)
+                engine.ProcessBackspace();
+            else
+                engine.ProcessKey(frame.key, frame.time);
+
+            afterKeys.Add(arm.Health.Health.Value);
+            min = Math.Min(min, arm.Health.Health.Value);
+        }
+
+        int next = 0;
+
+        for (double now = 0; now <= end; now += ReplayEngineFeed.FRAME_MS)
+        {
+            while (next < frames.Count && frames[next].time <= now)
+                apply(frames[next++]);
+
+            clock = now;
+            engine.Update(now);
+            min = Math.Min(min, arm.Health.Health.Value);
+        }
+
+        while (next < frames.Count)
+            apply(frames[next++]);
+
+        clock = end;
+        engine.Update(end);
+        min = Math.Min(min, arm.Health.Health.Value);
+
+        return new HealthRun(afterKeys, arm.Health.Health.Value, min, arm.FailRequests, firstFailRequestAt, arm.Conclude());
+    }
+
+    /// <summary>
+    /// THE HEALTH ARM of the sweep (backlog 306): every generated and scripted run's HP bar, browser
+    /// against the desktop's real <see cref="TypeBeatHealthProcessor"/> behind
+    /// <see cref="TypeBeatHealthFeed"/>, after every keystroke and at the end, to the last bit, plus
+    /// the lowest it went, how many fails the No Fail veto refused and the instant of the first.
+    ///
+    /// <para>Both sides play under the veto (osu's No Fail: <c>HealthProcessor.Failed</c> answering
+    /// false), because the account half of this sweep is compared against
+    /// <see cref="TypeBeatReplayScorer"/>, which simulates no health and plays every run out in full.
+    /// The browser no longer stops at the 13th rejection for the same reason, which is what retired
+    /// the harness's old cap on rejected keys. The arm's own account is held against the browser's
+    /// too, so the score half of <see cref="LiveHealthArm"/> is proven against every case in the
+    /// sweep and not only against the handful of named health scripts.</para>
+    /// </summary>
+    [Test]
+    public void EveryGeneratedRunDrainsTheSameBar()
+    {
+        var cases = browser_runs.Value.GetProperty("cases");
+
+        Assert.Multiple(() =>
+        {
+            foreach (var browserCase in cases.EnumerateArray())
+            {
+                string scenario = browserCase.GetProperty("name").GetString()!;
+                var game = PlayHealth(browserCase.GetProperty("fixture").GetString()!, browserCase.GetProperty("keys"), browserCase.GetProperty("spaceSkipsWord").GetBoolean());
+                var health = browserCase.GetProperty("health");
+                var afterKeys = health.GetProperty("afterKeys").EnumerateArray().Select(v => v.GetDouble()).ToList();
+
+                Assert.That(afterKeys, Is.EqualTo(game.AfterKeys), $"{scenario}: the bar after every keystroke");
+                Assert.That(health.GetProperty("atEnd").GetDouble(), Is.EqualTo(game.AtEnd), $"{scenario}: the bar at the end");
+                Assert.That(health.GetProperty("min").GetDouble(), Is.EqualTo(game.Min), $"{scenario}: the lowest the bar went");
+                Assert.That(health.GetProperty("failRequests").GetInt32(), Is.EqualTo(game.FailRequests), $"{scenario}: fails the veto refused");
+
+                var first = health.GetProperty("firstFailRequestAt");
+                Assert.That(first.ValueKind == JsonValueKind.Null ? (double?)null : first.GetDouble(), Is.EqualTo(game.FirstFailRequestAt), $"{scenario}: the first refused fail");
+
+                var submitted = browserCase.GetProperty("submitted");
+                Assert.That(Dict(submitted, "statistics"), Is.EquivalentTo(Wire(game.Account.Statistics)), $"{scenario}: the arm's statistics");
+                Assert.That(submitted.GetProperty("maxCombo").GetInt32(), Is.EqualTo(game.Account.MaxCombo), $"{scenario}: the arm's max_combo");
+                Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(game.Account.TotalScore), $"{scenario}: the arm's total_score");
+            }
+        });
+    }
+
+    /// <summary>
+    /// The health arm is only worth what it exercises: every one of the account's moves has to be
+    /// reached somewhere in the sweep (a one-cell deferred drain, which is a typo or a one-cell skip;
+    /// a multi-cell one, which is a word skip; a refund, and a refund the clamp at full cut short; a
+    /// rejection's drain), and at least one run has to have the veto refuse a fail, with the bar at 0.
+    /// Read off the browser side, which is the side the harness measures.
+    /// </summary>
+    [Test]
+    public void TheHealthArmReachesEveryMoveOfTheAccount()
+    {
+        int oneCell = 0, multiCell = 0, refunds = 0, clamped = 0, rejections = 0, refused = 0, empty = 0;
+
+        foreach (var browserCase in browser_runs.Value.GetProperty("cases").EnumerateArray())
+        {
+            var health = browserCase.GetProperty("health");
+
+            if (health.GetProperty("oneCellDrains").GetInt32() > 0) oneCell++;
+            if (health.GetProperty("multiCellDrains").GetInt32() > 0) multiCell++;
+            if (health.GetProperty("refunds").GetInt32() > 0) refunds++;
+            if (health.GetProperty("clampedRefunds").GetInt32() > 0) clamped++;
+            if (health.GetProperty("rejectionDrains").GetInt32() > 0) rejections++;
+            if (health.GetProperty("failRequests").GetInt32() > 0) refused++;
+            if (health.GetProperty("min").GetDouble() == 0) empty++;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(oneCell, Is.GreaterThan(0), "no run took a one-cell drain (a typo)");
+            Assert.That(multiCell, Is.GreaterThan(0), "no run took a multi-cell drain (a word skip)");
+            Assert.That(refunds, Is.GreaterThan(0), "no run refunded a drain");
+            Assert.That(clamped, Is.GreaterThan(0), "no run refunded into a bar the clamp at full cut short");
+            Assert.That(rejections, Is.GreaterThan(0), "no run drained on a rejected key");
+            Assert.That(refused, Is.GreaterThan(0), "no run had the No Fail veto refuse a fail");
+            Assert.That(empty, Is.GreaterThan(0), "no run emptied the bar");
+        });
+    }
+
+    #endregion
 }
