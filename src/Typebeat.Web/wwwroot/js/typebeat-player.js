@@ -1316,6 +1316,11 @@
     // interval backstop is throttled (to 1 s, and in Chrome's intensive mode to 1 min), but the
     // audio keeps playing, so the frame after the gap sees BOTH clocks jump by the same wall time
     // and the difference stays ~0. Pinned by PlaybackValidityTest.
+    //
+    // PAUSES (backlog 311) are a discontinuity at both ends: the pause drops the baseline, and so
+    // does the resume, because a context resumed synchronously would otherwise hand the first
+    // frame back a frozen clock delta against the whole paused wall span. Pinned by
+    // PlayerPauseTest.
     const PLAYBACK_DISCREPANCY_MS = 300;
     const ALLOWED_PLAYBACK_DISCREPANCIES = 5;
 
@@ -1344,6 +1349,50 @@
             return state.valid;
         };
         return state;
+    }
+
+    // ---- pause, focus-loss pause, retry and quit (backlog 311) -----------------
+    // The desktop Player's pause surface, ported onto the audio clock:
+    //
+    //   Pause()                  audioCtx.suspend(). Suspending freezes currentTime, so nowMs()
+    //                            freezes with it and needs no rebase; rAF and the backstop are
+    //                            stopped, and every game key is ignored until resume.
+    //   PauseCooldownDuration    PAUSE_COOLDOWN_MS of REAL time (performance.now()), measured from
+    //                            the last pause, as the desktop measures it on the screen's own
+    //                            clock since backlog 267. Resume is never gated.
+    //   Resume()                 audioCtx.resume() from the key press or click itself. Instant:
+    //                            this ruleset has no ResumeOverlay, so there is no countdown.
+    //   PauseOnFocusLost         a hidden tab, a window blur and an AudioContext the browser
+    //                            suspended or interrupted all pause, except that FOCUS loss is
+    //                            waived while the clock is inside a skippable instrumental (the
+    //                            desktop's BreakTracker.IsBreakTime exception, see
+    //                            inSkippableInstrumental). A refused attempt is retried on every
+    //                            tick, which is the desktop's Scheduler.AddOnce reschedule, so a
+    //                            hide during the cooldown or a break still pauses once it can.
+    //   HotkeyRetryOverlay       hold ` for HOLD_TO_CONFIRM_MS (UIHoldActivationDelay's default):
+    //   HotkeyExitOverlay        a fresh begin() / Ctrl+` for the same hold: quit. Both DISCARD
+    //                            the run; neither ever reaches onFinish, so nothing is submitted
+    //                            (the owner's call: the desktop's quit submission is not mirrored).
+    const PAUSE_COOLDOWN_MS = 1000;
+    const HOLD_TO_CONFIRM_MS = 200;
+    const PAUSE_HINT = 'esc to resume · hold ` to retry · hold ctrl+` to quit';
+
+    // Whether a pause taken at wall time `wallMs` is refused by the cooldown of the last one.
+    function pauseCooldownActive(lastPauseWallMs, wallMs) {
+        return lastPauseWallMs !== null && wallMs < lastPauseWallMs + PAUSE_COOLDOWN_MS;
+    }
+
+    // The break exception, on TIME alone as the desktop's BreakTracker decides it: the intro run-up
+    // before the intro skip target, and every qualifying gap from its start to its skip target.
+    // Deliberately NOT pendingSkipTargetFor, which also asks whether the player is waiting on the
+    // gap's line: a player still dragging on the line behind an instrumental is inside the break on
+    // the desktop too, and a hide there is not a pause.
+    function inSkippableInstrumental(gaps, introTarget, time) {
+        if (introTarget !== null && introTarget !== undefined && time < introTarget) return true;
+        for (const g of gaps) {
+            if (time >= g.gapStartTime && time < g.skipTarget) return true;
+        }
+        return false;
     }
 
     function mountPlayer(container, opts) {
@@ -1433,6 +1482,9 @@
 
         const overlay = el('div', 'tb-overlay');
         root.append(hud, health, stage, progress, progressTime, meta, overlay);
+        // The hold-` / hold-Ctrl+` fill (backlog 311), empty and hidden until a hold begins.
+        const holdBox = el('div', 'tb-hold');
+        root.appendChild(holdBox);
 
         const scoreEl = root.querySelector('#tb-score');
         const comboEl = root.querySelector('#tb-combo');
@@ -1443,6 +1495,12 @@
         let audioCtx = null, audioBuffer = null, source = null;
         let startedAt = 0, raf = 0, backstop = 0, engine = null, concluded = false, running = false;
         let startKeyHandler = null; // capturing keydown listener while the start gate is up
+        // The pause machinery (backlog 311, see PAUSE_COOLDOWN_MS above).
+        let paused = false;
+        let lastPauseWall = null;      // performance.now() of the last pause taken, for the cooldown
+        let blurred = false;           // the window lost focus (a hidden tab is document.hidden)
+        let ctxInterrupted = false;    // the BROWSER suspended or interrupted the context mid-play
+        let hold = null;               // the live hold-` / hold-Ctrl+` gesture: { kind, timer }
 
         function nowMs() { return audioCtx ? (audioCtx.currentTime - startedAt) * 1000 : 0; }
 
@@ -1466,7 +1524,11 @@
         // reads offsetMs at `when` and runs through silent negative time, and the source is
         // scheduled to start from the top of the track at the moment the clock crosses 0, which is
         // `when - offsetSec`, i.e. startedAt itself.
+        //
+        // Refused while PAUSED (backlog 311): a seek under a suspended context would rebase the clock
+        // the pause froze. A retry clears the pause before its begin() reaches here.
         function startSourceAt(offsetMs) {
+            if (paused) return false;
             cleanupAudio();
             source = audioCtx.createBufferSource();
             source.buffer = audioBuffer;
@@ -1481,6 +1543,7 @@
             validity.discontinuity(); // the clock jumps on purpose here
             if (offsetSec >= 0) source.start(when, offsetSec);
             else source.start(startedAt, 0);
+            return true;
         }
 
         function removeStartKey() {
@@ -1489,9 +1552,10 @@
 
         function destroy() {
             running = false;
-            if (raf) cancelAnimationFrame(raf);
-            if (backstop) { clearInterval(backstop); backstop = 0; }
-            document.removeEventListener('keydown', onKeyDown, true);
+            paused = false;
+            abortHold();
+            stopLoops();
+            detachRunListeners();
             window.removeEventListener('resize', onResize);
             removeStartKey();
             cleanupAudio();
@@ -1525,9 +1589,210 @@
             prevWasDead: false
         };
 
+        // THE KEY GATE (backlog 311). The lifecycle keys (Escape, hold-`, hold-Ctrl+`) are taken
+        // first and never reach the engine. Every other key is IGNORED while paused, and while the
+        // context is not running (resuming, or suspended by the browser ahead of its pause): the
+        // clock is frozen there, and a press judged at a frozen clock is a free look at the lyric.
+        // While paused the key is also left to the browser, so Tab and Enter work on the card.
         function onKeyDown(e) {
             if (!running || !engine) return;
+            if (routeLifecycleKey(e)) return;
+            if (paused || audioCtx.state !== 'running') return;
             routeKeyDown(e, keyHost);
+        }
+
+        function isHoldKey(e) {
+            return e.code === 'Backquote' || (!e.code && e.key === '`');
+        }
+
+        function routeLifecycleKey(e) {
+            if (isHoldKey(e)) {
+                e.preventDefault();
+                if (!e.repeat && !e.metaKey) beginHold(e.ctrlKey ? 'exit' : 'retry');
+                return true;
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                // GlobalAction.Back: pause, and on the pause card the Back action is Continue.
+                if (!e.repeat) { if (paused) resume(); else tryPause(); }
+                return true;
+            }
+            return false;
+        }
+
+        function onKeyUp(e) {
+            if (hold && isHoldKey(e)) abortHold();
+        }
+
+        // --- pause / resume (backlog 311) -------------------------------------
+        function startLoops() {
+            stopLoops();
+            raf = requestAnimationFrame(rafLoop);
+            // The backstop now only covers the stretch between a hide and its pause (a cooldown or
+            // a break waiving it), and a break the player sits out hidden.
+            backstop = setInterval(function () { if (running && !paused && document.hidden) tick(); }, 250);
+        }
+
+        function stopLoops() {
+            if (raf) { cancelAnimationFrame(raf); raf = 0; }
+            if (backstop) { clearInterval(backstop); backstop = 0; }
+        }
+
+        // Player.Pause(): refused outside a live run, on a failed or finished engine, and inside the
+        // cooldown. Returns whether the pause was taken.
+        function tryPause() {
+            if (!running || paused || !engine || engine.failed || engine.finished) return false;
+            const wall = performance.now();
+            if (pauseCooldownActive(lastPauseWall, wall)) return false;
+            paused = true;
+            lastPauseWall = wall;
+            stopLoops();
+            validity.discontinuity();
+            try { const p = audioCtx.suspend(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+            showPauseCard();
+            return true;
+        }
+
+        // Player.Resume(): instant, from the gesture that asked for it.
+        function resume() {
+            if (!running || !paused) return;
+            paused = false;
+            ctxInterrupted = false;
+            overlay.className = 'tb-overlay';
+            overlay.innerHTML = '';
+            validity.discontinuity();
+            lastFrameMs = null;
+            try { const p = audioCtx.resume(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+            startLoops();
+        }
+
+        // Mid-play retry: the run is DISCARDED (never concluded, so onFinish never runs) and begin()
+        // mints a fresh token. The context is resumed here, inside the gesture.
+        function retry() {
+            if (!running) return;
+            paused = false;
+            if (audioCtx.state !== 'running') {
+                try { const p = audioCtx.resume(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+            }
+            begin();
+        }
+
+        // Quit: the run is DISCARDED, never submitted. With a host to return to, the player is torn
+        // down and handed back; without one it falls back to its own start gate.
+        function quit() {
+            if (!running) return;
+            if (opts.onExit) {
+                destroy();
+                opts.onExit();
+                return;
+            }
+            running = false;
+            paused = false;
+            abortHold();
+            stopLoops();
+            detachRunListeners();
+            cleanupAudio();
+            showStartGate('press space to start');
+        }
+
+        // Whether focus loss (or the browser's own suspension) wants the run paused right now.
+        function autoPauseWanted() {
+            if (ctxInterrupted) return true;
+            if (!(document.hidden || blurred)) return false;
+            return !inSkippableInstrumental(gaps, introTarget, nowMs());
+        }
+
+        function maybeAutoPause() {
+            if (running && !paused && autoPauseWanted()) tryPause();
+        }
+
+        function onVisibilityChange() {
+            if (document.hidden) { abortHold(); maybeAutoPause(); }
+        }
+        function onBlur() { blurred = true; abortHold(); maybeAutoPause(); }
+        function onFocus() { blurred = false; }
+        function onCtxStateChange() {
+            const st = audioCtx ? audioCtx.state : 'closed';
+            if (st === 'running') { ctxInterrupted = false; return; }
+            if ((st === 'suspended' || st === 'interrupted') && running && !paused) {
+                ctxInterrupted = true;
+                maybeAutoPause();
+            }
+        }
+
+        // Leaving the page mid-run (F5, Ctrl+R, a closed tab) asks first; a run has no other save.
+        function onBeforeUnload(e) {
+            if (!running) return undefined;
+            e.preventDefault();
+            e.returnValue = '';
+            return '';
+        }
+
+        function attachRunListeners() {
+            detachRunListeners();
+            document.addEventListener('keydown', onKeyDown, true);
+            document.addEventListener('keyup', onKeyUp, true);
+            document.addEventListener('visibilitychange', onVisibilityChange);
+            window.addEventListener('blur', onBlur);
+            window.addEventListener('focus', onFocus);
+            window.addEventListener('beforeunload', onBeforeUnload);
+            if (audioCtx && audioCtx.addEventListener) audioCtx.addEventListener('statechange', onCtxStateChange);
+        }
+
+        function detachRunListeners() {
+            document.removeEventListener('keydown', onKeyDown, true);
+            document.removeEventListener('keyup', onKeyUp, true);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            window.removeEventListener('blur', onBlur);
+            window.removeEventListener('focus', onFocus);
+            window.removeEventListener('beforeunload', onBeforeUnload);
+            if (audioCtx && audioCtx.removeEventListener) audioCtx.removeEventListener('statechange', onCtxStateChange);
+        }
+
+        // HoldToConfirmContainer: the action fires once the key has been held HOLD_TO_CONFIRM_MS,
+        // with a fill that runs over the same span; letting go, a blur or a hide aborts it.
+        function beginHold(kind) {
+            abortHold();
+            const timer = setTimeout(function () {
+                hold = null;
+                holdBox.className = 'tb-hold';
+                if (kind === 'retry') retry(); else quit();
+            }, HOLD_TO_CONFIRM_MS);
+            hold = { kind: kind, timer: timer };
+            // A fresh fill element restarts its CSS animation from empty.
+            holdBox.innerHTML = '';
+            holdBox.appendChild(el('span', 'tb-hold-label', kind === 'retry' ? 'retry' : 'quit'));
+            const track = el('span', 'tb-hold-track');
+            track.appendChild(el('span', 'tb-hold-fill'));
+            holdBox.appendChild(track);
+            holdBox.className = 'tb-hold tb-hold-on tb-hold-' + kind;
+        }
+
+        function abortHold() {
+            if (!hold) return;
+            clearTimeout(hold.timer);
+            hold = null;
+            holdBox.className = 'tb-hold';
+        }
+
+        function showPauseCard() {
+            overlay.className = 'tb-overlay tb-overlay-on tb-overlay-pause';
+            overlay.innerHTML = '';
+            const card = el('div', 'tb-card tb-pause');
+            card.appendChild(el('div', 'tb-card-title', 'paused'));
+            const actions = el('div', 'tb-pause-actions');
+            const resumeBtn = el('button', 'tb-btn tb-btn-primary tb-pause-resume', 'resume');
+            const retryBtn = el('button', 'tb-btn tb-btn-ghost tb-pause-retry', 'retry');
+            const quitBtn = el('button', 'tb-btn tb-btn-ghost tb-pause-quit', 'quit');
+            for (const b of [resumeBtn, retryBtn, quitBtn]) b.type = 'button';
+            resumeBtn.addEventListener('click', resume);
+            retryBtn.addEventListener('click', retry);
+            quitBtn.addEventListener('click', quit);
+            actions.append(resumeBtn, retryBtn, quitBtn);
+            card.appendChild(actions);
+            card.appendChild(el('div', 'tb-card-hint', escapeHtml(PAUSE_HINT)));
+            overlay.appendChild(card);
+            if (typeof resumeBtn.focus === 'function') resumeBtn.focus();
         }
 
         // --- row plumbing -----------------------------------------------------
@@ -2053,12 +2318,17 @@
         // simply meets the new time on the next tick, sealing anything it passed through the normal
         // loop. A skip target is always SKIP_LEAD_MS in front of the next line's activation, so the
         // walk can never step over a line the player has not been offered.
+        //
+        // Refused while paused or while the context is not running (backlog 311): the chip is still
+        // clickable under the pause card's backdrop, and a seek against a frozen clock would move
+        // the song while the player looks at the card.
         function performSkip(target) {
             if (!running || !audioCtx || !audioBuffer || target === null) return;
+            if (paused || audioCtx.state !== 'running') return;
             if (!(target > nowMs())) return;
             if (target / 1000 >= audioBuffer.duration) return;
 
-            startSourceAt(target);
+            if (!startSourceAt(target)) return;
 
             // The clock has jumped, so this frame's damping delta is meaningless and both heads
             // belong at their new positions rather than sliding there through the gap.
@@ -2176,25 +2446,31 @@
         // the tab is visible (vsync-smooth); a low-rate setInterval backstop keeps it
         // ticking when the tab is hidden and rAF is paused, so state stays consistent
         // with the still-playing audio instead of freezing.
+        //
+        // Since backlog 311 a hidden tab PAUSES, so the backstop only runs through a hide the pause
+        // did not take (the cooldown, or a skippable instrumental), and each tick first retries the
+        // auto-pause that was refused, which is the desktop's rescheduled updatePauseOnFocusLostState.
         function tick() {
-            if (!running) return;
+            if (!running || paused) return;
+            if (autoPauseWanted() && tryPause()) return;
             validity.observe(nowMs(), performance.now(), audioCtx.state === 'running');
             engine.update(nowMs());
             render();
             if ((engine.finished || engine.failed) && !concluded) conclude();
         }
         function rafLoop() {
-            if (!running) return;
+            raf = 0;
+            if (!running || paused) return;
             tick();
-            if (running) raf = requestAnimationFrame(rafLoop);
+            if (running && !paused) raf = requestAnimationFrame(rafLoop);
         }
 
         function conclude() {
             concluded = true;
             running = false;
-            if (raf) cancelAnimationFrame(raf);
-            if (backstop) { clearInterval(backstop); backstop = 0; }
-            document.removeEventListener('keydown', onKeyDown, true);
+            abortHold();
+            stopLoops();
+            detachRunListeners();
             if (engine.failed) cleanupAudio();
             const results = Core.computeScore(engine);
             // The veto's verdict rides on the results; play.js declines to submit a false one.
@@ -2204,6 +2480,15 @@
         }
 
         function begin() {
+            // A mid-play retry (backlog 311) reaches here with the old run's loops and hold still
+            // live, and possibly paused: all of it is dropped with the run, and the cooldown and
+            // focus state start over as a fresh desktop Player's do.
+            abortHold();
+            stopLoops();
+            paused = false;
+            lastPauseWall = null;
+            blurred = false;
+            ctxInterrupted = false;
             engine = new Core.TypingEngine(beatmap);
             validity = makePlaybackValidity();
             // Display-only hooks. Neither reads anything back into the engine, so nothing here
@@ -2252,11 +2537,10 @@
             // longer AudioLeadIn) gets its silent pre-roll, with the stage and the cue on screen.
             startSourceAt(clockStart);
             running = true;
-            document.addEventListener('keydown', onKeyDown, true);
+            attachRunListeners();
             window.removeEventListener('resize', onResize);
             window.addEventListener('resize', onResize);
-            raf = requestAnimationFrame(rafLoop);
-            backstop = setInterval(function () { if (running && document.hidden) tick(); }, 250);
+            startLoops();
         }
 
         function showStartGate(label) {
@@ -2338,6 +2622,12 @@
             beatmap,
             destroy,
             get engine() { return engine; },
+            // Read-only views of the run's clock and pause state (backlog 311), for the lifecycle
+            // harness; nothing on the page reads them.
+            now: nowMs,
+            get paused() { return paused; },
+            get running() { return running; },
+            get playbackValidity() { return { valid: validity.valid, discrepancies: validity.discrepancies }; },
             setSubmitStatus(html, cls) {
                 if (publicApi._status) {
                     publicApi._status.innerHTML = html;
@@ -2397,6 +2687,14 @@
         makePlaybackValidity,
         PLAYBACK_DISCREPANCY_MS,
         ALLOWED_PLAYBACK_DISCREPANCIES
+    };
+    // The pause surface (backlog 311), for PlayerPauseHarness's pins.
+    Core.pause = {
+        PAUSE_COOLDOWN_MS,
+        HOLD_TO_CONFIRM_MS,
+        PAUSE_HINT,
+        pauseCooldownActive,
+        inSkippableInstrumental
     };
     Core.escapeHtml = escapeHtml;
 

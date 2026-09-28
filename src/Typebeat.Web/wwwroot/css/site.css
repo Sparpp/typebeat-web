@@ -3545,3 +3545,28 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
         width: min(360px, calc(100vw - var(--space-4)));
     }
 }
+
+/* ---- /play pause card and hold-to-confirm fill (backlog 311) ---- */
+.tb-pause-actions { display: flex; gap: var(--space-3); flex-wrap: wrap; justify-content: center; }
+/* The desktop's HoldToConfirmOverlay: a small bar that fills over the hold delay (200 ms,
+   Easing.Out) while ` (retry) or Ctrl+` (quit) is held, and vanishes on release. */
+.tb-hold {
+    position: absolute; top: var(--space-3); left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    align-items: center; gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    border: 1px solid var(--line-bright);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    z-index: 5;
+    pointer-events: none;
+}
+.tb-hold-on { display: flex; }
+.tb-hold-track { width: 80px; height: 3px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
+.tb-hold-fill { display: block; height: 100%; width: 0; background: var(--violet); }
+.tb-hold-on .tb-hold-fill { animation: tbHoldFill .2s ease-out forwards; }
+.tb-hold-exit .tb-hold-fill { background: var(--text); }
+@keyframes tbHoldFill { from { width: 0; } to { width: 100%; } }
