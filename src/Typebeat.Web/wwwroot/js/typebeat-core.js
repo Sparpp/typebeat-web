@@ -1785,6 +1785,9 @@
             audioFilename: parsed.audioFilename,
             // The map's track gain, applied by the player to the decoded samples (applyTrackGain).
             audioGain: parsed.audioGain === undefined ? DEFAULT_AUDIO_GAIN : parsed.audioGain,
+            // [General] AudioLeadIn, carried through untouched for the player's clock start
+            // (gameplayStartTime). Nothing in the engine or the scorer reads it.
+            audioLeadIn: parsed.audioLeadIn === undefined ? 0 : parsed.audioLeadIn,
             lines: lines,
             totalCells: lines.reduce((n, l) => n + l.cells.length, 0)
         };

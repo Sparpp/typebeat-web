@@ -789,13 +789,16 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
-    /// The INTRO skip, which is not an InstrumentalGaps gap on either side: the desktop's separate
-    /// intro SkipOverlay lands at GameplayStartTime - MINIMUM_SKIP_TIME, i.e. the first object less
-    /// 3000, and removes only run-up drain_length_s already excludes (so the gate never sees it).
-    /// A 30 s intro is therefore skippable to 27000 while contributing nothing to skippable_s.
+    /// The INTRO skip, which is not an InstrumentalGaps gap on either side, on a 30 s intro whose
+    /// first word is sung AT line 0's stamp: the desktop's separate intro SkipOverlay lands at
+    /// GameplayStartTime - MINIMUM_SKIP_TIME, i.e. line 0's start less 3000, and removes only run-up
+    /// drain_length_s already excludes (so the gate never sees it). This fixture skips to 27000
+    /// while contributing nothing to skippable_s. Because its line start and first vocal coincide it
+    /// cannot tell which of the two the skip is anchored on; that is
+    /// <see cref="IntroSkipIsAnchoredOnLineZerosStart_NotItsFirstVocal"/>'s job.
     /// </summary>
     [Test]
-    public void IntroSkipLandsThreeSecondsBeforeTheFirstVocal_AndCostsNoAllowance()
+    public void AThirtySecondIntroWhoseFirstWordOpensLineZeroSkipsTo27000_AndCostsNoAllowance()
     {
         var root = Harness();
         var intro = root.GetProperty("gapLongIntro");
@@ -816,6 +819,85 @@ public class WebplayDisplayTest
             Assert.That(window[2], Is.EqualTo(-1), "at the target itself there is nothing left to skip");
         });
     }
+
+    /// <summary>
+    /// The intro skip's ANCHOR (backlog 308), on a line 0 stamped at 10000 whose first word is not
+    /// sung until 14000. The desktop lands at GameplayStartTime - MINIMUM_SKIP_TIME =
+    /// (line0.StartTime - 2000) - 1000 = 7000, before drain_length_s starts, so the play-time gate
+    /// never counts what it removes. The old browser rule (first vocal - 3000 = 11000) landed a
+    /// second INSIDE the drain, removing time the gate counts, which could store an honest browser
+    /// play unranked. Its clock starts at 0 (line 0 is well past 2 s).
+    /// </summary>
+    [Test]
+    public void IntroSkipIsAnchoredOnLineZerosStart_NotItsFirstVocal()
+    {
+        var root = Harness();
+        var late = root.GetProperty("clockLateFirstWord");
+        var window = late.GetProperty("window").EnumerateArray().Select(v => v.GetDouble()).ToArray();
+        var serverLines = Lines(LateFirstWordLyrics);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(late, "lineStart"), Is.EqualTo(10000));
+            Assert.That(Num(late, "firstVocalTime"), Is.EqualTo(14000), "the fixture has to separate the two anchors");
+            Assert.That(Num(late, "gameplayStartTime"), Is.EqualTo(0));
+            Assert.That(Num(late, "introSkipTarget"), Is.EqualTo(7000), "line 0's start less SKIP_LEAD_MS, not 11000");
+            Assert.That(Num(late, "introSkipTargetDefaulted"), Is.EqualTo(7000), "the lines-only call means no AudioLeadIn");
+
+            // The server's own drain starts at line 0's start, and the skip lands in front of it.
+            Assert.That(serverLines[0].StartTime, Is.EqualTo(10000));
+            Assert.That(Num(late, "introSkipTarget"), Is.LessThanOrEqualTo(serverLines[0].StartTime),
+                "the intro skip must not remove drain time the play-time gate counts");
+
+            Assert.That(window[0], Is.EqualTo(7000));
+            Assert.That(window[1], Is.EqualTo(7000));
+            Assert.That(window[2], Is.EqualTo(-1), "at the target itself there is nothing left to skip");
+            Assert.That(window[3], Is.EqualTo(-1), "and nothing past it, where the old rule still offered 11000");
+        });
+    }
+
+    /// <summary>
+    /// The desktop's CLOCK START (backlog 308): MasterGameplayClockContainer.findEarliestStartTime
+    /// over DrawableRuleset.GameplayStartTime, min(0, line0.StartTime - 2000, line0.StartTime -
+    /// AudioLeadIn when positive), with no storyboard term on /play. A first vocal at 500 pre-rolls
+    /// from -1500 whether the map carries no AudioLeadIn or the 2000 the importer writes for exactly
+    /// this shape; a longer lead-in outreaches the 2000 term. The intro skip is offered only when it
+    /// lands after the clock start, which is where the desktop's intro SkipOverlay expires at once:
+    /// none for the first two, and a skip through negative time to -2500 for the third.
+    /// </summary>
+    [Test]
+    public void TheClockStartsWhereTheDesktopsPreRollDoes()
+    {
+        var root = Harness();
+        var early = root.GetProperty("clockEarlyVocal").EnumerateArray().ToArray();
+        var longIntro = root.GetProperty("clockLongIntro");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(early[0], "audioLeadIn"), Is.Zero);
+            Assert.That(Num(early[0], "gameplayStartTime"), Is.EqualTo(-1500));
+            Assert.That(Num(early[0], "introSkipTarget"), Is.EqualTo(-1));
+
+            Assert.That(Num(early[1], "audioLeadIn"), Is.EqualTo(2000), "buildBeatmap carries AudioLeadIn through");
+            Assert.That(Num(early[1], "gameplayStartTime"), Is.EqualTo(-1500));
+            Assert.That(Num(early[1], "introSkipTarget"), Is.EqualTo(-1));
+
+            Assert.That(Num(early[2], "audioLeadIn"), Is.EqualTo(5000));
+            Assert.That(Num(early[2], "gameplayStartTime"), Is.EqualTo(-4500));
+            Assert.That(Num(early[2], "introSkipTarget"), Is.EqualTo(-2500));
+
+            Assert.That(Num(longIntro, "gameplayStartTime"), Is.Zero);
+            Assert.That(Num(longIntro, "introSkipTarget"), Is.EqualTo(27000));
+        });
+    }
+
+    // The clockLateFirstWord fixture's lyrics, as the harness builds them.
+    private const string LateFirstWordLyrics =
+        """
+        {"version":2,"song_end_ms":60000,"granularity":"Word"}
+        {"text":"ab","start_ms":10000,"end_ms":15000,"words":[{"text":"ab","start_ms":14000,"end_ms":15000,"score":1}]}
+        {"text":"cd","start_ms":30000,"end_ms":31000,"words":[{"text":"cd","start_ms":30000,"end_ms":31000,"score":1}]}
+        """;
 
     /// <summary>
     /// The skip window's edges on the headline map: live from gapStart, dead from skipTarget. Half

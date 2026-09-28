@@ -461,16 +461,42 @@
         return total;
     }
 
+    // Where the gameplay clock STARTS, in map time: MasterGameplayClockContainer's
+    // findEarliestStartTime over DrawableRuleset.GameplayStartTime (the first hit object less 2000,
+    // and the first hit object is line 0, so its startTime, not its first vocal). That is
+    // min(0, line0.startTime - 2000), widened by the map's AudioLeadIn when it has one. /play has no
+    // storyboard, so the desktop's storyboard term has nothing to contribute. A map whose first
+    // line starts inside 2 s therefore runs its clock through silent negative time first, with the
+    // stage and the cue on screen, exactly as the desktop's pre-roll does.
+    function gameplayStartTime(beatmap) {
+        const lines = beatmap && beatmap.lines;
+        if (!lines || lines.length === 0) return 0;
+        const first = lines[0].startTime;
+        let time = Math.min(0, first - 2000);
+        const leadIn = beatmap.audioLeadIn || 0;
+        if (leadIn > 0) time = Math.min(time, first - leadIn);
+        return time;
+    }
+
     // The INTRO skip, which is NOT an InstrumentalGaps gap: on the desktop it is the separate intro
     // SkipOverlay, landing at MasterGameplayClockContainer.Skip's GameplayStartTime -
-    // MINIMUM_SKIP_TIME, i.e. (first object - 2000) - 1000. So: the first vocal less SKIP_LEAD_MS,
-    // the same 3000 the mid-song skips leave in front of a line. It is gate-free by construction:
-    // drain_length_s already starts at the first line, so this removes only run-up the play-time
-    // gate never asked for. null when there is nothing in front of the first vocal to remove.
-    function introSkipTarget(lines) {
+    // MINIMUM_SKIP_TIME, i.e. (line0.startTime - 2000) - 1000. So: the first LINE'S START less
+    // SKIP_LEAD_MS. That is not the first vocal less SKIP_LEAD_MS (what this used to compute, and
+    // what backlog 230 assumed was the same thing): a first word sung more than 3 s after its line's
+    // stamp put the old target past line 0's start, inside drain_length_s, so the skip removed drain
+    // time the play-time gate counts and an honest play could be stored unranked. Anchored on the
+    // line start it lands before drain_length_s begins, so it removes only run-up the gate never
+    // asked for, and is gate-free by construction.
+    //
+    // null when the target is not after the clock start (`clockStart`, gameplayStartTime): the
+    // desktop's intro SkipOverlay expires at once when its fadeOutBeginTime is not past the time it
+    // was loaded at, which is the same rule. clockStart defaults to the map with no AudioLeadIn,
+    // which is what every caller that hands over only the lines means.
+    function introSkipTarget(lines, clockStart) {
         if (!lines || lines.length === 0) return null;
-        const target = firstVocalTime(lines[0]) - SKIP_LEAD_MS;
-        return target > 0 ? target : null;
+        const start = clockStart === undefined ? gameplayStartTime({ lines: lines }) : clockStart;
+        const target = lines[0].startTime - SKIP_LEAD_MS;
+        return target > start ? target : null;
     }
 
     // The line the player is WAITING FOR, which is what both the countdown chip and the skip look
@@ -527,8 +553,9 @@
     // The FIRST LINE'S HEAD START (PR 2) counts as a live line here, as it does in
     // TypeBeatPlayfield's key handler (`!engine.LineIsActive && !engine.FirstLineTypingOpensAt`):
     // a press inside it opens the line and types, rather than falling through to the skip.
-    // Unreachable as a skip today (the intro target sits SKIP_LEAD_MS before the first vocal, far
-    // outside the head start), and mirrored so the two predicates cannot drift.
+    // Unreachable as a skip today (the intro target sits SKIP_LEAD_MS before line 0's start, which
+    // is never after its activation, so far outside the head start), and mirrored so the two
+    // predicates cannot drift.
     function skipAllowedFor(engine, time, hasSelection) {
         const active = engine.activeLineIndex >= 0;
         const typing = active || engine.firstLineTypingOpensAt(time);
@@ -833,7 +860,9 @@
         // The skippable stretches of this map, computed once: the qualifying instrumental gaps
         // (the mirror of what the server priced into beatmaps.skippable_s) and the intro run-up.
         const gaps = computeGaps(beatmap.lines);
-        const introTarget = introSkipTarget(beatmap.lines);
+        // And where the clock starts (the desktop's pre-roll), which the intro skip is offered from.
+        const clockStart = gameplayStartTime(beatmap);
+        const introTarget = introSkipTarget(beatmap.lines, clockStart);
 
         container.innerHTML = '';
         const root = el('div', 'tb-player');
@@ -924,6 +953,11 @@
         // The 60 ms scheduling lead is the same one begin() has always taken: `when` is when the
         // audio actually starts, and startedAt is back-dated by the offset so that at `when` the
         // gameplay clock reads exactly offsetMs.
+        //
+        // A NEGATIVE offset (the pre-roll, see gameplayStartTime) is not clamped: the clock still
+        // reads offsetMs at `when` and runs through silent negative time, and the source is
+        // scheduled to start from the top of the track at the moment the clock crosses 0, which is
+        // `when - offsetSec`, i.e. startedAt itself.
         function startSourceAt(offsetMs) {
             cleanupAudio();
             source = audioCtx.createBufferSource();
@@ -933,10 +967,11 @@
             gainNode.gain.value = 0.1;
             source.connect(gainNode);
             gainNode.connect(audioCtx.destination);
-            const offsetSec = Math.max(0, offsetMs) / 1000;
+            const offsetSec = offsetMs / 1000;
             const when = audioCtx.currentTime + 0.06; // small scheduling lead
-            source.start(when, offsetSec);
             startedAt = when - offsetSec;
+            if (offsetSec >= 0) source.start(when, offsetSec);
+            else source.start(startedAt, 0);
         }
 
         function removeStartKey() {
@@ -1614,7 +1649,9 @@
             if (opts.onPlayStart) { try { opts.onPlayStart(); } catch (e) { console.error(e); } }
             overlay.className = 'tb-overlay';
             overlay.innerHTML = '';
-            startSourceAt(0);
+            // From the desktop's clock start, not from 0: a first line inside 2 s (or a map with a
+            // longer AudioLeadIn) gets its silent pre-roll, with the stage and the cue on screen.
+            startSourceAt(clockStart);
             running = true;
             document.addEventListener('keydown', onKeyDown, true);
             window.removeEventListener('resize', onResize);
@@ -1782,6 +1819,7 @@
         lastTypeableTarget,
         computeGaps,
         skippableMs,
+        gameplayStartTime,
         introSkipTarget,
         upcomingLineIndex,
         skipAllowed,

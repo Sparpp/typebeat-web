@@ -1122,7 +1122,46 @@ const out = {
     // C# Math.Round's MidpointRounding.ToEven, on the halves either side of an even and an odd
     // integer, one off a half each way, and a negative half.
     roundHalfEven: [2000.5, 2001.5, 2000.49, 2000.51, 5510.5, 9600.5, -0.5, -1.5, 3.3].map(D.roundHalfEven),
-    keyOrder: keyOrderRun()
+    keyOrder: keyOrderRun(),
+
+    // ---- the clock start and the intro skip anchor (backlog 308) ----
+    // A line 0 stamped at 10000 whose first word is not sung until 14000: the two anchors the intro
+    // skip could use are 4 s apart here, where the longIntro fixture has them equal. The desktop
+    // lands at line0.startTime - 3000 = 7000; the old browser rule (first vocal - 3000) said 11000.
+    clockLateFirstWord: (() => {
+        const map = build(OSU_HEADER +
+            '{"version":2,"song_end_ms":60000,"granularity":"Word"}\n' +
+            '{"text":"ab","start_ms":10000,"end_ms":15000,"words":[{"text":"ab","start_ms":14000,"end_ms":15000,"score":1}]}\n' +
+            '{"text":"cd","start_ms":30000,"end_ms":31000,"words":[{"text":"cd","start_ms":30000,"end_ms":31000,"score":1}]}\n');
+        const start = D.gameplayStartTime(map);
+        const intro = D.introSkipTarget(map.lines, start);
+        return {
+            lineStart: map.lines[0].startTime,
+            firstVocalTime: D.firstVocalTime(map.lines[0]),
+            gameplayStartTime: start,
+            introSkipTarget: intro,
+            introSkipTargetDefaulted: D.introSkipTarget(map.lines),
+            window: [0, 6999, 7000, 10999].map(t => { const v = D.skipTargetAt([], intro, 0, t); return v === null ? -1 : v; })
+        };
+    })(),
+
+    // The early-vocal pre-roll: a first line at 500, with no AudioLeadIn, with the 2000 the importer
+    // writes for exactly this shape, and with a longer one that outreaches the 2000 term.
+    clockEarlyVocal: [null, 2000, 5000].map(leadIn => {
+        const header = leadIn === null ? OSU_HEADER : OSU_HEADER.replace('[General]\n', '[General]\nAudioLeadIn: ' + leadIn + '\n');
+        const map = build(header +
+            '{"version":2,"song_end_ms":20000,"granularity":"Word"}\n' +
+            '{"text":"ab","start_ms":500,"end_ms":1500,"words":[{"text":"ab","start_ms":500,"end_ms":1500,"score":1}]}\n');
+        const start = D.gameplayStartTime(map);
+        const intro = D.introSkipTarget(map.lines, start);
+        return { audioLeadIn: map.audioLeadIn, gameplayStartTime: start, introSkipTarget: intro === null ? -1 : intro };
+    }),
+
+    // A first line well past 2 s: the clock starts at 0 and the 30 s intro still skips to 27000.
+    clockLongIntro: (() => {
+        const map = build(OSU_HEADER + GAP_FIXTURES.longIntro);
+        return { gameplayStartTime: D.gameplayStartTime(map), introSkipTarget: D.introSkipTarget(map.lines, D.gameplayStartTime(map)) };
+    })()
 };
 
 process.stdout.write(JSON.stringify(out));
