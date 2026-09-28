@@ -1486,4 +1486,148 @@ public class WebplayDisplayTest
             Assert.That(hint, Does.StartWith("type the lyrics as they are sung"), "the rest of the brief is unchanged");
         });
     }
+
+    // =============================================================================================
+    // STACK LAYOUT AND ANIMATION TIMINGS (backlog 322). The desktop draws all three lyric rows at
+    // one size with a 96 px pitch at LYRIC_FONT_SIZE 42 (LyricStage), pops a Great for 120 ms
+    // OutQuint (LyricLineDisplay.PlayJudgementFeedback), fades the carets over 120 ms
+    // (LyricStage.setCaretsVisible) and centres the rejected letter at (+/-34, -4) px in Mono(30)
+    // (LyricStage.onWrongKeyRejected). These hold the browser to those values.
+    // =============================================================================================
+
+    private static string SiteCss() =>
+        File.ReadAllText(Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "css", "site.css")).Replace("\r\n", "\n");
+
+    /// <summary>The body of the FIRST rule whose selector is exactly <paramref name="selector"/>.</summary>
+    private static string Rule(string css, string selector)
+    {
+        int at = css.IndexOf("\n" + selector + " {", StringComparison.Ordinal);
+        Assert.That(at, Is.GreaterThanOrEqualTo(0), $"no rule for {selector}");
+        int open = css.IndexOf('{', at);
+        int close = css.IndexOf('}', open);
+        return css.Substring(open + 1, close - open - 1);
+    }
+
+    private static double Invariant(string s) => double.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Every row is drawn at the current row's size and weight, the desktop's one LYRIC_FONT_SIZE:
+    /// the neighbours used to be about 54% of it, which read the next line ahead at half size and
+    /// grew it on activation. The size lives on the stack and the rows inherit it.
+    /// </summary>
+    [Test]
+    public void EveryLyricRowDrawsAtTheCurrentRowsSizeAndWeight()
+    {
+        string css = SiteCss();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Rule(css, ".tb-stack"), Does.Contain("font-size: clamp(1.6rem, min(4.4vw, 5.5vh), 2.6rem);"));
+            Assert.That(css, Does.Contain(".tb-line-prev, .tb-line-cur, .tb-line-next { font-size: 1em; font-weight: 600; }"));
+
+            // The half-size neighbour rule is gone, and no row rule sets a size of its own.
+            Assert.That(css, Does.Not.Contain("clamp(1rem, 2.4vw, 1.4rem)"));
+            Assert.That(css, Does.Not.Match(@"\.tb-line-(prev|cur|next)[^{]*\{[^}]*font-size: clamp"));
+        });
+    }
+
+    /// <summary>
+    /// The row pitch is the desktop's 96 px over its 42 px font, in em. A row's box is its
+    /// line-height, so the gap has to be the pitch minus THAT line-height: this reads both off the
+    /// stylesheet and checks they add up, so a line-height change that forgets the gap fails here.
+    /// </summary>
+    [Test]
+    public void RowPitchIsTheDesktops96Over42()
+    {
+        string css = SiteCss();
+        var lh = System.Text.RegularExpressions.Regex.Match(Rule(css, ".tb-line"), @"line-height: ([0-9.]+);");
+        var minH = System.Text.RegularExpressions.Regex.Match(Rule(css, ".tb-line"), @"min-height: ([0-9.]+)em;");
+        var gap = System.Text.RegularExpressions.Regex.Match(Rule(css, ".tb-stack"), @"gap: calc\(96em / 42 - ([0-9.]+)em\);");
+
+        Assert.That(lh.Success && minH.Success && gap.Success, Is.True, "the pitch rules moved");
+
+        double lineHeight = Invariant(lh.Groups[1].Value);
+        double gapMinus = Invariant(gap.Groups[1].Value);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Invariant(minH.Groups[1].Value), Is.EqualTo(lineHeight), "an empty row must hold the same slot as a full one");
+            Assert.That(gapMinus, Is.EqualTo(lineHeight), "the gap must subtract the row's own box");
+            Assert.That(lineHeight + (96.0 / 42 - gapMinus), Is.EqualTo(2.2857).Within(1e-4), "centre to centre, in em");
+        });
+    }
+
+    /// <summary>
+    /// The Great pop is the desktop's 120 ms OutQuint (it was 140 ms ease-out, a porting slip). The
+    /// JS constant decides how long the class stays on and the CSS decides how long the animation
+    /// runs, so both are held to the one number.
+    /// </summary>
+    [Test]
+    public void PerfectPopIs120MsOutQuintOnBothSides()
+    {
+        double pop = Num(Harness(), "perfectPopMs");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pop, Is.EqualTo(120));
+            Assert.That(SiteCss(), Does.Contain($".tb-c-pop {{ animation: tbPop {pop}ms cubic-bezier(0.22, 1, 0.36, 1); }}"));
+        });
+    }
+
+    /// <summary>
+    /// The carets FADE over 120 ms OutQuint on a visibility change rather than snapping, starting
+    /// from wherever the previous fade stood (FadeTo from the current alpha). Starts hidden, like
+    /// the desktop's Alpha = 0 carets. Values: outQuint(0.5) = 0.96875.
+    /// </summary>
+    [Test]
+    public void CaretsFadeOver120MsOutQuint()
+    {
+        var root = Harness();
+        var f = JsHarness.Doubles(root, "caretFade");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Num(root, "caretFadeMs"), Is.EqualTo(120));
+            Assert.That(f[0], Is.EqualTo(0), "hidden at birth");
+            Assert.That(f[1], Is.EqualTo(0), "a fade in starts from 0");
+            Assert.That(f[2], Is.EqualTo(0.96875).Within(1e-12), "half way, OutQuint");
+            Assert.That(f[3], Is.EqualTo(1));
+            Assert.That(f[4], Is.EqualTo(1));
+            Assert.That(f[5], Is.EqualTo(1), "a fade out starts from 1");
+            Assert.That(f[6], Is.EqualTo(0.03125).Within(1e-12));
+            Assert.That(f[7], Is.EqualTo(0));
+            Assert.That(f[8], Is.EqualTo(0));
+            Assert.That(f[9], Is.EqualTo(0.96875).Within(1e-12), "reversed half way in");
+            Assert.That(f[10], Is.EqualTo(0.96875 * 0.03125).Within(1e-12), "turns round from where it stood");
+            Assert.That(f[11], Is.EqualTo(0));
+        });
+    }
+
+    /// <summary>
+    /// The rejected letter is Mono(30) centred at (+/-34, -4) px off the caret top, moves by
+    /// (18, -30) over 140 ms OutQuint then (12, 110) over 460 ms InQuad, spins to 18 deg over 600 ms
+    /// OutQuint, and fades over the last 460 ms InQuad. Desktop px at 42 become em: the letter's
+    /// own em is 30/42 of the row's, so each desktop px is 1/30 of it.
+    /// </summary>
+    [Test]
+    public void WrongKeyLetterIsCentredWithTheDesktopOffsetsAndSplitEasing()
+    {
+        string css = SiteCss();
+        string letter = Rule(css, ".tb-wrongkey");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Rule(css, ".tb-wrongkeys"), Does.Contain("top: .16em;"), "on the caret's top edge");
+            Assert.That(letter, Does.Contain("font-size: calc(30em / 42);"));
+            Assert.That(letter, Does.Contain("font-family: var(--font-display);"));
+            Assert.That(letter, Does.Contain("translate: calc(-50% + var(--dir) * 34em / 30) calc(-50% - 4em / 30);"));
+            Assert.That(letter, Does.Contain("tbWrongKeySpin 600ms cubic-bezier(0.22, 1, 0.36, 1) forwards"));
+
+            // 34 + 18 = 52 and -4 - 30 = -34 at 140/600 of the way, then + (12, 110) = (64, 76).
+            Assert.That(css, Does.Contain("23.333% { translate: calc(-50% + var(--dir) * 52em / 30) calc(-50% - 34em / 30); animation-timing-function: cubic-bezier(0.11, 0, 0.5, 0); }"));
+            Assert.That(css, Does.Contain("100%    { translate: calc(-50% + var(--dir) * 64em / 30) calc(-50% + 76em / 30); }"));
+            Assert.That(css, Does.Contain("to   { rotate: calc(var(--dir) * 18deg); }"));
+            Assert.That(css, Does.Contain("23.333% { opacity: 1; animation-timing-function: cubic-bezier(0.11, 0, 0.5, 0); }"));
+        });
+    }
 }

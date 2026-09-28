@@ -2734,14 +2734,25 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
    wrong-key pops. Every overlay x is therefore a plain row-local offset, and the auto-shrink
    scale applied to the row carries the glyphs and the overlays together (the client's
    per-display content scale). typebeat-player.js translates .tb-stack itself on a line change
-   to reproduce the eased 220ms scroll. */
+   to reproduce the eased 220ms scroll.
+   Every row is drawn at ONE size, the desktop's (LyricStage draws all three LyricLineDisplays at
+   TypeBeatStyle.LYRIC_FONT_SIZE 42 and dims its neighbours by alpha alone), so the size lives here
+   and the rows inherit it. The row PITCH is the desktop's default centre-to-centre spacing (96 px,
+   TypeBeatRulesetSetting.LineSpacing) over that same 42, expressed in em so it follows the size:
+   a row's box is its 1.35em line-height, and the flex gap supplies the rest of the 96/42em pitch
+   (about 2.29em). beginScroll re-measures that pitch off offsetTop, so the scroll follows it.
+   The size also follows the viewport HEIGHT (5.5vh is the desktop's 42 px at its 768 px reference
+   height): three full-size rows at that pitch are about 5.9em tall, so on a short window a
+   width-only clamp grew the player past the viewport. The desktop scales its playfield with the
+   window the same way. */
 .tb-stack {
     position: relative;
     width: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--space-4);
+    font-size: clamp(1.6rem, min(4.4vw, 5.5vh), 2.6rem);
+    gap: calc(96em / 42 - 1.35em);
 }
 
 .tb-line {
@@ -2758,8 +2769,9 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     min-height: 1.35em;
     transition: opacity .15s ease-out;
 }
-.tb-line-prev, .tb-line-next { font-size: clamp(1rem, 2.4vw, 1.4rem); color: var(--text-faint); }
-.tb-line-cur { font-size: clamp(1.6rem, 4.4vw, 2.6rem); color: var(--text-muted); font-weight: 600; }
+.tb-line-prev, .tb-line-cur, .tb-line-next { font-size: 1em; font-weight: 600; }
+.tb-line-prev, .tb-line-next { color: var(--text-faint); }
+.tb-line-cur { color: var(--text-muted); }
 
 /* Dim ladder: alpha = 1 - dim, from LyricStage.relayout (a line is active) and
    relayoutUpcoming (pre-roll, or the dead zone between a seal and the next line's cue, where
@@ -2841,7 +2853,10 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
    deliberately outside the sync tint above, for the same identity-vs-state reason.) */
 .tb-c-free, .tb-line-cur .tb-c-free { color: #c792ea; }
 
-.tb-c-pop { animation: tbPop 140ms ease-out; }
+/* LyricLineDisplay.PlayJudgementFeedback: ScaleTo(1.25) then ScaleTo(1, 120, OutQuint). The
+   curve is the usual cubic fit of OutQuint; the length is PERFECT_POP_MS in typebeat-player.js,
+   which decides how long the class stays on. */
+.tb-c-pop { animation: tbPop 120ms cubic-bezier(0.22, 1, 0.36, 1); }
 @keyframes tbPop {
     from { transform: scale(1.25); }
     to   { transform: scale(1); }
@@ -2906,21 +2921,44 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 /* ---- rejected wrong key ----
    The offending letter pops up beside the caret (alternating sides), falls away and fades; it
-   never enters the line. Pure decoration, so this one animation runs on wall time. */
-.tb-wrongkeys { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 2; }
+   never enters the line. Pure decoration, so this one animation runs on wall time.
+   LyricStage.onWrongKeyRejected, desktop px at LYRIC_FONT_SIZE 42 re-expressed in em: the letter
+   is Mono(30), so its own font-size is 30/42 of the row's and each desktop px is 1/30 of the
+   letter's own em. Origin Centre: the centring -50% rides in the translate, which applies before
+   the rotate, so the glyph spins about its own centre. The layer sits on the caret's top edge
+   (.16em, the caret's own top), and the letter's centre starts at (+/-34, -4) px from there.
+   Three animations because the desktop eases each property on its own clock: the move is 140 ms
+   OutQuint by (18, -30) then 460 ms InQuad by (12, 110); the spin is 600 ms OutQuint to 18 deg;
+   the fade waits 140 ms then runs 460 ms InQuad. The cubic curves are the usual OutQuint and
+   InQuad fits. */
+.tb-wrongkeys { position: absolute; left: 0; top: .16em; width: 0; height: 0; pointer-events: none; z-index: 2; }
 .tb-wrongkey {
     position: absolute;
     left: 0; top: 0;
     color: var(--bad);
+    font-family: var(--font-display);
     font-weight: 700;
-    font-size: .8em;
+    font-size: calc(30em / 42);
     line-height: 1;
-    animation: tbWrongKey 600ms ease-out forwards;
+    translate: calc(-50% + var(--dir) * 34em / 30) calc(-50% - 4em / 30);
+    animation:
+        tbWrongKeyMove 600ms forwards,
+        tbWrongKeySpin 600ms cubic-bezier(0.22, 1, 0.36, 1) forwards,
+        tbWrongKeyFade 600ms forwards;
 }
-@keyframes tbWrongKey {
-    0%   { transform: translate(0, 0) rotate(0deg); opacity: 1; }
-    23%  { transform: translate(calc(var(--dir) * 18px), -30px) rotate(calc(var(--dir) * 7deg)); opacity: 1; }
-    100% { transform: translate(calc(var(--dir) * 30px), 80px) rotate(calc(var(--dir) * 18deg)); opacity: 0; }
+@keyframes tbWrongKeyMove {
+    0%      { translate: calc(-50% + var(--dir) * 34em / 30) calc(-50% - 4em / 30); animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
+    23.333% { translate: calc(-50% + var(--dir) * 52em / 30) calc(-50% - 34em / 30); animation-timing-function: cubic-bezier(0.11, 0, 0.5, 0); }
+    100%    { translate: calc(-50% + var(--dir) * 64em / 30) calc(-50% + 76em / 30); }
+}
+@keyframes tbWrongKeySpin {
+    from { rotate: 0deg; }
+    to   { rotate: calc(var(--dir) * 18deg); }
+}
+@keyframes tbWrongKeyFade {
+    0%      { opacity: 1; }
+    23.333% { opacity: 1; animation-timing-function: cubic-bezier(0.11, 0, 0.5, 0); }
+    100%    { opacity: 0; }
 }
 
 /* ---- instrumental / intro gap ----
@@ -3066,6 +3104,13 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     .tb-hud-val { font-size: var(--text-xl); }
     .tb-player { padding: var(--space-4); }
     .tb-gap-track { width: 72px; }
+}
+
+/* A short window (a landscape phone, a small laptop with the browser's own chrome): the full-size
+   stack is the tallest thing in the player, so the stage gives up most of its breathing room
+   rather than pushing the progress bar and the title below the fold. */
+@media (max-height: 640px) {
+    .tb-stage { padding: var(--space-2) 0; gap: var(--space-2); }
 }
 
 /* ==========================================================================

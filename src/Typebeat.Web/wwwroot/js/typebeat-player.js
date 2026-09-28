@@ -55,7 +55,8 @@
     const LINE_SCROLL_MS = 220;             // TypeBeatStyle.LINE_SCROLL_DURATION (ms), OutQuint
     const CARET_SNAP_FACTOR = 1.5;          // Caret.MoveToTarget: snap past 1.5 line heights
     const CARET_MOVING_EPSILON = 0.75;      // Caret.Update: "still moving" threshold, px
-    const PERFECT_POP_MS = 140;             // LyricLineDisplay.PlayJudgementFeedback
+    const PERFECT_POP_MS = 120;             // LyricLineDisplay.PlayJudgementFeedback, OutQuint
+    const CARET_FADE_MS = 120;              // LyricStage.setCaretsVisible, OutQuint
     const ROLLING_WPM_WINDOW = 30;          // TypingEngine.rolling_wpm_window
     // No desktop analogue: how long a dead stretch has to be before the chip is worth drawing at
     // all. Shorter than a qualifying SKIP gap by an order of magnitude, so plenty of chips are
@@ -181,6 +182,24 @@
         if (moving || msSinceActivity < CARET_BLINK_PERIOD) return 1;
         const phase = (msSinceActivity - CARET_BLINK_PERIOD) / CARET_BLINK_PERIOD;
         return 0.5 + 0.5 * Math.cos(phase * Math.PI * 2);
+    }
+
+    // Caret show/hide over time (mirrors LyricStage.setCaretsVisible): a change of visibility
+    // starts a FadeTo(1 or 0, CARET_FADE_MS, OutQuint) from wherever the fade currently stands, so
+    // a reversal mid-fade turns round without a jump. It multiplies caretAlpha rather than being a
+    // CSS transition, because the blink writes the same opacity every frame and a transition would
+    // smear it. Starts hidden, as the desktop carets are built with Alpha 0.
+    function makeCaretFade(durationMs) {
+        let target = false, from = 0, start = -Infinity;
+        return function (visible, time) {
+            const p = durationMs > 0 ? Math.min(1, Math.max(0, (time - start) / durationMs)) : 1;
+            const current = from + ((target ? 1 : 0) - from) * outQuint(p);
+            if (visible === target) return current;
+            target = visible;
+            from = current;
+            start = time;
+            return current;
+        };
     }
 
     // Gross WPM implied by `count` presses spanning `spanMs` of ACTIVE time (mirrors
@@ -1404,6 +1423,9 @@
         // and the caret stay one object. The desktop hides the sung caret once the song is more than
         // one line from the focused line, since it is off the visible stack; here that is the same
         // test, expressed as "no row is showing it".
+        const playerCaretFade = makeCaretFade(CARET_FADE_MS);
+        const sungCaretFade = makeCaretFade(CARET_FADE_MS);
+
         function updateCarets(time, elapsed, active, sungRow) {
             const lineComplete = active && engine.caretIndex >= rowCur.line.cells.length;
             const shown = caretsVisible(active, lineComplete, engine.finished, !!sungRow);
@@ -1438,8 +1460,10 @@
             sungCaret.style.transform = 'translateX(' + sungX.toFixed(2) + 'px)';
 
             const moving = Math.abs(caretTarget - caretX) > CARET_MOVING_EPSILON;
-            playerCaret.style.opacity = shown.player ? caretAlpha(time - lastTypedAt, moving, true).toFixed(3) : '0';
-            sungCaret.style.opacity = shown.sung ? '1' : '0';
+            const playerFade = playerCaretFade(shown.player, time);
+            const sungFade = sungCaretFade(shown.sung, time);
+            playerCaret.style.opacity = (playerFade * caretAlpha(time - lastTypedAt, moving, true)).toFixed(3);
+            sungCaret.style.opacity = sungFade.toFixed(3);
         }
 
         function approach(current, target, halfTime, elapsed, lineHeight) {
@@ -1590,13 +1614,15 @@
         }
 
         // A rejected wrong key never enters the line; the offending letter pops up beside the
-        // caret (alternating sides), falls away and fades (LyricStage.onWrongKeyRejected).
+        // caret (alternating sides), falls away and fades (LyricStage.onWrongKeyRejected). The
+        // letter is anchored ON the caret; the desktop's side offset, lift and motion are all in
+        // .tb-wrongkey, in em, so they follow the lyric size.
         function popWrongKey(c) {
             wrongDirection = -wrongDirection;
             const letter = el('span', 'tb-wrongkey');
             letter.textContent = c === ' ' ? '_' : c;
             letter.style.setProperty('--dir', String(wrongDirection));
-            letter.style.left = (caretX + wrongDirection * 24).toFixed(2) + 'px';
+            letter.style.left = caretX.toFixed(2) + 'px';
             wrongLayer.appendChild(letter);
             const drop = () => { if (letter.parentNode) letter.parentNode.removeChild(letter); };
             letter.addEventListener('animationend', drop);
@@ -1887,6 +1913,7 @@
         sungPositionAt,
         cueBar,
         caretAlpha,
+        makeCaretFade,
         rollingWpmValue,
         makeRollingWpm,
         cellClass,
@@ -1934,7 +1961,8 @@
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,
             ROLLING_WPM_WINDOW, GAP_CHIP_MIN_MS,
-            MIN_GAP_MS, GAP_START_SETTLE_MS, MIN_SKIP_WINDOW_MS, SKIP_LEAD_MS
+            MIN_GAP_MS, GAP_START_SETTLE_MS, MIN_SKIP_WINDOW_MS, SKIP_LEAD_MS,
+            CARET_FADE_MS
         }
     };
 })(window.TypeBeatCore);

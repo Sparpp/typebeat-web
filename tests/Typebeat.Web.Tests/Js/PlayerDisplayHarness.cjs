@@ -1268,7 +1268,20 @@ const out = {
     healthBarSamples: [1, 0.5, 0.2, 0.19999, 0.05, 0, -0.1, 1.2].map(h => Object.assign({ health: h }, D.healthBar(h))),
     lowHealthThreshold: D.LOW_HEALTH_THRESHOLD,
     healthBarRuns: healthBarRuns(),
-    startGateHint: D.START_GATE_HINT
+    startGateHint: D.START_GATE_HINT,
+
+    // ---- stack layout and animation timings (backlog 322) ----
+    perfectPopMs: D.constants.PERFECT_POP_MS,
+    caretFadeMs: D.constants.CARET_FADE_MS,
+    caretFade: (() => {
+        // One fade in, one fade out, then a reversal half way through a fade in.
+        const f = D.makeCaretFade(D.constants.CARET_FADE_MS);
+        return [
+            f(false, 0), f(true, 0), f(true, 60), f(true, 120), f(true, 500),
+            f(false, 1000), f(false, 1060), f(false, 1120),
+            f(true, 2000), f(false, 2060), f(false, 2120), f(false, 2180)
+        ];
+    })()
 };
 
 // THE HP BAR READS THE ACCOUNT (backlog 306). Two plays that never reject a key, so the rejection
