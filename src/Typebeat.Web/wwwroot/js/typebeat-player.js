@@ -1724,7 +1724,17 @@
         // decodeAudioData needs a fresh copy (some browsers detach the buffer).
         const bytes = opts.audioArrayBuffer.slice(0);
         audioCtx.decodeAudioData(bytes,
-            (buf) => { audioBuffer = buf; showStartGate('press space to start'); },
+            (buf) => {
+                // The map's own track gain, baked into the samples once here, ahead of the fixed 0.1
+                // level startSourceAt applies, so a boosted map clips where the desktop's does.
+                if (beatmap.audioGain !== Core.constants.DEFAULT_AUDIO_GAIN) {
+                    const channels = [];
+                    for (let c = 0; c < buf.numberOfChannels; c++) channels.push(buf.getChannelData(c));
+                    Core.applyTrackGain(channels, beatmap.audioGain);
+                }
+                audioBuffer = buf;
+                showStartGate('press space to start');
+            },
             (err) => {
                 overlay.innerHTML = '';
                 overlay.appendChild(el('div', 'tb-card', '<div class="tb-card-title">could not load audio</div><div class="tb-card-hint">this map’s audio format isn’t supported by your browser.</div>'));

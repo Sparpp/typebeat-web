@@ -219,6 +219,108 @@ public class LyricParserParityTest
         });
     }
 
+    /// <summary>
+    /// The map's track gain (backlog 315) through the same lens, but between the game's production
+    /// decoder and the BROWSER's <c>parseLyricOsu</c>: the server never reads the key, /play is
+    /// served the stored .osu verbatim and applies the gain itself. The files are the game writer's
+    /// own output, either with a gain passed to it (so the value is spelled by
+    /// <c>BeatmapMetadata.EncodeAudioGain</c>) or with a raw <c>AudioGain:</c> line spliced into its
+    /// [Metadata] section, which is how the clamp and the TryParse edges reach both readers.
+    /// </summary>
+    [Test]
+    public void TheBrowserReadsTheSameAudioGainAsTheGamesDecoder()
+    {
+        string plain = Osu();
+        const string metadata_header = "[Metadata]";
+        int at = plain.IndexOf(metadata_header, StringComparison.Ordinal);
+        Assert.That(at, Is.GreaterThanOrEqualTo(0), "the writer emits a [Metadata] section");
+
+        string spliced(params string[] values)
+        {
+            var lines = new StringBuilder();
+            foreach (string v in values)
+                lines.Append("\nAudioGain:").Append(v);
+            return plain.Insert(at + metadata_header.Length, lines.ToString());
+        }
+
+        var cases = new List<(string Name, string Osu)>
+        {
+            ("absent", plain),
+            ("written 2.5", LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(), audioGain: 2.5)),
+            ("written 1/3", LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(), audioGain: 1.0 / 3)),
+            ("written 0", LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(), audioGain: 0)),
+            ("written 4", LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(), audioGain: 4)),
+            ("good then junk", spliced("2", "junk")),
+            ("junk then good", spliced("junk", "3")),
+        };
+
+        foreach (string raw in new[]
+                 {
+                     "2", "0.5", "4", "4.5", "1e1", "-1", "-0.25", "0", ".5", "1.", "+2", "2.5e-1", "1E+0",
+                     "2x", "1.5.2", "abc", "", "1,5", "0x2", "1 2", "Infinity", "-Infinity", "infinity", "1e400", " 3 ",
+                 })
+            cases.Add(($"raw '{raw}'", spliced(raw)));
+
+        string path = Path.Combine(Path.GetTempPath(), $"typebeat-audiogain-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(cases.Select(c => c.Osu).ToArray()), new UTF8Encoding(false));
+
+        System.Text.Json.JsonElement browser;
+
+        try
+        {
+            browser = NodeHarness.Run("CoreAudioGainHarness.cjs", path);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // A leftover temp file is not worth failing a fidelity test over.
+            }
+        }
+
+        double[] gains = browser.GetProperty("gains").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+        double[] built = browser.GetProperty("built").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+        int nonDefault = 0;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(gains, Has.Length.EqualTo(cases.Count));
+
+            for (int i = 0; i < cases.Count; i++)
+            {
+                double game = ClientDecode(cases[i].Osu).Metadata.AudioGain;
+
+                if (game != BeatmapMetadata.DEFAULT_AUDIO_GAIN)
+                    nonDefault++;
+
+                Assert.That(gains[i], Is.EqualTo(game), $"{cases[i].Name}: parse");
+                Assert.That(built[i], Is.EqualTo(game), $"{cases[i].Name}: carried by buildBeatmap");
+            }
+        });
+
+        // Coverage: most cases must move the gain, or the agreement is mostly on the default.
+        Assert.That(nonDefault, Is.GreaterThanOrEqualTo(20), "cases whose gain is not the default");
+    }
+
+    /// <summary>
+    /// The one value <c>double.TryParse</c> accepts that the browser refuses: NaN. The game's
+    /// <c>Math.Clamp</c> passes it through, so the desktop would play a track of NaN samples; the
+    /// browser keeps the default instead. Pinned so the divergence stays a known one, and so a
+    /// desktop fix (reading NaN as absent) shows up here as the moment to drop this.
+    /// </summary>
+    [Test]
+    public void NaNIsTheOneKnownDivergence()
+    {
+        string osu = Osu();
+        osu = osu.Insert(osu.IndexOf("[Metadata]", StringComparison.Ordinal) + "[Metadata]".Length, "\nAudioGain:NaN");
+
+        Assert.That(double.IsNaN(ClientDecode(osu).Metadata.AudioGain), Is.True, "the game decoder passes NaN through its clamp");
+    }
+
     [Test]
     public void BothParsersReadTheSameUnitsPausesAndSyllablesFromTheSameFile()
     {

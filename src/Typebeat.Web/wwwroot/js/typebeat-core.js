@@ -249,11 +249,67 @@
         return isFinite(version) ? version : FALLBACK_FORMAT_VERSION;
     }
 
+    // The map's own TRACK GAIN (PR 1), a linear multiplier on the song's samples: 1 plays the file
+    // as imported, and a hand-edited value is clamped to [0, MAX_AUDIO_GAIN] on read. Mirrors
+    // BeatmapMetadata.DEFAULT_AUDIO_GAIN / MAX_AUDIO_GAIN and the [Metadata] AudioGain case of the
+    // game's LegacyBeatmapDecoder.
+    const DEFAULT_AUDIO_GAIN = 1;
+    const MAX_AUDIO_GAIN = 4;
+
+    // The decoder reads the value with double.TryParse(NumberStyles.Float, InvariantCulture), which
+    // takes the WHOLE string or nothing: an optional sign, digits with at most one decimal point
+    // (either side may be empty but not both), and an optional exponent, or the invariant infinity
+    // symbol. parseFloat would take "2x" as 2; TryParse rejects it, so this does too. A number too
+    // large for a double reads as infinity on both sides (and so clamps to the maximum).
+    const AUDIO_GAIN_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+    const AUDIO_GAIN_INFINITY = /^([+-]?)infinity$/i;
+
+    // The parsed gain, or null where TryParse would fail (the caller then keeps what it had).
+    // NaN is the one value TryParse accepts that is refused here: the desktop's Math.Clamp would
+    // pass it through and play a track of NaN samples, which is a defect to report, not to copy.
+    function parseAudioGain(value) {
+        const v = String(value);
+        let n;
+        if (AUDIO_GAIN_NUMBER.test(v)) n = Number(v);
+        else {
+            const inf = AUDIO_GAIN_INFINITY.exec(v);
+            if (!inf) return null;
+            n = inf[1] === '-' ? -Infinity : Infinity;
+        }
+        if (n !== n) return null;
+        return n < 0 ? 0 : n > MAX_AUDIO_GAIN ? MAX_AUDIO_GAIN : n;
+    }
+
+    // Applies a track gain to decoded audio IN PLACE: every sample of every channel (each a
+    // Float32Array, as AudioBuffer.getChannelData hands them out) scaled by `gain` and clamped to
+    // full scale. It runs once, on the decoded samples and ahead of every volume stage, because that
+    // is where the desktop clips (ScaledAudioStream clamps the scaled sample to [-1, 1] before the
+    // mixer sees it): a gain node ahead of the player's fixed 0.1 level would never reach full scale
+    // (0.1 x 4 < 1), so a map boosted past what its samples hold would play clean here and clipped
+    // there. A gain of exactly DEFAULT_AUDIO_GAIN touches nothing, as the desktop plays the file
+    // itself then. Returns the number of samples that clipped.
+    function applyTrackGain(channels, gain) {
+        let clipped = 0;
+        if (gain === DEFAULT_AUDIO_GAIN || !channels) return clipped;
+        for (const data of channels) {
+            for (let i = 0; i < data.length; i++) {
+                const scaled = data[i] * gain;
+                if (scaled > 1) { data[i] = 1; clipped++; }
+                else if (scaled < -1) { data[i] = -1; clipped++; }
+                else data[i] = scaled;
+            }
+        }
+        return clipped;
+    }
+
     function parseLyricOsu(text) {
         if (text && text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip BOM
         const rows = String(text).split(/\r?\n/);
         const general = {}, metadata = {};
         const lyricObjs = [];
+        // Read in the loop rather than off the key map, because the decoder only ASSIGNS on a
+        // successful parse: a later unparseable AudioGain line leaves an earlier good one standing.
+        let audioGain = DEFAULT_AUDIO_GAIN;
         let section = '';
         // The magic line is the first non-empty row, exactly as the server's parser locates it; a
         // file that does not carry one keeps the fallback version.
@@ -271,6 +327,10 @@
                     const key = raw.slice(0, idx).trim();
                     const val = raw.slice(idx + 1).trim();
                     (section === 'General' ? general : metadata)[key] = val;
+                    if (section === 'Metadata' && key === 'AudioGain') {
+                        const g = parseAudioGain(val);
+                        if (g !== null) audioGain = g;
+                    }
                 }
             } else if (section === 'Lyrics') {
                 try { lyricObjs.push(JSON.parse(t)); } catch (e) { /* tolerate junk */ }
@@ -297,6 +357,7 @@
             beatmapId: parseInt(metadata['BeatmapID'] || '0', 10) || 0,
             beatmapSetId: parseInt(metadata['BeatmapSetID'] || '0', 10) || 0,
             formatVersion: formatVersion === null ? FALLBACK_FORMAT_VERSION : formatVersion,
+            audioGain,
             header,
             lineObjs
         };
@@ -1721,6 +1782,8 @@
             beatmapId: parsed.beatmapId,
             granularity: granularity,
             audioFilename: parsed.audioFilename,
+            // The map's track gain, applied by the player to the decoded samples (applyTrackGain).
+            audioGain: parsed.audioGain === undefined ? DEFAULT_AUDIO_GAIN : parsed.audioGain,
             lines: lines,
             totalCells: lines.reduce((n, l) => n + l.cells.length, 0)
         };
@@ -4555,6 +4618,9 @@
         stripBackingVocals,
         defaultChar, projectDefault, toDefaultStream,
         parseLyricOsu, parseFormatVersion, buildBeatmap, syllableCharTarget,
+        // The map's track gain (PR 1): the TryParse-mirroring read and the in-place scale and clamp
+        // the player runs on the decoded audio, exported so the harnesses can pin both.
+        parseAudioGain, applyTrackGain,
         // The syllabifier and the group derivation, exported so the fidelity harnesses can hold
         // them against the game's own Syllabifier / TypingLine.Syllables word for word.
         isSyllabifiable, countSyllables, splitPoints, buildSyllables, syllableIndexOf,
@@ -4573,6 +4639,7 @@
             // The format version gate (backlog 255), exported so the harnesses pin the same numbers
             // the C# decoder carries rather than transcribing them.
             FORMAT_MAGIC, FALLBACK_FORMAT_VERSION, LITERAL_BRACKETS_FROM_VERSION,
+            DEFAULT_AUDIO_GAIN, MAX_AUDIO_GAIN,
             // The flexible caret's two tuning points (backlog 208), exported so the harnesses pin
             // the same numbers the game's own FletcherEngineTest does rather than transcribing them.
             FLETCHER_MAX_CHARS_AHEAD, FLETCHER_DRAG_GRACE_MS,
