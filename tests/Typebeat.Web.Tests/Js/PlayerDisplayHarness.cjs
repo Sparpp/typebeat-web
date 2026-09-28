@@ -376,10 +376,16 @@ function sungPlacement(engine, map, time) {
 // Class and GLYPH exactly as paintRow would write them, for every cell of a line. Backlog 251
 // removed the per-cell sync tint (cellFill / --tb-sync-fill) this used to also report; a correct
 // cell now takes .tb-c-hit's flat colour straight from CSS, so there is nothing left to sample.
+//
+// Since backlog 316 the glyph is read through the space error dot flag exactly as paintRow reads
+// it (the dot is on for every /play run), and each cell reports whether its dot is showing.
 function paint(engine, lineIndex) {
-    return engine.lines[lineIndex].cells.map(c => ({
+    const cells = engine.lines[lineIndex].cells;
+    const dots = D.spaceErrorDots(cells);
+    return cells.map((c, i) => ({
         cls: D.cellClass(c, false, false),
-        glyph: D.cellGlyph(c)
+        glyph: D.cellGlyph(c, dots[i]),
+        dot: dots[i]
     }));
 }
 
@@ -1735,5 +1741,137 @@ function resultCardRuns() {
         bare: D.resultCells(TB.computeScore(run(abcdOsu, clean, 9000)), { title: 't', artist: 'a' }).meta
     };
 }
+
+// --- cell-state feedback (backlog 316) ---
+// The desktop's three kinds of cell feedback: the ABANDONED dim a word skip leaves, the SPACE ERROR
+// DOT, and the typo MOTION a typed-through wrong key plays. All three run on the skip-ON arm here
+// (the engine's default and what /play plays), which is the only arm a word can be abandoned on.
+function skipOnEngine() {
+    const engine = new TB.TypingEngine(build(abcdOsu));
+    engine.spaceSkipsWord = true;
+    engine.update(1000);
+    return engine;
+}
+
+// 'a', then a space on 'b': the skip abandons 'b' and the same press pays the gap. Then two
+// backspaces: the first erases the gap, the second steps transparently over the abandoned 'b' (which
+// re-opens it) and erases 'a'. The abandoned paint is taken after the skip, after the first erase
+// (still abandoned) and after the reclaim.
+function abandonedRun() {
+    const engine = skipOnEngine();
+    engine.processKey('a', 1000);
+    engine.update(1200);
+    engine.processKey(' ', 1200);
+    const skipped = paint(engine, 0);
+    engine.processBackspace();
+    const gapErased = paint(engine, 0);
+    engine.processBackspace();
+    return { skipped: skipped, gapErased: gapErased, reclaimed: paint(engine, 0) };
+}
+
+// SpaceErrorDotTest's cells, hand-built for the same reason the desktop builds them by hand: the rule
+// reads three properties, and the cases that matter are combinations no single play produces.
+function dotCell(expected, typeable, state, typedChar) {
+    return { expected: expected, typeable: typeable, state: state, typedChar: typedChar === undefined ? null : typedChar };
+}
+function letterCell(ch, state) { return dotCell(ch, true, state); }
+function gapCell(state, typedChar) { return dotCell(' ', true, state, typedChar); }
+function markCell(ch) { return dotCell(ch, false, 'autoskip'); }
+
+function dotCases() {
+    const L = letterCell, G = gapCell, M = markCell;
+    const cases = {
+        flawedWordSpacedPast: [L('a', 'wrong'), L('b', 'correct'), G('correct'), L('c', 'correct'), L('d', 'correct')],
+        cleanWord: [L('a', 'correct'), L('b', 'correct'), G('correct'), L('c', 'correct'), L('d', 'correct')],
+        unacceptedGapUntyped: [L('a', 'wrong'), L('b', 'missed'), G('untyped'), L('c', 'untyped')],
+        unacceptedGapMissed: [L('a', 'wrong'), L('b', 'missed'), G('missed'), L('c', 'untyped')],
+        unacceptedGapAbandoned: [L('a', 'wrong'), L('b', 'missed'), G('abandoned'), L('c', 'untyped')],
+        gapHoldingTypedChars: [L('a', 'abandoned'), L('b', 'abandoned'), G('wrong', 'x'), L('c', 'untyped')],
+        mistypedGapFromCleanWord: [L('a', 'correct'), L('b', 'correct'), G('wrong', 'q'), L('c', 'untyped')],
+        spacedPastCleanly: [L('a', 'correct'), L('b', 'correct'), G('correct', ' '), L('c', 'correct')],
+        payingTheSpaceKeepsTheDot: [L('a', 'wrong'), L('b', 'correct'), G('correct', 'x'), L('c', 'correct')],
+        flawWrong: [L('a', 'correct'), L('b', 'wrong'), G('correct'), L('c', 'correct')],
+        flawMissed: [L('a', 'correct'), L('b', 'missed'), G('correct'), L('c', 'correct')],
+        flawAbandoned: [L('a', 'correct'), L('b', 'abandoned'), G('correct'), L('c', 'correct')],
+        flawCorrect: [L('a', 'correct'), L('b', 'correct'), G('correct'), L('c', 'correct')],
+        flawUntyped: [L('a', 'correct'), L('b', 'untyped'), G('correct'), L('c', 'correct')],
+        eachGapReadsOwnWord: [L('a', 'correct'), L('b', 'correct'), G('correct'), L('c', 'correct'), L('d', 'wrong'), G('correct'), L('e', 'correct'), L('f', 'correct')],
+        spoiledGapDoesNotFlawNext: [L('a', 'wrong'), G('wrong'), L('b', 'correct'), G('correct'), L('c', 'correct')],
+        punctuationCarriesFlaw: [L('a', 'wrong'), M(','), G('correct'), L('b', 'correct')],
+        punctuationIsNoFlaw: [L('a', 'correct'), M(','), G('correct'), L('b', 'correct')],
+        noGaps: [L('a', 'wrong'), L('b', 'missed')],
+        empty: []
+    };
+    const result = {};
+    for (const name of Object.keys(cases)) result[name] = D.spaceErrorDots(cases[name]);
+
+    // TestReclaimingAnAbandonedWordClearsItsDot: the same array re-read after the reclaim.
+    const reclaim = [L('a', 'correct'), L('b', 'abandoned'), G('correct'), L('c', 'correct')];
+    const before = D.spaceErrorDots(reclaim)[2];
+    reclaim[1].state = 'untyped';
+    result.reclaimBefore = before;
+    result.reclaimAfter = D.spaceErrorDots(reclaim)[2];
+    return result;
+}
+
+// TestTheDotReplacesTheCharacterRatherThanStackingOnIt, through cellGlyph's dotted argument (the
+// setting is on for every /play run, so the desktop's enabled flag is the constant).
+function gapGlyphCases() {
+    return {
+        dottedWrongGap: D.cellGlyph(gapCell('wrong', 'x'), true),
+        undottedWrongGap: D.cellGlyph(gapCell('wrong', 'x'), false),
+        dottedCorrectGap: D.cellGlyph(gapCell('correct', 'x'), true),
+        dottedLyricCell: D.cellGlyph(letterCell('a', 'wrong'), true),
+        enabled: D.SPACE_ERROR_DOTS_ENABLED
+    };
+}
+
+// Every press is either a typo typed through or an accepted key, and the script below has both,
+// including a second typo OVERWRITING a parked gap typo (the C# raises CharJudged for that one too).
+// The same script is played twice, with and without an onTypoLanded subscriber, so the onCharJudged
+// stream is shown to be exactly what it was before the hook existed.
+const TYPO_SCRIPT = [['a', 1000], ['x', 1100], ['q', 1300], ['z', 1400], [' ', 1500], ['c', 2000], ['d', 2500]];
+
+function typoHookRun(subscribe) {
+    const engine = skipOnEngine();
+    const typos = [];
+    const judged = [];
+    engine.onCharJudged = (index, type) => judged.push({ index: index, type: type });
+    if (subscribe) engine.onTypoLanded = (index, lineIndex) => typos.push({ index: index, line: lineIndex, state: engine.lines[lineIndex].cells[index].state });
+    for (const [c, t] of TYPO_SCRIPT) { engine.update(t); engine.processKey(c, t); }
+    return { typos: typos, judged: judged, wrongChar: engine.counts.WrongChar || 0, health: engine.health, paint: paint(engine, 0) };
+}
+
+// A Gatekeeper REJECTION lands nothing, so it raises no typo either.
+function rejectedKeyRun() {
+    const engine = skipOnEngine();
+    engine.allowWrongInput = false;
+    let typos = 0, wrongKeys = 0;
+    engine.onTypoLanded = () => typos++;
+    engine.onWrongKey = () => wrongKeys++;
+    engine.processKey('x', 1000);
+    return { typos: typos, wrongKeys: wrongKeys };
+}
+
+out.cellFeedback = {
+    abandoned: abandonedRun(),
+    dots: dotCases(),
+    gapGlyph: gapGlyphCases(),
+    pulse: {
+        ms: D.SPACE_ERROR_DOT_PULSE_MS,
+        scale: D.SPACE_ERROR_DOT_PULSE_SCALE,
+        atZero: D.spaceErrorDotPulseScale(0),
+        atEnd: D.spaceErrorDotPulseScale(D.SPACE_ERROR_DOT_PULSE_MS),
+        pastEnd: D.spaceErrorDotPulseScale(D.SPACE_ERROR_DOT_PULSE_MS * 2),
+        negative: D.spaceErrorDotPulseScale(-5),
+        peak: D.spaceErrorDotPulseScale(D.SPACE_ERROR_DOT_PULSE_MS / 2),
+        curve: Array.from({ length: 21 }, (_, k) => D.spaceErrorDotPulseScale(k * D.SPACE_ERROR_DOT_PULSE_MS / 20))
+    },
+    shakeMs: D.TYPO_SHAKE_MS,
+    shakeClass: D.cellClass(letterCell('a', 'wrong'), false, false, true),
+    typoHook: typoHookRun(true),
+    typoHookUnsubscribed: typoHookRun(false),
+    rejectedKey: rejectedKeyRun()
+};
 
 process.stdout.write(JSON.stringify(out));

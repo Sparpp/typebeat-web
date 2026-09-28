@@ -2695,6 +2695,9 @@
             this.onCharJudged = null;
             this.onWrongKey = null;
             this.onComboBroken = null;
+            // A wrong key TYPED THROUGH into a cell (the C#'s CharJudged(WrongChar)), carrying the
+            // cell index and the line index it landed on. Display only (backlog 316).
+            this.onTypoLanded = null;
             // TypingEngine.ComboRestored: a corrected typo just resumed the streak its wrong
             // keypress broke, carrying how much combo was put back. Raised with combo and maxCombo
             // already restored and BEFORE the corrected retype is judged.
@@ -4257,14 +4260,14 @@
                     // break to a free increment; sealLine handles it there, at the seam that applies
                     // the result, rather than here, because a typo the player goes back for must
                     // still earn its retype's combo normally.
-                    // NEITHER renderer hook fires here, and both omissions mirror the desktop.
-                    // onWrongKey is the REJECTED-key feedback (shake + the char popping off the
+                    // Neither of the two older renderer hooks fires here, and both omissions mirror
+                    // the desktop. onWrongKey is the REJECTED-key feedback (the char popping off the
                     // caret, mirroring LyricStage.onWrongKeyRejected), which the desktop does not
-                    // play for a char it accepted into a cell; the cell painting itself wrong is the
-                    // feedback on both sides. onCharJudged is this renderer's rolling-WPM tap, and
-                    // the C# pushRollingSample() sits on the ACCEPTED path only, below the branch we
-                    // are in, so logging a wrong char here would drift the browser's WPM readout
-                    // away from the desktop's.
+                    // play for a char it accepted into a cell. onCharJudged is this renderer's
+                    // rolling-WPM tap, and the C# pushRollingSample() sits on the ACCEPTED path only,
+                    // below the branch we are in, so logging a wrong char there would drift the
+                    // browser's WPM readout away from the desktop's. The typo's OWN feedback is
+                    // onTypoLanded, raised below.
                     //
                     // HEALTH is charged here, at the keypress (backlog 166: TypeBeatHealthFeed on
                     // CharJudged(WrongChar) -> ApplyTypoDrain), and refunded if the character is
@@ -4274,6 +4277,15 @@
                     // PARKED gap typo included, so the drain is taken every time too, and the erase
                     // later refunds one.
                     this.healthAccount.applyDeferredDrain(1);
+                    // THE TYPO'S DISPLAY FEEDBACK (backlog 316): the other two readers of the C#'s
+                    // CharJudged(WrongChar), which LyricStage.onCharJudged routes to the cell's
+                    // 2 px shake, the gap dot's pulse (LyricLineDisplay.PlayJudgementFeedback) and
+                    // the caret blink reset (Caret.NotifyTyped). Raised once per typed-through key,
+                    // at the instant the C# raises that judgement: after the break and the drain
+                    // above, before the roll below, with the cell and line the key landed on.
+                    // DISPLAY ONLY: it reads nothing back into the engine, and it is a hook of its
+                    // own rather than onCharJudged precisely so the rolling WPM stays accepted-only.
+                    if (this.onTypoLanded) this.onTypoLanded(wrongCellIndex, this.activeLineIndex);
                     //
                     // A typo on the line's LAST cell finishes it exactly as a correct press would
                     // (the character is finished, it is simply wrong), so this path rolls the caret

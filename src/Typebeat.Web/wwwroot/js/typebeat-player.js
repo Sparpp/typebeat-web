@@ -425,8 +425,57 @@
     const START_GATE_HINT = 'type the lyrics as they are sung · the blue underline is the vocal, the bar under the next line counts you in · '
         + 'the thin bar under the stats is your health: characters typed right refill it, missed characters, typos and skipped words drain it, and the run fails if it empties';
 
+    // THE SPACE ERROR DOT (backlog 316, the desktop's backlog 197 marker). A user setting on the
+    // desktop that has shipped ON since PR 2 (TypeBeatRulesetConfigManager's SpaceErrorDots
+    // default, pinned by ConfigDefaultsTest). /play has no settings surface, so it takes that
+    // shipped default unconditionally, the move backlogs 198 and 307 made for the engine settings.
+    const SPACE_ERROR_DOTS_ENABLED = true;
+    // LyricLineDisplay.SPACE_ERROR_DOT_PULSE_MS / _SCALE: the bounce every typo landing on a gap
+    // plays on that gap's dot, so a mashed space still acknowledges each press.
+    const SPACE_ERROR_DOT_PULSE_MS = 150;
+    const SPACE_ERROR_DOT_PULSE_SCALE = 0.5;
+    // LyricLineDisplay.PlayJudgementFeedback's WrongChar shake: 2 px left over 25 ms, 2 px right
+    // over 25 ms, home over 15 ms. The keyframes live on .tb-c-shake in site.css; this is how long
+    // the class stays on.
+    const TYPO_SHAKE_MS = 65;
+
+    /// A WORD GAP (LyricLineDisplay.IsWordGap, the engine's own isWordGap): the typeable space cell
+    /// between two words. Punctuation is not typeable, so it rides inside its word.
+    function isWordGap(cell) {
+        return cell.typeable && cell.expected === ' ';
+    }
+
+    /// LyricLineDisplay.ComputeSpaceErrorDots, one flag per cell, pure. A gap is dotted when it
+    /// holds a typo of its OWN (state wrong), or when the word before it (back to the previous gap
+    /// or the line start) was left FLAWED and the player spaced past it (the gap is correct).
+    /// Flawed means a typeable non-gap cell wrong, missed or abandoned: a word given up to a skip
+    /// was left with an error in it, and reclaiming it (which returns its cells to untyped) clears
+    /// the dot with no event of its own, because this is re-read on every repaint.
+    function spaceErrorDots(cells) {
+        const into = new Array(cells.length);
+        let flawed = false;
+        for (let i = 0; i < cells.length; i++) {
+            const cell = cells[i];
+            if (isWordGap(cell)) {
+                into[i] = cell.state === 'wrong' || (flawed && cell.state === 'correct');
+                flawed = false;
+                continue;
+            }
+            into[i] = false;
+            if (cell.typeable && (cell.state === 'wrong' || cell.state === 'missed' || cell.state === 'abandoned')) flawed = true;
+        }
+        return into;
+    }
+
+    /// LyricLineDisplay.SpaceErrorDotPulseScale: 1 at rest and at both ends of the pulse,
+    /// 1 + SPACE_ERROR_DOT_PULSE_SCALE at its midpoint, a half sine between.
+    function spaceErrorDotPulseScale(elapsedMs) {
+        if (!(elapsedMs > 0) || elapsedMs >= SPACE_ERROR_DOT_PULSE_MS) return 1;
+        return 1 + SPACE_ERROR_DOT_PULSE_SCALE * Math.sin(Math.PI * (elapsedMs / SPACE_ERROR_DOT_PULSE_MS));
+    }
+
     /// The class list for a cell's span. Pure (state in, string out).
-    function cellClass(cell, isCaret, popping) {
+    function cellClass(cell, isCaret, popping, shaking) {
         let cls = 'tb-c';
         if (cell.state === 'correct') {
             const jt = cell.judgeType;
@@ -440,23 +489,31 @@
         } else if (cell.state === 'wrong') {
             // Typed through wrong (the default model). The desktop shows the EXPECTED glyph in
             // error red on a LYRIC cell, not the char that was pressed, so only the colour changes
-            // there; on a WORD GAP it shows the typed char instead, because a space painted red is
-            // nothing at all (see cellGlyph, mirroring LyricLineDisplay.CellGlyph). Both keep
-            // tb-c-wrong, so the error colour is the same one in both cases.
+            // there. A wrong WORD GAP draws the space error dot and a BLANK glyph instead (see
+            // cellGlyph and spaceErrorDots, mirroring LyricLineDisplay.GapGlyph with the dot ON,
+            // the shipped default); the typed letter is what the dot-OFF presentation drew there,
+            // because a space painted red is nothing at all. Both keep tb-c-wrong.
             //
-            // The GAP takes a second, additive class (backlog 185). Its glyph is a letter standing
-            // where a space was, so during a typo burst the run of them reads as solid text and the
-            // word boundaries it was drawn to preserve vanish into it. Dimming that letter (the
-            // opacity lives on .tb-c-wrong-gap in site.css) keeps it legible as an error while
-            // letting the boundary read through again. A wrong LYRIC cell is deliberately left at
-            // full strength: it is showing its OWN character, so it takes no space away, and the
-            // desktop dims the same lane for the same reason.
+            // The GAP keeps a second, additive class (backlog 185), the desktop's WRONG_GAP_ALPHA
+            // lane. With the dot on its glyph is blank, so the dim has nothing left to act on, and
+            // the dot is drawn on an overlay of its own rather than inside this span, so the dim
+            // cannot reach it either. It stays because it is the desktop's state alpha for the
+            // cell. A wrong LYRIC cell is deliberately left at full strength: it is showing its OWN
+            // character, so it takes no space away, and the desktop dims the same lane for the
+            // same reason.
             cls += ' tb-c-wrong';
             // Strictly expected === ' ', not "the typed char is a space": a mid-word space typo is
             // a wrong LYRIC cell showing its own letter in red, and must not be dimmed.
             if (cell.expected === ' ') cls += ' tb-c-wrong-gap';
         } else if (cell.state === 'missed') {
             cls += ' tb-c-miss';
+        } else if (cell.state === 'abandoned') {
+            // Given up to a word skip (backlog 167) and not yet lost: one backspace, or a Ctrl+A,
+            // re-opens it. The desktop draws it at ABANDONED_ALPHA (0.7), between full untyped
+            // brightness and the missed 0.4, so the damage a stray space did reads as reclaimable
+            // rather than as nothing or as a miss. It keeps the untyped colour (tb-c-todo, and the
+            // current line's todo shade with it) and tb-c-abandoned adds the alpha on top.
+            cls += ' tb-c-todo tb-c-abandoned';
         } else {
             cls += ' tb-c-todo';
         }
@@ -467,6 +524,9 @@
         if (cell.freestyle) cls += ' tb-c-free';
         if (isCaret) cls += ' tb-c-at';
         if (popping) cls += ' tb-c-pop';
+        // A typo that just LANDED on this cell (engine.onTypoLanded): the desktop's 2 px WrongChar
+        // shake, run by .tb-c-shake's keyframes for TYPO_SHAKE_MS.
+        if (shaking) cls += ' tb-c-shake';
         return cls;
     }
 
@@ -478,10 +538,13 @@
     ///
     /// The one exception is a WRONG WORD GAP (backlog 181, the cell state that could not exist
     /// before it): there the expected character is a space, and a space painted red is nothing at
-    /// all, so the cell shows the TYPED character instead. That is the whole of the difference, and
-    /// it is forced rather than chosen: the state has to be visible, and the gap has no glyph of
-    /// its own to make visible. A gap in any other state, the typo once backspaced included, is a
-    /// space again.
+    /// all, so the state needs a mark of its own. Which mark is LyricLineDisplay.GapGlyph's rule
+    /// (backlog 316): a DOTTED gap (`dotted`, spaceErrorDots' flag for this cell) is BLANK, because
+    /// the space error dot drawn over it is the whole mark and the typed letter would stack a
+    /// second one in the same slot; an undotted wrong gap shows the TYPED character, the dot-OFF
+    /// presentation. The dot is on for every /play run (SPACE_ERROR_DOTS_ENABLED) and a wrong gap
+    /// always earns it, so the typed letter is only reached by a caller that passes no flag. A gap
+    /// in any other state, the typo once backspaced included, is a space again.
     ///
     /// Layout does not move with it, which is the desktop's rule reached by a different road: there
     /// the advances were measured once at load, here the lyric stack is set in JetBrains Mono (see
@@ -489,7 +552,8 @@
     /// moves. Re-measuring is not even reached: measureRow() runs on a line change and a resize,
     /// never on a keypress, so a reflow here would silently unregister the caret, the sweep and the
     /// cue bars from the glyphs rather than move them with it.
-    function cellGlyph(cell) {
+    function cellGlyph(cell, dotted) {
+        if (cell.expected === ' ' && SPACE_ERROR_DOTS_ENABLED && dotted) return ' ';
         return cell.expected === ' ' && cell.state === 'wrong' && cell.typedChar !== null
             ? cell.typedChar
             : cell.expected;
@@ -1507,6 +1571,16 @@
             rowObj.scale = 1;
             rowObj.row.style.transform = 'none';
             rowObj.sweep.style.display = line ? '' : 'none';
+            // The SPACE ERROR DOTS (backlog 316): one overlay dot per word gap, in a layer of the
+            // row's own rather than as a pseudo-element of the gap's span, because that span can
+            // carry .tb-c-wrong-gap's dim and a child of it would be dimmed with it. Created with
+            // the row's first build, emptied and refilled with every line change like the spans.
+            if (!rowObj.dotsBox) {
+                rowObj.dotsBox = el('div', 'tb-dots');
+                rowObj.row.appendChild(rowObj.dotsBox);
+            }
+            rowObj.dotsBox.textContent = '';
+            rowObj.dots = [];
             if (!line) return;
 
             const frag = document.createDocumentFragment();
@@ -1514,12 +1588,28 @@
                 const span = el('span');
                 rowObj.spans.push(span);
                 frag.appendChild(span);
+                if (isWordGap(line.cells[i])) {
+                    const dot = el('span', 'tb-dot');
+                    rowObj.dots.push({ index: i, el: dot, shown: false, scale: 1 });
+                    rowObj.dotsBox.appendChild(dot);
+                }
             }
             rowObj.cellsBox.appendChild(frag);
         }
 
-        function cellText(cell, shimmerTick, i) {
-            let ch = cellGlyph(cell);
+        // Centre each dot in its gap's slot, off the same measured offsets the caret and the sweep
+        // are placed from (LyricLineDisplay.measureAndLayout: cellX + advance / 2). Runs wherever
+        // measureRow does, so a fit or a resize moves the dots with the glyphs.
+        function placeDots(rowObj) {
+            if (!rowObj.dots) return;
+            for (const d of rowObj.dots) {
+                const x = (rowObj.offsets[d.index] + rowObj.offsets[d.index + 1]) / 2;
+                d.el.style.left = (isFinite(x) ? x : 0).toFixed(2) + 'px';
+            }
+        }
+
+        function cellText(cell, shimmerTick, i, dotted) {
+            let ch = cellGlyph(cell, dotted);
             if (cell.freestyle) ch = cell.typedChar !== null ? cell.typedChar : Core.freestyleGlyph(shimmerTick, i);
             // A space (a word gap's expected char, or a space typed into a freestyle slot) must
             // render as nbsp or the browser collapses it away.
@@ -1534,14 +1624,35 @@
         function paintRow(rowObj, caretIndex, shimmerTick, time) {
             const line = rowObj.line;
             if (!line) return;
+            // The dot rule is a whole-line read, so it runs once per repaint and not per cell.
+            const dots = SPACE_ERROR_DOTS_ENABLED ? spaceErrorDots(line.cells) : null;
+            const isCur = rowObj === rowCur;
             for (let i = 0; i < rowObj.spans.length; i++) {
                 const span = rowObj.spans[i];
                 const cell = line.cells[i];
-                const popping = popEnd[i] > time && rowObj === rowCur;
-                const cls = cellClass(cell, i === caretIndex, popping);
+                const popping = popEnd[i] > time && isCur;
+                const shaking = shakeEnd[i] > time && isCur;
+                const cls = cellClass(cell, i === caretIndex, popping, shaking);
                 if (span.className !== cls) span.className = cls;
-                const txt = cellText(cell, shimmerTick, i);
+                const txt = cellText(cell, shimmerTick, i, dots !== null && dots[i]);
                 if (span.textContent !== txt) span.textContent = txt;
+            }
+            // Each gap's dot: shown on the flag, and swelling through its pulse
+            // (LyricLineDisplay.Update's bounce, a clock rather than a state change).
+            for (const d of rowObj.dots || []) {
+                const shown = dots !== null && dots[d.index];
+                if (d.shown !== shown) {
+                    d.shown = shown;
+                    d.el.classList.toggle('tb-dot-on', shown);
+                }
+                const pulseEnd = isCur && d.index < dotPulseEnd.length ? dotPulseEnd[d.index] : -1;
+                const scale = pulseEnd > time
+                    ? spaceErrorDotPulseScale(SPACE_ERROR_DOT_PULSE_MS - (pulseEnd - time))
+                    : 1;
+                if (d.scale !== scale) {
+                    d.scale = scale;
+                    d.el.style.transform = scale === 1 ? '' : 'scale(' + scale.toFixed(3) + ')';
+                }
             }
         }
 
@@ -1598,6 +1709,8 @@
         let lastTypedAt = -1e9, lastFrameMs = null;
         let scrollPitch = 0, scrollStart = -1;
         let popEnd = [];             // per-cell audio-clock deadline for the top-tier pop
+        let shakeEnd = [];           // per-cell deadline for a landed typo's shake (backlog 316)
+        let dotPulseEnd = [];        // per-cell deadline for a gap dot's pulse (backlog 316)
         let gapActive = false, gapFrom = 0, gapTo = 0;
         // The skip the chip is currently offering (its button reads this), or null for none.
         let skipTarget = null;
@@ -1611,6 +1724,8 @@
             buildRow(rowCur, curIdx);
             buildRow(rowNext, curIdx + 1);
             popEnd = new Array(rowCur.spans.length).fill(-1);
+            shakeEnd = new Array(rowCur.spans.length).fill(-1);
+            dotPulseEnd = new Array(rowCur.spans.length).fill(-1);
             paintRow(rowPrev, -1, shimmerTick, time);
             paintRow(rowCur, caretIndex, shimmerTick, time);
             paintRow(rowNext, -1, shimmerTick, time);
@@ -1624,6 +1739,7 @@
             const avail = stack.clientWidth;
             for (const r of rows) fitRow(r, avail);
             for (const r of rows) measureRow(r);
+            for (const r of rows) placeDots(r);
             caretSnap = true;
             sungSnap = true;
         }
@@ -2100,6 +2216,18 @@
                 lastTypedAt = nowMs();
                 if (type === 'Great' && index < popEnd.length) popEnd[index] = nowMs() + PERFECT_POP_MS;
             };
+            // A wrong key TYPED THROUGH into a cell (backlog 316), the desktop's
+            // CharJudged(WrongChar) feedback: the cell shakes, the gap's dot pulses (a dot exists
+            // only on a word gap, so a typo on a lyric cell pulses nothing), and the caret blink
+            // resets (Caret.NotifyTyped runs on every judgement, typos included). Deliberately NOT
+            // the rolling WPM, which stays on onCharJudged's accepted presses as on the desktop.
+            engine.onTypoLanded = function (index, lineIndex) {
+                const now = nowMs();
+                lastTypedAt = now;
+                if (lineIndex !== lastCurIdx || index >= shakeEnd.length) return;
+                shakeEnd[index] = now + TYPO_SHAKE_MS;
+                if (isWordGap(beatmap.lines[lineIndex].cells[index])) dotPulseEnd[index] = now + SPACE_ERROR_DOT_PULSE_MS;
+            };
             concluded = false;
             lastCurIdx = -2;
             lastFrameMs = null;
@@ -2287,6 +2415,15 @@
         makeRollingWpm,
         cellClass,
         cellGlyph,
+        // The cell-state feedback (backlog 316): the space error dot rule and its pulse curve,
+        // pure, so the display harness pins them against the desktop's SpaceErrorDotTest cases.
+        isWordGap,
+        spaceErrorDots,
+        spaceErrorDotPulseScale,
+        SPACE_ERROR_DOTS_ENABLED,
+        SPACE_ERROR_DOT_PULSE_MS,
+        SPACE_ERROR_DOT_PULSE_SCALE,
+        TYPO_SHAKE_MS,
         cueTargetLine,
         sungLineFor,
         sweepFillFor,

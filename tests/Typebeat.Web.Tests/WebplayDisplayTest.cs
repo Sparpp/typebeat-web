@@ -704,6 +704,8 @@ public class WebplayDisplayTest
 
     private static string Glyph(JsonElement paint, int i) => paint[i].GetProperty("glyph").GetString()!;
 
+    private static bool Dot(JsonElement paint, int i) => paint[i].GetProperty("dot").GetBoolean();
+
     // SyncTintRampIsFlooredMonotonicAndExactAtItsEnds removed by backlog 251: the ramp it pinned
     // (LyricLineDisplay.CorrectCharColour, re-expressed here) no longer exists, and neither do
     // syncTintFill or SYNC_TINT_FLOOR in typebeat-player.js.
@@ -747,18 +749,19 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
-    /// A wrong letter typed into the WORD GAP (backlog 181) shows the character that went in, in
-    /// the same error red a wrong lyric cell wears. It is the one cell whose glyph is not fixed for
-    /// the whole play, and the exception is forced rather than chosen: a lyric cell keeps showing
-    /// its own character because a mistyped line still has to read as the line it was meant to be,
-    /// but the gap's own character is a space, and a space painted red is nothing at all.
+    /// A wrong letter typed into the WORD GAP (backlog 181) is marked by the SPACE ERROR DOT, and
+    /// the gap's glyph goes blank (backlog 316). A space painted red is nothing at all, so the state
+    /// needs a mark of its own, and with the dot on (the desktop's shipped default since PR 2, and
+    /// the only presentation /play has) the dot is the whole mark: drawing the typed letter as well
+    /// stacks two marks in one slot. The dot-OFF presentation, the typed letter at the gap's dimmed
+    /// alpha, is what this pinned until the browser gained the dot.
     ///
-    /// <para>Mirrors <c>LyricLineDisplay.CellGlyph</c>, whose rule is exactly this one: the typed
-    /// char for a Wrong SPACE cell, the expected char otherwise. The gap in every other state is a
-    /// space again, the typo once backspaced included, which is the second half asserted here.</para>
+    /// <para>Mirrors <c>LyricLineDisplay.GapGlyph</c> with the setting on: blank for a dotted gap,
+    /// and a wrong gap is always dotted. The gap in every other state is a space again, the typo
+    /// once backspaced included, and its dot goes with it, which is the second half asserted here.</para>
     /// </summary>
     [Test]
-    public void AWrongWordGapShowsTheTypedCharacterInErrorRed()
+    public void AWrongWordGapShowsTheSpaceErrorDotInsteadOfItsTypedCharacter()
     {
         var root = Harness();
         var typo = root.GetProperty("gapTypoPaint");
@@ -766,11 +769,15 @@ public class WebplayDisplayTest
 
         Assert.Multiple(() =>
         {
-            // Cell 2 is the word gap of "ab cd". 'x' went in, the seal left it wrong, and it is
-            // drawn as the typo rather than as an invisible red space. The second class is backlog
-            // 185's dimming lane, carried only by a gap (see TheDimmingIsKeyedOnTheGapNotTheKey).
+            // Cell 2 is the word gap of "ab cd". 'x' went in and the seal left it wrong: the gap is
+            // dotted and blank, not the typo letter. The second class is backlog 185's dimming lane,
+            // carried only by a gap (see TheDimmingIsKeyedOnTheGapNotTheKey); the dot is drawn on a
+            // layer of its own, so that dim does not reach it.
             Assert.That(Cls(typo, 2), Is.EqualTo("tb-c tb-c-wrong tb-c-wrong-gap"));
-            Assert.That(Glyph(typo, 2), Is.EqualTo("x"));
+            Assert.That(Glyph(typo, 2), Is.EqualTo(" "));
+            Assert.That(Dot(typo, 2), Is.True, "the dot marks the gap typo");
+            Assert.That(Dot(typo, 1), Is.False);
+            Assert.That(Dot(erased, 2), Is.False, "erasing the typo takes the dot with it");
 
             // Nothing else moved: the letters either side are ordinary hits still showing their own
             // characters, which is what says the typo did not shift the line.
@@ -802,7 +809,9 @@ public class WebplayDisplayTest
     ///
     /// <para>The dimming itself is CSS, ported by OUTCOME rather than by literal: the desktop dims
     /// its own cell-alpha lane, /play dims with this site's own idiom, the same one .tb-c-miss
-    /// already uses.</para>
+    /// already uses. Since backlog 316 a wrong gap draws the space error dot and a blank glyph
+    /// rather than the letter, so the lane is the desktop's WRONG_GAP_ALPHA kept for fidelity; the
+    /// dot sits on its own layer, outside the span this class dims.</para>
     /// </summary>
     [Test]
     public void TheDimmingIsKeyedOnTheGapNotTheKey()
@@ -2112,6 +2121,179 @@ public class WebplayDisplayTest
             Assert.That(bare.GetProperty("stars").ValueKind, Is.EqualTo(JsonValueKind.Null));
             Assert.That(bare.GetProperty("difficulty").ValueKind, Is.EqualTo(JsonValueKind.Null));
             Assert.That(bare.GetProperty("mapper").ValueKind, Is.EqualTo(JsonValueKind.Null));
+        });
+    }
+
+    // --- cell-state feedback (backlog 316) ---
+
+    private static JsonElement CellFeedback() => Harness().GetProperty("cellFeedback");
+
+    private static bool[] Bools(JsonElement array) => array.EnumerateArray().Select(e => e.GetBoolean()).ToArray();
+
+    /// <summary>
+    /// A WORD SKIP'S ABANDONED CELLS draw at the desktop's ABANDONED_ALPHA (0.7), between full
+    /// untyped strength and the missed 0.4 (LyricLineDisplay.refreshCell's Abandoned arm): given up
+    /// and not yet lost. Before this they fell through to the untouched class, so the player could
+    /// not see which word a stray space had given up, which is exactly what a Ctrl+A recovery needs
+    /// them to see. The class composes with the untyped colour, and it goes on the reclaim.
+    ///
+    /// <para>Skip-on "ab cd": 'a', then a space on 'b' abandons it and pays the gap. The first
+    /// backspace erases the gap (the word stays abandoned), the second steps over 'b', re-opening
+    /// it, and erases 'a'.</para>
+    /// </summary>
+    [Test]
+    public void AWordSkipsAbandonedCellsDrawDimmedUntilReclaimed()
+    {
+        var run = CellFeedback().GetProperty("abandoned");
+        var skipped = run.GetProperty("skipped");
+        var gapErased = run.GetProperty("gapErased");
+        var reclaimed = run.GetProperty("reclaimed");
+        string css = SiteCss();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Cls(skipped, 1), Is.EqualTo("tb-c tb-c-todo tb-c-abandoned"), "the skipped 'b'");
+            Assert.That(Glyph(skipped, 1), Is.EqualTo("b"), "it still shows its own character");
+            Assert.That(Cls(skipped, 0), Is.EqualTo("tb-c tb-c-hit"));
+            Assert.That(Cls(skipped, 3), Is.EqualTo("tb-c tb-c-todo"), "an untouched cell is not abandoned");
+            // The skipping space was accepted past a flawed word, so the gap earns the dot too.
+            Assert.That(Dot(skipped, 2), Is.True);
+
+            Assert.That(Cls(gapErased, 1), Is.EqualTo("tb-c tb-c-todo tb-c-abandoned"), "still given up");
+            Assert.That(Dot(gapErased, 2), Is.False, "an untyped gap has not been spaced past");
+
+            Assert.That(Cls(reclaimed, 1), Is.EqualTo("tb-c tb-c-todo"), "the reclaim takes the dim off");
+
+            Assert.That(Rule(css, ".tb-c-abandoned"), Does.Contain("opacity: .7;"));
+        });
+    }
+
+    /// <summary>
+    /// THE SPACE ERROR DOT RULE, typebeat-osu's SpaceErrorDotTest transcribed case for case onto the
+    /// JS port (spaceErrorDots, mirroring LyricLineDisplay.ComputeSpaceErrorDots). The harness builds
+    /// the same hand-made cells; the expected flags below are the desktop test's own.
+    /// </summary>
+    [Test]
+    public void TheSpaceErrorDotRuleMatchesTheDesktopCases()
+    {
+        var dots = CellFeedback().GetProperty("dots");
+        bool[] Case(string name) => Bools(dots.GetProperty(name));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Case("flawedWordSpacedPast"), Is.EqualTo(new[] { false, false, true, false, false }), "TestAFlawedWordSpacedPastEarnsADot");
+            Assert.That(Case("cleanWord"), Is.EqualTo(new[] { false, false, false, false, false }), "TestACleanWordEarnsNothing");
+            Assert.That(Case("unacceptedGapUntyped"), Is.EqualTo(new[] { false, false, false, false }), "TestAnUnacceptedGapNeverEarnsADot(Untyped)");
+            Assert.That(Case("unacceptedGapMissed"), Is.EqualTo(new[] { false, false, false, false }), "TestAnUnacceptedGapNeverEarnsADot(Missed)");
+            Assert.That(Case("unacceptedGapAbandoned"), Is.EqualTo(new[] { false, false, false, false }), "TestAnUnacceptedGapNeverEarnsADot(Abandoned)");
+            Assert.That(Case("gapHoldingTypedChars"), Is.EqualTo(new[] { false, false, true, false }), "TestAGapHoldingTypedCharactersKeepsItsWordsDot");
+            Assert.That(Case("mistypedGapFromCleanWord"), Is.EqualTo(new[] { false, false, true, false }), "TestAMistypedGapEarnsItsOwnDotFromACleanWord");
+            Assert.That(Case("spacedPastCleanly"), Is.EqualTo(new[] { false, false, false, false }), "TestAWordSpacedPastCleanlyEarnsNoDot");
+            Assert.That(Case("payingTheSpaceKeepsTheDot"), Is.EqualTo(new[] { false, false, true, false }), "TestPayingTheSpaceKeepsTheDot");
+            Assert.That(Case("flawWrong"), Is.EqualTo(new[] { false, false, true, false }), "TestWhichStatesLeaveAWordFlawed(Wrong)");
+            Assert.That(Case("flawMissed"), Is.EqualTo(new[] { false, false, true, false }), "TestWhichStatesLeaveAWordFlawed(Missed)");
+            Assert.That(Case("flawAbandoned"), Is.EqualTo(new[] { false, false, true, false }), "TestWhichStatesLeaveAWordFlawed(Abandoned)");
+            Assert.That(Case("flawCorrect"), Is.EqualTo(new[] { false, false, false, false }), "TestWhichStatesLeaveAWordFlawed(Correct)");
+            Assert.That(Case("flawUntyped"), Is.EqualTo(new[] { false, false, false, false }), "TestWhichStatesLeaveAWordFlawed(Untyped)");
+            Assert.That(Case("eachGapReadsOwnWord"), Is.EqualTo(new[] { false, false, false, false, false, true, false, false }), "TestEachGapReadsOnlyItsOwnWord");
+            Assert.That(Case("spoiledGapDoesNotFlawNext"), Is.EqualTo(new[] { false, true, false, false, false }), "TestASpoiledGapDoesNotFlawTheNextWord");
+            Assert.That(Case("punctuationCarriesFlaw"), Is.EqualTo(new[] { false, false, true, false }), "TestPunctuationIsNeitherABoundaryNorAFlaw (flaw)");
+            Assert.That(Case("punctuationIsNoFlaw"), Is.EqualTo(new[] { false, false, false, false }), "TestPunctuationIsNeitherABoundaryNorAFlaw (clean)");
+            Assert.That(Case("noGaps"), Is.EqualTo(new[] { false, false }), "TestALineWithNoGapsHasNoDots");
+            Assert.That(Case("empty"), Is.Empty, "an empty line");
+            Assert.That(dots.GetProperty("reclaimBefore").GetBoolean(), Is.True, "TestReclaimingAnAbandonedWordClearsItsDot (skipped)");
+            Assert.That(dots.GetProperty("reclaimAfter").GetBoolean(), Is.False, "TestReclaimingAnAbandonedWordClearsItsDot (reclaimed)");
+        });
+    }
+
+    /// <summary>
+    /// THE DOT REPLACES THE CHARACTER (SpaceErrorDotTest.TestTheDotReplacesTheCharacterRatherThanStackingOnIt,
+    /// with the setting on, the only arm /play has): a dotted gap is blank, an undotted wrong gap
+    /// still shows its typo, and a lyric cell never routes through the gap rule. The pulse curve is
+    /// TestTheDotPulseCurveStartsAndEndsUndisturbed's, and the dot and the shake have CSS to mean
+    /// something with.
+    /// </summary>
+    [Test]
+    public void TheDotReplacesTheGapGlyphAndPulsesOnTheDesktopCurve()
+    {
+        var fb = CellFeedback();
+        var glyph = fb.GetProperty("gapGlyph");
+        var pulse = fb.GetProperty("pulse");
+        double[] curve = pulse.GetProperty("curve").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+        string css = SiteCss();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(glyph.GetProperty("enabled").GetBoolean(), Is.True, "the desktop default (ConfigDefaultsTest)");
+            Assert.That(glyph.GetProperty("dottedWrongGap").GetString(), Is.EqualTo(" "), "the dot is the whole mark");
+            Assert.That(glyph.GetProperty("undottedWrongGap").GetString(), Is.EqualTo("x"), "an undotted gap still shows its typo");
+            Assert.That(glyph.GetProperty("dottedCorrectGap").GetString(), Is.EqualTo(" "));
+            Assert.That(glyph.GetProperty("dottedLyricCell").GetString(), Is.EqualTo("a"), "lyric cells never route through the gap rule");
+
+            Assert.That(Num(pulse, "ms"), Is.EqualTo(150), "SPACE_ERROR_DOT_PULSE_MS");
+            Assert.That(Num(pulse, "scale"), Is.EqualTo(0.5), "SPACE_ERROR_DOT_PULSE_SCALE");
+            Assert.That(Num(pulse, "atZero"), Is.EqualTo(1).Within(1e-6), "the pulse starts at rest");
+            Assert.That(Num(pulse, "atEnd"), Is.EqualTo(1), "and ends at rest");
+            Assert.That(Num(pulse, "pastEnd"), Is.EqualTo(1), "past the end it is over");
+            Assert.That(Num(pulse, "negative"), Is.EqualTo(1), "a negative elapsed time cannot shrink it");
+            Assert.That(Num(pulse, "peak"), Is.EqualTo(1.5).Within(1e-6), "the midpoint is the peak");
+            for (int k = 1; k <= 10; k++)
+                Assert.That(curve[k], Is.GreaterThanOrEqualTo(curve[k - 1] - 1e-9), $"rising at step {k}");
+            for (int k = 11; k <= 20; k++)
+                Assert.That(curve[k], Is.LessThanOrEqualTo(curve[k - 1] + 1e-9), $"falling at step {k}");
+
+            Assert.That(Rule(css, ".tb-dot"), Does.Contain("background: var(--bad);"), "the error colour");
+            Assert.That(Rule(css, ".tb-dot.tb-dot-on"), Does.Contain("opacity: 1;"));
+
+            // The shake: 2 px either way over the desktop's 25 + 25 + 15 ms.
+            Assert.That(Num(fb, "shakeMs"), Is.EqualTo(65));
+            Assert.That(fb.GetProperty("shakeClass").GetString(), Is.EqualTo("tb-c tb-c-wrong tb-c-shake"));
+            Assert.That(Rule(css, ".tb-c-shake"), Does.Contain("animation: tbShake 65ms linear;"));
+            Assert.That(css, Does.Contain("38.46% { transform: translateX(-2px); }"));
+            Assert.That(css, Does.Contain("76.92% { transform: translateX(2px);"));
+        });
+    }
+
+    /// <summary>
+    /// THE TYPO HOOK (engine.onTypoLanded) fires once per typed-through wrong key, the C#'s
+    /// CharJudged(WrongChar), and never for an accepted press or a Gatekeeper rejection (which lands
+    /// nothing). Skip-on "ab cd": 'a' clean, 'x' typed through on 'b', 'q' parked on the gap, 'z'
+    /// overwriting that parked typo (the C# raises the judgement for that one too), the space paid
+    /// over it, then 'c' and 'd' clean. Three typos, three hooks, on the cells they landed on.
+    ///
+    /// <para>And it is DISPLAY ONLY: the same script with no subscriber announces exactly the same
+    /// onCharJudged stream (the renderer's rolling-WPM tap stays accepted-only), the same typo count
+    /// and the same health, and paints the same line.</para>
+    /// </summary>
+    [Test]
+    public void TheTypoHookFiresOncePerTypedThroughTypoAndMovesNothing()
+    {
+        var fb = CellFeedback();
+        var hooked = fb.GetProperty("typoHook");
+        var bare = fb.GetProperty("typoHookUnsubscribed");
+        var typos = hooked.GetProperty("typos").EnumerateArray().ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(typos.Select(t => t.GetProperty("index").GetInt32()), Is.EqualTo(new[] { 1, 2, 2 }));
+            Assert.That(typos.Select(t => t.GetProperty("line").GetInt32()), Is.All.EqualTo(0));
+            Assert.That(typos.Select(t => t.GetProperty("state").GetString()), Is.All.EqualTo("wrong"), "raised with the cell already wrong");
+            Assert.That(Num(hooked, "wrongChar"), Is.EqualTo(typos.Length), "one hook per counted typo");
+
+            // Accepted presses only on the WPM tap: 'a', 'c', 'd' (the space over a parked typo steps
+            // over it without a judgement).
+            var judged = hooked.GetProperty("judged").EnumerateArray().Select(j => j.GetProperty("index").GetInt32()).ToArray();
+            Assert.That(judged, Is.EqualTo(new[] { 0, 3, 4 }));
+
+            Assert.That(hooked.GetProperty("judged").GetRawText(), Is.EqualTo(bare.GetProperty("judged").GetRawText()), "onCharJudged is untouched by the hook");
+            Assert.That(Num(hooked, "wrongChar"), Is.EqualTo(Num(bare, "wrongChar")));
+            Assert.That(Num(hooked, "health"), Is.EqualTo(Num(bare, "health")));
+            Assert.That(hooked.GetProperty("paint").GetRawText(), Is.EqualTo(bare.GetProperty("paint").GetRawText()));
+            Assert.That(bare.GetProperty("typos").GetArrayLength(), Is.Zero);
+
+            var rejected = fb.GetProperty("rejectedKey");
+            Assert.That(Num(rejected, "wrongKeys"), Is.EqualTo(1), "the rejection took its own feedback");
+            Assert.That(Num(rejected, "typos"), Is.Zero, "and landed no typo");
         });
     }
 }
