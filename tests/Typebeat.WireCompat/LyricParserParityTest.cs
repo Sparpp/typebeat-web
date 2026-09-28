@@ -258,6 +258,11 @@ public class LyricParserParityTest
                  {
                      "2", "0.5", "4", "4.5", "1e1", "-1", "-0.25", "0", ".5", "1.", "+2", "2.5e-1", "1E+0",
                      "2x", "1.5.2", "abc", "", "1,5", "0x2", "1 2", "Infinity", "-Infinity", "infinity", "1e400", " 3 ",
+                     // NaN used to be the one value the two readers disagreed on: double.TryParse
+                     // accepts it and Math.Clamp passed it through, while the browser has always
+                     // refused it. The game's decoder now guards it the same way (backlog 324), so
+                     // this is an ordinary agreeing case rather than a divergence pinned on its own.
+                     "NaN",
                  })
             cases.Add(($"raw '{raw}'", spliced(raw)));
 
@@ -304,21 +309,6 @@ public class LyricParserParityTest
 
         // Coverage: most cases must move the gain, or the agreement is mostly on the default.
         Assert.That(nonDefault, Is.GreaterThanOrEqualTo(20), "cases whose gain is not the default");
-    }
-
-    /// <summary>
-    /// The one value <c>double.TryParse</c> accepts that the browser refuses: NaN. The game's
-    /// <c>Math.Clamp</c> passes it through, so the desktop would play a track of NaN samples; the
-    /// browser keeps the default instead. Pinned so the divergence stays a known one, and so a
-    /// desktop fix (reading NaN as absent) shows up here as the moment to drop this.
-    /// </summary>
-    [Test]
-    public void NaNIsTheOneKnownDivergence()
-    {
-        string osu = Osu();
-        osu = osu.Insert(osu.IndexOf("[Metadata]", StringComparison.Ordinal) + "[Metadata]".Length, "\nAudioGain:NaN");
-
-        Assert.That(double.IsNaN(ClientDecode(osu).Metadata.AudioGain), Is.True, "the game decoder passes NaN through its clamp");
     }
 
     [Test]

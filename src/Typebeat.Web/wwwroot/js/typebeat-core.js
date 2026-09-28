@@ -265,8 +265,9 @@
     const AUDIO_GAIN_INFINITY = /^([+-]?)infinity$/i;
 
     // The parsed gain, or null where TryParse would fail (the caller then keeps what it had).
-    // NaN is the one value TryParse accepts that is refused here: the desktop's Math.Clamp would
-    // pass it through and play a track of NaN samples, which is a defect to report, not to copy.
+    // NaN is a value TryParse accepts that is refused here too: the game's decoder guards it the
+    // same way (backlog 324), so both readers keep the default on a NaN line instead of one of
+    // them clamping it straight through into a track of NaN samples.
     function parseAudioGain(value) {
         const v = String(value);
         let n;
