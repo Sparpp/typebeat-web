@@ -1154,6 +1154,84 @@
             + `<a class="tb-btn tb-btn-discord" href="${escapeHtml(url)}" target="_blank" rel="noopener">join discord</a>`;
     }
 
+    // ---- the results card's content (backlog 320) ------------------------------
+    // What the card says, as data, so the harness can pin it without a DOM; showResults only lays
+    // it out. It mirrors the desktop results panel (ExpandedPanelMiddleContent and its statistics):
+    //
+    //  - The tier row is great / ok / meh / miss, and MISS FOLDS IN the uncorrected typos
+    //    (counts.typos, the `good` statistic): a cell the song sealed holding a wrong character is a
+    //    miss to the player, as it is on the desktop panel (TypeBeatRuleset's statistic mapping,
+    //    backlog 213) and in the set page's score rows (ScoreRowModel's MissColumn). The separate
+    //    'typos' figure is the other number, wrong KEYPRESSES (counts.mistypes, backlog 140).
+    //  - Max combo reads 'N / total' against maximumStatistics.great (one per typeable cell, the
+    //    most a run can reach), with the desktop ComboStatistic's PERFECT marker when they are equal.
+    //  - A FAILED run shows the JUDGED-only accuracy (computeScore's accuracyJudged), which is what
+    //    the desktop attaches to a failed score and what the server stores and the profile shows.
+    //    The whole-map `accuracy` would read lower, since it charges every cell the fail left
+    //    unplayed. A passed run judges every cell, so there the two are the same number.
+    //  - The map's metadata: title and artist, stars, difficulty name, mapper and the play date.
+    //    Anything the host did not hand over (a deep link has no stars, say) is left out, not faked.
+    // Every browser play is nomod, so there is no mods cell.
+    const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+        'September', 'October', 'November', 'December'];
+
+    // The site's "0.0#" star format, as play.js's formatStars draws the difficulty pills.
+    function fmtStars(stars) {
+        const s = Number(stars || 0).toFixed(2);
+        return s.charAt(s.length - 1) === '0' ? s.slice(0, -1) : s;
+    }
+
+    // The desktop's PlayedOnText wording ("played on 28 September 2026, 14:05"), in local time.
+    function fmtPlayedOn(date) {
+        if (!(date instanceof Date) || isNaN(date.getTime())) return null;
+        const pad = (n) => (n < 10 ? '0' : '') + n;
+        return 'played on ' + date.getDate() + ' ' + MONTHS[date.getMonth()] + ' ' + date.getFullYear()
+            + ', ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+    }
+
+    function resultCells(results, meta) {
+        const m = meta || {};
+        const counts = results.counts;
+        const judgedOnly = !results.passed && typeof results.accuracyJudged === 'number';
+        const comboMax = results.maximumStatistics ? results.maximumStatistics.great : 0;
+        const perfect = comboMax > 0 && results.maxCombo === comboMax;
+        const hasStars = typeof m.stars === 'number' && isFinite(m.stars);
+        return {
+            stats: [
+                { key: 'score', label: 'score', value: fmtInt(results.totalScore) },
+                { key: 'typed', label: 'typed', value: fmtPct(results.completion) },
+                { key: 'accuracy', label: 'accuracy', value: fmtPct(judgedOnly ? results.accuracyJudged : results.accuracy) },
+                { key: 'combo', label: 'max combo', value: comboMax > 0 ? results.maxCombo + ' / ' + comboMax : results.maxCombo + 'x', perfect: perfect },
+                { key: 'wpm', label: 'wpm', value: String(Math.round(results.wpm)) },
+                { key: 'typos', label: 'typos', value: String(counts.mistypes) }
+            ],
+            tiers: [
+                { key: 'great', label: 'great', value: String(counts.great) },
+                { key: 'ok', label: 'ok', value: String(counts.ok) },
+                { key: 'meh', label: 'meh', value: String(counts.meh) },
+                { key: 'miss', label: 'miss', value: String(counts.miss + counts.typos) }
+            ],
+            meta: {
+                title: m.title || '',
+                artist: m.artist || '',
+                stars: hasStars ? '★ ' + fmtStars(m.stars) : null,
+                difficulty: m.difficulty || null,
+                mapper: m.creator ? 'mapped by ' + m.creator : null,
+                played: fmtPlayedOn(m.playedAt)
+            }
+        };
+    }
+
+    // The metadata block of the card: title, artist, then stars, difficulty and mapper on one line
+    // and the play date under it. Lines with nothing to say are left out.
+    function resultMetaHtml(meta) {
+        const detail = [meta.stars, meta.difficulty, meta.mapper].filter(Boolean).map(escapeHtml).join(' · ');
+        return (meta.title ? `<div class="tb-result-meta-title">${escapeHtml(meta.title)}</div>` : '')
+            + (meta.artist ? `<div class="tb-result-meta-artist">${escapeHtml(meta.artist)}</div>` : '')
+            + (detail ? `<div class="tb-result-meta-detail">${detail}</div>` : '')
+            + (meta.played ? `<div class="tb-result-meta-played">${escapeHtml(meta.played)}</div>` : '');
+    }
+
     // ---- the playback-validity veto (backlog 312) ------------------------------
     // A port of MasterGameplayClockContainer.checkPlaybackValidity: the gameplay clock (here the
     // audio clock, nowMs()) is held against wall time (performance.now()) frame by frame. Each
@@ -2079,22 +2157,28 @@
             const card = el('div', 'tb-card tb-results');
             card.appendChild(el('div', 'tb-rank tb-rank-' + results.rank.replace(/[^A-Z]/gi, ''), results.rank));
             card.appendChild(el('div', 'tb-card-title', results.passed ? 'cleared' : 'failed'));
+            // The layout of resultCells (above mountPlayer), which decides every figure. The tier
+            // row's miss is the fold of misses and uncorrected typos, the desktop panel's Miss; the
+            // 'typos' stat beside it counts wrong KEYPRESSES (backlog 140), a different number that
+            // no fold touches. A cell sealed holding a wrong character therefore shows in both, once
+            // as the miss it cost and once as the key that caused it, which is what the desktop shows.
+            const cells = resultCells(results, {
+                title: title,
+                artist: artist,
+                stars: opts.stars,
+                difficulty: opts.difficulty,
+                creator: opts.creator || beatmap.creator,
+                playedAt: new Date()
+            });
+            const info = el('div', 'tb-result-meta');
+            info.innerHTML = resultMetaHtml(cells.meta);
+            card.appendChild(info);
             const grid = el('div', 'tb-result-grid');
-            grid.innerHTML =
-                statCell('score', fmtInt(results.totalScore)) +
-                statCell('typed', fmtPct(results.completion)) +
-                statCell('accuracy', fmtPct(results.accuracy)) +
-                statCell('max combo', results.maxCombo + 'x') +
-                statCell('wpm', Math.round(results.wpm)) +
-                statCell('misses', results.counts.miss) +
-                // ONE typo number (backlog 140), counting wrong KEYPRESSES. Beside misses, never
-                // folded into them: a miss is a character the song left behind, a typo is a key you
-                // got wrong. There used to be a second number here, the cells still holding a wrong
-                // character at the seal; every one of those implied a wrong keypress, so this count
-                // already covers them. What such a cell COSTS is unchanged (accuracy, completion and
-                // rank all still fall), it is just no longer counted at the player twice.
-                statCell('typos', results.counts.mistypes);
+            grid.innerHTML = cells.stats.map(statCellOf).join('');
             card.appendChild(grid);
+            const tiers = el('div', 'tb-result-grid tb-result-tiers');
+            tiers.innerHTML = cells.tiers.map(statCellOf).join('');
+            card.appendChild(tiers);
             // One invitation to the Discord server, between the numbers and the submit line: it
             // reads as part of the result, and 'play again' / 'back to maps' stay exactly where the
             // player last left them instead of being pushed down a row.
@@ -2116,8 +2200,9 @@
             publicApi._status = status;
         }
 
-        function statCell(label, val) {
-            return `<div class="tb-result-cell"><span class="tb-result-val">${escapeHtml(String(val))}</span><span class="tb-result-lbl">${escapeHtml(label)}</span></div>`;
+        function statCellOf(cell) {
+            const marker = cell.perfect ? '<span class="tb-result-perfect">perfect</span>' : '';
+            return `<div class="tb-result-cell tb-result-${cell.key}"><span class="tb-result-val">${escapeHtml(cell.value)}${marker}</span><span class="tb-result-lbl">${escapeHtml(cell.label)}</span></div>`;
         }
 
         // --- public api ------------------------------------------------------
@@ -2255,6 +2340,10 @@
         pushWarningBar,
         songWindowClosesAt,
         PUSH_FADE_IN_MS,
+        // The results card's content (backlog 320), pure, so the display harness pins the miss
+        // fold, the combo out of its maximum, a failed run's judged accuracy and the metadata.
+        resultCells,
+        resultMetaHtml,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,

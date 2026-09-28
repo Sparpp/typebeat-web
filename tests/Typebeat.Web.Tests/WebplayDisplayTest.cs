@@ -1994,4 +1994,124 @@ public class WebplayDisplayTest
             Assert.That(Shown(fixedLead[4]), Is.False);
         });
     }
+
+
+    // ---- the results card (backlog 320) ----
+
+    private static JsonElement Card(JsonElement root, string run) => root.GetProperty("resultCard").GetProperty(run);
+
+    private static string CellValue(JsonElement card, string group, string key)
+    {
+        foreach (var cell in card.GetProperty("cells").GetProperty(group).EnumerateArray())
+            if (cell.GetProperty("key").GetString() == key)
+                return cell.GetProperty("value").GetString()!;
+        throw new AssertionException($"no '{key}' cell in {group}");
+    }
+
+    /// <summary>
+    /// The tier row mirrors the desktop panel's Great / Ok / Meh / Miss, and Miss FOLDS IN the
+    /// uncorrected typos (TypeBeatRuleset's statistic mapping, backlog 213), as the set page's score
+    /// rows do. The fixture types 'b' as 'x' and never fixes it: computeScore holds that cell as
+    /// counts.typos (the `good` statistic) with counts.miss at 0, and the card must still read one
+    /// miss. The 'typos' stat beside it stays the wrong-KEYPRESS count (backlog 140).
+    /// </summary>
+    [Test]
+    public void TheResultCardFoldsUncorrectedTyposIntoMissesAndShowsEveryTier()
+    {
+        var typo = Card(Harness(), "typo");
+        var counts = typo.GetProperty("results").GetProperty("counts");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(counts.GetProperty("miss").GetInt32(), Is.EqualTo(0), "the raw count has no miss");
+            Assert.That(counts.GetProperty("typos").GetInt32(), Is.EqualTo(1), "only an uncorrected typo");
+            Assert.That(CellValue(typo, "tiers", "miss"), Is.EqualTo("1"), "the card folds it into miss");
+            Assert.That(CellValue(typo, "tiers", "great"), Is.EqualTo("4"));
+            Assert.That(CellValue(typo, "tiers", "ok"), Is.EqualTo("0"));
+            Assert.That(CellValue(typo, "tiers", "meh"), Is.EqualTo("0"));
+            Assert.That(CellValue(typo, "stats", "typos"), Is.EqualTo("1"), "one wrong keypress");
+            Assert.That(CellValue(typo, "stats", "combo"), Is.EqualTo("3 / 5"), "the combo out of the map's maximum");
+            Assert.That(typo.GetProperty("cells").GetProperty("stats")[3].GetProperty("perfect").GetBoolean(), Is.False);
+        });
+    }
+
+    /// <summary>
+    /// A full combo reads 'N / N' with the desktop ComboStatistic's PERFECT marker, the total being
+    /// maximumStatistics.great (one per typeable cell: "ab cd" has five).
+    /// </summary>
+    [Test]
+    public void AFullComboReadsOutOfItsMaximumWithThePerfectMarker()
+    {
+        var perfect = Card(Harness(), "perfect");
+        var combo = perfect.GetProperty("cells").GetProperty("stats").EnumerateArray()
+            .Single(c => c.GetProperty("key").GetString() == "combo");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(perfect.GetProperty("results").GetProperty("maximumStatistics").GetProperty("great").GetInt32(), Is.EqualTo(5));
+            Assert.That(combo.GetProperty("value").GetString(), Is.EqualTo("5 / 5"));
+            Assert.That(combo.GetProperty("perfect").GetBoolean(), Is.True);
+            Assert.That(CellValue(perfect, "tiers", "miss"), Is.EqualTo("0"));
+        });
+    }
+
+    /// <summary>
+    /// A FAILED run's card shows the JUDGED-only accuracy, which is what the desktop attaches to a
+    /// failed score and the server stores. The fixture types "ab cd" clean, then leaves a 15-word line
+    /// untouched until its seal empties the bar, with a last line never reached: 5 greats and 45
+    /// misses judged over 85 cells. Judged accuracy is 5/50 = 0.1; the whole-map `accuracy`
+    /// computeScore has always returned (5/85) must be left exactly as it was, since
+    /// EngineFuzzLiveParityTest pins it against the game.
+    /// </summary>
+    [Test]
+    public void AFailedRunShowsItsJudgedAccuracyAndLeavesTheSubmittedOneAlone()
+    {
+        var failed = Card(Harness(), "failed");
+        var results = failed.GetProperty("results");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(failed.GetProperty("failed").GetBoolean(), Is.True, "the fixture really fails");
+            Assert.That(results.GetProperty("passed").GetBoolean(), Is.False);
+            Assert.That(results.GetProperty("maximumStatistics").GetProperty("great").GetInt32(), Is.EqualTo(85));
+            Assert.That(results.GetProperty("counts").GetProperty("miss").GetInt32(), Is.EqualTo(45));
+            Assert.That(Num(results, "accuracyJudged"), Is.EqualTo(0.1).Within(1e-12));
+            Assert.That(Num(results, "accuracy"), Is.EqualTo(5.0 / 85).Within(1e-12), "the submitted accuracy is untouched");
+            Assert.That(CellValue(failed, "stats", "accuracy"), Is.EqualTo("10.00%"), "the card shows the judged figure");
+            Assert.That(CellValue(failed, "stats", "combo"), Is.EqualTo("5 / 85"));
+
+            // A passed run judges every cell, so there the two accuracies agree and the card is unchanged.
+            var typo = Card(Harness(), "typo").GetProperty("results");
+            Assert.That(Num(typo, "accuracyJudged"), Is.EqualTo(Num(typo, "accuracy")).Within(1e-12));
+        });
+    }
+
+    /// <summary>
+    /// The metadata the desktop panel prints: title, artist, stars (the site's "0.0#" format),
+    /// difficulty name, mapper and the play date in PlayedOnText's wording. A deep link, which hands
+    /// the player no diff row, leaves stars and difficulty out rather than inventing them.
+    /// </summary>
+    [Test]
+    public void TheResultCardPrintsTheMapMetadataAndThePlayDate()
+    {
+        var root = Harness();
+        var meta = Card(root, "perfect").GetProperty("cells").GetProperty("meta");
+        string html = Card(root, "perfect").GetProperty("metaHtml").GetString()!;
+        var bare = root.GetProperty("resultCard").GetProperty("bare");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(meta.GetProperty("title").GetString(), Is.EqualTo("t"));
+            Assert.That(meta.GetProperty("artist").GetString(), Is.EqualTo("a"));
+            Assert.That(meta.GetProperty("stars").GetString(), Is.EqualTo("\u2605 4.25"));
+            Assert.That(meta.GetProperty("difficulty").GetString(), Is.EqualTo("Insane"));
+            Assert.That(meta.GetProperty("mapper").GetString(), Is.EqualTo("mapped by someone"));
+            Assert.That(meta.GetProperty("played").GetString(), Is.EqualTo("played on 28 September 2026, 14:05"));
+            Assert.That(html, Does.Contain("\u2605 4.25 \u00b7 Insane \u00b7 mapped by someone"));
+
+            Assert.That(bare.GetProperty("stars").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(bare.GetProperty("difficulty").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(bare.GetProperty("mapper").ValueKind, Is.EqualTo(JsonValueKind.Null));
+        });
+    }
 }

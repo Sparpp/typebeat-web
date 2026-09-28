@@ -1387,7 +1387,10 @@ const out = {
     progressLongIntro: progressLongIntro(),
     songTimeFormat: [0, 999, 1000, 59999, 60000, 61500, 3600000, -1, -1000, -1001, -61000].map(D.fmtSongTime),
     accuracyFormat: [1, 0.99999, 0.899999, 1 / 3, 0.5, 0].map(D.fmtAccuracy),
-    maxComboCache: maxComboCache()
+    maxComboCache: maxComboCache(),
+
+    // ---- the results card (backlog 320) ----
+    resultCard: resultCardRuns()
 };
 
 // What the HUD cells show for an engine, beside the numbers they must agree with.
@@ -1689,5 +1692,48 @@ out.pushWarning318 = {
     wordAnchor: pushSweep(wordAnchorOsu, [5999, 6000, 6799, 6800, 7000, 7499]),
     fixedLead: pushSweep(fixedLeadOsu, [6099, 6100, 7599, 7600, 8199])
 };
+
+// THE RESULTS CARD (backlog 320). Three real runs through computeScore and the card's pure
+// content builder, each beside the raw result the card was built from:
+//  - typo: abcdOsu with 'b' typed as 'x' and never fixed. The sealed wrong cell is an uncorrected
+//    typo (counts.typos, the `good` statistic), and the card's miss folds it in as the desktop's does.
+//  - perfect: abcdOsu typed clean, a full combo of 5 out of 5, so the combo carries its marker.
+//  - failed: abcdOsu typed clean, then a 15-word line nobody types, whose seal empties the bar and
+//    fails the run with the last line never reached. The card shows the judged-only accuracy (5
+//    greats over 50 judged cells, 0.1) while the submitted `accuracy` stays the whole-map ratio.
+function resultCardRuns() {
+    const header = OSU_HEADER.replace('[Lyrics]\n', 'Creator: someone\n[Lyrics]\n');
+    const abcdLine = abcdOsu.slice(OSU_HEADER.length).split('\n')[1];
+    const words = 'the quick brown fox jumps over the lazy dog and then some more words here'.split(' ');
+    const lineOf = (ws, start, step) => JSON.stringify({
+        text: ws.join(' '), start_ms: start, end_ms: start + ws.length * step,
+        words: ws.map((w, i) => ({ text: w, start_ms: start + i * step, end_ms: start + (i + 1) * step, score: 1 }))
+    });
+    const failOsu = header + '{"granularity":"word","version":2,"song_end_ms":22000}\n'
+        + abcdLine + '\n' + lineOf(words, 5000, 500) + '\n' + lineOf(['the', 'end'], 20000, 500) + '\n';
+
+    function run(osu, keys, until) {
+        const engine = engineFor(build(osu));
+        engine.update(1000);
+        for (const [c, t] of keys) { engine.update(t); engine.processKey(c, t); }
+        engine.update(until);
+        return engine;
+    }
+
+    const meta = { title: 't', artist: 'a', stars: 4.25, difficulty: 'Insane', creator: 'someone', playedAt: new Date(2026, 8, 28, 14, 5) };
+    function card(engine, m) {
+        const results = TB.computeScore(engine);
+        return { failed: engine.failed, results: results, cells: D.resultCells(results, m), metaHtml: D.resultMetaHtml(D.resultCells(results, m).meta) };
+    }
+
+    const clean = [['a', 1000], ['b', 1500], [' ', 2000], ['c', 2000], ['d', 2500]];
+    return {
+        typo: card(run(abcdOsu, [['a', 1000], ['x', 1500], [' ', 2000], ['c', 2000], ['d', 2500]], 9000), meta),
+        perfect: card(run(abcdOsu, clean, 9000), meta),
+        failed: card(run(failOsu, clean, 30000), meta),
+        // A deep link hands over no diff row: no stars, no difficulty name, nothing faked.
+        bare: D.resultCells(TB.computeScore(run(abcdOsu, clean, 9000)), { title: 't', artist: 'a' }).meta
+    };
+}
 
 process.stdout.write(JSON.stringify(out));

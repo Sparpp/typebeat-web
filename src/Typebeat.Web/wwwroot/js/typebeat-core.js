@@ -4936,6 +4936,11 @@
             totalScore: totalScore,
             totalScoreWithoutMods: totalWithoutMods,
             accuracy: acc,
+            // The JUDGED-only accuracy the total above is built on (ScoreProcessor.Accuracy), for
+            // the results card to show on a FAILED run (backlog 320), where it is what the desktop
+            // attaches and the server stores. Display only: it is never submitted, and `accuracy`
+            // above is untouched. Equal to it on a completed play.
+            accuracyJudged: accJudged,
             // ScoreProcessor.HighestCombo, submitted as max_combo: the longest run of judged cells
             // uninterrupted by a missed cell OR a wrong keypress (in either input model).
             maxCombo: processor.highestCombo,

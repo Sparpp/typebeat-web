@@ -249,7 +249,7 @@
             wpm.textContent = Math.round(d.wpm) + ' WPM';
             btn.appendChild(wpm);
         }
-        btn.addEventListener('click', () => load(map, d.id));
+        btn.addEventListener('click', () => load(map, d.id, d));
         return btn;
     }
 
@@ -275,7 +275,10 @@
 
     // ---- loading a chosen difficulty ---------------------------------------
 
-    async function load(map, diffId) {
+    // `diff` is the difficulty's row off the diffs fetch (stars, version_name), when the caller
+    // already has it; a deep link does not, so its row is looked up alongside the map fetch. The
+    // results card prints both (backlog 320), and a row that cannot be found just leaves them out.
+    async function load(map, diffId, diff) {
         const setId = map.setId;
         const title = map.title || '';
         const artist = map.artist || '';
@@ -284,12 +287,15 @@
         showStage();
         stageMount.innerHTML = '<div class="tb-loading">loading map…</div>';
 
-        let osuText, audioBuf, beatmapHash = null;
+        let osuText, audioBuf, beatmapHash = null, diffRow = diff || null;
         try {
-            const [osuRes, audioRes] = await Promise.all([
+            const [osuRes, audioRes, looked] = await Promise.all([
                 fetch(`/play/map/${setId}/osu${query}`, { credentials: 'same-origin' }),
-                fetch(`/play/map/${setId}/audio${query}`, { credentials: 'same-origin' })
+                fetch(`/play/map/${setId}/audio${query}`, { credentials: 'same-origin' }),
+                (diffRow || !diffId) ? Promise.resolve(null)
+                    : fetchDiffs(setId).then((ds) => ds.find((d) => d.id === diffId) || null)
             ]);
+            if (looked) diffRow = looked;
             if (!osuRes.ok || !audioRes.ok) throw new Error('map fetch failed');
             osuText = await osuRes.text();
             // The checksum of exactly this text, handed back with every token minted from it.
@@ -311,6 +317,10 @@
                 audioArrayBuffer: audioBuf,
                 title: title,
                 artist: artist,
+                // The results card's metadata (backlog 320). The mapper is read off the .osu itself
+                // (its [Metadata] Creator) by the player, so it needs no threading here.
+                stars: diffRow && typeof diffRow.stars === 'number' ? diffRow.stars : null,
+                difficulty: (diffRow && diffRow.version_name) || null,
                 onExit: showPicker,
                 onPlayStart: () => { tokenPromise = createToken(setId, diffId, beatmapHash); },
                 // Consulted while the results card is being built, once per card, so a "play again"
@@ -380,7 +390,7 @@
         if (preselectedDiffId) return load(map, Number(preselectedDiffId));
 
         const diffs = await fetchDiffs(map.setId);
-        if (diffs.length === 1) return load(map, diffs[0].id);
+        if (diffs.length === 1) return load(map, diffs[0].id, diffs[0]);
         if (diffs.length === 0) return load(map, 0);
         showDiffStep(map, diffs);
     }
