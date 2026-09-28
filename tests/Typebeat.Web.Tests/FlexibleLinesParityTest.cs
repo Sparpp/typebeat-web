@@ -577,11 +577,11 @@ public class FlexibleLinesParityTest
     /// of the song and the contiguous window still says nothing about it.</para>
     ///
     /// <para>On the desktop this is what lets Space reach the mid-song skip overlay from a parked
-    /// caret. The BROWSER HAS NO SKIP OVERLAY: it cannot seek its scheduled audio source without
-    /// moving the gameplay clock, so a dead stretch gets a labelled countdown chip instead and there
-    /// is no fall-through for Space to reach. The predicate is still load-bearing here, because that
-    /// chip is what it now gates: under a pinned caret "a line is active" meant "the song is asking
-    /// for characters", and it does not any more.</para>
+    /// caret, and since backlog 230 the browser does the same: it has a real skip (a fresh
+    /// BufferSource started at an offset seeks exactly), routeKeyDown's parked-head drop hands that
+    /// Space to the seek while a skip window is live, and the countdown chip that labels a dead
+    /// stretch, which is also the skip button, is gated on this predicate. Under a pinned caret "a
+    /// line is active" meant "the song is asking for characters", and it does not any more.</para>
     /// </summary>
     [Test]
     public void ThroughAnInstrumentalTheSongIsNotOnTheParkedCaretsLine()

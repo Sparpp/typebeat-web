@@ -555,9 +555,10 @@ function generate(name, seed, spaceSkipsWord) {
             // A space, and it means four different things depending on where it lands and which arm
             // the run is on, which is why it is rolled everywhere rather than only inside a word.
             // On a word GAP it is simply the right key; on a gap a typo has PARKED the caret on it
-            // steps over that typo (backlog 184); inside a word it skips the word (setting on) or,
-            // since backlog 184, is typed through as an ordinary typo (setting off, which is the
-            // browser's permanent arm and the one midWordSpaceTypos below counts).
+            // steps over that typo (backlog 184); inside a word it skips the word (setting on, which
+            // is the arm /play always plays since backlog 198) or, since backlog 184, is typed
+            // through as an ordinary typo (setting off, the desktop's opt-out arm and the one
+            // midWordSpaceTypos below counts).
             ch = ' ';
         } else if (roll < 0.44 && cell.expected === ' ') {
             // A wrong letter on a WORD GAP. Rejected in every model before backlog 181, typed

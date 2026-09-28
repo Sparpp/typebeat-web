@@ -802,9 +802,10 @@ public class WebplayDisplayTest
     /// is not, because it shows its own character and takes no boundary away.
     ///
     /// <para>The predicate is what the cell EXPECTS, not what was pressed, and the cell below is
-    /// the one that separates the two: a space typed inside a word. Space-skip is hardcoded off in
-    /// the browser, so that press is typed through as an ordinary wrong character on a lyric cell,
-    /// which still shows its own 'b' in red. Keying on the typed char instead would dim it and
+    /// the one that separates the two: a space typed inside a word. /play runs space-skip ON since
+    /// backlog 198, but this fixture declares the skip-OFF arm (the harness's engineFor), the
+    /// desktop's opt-out, so that press is typed through as an ordinary wrong character on a lyric
+    /// cell, which still shows its own 'b' in red. Keying on the typed char instead would dim it and
     /// start dimming half the wrong cells on the line.</para>
     ///
     /// <para>The dimming itself is CSS, ported by OUTCOME rather than by literal: the desktop dims

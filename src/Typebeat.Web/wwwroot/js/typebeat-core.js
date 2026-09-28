@@ -4196,7 +4196,9 @@
             // REJECTION is still the only outcome available to it on a freestyle slot, which is the
             // one cell backlog 184 left out of the type-through it opened to the space key: the slot
             // renders the character the player pressed, so a space typed into one would blank it
-            // rather than mark it (see spaceMayLand below).
+            // rather than mark it (see spaceMayLand below). That is the skip-OFF arm, which /play
+            // never plays: spaceSkipsWord is on there (backlog 198), so the skip gate above has
+            // already taken a space on a freestyle slot as a word skip before it could get here.
             const matched = (cell.freestyle && c !== ' ') ||
                 (this.caseSensitive ? c === cell.expected : fold(c) === fold(cell.expected));
 
@@ -4214,7 +4216,9 @@
                 // The cell still renders its own expected character in the error red (cellGlyph in
                 // typebeat-player.js substitutes the typed char for GAPS only), which is what makes
                 // an invisible red space a non-problem. With spaceSkipsWord on the same press never
-                // arrives here: the skip gate above consumed it. A FREESTYLE slot is the one cell
+                // arrives here: the skip gate above consumed it. /play is always on that arm
+                // (backlog 198), so spaceMayLand is false for every live browser press and this
+                // clause is the skip-OFF arm, kept for the mirror. A FREESTYLE slot is the one cell
                 // that keeps refusing the key, because it has no expected glyph to redden and would
                 // render blank instead of wrong (backlog 50's promise: any character EXCEPT the
                 // word-advance key). The knock-on is deliberate: mid-word spaces stop feeding the
@@ -4282,9 +4286,9 @@
                     // off, an advancing gap typo costs the player one cell, and with it on the next
                     // space fed the skip gate a spoiled gap and gave up a whole word. Every typo on a
                     // LYRIC cell advances exactly as it always has, under both arms. The browser
-                    // hardcodes the setting OFF, so the park is unreachable in a live /play run and
-                    // exists here to keep the mirror whole: the desktop can turn it on, and the two
-                    // engines feed one leaderboard.
+                    // takes the desktop's shipped default and runs with the setting ON (backlog 198),
+                    // so the park is LIVE on every /play run: a wrong letter on a word gap parks
+                    // here, and the fuzz sweep counts those presses as parkedGapTypos.
                     if (!(this.spaceSkipsWord && cell.expected === ' ')) {
                         this.caretIndex++;
                         this.autoSkipForward();
@@ -4348,7 +4352,9 @@
                 // GATEKEEPER (strict). Wrong key REJECTED: costs a keypress + combo + streak; caret
                 // unmoved. Unreachable from the browser for a letter, and since backlog 184 for a
                 // mid-word space too: the one case the default path still refuses above is the space
-                // KEY pressed on a FREESTYLE slot.
+                // KEY pressed on a FREESTYLE slot, and only on the skip-OFF arm. /play runs skip-ON
+                // (backlog 198), where the skip gate takes that space first, so no live /play press
+                // reaches this branch at all; it and its mash fail stay for the mirror.
                 this.totalKeypresses++;
                 this.errorCount++;
                 this.consecutiveWrongKeys++;
