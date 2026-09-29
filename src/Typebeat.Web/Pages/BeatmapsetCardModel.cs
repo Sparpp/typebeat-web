@@ -26,6 +26,10 @@ namespace Typebeat.Web.Pages;
 /// [Events] Video line. Video files dominate a package's size, so this is what turns the card's
 /// download button into the two-option "with video" / "audio only" expand
 /// (<see cref="OffersDownloadChoice"/>); every other set downloads on the first click.</param>
+/// <param name="DiffsJson">The set's live difficulties as a json array of
+/// <c>{id, name, stars, wpm}</c>, hardest first (built by json_agg in the same lateral that
+/// produces <paramref name="Stars"/> and <paramref name="Wpm"/>, so it costs no extra round trip).
+/// Parsed once into <see cref="Diffs"/>; the partial reads that, never this string.</param>
 public sealed record BeatmapsetCardModel(
     long Id,
     string Title,
@@ -47,8 +51,81 @@ public sealed record BeatmapsetCardModel(
     bool HasPackage,
     bool Explicit,
     bool HasPlayableDiff,
-    bool HasVideo)
+    bool HasVideo,
+    string DiffsJson)
 {
+    /// <summary>
+    /// How many difficulties the card's star stack draws at most. A set with more still cycles
+    /// through all of them (the button's data carries every one, and its label says how many); only
+    /// the drawn glyphs stop here, so a ten-difficulty set cannot push the chip off the card.
+    /// </summary>
+    public const int StackCap = 5;
+
+    private static readonly System.Text.Json.JsonSerializerOptions diffsJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
+    private IReadOnlyList<CardDifficulty>? diffs;
+
+    /// <summary>The live difficulties, hardest first (ties broken by id, so the order is stable).</summary>
+    public IReadOnlyList<CardDifficulty> Diffs => diffs ??= ParseDiffs(DiffsJson);
+
+    /// <summary>
+    /// Two or more live difficulties: the chip becomes the cycling star-stack button. A one (or
+    /// zero) difficulty set keeps today's plain chip, byte for byte.
+    /// </summary>
+    public bool HasDiffStack => Diffs.Count > 1;
+
+    /// <summary>The difficulties whose stars are drawn: the <see cref="StackCap"/> hardest.</summary>
+    public IReadOnlyList<CardDifficulty> StackedDiffs => Diffs.Count <= StackCap ? Diffs : Diffs.Take(StackCap).ToList();
+
+    /// <summary>
+    /// What the stack button carries for card-diffs.js, one entry per live difficulty in stack
+    /// order, every display string already formatted here so the script never re-derives a number
+    /// or a colour: the rating text ("0.0#", as the chip prints it), the WPM text (null when
+    /// unknown), the <see cref="DifficultyColour"/> tint and the button's aria-label.
+    /// </summary>
+    public string DiffsDataJson => System.Text.Json.JsonSerializer.Serialize(Diffs.Select(d => new
+    {
+        id = d.Id,
+        stars = FormatStars(d.Stars),
+        wpm = d.Wpm is double w ? FormatWpm(w) : null,
+        colour = DifficultyColour.ForStars(d.Stars),
+        label = DiffLabel(d, Diffs.Count),
+    }));
+
+    /// <summary>The widest rating text across the difficulties, in characters: the stack button
+    /// reserves it so a click never reflows the card.</summary>
+    public int StarsTextWidth => Diffs.Count == 0 ? 0 : Diffs.Max(d => FormatStars(d.Stars).Length);
+
+    /// <summary>The widest WPM number across the difficulties, in characters (0 when none has one).</summary>
+    public int WpmTextWidth => Diffs.Count == 0 ? 0 : Diffs.Max(d => d.Wpm is double w ? FormatWpm(w).Length : 0);
+
+    /// <summary>The chip's rating text: the same "0.0#" the one-difficulty chip prints.</summary>
+    public static string FormatStars(double stars) => stars.ToString("0.0#", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>The chip's WPM number, whole words per minute.</summary>
+    public static string FormatWpm(double wpm) => wpm.ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The stack button's accessible name while <paramref name="d"/> is on top: which difficulty is
+    /// showing and its numbers, then how many there are and what a click does.
+    /// </summary>
+    public static string DiffLabel(CardDifficulty d, int count)
+    {
+        string pace = d.Wpm is double w ? $", {FormatWpm(w)} WPM" : string.Empty;
+        return $"{d.Name}: {FormatStars(d.Stars)} stars{pace}. {count} difficulties, click to cycle";
+    }
+
+    private static IReadOnlyList<CardDifficulty> ParseDiffs(string? json)
+    {
+        if (string.IsNullOrEmpty(json))
+            return [];
+
+        return System.Text.Json.JsonSerializer.Deserialize<List<CardDifficulty>>(json, diffsJsonOptions) ?? [];
+    }
+
     public string StatusLabel => BeatmapsetDisplay.StatusLabel(Status);
 
     public string PillClass => BeatmapsetDisplay.PillClass(Status);
@@ -85,6 +162,11 @@ public sealed record BeatmapsetCardModel(
     /// <summary>Artist, or its original non-romanized text when the viewer prefers that.</summary>
     public string DisplayArtist(bool preferOriginal) => MetadataDisplay.Pick(Artist, ArtistUnicode, preferOriginal);
 }
+
+/// <summary>One live difficulty of a card's set, as <see cref="BeatmapsetCardSql.Select"/>'s
+/// json_agg writes it: <paramref name="Wpm"/> is the same coalesce(target_wpm, wpm) the set-level
+/// chip reads, per row.</summary>
+public sealed record CardDifficulty(long Id, string Name, double Stars, double? Wpm);
 
 /// <summary>Status wording shared by the card partial and the set page.</summary>
 public static class BeatmapsetDisplay
@@ -145,7 +227,8 @@ public static class BeatmapsetCardSql
                -- Same predicate as PlayEndpoints.ResolveOsuFilenameAsync: if this is false the
                -- browser player has nothing to load, so the card must not offer webplay.
                EXISTS (SELECT 1 FROM beatmaps b2 WHERE b2.set_id = s.id AND b2.filename LIKE '%.osu') AS HasPlayableDiff,
-               s.has_video        AS HasVideo
+               s.has_video        AS HasVideo,
+               coalesce(d.diffs, '[]')::text AS DiffsJson
         FROM beatmapsets s
         JOIN users u ON u.id = s.owner_id
         LEFT JOIN LATERAL (
@@ -158,8 +241,20 @@ public static class BeatmapsetCardSql
             -- fallback is a slightly lower number, never a differently-scaled one.
             -- The cast is on the numeric wpm, not on the coalesce, so the two arms are the same
             -- type going in and the aggregate cannot pick one up by implicit resolution.
+            -- diffs is the per-difficulty list behind the card's star stack (backlog 327), in stack
+            -- order: hardest first, id as the tiebreak so two equal ratings never swap between
+            -- renders. Same rows, same coalesce, so its first entry's stars ARE the max above;
+            -- its wpm is that difficulty's own, which is the point (the max can come from a
+            -- different difficulty). Cast to text in the outer SELECT: json has no equality
+            -- operator, and a consumer wrapping this SELECT must stay free to compare rows.
             SELECT max(b.difficulty_rating) AS stars,
-                   max(coalesce(b.target_wpm, b.wpm::double precision)) AS wpm
+                   max(coalesce(b.target_wpm, b.wpm::double precision)) AS wpm,
+                   json_agg(json_build_object(
+                       'id', b.id,
+                       'name', b.version_name,
+                       'stars', b.difficulty_rating,
+                       'wpm', coalesce(b.target_wpm, b.wpm::double precision))
+                       ORDER BY b.difficulty_rating DESC, b.id) AS diffs
             FROM beatmaps b
             WHERE b.set_id = s.id AND b.filename IS NOT NULL
         ) d ON true

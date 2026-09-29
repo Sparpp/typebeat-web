@@ -149,6 +149,28 @@ public static class PublicSiteSeed
     /// <summary>"Operator Bravo Ballad": the high-stat operator fixture.</summary>
     public static long OpBravoId { get; private set; }
 
+    /// <summary>
+    /// "Triple Stack Serenade": three live difficulties whose HARDEST is not its FASTEST (backlog
+    /// 327), plus a dropped row rated above them all. hard 6.4 stars at an average 150 WPM (no
+    /// target), normal 4.1 stars at a target 195 (average 120), easy 2.2 stars at 70, inserted
+    /// easy, hard, normal so id order is not stack order. The set-level rollup reads 6.4 and 195,
+    /// numbers from two different difficulties; the card's stack must pair 6.4 with 150.
+    /// </summary>
+    public static long StackSetId { get; private set; }
+
+    public static long StackEasyId { get; private set; }
+
+    public static long StackNormalId { get; private set; }
+
+    public static long StackHardId { get; private set; }
+
+    /// <summary>"Six Step Staircase": six live difficulties, 1.5 to 6.5 stars in whole steps
+    /// (WPM 60 to 160 in twenties), one more than the card draws.</summary>
+    public static long StaircaseSetId { get; private set; }
+
+    /// <summary>The staircase's difficulties, hardest first (the stack's order).</summary>
+    public static long[] StaircaseDiffIds { get; private set; } = [];
+
     public static async Task EnsureSeededAsync()
     {
         await gate.WaitAsync();
@@ -352,6 +374,43 @@ public static class PublicSiteSeed
             await InsertBeatmapAsync(conn, OpBravoId,
                 totalLengthS: 240, stars: 7.0, wpm: 200, wordCount: 100, charCount: 700,
                 lyrics: "quiet rain falls on the piano at night", targetWpm: 130);
+
+            // The card's difficulty stack (backlog 327). Three days old, behind every filler, so
+            // neither lands on the listing's first page or the landing strip.
+            StackSetId = await InsertSetAsync(conn,
+                title: "Triple Stack Serenade", artist: "The Three Tiers",
+                submittedOffset: TimeSpan.FromDays(-3));
+
+            StackEasyId = await InsertBeatmapAsync(conn, StackSetId,
+                totalLengthS: 100, stars: 2.2, wpm: 70, wordCount: 100, charCount: 480,
+                versionName: "stack easy", filename: "stack-easy.osu");
+
+            StackHardId = await InsertBeatmapAsync(conn, StackSetId,
+                totalLengthS: 100, stars: 6.4, wpm: 150, wordCount: 240, charCount: 1150,
+                versionName: "stack hard", filename: "stack-hard.osu");
+
+            StackNormalId = await InsertBeatmapAsync(conn, StackSetId,
+                totalLengthS: 100, stars: 4.1, wpm: 120, wordCount: 180, charCount: 860,
+                targetWpm: 195, versionName: "stack normal", filename: "stack-normal.osu");
+
+            await InsertBeatmapAsync(conn, StackSetId,
+                totalLengthS: 100, stars: 9.5, wpm: 300, wordCount: 400, charCount: 2000,
+                versionName: "stack dropped", filename: null);
+
+            StaircaseSetId = await InsertSetAsync(conn,
+                title: "Six Step Staircase", artist: "The Many Tiers",
+                submittedOffset: TimeSpan.FromDays(-3).Add(TimeSpan.FromHours(-1)));
+
+            var staircase = new List<long>();
+            for (int step = 0; step < 6; step++)
+            {
+                staircase.Add(await InsertBeatmapAsync(conn, StaircaseSetId,
+                    totalLengthS: 90, stars: 1.5 + step, wpm: 60 + 20 * step, wordCount: 100, charCount: 500,
+                    versionName: $"step {step + 1}", filename: $"step-{step + 1}.osu"));
+            }
+
+            staircase.Reverse();
+            StaircaseDiffIds = staircase.ToArray();
 
             // Every seeded set EXCEPT the packageless one gets a version row, mirroring sets
             // that went through the upload pipeline: the set page / card Download actions key

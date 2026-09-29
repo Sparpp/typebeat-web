@@ -970,6 +970,69 @@ img { max-width: 100%; }
     margin-top: var(--space-1);
 }
 
+/* The multi-difficulty chip (backlog 327): a real button that cycles the set's difficulties.
+   One star per difficulty (at most BeatmapsetCardModel.StackCap), each in its own colour, stacked
+   in one grid cell: the current one on top at full size, the rest behind it, each a step further
+   left and a pixel lower. --stack-n, --rating-ch and --wpm-ch are rendered server-side from the
+   whole set, so the chip is as wide on its last difficulty as on its first: a click never
+   reflows the card. */
+.chip--diffs {
+    --star-step: 5px;
+    color: inherit;
+    font-family: inherit;
+    line-height: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 120ms ease-out, background-color 120ms ease-out;
+}
+
+.chip--diffs:hover {
+    border-color: var(--violet);
+    background: var(--surface-2);
+}
+
+.chip--diffs:focus-visible {
+    outline: 2px solid var(--violet-bright);
+    outline-offset: 2px;
+}
+
+.chip-stars {
+    display: inline-grid;
+    margin-right: 0.1em;
+    padding-left: calc((var(--stack-n) - 1) * var(--star-step));
+    /* Clip the lower stars to the chip's line without moving the baseline (overflow would). */
+    clip-path: inset(0);
+}
+
+.chip-star {
+    grid-area: 1 / 1;
+    justify-self: end;
+    z-index: calc(10 - var(--slot));
+    transform:
+        translate(calc(var(--slot) * var(--star-step) * -1), calc(var(--slot) * 1px))
+        scale(calc(1 - min(var(--slot), 1) * 0.12));
+    transform-origin: 50% 60%;
+    transition: transform 120ms ease-out;
+}
+
+.chip-rating {
+    display: inline-block;
+    min-width: calc(var(--rating-ch) * 1ch);
+    font-variant-numeric: tabular-nums;
+}
+
+.chip-wpm {
+    display: inline-block;
+    /* The widest number plus " WPM", or nothing when no difficulty has a pace. */
+    min-width: calc(var(--wpm-ch) * 1ch + min(var(--wpm-ch), 1) * 4ch);
+    font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .chip--diffs,
+    .chip-star { transition: none; }
+}
+
 .bset-card__rail {
     display: flex;
     flex-direction: column;

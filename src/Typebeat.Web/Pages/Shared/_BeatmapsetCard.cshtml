@@ -50,6 +50,35 @@
         </span>
         <span class="bset-card__meta">
             <span class="pill @Model.PillClass">@Model.StatusLabel</span>
+            @if (Model.HasDiffStack)
+            {
+                @* Two or more live difficulties (backlog 327): the chip is a button that cycles
+                   them, one star per difficulty (the StackCap hardest drawn), each in its own
+                   colour, the current one on top. Everything visible is the TOP difficulty's own
+                   rating and pace, hardest first, so the default reading pairs numbers from ONE
+                   difficulty (the set-level max(stars) / max(wpm) can come from two). With JS off
+                   the button does nothing and this is the whole story. card-diffs.js rotates it
+                   from data-diffs, which carries every difficulty already formatted. *@
+                var top = Model.Diffs[0];
+                var stacked = Model.StackedDiffs;
+                <button type="button" class="chip chip--diffs" data-diff-stack data-diffs="@Model.DiffsDataJson"
+                        data-diff-index="0" aria-label="@BeatmapsetCardModel.DiffLabel(top, Model.Diffs.Count)"
+                        style="--stack-n:@stacked.Count;--rating-ch:@Model.StarsTextWidth;--wpm-ch:@Model.WpmTextWidth">
+                    <span class="chip-value" data-diff-colour style="color:@Typebeat.Web.DifficultyColour.ForStars(top.Stars)">
+                        <span class="chip-stars" aria-hidden="true">
+                            @for (int i = 0; i < stacked.Count; i++)
+                            {
+                                <span class="chip-star" data-diff-star style="--slot:@i;color:@Typebeat.Web.DifficultyColour.ForStars(stacked[i].Stars)">&#9733;</span>
+                            }
+                        </span>
+                        <span class="chip-rating" data-diff-rating>@BeatmapsetCardModel.FormatStars(top.Stars)</span>
+                    </span>
+                    <span class="chip-label chip-wpm" data-diff-wpm
+                          title="target words per minute: the average WPM across the fastest fifth of the map's lyric lines of three words or more">@(top.Wpm is double topWpm ? BeatmapsetCardModel.FormatWpm(topWpm) + " WPM" : "")</span>
+                </button>
+            }
+            else
+            {
             <span class="chip">
                 <span class="chip-value" style="color:@Typebeat.Web.DifficultyColour.ForStars(Model.Stars)">&#9733; @Model.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
                 @* No chars/word here: the card has one line for stars and pace, and the word length
@@ -62,6 +91,7 @@
                     <span class="chip-label" title="target words per minute: the average WPM across the fastest fifth of the map's lyric lines of three words or more">@wpm.ToString("0", CultureInfo.InvariantCulture) WPM</span>
                 }
             </span>
+            }
         </span>
     </div>
     <div class="bset-card__rail">
