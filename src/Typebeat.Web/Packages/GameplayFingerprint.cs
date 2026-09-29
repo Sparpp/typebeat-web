@@ -46,7 +46,14 @@ namespace Typebeat.Web.Packages;
 /// <para>
 /// WHAT IS OUT, so these edits keep the rank: title, artist, both unicode variants, creator,
 /// difficulty name, source, tags, language, background, video, preview time, BPM/timing points,
-/// the .osu filename, and the beatdrop. The beatdrop exclusion is not a judgement call made here:
+/// the .osu filename, the beatdrop, and (since <see cref="VERSION"/> 2, backlog 330) every
+/// <c>"original"</c> key of the section, line and word alike. An original is the lyric as the song
+/// WRITES it in its own script: display and authoring data that no cell, target time or rating
+/// reads (the player types <c>"text"</c>, and only <c>"text"</c>), so adding a map's source script,
+/// or correcting it, is exactly the kind of edit backlog 173 says must not demote. A word's typed
+/// text is still in, so romanising an unromanised word (an empty <c>"text"</c> becoming a real
+/// one) is a gameplay change and demotes like any other. The pattern is a mirror of the game's
+/// <c>LyricOsuFormat.StripOriginals</c>, which its local ranked-status check applies. The beatdrop exclusion is not a judgement call made here:
 /// it mirrors the game's own <c>TypeBeatRuleset.NativeEncodingsEquivalentForStatus</c>, which
 /// normalises <c>beatdrop_ms</c> out precisely so a beatdrop-only editor save cannot demote a
 /// ranked map locally, on the grounds that the beatdrop only soundtracks the main-menu intro and
@@ -75,14 +82,15 @@ namespace Typebeat.Web.Packages;
 public static class GameplayFingerprint
 {
     /// <summary>
-    /// Stamped into every stored value as a <c>"v1:"</c> prefix. Bump when the RECIPE below
+    /// Stamped into every stored value as a <c>"v{VERSION}:"</c> prefix (<c>"v2:"</c> today;
+    /// version 2 added the <c>original</c> exclusion, backlog 330). Bump when the RECIPE below
     /// changes (a new field folded in, a different exclusion), which makes every stored value
     /// stale-shaped and hands the whole catalogue to
     /// <see cref="GameplayFingerprintBackfill"/> to rewrite. That sweep runs at startup BEFORE the
     /// app serves a request (Program.cs), so a recipe change can never be mistaken for a mapper's
     /// gameplay edit: by the time an upload can arrive, every row already speaks the new version.
     /// </summary>
-    public const int VERSION = 1;
+    public const int VERSION = 2;
 
     private static readonly string version_prefix = $"v{VERSION}:";
 
@@ -98,8 +106,21 @@ public static class GameplayFingerprint
     private static readonly Regex beatdrop_field =
         new Regex(",?\"beatdrop_ms\":[-0-9.eE+]+", RegexOptions.Compiled);
 
+    // Mirror of LyricOsuFormat.StripOriginals (backlog 330): every writer puts "original" straight
+    // after "text", so the leading comma is what is stripped, and a JSON string cannot hide an
+    // unescaped quote, so the pattern cannot reach inside a lyric.
+    private static readonly Regex original_field =
+        new Regex(@",""original"":""(?:[^""\\]|\\.)*""", RegexOptions.Compiled);
+
     /// <summary>
-    /// The stored fingerprint for one difficulty: <c>"v1:"</c> + lowercase SHA256 hex over the
+    /// One [Lyrics] line as the fingerprint hashes it: the beatdrop and every original removed. A
+    /// line that carries neither comes back as the very same string.
+    /// </summary>
+    public static string CanonicalLyricLine(string line)
+        => original_field.Replace(beatdrop_field.Replace(line, string.Empty), string.Empty);
+
+    /// <summary>
+    /// The stored fingerprint for one difficulty: <c>"v2:"</c> + lowercase SHA256 hex over the
     /// canonical form built by <see cref="CanonicalForm"/>.
     /// </summary>
     /// <param name="difficulty">The parsed .osu.</param>
@@ -144,7 +165,7 @@ public static class GameplayFingerprint
 
         foreach (string line in lyricLines)
         {
-            string stripped = beatdrop_field.Replace(line, string.Empty);
+            string stripped = CanonicalLyricLine(line);
             sb.Append(stripped.Length).Append(':').Append(stripped).Append('\n');
         }
 

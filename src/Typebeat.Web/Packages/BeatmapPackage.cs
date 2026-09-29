@@ -95,6 +95,17 @@ public sealed class ParsedDifficulty
     public required IReadOnlyList<LyricLine> Lines { get; init; }
     public required LyricPace.PaceStatistics Pace { get; init; }
 
+    /// <summary>
+    /// THE ORIGINAL TEXT (backlog 330): the originals of the words the game's romaniser could not
+    /// spell, which the map carries with no typed text (see
+    /// <see cref="LyricTiming.Header.Unromanised"/>). Empty for every map that is fit to store;
+    /// <see cref="PackageValidator"/> refuses any other. The originals themselves need no field of
+    /// their own here: the .osu is stored VERBATIM, so every <c>original</c> key a mapper wrote
+    /// round-trips through upload and download untouched, and <see cref="Lines"/> reads them into
+    /// <see cref="LyricLine.Original"/> and <see cref="TimedUnit.Original"/> without rating them.
+    /// </summary>
+    public IReadOnlyList<string> UnromanisedWords { get; init; } = Array.Empty<string>();
+
     private BeatmapRatings? ratings;
 
     /// <summary>

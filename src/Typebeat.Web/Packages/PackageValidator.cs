@@ -116,6 +116,16 @@ public static class PackageValidator
 
             if (!seenFilenames.Contains(BeatmapPackageParser.NormalizeFilename(diff.AudioFilename)))
                 throw new PackageValidationException($"Audio file \"{diff.AudioFilename}\" referenced by \"{diff.Filename}\" is missing from the package.");
+
+            // THE ORIGINAL TEXT (backlog 330): a word the game's romaniser could not spell is stored
+            // with no typed text until the mapper gives it one. The game's editor refuses to submit
+            // such a draft; this is the same refusal for any client that does not.
+            if (diff.UnromanisedWords.Count > 0)
+            {
+                throw new PackageValidationException(
+                    $"\"{diff.Filename}\" has {diff.UnromanisedWords.Count} word(s) with no romanisation yet "
+                    + $"({string.Join(", ", diff.UnromanisedWords.Distinct().Take(5))}); romanise them in the lyric editor before submitting.");
+            }
         }
     }
 

@@ -47,6 +47,15 @@ public sealed class TimedUnit
     /// reads exactly as it did.</para>
     /// </summary>
     public IReadOnlyList<WordPause> Pauses { get; init; } = Array.Empty<WordPause>();
+
+    /// <summary>
+    /// The word as the song WRITES it, in its own script (backlog 330; game's
+    /// <c>TimedUnit.Original</c>), read off the word object's optional <c>original</c> key and null
+    /// when it has none. PRESERVED, never rated: nothing this server computes reads it, which is the
+    /// contract that lets a map gain originals without a single rating or fingerprint moving (see
+    /// <see cref="GameplayFingerprint"/>).
+    /// </summary>
+    public string? Original { get; init; }
 }
 
 /// <summary>
@@ -88,6 +97,12 @@ public sealed class LyricLine
 
     /// <summary>One per whitespace token of <see cref="RawText"/>, in order.</summary>
     public required IReadOnlyList<TimedUnit> Units { get; init; }
+
+    /// <summary>
+    /// The line as the song writes it (backlog 330; game's <c>LyricLine.Original</c>), or null.
+    /// Preserved, never rated, like <see cref="TimedUnit.Original"/>.
+    /// </summary>
+    public string? Original { get; init; }
 }
 
 /// <summary>
@@ -129,13 +144,23 @@ public static class LyricTiming
         double StartMs,
         double EndMs,
         List<(string Text, double Start, double End, double[] Syllables)> Words,
-        List<List<(double Start, double End, int Split)>>? WordPauses = null);
+        List<List<(double Start, double End, int Split)>>? WordPauses = null,
+        string? Original = null,
+        List<string?>? WordOriginals = null);
 
     /// <summary>Header fields of a [Lyrics] section (all optional on the wire).</summary>
     public sealed class Header
     {
         public double? SongEndMs { get; set; }
         public double? BeatdropMs { get; set; }
+
+        /// <summary>
+        /// The ORIGINALS of the section's UNROMANISED words (backlog 330), in order: every word
+        /// written with an empty <c>text</c> beside an <c>original</c>, and every line that has an
+        /// original but nothing to type. A map carrying any is a draft the game refuses to submit,
+        /// and <see cref="PackageValidator"/> refuses it too.
+        /// </summary>
+        public List<string> Unromanised { get; } = new List<string>();
     }
 
     /// <summary>
@@ -175,6 +200,8 @@ public static class LyricTiming
 
                     continue;
                 }
+
+                header.Unromanised.AddRange(UnromanisedOf(root, stripBackingVocals));
 
                 if (TryParseRawLine(root, out var rawLine, stripBackingVocals))
                     raw.Add(rawLine);
@@ -257,6 +284,9 @@ public static class LyricTiming
         // Parallel to words[]: word i's authored pauses, raw (TimingJsonLoader's wordPauses).
         var wordPauses = new List<List<(double Start, double End, int Split)>>();
 
+        // Parallel to words[]: word i's ORIGINAL (backlog 330), TimingJsonLoader's wordOriginals.
+        var wordOriginals = new List<string?>();
+
         if (lineElement.TryGetProperty("words", out JsonElement wordsElement)
             && wordsElement.ValueKind == JsonValueKind.Array)
         {
@@ -306,6 +336,7 @@ public static class LyricTiming
                 }
 
                 words.Add((wordText, ws, we, syllables));
+                wordOriginals.Add(readOriginal(wordElement));
 
                 // THE AUTHORED PAUSES (type!beat editor extension): the rests inside the word, read
                 // RAW here and validated against the CLAMPED word in buildExplicitUnits, exactly as
@@ -344,8 +375,74 @@ public static class LyricTiming
         }
 
         rawLine = new RawLine(normalized, startMs, endMs, words,
-            wordPauses.Exists(p => p.Count > 0) ? wordPauses : null);
+            wordPauses.Exists(p => p.Count > 0) ? wordPauses : null,
+            readOriginal(lineElement),
+            wordOriginals.Exists(o => o != null) ? wordOriginals : null);
         return true;
+    }
+
+    /// <summary>
+    /// The object's optional <c>original</c> string (backlog 330), or null when absent, empty or
+    /// not a string (TimingJsonLoader.readOriginal).
+    /// </summary>
+    private static string? readOriginal(JsonElement element)
+        => element.TryGetProperty("original", out JsonElement originalElement)
+           && originalElement.ValueKind == JsonValueKind.String
+           && originalElement.GetString() is { Length: > 0 } original
+            ? original
+            : null;
+
+    /// <summary>
+    /// Whether word <paramref name="index"/> of <paramref name="line"/> is UNROMANISED (backlog
+    /// 330): an EMPTY text beside an original, the shape the game's importer writes for a word its
+    /// romaniser could not spell. It has no token in the line text, so it is taken out of the
+    /// words[]/token pairing, exactly as TimingJsonLoader.IsUnromanisedWord takes it out.
+    /// </summary>
+    public static bool IsUnromanisedWord(RawLine line, int index)
+        => line.WordOriginals != null && index < line.WordOriginals.Count && line.WordOriginals[index] != null
+           && line.Words[index].Text.Length == 0;
+
+    /// <summary>
+    /// The unromanised originals one [Lyrics] line carries (see <see cref="Header.Unromanised"/>):
+    /// each word with an empty text and an original, and, for a line with an original but nothing
+    /// to type, the line's original when no word of it already said so.
+    ///
+    /// <para>THE ONE PLACE THE TWO PARSERS KNOWINGLY DIFFER. The game keeps such a no-cell line
+    /// (so its editor can romanise it) where this parse drops it, as it drops every line with no
+    /// cell. A map carrying one can never be stored here (<see cref="PackageValidator"/> refuses
+    /// it, and the game refuses to submit it), so no rating is ever computed on the difference.</para>
+    /// </summary>
+    public static IEnumerable<string> UnromanisedOf(JsonElement lineElement, bool stripBackingVocals = false)
+    {
+        if (lineElement.ValueKind != JsonValueKind.Object
+            || !lineElement.TryGetProperty("text", out JsonElement textElement) || textElement.ValueKind != JsonValueKind.String)
+        {
+            yield break;
+        }
+
+        int found = 0;
+
+        if (lineElement.TryGetProperty("words", out JsonElement wordsElement) && wordsElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement word in wordsElement.EnumerateArray())
+            {
+                if (word.ValueKind == JsonValueKind.Object
+                    && readOriginal(word) is string original
+                    && word.TryGetProperty("text", out JsonElement wordText) && wordText.ValueKind == JsonValueKind.String
+                    && wordText.GetString()?.Length == 0)
+                {
+                    found++;
+                    yield return original;
+                }
+            }
+        }
+
+        string raw = textElement.GetString() ?? string.Empty;
+        bool freestyle = lineElement.TryGetProperty("freestyle", out JsonElement f) && f.ValueKind == JsonValueKind.True;
+        string normalized = Typeability.Normalize(stripBackingVocals ? Typeability.StripBackingVocals(raw) : raw, keepFreestyleMarkers: freestyle);
+
+        if (found == 0 && Typeability.ToDefaultStream(normalized).Length == 0 && readOriginal(lineElement) is string lineOriginal)
+            yield return lineOriginal;
     }
 
     /// <summary>
@@ -382,10 +479,15 @@ public static class LyricTiming
             string[] tokens = line.Text.Split(' ');
             IReadOnlyList<TimedUnit> units;
 
-            if (tokens.Length == line.Words.Count && tokens.Length > 0)
-                units = buildExplicitUnits(tokens, line.Words, line.WordPauses, start, end);
+            // UNROMANISED WORDS (backlog 330) have no token, so they are taken out of the pairing,
+            // exactly as TimingJsonLoader.pairedWords takes them out. A line without one pairs
+            // exactly as it always has.
+            var (words, wordPauses, wordOriginals) = pairedWords(line);
+
+            if (tokens.Length == words.Count && tokens.Length > 0)
+                units = buildExplicitUnits(tokens, words, wordPauses, start, end, wordOriginals);
             else
-                units = InterpolateUnits(line.Text, start, singEnd);
+                units = withDerivedOriginals(InterpolateUnits(line.Text, start, singEnd), line.Original);
 
             result.Add(new LyricLine
             {
@@ -394,10 +496,100 @@ public static class LyricTiming
                 EndTime = end,
                 SingEndTime = singEnd,
                 Units = units,
+                Original = line.Original,
             });
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Interpolated units given their originals from the LINE's original, when the line has no
+    /// words[] to carry them (a line-granularity map): the original's whitespace tokens pair with the
+    /// units one for one when, and only when, the two counts agree (TimingJsonLoader.withDerivedOriginals).
+    /// </summary>
+    private static IReadOnlyList<TimedUnit> withDerivedOriginals(IReadOnlyList<TimedUnit> units, string? lineOriginal)
+    {
+        if (lineOriginal == null || units.Count == 0)
+            return units;
+
+        string[] originals = lineOriginal.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+        if (originals.Length != units.Count)
+            return units;
+
+        return units.Select((u, i) => carriesOriginal(originals[i]) && originals[i] != u.Text
+            ? new TimedUnit
+            {
+                Text = u.Text,
+                StartTime = u.StartTime,
+                EndTime = u.EndTime,
+                SyllableBoundaries = u.SyllableBoundaries,
+                Pauses = u.Pauses,
+                Original = originals[i],
+            }
+            : u).ToArray();
+    }
+
+    /// <summary>
+    /// Whether a source word records an original at all: it carries a letter or a combining mark
+    /// outside ASCII (the game's <c>LyricOriginals.CarriesOriginal</c>, which decides the same thing
+    /// for the importer).
+    /// </summary>
+    private static bool carriesOriginal(string source)
+    {
+        for (int i = 0; i < source.Length; i++)
+        {
+            if (source[i] <= 0x7F)
+                continue;
+
+            switch (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(source, i))
+            {
+                case System.Globalization.UnicodeCategory.UppercaseLetter:
+                case System.Globalization.UnicodeCategory.LowercaseLetter:
+                case System.Globalization.UnicodeCategory.TitlecaseLetter:
+                case System.Globalization.UnicodeCategory.ModifierLetter:
+                case System.Globalization.UnicodeCategory.OtherLetter:
+                case System.Globalization.UnicodeCategory.NonSpacingMark:
+                case System.Globalization.UnicodeCategory.SpacingCombiningMark:
+                case System.Globalization.UnicodeCategory.EnclosingMark:
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The line's words[] with its unromanised words taken out, the parallel lists filtered in step
+    /// (TimingJsonLoader.pairedWords). A line with none comes back with its own lists.
+    /// </summary>
+    private static (List<(string Text, double Start, double End, double[] Syllables)> Words,
+        List<List<(double Start, double End, int Split)>>? WordPauses, List<string?>? WordOriginals) pairedWords(RawLine line)
+    {
+        bool any = false;
+
+        for (int i = 0; i < line.Words.Count && !any; i++)
+            any = IsUnromanisedWord(line, i);
+
+        if (!any)
+            return (line.Words, line.WordPauses, line.WordOriginals);
+
+        var words = new List<(string Text, double Start, double End, double[] Syllables)>();
+        var pauses = line.WordPauses == null ? null : new List<List<(double Start, double End, int Split)>>();
+        var originals = new List<string?>();
+
+        for (int i = 0; i < line.Words.Count; i++)
+        {
+            if (IsUnromanisedWord(line, i))
+                continue;
+
+            words.Add(line.Words[i]);
+            pauses?.Add(i < line.WordPauses!.Count ? line.WordPauses[i] : new List<(double, double, int)>());
+            originals.Add(line.WordOriginals![i]);
+        }
+
+        return (words, pauses, originals);
     }
 
     /// <summary>
@@ -451,7 +643,8 @@ public static class LyricTiming
         List<(string Text, double Start, double End, double[] Syllables)> words,
         List<List<(double Start, double End, int Split)>>? wordPauses,
         double lineStart,
-        double lineEnd)
+        double lineEnd,
+        List<string?>? wordOriginals = null)
     {
         var units = new List<TimedUnit>(tokens.Length);
         double prevEnd = lineStart;
@@ -490,6 +683,8 @@ public static class LyricTiming
                 // comparisons are strict on both sides.
                 SyllableBoundaries = syllableBoundaries(words[m].Syllables, ws, we),
                 Pauses = keptPauses.Count == 0 ? Array.Empty<WordPause>() : keptPauses,
+                // Preserved, never rated (backlog 330).
+                Original = wordOriginals != null && m < wordOriginals.Count && wordOriginals[m] != tokens[m] ? wordOriginals[m] : null,
             });
 
             prevEnd = we;

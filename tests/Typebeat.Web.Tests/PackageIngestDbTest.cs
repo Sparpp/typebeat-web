@@ -1025,7 +1025,7 @@ public class PackageIngestDbTest
         await using (var conn = await db.OpenAsync())
             before = await conn.ExecuteScalarAsync<string?>("SELECT gameplay_fingerprint FROM beatmaps WHERE id = @a", new { a });
 
-        Assert.That(before, Does.StartWith("v1:"), "ingest stamps the fingerprint with its recipe version");
+        Assert.That(before, Does.StartWith($"v{GameplayFingerprint.VERSION}:"), "ingest stamps the fingerprint with its recipe version");
 
         // Identical words, shifted times: invisible to beatmaps.lyrics, invisible to a metadata
         // comparison, and the single most gameplay-affecting edit a mapper can make.
@@ -1322,9 +1322,9 @@ public class PackageIngestDbTest
                 """
                 SELECT count(*) FROM beatmaps
                 WHERE set_id = @id AND filename IS NOT NULL
-                  AND (gameplay_fingerprint IS NULL OR gameplay_fingerprint NOT LIKE 'v1:%')
+                  AND (gameplay_fingerprint IS NULL OR gameplay_fingerprint NOT LIKE @current)
                 """,
-                new { id });
+                new { id, current = GameplayFingerprint.CurrentVersionLikePattern });
             Assert.That(stale, Is.Zero);
         }
     }

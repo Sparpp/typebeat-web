@@ -319,7 +319,7 @@ public static class BeatmapPackageParser
             }
         }
 
-        var (_, parsedLines) = LyricTiming.ParseSection(lyricLines,
+        var (lyricHeader, parsedLines) = LyricTiming.ParseSection(lyricLines,
             stripBackingVocals: formatVersion < LiteralBracketsFromVersion);
 
         return new ParsedDifficulty
@@ -346,6 +346,7 @@ public static class BeatmapPackageParser
             Bpm = bpm,
             LyricSectionLines = lyricLines,
             Lines = parsedLines,
+            UnromanisedWords = lyricHeader.Unromanised,
             Pace = LyricPace.Compute(parsedLines),
         };
     }
