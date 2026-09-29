@@ -535,6 +535,19 @@ img { max-width: 100%; }
 
 .chip-label { color: var(--text-faint); font-weight: 600; }
 
+/* "Polyglot available" (backlog 332): a difficulty carries its lyrics in their original script. */
+.chip-polyglot {
+    color: var(--text-muted);
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    padding: 0 0.3em;
+    cursor: help;
+}
+
 .chip-value {
     color: var(--text);
     font-family: var(--font-display);
@@ -1786,6 +1799,23 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     overflow-wrap: anywhere;
     max-width: 68ch;
 }
+
+/* A difficulty with originals (backlog 332): one list item per lyric line, the leading half at
+   body size and the other half beneath it, smaller and muted. */
+.set-lyrics__polyglot { margin: 0 0 var(--space-3); max-width: 68ch; }
+.set-lyrics__polyglot-mark { font-weight: 600; color: var(--text); }
+
+.set-lyrics__lines {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-width: 68ch;
+    overflow-wrap: anywhere;
+}
+
+.set-lyrics__line { margin-bottom: var(--space-2); }
+.set-lyrics__lead, .set-lyrics__beneath { display: block; }
+.set-lyrics__beneath { font-size: var(--text-sm); color: var(--text-muted); }
 
 /* ---- Set page: description edit box (owner/reviewer only, the report-box idiom) ---- */
 

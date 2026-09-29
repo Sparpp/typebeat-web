@@ -193,6 +193,13 @@
                     {
                         <div class="stat-row"><span class="stat-row__label">Lyric font</span><span class="stat-row__value">@Model.Diff.LyricFont</span></div>
                     }
+                    @* Polyglot (backlog 332): the difficulty carries its lyrics in their original
+                       script, so the desktop client's Polyglot mod can play it. Local only, which
+                       the title says, because a player looking for a board for it will not find one. *@
+                    @if (Model.Diff.HasOriginals)
+                    {
+                        <div class="stat-row stat-row--polyglot" data-polyglot-available><span class="stat-row__label">Polyglot</span><span class="stat-row__value" title="Type this difficulty in its original script with the Polyglot mod in the desktop client. Polyglot plays stay on your device: no submission, no leaderboard.">available</span></div>
+                    }
                     <div class="stat-row">
                         <span class="stat-row__label">Stars</span>
                         <span class="stat-row__value" style="color:@DifficultyColour.ForStars(Model.Diff.Stars)">&#9733; @Model.Diff.Stars.ToString("0.0#", CultureInfo.InvariantCulture)</span>
@@ -469,10 +476,54 @@
     @* The selected difficulty's stored lyric text (?diff= re-renders, same as the stats box
        and leaderboard above). Same plain-text discipline as the description: default Razor
        encoding + pre-line = XSS-safe line breaks, one stored lyric line per rendered line.
-       An empty string (blank map, or the backfill has not reached it) hides the section. *@
+       An empty string (blank map, or the backfill has not reached it) hides the section.
+
+       A difficulty that carries its ORIGINAL SCRIPT (backlog 332, 039_lyrics_original.sql)
+       renders line by line instead, each original paired with its romanisation. Which one leads
+       follows the viewer's "prefer original metadata" setting, the one that already picks the
+       title and artist above: preferring originals puts the script first with the romanisation
+       beneath it, and otherwise the romanised line leads with the script beneath. Both are
+       user-supplied text and go through Razor's default encoding like everything else here.
+       Every line declares its language (the set's Language as a BCP 47 tag, and that tag in
+       Latin script for the romanisation), so a browser picks a font that has the glyphs and a
+       screen reader reads each half in the right voice. *@
+    string? originalLang = Model.Set.LangTag;
+    string? romanisedLang = Model.Set.RomanisedLangTag;
     <section class="set-lyrics">
         <h2>Lyrics@(Model.Diffs.Count > 1 ? $": {Model.Diff.Name}" : "")</h2>
-        <div class="set-lyrics__text">@Model.Diff.Lyrics</div>
+        @if (Model.Diff.HasOriginals)
+        {
+            <p class="set-lyrics__polyglot faint" data-polyglot-available>
+                <span class="set-lyrics__polyglot-mark">Polyglot available</span>:
+                shown in the original script as well as the romanisation you type. The desktop
+                client's Polyglot mod plays the original, locally (no submission, no leaderboard).
+            </p>
+            <ol class="set-lyrics__lines">
+                @foreach (var (romanised, original) in Model.Diff.LyricLines)
+                {
+                    <li class="set-lyrics__line">
+                        @if (original is null)
+                        {
+                            <span class="set-lyrics__lead" lang="@romanisedLang">@romanised</span>
+                        }
+                        else if (preferOriginal)
+                        {
+                            <span class="set-lyrics__lead set-lyrics__original" lang="@originalLang">@original</span>
+                            <span class="set-lyrics__beneath" lang="@romanisedLang">@romanised</span>
+                        }
+                        else
+                        {
+                            <span class="set-lyrics__lead" lang="@romanisedLang">@romanised</span>
+                            <span class="set-lyrics__beneath set-lyrics__original" lang="@originalLang">@original</span>
+                        }
+                    </li>
+                }
+            </ol>
+        }
+        else
+        {
+            <div class="set-lyrics__text" lang="@romanisedLang">@Model.Diff.Lyrics</div>
+        }
     </section>
 }
 

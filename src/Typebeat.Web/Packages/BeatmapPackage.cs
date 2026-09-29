@@ -239,6 +239,42 @@ public sealed class ParsedDifficulty
     /// the set page's lyrics section (rendered one stored line per line).
     /// </summary>
     public string LyricsText => string.Join('\n', Lines.Select(l => l.RawText));
+
+    /// <summary>
+    /// The map's lyrics in their ORIGINAL SCRIPT (backlog 332), aligned line for line with
+    /// <see cref="LyricsText"/>: line i here is the original of line i there, or empty when that
+    /// line carries none. The whole value is EMPTY when no line carries one, which is how
+    /// <c>beatmaps.lyrics_original</c> (039_lyrics_original.sql) says "no originals" and what the
+    /// set page, the card's Polyglot marker and the <c>lyrics:</c> search all key off.
+    ///
+    /// <para>A line's original is its own <c>original</c> key when the map wrote one, and otherwise
+    /// its words' originals joined by spaces (a word with none contributes its romanised text), so
+    /// a map that only carries word originals still reads as whole lines. Newlines inside an
+    /// original are folded to spaces, because the '\n' is what keeps the two columns aligned.</para>
+    /// </summary>
+    public string OriginalLyricsText
+    {
+        get
+        {
+            var originals = Lines.Select(OriginalOf).ToList();
+
+            return originals.Any(o => o.Length > 0) ? string.Join('\n', originals) : string.Empty;
+        }
+    }
+
+    /// <summary>One line's original script, or empty when it carries none (see <see cref="OriginalLyricsText"/>).</summary>
+    public static string OriginalOf(LyricLine line)
+    {
+        string? original = line.Original;
+
+        if (string.IsNullOrWhiteSpace(original) && line.Units.Any(u => u.Original != null))
+            original = string.Join(' ', line.Units.Select(u => u.Original ?? u.Text));
+
+        if (string.IsNullOrWhiteSpace(original))
+            return string.Empty;
+
+        return string.Join(' ', original.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Trim();
+    }
 }
 
 /// <summary>The fully parsed contents of an uploaded beatmap package zip.</summary>

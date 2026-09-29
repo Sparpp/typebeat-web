@@ -109,6 +109,12 @@ public static class ScoreEndpoints
             || rulesetId != 0)
             return WireJson.Error(status_unprocessable, "invalid ruleset");
 
+        // A local-only mod (Polyglot, backlog 332) never asks for a token: the stock client keeps
+        // the play on the device and sends no mods here at all. A modified client that names one
+        // anyway is refused before anything is written, so not even a token row exists for it.
+        if (LocalOnlyMods.AnyLocalOnly(form["mods"].Concat(form["mods[]"])))
+            return WireJson.Error(status_unprocessable, LocalOnlyMods.REFUSAL);
+
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
@@ -181,6 +187,16 @@ public static class ScoreEndpoints
 
         if (submission is null)
             return WireJson.Error(status_unprocessable, "invalid request body");
+
+        // A local-only mod (Polyglot, backlog 332) is REFUSED, not stored unranked the way an
+        // unranked mod is: the stock client never submits such a play, so one arriving here came
+        // from a modified client, and it is turned away before the token is even read, so no
+        // score row, no pp, no rating cell and no board ever sees it.
+        if (submission.Mods is { } submittedMods && LocalOnlyMods.StackIsLocalOnly(submittedMods.Select(m => m.Acronym)))
+        {
+            logger.LogInformation("Score token {TokenId}: local-only mod submitted, refusing.", tokenId);
+            return WireJson.Error(status_unprocessable, LocalOnlyMods.REFUSAL);
+        }
 
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
         await using var tx = await conn.BeginTransactionAsync(ctx.RequestAborted);

@@ -115,6 +115,7 @@ public static class PaceBackfill
                         freestyle_cell_count = @freestyleCellCount,
                         ratings = @ratings::jsonb,
                         lyric_font = @lyricFont,
+                        lyrics_original = @lyricsOriginal,
                         pace_version = @paceVersion
                     WHERE id = @id;
 
@@ -177,6 +178,10 @@ public static class PaceBackfill
                         // every pre-291 blob simply has no LyricFont key, so NULL (the column's
                         // birth value) is already correct for every row this sweep never visits.
                         lyricFont = string.IsNullOrEmpty(diff.LyricFont) ? null : diff.LyricFont,
+                        // 039: the lyrics in their original script, re-read off the same blob. No
+                        // arm and no bump, for 037's reason: every blob stored before originals
+                        // existed (backlog 330) has none, so '' is already right for it.
+                        lyricsOriginal = diff.OriginalLyricsText,
                         paceVersion = LyricPace.VERSION,
                     });
 

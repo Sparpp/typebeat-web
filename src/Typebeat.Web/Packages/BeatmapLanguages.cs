@@ -99,4 +99,37 @@ public static class BeatmapLanguages
     /// </summary>
     public static string? DisplayName(string? stored)
         => IsCanonical(stored) ? char.ToUpperInvariant(stored![0]) + stored[1..] : null;
+
+    /// <summary>
+    /// The BCP 47 tag the pages put in a <c>lang</c> attribute for text in this language (backlog
+    /// 332), so a browser picks a font that has the script and a screen reader picks the voice.
+    /// Null for <c>instrumental</c>, <c>other</c> and <see cref="Unset"/>, which name no language:
+    /// the page then declares nothing and the text inherits the document's own.
+    /// </summary>
+    public static string? LangTag(string? stored) => stored switch
+    {
+        "english" => "en",
+        "japanese" => "ja",
+        "chinese" => "zh",
+        "korean" => "ko",
+        "french" => "fr",
+        "german" => "de",
+        "spanish" => "es",
+        "italian" => "it",
+        "russian" => "ru",
+        "polish" => "pl",
+        "swedish" => "sv",
+        _ => null,
+    };
+
+    /// <summary>
+    /// The tag for this language's ROMANISED text: <c>-Latn</c> appended for a language whose own
+    /// script is not Latin (Japanese, Chinese, Korean, Russian), the bare tag otherwise.
+    /// </summary>
+    public static string? RomanisedLangTag(string? stored) => LangTag(stored) switch
+    {
+        null => null,
+        "ja" or "zh" or "ko" or "ru" => LangTag(stored) + "-Latn",
+        string tag => tag,
+    };
 }

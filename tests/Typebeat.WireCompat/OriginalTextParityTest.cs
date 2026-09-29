@@ -39,7 +39,7 @@ public class OriginalTextParityTest
         => new ClientUnit { Text = text, StartTime = start, EndTime = end, Source = TimingSource.Explicit, Original = original };
 
     /// <summary>The editor's SAVE of a map with originals: Russian, a plain English line, and a Japanese line holding an unromanised kanji.</summary>
-    private static string editorSave()
+    private static string editorSave(bool withUnromanised = true)
     {
         var lines = new[]
         {
@@ -57,7 +57,7 @@ public class OriginalTextParityTest
             {
                 RawText = "ga suki", Original = "君 が すき", StartTime = 5000, EndTime = 8000, SingEndTime = 7500,
                 Units = [unit("ga", 5600, 6400, "が"), unit("suki", 6400, 7500, "すき")],
-                UnromanisedWords = [new UnromanisedWord(0, "君", 5000, 5600)],
+                UnromanisedWords = withUnromanised ? [new UnromanisedWord(0, "君", 5000, 5600)] : [],
             },
         };
 
@@ -112,6 +112,106 @@ public class OriginalTextParityTest
     }
 
     private static readonly string[] files = ["editor save", "russian import"];
+
+    /// <summary>
+    /// The BROWSER ARM (backlog 332). <c>/play</c> is nomod by decision and plays the ROMANISED text,
+    /// so <c>typebeat-core.js</c> needs no Polyglot at all; what it needs is to TOLERATE AND IGNORE
+    /// every <c>original</c> key, line and word, because it is served the same stored .osu the
+    /// desktop decodes. Held two ways over the same fixtures, through the production decoder on the
+    /// C# side and the shipped <c>parseLyricOsu</c> + <c>buildBeatmap</c> on the JS side: the
+    /// browser reads the file WITH originals exactly as it reads its originals-stripped twin, and
+    /// both are the game's own text, cells and cell targets, on the default and Literate arms.
+    /// </summary>
+    ///
+    /// <para>The editor save is taken WITHOUT its unromanised kanji here, and on purpose: a word
+    /// the romaniser could not spell is written with an empty text, the game and the server both
+    /// take it out of the word pairing, and the browser does not (its first cell on that line is
+    /// timed from 5000, the kanji's start, where desktop times it from 5600). No /play run can meet
+    /// that shape, because <c>PackageValidator</c> refuses any package still carrying one, so the
+    /// browser is only ever served maps where every original sits beside a typed word, which is
+    /// exactly what this pins.</para>
+    [TestCaseSource(nameof(files))]
+    public void TheBrowserDecoderIgnoresOriginals(string name)
+    {
+        string osu = name == "editor save" ? editorSave(withUnromanised: false) : russianImport();
+        string stripped = LyricOsuFormat.StripOriginals(osu);
+
+        // The premise: the file really carries originals, and the twin really does not.
+        Assert.That(osu, Does.Contain("\"original\""));
+        Assert.That(stripped, Does.Not.Contain("\"original\""));
+
+        var client = clientLines(osu);
+
+        string path = Path.Combine(Path.GetTempPath(), $"typebeat-originals-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new[] { osu, stripped }), new UTF8Encoding(false));
+
+        System.Text.Json.JsonElement browser;
+
+        try
+        {
+            browser = NodeHarness.Run("CoreLyricDecodeHarness.cjs", path);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // A leftover temp file is not worth failing a fidelity test over.
+            }
+        }
+
+        Assert.Multiple(() =>
+        {
+            foreach (bool literate in new[] { false, true })
+            {
+                string arm = literate ? "literate" : "plain";
+                var withOriginals = browser[0].GetProperty(arm).EnumerateArray().ToArray();
+                var withoutOriginals = browser[1].GetProperty(arm).EnumerateArray().ToArray();
+
+                Assert.That(withOriginals.Select(l => l.GetRawText()), Is.EqualTo(withoutOriginals.Select(l => l.GetRawText())),
+                    $"{arm}: the originals move nothing the browser decodes");
+
+                Assert.That(withOriginals, Has.Length.EqualTo(client.Count), $"{arm}: browser line count");
+
+                for (int l = 0; l < Math.Min(withOriginals.Length, client.Count); l++)
+                {
+                    var cells = typebeat.Game.Rulesets.TypeBeat.Gameplay.TypingLine.FromLyricLine(client[l], literate).Cells;
+
+                    Assert.That(withOriginals[l].GetProperty("text").GetString(), Is.EqualTo(client[l].RawText), $"{arm} line {l}: browser text");
+                    Assert.That(withOriginals[l].GetProperty("stream").GetString(), Is.EqualTo(new string(cells.Select(c => c.Expected).ToArray())),
+                        $"{arm} line {l}: browser cells");
+                    Assert.That(withOriginals[l].GetProperty("targets").EnumerateArray().Select(e => e.GetDouble()),
+                        Is.EqualTo(cells.Select(c => c.TargetTime)).AsCollection, $"{arm} line {l}: browser cell targets");
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// The site half of the same file (backlog 332): the server's ingest turns the originals into
+    /// <c>beatmaps.lyrics_original</c>, aligned line for line with <c>beatmaps.lyrics</c>, with the
+    /// game's own line originals where the map wrote them and an empty line where it wrote none.
+    /// </summary>
+    [Test]
+    public void TheStoredOriginalColumnIsAlignedWithTheStoredLyrics()
+    {
+        var client = clientLines(editorSave());
+        var server = serverParse(editorSave());
+
+        string[] lyrics = server.LyricsText.Split('\n');
+        string[] originals = server.OriginalLyricsText.Split('\n');
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(originals, Has.Length.EqualTo(lyrics.Length));
+            Assert.That(originals, Is.EqualTo(client.Select(l => l.Original ?? string.Empty)));
+            Assert.That(serverParse(LyricOsuFormat.StripOriginals(russianImport())).OriginalLyricsText, Is.Empty,
+                "a map with no originals stores none");
+        });
+    }
 
     /// <summary>
     /// The two exclusions are ONE rule: the game's <c>LyricOsuFormat.StripOriginals</c> (its local

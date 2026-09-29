@@ -1,0 +1,21 @@
+-- typebeat-web migration 039: the lyrics in their ORIGINAL SCRIPT (backlog 332, the site half of
+-- the Polyglot work). Since backlog 330 a stored map's [Lyrics] may carry an "original" per line and
+-- per word (the lyric as the song writes it, Cyrillic, kana, Hangul, and so on) beside the
+-- romanised text every client types. This column is that script, aligned line for line with
+-- beatmaps.lyrics (018_lyrics_search.sql): line i here is the original of line i there, or an empty
+-- line when that line has none (ParsedDifficulty.OriginalLyricsText).
+--
+-- It serves three readers, the same way beatmaps.lyrics serves two:
+--   * the set page's lyrics section, which shows the original with the romanisation beneath it;
+--   * the listing card, whose difficulty chip marks a difficulty "Polyglot available" (the desktop
+--     client's local-only Polyglot mod plays the original, and needs one to exist);
+--   * the lyrics: search operator, which matches a word in EITHER column.
+--
+-- WHY '' AND NOT NULL, as in 018: empty means "no originals", which is also exactly the value the
+-- parser writes for a map without any, so no reader needs a NULL special case, and "any
+-- difficulty has originals" is simply lyrics_original <> ''.
+--
+-- No backfill and no LyricPace VERSION bump: originals arrived with backlog 330, and every blob
+-- stored before that build carries none, so '' is already the right value for them. PackageIngest
+-- writes the column on upload, and PaceBackfill rewrites it whenever it reparses a row anyway.
+ALTER TABLE beatmaps ADD COLUMN lyrics_original text NOT NULL DEFAULT '';

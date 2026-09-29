@@ -110,8 +110,15 @@ public static class BeatmapSearchSql
             foreach (var n in perDiff)
                 inner.Append(" AND ").Append(Comparison(n, Next));
 
+            // Either script counts (backlog 332): a word matches when it appears in the romanised
+            // lyrics every client types OR in the original script the map carries beside them
+            // (beatmaps.lyrics_original, 039), so lyrics:"звезда" and lyrics:zvezda both find the
+            // same map. One parameter per word, read twice.
             foreach (string word in lyricWords)
-                inner.Append(" AND b.lyrics ILIKE @").Append(Next("%" + EscapeLike(word) + "%"));
+            {
+                string p = Next("%" + EscapeLike(word) + "%");
+                inner.Append(" AND (b.lyrics ILIKE @").Append(p).Append(" OR b.lyrics_original ILIKE @").Append(p).Append(')');
+            }
 
             sql.Append("\nAND EXISTS (SELECT 1 FROM beatmaps b WHERE b.set_id = s.id AND b.filename IS NOT NULL")
                .Append(inner)

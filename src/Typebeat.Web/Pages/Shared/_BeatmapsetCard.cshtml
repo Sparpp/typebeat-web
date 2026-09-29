@@ -75,6 +75,13 @@
                     </span>
                     <span class="chip-label chip-wpm" data-diff-wpm
                           title="target words per minute: the average WPM across the fastest fifth of the map's lyric lines of three words or more">@(top.Wpm is double topWpm ? BeatmapsetCardModel.FormatWpm(topWpm) + " WPM" : "")</span>
+                    @if (Model.HasPolyglot)
+                    {
+                        @* Backlog 332. Set-wide and static while the stack cycles: the per-difficulty
+                           answer rides each difficulty's aria-label instead, which the script
+                           already swaps, and the tooltip counts them. *@
+                        <span class="chip-polyglot" data-polyglot-available title="@Model.PolyglotTitle" aria-hidden="true">PG</span>
+                    }
                 </button>
             }
             else
@@ -89,6 +96,11 @@
                 @if (Model.Wpm is double wpm)
                 {
                     <span class="chip-label" title="target words per minute: the average WPM across the fastest fifth of the map's lyric lines of three words or more">@wpm.ToString("0", CultureInfo.InvariantCulture) WPM</span>
+                }
+                @if (Model.HasPolyglot)
+                {
+                    @* Backlog 332: the difficulty carries its lyrics in their original script. *@
+                    <abbr class="chip-polyglot" data-polyglot-available title="@Model.PolyglotTitle">PG</abbr>
                 }
             </span>
             }

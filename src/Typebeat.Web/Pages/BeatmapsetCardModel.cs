@@ -77,6 +77,27 @@ public sealed record BeatmapsetCardModel(
     /// </summary>
     public bool HasDiffStack => Diffs.Count > 1;
 
+    /// <summary>
+    /// Whether ANY live difficulty carries its original script (backlog 332), which puts the
+    /// "Polyglot available" marker on the chip. Read off the same per-difficulty list as the stack,
+    /// so it costs no query of its own.
+    /// </summary>
+    public bool HasPolyglot => Diffs.Any(d => d.Polyglot);
+
+    /// <summary>The marker's tooltip: which difficulties Polyglot is available on, and what it is.</summary>
+    public string PolyglotTitle
+    {
+        get
+        {
+            var with = Diffs.Where(d => d.Polyglot).ToList();
+            string where = Diffs.Count <= 1 || with.Count == Diffs.Count
+                ? "this map"
+                : $"{with.Count} of {Diffs.Count} difficulties";
+
+            return $"Polyglot available on {where}: type the lyrics in their original script in the desktop client (local only, no leaderboard)";
+        }
+    }
+
     /// <summary>The difficulties whose stars are drawn: the <see cref="StackCap"/> hardest.</summary>
     public IReadOnlyList<CardDifficulty> StackedDiffs => Diffs.Count <= StackCap ? Diffs : Diffs.Take(StackCap).ToList();
 
@@ -115,7 +136,10 @@ public sealed record BeatmapsetCardModel(
     public static string DiffLabel(CardDifficulty d, int count)
     {
         string pace = d.Wpm is double w ? $", {FormatWpm(w)} WPM" : string.Empty;
-        return $"{d.Name}: {FormatStars(d.Stars)} stars{pace}. {count} difficulties, click to cycle";
+        // Said per difficulty, because the stack's label is what a screen reader hears as it
+        // cycles, and Polyglot is available on the difficulties that carry originals, not the set.
+        string polyglot = d.Polyglot ? ", Polyglot available" : string.Empty;
+        return $"{d.Name}: {FormatStars(d.Stars)} stars{pace}{polyglot}. {count} difficulties, click to cycle";
     }
 
     private static IReadOnlyList<CardDifficulty> ParseDiffs(string? json)
@@ -165,8 +189,10 @@ public sealed record BeatmapsetCardModel(
 
 /// <summary>One live difficulty of a card's set, as <see cref="BeatmapsetCardSql.Select"/>'s
 /// json_agg writes it: <paramref name="Wpm"/> is the same coalesce(target_wpm, wpm) the set-level
-/// chip reads, per row.</summary>
-public sealed record CardDifficulty(long Id, string Name, double Stars, double? Wpm);
+/// chip reads, per row. <paramref name="Polyglot"/> is whether the difficulty carries its lyrics in
+/// their original script (039_lyrics_original.sql, backlog 332), which is what makes the desktop
+/// client's local-only Polyglot mod available on it; absent from the json reads as false.</summary>
+public sealed record CardDifficulty(long Id, string Name, double Stars, double? Wpm, bool Polyglot = false);
 
 /// <summary>Status wording shared by the card partial and the set page.</summary>
 public static class BeatmapsetDisplay
@@ -253,7 +279,10 @@ public static class BeatmapsetCardSql
                        'id', b.id,
                        'name', b.version_name,
                        'stars', b.difficulty_rating,
-                       'wpm', coalesce(b.target_wpm, b.wpm::double precision))
+                       'wpm', coalesce(b.target_wpm, b.wpm::double precision),
+                       -- 039_lyrics_original.sql (backlog 332): the difficulty carries its original
+                       -- script, so the chip marks Polyglot available on it.
+                       'polyglot', b.lyrics_original <> '')
                        ORDER BY b.difficulty_rating DESC, b.id) AS diffs
             FROM beatmaps b
             WHERE b.set_id = s.id AND b.filename IS NOT NULL

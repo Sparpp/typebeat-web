@@ -196,7 +196,10 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
                    b.wpm_curve             AS WpmCurve,
                    -- 037_lyric_font.sql. NULL means "no font chosen", which hides the row; the
                    -- name is informational (only the desktop client renders the font).
-                   b.lyric_font            AS LyricFont
+                   b.lyric_font            AS LyricFont,
+                   -- 039_lyrics_original.sql: the same lyrics in their original script, line for
+                   -- line, or '' when the difficulty carries none (backlog 332).
+                   b.lyrics_original       AS LyricsOriginal
             FROM beatmaps b
             WHERE b.set_id = @id AND b.filename IS NOT NULL
             ORDER BY b.difficulty_rating DESC, b.id ASC
@@ -570,6 +573,17 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
 
         /// <summary>Artist, or its original non-romanized text when the viewer prefers that.</summary>
         public string DisplayArtist(bool preferOriginal) => MetadataDisplay.Pick(Artist, ArtistUnicode, preferOriginal);
+
+        /// <summary>The BCP 47 tag of the song's language, or null (see <see cref="BeatmapLanguages.LangTag"/>).</summary>
+        public string? LangTag => BeatmapLanguages.LangTag(Language);
+
+        /// <summary>
+        /// The tag for the ROMANISED lyrics: the language in Latin script (<c>ja-Latn</c>,
+        /// <c>ru-Latn</c>) for a language that is not written in it, so a screen reader keeps its
+        /// Japanese or Russian voice and still reads the romaji as the transliteration it is, and
+        /// the bare tag for one that already is (<c>en</c>, <c>fr</c>).
+        /// </summary>
+        public string? RomanisedLangTag => BeatmapLanguages.RomanisedLangTag(Language);
     }
 
     /// <summary>One difficulty's stats. <see cref="Lyrics"/> is the stored per-difficulty lyric
@@ -617,6 +631,36 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
         /// runs on JetBrains Mono's fixed advance).
         /// </summary>
         public string? LyricFont { get; init; }
+
+        /// <summary>
+        /// The lyrics in their ORIGINAL SCRIPT (039_lyrics_original.sql, backlog 332), aligned line
+        /// for line with <see cref="Lyrics"/>, or empty when the difficulty carries none. A
+        /// difficulty with originals is one the desktop client's local-only Polyglot mod can play.
+        /// </summary>
+        public string LyricsOriginal { get; init; } = string.Empty;
+
+        /// <summary>Whether this difficulty carries originals, so Polyglot is available on it.</summary>
+        public bool HasOriginals => LyricsOriginal.Length > 0;
+
+        /// <summary>
+        /// The lyric lines paired with their originals, one entry per stored line of
+        /// <see cref="Lyrics"/>; <c>Original</c> is null on a line that has none. Built from the
+        /// two aligned columns, so a stale or hand-edited original column that has more lines than
+        /// the lyrics is cut to the lyrics, and one with fewer leaves the tail without originals,
+        /// rather than shifting a line onto the wrong translation.
+        /// </summary>
+        public IReadOnlyList<(string Romanised, string? Original)> LyricLines
+        {
+            get
+            {
+                string[] romanised = Lyrics.Split('\n');
+                string[] originals = HasOriginals ? LyricsOriginal.Split('\n') : [];
+
+                return romanised
+                    .Select((line, i) => (line, i < originals.Length && originals[i].Trim().Length > 0 ? originals[i] : null))
+                    .ToList();
+            }
+        }
 
         /// <summary>A non-zero bar is never invisible, however small it is next to the peak
         /// (<c>BarChartModel</c>'s min_visible_height, in the percentage units used here).</summary>

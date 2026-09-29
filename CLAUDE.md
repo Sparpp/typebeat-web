@@ -181,7 +181,17 @@ WireCompat is where that is provable, because it is the only project that compil
   retune is therefore an ordinary mirrored edit (`WINDOWS` here, `SyncWindows` there) that both
   clients take at once, and `tools/score-recalc` treats every stored row as unreproducible by
   construction because of it. The EASY mod's word-level shelter (`TypingEngine.WordShelter`) is not
-  mirrored, for the reason the window scale is not: `/play` has no mods payload. A harness that
+  mirrored, for the reason the window scale is not: `/play` has no mods payload. **Polyglot (`PG`,
+  backlog 331/332) exists only desktop side and is LOCAL ONLY** (`Mod.LocalOnly`): it types the
+  lyric in its original script, the game never requests a token or submits for it, so it is never
+  on the wire and has no rating matrix cell and no board. The server still knows the acronym, in
+  `Scoring/LocalOnlyMods.cs` (a deny list like `UnrankedMods`, so a new local-only client mod must
+  be added there), and REFUSES a token request or a submission naming it with a 422 before
+  anything is written, since only a modified client could send one (`PolyglotSiteTest` pins
+  both). The browser plays the romanised text and must merely IGNORE every `original` key in the
+  stored .osu; `OriginalTextParityTest.TheBrowserDecoderIgnoresOriginals` pins that through
+  `parseLyricOsu` + `buildBeatmap` against the game's decoder. The originals themselves reach the
+  site as `beatmaps.lyrics_original` (039), aligned line for line with `beatmaps.lyrics`. A harness that
   SPIES on an engine method must forward every argument
   (`CoreFuzzHarness.cjs` wraps `rushesPastCap`): a dropped one reads out of the prefix table as NaN
   and silently answers "no rush" for the entire sweep.

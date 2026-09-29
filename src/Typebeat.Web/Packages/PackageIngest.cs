@@ -361,13 +361,13 @@ public sealed class PackageIngest(
                      difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics,
                      sr_dt, sr_ht, sr_literate, sr_literate_dt, sr_literate_ht,
                      peak_wpm, peak_cpm, target_wpm, wpm_curve, gameplay_fingerprint, freestyle_cell_count,
-                     ratings, lyric_font)
+                     ratings, lyric_font, lyrics_original)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
                      @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
                      @srDt, @srHt, @srLiterate, @srLiterateDt, @srLiterateHt,
                      @peakWpm, @peakCpm, @targetWpm, @wpmCurve, @gameplayFingerprint, @freestyleCellCount,
-                     @ratings::jsonb, @lyricFont)
+                     @ratings::jsonb, @lyricFont, @lyricsOriginal)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -394,7 +394,8 @@ public sealed class PackageIngest(
                     gameplay_fingerprint = EXCLUDED.gameplay_fingerprint,
                     freestyle_cell_count = EXCLUDED.freestyle_cell_count,
                     ratings = EXCLUDED.ratings,
-                    lyric_font = EXCLUDED.lyric_font;
+                    lyric_font = EXCLUDED.lyric_font,
+                    lyrics_original = EXCLUDED.lyrics_original;
 
                 -- A re-upload can move this difficulty's star ratings, and the stored per-score pp
                 -- is a function of them, so hand every score set on this map back to PpBackfill
@@ -422,6 +423,10 @@ public sealed class PackageIngest(
                     // The lyrics: search operator's haystack, also rendered by the set page's
                     // lyrics section (018_lyrics_search.sql).
                     lyrics = diff.LyricsText,
+                    // The same lyrics in their original script, line for line, or '' when the map
+                    // carries none (039_lyrics_original.sql): the set page's original text, the
+                    // card's Polyglot marker and the other half of the lyrics: haystack.
+                    lyricsOriginal = diff.OriginalLyricsText,
                     // The star ratings at Double Time's and Half Time's BASE clock rates, the only
                     // rate ratings pp ever needs (020_performance_points.sql, docs/pp.md). Written
                     // here so no rate maths ever happens at query time.
