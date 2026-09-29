@@ -209,6 +209,58 @@ public class BeatmapSearchOperatorTest
         });
     }
 
+    // ---- the game's operator syntax (backlog 338) over the "staropset" ratings ----
+    // Index order: 3.99, 4.00, 4.0712, 4.50 (PublicSiteSeed.StarOpRatings).
+
+    [TestCase("stars>4", new[] { 2, 3 })]
+    [TestCase("stars<=4", new[] { 0, 1 })]
+    [TestCase("stars=4.07", new[] { 2 })]
+    [TestCase("stars!=4.07", new[] { 0, 1, 3 })]
+    [TestCase("sr>=4.5", new[] { 3 })]
+    [TestCase("stars:4.07", new[] { 2 })]
+    [TestCase("stars=4", new[] { 1 })]
+    [TestCase("stars:>4", new[] { 2, 3 })]
+    public async Task GameStarSyntax_SelectsExactlyTheRatingsItNames(string op, int[] expected)
+    {
+        var ids = Ids(await GetHtml("/beatmapsets?q=" + Enc("staropset " + op)));
+        var want = expected.Select(i => PublicSiteSeed.StarOpIds[i]).ToList();
+
+        // stars:4.07 is the colon spelling of the same equality: it used to compare at full
+        // precision and find nothing, while the card printed "4.07" on the third fixture.
+        Assert.That(ids, Is.EquivalentTo(want), op);
+    }
+
+    [Test]
+    public async Task GameTextSyntax_EqualsIsTheColon_AndNotEqualsExcludes()
+    {
+        var bravo = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset title=bravo")));
+        var notBravo = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset title!=bravo")));
+        var notPiano = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset artist!:piano")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(bravo, Is.EquivalentTo(new[] { PublicSiteSeed.OpBravoId }));
+            Assert.That(notBravo, Is.EquivalentTo(new[] { PublicSiteSeed.OpAlphaId }));
+            Assert.That(notPiano, Is.EquivalentTo(new[] { PublicSiteSeed.OpAlphaId }));
+        });
+    }
+
+    [Test]
+    public async Task GameSyntax_WholeNumberAndLengthEquality()
+    {
+        // Alpha: wpm 100, 90 s. Bravo: wpm 200, 240 s. length=2m is the game's 90 to 150 window.
+        var wpm = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset wpm=100")));
+        var clock = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset length=1:30")));
+        var minutes = Ids(await GetHtml("/beatmapsets?q=" + Enc("operatorset length=4m")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(wpm, Is.EquivalentTo(new[] { PublicSiteSeed.OpAlphaId }));
+            Assert.That(clock, Is.EquivalentTo(new[] { PublicSiteSeed.OpAlphaId }));
+            Assert.That(minutes, Is.EquivalentTo(new[] { PublicSiteSeed.OpBravoId }));
+        });
+    }
+
     [Test]
     public async Task UnknownKey_TreatedAsPlainText_NoError()
     {
@@ -238,6 +290,12 @@ public class BeatmapSearchOperatorTest
             Assert.That(html, Does.Contain("star:"));
             Assert.That(html, Does.Contain("length:"));
             Assert.That(html, Does.Contain("lyrics:"));
+
+            // The game's spellings (backlog 338), with the item's three examples.
+            Assert.That(html, Does.Contain("<code>stars&gt;4</code>"));
+            Assert.That(html, Does.Contain("<code>stars&lt;=4</code>"));
+            Assert.That(html, Does.Contain("<code>stars=4.07</code>"));
+            Assert.That(html, Does.Contain("<code>stars=4.06</code>"), "the rounded-display note");
         });
     }
 

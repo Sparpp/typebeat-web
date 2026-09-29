@@ -88,7 +88,10 @@ public static class BeatmapSearchSql
                 FilterField.Tag => $"s.tags ILIKE @{p}",
                 _ => throw new ArgumentOutOfRangeException(nameof(query), f.Field, "not a text field"),
             };
-            sql.Append("\nAND ").Append(clause);
+            // An exclusion (the game's title!=foo) is the negation of the same match. COALESCE
+            // because a NULL column (a set without a title_unicode, say) makes the ILIKE NULL, and
+            // NOT NULL would drop a set that plainly does not contain the word.
+            sql.Append("\nAND ").Append(f.Exclude ? $"NOT COALESCE({clause}, false)" : clause);
         }
 
         // Per-difficulty predicates collapse into one EXISTS so they apply to the SAME difficulty:
@@ -105,7 +108,7 @@ public static class BeatmapSearchSql
         {
             var inner = new StringBuilder();
             foreach (var n in perDiff)
-                inner.Append(" AND ").Append(Comparison(BeatmapExpr(n.Field), n, Next));
+                inner.Append(" AND ").Append(Comparison(n, Next));
 
             foreach (string word in lyricWords)
                 inner.Append(" AND b.lyrics ILIKE @").Append(Next("%" + EscapeLike(word) + "%"));
@@ -116,7 +119,7 @@ public static class BeatmapSearchSql
         }
 
         foreach (var n in query.NumericFilters.Where(n => n.Field == FilterField.Bpm))
-            sql.Append("\nAND ").Append(Comparison("s.bpm", n, Next));
+            sql.Append("\nAND ").Append(Comparison(n, Next));
 
         foreach (var b in query.BoolFilters)
         {
@@ -139,15 +142,86 @@ public static class BeatmapSearchSql
         return (sql.ToString(), param);
     }
 
-    private static string Comparison(string expr, NumericFilter n, Func<object, string> next) => n.Op switch
+    /// <summary>The column expression a numeric field compares: <c>b.</c> per difficulty, and
+    /// <c>s.bpm</c> for the one set-scoped numeric.</summary>
+    private static string NumericExpr(FilterField field) => field == FilterField.Bpm ? "s.bpm" : BeatmapExpr(field);
+
+    /// <summary>
+    /// One numeric predicate, exposed so a parity test can evaluate the very SQL the listing runs
+    /// against a table of its own (<c>tests/Typebeat.WireCompat/SearchOperatorParityTest.cs</c>
+    /// runs it over a VALUES list aliased <c>b</c>). Parameters are named <paramref name="prefix"/>0,
+    /// 1, and so on; the SQL carries no user text.
+    /// </summary>
+    public static (string Sql, IReadOnlyDictionary<string, object> Parameters) NumericPredicate(NumericFilter n, string prefix = "op")
     {
-        Comparator.Gt => $"{expr} > @{next(n.Low)}",
-        Comparator.Gte => $"{expr} >= @{next(n.Low)}",
-        Comparator.Lt => $"{expr} < @{next(n.Low)}",
-        Comparator.Lte => $"{expr} <= @{next(n.Low)}",
-        Comparator.Range => $"{expr} BETWEEN @{next(n.Low)} AND @{next(n.High)}",
-        _ => $"{expr} = @{next(n.Low)}",
-    };
+        var param = new Dictionary<string, object>();
+        int seq = 0;
+
+        string Next(object value)
+        {
+            string name = prefix + seq++;
+            param[name] = value;
+            return name;
+        }
+
+        return (Comparison(n, Next), param);
+    }
+
+    /// <summary>
+    /// Greater and less compare the RAW stored value; equality and inequality compare what the
+    /// player is shown (and what the game's song select compares), per field:
+    /// <list type="bullet">
+    /// <item>stars: the rating FLOORED to two decimals against the operand as typed, the game's
+    /// <c>FloorToDecimalDigits(2)</c> with tolerance 0 (<c>BeatmapCarouselFilterMatching</c>), so
+    /// <c>stars=4.07</c> is [4.07, 4.08) and <c>stars=4</c> is [4.00, 4.01). Postgres float8
+    /// arithmetic is the same IEEE double arithmetic as <c>Math.Floor(v * 100) / 100</c>.</item>
+    /// <item>wpm, cpm, target: the value rounded to a whole number, as every page prints it
+    /// (<c>ToString("0")</c>, half away from zero, which is <c>round(numeric)</c>).</item>
+    /// <item>bpm: within 0.5 either side, exclusive, the game's tolerance.</item>
+    /// <item>length: within half the smallest unit the operand was written in, exclusive
+    /// (<see cref="NumericFilter.Tolerance"/>), the game's rule.</item>
+    /// </list>
+    /// Inequality is the SQL negation of the equality clause, so a NULL stat (a target the backfill
+    /// has not reached) stays invisible to both, as it is to every other comparison.
+    /// </summary>
+    private static string Comparison(NumericFilter n, Func<object, string> next)
+    {
+        string expr = NumericExpr(n.Field);
+
+        return n.Op switch
+        {
+            Comparator.Gt => $"{expr} > @{next(n.Low)}",
+            Comparator.Gte => $"{expr} >= @{next(n.Low)}",
+            Comparator.Lt => $"{expr} < @{next(n.Low)}",
+            Comparator.Lte => $"{expr} <= @{next(n.Low)}",
+            Comparator.Range => $"{expr} BETWEEN @{next(n.Low)} AND @{next(n.High)}",
+            Comparator.Neq => $"NOT ({Equality(expr, n, next)})",
+            _ => Equality(expr, n, next),
+        };
+    }
+
+    /// <summary>The game's tolerance for a BPM equality (<c>FilterQueryParser</c>, <c>bpm</c> case).</summary>
+    public const double BPM_TOLERANCE = 0.5;
+
+    private static string Equality(string expr, NumericFilter n, Func<object, string> next)
+    {
+        switch (n.Field)
+        {
+            case FilterField.Stars:
+                return $"floor({expr} * 100) / 100 = @{next(n.Low)}";
+
+            case FilterField.Wpm or FilterField.Cpm or FilterField.TargetWpm:
+                return $"round(({expr})::numeric) = @{next(n.Low)}";
+
+            case FilterField.Bpm:
+            case FilterField.Length:
+                double tolerance = n.Field == FilterField.Bpm ? BPM_TOLERANCE : n.Tolerance;
+                return $"({expr} > @{next(n.Low - tolerance)} AND {expr} < @{next(n.Low + tolerance)})";
+
+            default:
+                return $"{expr} = @{next(n.Low)}";
+        }
+    }
 
     private static string EscapeLike(string raw)
         => raw.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_");
@@ -163,6 +237,7 @@ public static class BeatmapSearchSql
             Comparator.Lt => "< " + lo,
             Comparator.Lte => "<= " + lo,
             Comparator.Range => lo + "–" + n.High.ToString(CultureInfo.InvariantCulture),
+            Comparator.Neq => "!= " + lo,
             _ => "= " + lo,
         };
     }

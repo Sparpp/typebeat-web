@@ -150,6 +150,16 @@ public static class PublicSiteSeed
     public static long OpBravoId { get; private set; }
 
     /// <summary>
+    /// Four one-difficulty sets tagged "staropset" for the game-syntax star operators (backlog
+    /// 338), rated 3.99, 4.00, 4.0712 and 4.50. 4.0712 is the one that matters: the site prints it
+    /// as 4.07, so stars=4.07 has to find it, which a full-precision equality never did.
+    /// </summary>
+    public static long[] StarOpIds { get; private set; } = [];
+
+    /// <summary>The ratings behind <see cref="StarOpIds"/>, index for index.</summary>
+    public static readonly double[] StarOpRatings = [3.99, 4.00, 4.0712, 4.50];
+
+    /// <summary>
     /// "Triple Stack Serenade": three live difficulties whose HARDEST is not its FASTEST (backlog
     /// 327), plus a dropped row rated above them all. hard 6.4 stars at an average 150 WPM (no
     /// target), normal 4.1 stars at a target 195 (average 120), easy 2.2 stars at 70, inserted
@@ -374,6 +384,20 @@ public static class PublicSiteSeed
             await InsertBeatmapAsync(conn, OpBravoId,
                 totalLengthS: 240, stars: 7.0, wpm: 200, wordCount: 100, charCount: 700,
                 lyrics: "quiet rain falls on the piano at night", targetWpm: 130);
+
+            // Fixed 2021 dates, so none of the four reaches the listing's first page.
+            var starOps = new List<long>();
+            for (int i = 0; i < StarOpRatings.Length; i++)
+            {
+                long setId = await InsertSetAtAsync(conn,
+                    title: $"Star Operator {i + 1}", artist: "The Hundredths",
+                    tags: "staropset", submittedAt: new DateTime(2021, 6, 1 + i, 0, 0, 0, DateTimeKind.Utc));
+                await InsertBeatmapAsync(conn, setId,
+                    totalLengthS: 100, stars: StarOpRatings[i], wpm: 100, wordCount: 100, charCount: 500);
+                starOps.Add(setId);
+            }
+
+            StarOpIds = starOps.ToArray();
 
             // The card's difficulty stack (backlog 327). Three days old, behind every filler, so
             // neither lands on the listing's first page or the landing strip.

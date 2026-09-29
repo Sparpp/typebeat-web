@@ -412,6 +412,267 @@ public class BeatmapSearchQueryTest
         Assert.That(param["op0"], Is.EqualTo(@"%50\%%"));
     }
 
+    // ---- the game's operator syntax (backlog 338) ----
+
+    // Every spelling FilterQueryParser.parseOperator accepts, on stars and its "sr" alias.
+    [TestCase("stars=4.07", Comparator.Eq, 4.07)]
+    [TestCase("stars:4.07", Comparator.Eq, 4.07)]
+    [TestCase("stars!=4.07", Comparator.Neq, 4.07)]
+    [TestCase("stars!:4.07", Comparator.Neq, 4.07)]
+    [TestCase("stars<4", Comparator.Lt, 4.0)]
+    [TestCase("stars<=4", Comparator.Lte, 4.0)]
+    [TestCase("stars<:4", Comparator.Lte, 4.0)]
+    [TestCase("stars>4", Comparator.Gt, 4.0)]
+    [TestCase("stars>=4", Comparator.Gte, 4.0)]
+    [TestCase("stars>:4", Comparator.Gte, 4.0)]
+    [TestCase("sr>4.5", Comparator.Gt, 4.5)]
+    [TestCase("SR<=2", Comparator.Lte, 2.0)]
+    [TestCase("star=5", Comparator.Eq, 5.0)]
+    public void GameOperatorSpellings_ParseToTheRightComparator(string input, Comparator op, double low)
+    {
+        var q = BeatmapSearchQuery.Parse(input);
+        var n = q.NumericFilters.Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(n.Field, Is.EqualTo(FilterField.Stars));
+            Assert.That(n.Op, Is.EqualTo(op));
+            Assert.That(n.Low, Is.EqualTo(low));
+            Assert.That(q.FreeText, Is.Empty);
+        });
+    }
+
+    [TestCase("star:>4")]
+    [TestCase("star:>=4")]
+    [TestCase("star:<6")]
+    [TestCase("star:<=6")]
+    [TestCase("star:=5")]
+    [TestCase("star:5")]
+    [TestCase("star:4-6")]
+    [TestCase("star:4..6")]
+    [TestCase("length:1:30")]
+    [TestCase("length:>1:30")]
+    [TestCase("date:>2026-07-01")]
+    [TestCase("title:\"night drive\"")]
+    [TestCase("lang:jp")]
+    [TestCase("explicit:no")]
+    public void ColonForms_ParseExactlyAsTheyAlwaysDid(string input)
+    {
+        // Every colon form the guide has ever documented still parses to an operator with nothing
+        // left over (the operands are pinned by the older tests above and the one below), so a
+        // saved search or a shared URL does not move.
+        var q = BeatmapSearchQuery.Parse(input);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(q.HasOperators, Is.True, input);
+            Assert.That(q.FreeText, Is.Empty, input);
+        });
+    }
+
+    [Test]
+    public void ColonForms_KeepTheirComparatorsAndOperands()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(BeatmapSearchQuery.Parse("star:>=4").NumericFilters.Single(), Is.EqualTo(new NumericFilter(FilterField.Stars, Comparator.Gte, 4, 4)));
+            Assert.That(BeatmapSearchQuery.Parse("star:4-6").NumericFilters.Single(), Is.EqualTo(new NumericFilter(FilterField.Stars, Comparator.Range, 4, 6)));
+            Assert.That(BeatmapSearchQuery.Parse("date:<2026").DateFilters.Single(), Is.EqualTo(BeatmapSearchQuery.Parse("date<2026").DateFilters.Single()));
+            Assert.That(BeatmapSearchQuery.Parse("date:>=2026-02").DateFilters.Single(), Is.EqualTo(BeatmapSearchQuery.Parse("date>=2026-02").DateFilters.Single()));
+        });
+    }
+
+    [TestCase("ratio>2")]
+    [TestCase("ratio=2")]
+    [TestCase("colour!=blue")]
+    [TestCase("stars>abc")]
+    [TestCase("stars>")]
+    [TestCase("stars=")]
+    [TestCase("stars!=")]
+    [TestCase("stars>>4")]
+    [TestCase("stars=>4")]
+    [TestCase("stars!4")]
+    [TestCase("stars=:4")]
+    [TestCase("stars!=4-6")]
+    [TestCase("title>foo")]
+    [TestCase("lyrics!=neon")]
+    [TestCase("lang!=japanese")]
+    [TestCase("date!=2026")]
+    [TestCase("date>abc")]
+    [TestCase("explicit>yes")]
+    [TestCase("\"stars>4\"")]
+    [TestCase("4stars>4")]
+    public void UnknownOrMalformedGameOperators_StayFreeText(string input)
+    {
+        var q = BeatmapSearchQuery.Parse(input);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(q.HasOperators, Is.False, input);
+            Assert.That(q.FreeText, Is.EqualTo(input), input);
+        });
+    }
+
+    [Test]
+    public void QuotedValue_WithAnOperatorInside_StaysTheValue()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(BeatmapSearchQuery.Parse("title:\"a>b\"").TextFilters.Single(), Is.EqualTo(new TextFilter(FilterField.Title, "a>b")));
+            Assert.That(BeatmapSearchQuery.Parse("title=\"x != y\"").TextFilters.Single(), Is.EqualTo(new TextFilter(FilterField.Title, "x != y")));
+            Assert.That(BeatmapSearchQuery.Parse("artist!=\"stars>4\"").TextFilters.Single(), Is.EqualTo(new TextFilter(FilterField.Artist, "stars>4", Exclude: true)));
+        });
+    }
+
+    [Test]
+    public void TextKeys_EqualsIsTheColon_NotEqualsExcludes()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(BeatmapSearchQuery.Parse("title=foo").TextFilters.Single(), Is.EqualTo(BeatmapSearchQuery.Parse("title:foo").TextFilters.Single()));
+            Assert.That(BeatmapSearchQuery.Parse("artist=foo").TextFilters.Single(), Is.EqualTo(new TextFilter(FilterField.Artist, "foo")));
+            Assert.That(BeatmapSearchQuery.Parse("creator=foo").TextFilters.Single(), Is.EqualTo(new TextFilter(FilterField.Creator, "foo")));
+            Assert.That(BeatmapSearchQuery.Parse("title!=foo").TextFilters.Single(), Is.EqualTo(new TextFilter(FilterField.Title, "foo", Exclude: true)));
+            Assert.That(BeatmapSearchQuery.Parse("mapper!:foo").TextFilters.Single(), Is.EqualTo(new TextFilter(FilterField.Creator, "foo", Exclude: true)));
+        });
+    }
+
+    [Test]
+    public void BoolAndDate_TakeTheGameSpellings()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(BeatmapSearchQuery.Parse("explicit=yes").BoolFilters.Single(), Is.EqualTo(new BoolFilter(FilterField.Explicit, true)));
+            Assert.That(BeatmapSearchQuery.Parse("explicit!=yes").BoolFilters.Single(), Is.EqualTo(new BoolFilter(FilterField.Explicit, false)));
+            Assert.That(BeatmapSearchQuery.Parse("date=2026").DateFilters.Single(), Is.EqualTo(BeatmapSearchQuery.Parse("date:2026").DateFilters.Single()));
+            Assert.That(BeatmapSearchQuery.Parse("date>2026-07-01").DateFilters.Single(), Is.EqualTo(BeatmapSearchQuery.Parse("date:>2026-07-01").DateFilters.Single()));
+        });
+    }
+
+    // The game's length grammar and tolerance (FilterQueryParser.tryUpdateLengthRange): half the
+    // smallest unit written, every unit but the largest under 60, a fraction on the smallest only.
+    [TestCase("length=90", 90.0, 0.5)]
+    [TestCase("length=1:30", 90.0, 0.5)]
+    [TestCase("length:1:30", 90.0, 0.5)]
+    [TestCase("length=1:02:03", 3723.0, 0.5)]
+    [TestCase("length=2m", 120.0, 30.0)]
+    [TestCase("length=1.5m", 90.0, 30.0)]
+    [TestCase("length=1m30s", 90.0, 0.5)]
+    [TestCase("length=90s", 90.0, 0.5)]
+    [TestCase("length=1h", 3600.0, 1800.0)]
+    [TestCase("length=1h5m", 3900.0, 30.0)]
+    [TestCase("len!=2m", 120.0, 30.0)]
+    public void Length_ReadsTheGameUnits_WithItsTolerance(string input, double seconds, double tolerance)
+    {
+        var n = BeatmapSearchQuery.Parse(input).NumericFilters.Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(n.Field, Is.EqualTo(FilterField.Length));
+            Assert.That(n.Low, Is.EqualTo(seconds).Within(1e-9));
+            Assert.That(n.Tolerance, Is.EqualTo(tolerance));
+        });
+    }
+
+    [TestCase("length=1m75s")]
+    [TestCase("length=1.5m30s")]
+    [TestCase("length=abc")]
+    [TestCase("length=1:75")]
+    public void Length_MalformedGameUnits_StayFreeText(string input)
+        => Assert.That(BeatmapSearchQuery.Parse(input).FreeText, Is.EqualTo(input));
+
+    [Test]
+    public void Sql_StarsEquality_ComparesTheFlooredRating()
+    {
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("stars=4.07"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sql, Does.Contain("floor(b.difficulty_rating * 100) / 100 = @op0"));
+            Assert.That(param["op0"], Is.EqualTo(4.07));
+        });
+    }
+
+    [Test]
+    public void Sql_NotEqual_IsTheNegatedEquality()
+    {
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("stars!=4.07"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sql, Does.Contain("NOT (floor(b.difficulty_rating * 100) / 100 = @op0)"));
+            Assert.That(param["op0"], Is.EqualTo(4.07));
+        });
+    }
+
+    [Test]
+    public void Sql_GreaterAndLess_StayOnTheRawRating()
+    {
+        var (sql, _) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("stars>4 sr<=6"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sql, Does.Contain("b.difficulty_rating > @op0"));
+            Assert.That(sql, Does.Contain("b.difficulty_rating <= @op1"));
+            Assert.That(sql, Does.Not.Contain("floor"));
+        });
+    }
+
+    [Test]
+    public void Sql_WholeNumberPaces_CompareRounded()
+    {
+        var (sql, _) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("wpm=120 target!=150 cpm:600"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sql, Does.Contain("round((b.wpm)::numeric) = @op0"));
+            Assert.That(sql, Does.Contain("NOT (round((b.target_wpm)::numeric) = @op1)"));
+            Assert.That(sql, Does.Contain("round(((b.wpm::double precision * 5))::numeric) = @op2"));
+        });
+    }
+
+    [Test]
+    public void Sql_BpmAndLength_UseTheGameTolerance()
+    {
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("bpm=128 length=2m"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sql, Does.Contain("(b.total_length_s > @op0 AND b.total_length_s < @op1)"));
+            Assert.That(param["op0"], Is.EqualTo(90.0));
+            Assert.That(param["op1"], Is.EqualTo(150.0));
+            Assert.That(sql, Does.Contain("(s.bpm > @op2 AND s.bpm < @op3)"));
+            Assert.That(param["op2"], Is.EqualTo(127.5));
+            Assert.That(param["op3"], Is.EqualTo(128.5));
+        });
+    }
+
+    [Test]
+    public void Sql_TextExclusion_IsANullSafeNegation()
+    {
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("title!=rhap"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sql, Does.Contain("NOT COALESCE((s.title ILIKE @op0 OR s.title_unicode ILIKE @op0), false)"));
+            Assert.That(param["op0"], Is.EqualTo("%rhap%"));
+        });
+    }
+
+    [Test]
+    public void Sql_NeverCarriesUserText()
+    {
+        // Hostile values reach SQL as parameters only, whatever operator spelling carried them.
+        const string hostile = "x');DROP_TABLE_users;--";
+        var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse($"title!={hostile} artist={hostile} stars!=1"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sql, Does.Not.Contain("DROP"));
+            Assert.That(param.Values, Has.Some.EqualTo("%x');DROP\\_TABLE\\_users;--%"));
+        });
+    }
+
     // ---- lyrics operator ----
 
     [Test]

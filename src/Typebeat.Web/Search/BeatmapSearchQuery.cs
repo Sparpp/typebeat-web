@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Typebeat.Web.Packages;
 
 namespace Typebeat.Web.Search;
@@ -48,20 +49,168 @@ public sealed class BeatmapSearchQuery
 
         foreach (string token in Tokenize(raw ?? string.Empty))
         {
-            // Only a colon that follows a recognised key turns a token into an operator; a bare
-            // "ratio:2" or "http://x" (unknown key) falls through to free text untouched.
-            int colon = token.IndexOf(':');
-            if (colon > 0 && Fields.Lookup(token[..colon]) is { } field)
-            {
-                string value = Unquote(token[(colon + 1)..]);
-                if (value.Length > 0 && TryAddOperator(field, value, text, numeric, date, boolean))
-                    continue;
-            }
+            // A token is an operator only when it opens with a recognised KEY followed directly by
+            // one of the operator spellings; a bare "ratio:2", "ratio>2" or "http://x" (unknown
+            // key) falls through to free text untouched, and so does a token opening with a quote.
+            if (TrySplitOperator(token, out var field, out var op, out string value)
+                && TryAddOperator(field, op, value, text, numeric, date, boolean))
+                continue;
 
             freeTokens.Add(token);
         }
 
         return new BeatmapSearchQuery(string.Join(' ', freeTokens).Trim(), text, numeric, date, boolean);
+    }
+
+    /// <summary>
+    /// Splits <c>key</c>, operator and value, accepting every spelling the game's song select
+    /// accepts (<c>FilterQueryParser</c>): <c>:</c> and <c>=</c> (equal), <c>!=</c> and <c>!:</c>
+    /// (not equal), <c>&lt;</c>, <c>&lt;=</c>, <c>&lt;:</c>, <c>&gt;</c>, <c>&gt;=</c>,
+    /// <c>&gt;:</c>. The key is the leading run of ASCII letters and must be on the
+    /// <see cref="Fields"/> whitelist. The bare colon keeps its osu-web meaning (a comparator may
+    /// PREFIX the value: <c>star:&gt;4</c>), so every saved search and shared URL reads as before.
+    /// </summary>
+    private static bool TrySplitOperator(string token, out FilterField field, out SearchOperator op, out string value)
+    {
+        field = default;
+        op = default;
+        value = string.Empty;
+
+        int keyEnd = 0;
+        while (keyEnd < token.Length && char.IsAsciiLetter(token[keyEnd]))
+            keyEnd++;
+
+        if (keyEnd == 0 || keyEnd == token.Length || Fields.Lookup(token[..keyEnd]) is not { } found)
+            return false;
+
+        char c = token[keyEnd];
+        char next = keyEnd + 1 < token.Length ? token[keyEnd + 1] : '\0';
+        bool doubled = next is '=' or ':';
+        int width = 1;
+
+        switch (c)
+        {
+            case ':':
+                op = SearchOperator.Colon;
+                break;
+
+            case '=':
+                op = SearchOperator.Eq;
+                break;
+
+            case '!' when doubled:
+                op = SearchOperator.Neq;
+                width = 2;
+                break;
+
+            case '<':
+                op = doubled ? SearchOperator.Lte : SearchOperator.Lt;
+                width = doubled ? 2 : 1;
+                break;
+
+            case '>':
+                op = doubled ? SearchOperator.Gte : SearchOperator.Gt;
+                width = doubled ? 2 : 1;
+                break;
+
+            default:
+                return false;
+        }
+
+        field = found;
+        value = Unquote(token[(keyEnd + width)..]);
+        return value.Length > 0;
+    }
+
+    /// <summary>A value that itself opens with an operator character (<c>stars&gt;&gt;4</c>,
+    /// <c>stars=&gt;4</c>) belongs to no spelling the game accepts either, so it stays free text.</summary>
+    private static bool StartsWithOperator(string value) => value[0] is '<' or '>' or '=' or '!' or ':';
+
+    private static bool TryAddOperator(FilterField field, SearchOperator op, string value,
+        List<TextFilter> text, List<NumericFilter> numeric, List<DateFilter> date, List<BoolFilter> boolean)
+    {
+        if (op == SearchOperator.Colon)
+            return TryAddOperator(field, value, text, numeric, date, boolean);
+
+        switch (Fields.Kind(field))
+        {
+            case FieldKind.Text:
+                // The game's text keys take = and != only (TryUpdateCriteriaText). A lyrics:
+                // exclusion has no per-difficulty meaning worth guessing at, so it stays free text.
+                if (op == SearchOperator.Eq)
+                    return TryAddOperator(field, value, text, numeric, date, boolean);
+                if (op == SearchOperator.Neq && field != FilterField.Lyrics)
+                {
+                    text.Add(new TextFilter(field, value, Exclude: true));
+                    return true;
+                }
+                return false;
+
+            case FieldKind.Language:
+                return op == SearchOperator.Eq && TryAddOperator(field, value, text, numeric, date, boolean);
+
+            case FieldKind.Numeric:
+            {
+                if (StartsWithOperator(value))
+                    return false;
+
+                // = is the colon's bare-value form exactly, so it keeps the a-b range too.
+                if (op == SearchOperator.Eq)
+                    return TryAddOperator(field, value, text, numeric, date, boolean);
+
+                if (!NumericFilter.TryParseOperand(field, value, out double n, out double tolerance))
+                    return false;
+
+                var comparator = op switch
+                {
+                    SearchOperator.Neq => Comparator.Neq,
+                    SearchOperator.Lt => Comparator.Lt,
+                    SearchOperator.Lte => Comparator.Lte,
+                    SearchOperator.Gt => Comparator.Gt,
+                    _ => Comparator.Gte,
+                };
+
+                numeric.Add(new NumericFilter(field, comparator, n, n) { Tolerance = tolerance });
+                return true;
+            }
+
+            case FieldKind.Date:
+            {
+                // Re-expressed as the colon form's comparator prefix, which DateFilter already
+                // reads; a date inequality has no period meaning and stays free text.
+                if (StartsWithOperator(value) || op == SearchOperator.Neq)
+                    return false;
+
+                string prefix = op switch
+                {
+                    SearchOperator.Lt => "<",
+                    SearchOperator.Lte => "<=",
+                    SearchOperator.Gt => ">",
+                    SearchOperator.Gte => ">=",
+                    _ => string.Empty,
+                };
+
+                return TryAddOperator(field, prefix + value, text, numeric, date, boolean);
+            }
+
+            case FieldKind.Bool:
+                if (BoolFilter.TryParse(field, value) is not { } bf)
+                    return false;
+                if (op == SearchOperator.Eq)
+                {
+                    boolean.Add(bf);
+                    return true;
+                }
+                if (op == SearchOperator.Neq)
+                {
+                    boolean.Add(bf with { Value = !bf.Value });
+                    return true;
+                }
+                return false;
+
+            default:
+                return false;
+        }
     }
 
     private static bool TryAddOperator(FilterField field, string value,
@@ -164,6 +313,10 @@ public enum FilterField
 
 internal enum FieldKind { Text, Numeric, Date, Bool, Language }
 
+/// <summary>The operator spelling between a key and its value. <see cref="Colon"/> is the
+/// osu-web form whose value may carry its own comparator prefix; the rest are the game's.</summary>
+internal enum SearchOperator { Colon, Eq, Neq, Lt, Lte, Gt, Gte }
+
 /// <summary>Keyword → field whitelist. The single source of truth for which keys are operators.</summary>
 internal static class Fields
 {
@@ -183,6 +336,8 @@ internal static class Fields
         ["lang"] = FilterField.Language,
         ["star"] = FilterField.Stars,
         ["stars"] = FilterField.Stars,
+        // The game's song select reads "sr" (star rating) too, so the same query works in both.
+        ["sr"] = FilterField.Stars,
         ["wpm"] = FilterField.Wpm,
         ["cpm"] = FilterField.Cpm,
         // The map's TARGET pace (033_target_wpm.sql): the average WPM across the fastest fifth of
@@ -214,14 +369,15 @@ internal static class Fields
     };
 }
 
-public enum Comparator { Eq, Lt, Lte, Gt, Gte, Range }
+public enum Comparator { Eq, Lt, Lte, Gt, Gte, Range, Neq }
 
 /// <summary>
 /// A substring (ILIKE) filter on a text column: <c>title:</c>, <c>artist:</c>, etc. The one
 /// exception is <see cref="FilterField.Language"/>, whose <see cref="Value"/> is already folded to
 /// a canonical language name at parse time and is compared for EQUALITY by the SQL builder.
+/// <see cref="Exclude"/> is the game's <c>title!=foo</c>: the set must NOT match the substring.
 /// </summary>
-public sealed record TextFilter(FilterField Field, string Value);
+public sealed record TextFilter(FilterField Field, string Value, bool Exclude = false);
 
 /// <summary>
 /// An equality filter on a boolean column (<c>explicit:</c>). Anything that is not a recognised
@@ -245,6 +401,14 @@ public sealed record BoolFilter(FilterField Field, bool Value)
 public sealed record NumericFilter(FilterField Field, Comparator Op, double Low, double High)
 {
     /// <summary>
+    /// Half-width, in seconds, of the window a LENGTH equality or inequality matches: the game's
+    /// rule (<c>FilterQueryParser.tryUpdateLengthRange</c>), half the smallest unit the value was
+    /// written in, so <c>length=90</c> and <c>length=1:30</c> mean 89.5 to 90.5 exclusive and
+    /// <c>length=2m</c> means 90 to 150. Zero for every other field.
+    /// </summary>
+    public double Tolerance { get; init; }
+
+    /// <summary>
     /// Grammar: an optional comparator prefix (<c>&gt;</c>, <c>&gt;=</c>, <c>&lt;</c>, <c>&lt;=</c>,
     /// <c>=</c>) then a number; OR a range <c>a-b</c> / <c>a..b</c>; a bare number means equality.
     /// Numbers may be plain (<c>4</c>, <c>4.5</c>) or <c>mm:ss</c> (<c>1:30</c> → 90); the latter
@@ -259,13 +423,78 @@ public sealed record NumericFilter(FilterField Field, Comparator Op, double Low,
             // No explicit comparator: it may still be a range (a-b / a..b).
             if (TrySplitRange(rest, out string lo, out string hi))
             {
-                if (TryParseNumber(lo, out double low) && TryParseNumber(hi, out double high))
+                if (TryParseOperand(field, lo, out double low, out _) && TryParseOperand(field, hi, out double high, out _))
                     return new NumericFilter(field, Comparator.Range, Math.Min(low, high), Math.Max(low, high));
                 return null;
             }
         }
 
-        return TryParseNumber(rest, out double n) ? new NumericFilter(field, op, n, n) : null;
+        return TryParseOperand(field, rest, out double n, out double tolerance)
+            ? new NumericFilter(field, op, n, n) { Tolerance = tolerance }
+            : null;
+    }
+
+    /// <summary>
+    /// One operand. Length additionally reads the game's unit forms (<c>2m</c>, <c>1m30s</c>,
+    /// <c>1h</c>, <c>1:02:03</c>) after the plain seconds and <c>mm:ss</c> it always read, and
+    /// reports the game's equality tolerance for what was written.
+    /// </summary>
+    internal static bool TryParseOperand(FilterField field, string token, out double value, out double tolerance)
+    {
+        tolerance = 0;
+
+        if (field != FilterField.Length)
+            return TryParseNumber(token, out value);
+
+        // Plain seconds and mm:ss both end in a seconds unit: half a second, as the game.
+        tolerance = 0.5;
+        return TryParseNumber(token, out value) || TryParseLengthUnits(token, out value, out tolerance);
+    }
+
+    private static readonly Regex clockLength = new(@"^((?<hours>\d+):)?(?<minutes>\d+):(?<seconds>\d+)$", RegexOptions.CultureInvariant);
+
+    private static readonly Regex unitLength = new(
+        @"^((?<hours>\d+(\.\d+)?)h)?((?<minutes>\d+(\.\d+)?)m)?((?<seconds>\d+(\.\d+)?)s)?$", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// A port of the game's <c>tryUpdateLengthRange</c> value grammar: every unit but the largest
+    /// written must be under 60, only the smallest may carry a fraction, and the tolerance is half
+    /// the smallest unit written.
+    /// </summary>
+    private static bool TryParseLengthUnits(string token, out double seconds, out double tolerance)
+    {
+        seconds = 0;
+        tolerance = 0;
+
+        var match = clockLength.Match(token);
+        if (!match.Success)
+            match = unitLength.Match(token);
+        if (!match.Success)
+            return false;
+
+        // Smallest unit first, as the game walks them.
+        var parts = new List<(string Text, double Scale)>();
+        if (match.Groups["seconds"].Success) parts.Add((match.Groups["seconds"].Value, 1));
+        if (match.Groups["minutes"].Success) parts.Add((match.Groups["minutes"].Value, 60));
+        if (match.Groups["hours"].Success) parts.Add((match.Groups["hours"].Value, 3600));
+
+        if (parts.Count == 0)
+            return false;
+
+        for (int i = 0; i < parts.Count; i++)
+        {
+            if (!double.TryParse(parts[i].Text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out double amount))
+                return false;
+            if (i != parts.Count - 1 && amount >= 60)
+                return false;
+            if (i != 0 && parts[i].Text.Contains('.'))
+                return false;
+
+            seconds += amount * parts[i].Scale;
+        }
+
+        tolerance = parts[0].Scale / 2;
+        return true;
     }
 
     private static bool TrySplitRange(string value, out string low, out string high)

@@ -27,7 +27,9 @@
                 <code>lang:japanese</code>
             </p>
             <p>Numbers take <code>&gt;</code> <code>&lt;</code> or a <code>4-6</code> range;
-                <code>length</code> also reads <code>mm:ss</code>. Full list in the guide below.</p>
+                <code>length</code> also reads <code>mm:ss</code>. The game's
+                <code>stars&gt;4</code> <code>stars&lt;=4</code> <code>stars=4.07</code> work too.
+                Full list in the guide below.</p>
         </span>
     </span>
     @if (Model.Sort != "newest")
@@ -54,6 +56,23 @@
             <code>&gt;=</code>, <code>&lt;=</code> or a <code>4-6</code> range. Unknown filters are
             treated as plain text.
         </p>
+        <p>
+            The game's song select syntax works here too: <code>stars&gt;4</code>,
+            <code>stars&lt;=4</code>, <code>stars=4.07</code>. The operator can replace the colon
+            (<code>=</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>,
+            <code>&gt;=</code>), <code>sr</code> is short for <code>stars</code>, and
+            <code>!=</code> excludes: <code>stars!=4.07</code>, <code>artist!=queen</code>.
+        </p>
+        <p>
+            An exact number matches what you would see, the way the game matches it:
+            <code>stars=4.07</code> is any rating from 4.07 up to (not including) 4.08, and
+            <code>stars=4</code> is 4.00 up to 4.01. WPM matches the whole number shown, BPM
+            within half a beat, and <code>length=2m</code> within half a minute
+            (<code>length=1:30</code> within half a second). Cards round the rating to two decimals
+            while the game cuts it down, so a map rated 4.068 shows as 4.07 here but matches
+            <code>stars=4.06</code>. Greater and less than (<code>stars&gt;4</code>) always compare
+            the full rating.
+        </p>
         <table class="search-guide__table">
             <tbody>
                 <tr><td><code>title:</code></td><td>set title</td><td><code>title:rhapsody</code></td></tr>
@@ -63,7 +82,7 @@
                 <tr><td><code>tag:</code></td><td>tags</td><td><code>tag:vocaloid</code></td></tr>
                 <tr><td><code>lyrics:</code></td><td>words sung in the map; every word must appear</td><td><code>lyrics:"neon night"</code></td></tr>
                 <tr><td><code>language:</code></td><td>song language (also <code>lang:</code>); takes short codes too</td><td><code>lang:jp</code></td></tr>
-                <tr><td><code>star:</code></td><td>difficulty stars</td><td><code>star:4-6</code></td></tr>
+                <tr><td><code>star:</code></td><td>difficulty stars (also <code>stars</code>, <code>sr</code>)</td><td><code>star:4-6</code> &nbsp; <code>stars&gt;4</code> &nbsp; <code>stars=4.07</code></td></tr>
                 <tr><td><code>target:</code></td><td>target WPM: the average pace of the fastest fifth of the map's lyric lines of three words or more</td><td><code>target:&gt;120</code></td></tr>
                 <tr><td><code>wpm:</code></td><td>average words per minute, five keystrokes to the word</td><td><code>wpm:&gt;120</code></td></tr>
                 <tr><td><code>cpm:</code></td><td>the same stored average in characters, exactly five times <code>wpm:</code>; no longer shown on pages</td><td><code>cpm:&gt;600</code></td></tr>
