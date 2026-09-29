@@ -26,9 +26,14 @@ public sealed record AccountCreationResult(
 /// </summary>
 public static class AccountCreation
 {
+    /// <param name="countryCode">The account's country, resolved from the sign-up request by
+    /// <see cref="CountryResolver"/> (<see cref="Countries.Unknown"/> when there is none). Stored as
+    /// given; anything that is not a storable country is stored as unknown.</param>
     public static async Task<AccountCreationResult> CreateAsync(
-        Db db, PasswordService passwords, string username, string email, string password)
+        Db db, PasswordService passwords, string username, string email, string password, string countryCode = Countries.Unknown)
     {
+        string country = Countries.IsCountry(countryCode) ? countryCode : Countries.Unknown;
+
         var usernameErrors = new List<string>(AccountValidation.ValidateUsername(username));
         var emailErrors = new List<string>(AccountValidation.ValidateEmail(email));
         var passwordErrors = new List<string>(AccountValidation.ValidatePassword(password, username));
@@ -52,15 +57,15 @@ public static class AccountCreation
         long id;
         try
         {
-            // verified_at stays NULL (email verification is a later milestone);
-            // country_code defaults to 'XX' until GeoIP lands.
+            // verified_at stays NULL until the emailed code is entered. country_code is detected,
+            // not chosen, so country_chosen keeps its default false (038_country_chosen.sql).
             id = await conn.ExecuteScalarAsync<long>(
                 """
-                INSERT INTO users (username, email, password_hash)
-                VALUES (@username, @email, @hash)
+                INSERT INTO users (username, email, password_hash, country_code)
+                VALUES (@username, @email, @hash, @country)
                 RETURNING id
                 """,
-                new { username, email, hash = passwords.Hash(password) });
+                new { username, email, hash = passwords.Hash(password), country });
         }
         catch (PostgresException pg) when (pg.SqlState == PostgresErrorCodes.UniqueViolation)
         {
@@ -87,8 +92,11 @@ public static class AccountCreation
     /// asserted email_verified for it. The user, their stats row and the Google link are written in
     /// one transaction, so there is never an account that exists but cannot be signed in to.
     /// </summary>
-    public static async Task<AccountCreationResult> CreateExternalAsync(Db db, string username, GoogleIdentity identity, CancellationToken ct = default)
+    public static async Task<AccountCreationResult> CreateExternalAsync(Db db, string username, GoogleIdentity identity,
+        string countryCode = Countries.Unknown, CancellationToken ct = default)
     {
+        string country = Countries.IsCountry(countryCode) ? countryCode : Countries.Unknown;
+
         string email = identity.Email;
         var usernameErrors = new List<string>(AccountValidation.ValidateUsername(username));
         var emailErrors = new List<string>(AccountValidation.ValidateEmail(email));
@@ -115,11 +123,11 @@ public static class AccountCreation
         {
             id = await conn.ExecuteScalarAsync<long>(
                 """
-                INSERT INTO users (username, email, password_hash, verified_at)
-                VALUES (@username, @email, NULL, now())
+                INSERT INTO users (username, email, password_hash, verified_at, country_code)
+                VALUES (@username, @email, NULL, now(), @country)
                 RETURNING id
                 """,
-                new { username, email }, tx);
+                new { username, email, country }, tx);
 
             await conn.ExecuteAsync("INSERT INTO user_stats (user_id) VALUES (@id)", new { id }, tx);
 

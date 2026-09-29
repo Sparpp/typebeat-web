@@ -3680,3 +3680,54 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     transition: transform 2.5s cubic-bezier(0.25, 1, 0.5, 1), filter 2.5s linear;
 }
 .tb-result-hint { margin-top: var(--space-2); }
+
+/* ---- Country flags (Pages/Shared/_Flag.cshtml) ----
+   One small image per ISO code (wwwroot/flags, the game's own Twemoji-derived set). _Flag renders
+   nothing at all for "no country", so every placement below has to read fine without the image. */
+
+.flag {
+    display: inline-block;
+    flex-shrink: 0;
+    width: 21px;
+    height: 15px;
+    border-radius: 2px;
+    vertical-align: -2px;
+    object-fit: cover;
+}
+
+/* Table cells (rankings, set leaderboard): the flag sits between the rank and the name. The pair
+   is a WRAPPING inline-flex on purpose: the set page's leaderboard table is already at its
+   min-content width (names and dates wrap there without any flag), so a flag that insisted on
+   sitting beside the name would push that table into a horizontal scroll. Wrapping lets the flag
+   sit above the name where the column is that tight, and beside it everywhere else. */
+.player-cell__who {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--space-2);
+    row-gap: 2px;
+}
+
+.profile-header__nameline,
+.podium__nameline,
+.user-row__nameline,
+.comment-row__nameline {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.profile-header__nameline .flag {
+    width: 28px;
+    height: 20px;
+    border-radius: 3px;
+}
+
+.settings-country {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.settings-country .input { flex: 1; min-width: 0; }

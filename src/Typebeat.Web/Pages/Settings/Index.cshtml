@@ -74,6 +74,37 @@
     </div>
 
     <div class="card settings-card">
+        <h2 class="card-title">Country</h2>
+        <form method="post" asp-page-handler="Country">
+            @Html.AntiForgeryToken()
+            <div class="field">
+                <label for="Country">Shown as a flag beside your name on the site and in the game</label>
+                <div class="settings-country">
+                    <partial name="_Flag" model="Model.Country" />
+                    <select class="input" id="Country" name="Country">
+                        <option value="@Typebeat.Web.Countries.Unknown" selected="@(Model.Country == Typebeat.Web.Countries.Unknown)">No country</option>
+                        @foreach (var country in Typebeat.Web.Countries.Names.OrderBy(c => c.Value, StringComparer.Ordinal))
+                        {
+                            <option value="@country.Key" selected="@(Model.Country == country.Key)">@country.Value</option>
+                        }
+                    </select>
+                </div>
+                <div class="field-hint">
+                    @if (Model.CountryChosen)
+                    {
+                        <text>You chose this. It will not change unless you change it here.</text>
+                    }
+                    else
+                    {
+                        <text>Detected from your connection when you signed up. Only the country is kept, never your IP address.</text>
+                    }
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-small">Save country</button>
+        </form>
+    </div>
+
+    <div class="card settings-card">
         <h2 class="card-title">Preferences</h2>
         <form method="post" asp-page-handler="Preferences">
             @Html.AntiForgeryToken()

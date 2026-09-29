@@ -34,7 +34,10 @@
             <span class="profile-avatar profile-avatar--fallback" aria-hidden="true">@Model.ProfileUser.Username[..1]</span>
         }
         <div class="profile-header__who">
-            <h1 class="profile-header__name">@Model.ProfileUser.Username</h1>
+            <div class="profile-header__nameline">
+                <h1 class="profile-header__name">@Model.ProfileUser.Username</h1>
+                <partial name="_Flag" model="Model.ProfileUser.CountryCode" />
+            </div>
             <div class="profile-header__dates faint">
                 Joined @Model.ProfileUser.CreatedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
                 &middot; Last seen @ProfileModel.LastSeenLabel(Model.ProfileUser.LastVisit)

@@ -13,7 +13,10 @@
         }
     </a>
     <div class="user-row__who">
-        <a class="user-row__name" href="/users/@Model.Id">@Model.Username</a>
+        <span class="user-row__nameline">
+            <partial name="_Flag" model="Model.CountryCode" />
+            <a class="user-row__name" href="/users/@Model.Id">@Model.Username</a>
+        </span>
         <span class="user-row__meta faint">
             Joined @Model.CreatedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
             &middot; Last seen @ProfileModel.LastSeenLabel(Model.LastVisit)

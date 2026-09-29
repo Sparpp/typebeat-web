@@ -43,6 +43,8 @@ public static class SessionCookieAuth
                 // are treated as signed out.
                 if (user is { Restricted: false })
                 {
+                    // An account still without a country gets the request's, once (see CountryBackfill).
+                    user = await CountryBackfill.ApplyAsync(ctx, user);
                     ctx.Items[item_key] = user;
 
                     // Website page loads keep users.last_visit fresh (throttled; never anonymous;

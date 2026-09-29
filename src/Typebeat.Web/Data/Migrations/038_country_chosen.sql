@@ -1,0 +1,16 @@
+-- typebeat-web migration 038: whether a player chose their own country (backlog 333).
+--
+-- users.country_code has existed since 001_init.sql, defaulting to 'XX' ("no country"), and until
+-- backlog 333 nothing wrote it. Now the account's country is detected from the request at sign-up
+-- (Auth/CountryResolver.cs, Cloudflare's CF-IPCountry header behind the proxy), accounts created
+-- before that get it once on their next signed-in request (Auth/CountryBackfill.cs), and Settings
+-- lets a player pick any country or "No country".
+--
+-- "No country" is stored as 'XX', the same value an undetected account holds, so this flag is what
+-- tells the two apart: it is set whenever the Settings control saves (and by account erasure), and
+-- the backfill's guarded UPDATE requires it to be false. Without it, a player who deliberately hid
+-- their country would have it re-detected on their next page load.
+--
+-- DEFAULT false is correct for every existing row: nobody could choose before the control existed.
+-- No index: the backfill reads it off the already-loaded session user, never by scanning.
+ALTER TABLE users ADD COLUMN country_chosen boolean NOT NULL DEFAULT false;

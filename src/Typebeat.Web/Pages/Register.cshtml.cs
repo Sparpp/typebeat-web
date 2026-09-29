@@ -45,7 +45,7 @@ public sealed class RegisterModel(
         }
 
         string emailAddress = Email.Trim();
-        var result = await AccountCreation.CreateAsync(db, passwords, Username.Trim(), emailAddress, Password);
+        var result = await AccountCreation.CreateAsync(db, passwords, Username.Trim(), emailAddress, Password, CountryResolver.Resolve(HttpContext));
 
         if (!result.Succeeded)
         {

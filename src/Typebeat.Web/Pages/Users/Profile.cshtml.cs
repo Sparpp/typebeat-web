@@ -196,7 +196,8 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                    u.description AS Description,
                    u.created_at  AS CreatedAt,
                    u.last_visit  AS LastVisit,
-                   u.restricted  AS Restricted
+                   u.restricted  AS Restricted,
+                   u.country_code::text AS CountryCode
             FROM users u
             WHERE u.id = @id
             """,
@@ -775,7 +776,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
     public sealed record UserHeader(
         long Id, string Username, string? AvatarKey, string? CoverKey, string Description,
-        DateTime CreatedAt, DateTime? LastVisit, bool Restricted)
+        DateTime CreatedAt, DateTime? LastVisit, bool Restricted, string CountryCode)
     {
         /// <summary>Uploaded avatar (settings page), or null → initial-letter fallback.</summary>
         public string? AvatarUrl => AvatarKey is null ? null : $"/{AvatarKey}";

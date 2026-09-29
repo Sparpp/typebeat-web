@@ -1,0 +1,11 @@
+@model string?
+@*
+    A country flag: the stored users.country_code in, one <img> out, or NOTHING AT ALL for "no
+    country" (XX, and anything else Countries does not know). Never a broken image and never the
+    game's '?' tile: on the website an unknown country is simply not shown. The country's name is
+    both the alt text and the tooltip. The images are the game's own flags (wwwroot/flags/NOTICE.txt).
+*@
+@if (Typebeat.Web.Countries.NameOf(Model) is string countryName)
+{
+    <img class="flag" src="/flags/@(Model).png" alt="@countryName" title="@countryName" width="21" height="15" loading="lazy" />
+}

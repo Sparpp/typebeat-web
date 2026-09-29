@@ -64,7 +64,7 @@
                     var row = Model.PerformanceRows[i];
                     <tr>
                         <td class="num">#@(Model.RankOffset + i + 1)</td>
-                        <td><a href="/users/@row.UserId">@row.Username</a></td>
+                        <td class="player-cell"><span class="player-cell__who"><partial name="_Flag" model="row.CountryCode" /><a href="/users/@row.UserId">@row.Username</a></span></td>
                         <td class="num">@row.TotalPp.ToString("N0", CultureInfo.InvariantCulture)pp</td>
                         <td class="num">@row.PpPlayCount.ToString("N0", CultureInfo.InvariantCulture)</td>
                         <td class="num">@row.CumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
@@ -114,7 +114,7 @@
                     string displayArtist = row.DisplayArtist(preferOriginal);
                     <tr>
                         <td class="num">#@(Model.RankOffset + i + 1)</td>
-                        <td><a href="/users/@row.UserId">@row.Username</a></td>
+                        <td class="player-cell"><span class="player-cell__who"><partial name="_Flag" model="row.CountryCode" /><a href="/users/@row.UserId">@row.Username</a></span></td>
                         <td>
                             <a href="/beatmapsets/@row.SetId" title="@displayTitle [@displayArtist]">@displayTitle</a>
                             @if (row.Explicit)
@@ -178,7 +178,7 @@
                     var row = Model.ScoreRows[i];
                     <tr>
                         <td class="num">#@(Model.RankOffset + i + 1)</td>
-                        <td><a href="/users/@row.UserId">@row.Username</a></td>
+                        <td class="player-cell"><span class="player-cell__who"><partial name="_Flag" model="row.CountryCode" /><a href="/users/@row.UserId">@row.Username</a></span></td>
                         <td class="num">@row.CumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
                         <td class="num">@row.TotalCumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
                         <td class="num">@row.RankedScoreCount.ToString("N0", CultureInfo.InvariantCulture)</td>

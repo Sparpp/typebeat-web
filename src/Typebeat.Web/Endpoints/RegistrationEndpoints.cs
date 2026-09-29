@@ -58,7 +58,7 @@ public static class RegistrationEndpoints
             string email = form["user[user_email]"].ToString().Trim();
             string password = form["user[password]"].ToString();
 
-            var result = await AccountCreation.CreateAsync(db, passwords, username, email, password);
+            var result = await AccountCreation.CreateAsync(db, passwords, username, email, password, CountryResolver.Resolve(ctx));
 
             if (!result.Succeeded)
                 return WireJson.Ok(BuildFormError(result.UsernameErrors, result.EmailErrors, result.PasswordErrors), StatusCodes.Status422UnprocessableEntity);

@@ -65,6 +65,11 @@ public static class AuthExtensions
         var user = await tokens.ResolveAsync(token);
 
         // Restricted users can authenticate (so the client behaves) but never interact.
-        return user is { Restricted: true } ? null : user;
+        if (user is null || user.Restricted)
+            return null;
+
+        // The game client's requests come through the same proxy, so a player who only ever signs
+        // in from the game gets their country too (once; see CountryBackfill).
+        return await CountryBackfill.ApplyAsync(ctx, user);
     }
 }

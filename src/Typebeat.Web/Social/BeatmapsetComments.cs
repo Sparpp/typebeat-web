@@ -68,7 +68,8 @@ public static class BeatmapsetComments
                         u.username::text AS Username,
                         u.avatar_key AS AvatarKey,
                         c.body       AS Body,
-                        c.created_at AS CreatedAt
+                        c.created_at AS CreatedAt,
+                        u.country_code::text AS CountryCode
                  FROM beatmapset_comments c
                  JOIN users u ON u.id = c.user_id
                  WHERE c.set_id = @setId AND c.id > @afterId AND {visible_predicate}
@@ -165,7 +166,7 @@ public sealed record CommentRowView(CommentRowModel Comment, long SetId, bool Ca
 
 /// <summary>One rendered comment (Pages/Shared/_CommentRow.cshtml).</summary>
 public sealed record CommentRowModel(
-    long Id, long UserId, string Username, string? AvatarKey, string Body, DateTime CreatedAt)
+    long Id, long UserId, string Username, string? AvatarKey, string Body, DateTime CreatedAt, string CountryCode)
 {
     /// <summary>Uploaded avatar, or null for the initial-letter fallback.</summary>
     public string? AvatarUrl => AvatarKey is null ? null : $"/{AvatarKey}";

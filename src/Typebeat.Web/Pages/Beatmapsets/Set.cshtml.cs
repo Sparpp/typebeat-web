@@ -231,13 +231,14 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
                    best.ended_at     AS EndedAt,
                    best.mods         AS ModsJson,
                    best.statistics   AS StatisticsJson,
-                   best.has_replay   AS HasReplay
+                   best.has_replay   AS HasReplay,
+                   best.country_code AS CountryCode
             FROM (
                 SELECT DISTINCT ON (sc.user_id)
                        sc.id, sc.user_id, sc.total_score, sc.accuracy, sc.completion, sc.max_combo, sc.rank,
                        sc.ended_at, sc.mods::text AS mods, sc.statistics::text AS statistics,
                        sc.replay_key IS NOT NULL AS has_replay,
-                       u.username::text AS username, u.avatar_key
+                       u.username::text AS username, u.avatar_key, u.country_code::text AS country_code
                 FROM scores sc
                 JOIN users u ON u.id = sc.user_id
                 WHERE sc.beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("sc")}
@@ -700,7 +701,7 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
     /// </summary>
     public sealed record ScoreRow(
         long ScoreId, long UserId, string Username, string? AvatarKey, long TotalScore, double Accuracy, double Completion,
-        int MaxCombo, string Rank, DateTime EndedAt, string ModsJson, string StatisticsJson, bool HasReplay)
+        int MaxCombo, string Rank, DateTime EndedAt, string ModsJson, string StatisticsJson, bool HasReplay, string CountryCode)
     {
         /// <summary>Uploaded avatar, or null → the initial-letter fallback.</summary>
         public string? AvatarUrl => AvatarKey is null ? null : $"/{AvatarKey}";

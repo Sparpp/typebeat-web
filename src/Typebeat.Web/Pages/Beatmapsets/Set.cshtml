@@ -365,7 +365,10 @@
                 }
             </a>
             <div class="podium__who">
-                <a class="podium__name" href="/users/@top.UserId">@top.Username</a>
+                <div class="podium__nameline">
+                    <partial name="_Flag" model="top.CountryCode" />
+                    <a class="podium__name" href="/users/@top.UserId">@top.Username</a>
+                </div>
                 <div class="faint">@top.EndedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)</div>
             </div>
             <div class="podium__stats">
@@ -432,7 +435,7 @@
                         <td class="num">@SetModel.FormatPercent(score.Completion)</td>
                         <td class="num">@score.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</td>
                         <td class="num">@SetModel.FormatPercent(score.Accuracy)</td>
-                        <td><a href="/users/@score.UserId">@score.Username</a></td>
+                        <td class="player-cell"><span class="player-cell__who"><partial name="_Flag" model="score.CountryCode" /><a href="/users/@score.UserId">@score.Username</a></span></td>
                         <td class="num">@score.MaxCombo.ToString("N0", CultureInfo.InvariantCulture)x</td>
                         <td class="num">@score.Great</td>
                         <td class="num">@score.Ok</td>

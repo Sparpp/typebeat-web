@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.RegularExpressions;
 using Dapper;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Mvc.Testing.Handlers;
 using Microsoft.AspNetCore.TestHost;
@@ -73,12 +74,19 @@ public class WebsiteFixture
         Environment.SetEnvironmentVariable("TYPEBEAT_DB", ConnectionString);
 
         factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        {
+            // Production's proxy configuration, so the host trusts Cloudflare's CF-IPCountry the way
+            // it does live (CountryResolver honours it only behind the proxy). No test sends
+            // X-Forwarded-*, so the forwarded-headers middleware this also enables is inert here.
+            b.UseSetting(CountryResolver.ProxyFlag, "true");
+
             b.ConfigureTestServices(services =>
             {
                 // Swap the real/log sender for the capturing double so tests can read codes.
                 services.RemoveAll<IEmailSender>();
                 services.AddSingleton<IEmailSender>(Emails);
-            }));
+            });
+        });
 
         Client = factory.CreateDefaultClient(BaseAddress, new RedirectHandler());
 

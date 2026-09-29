@@ -15,6 +15,9 @@ namespace Typebeat.Web.Pages.Settings;
 /// Self-contained POST handlers, each re-rendering this page on error and using POST-redirect-GET
 /// on success:
 ///  - Profile: the plain-text description (bio).
+///  - Country: any country the game client knows, or "No country" (stored as XX). Every save sets
+///    users.country_chosen, which is what stops <see cref="CountryBackfill"/> re-detecting a
+///    deliberate "No country" (038_country_chosen.sql).
 ///  - Avatar / Banner: an uploaded image, resized to a fixed JPEG by <see cref="ProfileMedia"/>
 ///    and stored under a version-stamped key; the superseded object is deleted so blobs don't leak.
 ///  - Delete: GDPR erasure. ANONYMIZES rather than hard-deletes: scrubs every personal column,
@@ -44,6 +47,15 @@ public sealed class IndexModel(
 
     [BindProperty] public string? Description { get; set; }
     [BindProperty] public string? ConfirmUsername { get; set; }
+
+    /// <summary>
+    /// The Country control: a code from <see cref="Countries"/>, or <see cref="Countries.Unknown"/>
+    /// for "No country". Bound on POST, and filled from the row on GET.
+    /// </summary>
+    [BindProperty] public string? Country { get; set; }
+
+    /// <summary>False while the country on the account is the detected one (or none was detected).</summary>
+    public bool CountryChosen { get; private set; }
 
     /// <summary>Preferences &gt; show a map's original (non-romanized) title/artist instead of romanized.</summary>
     [BindProperty] public bool PreferOriginalMetadata { get; set; }
@@ -85,6 +97,7 @@ public sealed class IndexModel(
             "avatar" => "Avatar updated.",
             "banner" => "Banner updated.",
             "preferences" => "Preferences saved.",
+            "country" => "Country saved.",
             "google-linked" => "Google account linked. You can now sign in with Google.",
             "google-unlinked" => "Google account unlinked.",
             "password-code" => "We emailed you a code. Enter it below with your new password.",
@@ -124,6 +137,31 @@ public sealed class IndexModel(
         }
 
         return RedirectToPage(new { saved = "profile" });
+    }
+
+    public async Task<IActionResult> OnPostCountryAsync()
+    {
+        if (CurrentUser is null)
+            return Redirect("/login");
+
+        string code = (Country ?? string.Empty).Trim();
+
+        if (code != Countries.Unknown && !Countries.IsCountry(code))
+        {
+            Country = null;
+            return await failAsync(CurrentUser.Id, "Choose a country from the list.");
+        }
+
+        await using (var conn = await db.OpenAsync(HttpContext.RequestAborted))
+        {
+            // country_chosen is set on EVERY save, "No country" included: that is the whole point of
+            // the flag, a deliberate XX must never be re-detected by CountryBackfill.
+            await conn.ExecuteAsync(
+                "UPDATE users SET country_code = @code, country_chosen = true WHERE id = @id",
+                new { code, id = CurrentUser.Id });
+        }
+
+        return RedirectToPage(new { saved = "country" });
     }
 
     public async Task<IActionResult> OnPostPreferencesAsync()
@@ -373,11 +411,13 @@ public sealed class IndexModel(
 
     private async Task loadCurrentAsync(NpgsqlConnection conn, long id)
     {
-        var row = await conn.QuerySingleOrDefaultAsync<(string Description, string? AvatarKey, string? CoverKey, bool PreferOriginalMetadata, bool HasPassword)>(
+        var row = await conn.QuerySingleOrDefaultAsync<(string Description, string? AvatarKey, string? CoverKey, bool PreferOriginalMetadata, bool HasPassword,
+            string CountryCode, bool CountryChosen)>(
             """
             SELECT description AS Description, avatar_key AS AvatarKey, cover_key AS CoverKey,
                    prefer_original_metadata AS PreferOriginalMetadata,
-                   COALESCE(password_hash, '') <> '' AS HasPassword
+                   COALESCE(password_hash, '') <> '' AS HasPassword,
+                   country_code::text AS CountryCode, country_chosen AS CountryChosen
             FROM users WHERE id = @id
             """,
             new { id });
@@ -388,6 +428,8 @@ public sealed class IndexModel(
         BannerUrl = row.CoverKey is null ? null : $"/{row.CoverKey}";
         PreferOriginalMetadata = row.PreferOriginalMetadata;
         HasPassword = row.HasPassword;
+        Country ??= Countries.IsCountry(row.CountryCode) ? row.CountryCode : Countries.Unknown;
+        CountryChosen = row.CountryChosen;
         (GoogleLinked, GoogleEmail) = await ExternalLogins.GetGoogleLinkAsync(conn, id);
     }
 
@@ -426,6 +468,9 @@ public sealed class IndexModel(
             email         = 'deleted_' || id::text || '@deleted.invalid',
             password_hash = '',
             country_code  = 'XX',
+            -- Chosen, so CountryBackfill can never re-detect a country for an erased account (it
+            -- has no sessions left to do it from, but the guard should not depend on that).
+            country_chosen = true,
             avatar_key    = NULL,
             cover_key     = NULL,
             description   = '',

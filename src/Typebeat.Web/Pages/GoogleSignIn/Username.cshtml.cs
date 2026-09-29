@@ -59,7 +59,7 @@ public sealed class UsernameModel(Db db, GoogleOidc google, GoogleCookies cookie
             return Page();
         }
 
-        var result = await AccountCreation.CreateExternalAsync(db, Username.Trim(), pending.Identity, HttpContext.RequestAborted);
+        var result = await AccountCreation.CreateExternalAsync(db, Username.Trim(), pending.Identity, CountryResolver.Resolve(HttpContext), HttpContext.RequestAborted);
 
         if (!result.Succeeded)
         {

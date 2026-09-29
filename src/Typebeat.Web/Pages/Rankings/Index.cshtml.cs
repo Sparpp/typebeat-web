@@ -116,7 +116,8 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         string ModsJson,
         string StatisticsJson,
         bool HasReplay,
-        string? Ratings)
+        string? Ratings,
+        string CountryCode)
     {
         /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
         public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);
@@ -386,7 +387,8 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                             sc.mods::text AS ModsJson,
                             sc.statistics::text AS StatisticsJson,
                             sc.replay_key IS NOT NULL AS HasReplay,
-                            b.ratings::text AS Ratings
+                            b.ratings::text AS Ratings,
+                            u.country_code::text AS CountryCode
                      FROM (
                          SELECT best.id, best.user_id, best.beatmap_id, best.pp
                          FROM ({PpRanking.BestPerSetSql}) best

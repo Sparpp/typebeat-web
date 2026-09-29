@@ -19,7 +19,10 @@
     </a>
     <div class="comment-row__main">
         <div class="comment-row__meta">
-            <a class="comment-row__name" href="/users/@Model.Comment.UserId">@Model.Comment.Username</a>
+            <span class="comment-row__nameline">
+                <partial name="_Flag" model="Model.Comment.CountryCode" />
+                <a class="comment-row__name" href="/users/@Model.Comment.UserId">@Model.Comment.Username</a>
+            </span>
             <span class="faint">@Model.Comment.AgeLabel()</span>
             @if (Model.CanDelete)
             {

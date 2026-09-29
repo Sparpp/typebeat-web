@@ -11,13 +11,15 @@ namespace Typebeat.Web.Pages;
 /// <param name="LastVisit">Null for an account that has never signed in ("never").</param>
 /// <param name="MapCount">Publicly visible beatmapsets this user owns. Renders as a "n maps" tag,
 /// which is what makes a follower list also readable as "which of these people map".</param>
+/// <param name="CountryCode">users.country_code, rendered through _Flag (nothing for XX).</param>
 public sealed record UserRowModel(
     long Id,
     string Username,
     string? AvatarKey,
     DateTime CreatedAt,
     DateTime? LastVisit,
-    long MapCount)
+    long MapCount,
+    string CountryCode)
 {
     public string? AvatarUrl => AvatarKey is null ? null : $"/{AvatarKey}";
 }
@@ -44,7 +46,8 @@ public static class UserRowSql
                (SELECT count(*)
                 FROM beatmapsets bs
                 WHERE bs.owner_id = u.id
-                  AND bs.status IN ('pending', 'unranked', 'ranked')) AS MapCount
+                  AND bs.status IN ('pending', 'unranked', 'ranked')) AS MapCount,
+               u.country_code::text AS CountryCode
         FROM users u
         """;
 }
