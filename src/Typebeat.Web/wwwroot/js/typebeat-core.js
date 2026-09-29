@@ -109,6 +109,9 @@
     // after the NFD fold, so a precomposed letter that decomposes to one of these plus a mark (Ǿ, ǽ)
     // is reached too (mirrors Typeability.SPECIAL_LETTERS, which carries the full reasoning, and the
     // server's copy; the three must stay byte for byte identical).
+    // The ROMANISER (Cyrillic, Greek, kana, hangul and the rest to ASCII, backlog 329) deliberately
+    // has NO copy here: it runs once, at import (Romaniser.cs in the game and on the server), and a
+    // stored map already carries the romanised ASCII this file decodes.
     const SPECIAL_LETTERS = Object.freeze({
         'ß': 'ss', 'ẞ': 'SS',
         'æ': 'ae', 'Æ': 'AE',

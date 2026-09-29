@@ -79,4 +79,18 @@
     <ProjectReference Include="$(TypebeatRulesetProject)" />
   </ItemGroup>
 
+  <!-- RomaniserParityTest (backlog 329) reads the romaniser fixtures from the GAME repo, where its
+       own RomaniserTest reads them, so both sides are held to one file per script; and both
+       copies of Romaniser.cs as text, to pin that they differ only in the namespace line. All
+       three resolve through the same ruleset property as the project reference above. -->
+  <PropertyGroup>
+    <TypebeatRulesetDir>$([System.IO.Path]::GetDirectoryName('$(TypebeatRulesetProject)'))</TypebeatRulesetDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(TypebeatRulesetDir)\..\typebeat.Game.Rulesets.TypeBeat.Tests\NonVisual\fixtures\romaniser\*.tsv" Link="RomaniserFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Beatmaps\Romaniser.cs" Link="RomaniserMirror\game.cs.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Romaniser.cs" Link="RomaniserMirror\server.cs.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

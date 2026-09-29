@@ -113,6 +113,7 @@ WireCompat is where that is provable, because it is the only project that compil
 | `src/Typebeat.Web/wwwroot/js/typebeat-player.js` (`computeGaps` + its four constants) | the same `InstrumentalGaps.cs`, via the row above |
 | `src/Typebeat.Web/wwwroot/js/typebeat-core.js` | the C# `TypingEngine` / `TypeBeatScoreProcessor` |
 | `src/Typebeat.Web/wwwroot/js/typebeat-player.js` (`buildPaceBands` and its `pace*` helpers, the underline pace hue; display only, pinned by `UnderlinePaceParityTest` against `BuildBands` on the synthetic and env-supplied real maps) | `typebeat.Game.Rulesets.TypeBeat/UI/UnderlinePace.cs` |
+| `src/Typebeat.Web/Packages/Lyrics/Romaniser.cs` (identical below the `using` lines except the namespace line; pinned by `RomaniserParityTest` over the game repo's `NonVisual/fixtures/romaniser/*.tsv`, which the WireCompat csproj links in; the JS has no copy, since it only decodes already-romanised text) | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/Romaniser.cs` |
 
 - **`typebeat-core.js` is a hand-written JS reimplementation of the C# engine** and must stay
   byte-compatible, or browser `/play` scores diverge from desktop on the same leaderboards. Any
