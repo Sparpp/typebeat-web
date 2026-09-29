@@ -184,6 +184,13 @@ WireCompat is where that is provable, because it is the only project that compil
   SPIES on an engine method must forward every argument
   (`CoreFuzzHarness.cjs` wraps `rushesPastCap`): a dropped one reads out of the prefix table as NaN
   and silently answers "no rush" for the entire sweep.
+- **Lyric NORMALISATION is mirrored three ways** (game `Typeability.Normalize` in
+  `Beatmaps/LyricBeatmap.cs`, server `Packages/Lyrics/Typeability.cs`, browser `normalize` in
+  `typebeat-core.js`), and since backlog 329 that includes the 20-entry `SPECIAL_LETTERS` table
+  (ss for ß, ae for æ, th for þ, and so on) applied right after the NFD fold; the `PUNCTUATION`
+  set rides the same three-way rule. All three run at DECODE time, not only import, so an edit
+  changes how stored maps play on every client at once: keep them in lockstep, and
+  `LyricParserParityTest.AllThreeDecodersSpellTheSpecialLettersIdentically` is the pin.
 - **The .osu FORMAT VERSION GATE exists three times** since backlog 255, and all three read the
   magic line the same way (digits after `type!beat file format v`, fallback 1): the game's
   `LyricBeatmapDecoder.ParseFormatVersion`, `BeatmapPackageParser.ParseFormatVersion` here, and
