@@ -102,7 +102,36 @@
         return n;
     }
 
-    // NFD-fold diacritics, map curly quotes/apostrophes and en/em dashes to their ASCII forms, KEEP
+    // The Latin SPECIAL LETTERS normalize spells out in ASCII (backlog 329, step a): letters with no
+    // canonical decomposition, so the NFD fold cannot reach them and they used to be DELETED
+    // ("straße" stored as "strae"). Case preserved for Literate; a two-letter capital takes one fixed
+    // form (Þ "Th", Ŋ "Ng") while ẞ and the capital ligatures spell out in full capitals. Applied
+    // after the NFD fold, so a precomposed letter that decomposes to one of these plus a mark (Ǿ, ǽ)
+    // is reached too (mirrors Typeability.SPECIAL_LETTERS, which carries the full reasoning, and the
+    // server's copy; the three must stay byte for byte identical).
+    const SPECIAL_LETTERS = Object.freeze({
+        'ß': 'ss', 'ẞ': 'SS',
+        'æ': 'ae', 'Æ': 'AE',
+        'œ': 'oe', 'Œ': 'OE',
+        'ø': 'o', 'Ø': 'O',
+        'ł': 'l', 'Ł': 'L',
+        'đ': 'd', 'Đ': 'D',
+        'þ': 'th', 'Þ': 'Th',
+        'ð': 'd', 'Ð': 'D',
+        'ı': 'i',
+        'ŋ': 'ng', 'Ŋ': 'Ng',
+        'ĸ': 'k',
+    });
+    const SPECIAL_LETTER_RE = new RegExp('[' + Object.keys(SPECIAL_LETTERS).join('') + ']', 'g');
+
+    // Spell every SPECIAL_LETTERS letter out in ASCII, leaving every other char alone (mirrors
+    // Typeability.SpellSpecialLetters).
+    function spellSpecialLetters(s) {
+        return s.replace(SPECIAL_LETTER_RE, ch => SPECIAL_LETTERS[ch]);
+    }
+
+    // NFD-fold diacritics, spell out the special letters NFD cannot reach (SPECIAL_LETTERS), map
+    // curly quotes/apostrophes and en/em dashes to their ASCII forms, KEEP
     // the supported punctuation, DROP every other non-space char that isn't typeable, collapse
     // whitespace, trim (mirrors Typeability.Normalize).
     //
@@ -122,6 +151,9 @@
     function normalize(s, keepFreestyleMarkers = false) {
         if (s == null) return '';
         s = String(s).normalize('NFD').replace(/[̀-ͯ]/g, '');
+        // The letters NFD cannot reach ('ß', 'ø', 'ł', ...) are spelled out rather than dropped
+        // below as untypeable.
+        s = spellSpecialLetters(s);
         // The variant sets are the C# switch verbatim (U+2018 U+2019 U+201A U+2032 /
         // U+201C U+201D U+201E U+2033 / U+2013 U+2014 U+2015 U+2212). They were allowed to drift
         // while an unmapped variant was dropped as untypeable on both sides either way; now that
@@ -5054,7 +5086,7 @@
 
     global.TypeBeatCore = {
         // low-level
-        isTypeable, isFreestyle, isCell, isPunctuation, normalize,
+        isTypeable, isFreestyle, isCell, isPunctuation, normalize, spellSpecialLetters,
         // Exported since backlog 255 took it out of normalize: it is the pre-v2 half of the format
         // version gate, and the fidelity harness holds it against the C# copy on its own.
         stripBackingVocals,
@@ -5077,7 +5109,7 @@
         freestyleTick, freestyleGlyph,
         constants: {
             CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, FREESTYLE_MARKER,
-            SHIMMER_INTERVAL_MS, PUNCTUATION, WORD_BREAK, STRETCH_RUN_LENGTH,
+            SHIMMER_INTERVAL_MS, PUNCTUATION, SPECIAL_LETTERS, WORD_BREAK, STRETCH_RUN_LENGTH,
             // The format version gate (backlog 255), exported so the harnesses pin the same numbers
             // the C# decoder carries rather than transcribing them.
             FORMAT_MAGIC, FALLBACK_FORMAT_VERSION, LITERAL_BRACKETS_FROM_VERSION,

@@ -311,6 +311,120 @@ public class LyricParserParityTest
         Assert.That(nonDefault, Is.GreaterThanOrEqualTo(20), "cases whose gain is not the default");
     }
 
+    /// <summary>
+    /// The Latin SPECIAL LETTERS (backlog 329, step a) through all three decoders of one file. An
+    /// import's .osu re-emits the aligner's RAW line, so "Straße" reaches every client as written
+    /// and each one's normalizer decides what the player types: the game's production decoder,
+    /// the server's ingest (whose parse is what the stored rating counts) and the browser's
+    /// <c>parseLyricOsu</c> + <c>buildBeatmap</c> (what a /play run types). Held text for text, unit
+    /// for unit and cell for cell, on both the default and the Literate flattening, since Literate
+    /// types the spelled capitals case-sensitively.
+    /// </summary>
+    [Test]
+    public void AllThreeDecodersSpellTheSpecialLettersIdentically()
+    {
+        (string Text, double Start, double End)[][] fixture =
+        [
+            [("Straße", 1000, 1800), ("STRAẞE", 1800, 2600), ("Grüße", 2600, 3400)],
+            [("Øresund", 4000, 4800), ("Ærø", 4800, 5600), ("cœur", 5600, 6200), ("Œuvre", 6200, 7000)],
+            [("łódź", 8000, 8800), ("Łódź", 8800, 9600), ("þú", 9600, 10200), ("Þór", 10200, 11000)],
+            [("Đorđe", 12000, 12800), ("Ðað", 12800, 13400), ("kalı", 13400, 14000), ("Ŋaŋ", 14000, 14600), ("ĸ", 14600, 15000)],
+            [("Ǿ", 16000, 16400), ("ǽ", 16400, 16800), ("Ǣ", 16800, 17200), ("ĸ", 17200, 17600)],
+        ];
+
+        var lines = new JsonArray();
+
+        foreach (var line in fixture)
+        {
+            var wordArray = new JsonArray();
+
+            foreach ((string text, double start, double end) in line)
+                wordArray.Add(new JsonObject { ["text"] = text, ["start_ms"] = start, ["end_ms"] = end, ["score"] = 1 });
+
+            lines.Add(new JsonObject
+            {
+                ["text"] = string.Join(' ', line.Select(w => w.Text)),
+                ["start_ms"] = line[0].Start,
+                ["end_ms"] = line[^1].End,
+                ["words"] = wordArray,
+            });
+        }
+
+        string timingJson = new JsonObject { ["version"] = 2, ["song_end_ms"] = 20000, ["lines"] = lines }.ToJsonString();
+        string osu = LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", timingJson);
+
+        // The premise: the stored file carries the letters RAW (the writer spells them as JSON
+        // escapes, which every decoder reads back as the letter), so the decoders really are what
+        // decide.
+        Assert.That(osu, Does.Contain("Stra\\u00DFe").And.Contain("\\u0141\\u00F3d\\u017A").And.Contain("\\u00DE\\u00F3r"));
+
+        var client = ClientParse(osu);
+        var server = ServerParse(osu).Lines;
+
+        string path = Path.Combine(Path.GetTempPath(), $"typebeat-lyricdecode-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new[] { osu }), new UTF8Encoding(false));
+
+        System.Text.Json.JsonElement browser;
+
+        try
+        {
+            browser = NodeHarness.Run("CoreLyricDecodeHarness.cjs", path)[0];
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // A leftover temp file is not worth failing a fidelity test over.
+            }
+        }
+
+        Assert.Multiple(() =>
+        {
+            // The game and server TABLES are one table, entry for entry.
+            Assert.That(Web.Packages.Lyrics.Typeability.SPECIAL_LETTERS, Is.EquivalentTo(Typeability.SPECIAL_LETTERS), "the two C# tables");
+
+            Assert.That(client.Select(l => l.RawText), Is.EqualTo(new[]
+            {
+                "Strasse STRASSE Grusse",
+                "Oresund AEro coeur OEuvre",
+                "lodz Lodz thu Thor",
+                "Dorde Dad kali Ngang k",
+                "O ae AE k",
+            }), "the game's decode, stated so a failure names the rule");
+
+            Assert.That(server.Select(l => l.RawText), Is.EqualTo(client.Select(l => l.RawText)), "server: text");
+
+            for (int l = 0; l < Math.Min(client.Count, server.Count); l++)
+            {
+                Assert.That(server[l].Units.Select(u => (u.Text, u.StartTime, u.EndTime)),
+                    Is.EqualTo(client[l].Units.Select(u => (u.Text, u.StartTime, u.EndTime))), $"line {l}: server units");
+            }
+
+            foreach (bool literate in new[] { false, true })
+            {
+                var js = browser.GetProperty(literate ? "literate" : "plain").EnumerateArray().ToArray();
+                string arm = literate ? "literate" : "plain";
+
+                Assert.That(js, Has.Length.EqualTo(client.Count), $"{arm}: browser line count");
+
+                for (int l = 0; l < Math.Min(js.Length, client.Count); l++)
+                {
+                    var cells = typebeat.Game.Rulesets.TypeBeat.Gameplay.TypingLine.FromLyricLine(client[l], literate).Cells;
+
+                    Assert.That(js[l].GetProperty("text").GetString(), Is.EqualTo(client[l].RawText), $"{arm} line {l}: browser text");
+                    Assert.That(js[l].GetProperty("stream").GetString(), Is.EqualTo(new string(cells.Select(c => c.Expected).ToArray())),
+                        $"{arm} line {l}: browser cells");
+                    Assert.That(js[l].GetProperty("targets").EnumerateArray().Select(e => e.GetDouble()),
+                        Is.EqualTo(cells.Select(c => c.TargetTime)).AsCollection, $"{arm} line {l}: browser cell targets");
+                }
+            }
+        });
+    }
+
     [Test]
     public void BothParsersReadTheSameUnitsPausesAndSyllablesFromTheSameFile()
     {

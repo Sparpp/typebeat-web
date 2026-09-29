@@ -131,7 +131,60 @@ public static class Typeability
     }
 
     /// <summary>
-    /// Latin diacritics stripped (FormD, combining marks dropped), curly quotes/dashes/NBSP
+    /// The Latin SPECIAL LETTERS <see cref="Normalize"/> spells out in ASCII (backlog 329, step
+    /// a): letters Unicode gives no canonical decomposition, so FormD cannot fold them and without
+    /// this table they were DELETED ("straße" stored as "strae"). Case is preserved for the
+    /// client's Literate mod; a two-letter capital takes one fixed form (Þ "Th", Ŋ "Ng") while ẞ
+    /// and the capital ligatures Æ and Œ spell out in full capitals. Applied after FormD, so a
+    /// precomposed letter that decomposes to one of these plus a mark (Ǿ, ǽ) is reached too.
+    /// (LyricBeatmap.cs, Typeability.SPECIAL_LETTERS, which carries the full reasoning.)
+    ///
+    /// <para>MIRRORED byte for byte with the game and with <c>SPECIAL_LETTERS</c> in
+    /// <c>typebeat-core.js</c>: an import stores the raw aligner line and all three decode it, so
+    /// a one-sided edit gives the two clients and the stored rating different cells.</para>
+    /// </summary>
+    public static readonly IReadOnlyDictionary<char, string> SPECIAL_LETTERS = new Dictionary<char, string>
+    {
+        ['ß'] = "ss", ['ẞ'] = "SS",
+        ['æ'] = "ae", ['Æ'] = "AE",
+        ['œ'] = "oe", ['Œ'] = "OE",
+        ['ø'] = "o", ['Ø'] = "O",
+        ['ł'] = "l", ['Ł'] = "L",
+        ['đ'] = "d", ['Đ'] = "D",
+        ['þ'] = "th", ['Þ'] = "Th",
+        ['ð'] = "d", ['Ð'] = "D",
+        ['ı'] = "i",
+        ['ŋ'] = "ng", ['Ŋ'] = "Ng",
+        ['ĸ'] = "k",
+    };
+
+    /// <summary>
+    /// Spells every <see cref="SPECIAL_LETTERS"/> letter in <paramref name="text"/> out in ASCII
+    /// and leaves every other char alone. Returns the input itself when it carries none.
+    /// (LyricBeatmap.cs, Typeability.SpellSpecialLetters.)
+    /// </summary>
+    public static string SpellSpecialLetters(string text)
+    {
+        StringBuilder? sb = null;
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (!SPECIAL_LETTERS.TryGetValue(text[i], out string? spelled))
+            {
+                sb?.Append(text[i]);
+                continue;
+            }
+
+            sb ??= new StringBuilder(text, 0, i, text.Length + 8);
+            sb.Append(spelled);
+        }
+
+        return sb?.ToString() ?? text;
+    }
+
+    /// <summary>
+    /// Latin diacritics stripped (FormD, combining marks dropped), the Latin special letters
+    /// spelled out (<see cref="SPECIAL_LETTERS"/>), curly quotes/dashes/NBSP
     /// mapped to ASCII, then every char that is neither typeable nor one of the supported
     /// <see cref="PUNCTUATION"/> marks REMOVED; whitespace runs collapse to a single space,
     /// trimmed. (LyricBeatmap.cs, Typeability.Normalize.)
@@ -160,6 +213,10 @@ public static class Typeability
         {
             // Invalid Unicode (broken surrogates), carry on undecomposed.
         }
+
+        // The letters FormD cannot reach ('ß', 'ø', 'ł', ...) are spelled out rather than
+        // dropped below as untypeable.
+        raw = SpellSpecialLetters(raw);
 
         var sb = new StringBuilder(raw.Length);
         bool pendingSpace = false;

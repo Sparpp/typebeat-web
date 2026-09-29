@@ -57,6 +57,14 @@ const SAMPLES = [
     '',
     '-',
     '...',
+    // The Latin special letters NFD cannot decompose (backlog 329, step a), every one of them, in
+    // words and in the casing Literate types.
+    'straße STRAẞE Grüße',
+    'Øresund Ærø cœur Œuvre',
+    'łódź Łódź',
+    'þú Þór ÞÚ',
+    'Đorđe Ðað kalı Ŋaŋ ĸ',
+    'Ǿ ǿ ǽ Ǣ',                                    // precomposed: a table letter plus a mark
 ];
 
 // The magic line matters since backlog 255: it carries the FORMAT VERSION that decides whether a
@@ -161,6 +169,7 @@ function playThrough(osuText, literate) {
 const out = {
     punctuationConstant: TB.constants.PUNCTUATION,
     wordBreakConstant: TB.constants.WORD_BREAK,
+    specialLetters: TB.constants.SPECIAL_LETTERS,
     // A mark must stay outside the typeable surface: it is never a plain typeable char, only a cell
     // under Literate.
     marksAreNotTypeable: TB.constants.PUNCTUATION.split('').every(c => !TB.isTypeable(c) && !TB.isCell(c)),
