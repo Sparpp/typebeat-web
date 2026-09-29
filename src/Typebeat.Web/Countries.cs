@@ -247,6 +247,7 @@ public static class Countries
         ["SN"] = "Senegal",
         ["SO"] = "Somalia",
         ["SR"] = "Suriname",
+        ["SS"] = "South Sudan",
         ["ST"] = "Sao Tome and Principe",
         ["SV"] = "El Salvador",
         ["SX"] = "Sint Maarten",

@@ -14,6 +14,7 @@ public class CountryResolverTest
     [TestCase("JP", "JP")]
     [TestCase("gb", "GB")]
     [TestCase(" de ", "DE")]
+    [TestCase("SS", "SS")]
     public void BehindTheProxy_AKnownCountryIsAccepted(string header, string expected)
         => Assert.That(CountryResolver.Resolve(behindProxy: true, header), Is.EqualTo(expected));
 
@@ -42,8 +43,7 @@ public class CountryResolverTest
         => Assert.That(CountryResolver.Resolve(behindProxy: true, header), Is.EqualTo(Countries.Unknown));
 
     // Well-formed but not a country the client's enum can show: an unassigned code, the old GeoIP
-    // pseudo-codes the enum still carries (A1, A2, AP, O1), its non-country regions (EU, AN, FX),
-    // and South Sudan, which the enum does not have yet.
+    // pseudo-codes the enum still carries (A1, A2, AP, O1), and its non-country regions (EU, AN, FX).
     [TestCase("ZZ")]
     [TestCase("A1")]
     [TestCase("A2")]
@@ -52,7 +52,6 @@ public class CountryResolverTest
     [TestCase("EU")]
     [TestCase("AN")]
     [TestCase("FX")]
-    [TestCase("SS")]
     public void UnknownCodes_AreRejected(string header)
         => Assert.That(CountryResolver.Resolve(behindProxy: true, header), Is.EqualTo(Countries.Unknown));
 
@@ -66,7 +65,7 @@ public class CountryResolverTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(Countries.Codes.Count(), Is.EqualTo(249));
+            Assert.That(Countries.Codes.Count(), Is.EqualTo(250));
             Assert.That(missing, Is.Empty, "a storable country with no flag would render a broken image");
             Assert.That(unnamed, Is.Empty);
             Assert.That(Countries.IsCountry(Countries.Unknown), Is.False, "XX is the absence of a country, never one");

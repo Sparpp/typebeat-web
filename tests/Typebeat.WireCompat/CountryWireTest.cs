@@ -41,6 +41,16 @@ public class CountryWireTest
     }
 
     [Test]
+    public void SouthSudan_IsInBothListsAndParses()
+    {
+        // Backlog 345: SS was missing from the enum, so the resolver stored XX for South Sudan.
+        Assert.That(Enum.TryParse<CountryCode>("SS", out var ss), Is.True);
+        Assert.That(ss.GetDescription(), Is.EqualTo("South Sudan"));
+        Assert.That(Countries.Codes, Does.Contain("SS"));
+        Assert.That(Countries.NameOf("SS"), Is.EqualTo("South Sudan"));
+    }
+
+    [Test]
     public void EveryCodeTheServerCanStore_ParsesThroughTheClientsOwnProperty()
     {
         // APIUser.CountryCode is what every flag in the game reads; drive it from JSON exactly as a
