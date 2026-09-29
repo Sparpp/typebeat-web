@@ -1429,6 +1429,20 @@ img { max-width: 100%; }
     font-weight: 700;
 }
 
+.filter-label { flex: none; }
+
+/* Phone width: the pills wrap onto further lines INSIDE the row (never past the viewport), and the
+   row hangs its label in the left gutter so a wrapped line lines up under the first pill instead of
+   under the label. 64px = the 56px label + the 8px gap. Desktop is untouched. */
+@media (max-width: 640px) {
+    .filter-row {
+        min-width: 0;
+        padding-left: 64px;
+    }
+
+    .filter-row > .filter-label { margin-left: -64px; }
+}
+
 .filter-pill:hover {
     color: var(--text);
     background: var(--surface-2);

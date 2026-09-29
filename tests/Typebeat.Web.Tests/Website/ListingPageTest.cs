@@ -183,6 +183,24 @@ public class ListingPageTest
         return long.Parse(match.Groups[1].Value);
     }
 
+    /// <summary>
+    /// Backlog 337: the Status/Sort/Show pill rows must never push the page wider than a phone.
+    /// Pins the wrap rule and the phone-width hanging-label gutter.
+    /// </summary>
+    [Test]
+    public void FilterRows_WrapInsideTheirContainer_AtPhoneWidth()
+    {
+        string css = File.ReadAllText(Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "css", "site.css"));
+        css = Regex.Replace(css, @"\s+", " ");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(css, Does.Contain(".filter-row { display: flex; align-items: center; flex-wrap: wrap;"));
+            Assert.That(css, Does.Contain("@media (max-width: 640px) { .filter-row { min-width: 0; padding-left: 64px; }"));
+            Assert.That(css, Does.Contain(".filter-row > .filter-label { margin-left: -64px; }"));
+        });
+    }
+
     private static List<long> CardIds(string html)
         => Regex.Matches(html, "data-set-id=\"(\\d+)\"").Select(m => long.Parse(m.Groups[1].Value)).ToList();
 }
