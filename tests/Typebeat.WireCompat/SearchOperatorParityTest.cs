@@ -34,6 +34,15 @@ namespace Typebeat.WireCompat;
 /// on the site and not in the game). <see cref="GreaterAndLess_AgreeOnTheHundredths_AndDivergeInsideOne"/>
 /// pins both halves of that sentence so neither can change silently.
 /// </para>
+///
+/// <para>
+/// Backlog 342: both floors add the same epsilon (<c>FormatUtils.FLOOR_EPSILON</c> in the game,
+/// <see cref="BeatmapSearchSql.STAR_FLOOR_EPSILON"/> here) to the scaled rating, because a rating
+/// on an exact hundredth is not always one in binary: 4.1 * 100 is 409.99999999999994, so before
+/// it both sides floored a 4.10 map to 4.09 and <c>stars=4.1</c> found nothing, identically. The
+/// sweep agreed on that bug, which is why the answer on every hundredth is now pinned as well as
+/// the agreement (<see cref="StarEquality_EveryExactHundredth_MatchesItsOwnOperand"/>).
+/// </para>
 /// </summary>
 [TestFixture]
 public class SearchOperatorParityTest
@@ -43,16 +52,27 @@ public class SearchOperatorParityTest
         ?? throw new InvalidOperationException("FilterQueryParser.ApplyQueries not found");
 
     /// <summary>Every thousandth from 0 to 10, plus the awkward ones: the listing fixtures, values a
-    /// hair either side of a hundredth, and ratings whose rounded display and floored value differ.</summary>
+    /// hair either side of a hundredth, and ratings whose rounded display and floored value differ.
+    /// Every exact hundredth is already among the thousandths (4100 / 1000.0 is the same double as
+    /// 4.1, both being the nearest double to the same rational); the second list is backlog 342's
+    /// values written as literals, the doubles one ulp either side of 4.1 (the closest a rating can
+    /// sit to that hundredth without being it) and two just under it at 1e-10 and 1e-14.</summary>
     private static readonly double[] ratings = Enumerable.Range(0, 10_001).Select(i => i / 1000.0)
         .Concat([4.0712, 4.068, 4.0799999, 4.0099999, 3.9999999, 0.295, 2.675, 1.005, 6.9999, 4.0750001])
+        .Concat([4.1, 4.10, 4.07, 0.29, 0.57, 1.1, 2.3, 8.2, 9.9, 10.0, Math.BitDecrement(4.1), Math.BitIncrement(4.1), 4.0999999999, 4.09999999999999])
         .Distinct()
         .ToArray();
 
     private static readonly string[] equalityOperators = ["=", ":", "!=", "!:"];
 
+    /// <summary>The backlog 338 operands, plus every one-decimal operand from 0.1 to 9.9 (each is an
+    /// x.x0, the shape that exposes backlog 342) and a few two-decimal spellings of them.</summary>
     private static readonly string[] starOperands =
-        ["4", "4.0", "4.00", "4.07", "4.1", "0.29", "0.57", "1", "2.67", "6.99", "7", "10", "0", "4.075", "0.3"];
+        new[] { "4", "4.0", "4.00", "4.07", "4.1", "0.29", "0.57", "1", "2.67", "6.99", "7", "10", "0", "4.075", "0.3" }
+            .Concat(Enumerable.Range(1, 99).Select(i => (i / 10.0).ToString("0.0", CultureInfo.InvariantCulture)))
+            .Concat(["4.10", "0.10", "8.20", "9.90", "1.10"])
+            .Distinct()
+            .ToArray();
 
     [Test]
     public async Task StarEquality_MatchesTheGameOnEveryRating()
@@ -65,7 +85,8 @@ public class SearchOperatorParityTest
             {
                 string query = "stars" + op + operand;
                 var site = await SiteMatchesAsync(query, "b", "difficulty_rating", ratings);
-                var game = ratings.Where(r => GameMatches(query, new ClientBeatmap { StarRating = r })).ToHashSet();
+                var criteria = GameCriteria(query);
+                var game = ratings.Where(r => ClientMatcher.CheckCriteriaMatch(new ClientBeatmap { StarRating = r }, criteria)).ToHashSet();
 
                 Collect(mismatches, query, site, game);
             }
@@ -84,6 +105,15 @@ public class SearchOperatorParityTest
     [TestCase("stars=4.07", new[] { 4.07, 4.0712, 4.0799999 }, new[] { 4.068, 4.08, 4.085 })]
     [TestCase("stars!=4.07", new[] { 4.068, 4.08, 3.99, 4.5 }, new[] { 4.07, 4.0712 })]
     [TestCase("stars=4.075", new double[0], new[] { 4.07, 4.075, 4.0750001, 4.08 })]
+    // Backlog 342: a map rated exactly 4.10 (the card prints "4.1") is stars=4.1 on both sides.
+    // The epsilon is 1e-9 on the SCALED value, so it reaches 1e-11 stars under a hundredth:
+    // 4.09999999999999 (1e-14 under, float-noise distance) is lifted to 4.10, while 4.0999999999
+    // (1e-10 under, ten times further than the reach) stays a 4.09.
+    [TestCase("stars=4.1", new[] { 4.1, 4.1049, 4.09999999999999 }, new[] { 4.0999999999, 4.09, 4.0999999, 4.11 })]
+    [TestCase("stars=4.10", new[] { 4.1 }, new[] { 4.09, 4.11 })]
+    [TestCase("stars=4.09", new[] { 4.09, 4.0999999999 }, new[] { 4.1 })]
+    [TestCase("stars!=4.1", new[] { 4.09, 4.11 }, new[] { 4.1 })]
+    [TestCase("stars=0.29", new[] { 0.29 }, new[] { 0.28, 0.3 })]
     public async Task StarEquality_Table(string query, double[] match, double[] noMatch)
     {
         double[] all = match.Concat(noMatch).ToArray();
@@ -147,11 +177,13 @@ public class SearchOperatorParityTest
     [Test]
     public async Task GreaterAndLess_AgreeOnTheHundredths_AndDivergeInsideOne()
     {
-        // A rating ALREADY on the hundredths by the game's own floor (0.29 is not: 0.29 * 100 is
-        // 28.999..., which the game floors to 0.28, and the site's raw comparison does not).
+        // A rating ALREADY on the hundredths by the game's own floor. Since backlog 342 that is
+        // every hundredth (0.29 used not to be: 0.29 * 100 is 28.999..., which the game floored to
+        // 0.28 and the site's raw comparison did not), and the count pins it.
         double[] grid = Enumerable.Range(0, 1001).Select(i => i / 100.0)
             .Where(r => ClientFormat.FloorToDecimalDigits(r, 2) == r)
             .ToArray();
+        Assert.That(grid, Has.Length.EqualTo(1001), "every hundredth floors to itself");
         var mismatches = new List<string>();
 
         foreach (string op in new[] { ">", ">=", ">:", "<", "<=", "<:" })
@@ -178,7 +210,67 @@ public class SearchOperatorParityTest
         });
     }
 
+    /// <summary>
+    /// Backlog 342's ANSWER, not only its agreement: for every hundredth from 0.00 to 10.00, the map
+    /// rated exactly that (the nearest double, as both sides store it) is found by the operand
+    /// written with two decimals, and with one when it ends in 0, and by nothing else in the grid,
+    /// through the real game matcher and the real SQL. Without the epsilon both sides missed 4.1,
+    /// 0.29, 0.57 and every other hundredth whose scaled double falls a hair under its integer.
+    /// </summary>
+    [Test]
+    public async Task StarEquality_EveryExactHundredth_MatchesItsOwnOperand()
+    {
+        var misses = new List<string>();
+        double[] hundredths = Enumerable.Range(0, 1001).Select(k => k / 100.0).ToArray();
+
+        foreach (int k in Enumerable.Range(0, 1001))
+        {
+            double rating = hundredths[k];
+            var spellings = new List<string> { rating.ToString("0.00", CultureInfo.InvariantCulture) };
+            if (k % 10 == 0)
+                spellings.Add(rating.ToString("0.0", CultureInfo.InvariantCulture));
+
+            foreach (string operand in spellings)
+            {
+                string query = "stars=" + operand;
+                var site = await SiteMatchesAsync(query, "b", "difficulty_rating", hundredths);
+                var criteria = GameCriteria(query);
+                var game = hundredths.Where(r => ClientMatcher.CheckCriteriaMatch(new ClientBeatmap { StarRating = r }, criteria)).ToHashSet();
+
+                if (!site.SetEquals([rating]))
+                    misses.Add($"site {query}: [{Show(site)}]");
+                if (!game.SetEquals([rating]))
+                    misses.Add($"game {query}: [{Show(game)}]");
+            }
+        }
+
+        Assert.That(misses, Is.Empty, $"{misses.Count} misses, first 20:\n" + string.Join("\n", misses.Take(20)));
+
+        static string Show(HashSet<double> set)
+            => string.Join(", ", set.OrderBy(r => r).Select(r => r.ToString("R", CultureInfo.InvariantCulture)));
+    }
+
+    /// <summary>The readable half of the epsilon pin: one constant, one value, and the SQL spells it.</summary>
+    [Test]
+    public void TheTwoFloorEpsilonsAreTheSameConstant()
+    {
+        var (sql, _) = BeatmapSearchSql.NumericPredicate(BeatmapSearchQuery.Parse("stars=4.1").NumericFilters.Single());
+        var literal = System.Text.RegularExpressions.Regex.Match(sql, @"\* 100 \+ ([0-9.eE+-]+)::float8\)");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(BeatmapSearchSql.STAR_FLOOR_EPSILON, Is.EqualTo(ClientFormat.FLOOR_EPSILON));
+            Assert.That(literal.Success, Is.True, sql);
+            Assert.That(double.Parse(literal.Groups[1].Value, CultureInfo.InvariantCulture), Is.EqualTo(BeatmapSearchSql.STAR_FLOOR_EPSILON), sql);
+        });
+    }
+
     private static bool GameMatches(string query, ClientBeatmap beatmap)
+        => ClientMatcher.CheckCriteriaMatch(beatmap, GameCriteria(query));
+
+    /// <summary>The game's own parse of <paramref name="query"/>, built once per query so a sweep
+    /// over ten thousand ratings does not re-parse it for each one.</summary>
+    private static ClientCriteria GameCriteria(string query)
     {
         var criteria = new ClientCriteria();
         applyQueries.Invoke(null, [criteria, query]);
@@ -187,7 +279,7 @@ public class SearchOperatorParityTest
         // comparison into a text match; every query here is one it reads.
         Assert.That(criteria.SearchText?.Trim(), Is.Null.Or.Empty, $"the game did not parse {query}");
 
-        return ClientMatcher.CheckCriteriaMatch(beatmap, criteria);
+        return criteria;
     }
 
     /// <summary>The site's verdicts: the emitted predicate, evaluated by Postgres over the values.</summary>

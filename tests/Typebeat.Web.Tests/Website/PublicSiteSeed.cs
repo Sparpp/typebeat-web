@@ -150,14 +150,16 @@ public static class PublicSiteSeed
     public static long OpBravoId { get; private set; }
 
     /// <summary>
-    /// Four one-difficulty sets tagged "staropset" for the game-syntax star operators (backlog
-    /// 338), rated 3.99, 4.00, 4.0712 and 4.50. 4.0712 is the one that matters: the site prints it
-    /// as 4.07, so stars=4.07 has to find it, which a full-precision equality never did.
+    /// Five one-difficulty sets tagged "staropset" for the game-syntax star operators (backlog
+    /// 338), rated 3.99, 4.00, 4.0712, 4.50 and 4.10. 4.0712 is the one 338 is about: the site
+    /// prints it as 4.07, so stars=4.07 has to find it, which a full-precision equality never did.
+    /// 4.10 is backlog 342's: the card prints "4.1", but 4.1 * 100 is 409.99999999999994 in
+    /// float8, so a floor without the epsilon put it at 4.09 and stars=4.1 found nothing.
     /// </summary>
     public static long[] StarOpIds { get; private set; } = [];
 
     /// <summary>The ratings behind <see cref="StarOpIds"/>, index for index.</summary>
-    public static readonly double[] StarOpRatings = [3.99, 4.00, 4.0712, 4.50];
+    public static readonly double[] StarOpRatings = [3.99, 4.00, 4.0712, 4.50, 4.10];
 
     /// <summary>
     /// "Triple Stack Serenade": three live difficulties whose HARDEST is not its FASTEST (backlog
@@ -385,7 +387,7 @@ public static class PublicSiteSeed
                 totalLengthS: 240, stars: 7.0, wpm: 200, wordCount: 100, charCount: 700,
                 lyrics: "quiet rain falls on the piano at night", targetWpm: 130);
 
-            // Fixed 2021 dates, so none of the four reaches the listing's first page.
+            // Fixed 2021 dates, so none of the five reaches the listing's first page.
             var starOps = new List<long>();
             for (int i = 0; i < StarOpRatings.Length; i++)
             {

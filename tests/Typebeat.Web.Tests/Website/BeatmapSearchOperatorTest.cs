@@ -210,16 +210,19 @@ public class BeatmapSearchOperatorTest
     }
 
     // ---- the game's operator syntax (backlog 338) over the "staropset" ratings ----
-    // Index order: 3.99, 4.00, 4.0712, 4.50 (PublicSiteSeed.StarOpRatings).
+    // Index order: 3.99, 4.00, 4.0712, 4.50, 4.10 (PublicSiteSeed.StarOpRatings).
 
-    [TestCase("stars>4", new[] { 2, 3 })]
+    [TestCase("stars>4", new[] { 2, 3, 4 })]
     [TestCase("stars<=4", new[] { 0, 1 })]
     [TestCase("stars=4.07", new[] { 2 })]
-    [TestCase("stars!=4.07", new[] { 0, 1, 3 })]
+    [TestCase("stars!=4.07", new[] { 0, 1, 3, 4 })]
     [TestCase("sr>=4.5", new[] { 3 })]
     [TestCase("stars:4.07", new[] { 2 })]
     [TestCase("stars=4", new[] { 1 })]
-    [TestCase("stars:>4", new[] { 2, 3 })]
+    [TestCase("stars:>4", new[] { 2, 3, 4 })]
+    [TestCase("stars=4.1", new[] { 4 })]
+    [TestCase("stars=4.10", new[] { 4 })]
+    [TestCase("stars!=4.1", new[] { 0, 1, 2, 3 })]
     public async Task GameStarSyntax_SelectsExactlyTheRatingsItNames(string op, int[] expected)
     {
         var ids = Ids(await GetHtml("/beatmapsets?q=" + Enc("staropset " + op)));
@@ -227,6 +230,8 @@ public class BeatmapSearchOperatorTest
 
         // stars:4.07 is the colon spelling of the same equality: it used to compare at full
         // precision and find nothing, while the card printed "4.07" on the third fixture.
+        // stars=4.1 on the fifth (rated exactly 4.10, printed "4.1") is backlog 342: the floor
+        // read it as 4.09 until the epsilon went in.
         Assert.That(ids, Is.EquivalentTo(want), op);
     }
 

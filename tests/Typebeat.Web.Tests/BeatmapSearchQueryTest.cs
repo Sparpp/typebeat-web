@@ -588,7 +588,7 @@ public class BeatmapSearchQueryTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(sql, Does.Contain("floor(b.difficulty_rating * 100) / 100 = @op0"));
+            Assert.That(sql, Does.Contain("floor(b.difficulty_rating * 100 + 1e-9::float8) / 100 = @op0"));
             Assert.That(param["op0"], Is.EqualTo(4.07));
         });
     }
@@ -600,7 +600,7 @@ public class BeatmapSearchQueryTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(sql, Does.Contain("NOT (floor(b.difficulty_rating * 100) / 100 = @op0)"));
+            Assert.That(sql, Does.Contain("NOT (floor(b.difficulty_rating * 100 + 1e-9::float8) / 100 = @op0)"));
             Assert.That(param["op0"], Is.EqualTo(4.07));
         });
     }

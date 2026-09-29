@@ -174,7 +174,8 @@ public static class BeatmapSearchSql
     /// <item>stars: the rating FLOORED to two decimals against the operand as typed, the game's
     /// <c>FloorToDecimalDigits(2)</c> with tolerance 0 (<c>BeatmapCarouselFilterMatching</c>), so
     /// <c>stars=4.07</c> is [4.07, 4.08) and <c>stars=4</c> is [4.00, 4.01). Postgres float8
-    /// arithmetic is the same IEEE double arithmetic as <c>Math.Floor(v * 100) / 100</c>.</item>
+    /// arithmetic is the same IEEE double arithmetic as <c>Math.Floor(v * 100 + 1e-9) / 100</c>,
+    /// epsilon included (<see cref="STAR_FLOOR_EPSILON"/>), so a 4.10 is <c>stars=4.1</c>.</item>
     /// <item>wpm, cpm, target: the value rounded to a whole number, as every page prints it
     /// (<c>ToString("0")</c>, half away from zero, which is <c>round(numeric)</c>).</item>
     /// <item>bpm: within 0.5 either side, exclusive, the game's tolerance.</item>
@@ -200,6 +201,20 @@ public static class BeatmapSearchSql
         };
     }
 
+    /// <summary>
+    /// The game's <c>FormatUtils.FLOOR_EPSILON</c> (backlog 342), added to the scaled rating before
+    /// the floor so a rating within float noise of an exact hundredth floors to that hundredth:
+    /// without it a map rated exactly 4.10 floors to 4.09 (4.1 * 100 is 409.99999999999994 in
+    /// float8) and <c>stars=4.1</c> finds nothing, while the card prints "4.1". The explicit
+    /// <c>::float8</c> keeps the addition in float8 (a bare <c>1e-9</c> literal is numeric), and
+    /// Postgres evaluates the multiply, the add and the divide as three separate correctly rounded
+    /// IEEE double operations, the same three the game performs, so the verdicts are identical.
+    /// Change it with the game constant; <c>SearchOperatorParityTest</c> pins the pair.
+    /// </summary>
+    public const double STAR_FLOOR_EPSILON = 1e-9;
+
+    private const string STAR_FLOOR_EPSILON_SQL = "1e-9::float8";
+
     /// <summary>The game's tolerance for a BPM equality (<c>FilterQueryParser</c>, <c>bpm</c> case).</summary>
     public const double BPM_TOLERANCE = 0.5;
 
@@ -208,7 +223,7 @@ public static class BeatmapSearchSql
         switch (n.Field)
         {
             case FilterField.Stars:
-                return $"floor({expr} * 100) / 100 = @{next(n.Low)}";
+                return $"floor({expr} * 100 + {STAR_FLOOR_EPSILON_SQL}) / 100 = @{next(n.Low)}";
 
             case FilterField.Wpm or FilterField.Cpm or FilterField.TargetWpm:
                 return $"round(({expr})::numeric) = @{next(n.Low)}";
