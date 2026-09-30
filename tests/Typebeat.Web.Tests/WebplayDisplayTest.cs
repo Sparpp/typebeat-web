@@ -2179,7 +2179,9 @@ public class WebplayDisplayTest
     /// <summary>
     /// THE SPACE ERROR DOT RULE, typebeat-osu's SpaceErrorDotTest transcribed case for case onto the
     /// JS port (spaceErrorDots, mirroring LyricLineDisplay.ComputeSpaceErrorDots). The harness builds
-    /// the same hand-made cells; the expected flags below are the desktop test's own.
+    /// the same hand-made cells; the expected flags below are the desktop test's own. Since PR 3 only
+    /// a gap holding a wrong character of its own is dotted, so every case that used to read the
+    /// word before the gap now reads undotted, under the game's renamed test.
     /// </summary>
     [Test]
     public void TheSpaceErrorDotRuleMatchesTheDesktopCases()
@@ -2189,28 +2191,28 @@ public class WebplayDisplayTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(Case("flawedWordSpacedPast"), Is.EqualTo(new[] { false, false, true, false, false }), "TestAFlawedWordSpacedPastEarnsADot");
+            Assert.That(Case("flawedWordSpacedPast"), Is.EqualTo(new[] { false, false, false, false, false }), "TestAFlawedWordSpacedPastDoesNotEarnADot");
             Assert.That(Case("cleanWord"), Is.EqualTo(new[] { false, false, false, false, false }), "TestACleanWordEarnsNothing");
             Assert.That(Case("unacceptedGapUntyped"), Is.EqualTo(new[] { false, false, false, false }), "TestAnUnacceptedGapNeverEarnsADot(Untyped)");
             Assert.That(Case("unacceptedGapMissed"), Is.EqualTo(new[] { false, false, false, false }), "TestAnUnacceptedGapNeverEarnsADot(Missed)");
             Assert.That(Case("unacceptedGapAbandoned"), Is.EqualTo(new[] { false, false, false, false }), "TestAnUnacceptedGapNeverEarnsADot(Abandoned)");
-            Assert.That(Case("gapHoldingTypedChars"), Is.EqualTo(new[] { false, false, true, false }), "TestAGapHoldingTypedCharactersKeepsItsWordsDot");
+            Assert.That(Case("gapHoldingTypedChars"), Is.EqualTo(new[] { false, false, true, false }), "TestAGapHoldingTypedCharactersEarnsADot");
             Assert.That(Case("mistypedGapFromCleanWord"), Is.EqualTo(new[] { false, false, true, false }), "TestAMistypedGapEarnsItsOwnDotFromACleanWord");
             Assert.That(Case("spacedPastCleanly"), Is.EqualTo(new[] { false, false, false, false }), "TestAWordSpacedPastCleanlyEarnsNoDot");
-            Assert.That(Case("payingTheSpaceKeepsTheDot"), Is.EqualTo(new[] { false, false, true, false }), "TestPayingTheSpaceKeepsTheDot");
-            Assert.That(Case("flawWrong"), Is.EqualTo(new[] { false, false, true, false }), "TestWhichStatesLeaveAWordFlawed(Wrong)");
-            Assert.That(Case("flawMissed"), Is.EqualTo(new[] { false, false, true, false }), "TestWhichStatesLeaveAWordFlawed(Missed)");
-            Assert.That(Case("flawAbandoned"), Is.EqualTo(new[] { false, false, true, false }), "TestWhichStatesLeaveAWordFlawed(Abandoned)");
-            Assert.That(Case("flawCorrect"), Is.EqualTo(new[] { false, false, false, false }), "TestWhichStatesLeaveAWordFlawed(Correct)");
-            Assert.That(Case("flawUntyped"), Is.EqualTo(new[] { false, false, false, false }), "TestWhichStatesLeaveAWordFlawed(Untyped)");
-            Assert.That(Case("eachGapReadsOwnWord"), Is.EqualTo(new[] { false, false, false, false, false, true, false, false }), "TestEachGapReadsOnlyItsOwnWord");
+            Assert.That(Case("payingTheSpaceClearsTheDot"), Is.EqualTo(new[] { false, false, false, false }), "TestPayingTheSpaceClearsTheDot");
+            Assert.That(Case("flawWrong"), Is.EqualTo(new[] { false, false, false, false }), "TestWordStatesDoNotDotAnAcceptedGap(Wrong)");
+            Assert.That(Case("flawMissed"), Is.EqualTo(new[] { false, false, false, false }), "TestWordStatesDoNotDotAnAcceptedGap(Missed)");
+            Assert.That(Case("flawAbandoned"), Is.EqualTo(new[] { false, false, false, false }), "TestWordStatesDoNotDotAnAcceptedGap(Abandoned)");
+            Assert.That(Case("flawCorrect"), Is.EqualTo(new[] { false, false, false, false }), "TestWordStatesDoNotDotAnAcceptedGap(Correct)");
+            Assert.That(Case("flawUntyped"), Is.EqualTo(new[] { false, false, false, false }), "TestWordStatesDoNotDotAnAcceptedGap(Untyped)");
+            Assert.That(Case("wordTypoMarksNoSpace"), Is.EqualTo(new[] { false, false, false, false, false, false, false, false }), "TestAWordTypoDoesNotMarkSurroundingSpaces");
             Assert.That(Case("spoiledGapDoesNotFlawNext"), Is.EqualTo(new[] { false, true, false, false, false }), "TestASpoiledGapDoesNotFlawTheNextWord");
-            Assert.That(Case("punctuationCarriesFlaw"), Is.EqualTo(new[] { false, false, true, false }), "TestPunctuationIsNeitherABoundaryNorAFlaw (flaw)");
+            Assert.That(Case("punctuationCarriesFlaw"), Is.EqualTo(new[] { false, false, false, false }), "TestPunctuationIsNeitherABoundaryNorAFlaw (lyric typo)");
             Assert.That(Case("punctuationIsNoFlaw"), Is.EqualTo(new[] { false, false, false, false }), "TestPunctuationIsNeitherABoundaryNorAFlaw (clean)");
             Assert.That(Case("noGaps"), Is.EqualTo(new[] { false, false }), "TestALineWithNoGapsHasNoDots");
             Assert.That(Case("empty"), Is.Empty, "an empty line");
-            Assert.That(dots.GetProperty("reclaimBefore").GetBoolean(), Is.True, "TestReclaimingAnAbandonedWordClearsItsDot (skipped)");
-            Assert.That(dots.GetProperty("reclaimAfter").GetBoolean(), Is.False, "TestReclaimingAnAbandonedWordClearsItsDot (reclaimed)");
+            Assert.That(dots.GetProperty("reclaimBefore").GetBoolean(), Is.False, "TestSkippingAndReclaimingAWordLeavesNoDot (skipped)");
+            Assert.That(dots.GetProperty("reclaimAfter").GetBoolean(), Is.False, "TestSkippingAndReclaimingAWordLeavesNoDot (reclaimed)");
         });
     }
 

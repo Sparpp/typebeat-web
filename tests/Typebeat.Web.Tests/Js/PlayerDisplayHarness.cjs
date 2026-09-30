@@ -1847,14 +1847,14 @@ function dotCases() {
         gapHoldingTypedChars: [L('a', 'abandoned'), L('b', 'abandoned'), G('wrong', 'x'), L('c', 'untyped')],
         mistypedGapFromCleanWord: [L('a', 'correct'), L('b', 'correct'), G('wrong', 'q'), L('c', 'untyped')],
         spacedPastCleanly: [L('a', 'correct'), L('b', 'correct'), G('correct', ' '), L('c', 'correct')],
-        payingTheSpaceKeepsTheDot: [L('a', 'wrong'), L('b', 'correct'), G('correct', 'x'), L('c', 'correct')],
+        payingTheSpaceClearsTheDot: [L('a', 'wrong'), L('b', 'correct'), G('correct', 'x'), L('c', 'correct')],
         flawWrong: [L('a', 'correct'), L('b', 'wrong'), G('correct'), L('c', 'correct')],
         flawMissed: [L('a', 'correct'), L('b', 'missed'), G('correct'), L('c', 'correct')],
         flawAbandoned: [L('a', 'correct'), L('b', 'abandoned'), G('correct'), L('c', 'correct')],
         flawCorrect: [L('a', 'correct'), L('b', 'correct'), G('correct'), L('c', 'correct')],
         flawUntyped: [L('a', 'correct'), L('b', 'untyped'), G('correct'), L('c', 'correct')],
-        eachGapReadsOwnWord: [L('a', 'correct'), L('b', 'correct'), G('correct'), L('c', 'correct'), L('d', 'wrong'), G('correct'), L('e', 'correct'), L('f', 'correct')],
-        spoiledGapDoesNotFlawNext: [L('a', 'wrong'), G('wrong'), L('b', 'correct'), G('correct'), L('c', 'correct')],
+        wordTypoMarksNoSpace: [L('a', 'correct'), L('b', 'correct'), G('correct'), L('c', 'correct'), L('d', 'wrong'), G('correct'), L('e', 'correct'), L('f', 'correct')],
+        spoiledGapDoesNotFlawNext: [L('a', 'wrong'), G('wrong', 'x'), L('b', 'correct'), G('correct'), L('c', 'correct')],
         punctuationCarriesFlaw: [L('a', 'wrong'), M(','), G('correct'), L('b', 'correct')],
         punctuationIsNoFlaw: [L('a', 'correct'), M(','), G('correct'), L('b', 'correct')],
         noGaps: [L('a', 'wrong'), L('b', 'missed')],
@@ -1863,7 +1863,7 @@ function dotCases() {
     const result = {};
     for (const name of Object.keys(cases)) result[name] = D.spaceErrorDots(cases[name]);
 
-    // TestReclaimingAnAbandonedWordClearsItsDot: the same array re-read after the reclaim.
+    // TestSkippingAndReclaimingAWordLeavesNoDot: the same array re-read after the reclaim.
     const reclaim = [L('a', 'correct'), L('b', 'abandoned'), G('correct'), L('c', 'correct')];
     const before = D.spaceErrorDots(reclaim)[2];
     reclaim[1].state = 'untyped';

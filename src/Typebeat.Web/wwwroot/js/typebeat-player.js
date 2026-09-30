@@ -453,24 +453,16 @@
         return cell.typeable && cell.expected === ' ';
     }
 
-    /// LyricLineDisplay.ComputeSpaceErrorDots, one flag per cell, pure. A gap is dotted when it
-    /// holds a typo of its OWN (state wrong), or when the word before it (back to the previous gap
-    /// or the line start) was left FLAWED and the player spaced past it (the gap is correct).
-    /// Flawed means a typeable non-gap cell wrong, missed or abandoned: a word given up to a skip
-    /// was left with an error in it, and reclaiming it (which returns its cells to untyped) clears
-    /// the dot with no event of its own, because this is re-read on every repaint.
+    /// LyricLineDisplay.ComputeSpaceErrorDots, one flag per cell, pure. Since PR 3 a gap is dotted
+    /// only when it holds a wrong character of its OWN (state wrong, with a typed character): a typo
+    /// inside the word before it no longer dots a correctly typed space, and a skipped word leaves
+    /// no dot on the space the skip passed. The word-flaw half of the old rule is gone on both
+    /// sides.
     function spaceErrorDots(cells) {
         const into = new Array(cells.length);
-        let flawed = false;
         for (let i = 0; i < cells.length; i++) {
             const cell = cells[i];
-            if (isWordGap(cell)) {
-                into[i] = cell.state === 'wrong' || (flawed && cell.state === 'correct');
-                flawed = false;
-                continue;
-            }
-            into[i] = false;
-            if (cell.typeable && (cell.state === 'wrong' || cell.state === 'missed' || cell.state === 'abandoned')) flawed = true;
+            into[i] = isWordGap(cell) && cell.state === 'wrong' && cell.typedChar !== null && cell.typedChar !== undefined;
         }
         return into;
     }
