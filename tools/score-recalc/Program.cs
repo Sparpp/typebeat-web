@@ -228,7 +228,7 @@ internal static class Cli
             results.Add(result);
         }
 
-        var plan = WritePlan.Build(results, mode, options.Unreplayable, options.ScoreIds.Count > 0 || options.Limit is not null);
+        var plan = WritePlan.Build(results, mode, options.Unreplayable, options.ScoreIds.Count > 0 || options.Limit is not null || options.MaxScoreId is not null);
 
         Report.Print(results, plan, options.WholeTable, Console.Out);
 
@@ -274,6 +274,7 @@ internal static class Cli
     private static async Task<List<StoredScore>> LoadScoresAsync(NpgsqlConnection conn, Options options, CancellationToken ct)
     {
         string filter = options.ScoreIds.Count > 0 ? "AND s.id = ANY(@ids)" : string.Empty;
+        string ceiling = options.MaxScoreId is not null ? "AND s.id <= @maxScoreId" : string.Empty;
         string limit = options.Limit is int n ? $"LIMIT {n.ToString(CultureInfo.InvariantCulture)}" : string.Empty;
 
         var rows = await conn.QueryAsync<StoredScore>(
@@ -305,11 +306,11 @@ internal static class Cli
                     b.ratings::text              AS Ratings
              FROM scores s
              JOIN beatmaps b ON b.id = s.beatmap_id
-             WHERE s.ruleset_id = 0 {filter}
+             WHERE s.ruleset_id = 0 {filter} {ceiling}
              ORDER BY s.id
              {limit}
              """,
-            new { ids = options.ScoreIds.ToArray() });
+            new { ids = options.ScoreIds.ToArray(), maxScoreId = options.MaxScoreId });
 
         return rows.ToList();
     }
@@ -504,6 +505,10 @@ internal static class Cli
               --cache <dir>      where fetched .osr/.osz are kept (default: ./.score-recalc-cache)
               --score <id>       recalculate only this score; repeatable
               --limit <n>        only the first n rows
+              --max-score-id <n> only rows with id <= n. Pins a sweep to the rows a report covered,
+                                 so scores submitted on a live game after the report cannot drift
+                                 the expected counts; rows above the ceiling were judged under
+                                 today's rules already and lose nothing by sitting a supersede out.
               --out <file.json>  write the full per-score detail as JSON
               --full-table       print every row of the before/after table instead of the first 200
               --offline <dir>    no database at all: recalculate every .osr in <dir>/replays against
@@ -574,6 +579,17 @@ internal static class Cli
         public string? ScoresFile { get; private init; }
         public string? OutFile { get; private init; }
         public int? Limit { get; private init; }
+
+        /// <summary>
+        /// Only rows with an id at or below this are loaded. It exists for one situation: applying a
+        /// sweep on a LIVE game, where every score submitted between the report and the apply drifts
+        /// the expected counts and an apply against a moving table can lose that race indefinitely.
+        /// Pinning both runs to the highest id the report covered makes them read the same rows by
+        /// construction; rows above the ceiling were judged under today's rules to begin with, so
+        /// leaving them out of a supersede loses nothing.
+        /// </summary>
+        public long? MaxScoreId { get; private init; }
+
         public int? ExpectSuperseded { get; private init; }
 
         /// <summary>
@@ -603,6 +619,7 @@ internal static class Cli
         {
             string? db = null, site = null, cache = null, offline = null, stars = null, scoresFile = null, outFile = null;
             int? limit = null, expect = null, expectUnreproducible = null;
+            long? maxScoreId = null;
             bool confirmed = false, supersedeConfirmed = false, backfillMistypes = false;
             bool allowUnavailable = false, allowRefused = false, wholeTable = false;
             var ids = new List<long>();
@@ -667,6 +684,16 @@ internal static class Cli
                         ids.Add(id);
                         break;
 
+                    case "--max-score-id":
+                        if (!long.TryParse(Next(), out long maxId) || maxId < 1)
+                        {
+                            error = "--max-score-id needs a score id, the highest one the report covered.";
+                            return false;
+                        }
+
+                        maxScoreId = maxId;
+                        break;
+
                     case "--unreplayable":
                         if (Next() is not string spec || !TryApplyPolicy(spec, unreplayable, out error))
                         {
@@ -703,6 +730,7 @@ internal static class Cli
                 ScoresFile = scoresFile,
                 OutFile = outFile,
                 Limit = limit,
+                MaxScoreId = maxScoreId,
                 ExpectSuperseded = expect,
                 ExpectUnreproducible = expectUnreproducible,
                 Confirmed = confirmed,
