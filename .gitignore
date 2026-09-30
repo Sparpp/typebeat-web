@@ -9,3 +9,7 @@ deploy/.env
 # deploy/backup.sh writes prod backups into backups/ inside the server checkout; they must
 # never be tracked (and .dockerignore keeps them out of the image build context).
 backups/
+# tools/score-recalc keeps fetched .osr/.osz in its cache and writes the supersede report
+# beside the repo root; both are gigabytes of prod-derived data and never belong in git.
+.score-recalc-cache/
+supersede*.json
