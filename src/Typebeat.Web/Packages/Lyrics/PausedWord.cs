@@ -30,6 +30,12 @@ namespace Typebeat.Web.Packages.Lyrics;
 /// one that overlaps a rest already counted. That is the same conservative answer the loader gives
 /// a rest that no longer fits, and it is why a word whose every rest is ignored reads exactly as
 /// if it had none.</para>
+///
+/// <para>Since PR 3 both entry points take the CELL RULE as an optional parameter, as the game's do
+/// (its Polyglot play cuts a word in its original script, where a cell is any script's letter). The
+/// default is <see cref="Typeability.IsCell"/>, the rule these always used, so every stored map, the
+/// ratings and the parser read exactly what they read before; the server never passes another
+/// rule, because it never rates a Polyglot play.</para>
 /// </summary>
 internal static class PausedWord
 {
@@ -52,12 +58,13 @@ internal static class PausedWord
     /// can honour (see the type's remarks), in which case every reader keeps the plain word it had
     /// before the feature existed.
     /// </summary>
-    internal static Cut? Of(string token, double unitStart, double unitEnd, TimedUnit? unit)
+    internal static Cut? Of(string token, double unitStart, double unitEnd, TimedUnit? unit, Func<char, bool>? isCell = null)
     {
         if (unit == null || unit.Pauses.Count == 0)
             return null;
 
-        var rests = UsableRests(token, unitStart, unitEnd, unit.Pauses);
+        isCell ??= Typeability.IsCell;
+        var rests = UsableRests(token, unitStart, unitEnd, unit.Pauses, isCell);
 
         if (rests.Count == 0)
             return null;
@@ -80,10 +87,11 @@ internal static class PausedWord
     /// <para>Shared with the LOADER (<see cref="LyricTiming"/>), which keeps exactly this set when
     /// it reads a map, so a rest the play would ignore is never stored in the first place.</para>
     /// </summary>
-    internal static List<WordPause> UsableRests(string token, double unitStart, double unitEnd, IEnumerable<WordPause> pauses)
+    internal static List<WordPause> UsableRests(string token, double unitStart, double unitEnd, IEnumerable<WordPause> pauses, Func<char, bool>? isCell = null)
     {
+        isCell ??= Typeability.IsCell;
         var rests = new List<WordPause>();
-        int totalCells = Typeability.TypeableCount(token);
+        int totalCells = token.Count(c => isCell(c));
 
         foreach (var pause in pauses.OrderBy(p => p.StartTime))
         {
@@ -91,7 +99,7 @@ internal static class PausedWord
                 continue;
 
             int cut = Math.Clamp(pause.SplitChar, 0, token.Length);
-            int cells = cellsBefore(token, cut);
+            int cells = cellsBefore(token, cut, isCell);
 
             if (cells <= 0 || cells >= totalCells)
                 continue;
@@ -118,13 +126,13 @@ internal static class PausedWord
     /// <summary>
     /// How many of a token's typeable cells sit before <paramref name="charIndex"/>.
     /// </summary>
-    private static int cellsBefore(string token, int charIndex)
+    private static int cellsBefore(string token, int charIndex, Func<char, bool> isCell)
     {
         int cells = 0;
 
         for (int i = 0; i < charIndex && i < token.Length; i++)
         {
-            if (Typeability.IsCell(token[i]))
+            if (isCell(token[i]))
                 cells++;
         }
 
