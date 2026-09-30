@@ -299,3 +299,9 @@ WireCompat is where that is provable, because it is the only project that compil
 There is a tool for pp changes: `tools/pp.py` in the parent superrepo (`show` / `check` / `set`),
 which propagates a constant across both mirrors, `docs/pp.md` and the test expectations. Prefer it
 over hand-editing, and if it cannot express your change, say so rather than working around it.
+
+## Wire notes
+
+- **`song_language`** on every APIBeatmapSet object (`APIBeatmapSetResponse`): `beatmapsets.language`,
+  a canonical `BeatmapLanguages` name or `""`, always emitted; consumed by the client's
+  `BeatmapUpdaterMetadataLookup`. Never `language`, which the client binds to osu's `{id, name}`.
