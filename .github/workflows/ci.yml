@@ -136,11 +136,18 @@ jobs:
       # moved the site to typebeat.sh checked the new name first, got Cloudflare 525s because Caddy
       # had no vhost for it yet, failed, and so skipped the very reload that would have fixed it.
       # The old host is checked too, since every client shipped before the move still talks to it.
+      # PATIENT on purpose: the app does not listen until Program.cs has run the migrations, then
+      # PaceBackfill (which re-rates EVERY ranked map whenever LyricPace's VERSION moved, about 0.3 to
+      # 0.65 s per map) and PpBackfill. The deploy that carried LyricPace v22 took well over the old
+      # 35 s window (5 s + 10 x 3 s), Caddy answered 502 throughout, this step went red and the
+      # cleanup steps below never ran, although the site came up healthy a minute later
+      # (2026-09-30). Six minutes covers a re-rate of the whole pool several times over; a genuinely
+      # broken container still fails here, only later.
       - name: Health check
         run: |
           sleep 5
-          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://typebeat.sh/health | grep -q ok
-          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -q ok
+          curl -fsS --retry 60 --retry-delay 5 --retry-max-time 360 --retry-all-errors https://typebeat.sh/health | grep -q ok
+          curl -fsS --retry 20 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -q ok
           echo "healthy"
 
       # The build cache is what the box pays for the app image build, and nothing ever collected
