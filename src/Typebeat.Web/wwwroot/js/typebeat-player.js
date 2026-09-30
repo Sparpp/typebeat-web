@@ -598,16 +598,24 @@
     }
 
     // THE UNDERLINE PACE HUE (backlog 228 on the desktop, 317 here), a port of UI/UnderlinePace.cs.
-    // The rail under a line is cut into one band per WORD (the word gap that closes it included) and
-    // each band is tinted by its MAP-WIDE mid-rank percentile of countable cells per millisecond:
-    // the middle half stays the neutral rail, the fast quartile shades toward the error red and the
-    // slow one toward the slow green, both lifting from 0.20 to 0.34 alpha. Display only; nothing
-    // judges, scores or submits off it. Pinned against UnderlinePace.BuildBands in WireCompat.
+    // The rail under a line is cut into one band per WORD (the word gap that closes it included),
+    // and since PR 3 per syllable subdivision too (a word is cut again at each of its
+    // syllableMarkerCells). Each band is tinted by its speed in countable cells per millisecond, in
+    // one of two modes. The RELATIVE mode (UnderlinePace.BuildRelativeBands, the one the desktop's
+    // LyricStage draws since PR 3 and therefore what /play draws) compares each band with the band
+    // before it, across line breaks: a DEFAULT_MAX_CHANGE_PERCENT rise reaches the full error red, the
+    // same fall the full slow green. The WHOLE-MAP mode (UnderlinePace.BuildBands, the pre-PR 3 draw,
+    // kept for the mirror) ranks every band against the map: the middle half stays the neutral rail,
+    // the fast quartile shades red and the slow one green. Both lift from 0.20 to 0.34 alpha. Display
+    // only; nothing judges, scores or submits off it. Pinned against both C# builders in WireCompat.
     const PACE_NEUTRAL_ALPHA = 0.20;      // UnderlinePace.NEUTRAL_ALPHA
     const PACE_HUED_ALPHA = 0.34;         // UnderlinePace.HUED_ALPHA
     const PACE_NEUTRAL_LO_RANK = 0.25;    // UnderlinePace.NEUTRAL_LO_RANK
     const PACE_NEUTRAL_HI_RANK = 0.75;    // UnderlinePace.NEUTRAL_HI_RANK
     const PACE_MIN_SEGMENT_SPAN_MS = 30;  // UnderlinePace.MIN_SEGMENT_SPAN_MS
+    // UnderlinePace.DEFAULT_MAX_CHANGE_PERCENT, the desktop's PaceColourMaxChange setting default.
+    // /play has no settings surface, so it takes the default, as it does every display setting.
+    const PACE_DEFAULT_MAX_CHANGE_PERCENT = 100;
     // TypeBeatStyle.SungAccent (#7ec8e3), ErrorChar (#ca4754) and PaceSlowAccent (#6ed26e), as the
     // desktop's byte-constructed Color4s: channels in [0, 1].
     const PACE_SUNG_ACCENT = { r: 126 / 255, g: 200 / 255, b: 227 / 255 };
@@ -654,6 +662,28 @@
         };
     }
 
+    /// UnderlinePace.ColourForPreviousSpeed: the RELATIVE mode's band colour, from the change against
+    /// the band before. At the default threshold a 100% rise reaches the red end and a 100% fall the
+    /// green end, both through paceColourForRank's ramps. The first band (no previous) is neutral; a
+    /// positive speed after a zero-speed band is fully red. The threshold is clamped to [25, 150]
+    /// percent, and a non-finite one falls back to the default.
+    function paceColourForPreviousSpeed(speed, previousSpeed, maxChangePercent) {
+        if (previousSpeed === null || previousSpeed === undefined) return paceColourForRank(0.5);
+        if (previousSpeed <= 0) return speed > 0 ? paceColourForRank(1) : paceColourForRank(0.5);
+        const max = maxChangePercent === undefined ? PACE_DEFAULT_MAX_CHANGE_PERCENT : maxChangePercent;
+        const change = (speed - previousSpeed) / previousSpeed;
+        const threshold = isFinite(max)
+            ? Math.min(150, Math.max(25, max)) / 100
+            : PACE_DEFAULT_MAX_CHANGE_PERCENT / 100;
+        if (change > 0) {
+            return paceColourForRank(PACE_NEUTRAL_HI_RANK + Math.min(change / threshold, 1) * (1 - PACE_NEUTRAL_HI_RANK));
+        }
+        if (change < 0) {
+            return paceColourForRank(PACE_NEUTRAL_LO_RANK - Math.min(-change / threshold, 1) * PACE_NEUTRAL_LO_RANK);
+        }
+        return paceColourForRank(0.5);
+    }
+
     /// UnderlinePace.firstVocalTime: the first TYPEABLE cell's target in [from, toExclusive), else
     /// the range's first cell's (0 past the end).
     function paceFirstVocalTime(cells, from, toExclusive) {
@@ -663,16 +693,28 @@
         return from < cells.length ? cells[from].target : 0;
     }
 
-    /// UnderlinePace.SegmentLine: one { startCell, endCellExclusive, speed } per word, a segment
-    /// running through the word gap that closes it, its span reaching the NEXT segment's first vocal
-    /// target (the line's sung end for the last), and its speed in COUNTABLE cells (typeable, not a
-    /// space) per millisecond with the span floored at PACE_MIN_SEGMENT_SPAN_MS.
-    function paceSegmentLine(cells, lineSungEndMs) {
+    /// UnderlinePace.segmentLine: one { startCell, endCellExclusive, speed } per word, a segment
+    /// running through the word gap that closes it, cut again at every subdivision start inside the
+    /// line (PR 3: the caller passes the line's syllableMarkerCells, as UnderlinePace.SegmentLine(line)
+    /// passes TypingLine.SyllableMarkerCells; omitted, the cut is per word only). Its span reaches
+    /// the NEXT segment's first vocal target (the line's sung end for the last), and its speed is in
+    /// COUNTABLE cells (typeable, not a space) per millisecond with the span floored at
+    /// PACE_MIN_SEGMENT_SPAN_MS.
+    function paceSegmentLine(cells, lineSungEndMs, subdivisionStarts) {
         const n = cells.length;
         if (n === 0) return [];
         const starts = [0];
         for (let i = 0; i < n; i++) {
             if (isWordGap(cells[i]) && i + 1 < n) starts.push(i + 1);
+        }
+        for (const start of subdivisionStarts || []) {
+            if (start > 0 && start < n) starts.push(start);
+        }
+        // starts.Sort() then the adjacent-duplicate sweep: a NUMERIC sort, the JS default being
+        // lexicographic.
+        starts.sort(function (a, b) { return a - b; });
+        for (let i = starts.length - 1; i > 0; i--) {
+            if (starts[i] === starts[i - 1]) starts.splice(i, 1);
         }
         const result = new Array(starts.length);
         for (let k = 0; k < starts.length; k++) {
@@ -714,30 +756,51 @@
         return ranks;
     }
 
-    /// UnderlinePace.BuildBands, the whole-map precompute: one array of { startCell,
+    /// UnderlinePace.buildBands, the whole-map precompute: one array of { startCell,
     /// endCellExclusive, colour } per line. Each line's last segment closes on the END of its sung
     /// polyline (UnderlinePace.SungEndOf reads TypingLine.SweepEndTime, which is that anchor), taken
-    /// from buildSungPoints so the band and the fill drawn over it cannot drift apart. Run ONCE per
-    /// map, beside sungPoints; never per frame.
-    function buildPaceBands(lines, sungPointsPerLine) {
+    /// from buildSungPoints so the band and the fill drawn over it cannot drift apart, and each line
+    /// is cut at its own syllableMarkerCells as well as its word gaps. `relativeToPrevious` picks the
+    /// colour: each band against the band before it, across line breaks
+    /// (paceColourForPreviousSpeed), or its map-wide rank (paceColourForRank). Run ONCE per map,
+    /// beside sungPoints; never per frame.
+    function paceBandsOf(lines, sungPointsPerLine, relativeToPrevious, maxChangePercent) {
         const perLine = new Array(lines.length);
         const speeds = [];
         for (let k = 0; k < lines.length; k++) {
             const points = sungPointsPerLine ? sungPointsPerLine[k] : buildSungPoints(lines[k]);
-            perLine[k] = paceSegmentLine(lines[k].cells, points[points.length - 1].t);
+            perLine[k] = paceSegmentLine(lines[k].cells, points[points.length - 1].t, lines[k].syllableMarkerCells);
             for (const segment of perLine[k]) speeds.push(segment.speed);
         }
-        const ranks = paceRanksOf(speeds);
+        const ranks = relativeToPrevious ? [] : paceRanksOf(speeds);
         let at = 0;
+        let previousSpeed = null;
         return perLine.map(function (segments) {
             return segments.map(function (segment) {
+                const colour = relativeToPrevious
+                    ? paceColourForPreviousSpeed(segment.speed, previousSpeed, maxChangePercent)
+                    : paceColourForRank(ranks[at]);
+                previousSpeed = segment.speed;
+                at++;
                 return {
                     startCell: segment.startCell,
                     endCellExclusive: segment.endCellExclusive,
-                    colour: paceColourForRank(ranks[at++])
+                    colour: colour
                 };
             });
         });
+    }
+
+    /// UnderlinePace.BuildRelativeBands at DEFAULT_MAX_CHANGE_PERCENT: what the desktop's LyricStage
+    /// draws since PR 3, and therefore what /play draws.
+    function buildPaceBands(lines, sungPointsPerLine) {
+        return paceBandsOf(lines, sungPointsPerLine, true, PACE_DEFAULT_MAX_CHANGE_PERCENT);
+    }
+
+    /// UnderlinePace.BuildBands, the whole-map percentile mode the desktop drew before PR 3. Not
+    /// drawn by /play; kept, and pinned, because the C# keeps it.
+    function buildRankedPaceBands(lines, sungPointsPerLine) {
+        return paceBandsOf(lines, sungPointsPerLine, false);
     }
 
     /// A band colour as a CSS rgba() string.
@@ -3192,9 +3255,11 @@
         // against UnderlinePace.BuildBands in WireCompat.
         currentSyllableIn,
         paceColourForRank,
+        paceColourForPreviousSpeed,
         paceSegmentLine,
         paceRanksOf,
         buildPaceBands,
+        buildRankedPaceBands,
         paceColourCss,
         // The cell-state feedback (backlog 316): the space error dot rule and its pulse curve,
         // pure, so the display harness pins them against the desktop's SpaceErrorDotTest cases.

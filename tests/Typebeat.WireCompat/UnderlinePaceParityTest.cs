@@ -14,8 +14,13 @@ namespace Typebeat.WireCompat;
 /// <summary>
 /// The cross-repo pin on the underline PACE HUE (backlog 317): <c>buildPaceBands</c> in
 /// <c>typebeat-player.js</c> is a port of the desktop's <see cref="UnderlinePace"/>, and this holds
-/// the browser's bands against <see cref="UnderlinePace.BuildBands"/> over the same .osu bytes, band
-/// by band: the cell range each word band covers and the colour its map-wide pace rank earned.
+/// the browser's bands against the C# over the same .osu bytes, band by band: the cell range each
+/// word (or, since PR 3, syllable subdivision) band covers and the colour it earned. PR 3 moved the
+/// desktop's DRAWN mode to <see cref="UnderlinePace.BuildRelativeBands"/> (each band against the
+/// band before it, at <see cref="UnderlinePace.DEFAULT_MAX_CHANGE_PERCENT"/>), so that is what
+/// <c>buildPaceBands</c> is held against; the whole-map percentile mode
+/// (<see cref="UnderlinePace.BuildBands"/>) is kept on both sides and held against
+/// <c>buildRankedPaceBands</c>.
 ///
 /// <para>Display only, so a drift here moves no score; it would still show a /play player a
 /// different map from the one the desktop shows, which is what the mirror table forbids. The
@@ -36,6 +41,19 @@ public class UnderlinePaceParityTest
     private static readonly double?[] rank_probes =
         [0, 0.01, 0.1, 0.2, 0.2499, 0.25, 0.4, 0.5, 0.75, 0.7501, 0.8, 0.9, 0.99, 1, -1, 2, null];
 
+    /// <summary>
+    /// (speed, previous speed, max change percent) triples for
+    /// <see cref="UnderlinePace.ColourForPreviousSpeed"/>: no previous band, a zero previous with a
+    /// positive and a zero speed, no change, rises and falls either side of the threshold, and the
+    /// threshold clamped at both ends. A null max change is the default.
+    /// </summary>
+    private static readonly (double Speed, double? Previous, double? MaxChange)[] previous_probes =
+    [
+        (1, null, null), (1, 0, null), (0, 0, null), (1, 1, null),
+        (1.5, 1, null), (2, 1, null), (3, 1, null), (0.75, 1, null), (0.5, 1, null), (0, 1, null),
+        (1.2, 1, 10), (1.2, 1, 500), (0.9, 1, 50), (1.25, 1, 25), (2.5, 1, 150),
+    ];
+
     private static readonly Lazy<(List<(string Name, string Osu)> Maps, JsonElement Browser)> run = new(() =>
     {
         var maps = Fixtures();
@@ -52,6 +70,8 @@ public class UnderlinePaceParityTest
 
         payload.Append("],\"ranks\":[");
         payload.Append(string.Join(",", rank_probes.Select(r => r is double d ? d.ToString("R", CultureInfo.InvariantCulture) : "null")));
+        payload.Append("],\"previous\":[");
+        payload.Append(string.Join(",", previous_probes.Select(p => $"[{Json(p.Speed)},{Json(p.Previous)},{Json(p.MaxChange)}]")));
         payload.Append("]}");
 
         string path = Path.Combine(Path.GetTempPath(), $"typebeat-pacebands-{Guid.NewGuid():N}.json");
@@ -149,6 +169,8 @@ public class UnderlinePaceParityTest
                       .ToArray();
     }
 
+    private static string Json(double? value) => value is double d ? d.ToString("R", CultureInfo.InvariantCulture) : "null";
+
     private static void AssertColour(JsonElement browser, Color4 expected, string what)
     {
         Assert.That(browser.GetProperty("r").GetDouble(), Is.EqualTo(expected.R).Within(colour_tolerance), $"{what}: R");
@@ -158,16 +180,29 @@ public class UnderlinePaceParityTest
     }
 
     /// <summary>
-    /// Every band of every line of every fixture: same count, same cell range, same colour. Coverage
-    /// is asserted alongside, so the sweep cannot pass on maps that stopped reaching either hued end.
+    /// Every band of every line of every fixture, in the mode /play draws (the RELATIVE one since
+    /// PR 3): same count, same cell range, same colour. Coverage is asserted alongside, so the sweep
+    /// cannot pass on maps that stopped reaching either hued end, and on the subdivision cut PR 3
+    /// added (a word is cut again at its syllable markers, automatic ones included).
     /// </summary>
     [Test]
     public void TheBrowserBandsMatchUnderlinePaceOnEveryFixture()
+        => AssertBands("lines", lines => UnderlinePace.BuildRelativeBands(lines));
+
+    /// <summary>
+    /// The same sweep in the whole-map percentile mode (<see cref="UnderlinePace.BuildBands"/>, the
+    /// pre-PR 3 draw), which both sides keep.
+    /// </summary>
+    [Test]
+    public void TheBrowserRankedBandsMatchBuildBandsOnEveryFixture()
+        => AssertBands("ranked", UnderlinePace.BuildBands);
+
+    private static void AssertBands(string mode, Func<TypingLine[], PaceBand[][]> build)
     {
         var (maps, browser) = run.Value;
         var browserMaps = browser.GetProperty("maps");
         var neutral = UnderlinePace.NeutralColour;
-        int fast = 0, slow = 0, neutralBands = 0, total = 0;
+        int fast = 0, slow = 0, neutralBands = 0, total = 0, markers = 0;
 
         Assert.That(browserMaps.GetArrayLength(), Is.EqualTo(maps.Count), "the harness read every map");
 
@@ -176,8 +211,8 @@ public class UnderlinePaceParityTest
             for (int m = 0; m < maps.Count && m < browserMaps.GetArrayLength(); m++)
             {
                 var lines = Decode(maps[m].Osu);
-                var expected = UnderlinePace.BuildBands(lines);
-                var browserLines = browserMaps[m].GetProperty("lines");
+                var expected = build(lines);
+                var browserLines = browserMaps[m].GetProperty(mode);
                 var browserCells = browserMaps[m].GetProperty("cellCounts");
                 string name = maps[m].Name;
 
@@ -186,6 +221,8 @@ public class UnderlinePaceParityTest
                 for (int k = 0; k < expected.Length && k < browserLines.GetArrayLength(); k++)
                 {
                     Assert.That(browserCells[k].GetInt32(), Is.EqualTo(lines[k].Cells.Count), $"{name}[{k}]: cell count");
+                    Assert.That(browserMaps[m].GetProperty("markers")[k].GetInt32(), Is.EqualTo(lines[k].SyllableMarkerCells.Count), $"{name}[{k}]: subdivision cuts");
+                    markers += lines[k].SyllableMarkerCells.Count;
                     Assert.That(browserMaps[m].GetProperty("sungEnds")[k].GetDouble(), Is.EqualTo(UnderlinePace.SungEndOf(lines[k])), $"{name}[{k}]: sung end");
 
                     var segments = UnderlinePace.SegmentLine(lines[k]);
@@ -227,9 +264,36 @@ public class UnderlinePaceParityTest
             Assert.That(fast, Is.GreaterThan(0), "the fixtures reach the fast (red) end of the ramp");
             Assert.That(slow, Is.GreaterThan(0), "the fixtures reach the slow (green) end of the ramp");
             Assert.That(neutralBands, Is.GreaterThan(0), "the fixtures keep a neutral middle");
+            Assert.That(markers, Is.GreaterThan(0), "the fixtures cut at least one word at a syllable subdivision");
         });
 
-        TestContext.Out.WriteLine($"{maps.Count} maps, {total} bands: {fast} fast, {slow} slow, {neutralBands} neutral");
+        TestContext.Out.WriteLine($"{mode}: {maps.Count} maps, {total} bands: {fast} fast, {slow} slow, {neutralBands} neutral, {markers} subdivision cuts");
+    }
+
+    /// <summary>
+    /// <see cref="UnderlinePace.ColourForPreviousSpeed"/> against the browser's
+    /// <c>paceColourForPreviousSpeed</c>: the relative mode's ramp, probed where the maps may never
+    /// land (no previous band, a zero previous, both thresholds clamped).
+    /// </summary>
+    [Test]
+    public void ThePreviousSpeedRampMatchesColourForPreviousSpeed()
+    {
+        var probes = run.Value.Browser.GetProperty("previousProbes");
+
+        Assert.That(probes.GetArrayLength(), Is.EqualTo(previous_probes.Length));
+
+        Assert.Multiple(() =>
+        {
+            for (int i = 0; i < previous_probes.Length; i++)
+            {
+                var (speed, previous, maxChange) = previous_probes[i];
+                var expected = maxChange is double max
+                    ? UnderlinePace.ColourForPreviousSpeed(speed, previous, max)
+                    : UnderlinePace.ColourForPreviousSpeed(speed, previous);
+
+                AssertColour(probes[i], expected, $"speed {speed} after {previous?.ToString(CultureInfo.InvariantCulture) ?? "nothing"} at {maxChange?.ToString(CultureInfo.InvariantCulture) ?? "default"}");
+            }
+        });
     }
 
     /// <summary>
