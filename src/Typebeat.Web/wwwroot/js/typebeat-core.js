@@ -1254,10 +1254,10 @@
         const ends = [];
 
         // Parallel to the two above, for the display marks (backlog 317, mirrors TypingLine's
-        // subtimedInterior / groupTokenBase): whether this group opens a MAPPER-AUTHORED subdivision
-        // inside its word (a non-first group of a subtimed or paused token), and which group its
-        // token started at. A naturally syllabified word produces groups too and is never marked.
-        const subtimedInterior = [];
+        // groupTokenBase): which group each group's token started at, so a mark stays inside its
+        // word even where the default stream turned a hyphen into a space. Since PR 3 every
+        // surviving interior group is marked, authored or automatic alike, so there is no longer a
+        // per-group "was this subtimed" flag beside it.
         const groupTokenBase = [];
         const tokens = text.split(' ');
         let tokStart = 0;
@@ -1291,7 +1291,6 @@
                 const groupCount = splits.length + 1;
 
                 for (let g = 0; g < groupCount; g++) {
-                    subtimedInterior.push((subtimed || paused !== null) && g > 0);
                     groupTokenBase.push(groupBase);
 
                     if (paused !== null) {
@@ -1379,7 +1378,8 @@
         }
 
         // The display marks (backlog 317, mirrors TypingLine.SyllableMarkerCells), read off the
-        // groups that survived: a flagged group's startCell IS the gap its boundary falls in. A mark
+        // groups that survived: each group's startCell IS the gap its boundary falls in, whether the
+        // split was authored or derived by the syllabifier (PR 3 dropped the authored-only gate). A mark
         // needs a surviving EARLIER group of the same token (something rendered to its left inside
         // the word), and a cut landing on or just after a word-gap SPACE cell (a dash the default
         // stream turned into a space) is suppressed. Write-only: nothing above reads it, so no
@@ -1394,7 +1394,7 @@
                 lastSurvivor = -1;
             }
 
-            if (subtimedInterior[g] && remap[g] >= 0 && lastSurvivor >= 0) {
+            if (remap[g] >= 0 && lastSurvivor >= 0) {
                 const startCell = groups[remap[g]].startCell;
 
                 if (!isWordGapCell(cells, startCell) && !isWordGapCell(cells, startCell - 1)) syllableMarkerCells.push(startCell);
