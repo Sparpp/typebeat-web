@@ -7,9 +7,9 @@
 ///  - pace: LyricPaceStatistics.Compute
 ///    (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricPaceStatistics.cs), in three deliberate
 ///    shapes. <see cref="PaceStatistics.AverageWpm"/> is the WHOLE-MAP rate: every counted line's
-///    typeable cells over the total time the map is actually being SUNG, walked span by span so a
-///    breath between words counts and a real break (over <see cref="break_min_ms"/>) does not, so
-///    a line is weighted by how long it is sung rather than getting one vote.
+///    typeable cells over its sung word spans plus every pause (inside a line, inside a word, or
+///    between lines) charged up to <see cref="max_pause_ms"/> of playback time, so a line is
+///    weighted by how long it is sung rather than getting one vote.
 ///    <see cref="PaceStatistics.LineAverageWpm"/> is the figure that averaged before it, the
 ///    unweighted mean of the per-line (cells / boundary window) rates, kept as the companion the
 ///    whole-map rate is read against. <see cref="PaceStatistics.TargetWpm"/> is neither: it is the
@@ -320,8 +320,8 @@ public static class LyricPace
     /// v14, v17, v19 and v20.</para>
     ///
     /// <para>SECOND, THE PACE. <see cref="PaceStatistics.AverageWpm"/> is now the WHOLE-MAP rate
-    /// over the time the map is actually sung (<see cref="SungWindow"/>, pauses counted up to
-    /// <see cref="break_min_ms"/> and real breaks dropped whole), where it used to be the unweighted
+    /// over the time the map is actually sung (<c>SungWindow</c>, pauses counted up to
+    /// <c>break_min_ms</c> and real breaks dropped whole; both replaced at v23), where it used to be the unweighted
     /// mean of the per-line rates; that old figure survives as
     /// <see cref="PaceStatistics.LineAverageWpm"/>, which is NOT stored in a column of its own. A
     /// CELL also narrows: <see cref="Typeability.IsTypeable"/> rather than
@@ -387,6 +387,33 @@ public static class LyricPace
     /// stays at 24: the pp FORMULA does not move, and the new ratings and difficult-character counts
     /// reach it through the matrix.</para>
     ///
+    /// <para>v23 = THE PACE FIGURES CHANGE SHAPE AGAIN (PR 3, mirrored from the game's
+    /// <c>LyricPaceStatistics</c> and <c>LyricWpmCurve</c>). Three things move, and none of them is a
+    /// star rating.</para>
+    ///
+    /// <para>FIRST, THE WHOLE-MAP AVERAGE. A pause is no longer counted whole up to a threshold and
+    /// dropped whole beyond it (v21's <c>break_min_ms</c>): every pause, between two words, inside a
+    /// word (its authored <see cref="WordPause"/> rests, which the pace now reads), and between two
+    /// lines, is CHARGED up to <see cref="max_pause_ms"/> of playback time
+    /// (<see cref="chargedLineMs"/>), and the final line contributes no silence after its vocal end.
+    /// Lines are walked in start order, and the cap is one second AT THE RATE, so a rate is
+    /// recomputed rather than multiplied. <c>beatmaps.wpm</c> moves on nearly every map, and
+    /// <c>target_wpm</c> with it wherever the floor at the average binds.</para>
+    ///
+    /// <para>SECOND, THE CURVE. <see cref="LyricWpmCurve"/> drops its 30-cell rolling window for the
+    /// shipped SR axis's own window, at least <see cref="LyricWpmCurve.WINDOW_SECONDS"/> seconds and
+    /// <see cref="LyricWpmCurve.MIN_WINDOW_CELLS"/> cells, and fills every graph bar from a centered
+    /// window of its own. <c>peak_wpm</c>, <c>peak_cpm</c> and every point of <c>wpm_curve</c>
+    /// move.</para>
+    ///
+    /// <para>THIRD, NOTHING ELSE. The counts, <c>skippable_s</c>, <c>lyrics</c>, all six star columns
+    /// and every cell of the <c>beatmaps.ratings</c> matrix rewrite byte-identically (the rating reads
+    /// none of these figures, and <c>PausedWord</c>'s new cell-rule parameter defaults to the rule the
+    /// server always used). The sweep still stamps <c>pp_version = 0</c> on every score of every row it
+    /// rewrites, so the score table reprices at the next boot TO IDENTICAL VALUES, as at v15 and v18.
+    /// No column is added, so no migration comes with it, and <c>PerformancePoints.VERSION</c> stays
+    /// where it is.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -399,7 +426,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 22;
+    public const int VERSION = 23;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's
@@ -413,16 +440,11 @@ public static class LyricPace
     private const double min_line_window_ms = 500;
 
     /// <summary>
-    /// LyricPaceStatistics.cs: how long a pause has to be before it stops counting as singing time,
-    /// i.e. the threshold that separates a breath from a break in <see cref="SungWindow"/>.
-    ///
-    /// <para>The engine's own rest threshold is 400 ms (the widest Great-late window in the
-    /// judgement ladder): a gap wider than that resets a player's pace. This is deliberately far
-    /// more forgiving, so a breath between words still counts towards the average and only a real
-    /// break is dropped whole. Lower it towards 0 to drop every pause, or raise it to include the
-    /// song's longer silences as typing time.</para>
+    /// LyricPaceStatistics.cs: the most playback time one pause is charged (v23). Every pause counts
+    /// up to this and no further, so a breath carries its whole weight and an instrumental cannot
+    /// dominate the denominator.
     /// </summary>
-    private const double break_min_ms = 1000;
+    private const double max_pause_ms = 1000;
 
     /// <summary>
     /// LyricPaceStatistics.cs: whether a target below the whole-map average is raised to it, the
@@ -442,51 +464,59 @@ public static class LyricPace
     private const bool pace_floor_target = true;
 
     /// <summary>
-    /// LyricPaceStatistics.SungWindow: the time a line is actually SUNG, walked word span by word
-    /// span. Every span counts, every pause counts up to <see cref="break_min_ms"/>, and a pause
-    /// wider than that is a break and is dropped whole. A line carrying no word timings falls back
-    /// to its vocal end, which is the figure the whole-map average divided by before the breaks
-    /// became a threshold.
+    /// LyricPaceStatistics.chargedLineMs: sung time in a line, with each gap and authored word rest
+    /// capped separately at <paramref name="pauseCapMs"/>. A line without unit timings has no known
+    /// internal pauses, so its vocal span is charged whole. All times here are authored
+    /// milliseconds; the cap is scaled to the playback clock by the caller.
     /// </summary>
-    private static double SungWindow(LyricLine line)
+    private static double chargedLineMs(LyricLine line, double pauseCapMs)
     {
+        double lineEnd = Math.Max(line.StartTime, line.SingEndTime);
+
         if (line.Units.Count == 0)
-            return Math.Max(line.SingEndTime - line.StartTime, 0);
+            return lineEnd - line.StartTime;
 
         double charged = 0;
         double cursor = line.StartTime;
 
-        // A line whose end precedes its start (a mid-edit line, or a malformed import) has no
-        // window to charge: clamping against it would throw, so it reads as its own start and
-        // the walk below charges nothing for it.
-        double lineEnd = Math.Max(line.EndTime, line.StartTime);
-
-        foreach (TimedUnit unit in line.Units)
+        foreach (TimedUnit unit in line.Units.OrderBy(u => u.StartTime))
         {
             double start = Math.Clamp(unit.StartTime, line.StartTime, lineEnd);
             double end = Math.Clamp(unit.EndTime, start, lineEnd);
-            double gap = start - cursor;
 
-            if (gap > 0 && gap <= break_min_ms)
-                charged += gap;
+            if (start > cursor)
+                charged += Math.Min(start - cursor, pauseCapMs);
 
-            charged += end - start;
+            double sungStart = Math.Max(start, cursor);
+
+            if (end > sungStart)
+            {
+                charged += end - sungStart;
+                double restCursor = sungStart;
+
+                foreach (WordPause rest in unit.Pauses.OrderBy(p => p.StartTime))
+                {
+                    double restStart = Math.Clamp(Math.Max(rest.StartTime, restCursor), sungStart, end);
+                    double restEnd = Math.Clamp(rest.EndTime, restStart, end);
+                    charged -= Math.Max(0, restEnd - restStart - pauseCapMs);
+                    restCursor = restEnd;
+                }
+            }
+
             cursor = Math.Max(cursor, end);
         }
 
-        double tail = lineEnd - cursor;
-
-        if (tail > 0 && tail <= break_min_ms)
-            charged += tail;
+        if (lineEnd > cursor)
+            charged += Math.Min(lineEnd - cursor, pauseCapMs);
 
         return charged;
     }
 
     /// <param name="AverageCpm">
-    /// The WHOLE-MAP rate: total typeable cells over the summed SUNG windows
-    /// (<see cref="SungWindow"/>), where a sung window is the line's word spans plus every pause no
-    /// wider than <see cref="break_min_ms"/>. Breaks are NOT in the denominator, and a line
-    /// contributes time in proportion to how long it is sung rather than one vote. Stored as
+    /// The WHOLE-MAP rate: total typeable cells over the sung spans plus up to
+    /// <see cref="max_pause_ms"/> of playback time for each pause between words, inside words and
+    /// between lines (<see cref="chargedLineMs"/>). A line contributes time in proportion to how long
+    /// it is sung rather than one vote. Stored as
     /// <c>beatmaps.wpm</c> (over <see cref="CHARS_PER_WORD"/>).
     /// </param>
     /// <param name="LineAverageCpm">
@@ -557,10 +587,8 @@ public static class LyricPace
         /// page would print.
         ///
         /// <para>A map total, not a mean of per-line ratios, so it is the length of the average word
-        /// the player types rather than the average of the lines' averages. WPM and CPM go the other
-        /// way (unweighted per-line means) because they are RATES and a per-line mean is what keeps
-        /// a long instrumental gap from diluting them, while this is a pure count ratio with no time
-        /// in it to dilute.</para>
+        /// the player types rather than the average of the lines' averages. WPM and CPM instead
+        /// divide the map's cell total by its sung spans and capped pauses.</para>
         /// </summary>
         public double AverageCharsPerWord => WordCount == 0 ? 0 : (double)TypeableCellCount / WordCount;
     }
@@ -579,10 +607,10 @@ public static class LyricPace
     /// </summary>
     /// <param name="rate">
     /// The CLOCK the map is read at: 1 for no rate mod, 1.5 for DoubleTime, 0.75 for HalfTime. The
-    /// two whole-map rates are cells over TIME, so they scale with it exactly; the TARGET is not,
-    /// because the fixed reading duration it is re-expressed at is a duration the faster clock also
-    /// shortens, so it is recomputed through the difficulty model at this rate rather than
-    /// multiplied. <see cref="PaceStatistics.DifficultyRating"/> stays the NO-MOD baseline whatever
+    /// pause cap is one second at this playback rate, so the whole-map average is recomputed rather
+    /// than simply scaled; the TARGET is recomputed too, because the fixed reading duration it is
+    /// re-expressed at is a duration the faster clock also shortens, so it goes back through the
+    /// difficulty model at this rate rather than being multiplied. <see cref="PaceStatistics.DifficultyRating"/> stays the NO-MOD baseline whatever
     /// either parameter says: it is the stored <c>difficulty_rating</c>, and the rated variants live
     /// in <c>beatmaps.ratings</c>.
     /// </param>
@@ -594,10 +622,13 @@ public static class LyricPace
         int lineCount = 0;
         double cpmSum = 0;
 
-        // The whole-map denominator: the time the map is actually SUNG, accumulated line by line.
-        double vocalMinutes = 0;
+        // The whole-map denominator: sung spans plus capped pauses, in playback-rate milliseconds
+        // for the cap and authored milliseconds for everything else, accumulated line by line.
+        double chargedMs = 0;
+        double pauseCapMs = max_pause_ms * rate;
+        double? previousVocalEnd = null;
 
-        foreach (var line in lines)
+        foreach (var line in lines.OrderBy(l => l.StartTime))
         {
             // Cell arithmetic mirrors TypingLine.FromLyricLine: every typeable char is a
             // cell, plus one typeable space cell per token gap.
@@ -656,9 +687,13 @@ public static class LyricPace
             // disagree. The word COUNT is still accumulated, because AverageCharsPerWord needs it.
             double lineCpm = cells / windowMinutes;
 
-            // The whole-map denominator: the time the line is actually SUNG, walked span by span so
-            // that short pauses count and real breaks do not (see SungWindow).
-            vocalMinutes += Math.Max(SungWindow(line), min_line_window_ms) / 60000.0;
+            // Count the pause since the previous vocal end, then this line's sung spans and capped
+            // internal gaps. The final line contributes no silence after its vocal end.
+            if (previousVocalEnd.HasValue)
+                chargedMs += Math.Min(Math.Max(0, line.StartTime - previousVocalEnd.Value), pauseCapMs);
+
+            chargedMs += Math.Max(chargedLineMs(line, pauseCapMs), min_line_window_ms);
+            previousVocalEnd = Math.Max(previousVocalEnd ?? line.StartTime, Math.Max(line.StartTime, line.SingEndTime));
 
             cpmSum += lineCpm;
 
@@ -671,7 +706,7 @@ public static class LyricPace
         if (lineCount == 0)
             return default;
 
-        double averageCpm = vocalMinutes > 0 ? totalCells / vocalMinutes : 0;
+        double averageCpm = chargedMs > 0 ? totalCells * 60000.0 * rate / chargedMs : 0;
 
         // THE TARGET. Read from the difficulty model, which is where the window schedule, the
         // density prefix and the capability curve live: this file has no second copy of the scan, so
@@ -700,9 +735,6 @@ public static class LyricPace
         {
             targetWpm = 0;
         }
-
-        // The two whole-map rates scale with the clock; the target is already read at it.
-        averageCpm *= rate;
 
         if (pace_floor_target && averageCpm / CHARS_PER_WORD > targetWpm)
             targetWpm = averageCpm / CHARS_PER_WORD;

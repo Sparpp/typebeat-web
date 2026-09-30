@@ -3,11 +3,13 @@ using ClientLine = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricLine;
 using ClientPace = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricPaceStatistics;
 using ClientTypeability = typebeat.Game.Rulesets.TypeBeat.Beatmaps.Typeability;
 using ClientUnit = typebeat.Game.Rulesets.TypeBeat.Beatmaps.TimedUnit;
+using ClientWordPause = typebeat.Game.Rulesets.TypeBeat.Beatmaps.WordPause;
 using ServerCurve = Typebeat.Web.Packages.Lyrics.LyricWpmCurve;
 using ServerLine = Typebeat.Web.Packages.Lyrics.LyricLine;
 using ServerPace = Typebeat.Web.Packages.Lyrics.LyricPace;
 using ServerTypeability = Typebeat.Web.Packages.Lyrics.Typeability;
 using ServerUnit = Typebeat.Web.Packages.Lyrics.TimedUnit;
+using ServerWordPause = Typebeat.Web.Packages.Lyrics.WordPause;
 
 namespace Typebeat.WireCompat;
 
@@ -33,7 +35,8 @@ namespace Typebeat.WireCompat;
 /// text is interesting: mixed word lengths (so a chars-per-word figure is not trivially the same
 /// number as anything else), punctuation and a hyphen (which the default stream turns into a word
 /// break, changing the counts but not the curve), a repeated word, and a long instrumental gap
-/// (which the per-line pace mean must not dilute but the curve's map span must span).
+/// (which the whole-map rate charges only up to a second since LyricPace v23, the per-line mean
+/// charges whole, and the curve's map span must span).
 /// </para>
 /// </summary>
 [TestFixture]
@@ -147,15 +150,18 @@ public class LyricPaceParityTest
         // PR 2 gave the game's pace a STREAM and a CLOCK (song select reads the map converted with
         // the selected mods), and the server carries both parameters so the mirror can be held at
         // every one of them even though it stores only the default. It also made authored pauses a
-        // rating input, and the paused fixtures are here to prove the pace figures did NOT follow:
-        // a rest inside a word is still singing time for the whole-map rates, and the target reads
-        // the envelope arm's DENSITY, which spreads a word's cells over its whole span (only the
-        // chunked axis's rhythm arm reads a word's dividers).
+        // rating input. PR 3 (LyricPace v23) then made a rest a PACE input as well, but only past
+        // the one-second cap every pause is charged at: the paused fixtures' rests are all shorter
+        // than that, so they still prove the figures did not follow there, and the long-rest fixture
+        // is the one whose rests the whole-map rate has to trim. The target reads the envelope arm's
+        // DENSITY, which spreads a word's cells over its whole span (only the chunked axis's rhythm
+        // arm reads a word's dividers), on every one of them.
         var fixtures = new[]
         {
             ("awkward", TwinMaps()),
             ("paused", PerformancePointsParityTest.PausedTwinMaps()),
             ("paused, ignored", PerformancePointsParityTest.PausedTwinMaps(PerformancePointsParityTest.PauseShape.InvalidOnly)),
+            ("long rests", LongRestTwinMaps(withRests: true)),
         };
 
         Assert.Multiple(() =>
@@ -180,8 +186,9 @@ public class LyricPaceParityTest
             var (awkwardClient, awkwardServer) = TwinMaps();
             Assert.That(ServerPace.Compute(awkwardServer, false, 1), Is.EqualTo(ServerPace.Compute(awkwardServer)), "the defaults");
 
-            // THE PAUSES DO NOT REACH THE PACE, on either side: the paused fixture and its bare twin
-            // share every figure. (That the same rests DO move the rating is pinned in
+            // RESTS UNDER A SECOND DO NOT REACH THE PACE, on either side: the paused fixture and its
+            // bare twin share every figure, because a rest inside the sung span is charged whole up
+            // to the cap. (That the same rests DO move the rating is pinned in
             // PerformancePointsParityTest, on the same fixture.)
             var (pausedClient, pausedServer) = PerformancePointsParityTest.PausedTwinMaps();
             var (bareClient, bareServer) = PerformancePointsParityTest.PausedTwinMaps(PerformancePointsParityTest.PauseShape.None);
@@ -194,6 +201,70 @@ public class LyricPaceParityTest
                 "nor for the target, whose envelope density spreads a word over its whole span");
             Assert.That(ClientPace.Compute(pausedClient).TargetWpm, Is.EqualTo(ClientPace.Compute(bareClient).TargetWpm),
                 "on the client either");
+
+            // A REST OVER A SECOND DOES (v23): the part past the cap leaves the denominator, so the
+            // whole-map rate rises on both sides by the same amount, and at every clock (the cap is
+            // one PLAYBACK second, so a rate moves it). The per-line mean reads the boundary window
+            // and cannot see a rest at all.
+            var (longClient, longServer) = LongRestTwinMaps(withRests: true);
+            var (plainClient, plainServer) = LongRestTwinMaps(withRests: false);
+
+            foreach (double rate in new[] { 1.0, 1.5, 0.75 })
+            {
+                Assert.That(ServerPace.Compute(longServer, false, rate).AverageCpm, Is.GreaterThan(ServerPace.Compute(plainServer, false, rate).AverageCpm),
+                    $"rate={rate}: a rest past the cap is trimmed from the denominator");
+                Assert.That(ServerPace.Compute(longServer, false, rate).AverageCpm, Is.EqualTo(ClientPace.Compute(longClient, false, rate).AverageCpm),
+                    $"rate={rate}: identically on both sides");
+                Assert.That(ServerPace.Compute(longServer, false, rate).LineAverageCpm, Is.EqualTo(ServerPace.Compute(plainServer, false, rate).LineAverageCpm),
+                    $"rate={rate}: and the per-line mean does not see it");
+            }
+
+            // Hand-computed at rate 1, so the pin is not only "the two sides agree": each line is
+            // two 2000 ms words (the first holding a 3000 ms rest inside a 5000 ms span) with no
+            // gap, 7000 ms of spans charged 7000 - (3000 - 1000) = 5000, plus 1000 ms for the
+            // 4000 ms rest between the two lines. 2 * (20 letters + 1 space) = 42 cells over 11000 ms.
+            Assert.That(ServerPace.Compute(longServer).AverageCpm, Is.EqualTo(42 * 60000.0 / 11000).Within(1e-9), "the hand figure");
+        });
+    }
+
+    [Test]
+    public void TheCurveAgreesAtEveryClock()
+    {
+        // LyricPace v23 made the curve's window a PLAYBACK-time window (at least WINDOW_SECONDS and
+        // MIN_WINDOW_CELLS), so song select recomputes it at the selected rate rather than scaling
+        // it. The server stores only the rate-1 reading, and carries the parameter so the mirror is
+        // held at every clock anyway.
+        var fixtures = new[]
+        {
+            ("awkward", TwinMaps()),
+            ("paused", PerformancePointsParityTest.PausedTwinMaps()),
+            ("long rests", LongRestTwinMaps(withRests: true)),
+        };
+
+        Assert.Multiple(() =>
+        {
+            foreach ((string name, (IReadOnlyList<ClientLine> client, IReadOnlyList<ServerLine> server)) in fixtures)
+            foreach (double rate in new[] { 1.0, 1.5, 0.75 })
+            {
+                var c = ClientCurve.Compute(client, rate: rate);
+                var s = ServerCurve.Compute(server, rate: rate);
+                string context = $"{name} rate={rate}";
+
+                Assert.That(s.IsEmpty, Is.False, $"{context}: the fixture has to be long enough to measure");
+                Assert.That(s.PeakWpm, Is.EqualTo(c.PeakWpm), $"{context}: peak");
+                Assert.That(s.PeakCpm, Is.EqualTo(c.PeakCpm), $"{context}: peak CPM");
+                Assert.That(s.Curve, Is.EqualTo(c.Curve).AsCollection, $"{context}: curve");
+            }
+
+            // Non-vacuity for the parameter: a rate that only scaled would leave the normalised shape
+            // alone, and this fixture's does not.
+            var (_, awkwardServer) = TwinMaps();
+            var slow = ServerCurve.Compute(awkwardServer, rate: 1);
+            var fast = ServerCurve.Compute(awkwardServer, rate: 1.5);
+
+            Assert.That(fast.Curve.Select(w => w / fast.PeakWpm), Is.Not.EqualTo(slow.Curve.Select(w => w / slow.PeakWpm)).AsCollection,
+                "a rate recomputes the curve rather than scaling it");
+            Assert.That(ServerCurve.Compute(awkwardServer).Curve, Is.EqualTo(slow.Curve).AsCollection, "the default is rate 1, the stored figure");
         });
     }
 
@@ -242,7 +313,7 @@ public class LyricPaceParityTest
 
         Assert.Multiple(() =>
         {
-            // Under WINDOW_CELLS: no curve, no peaks, on both sides rather than one throwing.
+            // Under MIN_WINDOW_CELLS: no curve, no peaks, on both sides rather than one throwing.
             Assert.That(serverCurve.IsEmpty, Is.EqualTo(clientCurve.IsEmpty));
             Assert.That(serverCurve.PeakWpm, Is.EqualTo(clientCurve.PeakWpm));
             Assert.That(serverCurve.PeakCpm, Is.EqualTo(clientCurve.PeakCpm));
@@ -268,14 +339,14 @@ public class LyricPaceParityTest
 
     /// <summary>
     /// The awkward fixture described on the class, projected into each repo's own line type. Long
-    /// enough to fill several rolling windows (141 typeable cells against a 30-cell window), so the
+    /// enough to fill several rolling windows (141 typeable cells against a 16-cell floor), so the
     /// curve has real bars rather than the single window a minimal fixture would give it.
     ///
     /// <para>ITS SHAPE IS WHAT PULLS THE THREE PACE FIGURES APART, which is the whole reason a
     /// deliberately awkward fixture is worth having. The long instrumental gap separates the
-    /// WHOLE-MAP rate (which divides by the time the map is actually sung, so the gap is not in its
-    /// denominator) from the PER-LINE mean (which gives the line before the gap one vote like any
-    /// other). The two-word burst at the end is the fastest thing on the map by a distance, so it
+    /// WHOLE-MAP rate (which divides by the time the map is actually sung, so the gap is in its
+    /// denominator only up to a second) from the PER-LINE mean (which gives the line before the gap
+    /// one vote like any other). The two-word burst at the end is the fastest thing on the map by a distance, so it
     /// pulls the whole-map rate up while being far too short to be anyone's hardest window, which
     /// separates both of them from the TARGET. Three figures, three numbers, and the test asserts
     /// that outright rather than trusting it.</para>
@@ -345,12 +416,58 @@ public class LyricPaceParityTest
         // the game and the pace one gates the column the pp one now depends on.
         Assert.Multiple(() =>
         {
-            // 22 since PR 2: the overlapping chunked profile, the character floor, and authored
-            // pauses reaching the rating (plus the server's syllable-object parse fix) all ride
-            // the one re-rate sweep. The pp formula does not move, so its VERSION stays.
-            Assert.That(ServerPace.VERSION, Is.EqualTo(22));
+            // 23 since PR 3: the whole-map average's capped pauses and the curve's playback-time
+            // window re-derive beatmaps.wpm, target_wpm and the curve columns. No rating moves and
+            // the pp formula does not move, so its VERSION stays.
+            Assert.That(ServerPace.VERSION, Is.EqualTo(23));
             Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(24)); // pp:version
         });
+    }
+
+    /// <summary>
+    /// Two lines of two 10-character words each, sung back to back, with a 4000 ms rest between the
+    /// lines. With <paramref name="withRests"/> each line's first word runs 5000 ms and holds a
+    /// 3000 ms authored rest (split after its fifth character), so the whole-map rate has a rest past
+    /// the one-second cap to trim. Without, the same words carry no rest. Long enough (42 cells) to
+    /// fill the curve's 16-cell floor.
+    /// </summary>
+    private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) LongRestTwinMaps(bool withRests)
+    {
+        var client = new List<ClientLine>();
+        var server = new List<ServerLine>();
+
+        foreach (double lineStart in new[] { 1000.0, 12000.0 })
+        {
+            double first = lineStart, firstEnd = lineStart + 5000, second = firstEnd, secondEnd = second + 2000;
+            (double Start, double End, int Split)[] rests = withRests ? [(lineStart + 1000, lineStart + 4000, 5)] : [];
+
+            client.Add(new ClientLine
+            {
+                RawText = "abcdefghij klmnopqrst",
+                StartTime = lineStart,
+                EndTime = secondEnd,
+                SingEndTime = secondEnd,
+                Units =
+                [
+                    new ClientUnit { Text = "abcdefghij", StartTime = first, EndTime = firstEnd, Pauses = rests.Select(r => new ClientWordPause(r.Start, r.End, r.Split)).ToArray() },
+                    new ClientUnit { Text = "klmnopqrst", StartTime = second, EndTime = secondEnd },
+                ],
+            });
+            server.Add(new ServerLine
+            {
+                RawText = "abcdefghij klmnopqrst",
+                StartTime = lineStart,
+                EndTime = secondEnd,
+                SingEndTime = secondEnd,
+                Units =
+                [
+                    new ServerUnit { Text = "abcdefghij", StartTime = first, EndTime = firstEnd, Pauses = rests.Select(r => new ServerWordPause(r.Start, r.End, r.Split)).ToArray() },
+                    new ServerUnit { Text = "klmnopqrst", StartTime = second, EndTime = secondEnd },
+                ],
+            });
+        }
+
+        return (client, server);
     }
 
     /// <summary>The one lyric shape, projected into each repo's own <c>LyricLine</c> type.</summary>

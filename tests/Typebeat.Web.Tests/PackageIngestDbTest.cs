@@ -230,19 +230,23 @@ public class PackageIngestDbTest
             Assert.That(beatmap.Checksum, Has.Length.EqualTo(32));
             Assert.That(beatmap.WordCount, Is.EqualTo(4));
             Assert.That(beatmap.CharCount, Is.EqualTo(23));
-            // 23 cells / 0.05 min = 460 CPM, stored WPM = 460/5 = 92 (LyricPace v15). The two counts
-            // above are what the stored figure is derived from.
-            Assert.That((double)beatmap.Wpm, Is.EqualTo(92).Within(1e-6));
+            // 23 cells over the 2000 ms of word spans = 690 CPM, stored WPM = 690/5 = 138. The two
+            // counts above are what the stored figure is derived from. It read 92 (3000 ms, the
+            // spans plus the 1000 ms tail to the line boundary) until LyricPace v23 stopped charging
+            // anything after the final vocal end.
+            Assert.That((double)beatmap.Wpm, Is.EqualTo(138).Within(1e-6));
             Assert.That(beatmap.Difficulty, Is.EqualTo(starsAtRate(1)).Within(1e-12), "the model's own reading of the stored blob");
             Assert.That(beatmap.Difficulty, Is.EqualTo(3.6308745015818906).Within(1e-9)); // chunked-axis stars, LyricPace v22
             Assert.That(beatmap.Lyrics, Is.EqualTo("neon lights are calling")); // the lyrics: search haystack
 
             // 033_target_wpm.sql: written by the same upsert. Since LyricPace v21 it is the map's
             // hardest window by raw speed, read off the difficulty model and floored at the whole-map
-            // average, so it is a number on a map far too short for the 30-cell rolling window: that
+            // average, so it is a number on a map far too short for the 16-cell rolling window: that
             // is why this is a number where peak_wpm is NULL. The pace_version stamp is what makes the startup sweep skip this
             // row, so it has to be the CURRENT version or the new column would be filled twice over.
-            Assert.That(beatmap.TargetWpm, Is.EqualTo(97.98935824451091).Within(1e-9), "above the 92 WPM average, so the model's own window");
+            // The model's own window reads 97.99, which cleared the old 92 WPM average and sits
+            // under the v23 one, so the floor is what the column holds now.
+            Assert.That(beatmap.TargetWpm, Is.EqualTo(138).Within(1e-9), "below the 138 WPM average, so the floor");
             Assert.That(beatmap.PaceVersion, Is.EqualTo(LyricPace.VERSION));
 
             // 034_ratings_matrix.sql: the eighteen readings pp prices a play from, written by the
@@ -453,8 +457,8 @@ public class PackageIngestDbTest
 
         Assert.Multiple(() =>
         {
-            // The fixture lyric: 23 cells over a 3000 ms sung window.
-            Assert.That((double)row.Wpm, Is.EqualTo(92).Within(1e-6));
+            // The fixture lyric: 23 cells over 2000 ms of word spans (LyricPace v23).
+            Assert.That((double)row.Wpm, Is.EqualTo(138).Within(1e-6));
             Assert.That(row.Difficulty, Is.EqualTo(starsAtRate(1)).Within(1e-12)); // chunked-axis stars
             Assert.That(row.WordCount, Is.EqualTo(4));
             Assert.That(row.CharCount, Is.EqualTo(23));

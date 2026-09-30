@@ -55,24 +55,24 @@ public class LyricPaceTest
             Assert.That(pace.TypeableCellCount, Is.EqualTo(5));
             Assert.That(pace.WordCount, Is.EqualTo(2));
 
-            // 100 CPM SURVIVES THE v21 DENOMINATOR CHANGE, and not by luck. The old figure divided
-            // by the boundary window, 4000 - 1000 = 3000 ms. The new one divides by the SUNG window:
-            // two 1000 ms spans plus the 1000 ms tail to the line's boundary, which is exactly the
-            // break threshold and therefore still singing time, so the same 3000 ms comes out. Move
-            // break_min_ms below 1000 and this line reads 150 CPM instead, which is what makes it a
-            // useful place to notice the threshold.
+            // 150 CPM SINCE v23. The whole-map figure divides by the line's sung spans plus its
+            // capped pauses, and v23 (PR 3) stopped charging anything past the line's VOCAL end
+            // (SingEndTime, 3000): the two 1000 ms spans alone, so 5 cells / 2000 ms. Under v21 and
+            // v22 the 1000 ms tail to the boundary (4000) was still singing time, 3000 ms were
+            // charged and this read 100 CPM / 20 WPM, which is the figure the per-line mean below
+            // still reads because it divides by the BOUNDARY window.
             //
-            // CPM = 5 cells / 0.05 min = 100, and WPM is that over 5 = 20. The real-word convention
-            // this replaced said 2 / 0.05 = 40; the line averages 5/2 = 2.5 cells per word, exactly
-            // half the 5 the unit assumes, so the new figure is exactly half the old one.
-            Assert.That(pace.AverageCpm, Is.EqualTo(100.0).Within(1e-9));
-            Assert.That(pace.AverageWpm, Is.EqualTo(20.0).Within(1e-9));
+            // CPM = 5 cells / (2000 / 60000) min = 150, and WPM is that over 5 = 30. The line
+            // averages 5/2 = 2.5 cells per word, half the 5 the unit assumes.
+            Assert.That(pace.AverageCpm, Is.EqualTo(150.0).Within(1e-9));
+            Assert.That(pace.AverageWpm, Is.EqualTo(30.0).Within(1e-9));
             Assert.That(pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
 
-            // One line, so the whole-map rate and the line mean are the same number by construction.
-            // The fixtures below are where they come apart.
-            Assert.That(pace.LineAverageCpm, Is.EqualTo(pace.AverageCpm).Within(1e-12));
-            Assert.That(pace.LineAverageWpm, Is.EqualTo(pace.AverageWpm).Within(1e-12));
+            // One line, and still two figures since v23: the line mean reads the 3000 ms boundary
+            // window (100 CPM / 20 WPM, the game's ComputesBoundaryWindowPace figures), while the
+            // whole-map rate reads the 2000 ms actually sung.
+            Assert.That(pace.LineAverageCpm, Is.EqualTo(100.0).Within(1e-9));
+            Assert.That(pace.LineAverageWpm, Is.EqualTo(20.0).Within(1e-9));
 
             // Stars from LyricDifficulty, the SHIPPED (chunked) reading. It read 0.63 under the
             // strain model, 0.59 under the feats one, 0.5911 under the envelope at the 10.6 anchor,
@@ -131,20 +131,18 @@ public class LyricPaceTest
     }
 
     /// <summary>
-    /// THE POINT OF THE WHOLE-MAP RATE: a break in the song is not typing time.
-    ///
-    /// <para>A line's <see cref="LyricLine.EndTime"/> is the next line's start, so a map with a long
-    /// instrumental after a line hands that pause to the line's own boundary window. The per-line
-    /// mean then charges the player for it, one pause at a time; the whole-map rate walks the word
-    /// spans instead (<c>SungWindow</c>) and never sees it. Ported from the game's fixture of the
-    /// same name.</para>
+    /// The whole-map rate charges up to one second for a pause between lines (v23), rather than
+    /// dropping it or charging the entire instrumental. The line mean is still boundary-based.
+    /// Ported from the game's TheWholeMapAverageCapsTheBreakBetweenLines, which replaced
+    /// TheWholeMapAverageLeavesTheSongsBreaksOutOfTheDenominator in PR 3.
     /// </summary>
     [Test]
-    public void TheWholeMapAverage_LeavesTheSongsBreaksOutOfTheDenominator()
+    public void TheWholeMapAverage_CapsTheBreakBetweenLines()
     {
-        // Two 5-cell lines, each sung for 4 s but bounded for 20 s (a 16 s instrumental after each):
-        //   whole map = 10 cells / (4000 + 4000 ms) = 10 / 0.1333 = 75 CPM = 15 WPM
-        //   line mean = each line 5 cells / 20 s    =              15 CPM =  3 WPM
+        // Two 5-cell lines, each sung for 4 s and separated by a 16 s instrumental. The one pause
+        // contributes 1 s, and nothing is charged after the final line's vocal end:
+        //   whole map = 10 cells / (4000 + 1000 + 4000 ms) = 66.667 CPM = 13.333 WPM
+        //   line mean = each line 5 cells / 20 s           = 15     CPM =  3     WPM
         var pace = LyricPace.Compute(
         [
             sungLine("ab cd", 0, 20000, singEnd: 4000),
@@ -154,45 +152,41 @@ public class LyricPaceTest
         Assert.Multiple(() =>
         {
             Assert.That(pace.TypeableCellCount, Is.EqualTo(10));
-            Assert.That(pace.AverageCpm, Is.EqualTo(75.0).Within(1e-9));
-            Assert.That(pace.AverageWpm, Is.EqualTo(15.0).Within(1e-9));
+            Assert.That(pace.AverageCpm, Is.EqualTo(10.0 / (9000 / 60000.0)).Within(1e-9));
+            Assert.That(pace.AverageWpm, Is.EqualTo(10.0 / (9000 / 60000.0) / 5).Within(1e-9));
 
-            // The figure it replaced reads five times slower on the same map, because every one of
-            // those 16 second silences is sitting inside a line's own vote.
+            // The per-line mean still includes each line's entire 20 second boundary window.
             Assert.That(pace.LineAverageCpm, Is.EqualTo(15.0).Within(1e-9));
             Assert.That(pace.LineAverageWpm, Is.EqualTo(3.0).Within(1e-9));
 
-            // The two figures differ ONLY by where the windows stop, which is the point of the
-            // fixture: same five cells per line either way.
+            // The two figures differ by how the long inter-line pause is charged: same five cells
+            // per line either way.
             Assert.That(pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
         });
     }
 
     /// <summary>
-    /// THE THRESHOLD, and the difference between it being a threshold and it being a trim: a pause
-    /// counts as singing time up to <c>break_min_ms</c> (1000 ms) and is dropped WHOLE beyond it.
-    /// Nothing pinned this before v21, because before v21 nothing divided by a sung window.
+    /// THE CAP (v23): pauses between words are capped at one second just like pauses between lines,
+    /// and a gap after the final line's vocal end is outside the map's measured typing time. It
+    /// replaced v21's threshold (a pause counted whole up to <c>break_min_ms</c> and dropped whole
+    /// beyond it). Ported from the game's InternalPausesAreCappedAndFinalTrailingSilenceIsNotCounted.
     ///
     /// <para>Every fixture here is the same five cells, so the CPM figures encode the charged window
     /// directly: 5 cells * 60000 / CPM is the number of milliseconds that went into the denominator,
-    /// so 75 means 4000 ms charged, 60 means 5000 and 50 means 6000. Ported from the game's
-    /// APauseCountsUpToTheBreakThresholdAndIsDroppedWholeBeyondIt.</para>
+    /// and every one of them charges 5000.</para>
     /// </summary>
     [Test]
-    public void APause_CountsUpToTheBreakThreshold_AndIsDroppedWholeBeyondIt()
+    public void InternalPauses_AreCapped_AndFinalTrailingSilenceIsNotCounted()
     {
-        // A BREATH of exactly 1000 ms between the two 2 s spans COUNTS: the comparison is inclusive,
-        // so the widest pause the constant allows is not itself a break. The 5 s tail after the last
-        // span is wider than the constant and is dropped whole. Charged: 2000 + 1000 + 2000 = 5000.
+        // One second between the two words is inside the line; the 5 s after it is not.
+        // Charged: 2000 + 1000 + 2000 = 5000.
         var breath = LyricPace.Compute([sungLine("ab cd", 0, 10000, singEnd: 5000, (0, 2000), (3000, 5000))]);
 
-        // A BREAK of 1001 ms is over the line and is dropped WHOLE rather than trimmed back to the
-        // constant: a trim would have charged the extra millisecond's worth and read 5000 ms (60 CPM)
-        // here, so 75 (4000 ms, the two spans alone) is the number that says "dropped".
-        var gone = LyricPace.Compute([sungLine("ab cd", 0, 10000, singEnd: 5001, (0, 2000), (3001, 5001))]);
+        // Four seconds between the words contributes only one second: 2000 + 1000 + 2000 again.
+        var longInternalPause = LyricPace.Compute([sungLine("ab cd", 0, 10000, singEnd: 8000, (0, 2000), (6000, 8000))]);
 
-        // The same rule reads the TAIL between the last span and the line's boundary: a 1000 ms one
-        // counts (6000 ms charged) and a 1001 ms one does not (5000 ms).
+        // A gap after the final vocal end has no following lyric to separate from it, whatever the
+        // boundary says: both read 5000 ms charged.
         var shortTail = LyricPace.Compute([sungLine("ab cd", 0, 6000, singEnd: 5000, (0, 2000), (3000, 5000))]);
         var longTail = LyricPace.Compute([sungLine("ab cd", 0, 6001, singEnd: 5000, (0, 2000), (3000, 5000))]);
 
@@ -200,23 +194,19 @@ public class LyricPaceTest
         {
             Assert.That(breath.AverageCpm, Is.EqualTo(60.0).Within(1e-9));
             Assert.That(breath.AverageWpm, Is.EqualTo(12.0).Within(1e-9));
-            Assert.That(gone.AverageCpm, Is.EqualTo(75.0).Within(1e-9));
-            Assert.That(shortTail.AverageCpm, Is.EqualTo(50.0).Within(1e-9));
+            Assert.That(longInternalPause.AverageCpm, Is.EqualTo(60.0).Within(1e-9));
+            Assert.That(shortTail.AverageCpm, Is.EqualTo(60.0).Within(1e-9));
             Assert.That(longTail.AverageCpm, Is.EqualTo(60.0).Within(1e-9));
 
-            // THE THRESHOLD IS THE WHOLE-MAP FIGURE'S ALONE. The line mean reads the BOUNDARY window
-            // and never looks inside it, so the two 10 s fixtures disagree on the whole-map rate, 60
-            // against 75, while reading the same 30 CPM line mean. (The two tail fixtures are
-            // shorter than 10 s, so their line means differ for that reason instead, which is
-            // nothing to do with the threshold.)
-            foreach (var pace in new[] { breath, gone })
+            // The line mean reads the BOUNDARY window, so both 10 s lines still get 30 CPM.
+            foreach (var pace in new[] { breath, longInternalPause })
             {
                 Assert.That(pace.LineAverageCpm, Is.EqualTo(30.0).Within(1e-9));
                 Assert.That(pace.LineAverageWpm, Is.EqualTo(6.0).Within(1e-9));
             }
 
             // Every fixture here is the same five cells, so no window shape can move that.
-            foreach (var pace in new[] { breath, gone, shortTail, longTail })
+            foreach (var pace in new[] { breath, longInternalPause, shortTail, longTail })
                 Assert.That(pace.TypeableCellCount, Is.EqualTo(5));
         });
     }
@@ -321,9 +311,8 @@ public class LyricPaceTest
     /// A line whose single word span runs from its start to its vocal end, which is its boundary end
     /// unless <paramref name="singEnd"/> says otherwise.
     ///
-    /// <para><paramref name="units"/> overrides the spans when a fixture needs more than one: a pause
-    /// INSIDE a line is what the break threshold reads, and a single span covering the whole window
-    /// cannot express one.</para>
+    /// <para><paramref name="units"/> overrides the spans when a fixture needs more than one, so an
+    /// internal pause can be distinguished from the gap after the line.</para>
     /// </summary>
     private static LyricLine sungLine(string text, double start, double end, double? singEnd = null, params (double Start, double End)[] units)
     {
@@ -355,9 +344,9 @@ public class LyricPaceTest
     /// <paramref name="windowsMs"/> lines of "a b c", one per boundary window given. The line holds
     /// exactly 5 cells (three tokens, three chars, two inter-word spaces) and is sung for the whole
     /// window, so its rate is 5 * 60000 / window CPM on both averages and the whole distribution is
-    /// hand-computable. Lines are laid end to end with a 500 ms rest between them, which the LINE
-    /// mean cannot see and the whole-map rate does not charge for (the rest sits outside every line's
-    /// sung window).
+    /// hand-computable. Lines are laid out with a 500 ms rest between them, which the LINE mean
+    /// cannot see and the whole-map rate charges in full since v23 (a pause between lines counts up
+    /// to one second).
     ///
     /// <para>Five cells is far too thin to interest the difficulty model, so these fixtures exercise
     /// the two AVERAGES and reach the target only through its floor;
@@ -384,8 +373,9 @@ public class LyricPaceTest
     /// The map's six windows, chosen so every per-LINE rate is a round CPM: 500 ms -> 600 CPM
     /// (120 WPM), 600 -> 500 (100), 750 -> 400 (80), 1000 -> 300 (60), 1500 -> 200 (40),
     /// 3000 -> 100 (20). The LINE MEAN over them is (600 + 500 + 400 + 300 + 200 + 100) / 6 = 350 CPM
-    /// = 70 WPM; the whole-map rate is 30 cells over 7350 ms of singing = 244.898 CPM = 48.98 WPM,
-    /// which is the two averages coming apart on a fixture built to make them.
+    /// = 70 WPM; the whole-map rate is 30 cells over 7350 ms of singing plus five 500 ms rests
+    /// (charged in full since v23), 9850 ms = 182.74 CPM = 36.55 WPM, which is the two averages coming
+    /// apart on a fixture built to make them.
     /// </summary>
     private static readonly double[] six_windows = [500, 600, 750, 1000, 1500, 3000];
 
@@ -454,17 +444,18 @@ public class LyricPaceTest
 
         // And the two arms of that Math.Max, named rather than implied, so a failure says which one
         // broke. The peaked map publishes the MODEL's figure, its hardest window being far clear of
-        // its own average (151.05 against 102.86). The six-window map, six thin lines laid end to
-        // end, published its model figure too until v22 (52.26 against an average of 48.98); since
-        // the 16-character floor (LyricDifficulty.MinimumWindowChars) the model's figure for it is
-        // 43.05, below the average, so it now publishes the floor, 48.98 exactly.
+        // its own average (151.05 against 102.86). The six-window map, six thin lines with a 500 ms
+        // rest between each, published its model figure until v22 (52.26 against an average of
+        // 48.98), then the floor at v22 (the 16-character floor put the model's figure at 43.05,
+        // below that average), and its model figure again since v23: the model did not move, but
+        // the average fell to 36.55 once the five rests were charged, so 43.05 clears it.
         Assert.Multiple(() =>
         {
             Assert.That(LyricPace.Compute(twoPaceMap(6, 1000, 21000)).TargetWpm, Is.EqualTo(151.05142388501122).Within(1e-9));
             Assert.That(modelTargetWpm(linesAtWindows(six_windows)), Is.EqualTo(43.052892689999808).Within(1e-9), "the model's own figure");
-            Assert.That(LyricPace.Compute(linesAtWindows(six_windows)).TargetWpm, Is.EqualTo(LyricPace.Compute(linesAtWindows(six_windows)).AverageWpm).Within(1e-12),
-                "published at the floor");
-            Assert.That(LyricPace.Compute(linesAtWindows(six_windows)).TargetWpm, Is.EqualTo(48.979591836734684).Within(1e-9));
+            Assert.That(LyricPace.Compute(linesAtWindows(six_windows)).AverageWpm, Is.EqualTo(30 * 60000.0 / 9850 / 5).Within(1e-9), "the v23 average");
+            Assert.That(LyricPace.Compute(linesAtWindows(six_windows)).TargetWpm, Is.EqualTo(43.052892689999808).Within(1e-9),
+                "published at the model's figure, which clears the average");
         });
     }
 
@@ -560,6 +551,10 @@ public class LyricPaceTest
     /// scans) and both sat below the average; since v22 both are exactly 0, because each map carries
     /// 15 weighted cells, one short of the 16-character floor
     /// (<c>LyricDifficulty.MinimumWindowChars</c>), so no window qualifies at all.</para>
+    ///
+    /// <para>Since v23 the whole-map rate charges the pause BETWEEN lines (up to a second), so the
+    /// typeable lines of the two maps sit at the same times and the empty ones sit inside those
+    /// rests: an empty line neither closes the pause before it nor opens a new one after it.</para>
     /// </summary>
     [Test]
     public void AnUntypeableLine_IsInvisibleToBothAverages_AndTheTargetFallsToItsFloor()
@@ -567,10 +562,10 @@ public class LyricPaceTest
         LyricLine[] withEmptyLines =
         [
             windowLine("a b c", 1000, 1500),
-            windowLine("...", 2000, 2100),
-            windowLine("a b c", 3000, 4000),
-            windowLine("...", 5000, 5100),
-            windowLine("a b c", 6000, 7000),
+            windowLine("...", 1600, 1700),
+            windowLine("a b c", 2000, 3000),
+            windowLine("...", 3100, 3200),
+            windowLine("a b c", 3500, 4500),
         ];
 
         var withEmpty = LyricPace.Compute(withEmptyLines);
@@ -581,14 +576,15 @@ public class LyricPaceTest
         Assert.Multiple(() =>
         {
             // THE AVERAGES ARE THE PROPERTY, and it is exact: three counted lines, 15 cells over
-            // 500 + 1000 + 1000 = 2500 ms of singing = 360 CPM = 72 WPM.
+            // 500 + 1000 + 1000 = 2500 ms of singing plus two 500 ms rests = 3500 ms
+            // = 257.14 CPM = 51.43 WPM.
             Assert.That(withEmpty.TypeableCellCount, Is.EqualTo(withoutEmpty.TypeableCellCount));
             Assert.That(withEmpty.AverageWpm, Is.EqualTo(withoutEmpty.AverageWpm).Within(1e-12));
             Assert.That(withEmpty.LineAverageWpm, Is.EqualTo(withoutEmpty.LineAverageWpm).Within(1e-12));
-            Assert.That(withEmpty.AverageWpm, Is.EqualTo(72.0).Within(1e-9));
+            Assert.That(withEmpty.AverageWpm, Is.EqualTo(15 * 60000.0 / 3500 / 5).Within(1e-9));
 
-            // THE TARGET AGREES ONLY THROUGH THE FLOOR. Both model figures are below 72 (both are 0:
-            // neither map clears the character floor), so both maps publish 72.
+            // THE TARGET AGREES ONLY THROUGH THE FLOOR. Both model figures are below the average
+            // (both are 0: neither map clears the character floor), so both maps publish it.
             Assert.That(withEmpty.TargetWpm, Is.EqualTo(withoutEmpty.TargetWpm).Within(1e-12));
             Assert.That(withEmpty.TargetWpm, Is.EqualTo(withEmpty.AverageWpm).Within(1e-12));
 
@@ -1112,9 +1108,11 @@ public class LyricPaceTest
             Assert.That(lines[0].SingEndTime, Is.EqualTo(3000));
         });
 
-        // The parsed section reproduces the regression pace exactly.
+        // The parsed section reproduces the regression pace exactly (30 WPM whole-map since v23,
+        // 20 on the per-line mean, see ComputesSungWindowPace_MatchesGameRegressionValues).
         var pace = LyricPace.Compute(lines);
-        Assert.That(pace.AverageWpm, Is.EqualTo(20.0).Within(1e-9));
+        Assert.That(pace.AverageWpm, Is.EqualTo(30.0).Within(1e-9));
+        Assert.That(pace.LineAverageWpm, Is.EqualTo(20.0).Within(1e-9));
     }
 
     [Test]

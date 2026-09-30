@@ -103,12 +103,16 @@ public class PackageParserTest
 
         Assert.Multiple(() =>
         {
-            // The game's own pace regression values (LyricPaceStatisticsTest.ComputesBoundaryWindowPace).
+            // The game's own pace regression line. Since LyricPace v23 the whole-map figure charges
+            // only the two 1000 ms spans (nothing after the vocal end at 3000), so 5 cells / 2000 ms
+            // = 150 CPM; the per-line mean keeps the 3000 ms boundary window, 100 CPM
+            // (LyricPaceStatisticsTest.ComputesBoundaryWindowPace).
             Assert.That(diff.Lines, Has.Count.EqualTo(1));
             Assert.That(diff.Pace.TypeableCellCount, Is.EqualTo(5));
             Assert.That(diff.Pace.WordCount, Is.EqualTo(2));
-            Assert.That(diff.Pace.AverageCpm, Is.EqualTo(100).Within(1e-9));
-            Assert.That(diff.Pace.AverageWpm, Is.EqualTo(20).Within(1e-9)); // CPM/5 since LyricPace v15
+            Assert.That(diff.Pace.AverageCpm, Is.EqualTo(150).Within(1e-9));
+            Assert.That(diff.Pace.AverageWpm, Is.EqualTo(30).Within(1e-9)); // CPM/5 since LyricPace v15
+            Assert.That(diff.Pace.LineAverageCpm, Is.EqualTo(100).Within(1e-9));
             Assert.That(diff.Pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
             // Stars (LyricDifficulty): "ab cd" rates EXACTLY ZERO since LyricPace v22. It is five
             // cells, and the chunked axis's 16-character floor prices a map with no window holding
@@ -118,7 +122,7 @@ public class PackageParserTest
 
             // The rolling-window columns (028_wpm_curve.sql) are NULL here, and that is the
             // unmeasurable arm of their contract rather than an omission: "ab cd" is 5 cells
-            // against LyricWpmCurve.WINDOW_CELLS = 30, so there is not one window to read.
+            // against LyricWpmCurve.MIN_WINDOW_CELLS = 16, so there is not one window to read.
             Assert.That(diff.PeakWpm, Is.Null);
             Assert.That(diff.PeakCpm, Is.Null);
 
@@ -130,7 +134,7 @@ public class PackageParserTest
             // the floor is what the column holds: a number, where peak_wpm is NULL.
             Assert.That(diff.TargetWpm, Is.EqualTo(diff.Pace.AverageWpm).Within(1e-12),
                 "no window qualifies, so the target is the whole map's own pace");
-            Assert.That(diff.TargetWpm, Is.EqualTo(20).Within(1e-9));
+            Assert.That(diff.TargetWpm, Is.EqualTo(30).Within(1e-9));
 
             // Last line end = min(song_end 4000, end_ms 3000 + 3000 tail) = 4000 ms.
             Assert.That(diff.TotalLengthS, Is.EqualTo(4.0).Within(1e-9));
