@@ -33,6 +33,15 @@ public static class PublicSiteSeed
     /// <summary>"Hammered Keys", play_count 999999: most-played sort.</summary>
     public static long MostPlayedId { get; private set; }
 
+    /// <summary>Fuzzy search fixtures (backlog 351): "Dracula", "Dragonfly", "Draculaura" (a
+    /// prefix-only match for "dracula", and the newest of the three) and Mitski's "Washing
+    /// Machine Heart".</summary>
+    public static long DraculaId { get; private set; }
+    public static long DragonflyId { get; private set; }
+    public static long DraculauraId { get; private set; }
+    public static long WashingMachineId { get; private set; }
+    public static long FillerlessId { get; private set; }
+
     /// <summary>"Favourite Fingers", favourite_count 999999: most-favourited sort.</summary>
     public static long MostFavedId { get; private set; }
 
@@ -214,6 +223,33 @@ public static class PublicSiteSeed
                 title: "Bohemian Keyboard Rhapsody", artist: "Queen of Types",
                 submittedOffset: TimeSpan.FromMinutes(-30),
                 tags: "classic rock typing");
+
+            // Fuzzy search fixtures (backlog 351), dated three weeks back so they sit at the tail of
+            // the default listing and move nothing on page 1. Newest to oldest: Draculaura,
+            // Dragonfly, Dracula, which is the OPPOSITE of the match-tier order for "dracula", so
+            // only the tier ranking can put Dracula first.
+            DraculaId = await InsertSetAsync(conn,
+                title: "Dracula", artist: "Tame Impala",
+                submittedOffset: TimeSpan.FromDays(-21));
+
+            DragonflyId = await InsertSetAsync(conn,
+                title: "Dragonfly", artist: "Caroline Polachek",
+                submittedOffset: TimeSpan.FromDays(-20));
+
+            DraculauraId = await InsertSetAsync(conn,
+                title: "Draculaura", artist: "Monster Chorus",
+                submittedOffset: TimeSpan.FromDays(-19));
+
+            WashingMachineId = await InsertSetAsync(conn,
+                title: "Washing Machine Heart", artist: "Mitski",
+                submittedOffset: TimeSpan.FromDays(-22));
+
+            // A PREFIX-only match for "filler" that is newer than the 50th filler song: under the
+            // tier order it belongs after all 60 exact fillers, on page 2, which only a cursor
+            // that carries the tier can reach (a date-only cursor starts page 2 below it).
+            FillerlessId = await InsertSetAsync(conn,
+                title: "Fillerless Night", artist: "The Prefix",
+                submittedOffset: TimeSpan.FromHours(-49.5));
 
             MostPlayedId = await InsertSetAsync(conn,
                 title: "Hammered Keys", artist: "The Plays",

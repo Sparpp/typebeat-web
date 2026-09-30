@@ -7,17 +7,15 @@ using Typebeat.Web.Search;
 namespace Typebeat.Web.Pages.Beatmapsets;
 
 /// <summary>
-/// Public beatmap listing (/beatmapsets): full-text search (websearch_to_tsquery over the
-/// weighted beatmapsets.search vector, ILIKE fallback for short or lexeme-free queries),
-/// a status filter row, three sorts, and keyset "show more" paging: 50 per page, cursor on
-/// (sort key, id) carried in plain querystring links so the page needs no JavaScript.
+/// Public beatmap listing (/beatmapsets): free-text search through <see cref="FreeTextSearch"/>
+/// (exact lexeme, prefix, substring and typo layers), a status filter row, three sorts, and
+/// keyset "show more" paging: 50 per page, cursor on (sort key, id) carried in plain querystring
+/// links so the page needs no JavaScript. With free text on the default sort the match tier leads
+/// the order (and the cursor, as <c>after_tier</c>); an explicit sort keeps its own order.
 /// </summary>
 public sealed class ListingModel(Db db) : TypebeatPageModel
 {
     public const int PageSize = 50;
-
-    // Full-text search needs a word-ish token; anything shorter goes substring (ILIKE).
-    private const int min_fts_query_length = 3;
 
     public string Query { get; private set; } = string.Empty;
     public string Sort { get; private set; } = "newest";
@@ -35,7 +33,8 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
     public string? NextPageUrl { get; private set; }
 
     public async Task OnGetAsync(string? q, string? s, string? status, bool? unplayed,
-        long? after, [FromQuery(Name = "after_id")] long? afterId)
+        long? after, [FromQuery(Name = "after_id")] long? afterId,
+        [FromQuery(Name = "after_tier")] int? afterTier)
     {
         Query = (q ?? string.Empty).Trim();
         Sort = s is "plays" or "favs" ? s : "newest";
@@ -64,35 +63,13 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
         var search = BeatmapSearchQuery.Parse(Query);
         string freeText = search.FreeText;
 
-        if (freeText.Length > 0)
+        // Exact lexeme, prefix and substring layers, plus the typo fallback: one shared builder
+        // (FreeTextSearch). Its predicate joins the WHERE once the fallback is decided, below.
+        var textMatch = FreeTextSearch.Build(freeText);
+        if (textMatch is not null)
         {
-            const string ilike =
-                """
-                (s.title ILIKE @like OR s.title_unicode ILIKE @like
-                 OR s.artist ILIKE @like OR s.artist_unicode ILIKE @like
-                 OR s.tags ILIKE @like OR s.source ILIKE @like OR u.username::text ILIKE @like)
-                """;
-
-            param.Add("like", "%" + EscapeLike(freeText) + "%");
-
-            if (freeText.Length >= min_fts_query_length)
-            {
-                // websearch_to_tsquery('simple') matches how the vector is built (PackageIngest.
-                // SearchVectorSql, 'simple' config). A query that yields no lexemes at all
-                // (punctuation-only) falls back to substring matching instead of matching nothing.
-                param.Add("q", freeText);
-                where.Append(
-                    $"""
-
-                     AND (CASE WHEN numnode(websearch_to_tsquery('simple', @q)) > 0
-                               THEN s.search @@ websearch_to_tsquery('simple', @q)
-                               ELSE {ilike} END)
-                     """);
-            }
-            else
-            {
-                where.Append("\nAND ").Append(ilike);
-            }
+            foreach (var (name, value) in textMatch.Parameters)
+                param.Add(name, value);
         }
 
         // Typed operators translate to strictly-parameterised WHERE clauses (columns come from the
@@ -115,8 +92,33 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
                 + " WHERE b.set_id = s.id AND sc.user_id = @viewerId)");
         }
 
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        // The typo layer answers only a search nothing matches literally under every other filter
+        // (status, operators, unplayed), and then it replaces the literal predicate outright. The
+        // probe carries no cursor, so every page of one search takes the same branch.
+        string? tier = textMatch?.TierSql;
+        if (textMatch is not null)
+        {
+            string textWhere = textMatch.Where;
+
+            if (textMatch.TypoWhere is not null
+                && !await conn.ExecuteScalarAsync<bool>(
+                    $"SELECT EXISTS (SELECT 1 FROM beatmapsets s JOIN users u ON u.id = s.owner_id\n{where}\nAND {textMatch.Where})",
+                    param))
+            {
+                textWhere = textMatch.TypoWhere;
+                tier = null; // one tier only: plain newest-first, and no after_tier in the cursor
+            }
+
+            where.Append("\nAND ").Append(textWhere);
+        }
+
         string orderBy;
         string? cursor = null;
+
+        // Match tier ranks only the default sort: "most played" and "most favourited" are the
+        // visitor asking for that order, so they keep it exactly as before.
 
         switch (Sort)
         {
@@ -138,6 +140,19 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
                 }
                 break;
 
+            case "newest" when tier is not null:
+                // Free text on the default sort: best match tier first, newest within a tier. The
+                // cursor leads with the tier (ascending) ahead of the (submitted_at, id) pair
+                // (descending), so it cannot be one row comparison.
+                orderBy = $"ORDER BY {tier}, s.submitted_at DESC, s.id DESC";
+                if (after is not null && afterId is not null)
+                {
+                    cursor = $"AND ({tier} > @afterTier OR ({tier} = @afterTier AND (s.submitted_at, s.id) < (@afterTs, @afterId)))";
+                    param.Add("afterTs", DateTime.UnixEpoch.AddTicks(after.Value * 10));
+                    param.Add("afterTier", Math.Clamp(afterTier ?? FreeTextSearch.TierExact, FreeTextSearch.TierExact, FreeTextSearch.TierSubstring));
+                }
+                break;
+
             default:
                 orderBy = "ORDER BY s.submitted_at DESC, s.id DESC";
                 if (after is not null && afterId is not null)
@@ -155,8 +170,6 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
             where.Append('\n').Append(cursor);
             param.Add("afterId", afterId!.Value);
         }
-
-        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
         // One extra row tells us whether a next page exists.
         var rows = (await conn.QueryAsync<BeatmapsetCardModel>(
@@ -178,12 +191,22 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
                 "favs" => last.FavouriteCount,
                 _ => (last.Date.Ticks - DateTime.UnixEpoch.Ticks) / 10,
             };
-            NextPageUrl = BuildUrl(nextAfter, last.Id);
+            int? nextTier = null;
+            if (tier is not null && Sort == "newest")
+            {
+                param.Add("lastId", last.Id);
+                nextTier = await conn.ExecuteScalarAsync<int>(
+                    $"SELECT {tier} FROM beatmapsets s JOIN users u ON u.id = s.owner_id WHERE s.id = @lastId",
+                    param);
+            }
+
+            NextPageUrl = BuildUrl(nextAfter, last.Id, afterTier: nextTier);
         }
     }
 
     /// <summary>Listing URL preserving query/status/sort; cursor params only when paging.</summary>
-    public string BuildUrl(long? after = null, long? afterId = null, string? sort = null, string? status = null, bool? unplayed = null)
+    public string BuildUrl(long? after = null, long? afterId = null, string? sort = null, string? status = null, bool? unplayed = null,
+        int? afterTier = null)
     {
         var parts = new List<string>();
 
@@ -205,11 +228,11 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
         {
             parts.Add($"after={after}");
             parts.Add($"after_id={afterId}");
+            if (afterTier is not null)
+                parts.Add($"after_tier={afterTier}");
         }
 
         return parts.Count == 0 ? "/beatmapsets" : "/beatmapsets?" + string.Join("&", parts);
     }
 
-    private static string EscapeLike(string raw)
-        => raw.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_");
 }

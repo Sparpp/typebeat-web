@@ -60,6 +60,156 @@ public class ListingPageTest
         Assert.That(html, Does.Contain($"data-set-id=\"{PublicSiteSeed.SearchSetId}\""));
     }
 
+    // ---- backlog 351: prefix, substring and typo layers, tier ranking ----
+
+    [Test]
+    public async Task Search_PartialWord_FindsEveryTitleItPrefixes()
+    {
+        // FTS alone matched whole lexemes, so "drac" found nothing while "dr" (substring) did.
+        var drac = CardIds(await GetHtml("/beatmapsets?q=drac"));
+        var dra = CardIds(await GetHtml("/beatmapsets?q=dra"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(drac, Does.Contain(PublicSiteSeed.DraculaId));
+            Assert.That(drac, Does.Contain(PublicSiteSeed.DraculauraId));
+
+            // "drac" is NOT a prefix of Dragonfly (d-r-a-g); only a trigram union would return it
+            // (0.6), and that union floods literal searches with look-alikes, so the typo layer is
+            // a fallback. Fresh Drop is the same story at 0.4. "dra" prefixes all three.
+            Assert.That(drac, Does.Not.Contain(PublicSiteSeed.DragonflyId));
+            Assert.That(drac, Does.Not.Contain(PublicSiteSeed.FreshId));
+            Assert.That(dra, Is.SupersetOf(new[] { PublicSiteSeed.DraculaId, PublicSiteSeed.DragonflyId, PublicSiteSeed.DraculauraId }));
+        });
+    }
+
+    [Test]
+    public async Task Search_WholeWord_RanksTheExactMatchAboveNewerPrefixMatches()
+    {
+        // Draculaura is newer than Dracula and matches "dracula" as a prefix only: the default
+        // (newest) sort alone would put it first.
+        var ids = CardIds(await GetHtml("/beatmapsets?q=dracula"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ids.FirstOrDefault(), Is.EqualTo(PublicSiteSeed.DraculaId));
+            Assert.That(ids, Does.Contain(PublicSiteSeed.DraculauraId));
+        });
+    }
+
+    [Test]
+    public async Task Search_ExplicitSort_KeepsItsOwnOrder_OverTheMatchTier()
+    {
+        // Same two sets on a sort the visitor chose: plays tie at 0, so id DESC decides, and
+        // Draculaura (inserted after Dracula) leads exactly as it did before tiers existed.
+        var ids = CardIds(await GetHtml("/beatmapsets?q=dracula&s=plays"));
+
+        Assert.That(ids.IndexOf(PublicSiteSeed.DraculauraId), Is.LessThan(ids.IndexOf(PublicSiteSeed.DraculaId)));
+    }
+
+    [Test]
+    public async Task Search_MidWordFragment_FindsBySubstring()
+    {
+        Assert.That(CardIds(await GetHtml("/beatmapsets?q=cula")), Does.Contain(PublicSiteSeed.DraculaId));
+    }
+
+    [Test]
+    public async Task Search_SmallTypo_FindsByTrigram()
+    {
+        var dracla = CardIds(await GetHtml("/beatmapsets?q=dracla"));
+        var washng = CardIds(await GetHtml("/beatmapsets?q=" + Uri.EscapeDataString("washng machin")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(dracla, Does.Contain(PublicSiteSeed.DraculaId));
+            Assert.That(washng, Does.Contain(PublicSiteSeed.WashingMachineId));
+            // Per word: "machin" alone resembles nothing else, so the typo pair stays narrow.
+            Assert.That(washng, Has.Count.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task Search_MultiWord_PrefixesTheUnfinishedWord()
+    {
+        var ids = CardIds(await GetHtml("/beatmapsets?q=" + Uri.EscapeDataString("washing mach")));
+
+        Assert.That(ids, Does.Contain(PublicSiteSeed.WashingMachineId));
+    }
+
+    [Test]
+    public async Task Search_EveryWordIsAPrefix_AcrossTitleAndArtist()
+    {
+        // Only the prefix layer can answer this: not a substring anywhere, and both words are too
+        // short for the typo layer. "wa" prefixes Washing (title), "mi" prefixes Mitski (artist).
+        var ids = CardIds(await GetHtml("/beatmapsets?q=" + Uri.EscapeDataString("wa mi")));
+
+        Assert.That(ids, Does.Contain(PublicSiteSeed.WashingMachineId));
+    }
+
+    [Test]
+    public async Task Search_QuotedPhrase_StillMatchesAsAPhrase()
+    {
+        var ids = CardIds(await GetHtml("/beatmapsets?q=" + Uri.EscapeDataString("\"washing machine\"")));
+
+        Assert.That(ids.FirstOrDefault(), Is.EqualTo(PublicSiteSeed.WashingMachineId));
+    }
+
+    [TestCase("!!!")]
+    [TestCase("&|!():*<>")]
+    [TestCase("drac:* | ! (")]
+    [TestCase("'\\'")]
+    [TestCase("\"")]
+    [TestCase("\"unclosed phrase")]
+    [TestCase("x');DROP TABLE users;--")]
+    [TestCase("%_\\")]
+    public async Task Search_PunctuationAndOperatorCharacters_NeverError(string q)
+    {
+        // GetHtml asserts the 200; a tsquery syntax error would surface as a 500.
+        string html = await GetHtml("/beatmapsets?q=" + Uri.EscapeDataString(q));
+
+        Assert.That(html, Does.Contain("</html>"));
+    }
+
+    [Test]
+    public async Task Search_TwoCharacters_StaysASubstringMatch()
+    {
+        // "dr" is inside Dracula, Dragonfly and Fresh Drop; nothing without a "dr" joins them.
+        var ids = CardIds(await GetHtml("/beatmapsets?q=dr"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ids, Does.Contain(PublicSiteSeed.DraculaId));
+            Assert.That(ids, Does.Contain(PublicSiteSeed.DragonflyId));
+            Assert.That(ids, Does.Contain(PublicSiteSeed.FreshId));
+            Assert.That(ids, Does.Not.Contain(PublicSiteSeed.WashingMachineId));
+        });
+    }
+
+    [Test]
+    public async Task Search_TieredPaging_CarriesTheTierInTheCursor()
+    {
+        // 60 exact "filler" sets fill page 1 and start page 2; "Fillerless Night" (a prefix match,
+        // but newer than the 50th filler) must close page 2 rather than lead page 1 or vanish.
+        string page1 = await GetHtml("/beatmapsets?q=filler");
+        var page1Ids = CardIds(page1);
+
+        var showMore = Regex.Match(page1, "href=\"(/beatmapsets\\?[^\"]*after=[^\"]*)\"");
+        Assert.That(showMore.Success, Is.True, "page 1 must link a cursor page");
+
+        string next = WebUtility.HtmlDecode(showMore.Groups[1].Value);
+        var page2Ids = CardIds(await GetHtml(next));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(next, Does.Contain("after_tier=0"));
+            Assert.That(page1Ids, Has.Count.EqualTo(50));
+            Assert.That(page1Ids, Does.Not.Contain(PublicSiteSeed.FillerlessId));
+            Assert.That(page2Ids, Has.Count.EqualTo(11));
+            Assert.That(page2Ids.LastOrDefault(), Is.EqualTo(PublicSiteSeed.FillerlessId));
+            Assert.That(page2Ids.Intersect(page1Ids), Is.Empty, "cursor pages must not overlap");
+        });
+    }
+
     [Test]
     public async Task Search_NoResults_ShowsEmptyState()
     {
