@@ -21,7 +21,7 @@ public sealed class DownloadModel(IFileStore store, IConfiguration config) : Typ
     /// throttling of CF-proxied hosts observed for RU traffic, not a server issue) and this host
     /// gives them a fallback that skips the CF proxy hop entirely.
     /// </summary>
-    public const string DIRECT_MIRROR_ROOT = "https://bss.typebeat.mingda.sh";
+    public const string DIRECT_MIRROR_ROOT = "https://bss.typebeat.sh";
 
     /// <summary>Rewrites a root-relative download href onto the direct-origin mirror host.</summary>
     public static string MirrorHref(string href) => DIRECT_MIRROR_ROOT + href;

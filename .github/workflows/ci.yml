@@ -119,7 +119,7 @@ jobs:
       - name: Health check
         run: |
           sleep 5
-          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -q ok
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://typebeat.sh/health | grep -q ok
           echo "healthy"
 
       # Caddyfile changes used to never reach the running container (backlog 190): the old

@@ -37,7 +37,7 @@ per-section files under the session scratchpad
   `previews/{setId}.mp3`, downloads `downloads/`. R2 swap later = new IFileStore impl.
 - **Upload cap ~95 MB** (Cloudflare proxied request bodies cap at 100 MB on our plan). Kestrel
   default is ~28.6 MB — must be raised per-endpoint on the BSS routes only. Since backlog 189, BSS
-  uploads arrive via the direct-origin host (`bss.typebeat.mingda.sh`, DNS-only, not proxied
+  uploads arrive via the direct-origin host (`bss.typebeat.sh`, DNS-only, not proxied
   through Cloudflare), so this Cloudflare figure motivated the original cap but no longer bounds
   the live request path; the cap number itself is unchanged.
 - **DMCA minimum:** `/legal/dmca` static page + per-set report form writing to the existing
@@ -165,7 +165,7 @@ migrations are embedded resources applied at startup in filename order.
 - Submission port (~14 upstream files, trimmed wizard) with **native-encoder exporter** (never
   LegacyBeatmapExporter — it drops `[Lyrics]`); `BeatmapSubmissionServiceUrl = {root}/bss` in dev
   (derived from the local root). In production, since backlog 189, this points at the distinct
-  direct-origin host `https://bss.typebeat.mingda.sh` instead, with the `/bss` path prefix
+  direct-origin host `https://bss.typebeat.sh` instead, with the `/bss` path prefix
   unchanged: uploads bypass the Cloudflare-proxied main hostname because sustained upload bodies
   were dying mid-flight between the client and the CF edge (see `deploy/Caddyfile`).
 - Registry identity rename: `Software\typebeat\Capabilities`, progIds `typebeat.File/.Uri`,

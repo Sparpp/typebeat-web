@@ -40,7 +40,7 @@ public sealed record GoogleOidcOptions(string? ClientId, string? ClientSecret)
 ///     (<see cref="GetKeysAsync"/>, cached) and our client id and the cookie's nonce.
 ///
 /// The redirect URI is built from the request's own scheme and host, so it is whatever host the
-/// user is on (typebeat.mingda.sh in prod; TYPEBEAT_BEHIND_PROXY makes the scheme https). It must
+/// user is on (typebeat.sh in prod; TYPEBEAT_BEHIND_PROXY makes the scheme https). It must
 /// be registered, exactly, as an authorised redirect URI on the OAuth client.
 /// </summary>
 public sealed class GoogleOidc(GoogleOidcOptions options, IHttpClientFactory httpClients, ILogger<GoogleOidc> logger)

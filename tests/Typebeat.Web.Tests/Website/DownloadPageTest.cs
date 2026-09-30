@@ -94,9 +94,9 @@ public class DownloadPageTest
 
                 // Direct-mirror fallback (backlog 191): one per available card, on the direct-origin
                 // host, same root-relative route.
-                Assert.That(html, Does.Contain("href=\"https://bss.typebeat.mingda.sh/download/game\""));
-                Assert.That(html, Does.Contain("href=\"https://bss.typebeat.mingda.sh/download/game-linux\""));
-                Assert.That(html, Does.Contain("href=\"https://bss.typebeat.mingda.sh/download/game-macos\""));
+                Assert.That(html, Does.Contain("href=\"https://bss.typebeat.sh/download/game\""));
+                Assert.That(html, Does.Contain("href=\"https://bss.typebeat.sh/download/game-linux\""));
+                Assert.That(html, Does.Contain("href=\"https://bss.typebeat.sh/download/game-macos\""));
                 Assert.That(html, Does.Contain("direct mirror"));
 
                 // Card order IS the L-shaped layout (two-column grid, macOS last so it lands under
@@ -165,13 +165,13 @@ public class DownloadPageTest
     }
 
     /// <summary>
-    /// The direct-mirror host (backlog 191) is a pure string rewrite onto bss.typebeat.mingda.sh,
+    /// The direct-mirror host (backlog 191) is a pure string rewrite onto bss.typebeat.sh,
     /// which the server's Caddy already proxies to the same app, so the same root-relative route
     /// serves there unchanged.
     /// </summary>
     [Test]
     public void MirrorHref_RewritesOntoDirectOriginHost()
     {
-        Assert.That(DownloadModel.MirrorHref("/download/game"), Is.EqualTo("https://bss.typebeat.mingda.sh/download/game"));
+        Assert.That(DownloadModel.MirrorHref("/download/game"), Is.EqualTo("https://bss.typebeat.sh/download/game"));
     }
 }

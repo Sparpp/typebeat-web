@@ -1,6 +1,9 @@
-# Caddy auto-provisions a Let's Encrypt cert for this name once DNS points at the box.
+# Caddy auto-provisions a Let's Encrypt cert for each name once DNS points at the box.
 # Requires ports 80/443 reachable from the internet (ufw already allows them).
-typebeat.mingda.sh {
+
+# The canonical site. Moved here from typebeat.mingda.sh, which stays up below for the clients
+# that have it compiled in.
+typebeat.sh {
 	encode zstd gzip
 
 	# WebSocket upgrade for /ws/notifications is handled transparently by reverse_proxy.
@@ -12,14 +15,45 @@ typebeat.mingda.sh {
 	}
 }
 
+www.typebeat.sh {
+	redir https://typebeat.sh{uri} permanent
+}
+
+# The original host. Every client shipped before the domain move has this name compiled in as
+# its API root and update feed, so it must keep serving the app indefinitely: an old install can
+# only learn about the build that moves it to typebeat.sh by asking here. Only browser page
+# loads are sent to the new domain, recognised by a GET that asks for text/html (the game
+# client, the updater and the web player's fetches never do). The path list is a second guard
+# for the machine-facing routes in case some client ever sends a browser-like Accept.
+# Temporary (302) rather than permanent so a problem on the new domain is not cached into
+# browsers; switch to permanent once typebeat.sh has settled.
+typebeat.mingda.sh {
+	encode zstd gzip
+
+	@browser {
+		method GET
+		header Accept *text/html*
+		not path /api/* /oauth/* /bss/* /ws/* /releases/*
+	}
+	redir @browser https://typebeat.sh{uri} temporary
+
+	reverse_proxy app:8080
+
+	log {
+		output stdout
+		format console
+	}
+}
+
 # Direct-origin path for BSS uploads (backlog 189): a user's package uploads died 7/7 with the
 # body reset mid-flight between their client and the Cloudflare edge (an on-path middlebox
 # killing sustained request bodies to CF-proxied hosts; CF Security Events showed nothing, so the
-# drop is not a WAF/rate-limit decision). This name's DNS record is grey-cloud (DNS-only, no CF
-# proxy), so Caddy's ACME HTTP-01 challenge reaches this box directly the same way it did for the
-# main site, and the cert auto-provisions into the existing caddy_data volume on first deploy. No
-# app changes needed: AllowedHosts is "*" and the forwarded-headers config is already permissive.
-bss.typebeat.mingda.sh {
+# drop is not a WAF/rate-limit decision). These names' DNS records are grey-cloud (DNS-only, no
+# CF proxy), so Caddy's ACME HTTP-01 challenge reaches this box directly the same way it did for
+# the main site, and the cert auto-provisions into the existing caddy_data volume on first deploy.
+# No app changes needed: AllowedHosts is "*" and the forwarded-headers config is already
+# permissive. The mingda.sh name is what shipped clients fall back to, so it stays.
+bss.typebeat.sh, bss.typebeat.mingda.sh {
 	encode zstd gzip
 
 	reverse_proxy app:8080

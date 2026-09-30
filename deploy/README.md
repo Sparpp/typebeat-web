@@ -1,6 +1,6 @@
 # Deploy
 
-Single Hetzner box, Docker Compose. Caddy terminates TLS for `typebeat.mingda.sh` and
+Single Hetzner box, Docker Compose. Caddy terminates TLS for `typebeat.sh` and
 reverse-proxies to the ASP.NET app; Postgres lives on the private compose network.
 
 ## Running compose on the box
@@ -43,7 +43,7 @@ at the file instead of describing its invocation.
 
 ## First deploy
 
-1. DNS: an `A` record `typebeat.mingda.sh -> <server ip>` must resolve (DNS-only at first, so
+1. DNS: an `A` record `typebeat.sh -> <server ip>` must resolve (DNS-only at first, so
    Caddy's ACME HTTP challenge reaches the box; switch Cloudflare to proxied afterwards).
 2. On the box, in the repo root (`/opt/typebeat-web`):
    ```
@@ -55,7 +55,7 @@ at the file instead of describing its invocation.
    ```
    ./deploy/up.sh logs -f caddy
    ```
-4. Verify: `curl https://typebeat.mingda.sh/health` returns `ok`.
+4. Verify: `curl https://typebeat.sh/health` returns `ok`.
 
 ## Update
 
@@ -90,7 +90,7 @@ caches keep serving until you finish all four steps:
      "rm -rf /data/covers/<SET_ID> /data/previews/<SET_ID>.mp3 /data/packages/<SET_ID>"
    ```
 3. Purge the Cloudflare cache for the set's media URLs (dashboard → Caching → Purge by URL:
-   `https://typebeat.mingda.sh/covers/<SET_ID>/*` and `/previews/<SET_ID>.mp3`), or purge
+   `https://typebeat.sh/covers/<SET_ID>/*` and `/previews/<SET_ID>.mp3`), or purge
    everything for a single-set site. Covers/previews are served with `max-age=86400`, so even
    without a purge every cache ages out within a day; the purge closes that window.
 4. If the takedown was a DMCA notice, note the set id + notice reference in the report row
@@ -101,7 +101,7 @@ Browser caches cannot be purged remotely; the one-day `max-age` bounds them.
 ## Origin-side ingest (upload dies at the edge)
 
 Since backlog 189, the client submits BSS uploads via the direct-origin host
-(`bss.typebeat.mingda.sh`, DNS-only, not proxied through Cloudflare) already, so this runbook now
+(`bss.typebeat.sh`, DNS-only, not proxied through Cloudflare) already, so this runbook now
 covers the rarer case where even the direct host is unreachable from the user's network (their own
 path drops the body mid-flight, not a Cloudflare-edge issue). The triage below (BssUpload log
 grep) is unchanged.
@@ -197,7 +197,7 @@ report a transport failure client-side, is this runbook's case.
    ```
    docker exec -it typebeat-web-postgres-1 psql -U typebeat -d typebeat -c \
      "SELECT id, status, updated_at FROM beatmapsets WHERE id = <SET_ID>;"
-   curl -sS -o /dev/null -w '%{http_code}\n' https://typebeat.mingda.sh/beatmapsets/<SET_ID>
+   curl -sS -o /dev/null -w '%{http_code}\n' https://typebeat.sh/beatmapsets/<SET_ID>
    ```
 
 6. Revoke the token. Do this even if it is about to expire on its own:
@@ -444,7 +444,7 @@ So the alert firing is never evidence the guard works; only a test crossing or a
 Quick manual check, from anywhere:
 
 ```
-curl -sS -H "X-Buddy-Key: $TYPEBEAT_BUDDY_KEY" https://typebeat.mingda.sh/api/v2/ops/disk
+curl -sS -H "X-Buddy-Key: $TYPEBEAT_BUDDY_KEY" https://typebeat.sh/api/v2/ops/disk
 ```
 
 ### Diagnosing a fill (owner, on the box)
@@ -479,7 +479,7 @@ cause: a wedged Postgres is the symptom, never the cause.
 
 ## Monitoring
 
-- Uptime: UptimeRobot keyword monitor on `https://typebeat.mingda.sh/health` (keyword `ok`,
+- Uptime: UptimeRobot keyword monitor on `https://typebeat.sh/health` (keyword `ok`,
   5-min interval). Public status page: <https://stats.uptimerobot.com/E7XRJ7vfer>.
 - **Failure signature: if EVERYTHING 500s and Postgres looks unhealthy, check `df -h` first.** A
   full disk presents as a database fault, not a disk fault: Postgres logs
@@ -523,14 +523,14 @@ returns 404. To turn it on:
 
 1. In the [Google Cloud console](https://console.cloud.google.com/), pick (or create) a project,
    then **APIs & Services > OAuth consent screen**: user type **External**, app name `type!beat`,
-   a support email, the authorised domain `mingda.sh`, and the scopes `openid`, `email` and
+   a support email, the authorised domain `typebeat.sh`, and the scopes `openid`, `email` and
    `profile` (all three are non-sensitive, so no Google verification review is needed). Publish the
    app ("In production"); while it is in "Testing" only the listed test users can sign in.
 2. **APIs & Services > Credentials > Create credentials > OAuth client ID**, application type
    **Web application**. Leave "Authorised JavaScript origins" empty (the flow is server side) and
    add exactly one **Authorised redirect URI**:
    ```
-   https://typebeat.mingda.sh/auth/google/callback
+   https://typebeat.sh/auth/google/callback
    ```
    The app builds the redirect URI from the host the visitor is on, so it must match that host
    exactly, scheme and all. A local dev run would need `http://localhost:5089/auth/google/callback`

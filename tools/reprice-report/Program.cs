@@ -81,7 +81,7 @@ internal sealed class RunContext
 
 internal static class RepriceCli
 {
-    private const string default_site = "https://typebeat.mingda.sh";
+    private const string default_site = "https://typebeat.sh";
 
     /// <summary>Clean run, every predicate held.</summary>
     private const int exit_ok = 0;
@@ -519,7 +519,7 @@ internal static class RepriceCli
             Options:
               --db <conn>        Postgres connection string (default: $TYPEBEAT_DB, else the dev default)
               --site <url>       typebeat instance the beatmap packages are fetched from
-                                 (default: https://typebeat.mingda.sh). Read-only, public routes.
+                                 (default: https://typebeat.sh). Read-only, public routes.
               --cache <dir>      where fetched .osz are kept (default: ./.reprice-report-cache). The
                                  layout matches tools/score-recalc's, so pointing this at that tool's
                                  cache reuses every package it has already downloaded.

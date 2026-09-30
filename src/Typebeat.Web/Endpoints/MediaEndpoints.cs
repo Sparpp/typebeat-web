@@ -95,7 +95,7 @@ public static class MediaEndpoints
 
         // The Velopack update feed (downloads/releases/{file}): the release manifest + full
         // package the installed client's VelopackUpdateManager polls (SimpleWebSource at
-        // https://typebeat.mingda.sh/releases). Anonymous. Manifests must never be cached (a
+        // https://typebeat.sh/releases). Anonymous. Manifests must never be cached (a
         // stale one hides a new release); packages are immutable by name.
         app.MapGet("/releases/{file}", ServeReleaseAssetAsync);
 

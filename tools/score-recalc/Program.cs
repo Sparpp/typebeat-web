@@ -91,7 +91,7 @@ internal static class ScoreRecalcTool
 
 internal static class Cli
 {
-    private const string default_site = "https://typebeat.mingda.sh";
+    private const string default_site = "https://typebeat.sh";
     private const string write_flag = "--i-understand-this-writes-to-the-database";
 
     /// <summary>
@@ -500,7 +500,7 @@ internal static class Cli
             Options:
               --db <conn>        Postgres connection string (default: $TYPEBEAT_DB, else the dev default)
               --site <url>       typebeat instance to fetch replays and beatmap packages from
-                                 (default: https://typebeat.mingda.sh). Read-only, public routes.
+                                 (default: https://typebeat.sh). Read-only, public routes.
               --cache <dir>      where fetched .osr/.osz are kept (default: ./.score-recalc-cache)
               --score <id>       recalculate only this score; repeatable
               --limit <n>        only the first n rows

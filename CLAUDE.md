@@ -2,7 +2,7 @@
 
 Guidance for anyone (human or agent) working inside `typebeat-web`, the **type!beat backend and
 website**: an ASP.NET Core monolith (Razor Pages plus minimal-API endpoints) over Postgres. Runs in
-production at `typebeat.mingda.sh`.
+production at `typebeat.sh`.
 
 Most work here is done by an agent spawned into a **git worktree** under `.claude/worktrees/<slug>`
 by an orchestrator running in the parent superrepo. The rules below are the ones that get re-typed

@@ -68,7 +68,7 @@ public static class BssEndpoints
     /// Per-endpoint Kestrel body cap for the two package-upload routes only (~100 MB: above
     /// PackageValidator's 95 MiB package cap + multipart overhead, below Cloudflare's 100 MB
     /// proxied-body limit). Everything else keeps Kestrel's ~28.6 MB default. Since backlog 189,
-    /// uploads arrive via the direct-origin host (bss.typebeat.mingda.sh, not proxied through
+    /// uploads arrive via the direct-origin host (bss.typebeat.sh, not proxied through
     /// Cloudflare), so the Cloudflare figure motivated this cap but no longer bounds the live
     /// request path.
     /// </summary>

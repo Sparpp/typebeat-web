@@ -6,7 +6,7 @@
 # from the FILE's directory, so the build context `.` below resolves to deploy/ and the project
 # name becomes "deploy", which is a whole second stack with its own empty volumes. See
 # deploy/README.md, "Running compose on the box".
-# Caddy terminates TLS for typebeat.mingda.sh and reverse-proxies to the app; the app talks to
+# Caddy terminates TLS for typebeat.sh and reverse-proxies to the app; the app talks to
 # Postgres over the private compose network. Only Caddy publishes ports to the host.
 #
 # EVERY service caps its json-file log (10m x 3 = 30 MB worst case each). Docker's default is an
