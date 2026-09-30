@@ -2459,8 +2459,8 @@
     // being sung. A FLOOR, not a fixed window: a line whose own activation is earlier keeps it.
     const FIRST_LINE_LEAD_MS = 300;
 
-    // TypingCell.IsCountable: the currency the rush cap measures in. A space spends no budget, so
-    // pressing one can never push the caret over the line by itself.
+    // TypingCell.IsCountable: the currency the drift readout measures in (and the rush cap did
+    // until PR 3 removed it). A space spends no budget, so pressing one never moves the lead.
     function isCountable(cell) { return cell.typeable && cell.expected !== ' '; }
 
     // TypingEngine.isWordGap. A WORD GAP: the typeable SPACE cell that separates two words. The one
@@ -3148,7 +3148,8 @@
         // TypingEngine.PlayheadCountablePosition. How many COUNTABLE characters the song has
         // reached by `time`: the count of countable cells across the whole map whose target time is
         // at or before it. The playhead's position in the countable stream, and the reference the
-        // rush cap is measured against. Monotonic in time and a pure function of the beatmap.
+        // drift readout (and, before PR 3, the rush cap) is measured against. Monotonic in time and
+        // a pure function of the beatmap.
         playheadCountablePosition(time) {
             let lo = 0;
             let hi = this.countableTargets.length;
@@ -3637,8 +3638,9 @@
         // Called from the one arm such a press can reach: a word skip's space, falling through to be
         // judged on the word gap the skip parked the caret on. Keyed on the press having ACTUALLY
         // credited combo rather than on the skip having happened, so a skip whose space earned
-        // nothing (an inert retype of an already judged gap, the rush cap refusing a caret that was
-        // ALREADY out past its bound before the skip, or a word abandoned all the way to the end of
+        // nothing (an inert retype of an already judged gap, the pre-347 rush cap refusing a caret
+        // that was ALREADY out past its bound before the skip, an era the browser is never in since
+        // PR 3 removed the cap, or a word abandoned all the way to the end of
         // a line, where there is no gap for the space to land on at all) records no credit and
         // behaves exactly as backlog 176 left it. The word this press gave up no longer counts
         // against that bound (backlog 260), which is why the cap refusing here is now a statement
@@ -4586,10 +4588,10 @@
 
             // TypeBeatPlayfield.onCharJudged's flexible-caret arm. It existed for the RUSH CAP's
             // combo break on a press still judged Great/Ok/Meh, which the hit result alone (it
-            // INCREMENTS osu's combo) could not carry. Since backlog 347 the live rule breaks nothing
-            // there (the over-cap press is a Meh that credits combo), so on a scoring press the
-            // engine's combo is never zero here and this carries nothing; the C# keeps the same seam
-            // for its pre-347 era. Kept rather than deleted because it is written against "the combo
+            // INCREMENTS osu's combo) could not carry. Since backlog 347 the live rule broke nothing
+            // there (the over-cap press was a Meh that credited combo), and since PR 3 there is no
+            // cap at all, so on a scoring press the engine's combo is never zero here and this
+            // carries nothing; the C# keeps the same seam for its pre-347 era. Kept rather than deleted because it is written against "the combo
             // this press left behind" (the C# judgement.ComboAfter), which covers the inert-retype
             // branch too, and the C# announces that through the very same raise.
             //
