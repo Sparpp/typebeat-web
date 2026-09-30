@@ -106,14 +106,14 @@ WireCompat is where that is provable, because it is the only project that compil
 | `src/Typebeat.Web/Scoring/PerformancePoints.cs` | `typebeat.Game.Rulesets.TypeBeat/Scoring/PerformancePoints.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/LyricDifficulty.cs` | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricDifficulty.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/ChunkedEndurance.cs` | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/ChunkedEndurance.cs` |
-| `src/Typebeat.Web/Packages/Lyrics/PausedWord.cs` (rest validation and stretch spans only) | `typebeat.Game.Rulesets.TypeBeat/Gameplay/PausedWord.cs` |
+| `src/Typebeat.Web/Packages/Lyrics/PausedWord.cs` (rest validation and stretch spans only; the optional cell rule PR 3 added defaults to `Typeability.IsCell`, and the server never passes another) | `typebeat.Game.Rulesets.TypeBeat/Gameplay/PausedWord.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/LyricTiming.cs` (the stored map's `[Lyrics]` parse: words, `syllables`, `pauses`) | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/TimingJsonLoader.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/LyricWpmCurve.cs` | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricWpmCurve.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/InstrumentalGaps.cs` | `typebeat.Game.Rulesets.TypeBeat/Gameplay/InstrumentalGaps.cs` |
 | `src/Typebeat.Web/wwwroot/js/typebeat-player.js` (`computeGaps` + its four constants) | the same `InstrumentalGaps.cs`, via the row above |
 | `src/Typebeat.Web/wwwroot/js/typebeat-core.js` | the C# `TypingEngine` / `TypeBeatScoreProcessor` |
-| `src/Typebeat.Web/wwwroot/js/typebeat-player.js` (`buildPaceBands` and its `pace*` helpers, the underline pace hue; display only, pinned by `UnderlinePaceParityTest` against `BuildBands` on the synthetic and env-supplied real maps) | `typebeat.Game.Rulesets.TypeBeat/UI/UnderlinePace.cs` |
-| `src/Typebeat.Web/Packages/Lyrics/Romaniser.cs` (identical below the `using` lines except the namespace line; pinned by `RomaniserParityTest` over the game repo's `NonVisual/fixtures/romaniser/*.tsv`, which the WireCompat csproj links in; the JS has no copy, since it only decodes already-romanised text) | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/Romaniser.cs` |
+| `src/Typebeat.Web/wwwroot/js/typebeat-player.js` (`buildPaceBands` and its `pace*` helpers, the underline pace hue; display only. Since PR 3 a word is also cut at its `syllableMarkerCells` and `buildPaceBands` is the RELATIVE mode LyricStage draws, `BuildRelativeBands` at `DEFAULT_MAX_CHANGE_PERCENT`; the whole-map rank mode is `buildRankedPaceBands`. `UnderlinePaceParityTest` pins both on the synthetic and env-supplied real maps) | `typebeat.Game.Rulesets.TypeBeat/UI/UnderlinePace.cs` |
+| `src/Typebeat.Web/Packages/Lyrics/Romaniser.cs` (identical below the `using` lines except the namespace line; pinned by `RomaniserParityTest` over the game repo's `NonVisual/fixtures/romaniser/*.tsv`, which the WireCompat csproj links in; the JS has no copy, since it only decodes already-romanised text). DELIBERATE DIVERGENCE since PR 3: the game's `LyricOriginals` runs `JapaneseReading` (Kawazu + the LibNMeCab IPA dictionary: kanji readings and word boundaries) BEFORE this romaniser. The server has no dictionary and will not get one, so its mirror covers exactly what it covered before; kanji romanisation happens only in the client at import and reaches the server as already-romanised stored text plus the `original` field | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/Romaniser.cs` |
 
 - **`typebeat-core.js` is a hand-written JS reimplementation of the C# engine** and must stay
   byte-compatible, or browser `/play` scores diverge from desktop on the same leaderboards. Any
@@ -180,17 +180,29 @@ WireCompat is where that is provable, because it is the only project that compil
   extended frame reads the word as all false, and an older client IGNORES the unknown sentinel
   (any code below 0x20 it does not know resolves no cell). **Second-word bit 0** is
   `RushCapCostsAccuracy`: a press that leaves the caret more than `FLETCHER_MAX_CHARS_AHEAD`
-  countable characters past the playhead is AWARDED Meh (`rushCapTier`, a min over the ladder, so
+  countable characters past the playhead is AWARDED Meh (`RushCapTier`, a min over the ladder, so
   Premature/Lagging stay put) with its true delta, credits combo like any other hit (no break, no
-  discarded claim), and marks the cell (`judgedPastRushCap`, history, so an inert retype re-derives
-  the Meh and `typebeat-player.js` draws it in the `tb-c-off` warn tint), and the same bit loosens
-  the cap from five to six. Clear, the C# re-derives the pre-347 rule (cap five, the press graded on
-  the clock but the run zeroed once per excursion). The browser takes the new rule
-  unconditionally, so every live parity fixture sets `RushCapCostsAccuracy = true` on its bare engine
-  and appends `CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true)` after its CONFIG frame.
-  `EngineFuzzLiveParityTest` counts `rushCapMehs` (a rushed press announced as Meh on a marked
-  cell) and `ClearingTheExtendedHeaderReDerivesTheComboBreakAtFive` proves the scorer follows the
-  header; `tools/score-recalc` needs no axis for it (the header travels in the .osr), pinned by
+  discarded claim), and marks the cell (`JudgedPastRushCap`), and the same bit loosens the cap from
+  five to six. Clear, the C# re-derives the pre-347 rule (cap five, the press graded on the clock
+  but the run zeroed once per excursion). Both are STORED eras since PR 3 (bit 1 below removed the
+  cap live), but every live parity fixture still sets `RushCapCostsAccuracy = true` on its bare
+  engine, because the live client records it, and appends `CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true)` after its
+  CONFIG frame. **Second-word bit 1** (value 2, PR 3) is `InputEra2`, the SECOND INPUT ERA, set for
+  every live stack and so unconditional here with no flag: NO RUSH CAP at all (the C# skips
+  `rushesPastCap`, so bit 0 is recorded but inert live; the browser carries no cap constant, no
+  `rushesPastCap`, no `rushCapTier` and no `judgedPastRushCap` mark), ONE BACKSPACE UNDOES A WORD
+  SKIP and the gap it typed, parking the caret on the first abandoned cell (`tryUndoWordSkip`,
+  `adjacentSkippedWord`, `canUndoWordSkip`), SPACE TO SKIP needs `allowWrongInput` (under
+  Gatekeeper a mid-word space is a rejected wrong key), and the refined RETYPE ANCHOR (a gap typo
+  selects the word before it, a wholly abandoned word anchors on its own head, leading auto-skipped
+  punctuation is stepped over). So every live parity fixture sets `InputEra2 = true` beside
+  `RushCapCostsAccuracy = true`, and the extended word is 3. `EngineFuzzLiveParityTest` counts
+  `farAheadPresses` / `farAheadClockHits` (presses past where the 347 cap stood) and pins
+  `farAheadMehAwards` / `farAheadBreaks` at ZERO; `EachStoredRushEraReDerivesUnderItsOwnHeader`
+  proves the scorer follows both bits; `WordSkipLiveParityTest` and `WordInputParityTest` pin the
+  undo, the Gatekeeper space and the anchor; a stored-era arm replays the pre-PR 3 gesture
+  composition (`legacyScript` in `CoreFlexibleLinesHarness.cjs`). `tools/score-recalc` needs no
+  axis for either bit (the header travels in the .osr), pinned by
   `ScoreRecalcTest.TheRushCapEraTravelsInTheSecondHeaderThroughTheOsr`. PR 2 also made **authored pauses** (a word's `pauses` array, or the
   legacy single `pause` object) scoring surface: `usableRests` / `pausedWordOf` /
   `tokenCellTargets` mirror `Gameplay/PausedWord.cs` and `TypingLine.tokenCellTargets`, and move
@@ -213,9 +225,9 @@ WireCompat is where that is provable, because it is the only project that compil
   stored .osu; `OriginalTextParityTest.TheBrowserDecoderIgnoresOriginals` pins that through
   `parseLyricOsu` + `buildBeatmap` against the game's decoder. The originals themselves reach the
   site as `beatmaps.lyrics_original` (039), aligned line for line with `beatmaps.lyrics`. A harness that
-  SPIES on an engine method must forward every argument
-  (`CoreFuzzHarness.cjs` wraps `rushesPastCap`): a dropped one reads out of the prefix table as NaN
-  and silently answers "no rush" for the entire sweep.
+  SPIES on an engine method must forward every argument: a dropped one reads out of a table as NaN
+  and silently answers the wrong thing for the entire sweep (it once did, on the since-removed
+  `rushesPastCap`).
 - **Lyric NORMALISATION is mirrored three ways** (game `Typeability.Normalize` in
   `Beatmaps/LyricBeatmap.cs`, server `Packages/Lyrics/Typeability.cs`, browser `normalize` in
   `typebeat-core.js`), and since backlog 329 that includes the 20-entry `SPECIAL_LETTERS` table
@@ -241,7 +253,20 @@ WireCompat is where that is provable, because it is the only project that compil
   the char and cell cuts the engine and the editor also derive there reach no rating. The same
   parse reads `syllables` as the OBJECTS every writer produces (it read bare numbers until v22).
   `LyricParserParityTest` feeds both production parsers the same `LyricOsuFormat.GenerateOsu`
-  bytes and pins units, boundaries, rests and all eighteen matrix cells.
+  bytes and pins units, boundaries, rests and all eighteen matrix cells. Since LyricPace v23 the
+  whole-map PACE reads the rests too, but only the part of a rest past the one-second pause cap.
+- **PR 3's editor timing is in the stored .osu and is not gameplay.** The game's writer emits an
+  `[Editor]` `BeatDivisor:` and every `[TimingPoints]` row the editor's BPM tools authored (kiai
+  effect rows folded in) instead of the one placeholder row. The parser ignores the section and
+  still takes the set's BPM from the first uninherited row, and neither reaches a cell, a rating or
+  the gameplay fingerprint, so a BPM-only save keeps a ranked map's rank (the game's local status
+  check compares the whole encoding and is stricter). `LyricParserParityTest` holds the game's own
+  encoder output against the server parse, the validator, the fingerprint and the browser decode.
+- **Display rules the browser mirrors moved in PR 3 too**: syllable markers (`syllableMarkerCells`)
+  now include AUTOMATIC splits, and the space error dot (`spaceErrorDots`) marks only a gap holding a
+  wrong character of its own. The sung-highlight brightness, text pop-in and caret smoothing
+  settings PR 3 added are desktop-only presentation and are not mirrored. PR 3 also dropped the
+  `bpm` keyword from song select; the site keeps `bpm:` as a site-only operator, like `lang:`.
 - **`docs/pp.md` is the canonical pp spec**: every constant in `PerformancePoints.cs` is pinned there
   and must not drift from it. `PerformancePoints.VERSION` is shared with the game copy, stamps
   `scores.pp_version`, and drives `Packages/PpBackfill.cs`'s reprice-at-boot sweep, so bumping it is
@@ -257,6 +282,11 @@ WireCompat is where that is provable, because it is the only project that compil
   (mirroring the game's `Beatmaps/LyricPaceStatistics.cs`): `beatmaps.wpm` and, since backlog 272,
   `beatmaps.target_wpm` (`033_target_wpm.sql`), the average WPM across the fastest fifth of the map's
   lines, on the same not-on-the-wire, bump-the-VERSION rule. `LyricPaceParityTest` pins both halves.
+  Since PR 3 (**LyricPace v23**) the whole-map average charges every pause (between words, inside a
+  word, between lines) up to one PLAYBACK second and nothing after the final vocal end, and the
+  curve's window is the SR axis's (at least `WINDOW_SECONDS` 1.5 s and `MIN_WINDOW_CELLS` 16) with
+  every bar read from a centered window. Both take a `rate` and are recomputed rather than scaled
+  at one; the server stores rate 1, and `LyricPaceParityTest` holds every stream and clock.
 - **`InstrumentalGaps` must stay in lockstep** with the game copy (`MIN_GAP_MS` 10000 and the
   perceived-gap/skip-window rules): the play-time anti-cheat gate subtracts the skip allowance it
   computes, so drift either re-unranks honest skip users or lets impossibly fast plays rank. Since

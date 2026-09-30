@@ -541,7 +541,8 @@ public class SyllableSplitParityTest
     /// <c>syllableMarkerCells</c> equals <see cref="TypingLine.SyllableMarkerCells"/> on every
     /// variant of every authored case, so /play marks exactly the splits it judges on. The total is
     /// asserted non-zero so the sweep cannot pass vacuously on fixtures that stopped carrying any
-    /// subtimed word.
+    /// subtimed word. Since PR 3 an automatic (syllabifier) split is marked exactly as an authored
+    /// one is, so the non-subtimed words of these fixtures are marked too.
     /// </summary>
     [Test]
     public void TheTwoLoadersPlaceTheSameSyllableMarkers()
