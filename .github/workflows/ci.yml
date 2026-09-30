@@ -116,12 +116,6 @@ jobs:
       - name: Swap container
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web && ./deploy/up.sh up -d app'
 
-      - name: Health check
-        run: |
-          sleep 5
-          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://typebeat.sh/health | grep -q ok
-          echo "healthy"
-
       # Caddyfile changes used to never reach the running container (backlog 190): the old
       # single-file bind held the pre-deploy inode, and nothing here ever touched caddy. Now:
       # `up -d caddy` recreates the container only when its compose definition changed (which is
@@ -133,6 +127,18 @@ jobs:
           ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web \
             && ./deploy/up.sh up -d caddy \
             && ./deploy/up.sh exec -T caddy caddy reload --config /etc/caddy/deploy/Caddyfile --adapter caddyfile'
+
+      # AFTER the caddy reload on purpose. The check goes through Caddy, so a deploy that changes
+      # which hostnames Caddy serves can only pass once the reload has happened: the deploy that
+      # moved the site to typebeat.sh checked the new name first, got Cloudflare 525s because Caddy
+      # had no vhost for it yet, failed, and so skipped the very reload that would have fixed it.
+      # The old host is checked too, since every client shipped before the move still talks to it.
+      - name: Health check
+        run: |
+          sleep 5
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://typebeat.sh/health | grep -q ok
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -q ok
+          echo "healthy"
 
       # The build cache is what the box pays for the app image build, and nothing ever collected
       # it: on 2026-09-04 it had reached 7 GB and helped fill the 75 GB disk (see deploy/README.md,
