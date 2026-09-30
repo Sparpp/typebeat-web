@@ -654,6 +654,11 @@ public class ScoreRecalcTest
     /// (max_combo 12); without it (every row stored before 347) the press six ahead breaks the run at
     /// the old cap of five. Each row reproduces from its own replay. Crossed, the live replay cannot
     /// reproduce the row the old rule priced, which is only true if the tool read the header.</para>
+    ///
+    /// <para>PR 3 added a THIRD arm on the same header, bit 1 (<see cref="TypeBeatReplayFrame.InputEra2"/>,
+    /// what every live client now writes): no rush cap at all, so the same nine presses are nine
+    /// Greats by the clock and the run never breaks. That row too reproduces from its own replay, and
+    /// the 347 replay cannot reproduce it, so the tool reads bit 1 as well as bit 0.</para>
     /// </summary>
     [Test]
     public void TheRushCapEraTravelsInTheSecondHeaderThroughTheOsr()
@@ -704,18 +709,23 @@ public class ScoreRecalcTest
 
             var liveReplay = RushReplay(withExtendedHeader: true);
             var oldReplay = RushReplay(withExtendedHeader: false);
+            var era2Replay = RushReplay(withExtendedHeader: true, inputEra2: true);
 
             var liveDecoded = throughOsr(liveReplay);
             var oldDecoded = throughOsr(oldReplay);
+            var era2Decoded = throughOsr(era2Replay);
 
             // Priced on the map the package decodes to, which is the map the client really played:
             // the .osu round trip is not required to be identical to the in-memory fixture.
             var liveStored = StoredFor(liveDecoded.Playable!, liveReplay);
             var oldStored = StoredFor(oldDecoded.Playable!, oldReplay);
+            var era2Stored = StoredFor(era2Decoded.Playable!, era2Replay);
 
             var live = Recalculation.Run(liveStored, liveDecoded);
             var old = Recalculation.Run(oldStored, oldDecoded);
             var crossed = Recalculation.Run(oldStored, liveDecoded);
+            var era2 = Recalculation.Run(era2Stored, era2Decoded);
+            var era2Crossed = Recalculation.Run(era2Stored, liveDecoded);
 
             Assert.Multiple(() =>
             {
@@ -732,6 +742,14 @@ public class ScoreRecalcTest
                 Assert.That(old.NewStatistics!.GetValueOrDefault("meh"), Is.Zero, "pre-347 era: every press graded on the clock");
 
                 Assert.That(crossed.Skip, Is.Not.EqualTo(SkipReason.None), "the header is read: the live replay cannot reproduce the old row");
+
+                var era2Frames = era2Decoded.Score!.Replay.Frames.Cast<TypeBeatReplayFrame>().ToList();
+                Assert.That(era2Frames[1].IsConfigExtended && era2Frames[1].InputEra2 && era2Frames[1].RushCapCostsAccuracy, Is.True,
+                    "bit 1 survives the .osr beside bit 0");
+                Assert.That(era2.Skip, Is.EqualTo(SkipReason.None), "the second-input-era row reproduces from its own .osr");
+                Assert.That(era2.NewMaxCombo, Is.EqualTo(12), "second input era: no cap, the run never broke");
+                Assert.That(era2.NewStatistics!.GetValueOrDefault("meh"), Is.Zero, "second input era: no cap, no Meh award");
+                Assert.That(era2Crossed.Skip, Is.Not.EqualTo(SkipReason.None), "bit 1 is read: the 347 replay cannot reproduce the era's row");
             });
         }
         finally
@@ -767,15 +785,18 @@ public class ScoreRecalcTest
         return map;
     }
 
-    /// <summary>Nine presses at 1000 on the unpinned caret, then 'j', 'k', 'l' at 1120.</summary>
-    private static Replay RushReplay(bool withExtendedHeader)
+    /// <summary>
+    /// Nine presses at 1000 on the unpinned caret, then 'j', 'k', 'l' at 1120. The extended header
+    /// carries bit 0 (backlog 347) and, with <paramref name="inputEra2"/>, bit 1 (PR 3).
+    /// </summary>
+    private static Replay RushReplay(bool withExtendedHeader, bool inputEra2 = false)
     {
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, flexibleLines: true, boundedRush: true));
 
         if (withExtendedHeader)
-            replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true));
+            replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: inputEra2));
 
         for (int i = 0; i < 9; i++)
             replay.Frames.Add(new TypeBeatReplayFrame(1000, word[i]));

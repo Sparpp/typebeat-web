@@ -46,9 +46,15 @@ namespace Typebeat.WireCompat;
 /// <c>buildCells</c>), and in both streams every surviving char is typeable: the default stream drops
 /// punctuation outright, and Literate makes every mark a first-class cell. So the auto-skip
 /// step-over is pinned through the reachable twin that shares its code path, the ABANDONED cells of
-/// a word skip (<c>ProcessBackspace</c> steps transparently over both), and the "a mark rides inside
-/// its word rather than opening one" half is pinned under Literate, where an apostrophe IS a cell and
-/// must still not read as a word boundary.</para>
+/// a word skip (<c>ProcessBackspace</c> steps transparently over both, or since PR 3 undoes the skip
+/// outright when the caret is beside it), and the "a mark rides inside its word rather than opening
+/// one" half is pinned under Literate, where an apostrophe IS a cell and must still not read as a
+/// word boundary.</para>
+///
+/// <para>PR 3's SECOND INPUT ERA (<see cref="TypingEngine.InputEra2"/>) is live on both arms: one
+/// backspace undoes a word skip and the gap it typed, a gap typo anchors on the word before it, and a
+/// word given up whole anchors on its own head. The scenarios that pinned the older answers carry the
+/// era's answers now, under the game's own "...UnderInputEra2" test names.</para>
 /// </summary>
 [TestFixture]
 public class WordInputParityTest
@@ -180,10 +186,10 @@ public class WordInputParityTest
             Steps = [.. TypeItAll(), CtrlBackspace(), CtrlBackspace(), CtrlBackspace(), CtrlBackspace()],
         },
 
-        // A word given up to a word SKIP is reclaimed in one press exactly as the plain key reclaims
-        // it: ProcessBackspace steps transparently back over the abandoned cells, so the composed
-        // loop lands PAST its own target. The target is a floor, not a promise, and this is the
-        // reachable twin of the auto-skipped cell the same step-over covers.
+        // A word given up to a word SKIP is reclaimed exactly as the plain key reclaims it. Since
+        // PR 3 (ItReclaimsASkippedWordLikeThePlainKeyUnderInputEra2) the first press of the composed
+        // loop undoes the skip and its gap, and the second erases the typed 'a', landing on the
+        // target.
         new Scenario
         {
             Name = "itReclaimsASkippedWordLikeThePlainKey",
@@ -244,11 +250,13 @@ public class WordInputParityTest
         },
 
         // A typo on the WORD GAP itself (a wrong letter typed into the gap cell, live since backlog
-        // 181 and unconditional in the browser) anchors on the GAP, not on the perfectly good word in
-        // front of it.
+        // 181 and unconditional in the browser). Since PR 3
+        // (AGapTypoAnchorsOnThePrecedingWordUnderInputEra2) it anchors on the start of the word
+        // BEFORE the gap, so the retype includes its space; before PR 3 it anchored on the gap
+        // itself.
         new Scenario
         {
-            Name = "aGapTypoAnchorsOnTheGapItself",
+            Name = "aGapTypoAnchorsOnThePrecedingWord",
             Osu = AbCdEf(),
             Steps = [Key('a', a_t), Key('b', b_t), Key('x', gap1_t), Key('c', c_t), Churn(), CtrlA()],
         },
@@ -266,21 +274,19 @@ public class WordInputParityTest
             Steps = [Key('x', a_t), Key('b', b_t), Key(' ', gap1_t), Key(' ', 2200), Churn(), CtrlA()],
         },
 
-        // BACKLOG 260's input-layer half: a word given up WHOLE anchors on the gap in FRONT of it,
-        // not on its own head. The collapse is a run of ordinary backspaces, and one of those steps
-        // TRANSPARENTLY over abandoned cells to erase the nearest cell the player typed, so it cannot
-        // stop on the head of a word nobody touched: anchored there, the erase ran on to the gap and
-        // ended up BEHIND its own selection, where the first letter of the retype landed on an
-        // already-judged gap as a manufactured typo. One keystroke of correction making a mistake of
-        // its own.
+        // A word given up WHOLE, and the collapse that has to land on the anchor it offered. Backlog
+        // 260 widened that anchor onto the gap in FRONT of the word, because the old backspace stepped
+        // transparently over abandoned cells and could not stop on the head of a word nobody touched.
+        // Since PR 3 (CollapsingASelectionOverAWhollyAbandonedWordLandsOnItsAnchorUnderInputEra2) the
+        // era's backspace undoes the skip in one press and stops ON the word's head, so that is the
+        // anchor, and the gap in front of it is preserved.
         //
-        // The whole gesture is composed here rather than stopping at the anchor, because the anchor
-        // is only wrong in the sense that its own collapse disagrees with it: the load-bearing
+        // The whole gesture is composed here rather than stopping at the anchor: the load-bearing
         // reading is the caret AFTER the erases being the anchor the player was shown, and the line
         // then typing out with no mistype at all.
         new Scenario
         {
-            Name = "aWhollyAbandonedWordAnchorsOnTheGapBeforeIt",
+            Name = "aWhollyAbandonedWordAnchorsOnItsHead",
             Osu = AbCdEf(),
             SpaceSkipsWord = true,
             Steps =
@@ -288,7 +294,7 @@ public class WordInputParityTest
                 Key('a', a_t), Key('b', b_t), Key(' ', gap1_t),
                 Key(' ', 2100), // the space at the HEAD of "cd": the whole word goes, untouched
                 Churn(), CtrlA(),
-                Key(' ', gap1_t), Key('c', c_t), Key('d', d_t), Key(' ', gap2_t), Key('e', e_t), Key('f', f_t),
+                Key('c', c_t), Key('d', d_t), Key(' ', gap2_t), Key('e', e_t), Key('f', f_t),
             ],
         },
 
@@ -573,6 +579,7 @@ public class WordInputParityTest
             FirstLineLeadIn = true,
             // Backlog 347, the first bit of the SECOND CONFIG flags word: the browser takes it unconditionally.
             RushCapCostsAccuracy = true,
+            InputEra2 = true,
             ManualNewlines = true,
             NewlineOnTypedLetter = true,
         };
@@ -891,7 +898,8 @@ public class WordInputParityTest
                 Is.EqualTo(new[] { 8, 6, 3, 0, 0 }), "word by word to the head, then a dead stop");
 
             Assert.That(probes["itReclaimsASkippedWordLikeThePlainKey"][^2].States[1], Is.EqualTo("abandoned"), "the skip left a phantom cell");
-            Assert.That(probes["itReclaimsASkippedWordLikeThePlainKey"][^1].Erases, Is.EqualTo(2), "the gap, then ONE press over the phantom cell onto 'a'");
+            Assert.That(probes["itReclaimsASkippedWordLikeThePlainKey"][^1].Erases, Is.EqualTo(2), "undo the skip and its gap, then erase 'a' (PR 3)");
+            Assert.That(probes["itReclaimsASkippedWordLikeThePlainKey"][^1].CaretIndex, Is.Zero);
             Assert.That(probes["itReclaimsASkippedWordLikeThePlainKey"][^1].States[1], Is.EqualTo("untyped"), "the abandoned cell was reclaimed");
 
             // Ctrl+A, the anchor rules.
@@ -911,24 +919,24 @@ public class WordInputParityTest
             Assert.That(probes["theEarliestTypoBehindTheCaretWins"][^1].SelectionStart, Is.Zero, "the EARLIER typo's word, so one gesture offers both back");
             Assert.That(probes["theEarliestTypoBehindTheCaretWins"][^1].SelectionEnd, Is.EqualTo(7), "back to the caret in the third word");
 
-            Assert.That(probes["aGapTypoAnchorsOnTheGapItself"][^2].States[2], Is.EqualTo("wrong"), "a wrong letter landed on the word gap");
-            Assert.That(probes["aGapTypoAnchorsOnTheGapItself"][^1].SelectionStart, Is.EqualTo(2), "the gap itself, so \"ab\" is left alone");
+            Assert.That(probes["aGapTypoAnchorsOnThePrecedingWord"][^2].States[2], Is.EqualTo("wrong"), "a wrong letter landed on the word gap");
+            Assert.That(probes["aGapTypoAnchorsOnThePrecedingWord"][^1].SelectionStart, Is.Zero, "the head of \"ab\", selected with its gap (PR 3)");
 
             Assert.That(probes["anEarlierTypoOutranksALaterAbandonedWord"][^2].States[0], Is.EqualTo("wrong"), "the typo in \"ab\"");
             Assert.That(probes["anEarlierTypoOutranksALaterAbandonedWord"][^2].States[3], Is.EqualTo("abandoned"), "the later word skip's abandoned \"c\"");
             Assert.That(probes["anEarlierTypoOutranksALaterAbandonedWord"][^1].SelectionStart, Is.Zero, "the earlier typo's word wins, not the later abandoned one");
 
-            // Backlog 260: the anchor is widened to a cell the collapse can actually land on.
-            var whollyAbandoned = probes["aWhollyAbandonedWordAnchorsOnTheGapBeforeIt"];
+            // PR 3: the anchor is the wholly abandoned word's own head, where the era's backspace stops.
+            var whollyAbandoned = probes["aWhollyAbandonedWordAnchorsOnItsHead"];
             Assert.That(whollyAbandoned[4].States.Skip(3).Take(2), Is.All.EqualTo("abandoned"), "the space gave up the whole of \"cd\"");
             Assert.That(whollyAbandoned[4].CaretIndex, Is.EqualTo(6), "and the space was judged on the gap after it");
-            Assert.That(whollyAbandoned[4].RetypeSelectionAnchor, Is.EqualTo(2),
-                "the gap in FRONT of the word, not its own head: nobody typed the head, so no backspace can stop there");
-            Assert.That(whollyAbandoned[6].SelectionStart, Is.EqualTo(2), "so that is what Ctrl+A offered");
+            Assert.That(whollyAbandoned[4].RetypeSelectionAnchor, Is.EqualTo(3), "the head of the skipped word");
+            Assert.That(whollyAbandoned[6].SelectionStart, Is.EqualTo(3), "so that is what Ctrl+A offered");
             Assert.That(whollyAbandoned[6].SelectionEnd, Is.EqualTo(6));
-            Assert.That(whollyAbandoned[7].Erases, Is.EqualTo(2), "the gap the skip landed on, then ONE press over both abandoned cells onto the gap in front of them");
-            Assert.That(whollyAbandoned[7].CaretIndex, Is.EqualTo(3), "the collapse landed on the anchor and the space then typed there");
-            Assert.That(whollyAbandoned[7].States[2], Is.EqualTo("correct"), "on the gap, not behind it");
+            Assert.That(whollyAbandoned[7].Erases, Is.EqualTo(1), "one press undoes the skip and the gap it typed");
+            Assert.That(whollyAbandoned[7].CaretIndex, Is.EqualTo(4), "the collapse landed ON the anchor and the 'c' then typed there");
+            Assert.That(whollyAbandoned[7].States[2], Is.EqualTo("correct"), "the gap in front of the word was preserved");
+            Assert.That(whollyAbandoned[7].States[3], Is.EqualTo("correct"));
             Assert.That(whollyAbandoned[^1].States, Is.All.EqualTo("correct"), "and the line typed out clean");
             Assert.That(whollyAbandoned[^1].Mistypes, Is.Zero, "the correction manufactured no mistake of its own");
 
@@ -950,7 +958,7 @@ public class WordInputParityTest
             var abandoned = probes["aSelectionCollapsesThroughAbandonedCells"];
             Assert.That(abandoned[2].States[1], Is.EqualTo("abandoned"), "the space gave up the rest of \"ab\"");
             Assert.That(abandoned[^3].SelectionStart, Is.Zero, "the typo is at the head of \"ab\"");
-            Assert.That(abandoned[^2].Erases, Is.EqualTo(3), "'c', the gap, then ONE press over the phantom cell onto the typo");
+            Assert.That(abandoned[^2].Erases, Is.EqualTo(3), "'c', then the undo of the skip and its gap, then the typo (PR 3)");
 
             // An erase key over a live selection collapses it and types nothing, at both widths.
             foreach (string name in new[] { "ctrlBackspaceOverALiveSelectionCollapsesIt", "plainBackspaceOverALiveSelectionCollapsesIt" })

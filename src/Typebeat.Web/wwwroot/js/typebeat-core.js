@@ -1899,9 +1899,10 @@
             // behind: not a resolution, just a character the player has walked past and may still
             // come back into. It resolves nothing (no osu result is applied at the skip, which is
             // exactly what leaves the cell earnable), it holds its line open like an untyped cell,
-            // and it leaves the state by exactly one of two exits: a backspace steps transparently
-            // back over it (processBackspace) or the line seals on it and it becomes the miss it
-            // turned out to be (sealLine).
+            // and it leaves the state by exactly one of two exits: a backspace re-opens it (since
+            // PR 3 the one backspace that undoes the whole skip, tryUndoWordSkip, or the transparent
+            // walk in processBackspace for a skipped word the caret is no longer beside) or the line
+            // seals on it and it becomes the miss it turned out to be (sealLine).
             state: 'untyped',
             // Great | Ok | Meh | Premature | Lagging | Miss | WrongChar | Abandoned
             judgeType: null,
@@ -1917,11 +1918,9 @@
             // erases the wrong character, which is the whole of what it is for. Only a fresh engine
             // (the constructor's per-cell wipe, mirroring TypingEngine.reset) puts it back.
             heldWrongBeforeJudged: false,
-            // TypingCell.JudgedPastRushCap (backlog 347): whether the cell's ONE awarded judgement was
-            // made with the caret out past the rush cap, which awarded it 'Meh' whatever its delta
-            // said (see rushCapTier). History like the flag above, so an inert retype re-derives the
-            // same Meh; also what typebeat-player.js reads to draw the cell in the off-time warn tint.
-            judgedPastRushCap: false,
+            // (TypingCell.JudgedPastRushCap, backlog 347's rush-cap mark, is not carried. PR 3's
+            // second input era removed the rush cap from every live run, so no browser press can
+            // ever be judged past one; the C# keeps the mark for the stored eras it re-derives.)
             // Mirrors DrawableTypeBeatCharObject.Judged, i.e. "this cell has already handed the
             // score processor its one and only result". ApplyEngineResult bails on an already-judged
             // cell (`if (Judged) return;`) and ApplySealResults goes through the same call, so a cell
@@ -2016,14 +2015,9 @@
     // CorrectionCreditRule.Full (the pre-210 arm, which a stored row is re-derived under by the
     // recalculation tool) is one it can never be in and the clause collapses to the live
     // CorrectionCreditRule.Capped.
-    // TypeBeatResultMapping.RushCapTier (backlog 347). The tier a press is awarded when it lands with
-    // the caret out past the rush cap: the lowest hit tier, 'Meh', whatever the clock said. A min
-    // over the ladder: Great and Ok move down, Meh stays, and the off-ladder Premature / Lagging are
-    // left alone, because lifting one to Meh would PAY a press for being mistimed and out past the
-    // cap at once. Applied after awardedTier, so a corrected cell over the cap takes the lower cap.
-    function rushCapTier(type) {
-        return (type === 'Great' || type === 'Ok') ? 'Meh' : type;
-    }
+    // (TypeBeatResultMapping.RushCapTier, backlog 347's Meh award for a press out past the rush
+    // cap, is not mirrored: the second input era, PR 3, removed the cap from every live run, and
+    // the C# keeps the award only for the stored runs it re-derives.)
 
     function awardedTier(type, heldWrongBeforeJudged) {
         if (!heldWrongBeforeJudged) return type;
@@ -2435,15 +2429,15 @@
     // ---------------------------------------------------------------------------
     const COMBO_CAP = 50;
 
-    // TypingEngine.FLETCHER_MAX_CHARS_AHEAD: how many COUNTABLE characters (typeable and not a
-    // space) the caret may sit ahead of the playhead before a keypress is penalised. Since backlog
-    // 347 the penalty is the press's JUDGEMENT: it is awarded Meh whatever its timing and credits
-    // combo like any other hit (rushCapTier), and the cap loosened from five to six with it.
-    // Measured on the caret position AFTER the press, so the sixth char ahead is still fine and the
-    // seventh is not. The C# keeps the pre-347 cap of five and its combo break as an ERA
-    // (TypingEngine.RushCapCostsAccuracy, the first bit of the second CONFIG flags word); the
-    // browser only plays live, so it takes the live rule unconditionally.
-    const FLETCHER_MAX_CHARS_AHEAD = 6;
+    // THERE IS NO RUSH CAP (PR 3, TypingEngine.InputEra2, bit 1 of the second CONFIG flags word).
+    // TypingEngine.FLETCHER_MAX_CHARS_AHEAD bounded how many COUNTABLE characters the caret could
+    // sit ahead of the playhead before a press was penalised: a combo break at five before backlog
+    // 347, a Meh award at six after it. The second input era removed the cap outright, so a press
+    // any distance past the playhead is judged on its timing alone and credits combo like any
+    // other. The C# keeps both older caps as ERAS for the stored runs it re-derives; the browser
+    // only plays live, so it takes the live rule unconditionally and carries neither the constant
+    // nor TypingEngine.rushesPastCap. The countable stream below survives for charsAheadOfPlayhead,
+    // the drift readout the C# keeps too.
 
     // TypingEngine.FLETCHER_DRAG_GRACE_MS: extra time past a line's normal hard deadline
     // (endTime + sealGraceMs) that the engine holds the line open while the PLAYER is still on it,
@@ -2493,9 +2487,6 @@
                     // backspace by design, so only a whole-run rebuild puts it back (the C# clears
                     // it in exactly the same place, TypingEngine.reset).
                     c.heldWrongBeforeJudged = false;
-                    // ...and backlog 347's rush-cap mark (TypingCell.JudgedPastRushCap), on the same
-                    // terms: history, cleared only by a whole-run rebuild.
-                    c.judgedPastRushCap = false;
                     c.judged = false;
                 }
             }
@@ -2625,10 +2616,9 @@
             //   DRAG FREEDOM      a line the player is still typing is not force-sealed at its
             //                     normal deadline; the seal is deferred by FLETCHER_DRAG_GRACE_MS
             //                     so the caret is never yanked off a line mid-word (sealPermitted).
-            //   RUSH CAP          a press that puts the caret more than FLETCHER_MAX_CHARS_AHEAD
-            //                     countable chars ahead of the playhead lands, credits combo, and is
-            //                     awarded Meh whatever its timing (rushesPastCap, rushCapTier;
-            //                     backlog 347, before which it scored on the clock and broke combo).
+            //   NO RUSH CAP       a press any distance ahead of the playhead lands, is judged on its
+            //                     clock and credits combo (PR 3's second input era; before it a cap
+            //                     broke combo, backlog 208, and then awarded Meh, backlog 347).
             //   LINE-START SNAP   a caret sitting PAST the last character of its line is handed to
             //                     the next line the moment that line starts, so a player who has
             //                     FINISHED is still carried along by the song
@@ -2637,6 +2627,13 @@
             //
             // Per-char judgement windows are untouched: rushing reads as early deltas and dragging
             // as late ones, so accuracy, sync% and the judgement counts report the drift honestly.
+            //
+            // THE SECOND INPUT ERA (PR 3, TypingEngine.InputEra2, bit 1 of the second CONFIG flags
+            // word) is live for every desktop stack and therefore unconditional here, with no flag:
+            // no rush cap (above), one backspace undoing a word skip (tryUndoWordSkip), Space to skip
+            // only under wrong input (the skip gate in processKey) and the refined retype anchor
+            // (retypeSelectionAnchor). The C# defaults it FALSE so stored runs re-derive, so every
+            // parity fixture feeding the C# arm sets InputEra2 = true beside RushCapCostsAccuracy.
             //
             // ALL THREE TRUE UNCONDITIONALLY, the same shape every other live-only rule in this file
             // takes (the span judgement, the word-gap input model, the space discipline, the
@@ -2665,8 +2662,8 @@
             // while DRAG never was: rollForwardIfFinishedEarly handed the caret to the next line the
             // instant the last cell of the current one landed, however many seconds before that
             // line's cue, and the roll is TRANSITIVE, so a fast player could walk the whole map at
-            // the top of the song with nothing but the rush cap (which costs combo and blocks
-            // nothing) in the way.
+            // the top of the song with nothing but the rush cap (which cost combo and blocked
+            // nothing, and is gone since PR 3) in the way.
             //
             // A refused roll PARKS the caret past the last cell of its line, the state the
             // line-start snap already understands: keypresses there are inert (processKey answers
@@ -2714,7 +2711,8 @@
             this.firstLineLeadIn = true;
             // The COUNTABLE-CHARACTER STREAM (the C# constructor's countableTargets /
             // countableBase / countablePrefix): the whole map read as one run of countable cells,
-            // which is the currency the rush cap measures in. countableTargets holds every
+            // which is the currency the drift readout (charsAheadOfPlayhead) measures in, and the
+            // rush cap did before PR 3 removed it. countableTargets holds every
             // countable cell's target time sorted ascending, so the playhead's position is a binary
             // search; countableBase[k] plus countablePrefix[k][i] says where line k cell i sits in
             // that stream, so the caret's position is a lookup. All immutable after construction.
@@ -2762,10 +2760,11 @@
             // only a break discards a claim, so fumbling the beat between a typo and its fix no
             // longer costs the fix its restore. It rejoins the list in the C# under
             // OffTimeRule.BreaksCombo, the pre-199 era, which this file has no arm for. The flexible
-            // caret's RUSH CAP (backlog 208) left the list the same way at backlog 347: an over-cap
-            // press is awarded Meh and credits combo, so it breaks nothing and discards nothing. It
-            // rejoins the list in the C# only when TypingEngine.RushCapCostsAccuracy is clear, the
-            // pre-347 era, which this file has no arm for either.
+            // caret's RUSH CAP (backlog 208) left the list the same way at backlog 347 (an over-cap
+            // press was awarded Meh and credited combo) and left the engine at PR 3, which removed
+            // the cap. It rejoins the list in the C# only when both TypingEngine.InputEra2 and
+            // TypingEngine.RushCapCostsAccuracy are clear, the pre-347 era, which this file has no
+            // arm for either.
             //
             // "That had a streak to take" is backlog 176: a break landing while the run is ALREADY
             // at zero costs nothing, so it leaves an outstanding claim alone rather than replacing
@@ -3172,9 +3171,9 @@
         }
 
         // TypingEngine.countablePositionAt. caretCountablePosition for an ARBITRARY caret index on
-        // the active line. Split out for backlog 260, where the rush cap has to measure a skipping
-        // space against the caret as it stood BEFORE the skip moved it: the property above is
-        // exactly this at the live caret.
+        // the active line. Split out for backlog 260, where the rush cap had to measure a skipping
+        // space against the caret as it stood BEFORE the skip moved it (the cap is gone since PR 3):
+        // the property above is exactly this at the live caret.
         countablePositionAt(index) {
             if (this.activeLineIndex < 0) return 0;
 
@@ -3186,24 +3185,10 @@
 
         // TypingEngine.CharsAheadOfPlayhead. Signed countable-character drift of the caret against
         // the playhead: positive = rushing ahead, negative = dragging behind. The quantity the rush
-        // cap bounds, and the honest read-out of what the flexible caret is about.
+        // cap bounded until PR 3 removed it, and still the honest read-out of what the flexible
+        // caret is about. (TypingEngine.rushesPastCap is not mirrored: InputEra2 never consults it.)
         charsAheadOfPlayhead(time) {
             return this.caretCountablePosition - this.playheadCountablePosition(time);
-        }
-
-        // TypingEngine.rushesPastCap. Would accepting `cell` at `time` leave the caret more than
-        // FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead? Measured on the caret
-        // position AFTER the press, so with a cap of 5 the fifth char ahead is still fine and the
-        // sixth is not. A non-countable cell (a space) spends no budget.
-        //
-        // `caretIndexForCap` is normally the live caret, and is the caret as it stood BEFORE a word
-        // skip for the one press that can be judged past a caret it moved itself (backlog 260).
-        // Without it the abandoned tail was spent out of the player's budget by the very press that
-        // gave it up, which is the one way the sentence above about a space could be false.
-        rushesPastCap(cell, time, caretIndexForCap) {
-            const after = this.countablePositionAt(caretIndexForCap) + (isCountable(cell) ? 1 : 0);
-
-            return after - this.playheadCountablePosition(time) > FLETCHER_MAX_CHARS_AHEAD;
         }
 
         // TypingEngine.NextUnsealedLineIndex. The first line that has not sealed yet; -1 once every
@@ -4164,10 +4149,6 @@
             // increments the combo.
             let skipLeftAClaimOutstanding = false;
 
-            // Backlog 260: the caret as it stood BEFORE a word skip moved it, which is what the rush
-            // cap measures this press against. Negative when this press skipped nothing, which is
-            // every press but one and leaves the cap exactly where it was.
-            let caretBeforeSkip = -1;
 
             // Mashing mod: any key is the right key; judge it as the caret cell's expected char.
             // A FREESTYLE cell is exempt: it already accepts any key, and rewriting c here would
@@ -4187,8 +4168,14 @@
             // and a space pressed ON the word gap keeps its ordinary meaning. After the Mashing
             // rewrite on purpose: mashing has already turned the press into the expected char, so
             // this is unreachable under it.
-            if (this.spaceSkipsWord && c === ' ' && cell.expected !== ' ') {
-                caretBeforeSkip = this.caretIndex;
+            //
+            // Since PR 3 (the second input era) the skip also needs wrong input allowed: the C# gate
+            // is `SpaceSkipsWord && (AllowWrongInput || !InputEra2)`, which collapses to this with
+            // the era permanently on. Under Gatekeeper the press falls through to the strict
+            // rejection below, like any other wrong key. /play is never on Gatekeeper
+            // (allowWrongInput is always true here), so the term never refuses a live browser skip;
+            // it is carried so the gate reads the same as the C# one.
+            if (this.spaceSkipsWord && this.allowWrongInput && c === ' ' && cell.expected !== ' ') {
                 skipLeftAClaimOutstanding = this.skipCurrentWord();
 
                 if (this.caretIndex >= line.cells.length) {
@@ -4273,7 +4260,8 @@
                 // The cell still renders its own expected character in the error red (cellGlyph in
                 // typebeat-player.js substitutes the typed char for GAPS only), which is what makes
                 // an invisible red space a non-problem. With spaceSkipsWord on the same press never
-                // arrives here: the skip gate above consumed it. /play is always on that arm
+                // arrives here: the skip gate above consumed it (except under Gatekeeper, where since
+                // PR 3 it falls through to the rejection below). /play is always on that arm
                 // (backlog 198), so spaceMayLand is false for every live browser press and this
                 // clause is the skip-OFF arm, kept for the mirror. A FREESTYLE slot is the one cell
                 // that keeps refusing the key, because it has no expected glyph to redden and would
@@ -4508,9 +4496,6 @@
                 // set only before a cell is judged and never cleared. Announcing anything else here
                 // would show a Great on a cell whose stored result is the capped Ok.
                 type = awardedTier(classify(d, w), cell.heldWrongBeforeJudged);
-                // ...and through backlog 347's rush-cap award, for the same reason: the mark records
-                // that the first judgement was made out past the cap.
-                if (cell.judgedPastRushCap) type = rushCapTier(type);
                 cell.state = 'correct';
                 cell.typedChar = c;
                 cell.judgedDelta = d;
@@ -4529,29 +4514,11 @@
                 // tint and live sync percent saw; that display is gone, the delta is not).
                 type = awardedTier(classify(delta, w), cell.heldWrongBeforeJudged);
 
-                // THE RUSH CAP (backlog 208), evaluated BEFORE the caret moves: does this press put
-                // the caret more than FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead?
-                //
-                // "Before the caret moves" is true of every press but one, and that one is the whole
-                // of backlog 260: a space that skipped a word is judged on the gap AFTER the skip has
-                // already walked the caret over the abandoned tail, so the measurement has to be
-                // taken at the caret the press started from or the player is charged for characters
-                // they gave up rather than typed.
-                const caretForCap = caretBeforeSkip >= 0 ? caretBeforeSkip : this.caretIndex;
-                const rushedPastCap = this.fletcherEnabled && this.rushesPastCap(cell, time, caretForCap);
-
-                // WHAT THE CAP COSTS (backlog 347, TypingEngine.RushCapCostsAccuracy, the live arm):
-                // the JUDGEMENT and nothing else. The press is awarded the lowest hit tier
-                // (rushCapTier, a min over the ladder, so an off-time press is never lifted by it)
-                // and then flows through everything below exactly as a Meh struck by the clock
-                // would, combo credit included. Applied above the point ladder, as backlog 210's cap
-                // is, so the points, `counts`, onCharJudged and the osu result follow one decision.
-                // The delta is untouched.
-                if (rushedPastCap) {
-                    type = rushCapTier(type);
-                    cell.judgedPastRushCap = true;
-                }
-
+                // NO RUSH CAP (PR 3): the C# line is `FletcherEnabled && !RushCapExempt && !InputEra2
+                // && rushesPastCap(...)`, which is always false in the second input era, so nothing
+                // stands between the clock's tier and the point ladder however far past the playhead
+                // the caret is. Backlog 347's Meh award and the pre-347 combo break are both stored
+                // eras only.
                 const bp = basePoints(type);
 
                 if (bp > 0) {
@@ -4576,10 +4543,10 @@
                 // A space can never reach the off-time tiers at all: an untimed space is judged on a
                 // zeroed delta and always takes the top tier (see the block above).
                 //
-                // Since backlog 347 nothing stands between the press and the increment: the RUSH
-                // CAP (which the browser gained with the flexible default, backlog 208) used to be a
-                // combo penalty here, a break once per excursion, and is now the Meh taken above.
-                // The C# keeps that break as its pre-347 era; a browser play is always live.
+                // Nothing stands between the press and the increment: the RUSH CAP (which the
+                // browser gained with the flexible default, backlog 208) used to be a combo penalty
+                // here, a break once per excursion, then a Meh award (backlog 347), and is gone since
+                // PR 3. The C# keeps both as stored eras; a browser play is always live.
                 //
                 // The cell the press LANDED on, which is where this increment is recorded in the
                 // ledger (creditCombo): the caret has not moved yet (it rolls on below), and a word
@@ -4702,9 +4669,15 @@
         // back to 'untyped' for the same reason: retyping them re-earns them). Returns false when
         // there was nothing to do. The erased keypress stays in the accuracy counts.
         //
-        // Both step-overs are transparent because neither cell holds anything the player put there,
-        // so neither is an erase. That is what makes ONE press re-enter a skipped word and land on
-        // the last character actually typed, however many characters were given up.
+        // Since PR 3 (the second input era, TypingEngine.InputEra2) a word skip and the space it
+        // typed on the following gap are undone TOGETHER by one press (tryUndoWordSkip): the
+        // abandoned cells are re-opened and the caret returns to the FIRST of them, leaving every
+        // correctly typed character of the word intact, and the same holds at the end of a line,
+        // where a skipped final word has no following gap. The C# keeps the era before it (one
+        // press takes the typed gap, the next steps transparently over the abandoned run onto the
+        // last character actually typed and erases it) for the stored runs it re-derives; the
+        // browser plays live only, so it takes the new rule unconditionally. The transparent walk
+        // below still runs for everything the undo does not claim.
         //
         // The one case that does not erase BEHIND the caret is a typo the caret is parked ON, which
         // only the word-gap park can produce (backlog 184): that cell is cleared in place and the
@@ -4783,6 +4756,11 @@
                 return true;
             }
 
+            // THE SECOND INPUT ERA's undo of a word skip (TypingEngine.ProcessBackspace:
+            // `if (InputEra2 && tryUndoWordSkip(cells)) return true;`), in the same place: after the
+            // parked typo, before the transparent walk.
+            if (this.tryUndoWordSkip(cells)) return true;
+
             let target = this.caretIndex - 1;
             while (target >= 0 && (cells[target].state === 'autoskip' || cells[target].state === 'abandoned')) target--;
 
@@ -4835,6 +4813,84 @@
             return true;
         }
 
+        // TypingEngine.CanUndoWordSkip (PR 3): whether one backspace can undo the word skip
+        // adjacent to the caret. The C# answers false outside InputEra2; the browser is always in
+        // it.
+        get canUndoWordSkip() {
+            return this.adjacentSkippedWord() !== null;
+        }
+
+        // TypingEngine.adjacentSkippedWord (PR 3). The skipped word a backspace here would undo, as
+        // { firstAbandoned, wordEnd, gapIndex }, or null. The word is the one ENDING at the caret:
+        // the caret sits ON the gap that closes it (wordEnd = caret, no gap to erase), or just PAST
+        // that gap (the gap is behind the caret and is the one the skip typed), or at the end of the
+        // line (a skipped final word, no gap). It counts only if a cell of it is still abandoned,
+        // and firstAbandoned is the earliest such cell.
+        adjacentSkippedWord() {
+            if (this.finished || this.activeLineIndex < 0) return null;
+
+            const cells = this.lines[this.activeLineIndex].cells;
+            let wordEnd;
+            let gapIndex = -1;
+
+            if (this.caretIndex < cells.length && isWordGap(cells[this.caretIndex])) wordEnd = this.caretIndex;
+            else if (this.caretIndex > 0 && isWordGap(cells[this.caretIndex - 1])) wordEnd = gapIndex = this.caretIndex - 1;
+            else if (this.caretIndex === cells.length) wordEnd = this.caretIndex;
+            else return null;
+
+            let wordStart = wordEnd;
+
+            while (wordStart > 0 && !isWordGap(cells[wordStart - 1])) wordStart--;
+
+            for (let i = wordStart; i < wordEnd; i++) {
+                if (cells[i].state === 'abandoned') return { firstAbandoned: i, wordEnd: wordEnd, gapIndex: gapIndex };
+            }
+
+            return null;
+        }
+
+        // TypingEngine.tryUndoWordSkip (PR 3). Re-open every abandoned (and auto-skipped) cell of the
+        // adjacent skipped word from its first abandoned cell on, erase the space the skip typed onto
+        // the following gap when that gap is CORRECT (a skip can also step over an already spoiled
+        // gap, whose typo this space did not type and which keeps it for its own backspace), and park
+        // the caret on the first abandoned cell. The C# raises AbandonReclaimed with the re-opened
+        // cells, which carries HEALTH alone (the refund of what the skip drained), landed here as the
+        // old walk lands it. firstCorrectDelta is left on the gap, as on every erase, so a retype of
+        // it is inert.
+        tryUndoWordSkip(cells) {
+            const skip = this.adjacentSkippedWord();
+
+            if (skip === null) return false;
+
+            let reclaimed = 0;
+
+            for (let i = skip.firstAbandoned; i < skip.wordEnd; i++) {
+                if (cells[i].state === 'abandoned') {
+                    cells[i].state = 'untyped';
+                    cells[i].judgeType = null;
+                    reclaimed++;
+                } else if (cells[i].state === 'autoskip') {
+                    cells[i].state = 'untyped';
+                    cells[i].judgeType = null;
+                }
+            }
+
+            if (skip.gapIndex >= 0) {
+                const gap = cells[skip.gapIndex];
+
+                if (gap.state === 'correct') {
+                    gap.state = 'untyped';
+                    gap.typedChar = null;
+                    gap.judgedDelta = null;
+                    gap.judgeType = null;
+                }
+            }
+
+            this.caretIndex = skip.firstAbandoned;
+            this.healthAccount.refundDeferredDrain(reclaimed);
+            return true;
+        }
+
         // TypingEngine.WordBackspaceTarget. Where a CTRL+BACKSPACE (backlog 182, the typing-site
         // "erase the previous word" gesture) should leave the caret: a PURE QUERY, mutating nothing.
         // The caller composes the gesture out of ordinary processBackspace calls
@@ -4851,9 +4907,10 @@
         // composed gesture a no-op: it never calls the engine.
         //
         // The target is a FLOOR, not a promise: one processBackspace steps transparently back over
-        // auto-skipped and abandoned cells, so a press over a word that was entirely given up to a
-        // word skip can land the caret further back than this, exactly as a plain backspace there
-        // would. That is the existing reclaim behaviour and is deliberately not fought here.
+        // auto-skipped cells (and, in the era before PR 3, over abandoned ones too), so a press can
+        // land the caret further back than this, exactly as a plain backspace there would. Since
+        // PR 3 undoing a word skip stops at the first abandoned cell, keeping the typed cells before
+        // it.
         //
         // Answers caretIndex unchanged when no line is active or the run has finished, so the caller
         // needs no second guard.
@@ -4892,13 +4949,17 @@
         // the caret how many rounds are left. Retyping the cells in between costs nothing, since a
         // correct cell re-typed is scoring-inert.
         //
-        // WHICH run the mistake's cell opens has two cases, and they are the same rule stated twice:
-        // the selection starts at the first cell the player must retype to fix it. For an ordinary
-        // lyric character that is its WORD's first cell (walk back to the gap before it). For a WORD
-        // GAP holding a typo (possible since backlog 181, and unconditional here: the browser is
-        // always on the live arm of that rule) the gap IS the cell to retype and it belongs to no
-        // word, so the selection starts on the gap itself; walking back from it would swallow the
-        // perfectly good word in front of it for nothing.
+        // WHICH run the mistake's cell opens: for an ordinary lyric character (a typo or an abandoned
+        // cell alike) it is its WORD's first cell, walking back to the gap before it. Since PR 3 (the
+        // second input era, TypingEngine.InputEra2) three refinements ride on that, all live here
+        // because the browser is always in the era: a WORD GAP holding a typo (possible since
+        // backlog 181) selects from the beginning of the word BEFORE the gap, so the retype includes
+        // its space; a word given up whole anchors on its own head, with no backlog 260 widening onto
+        // the gap in front of it, because the era's backspace (tryUndoWordSkip) stops there; and
+        // leading punctuation the word auto-skips is stepped over, since the first TYPEABLE cell is
+        // the earliest place a backspace can stop without crossing the gap before the word. The C#
+        // keeps the old anchor (the gap itself, and the widening) as legacyRetypeSelectionAnchor for
+        // an engine without the era, so the anchor always agrees with the backspace it composes.
         //
         // The answer is never equal to caretIndex when it is non-negative: the scan is over
         // [0, caretIndex), so a selection always covers at least one cell. The one typo that can sit
@@ -4919,33 +4980,19 @@
 
             if (mistake < 0) return -1;
 
-            if (isWordGap(cells[mistake])) return mistake;
-
             let anchor = mistake;
+
+            // A typo on a space belongs to the word immediately before it for retyping. Step over
+            // adjacent gaps first so even unusual repeated spaces find that word.
+            if (isWordGap(cells[mistake])) {
+                while (anchor > 0 && isWordGap(cells[anchor - 1])) anchor--;
+            }
 
             while (anchor > 0 && !isWordGap(cells[anchor - 1])) anchor--;
 
-            // ...and then back to a cell the mass backspace can actually LAND on (backlog 260). The
-            // collapse is a run of ordinary processBackspace calls, and one of those steps
-            // TRANSPARENTLY over abandoned and auto-skipped cells to erase the nearest cell the
-            // player typed: it cannot stop on a cell nobody typed. So when the whole word was given
-            // up (a space struck at its head), the word's own first cell is not a stopping place, the
-            // run carries on to the gap in front of it, and a selection anchored on the word head was
-            // one cell short of where its own collapse ends up. The caret then sat BEHIND the anchor
-            // on a gap that had already been judged, and the next letter of the retype landed on it
-            // as a fresh typo: one keystroke of correction manufacturing a mistake of its own.
-            //
-            // Widening the SELECTION rather than bounding the backspace keeps this in the input
-            // layer with no era of its own, and costs the player one keystroke and nothing else: a
-            // gap that was already judged retypes inert (see firstCorrectDelta), so no count, no
-            // score and no combo moves, and the highlight now shows exactly the run the collapse
-            // will clear.
-            //
-            // The same walk the backspace makes, so the two cannot disagree: over the transparent
-            // states only, stopping at the line's head. A word gap is never in either state
-            // (skipCurrentWord scans strictly between the gaps), so this steps back at most out of
-            // the abandoned word and onto the gap before it.
-            while (anchor > 0 && (cells[anchor].state === 'abandoned' || cells[anchor].state === 'autoskip')) anchor--;
+            // A word can begin with punctuation that typing auto-skips. The first typeable cell is
+            // the earliest place a backspace can stop without crossing the prior gap.
+            while (anchor < mistake && !cells[anchor].typeable) anchor++;
 
             return anchor;
         }
@@ -5141,7 +5188,7 @@
             DEFAULT_AUDIO_GAIN, MAX_AUDIO_GAIN,
             // The flexible caret's two tuning points (backlog 208), exported so the harnesses pin
             // the same numbers the game's own FletcherEngineTest does rather than transcribing them.
-            FLETCHER_MAX_CHARS_AHEAD, FLETCHER_DRAG_GRACE_MS,
+            FLETCHER_DRAG_GRACE_MS,
             // The first line's head start (PR 2), exported for the same reason.
             FIRST_LINE_LEAD_MS,
             // The HP pool (backlog 306), exported so the cross-repo parity test holds each one

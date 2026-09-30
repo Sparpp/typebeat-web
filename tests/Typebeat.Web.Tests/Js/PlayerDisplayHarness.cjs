@@ -1810,19 +1810,21 @@ function skipOnEngine() {
 }
 
 // 'a', then a space on 'b': the skip abandons 'b' and the same press pays the gap. Then two
-// backspaces: the first erases the gap, the second steps transparently over the abandoned 'b' (which
-// re-opens it) and erases 'a'. The abandoned paint is taken after the skip, after the first erase
-// (still abandoned) and after the reclaim.
+// backspaces. Since PR 3 (the second input era) the FIRST undoes the whole skip: the gap is erased
+// and the abandoned 'b' re-opened in one press, the caret parked on 'b'. The second then erases 'a'.
+// The abandoned paint is taken after the skip, after the undo and after the erase.
 function abandonedRun() {
     const engine = skipOnEngine();
     engine.processKey('a', 1000);
     engine.update(1200);
     engine.processKey(' ', 1200);
     const skipped = paint(engine, 0);
+    const undoable = engine.canUndoWordSkip;
     engine.processBackspace();
-    const gapErased = paint(engine, 0);
+    const undone = paint(engine, 0);
+    const caretAfterUndo = engine.caretIndex;
     engine.processBackspace();
-    return { skipped: skipped, gapErased: gapErased, reclaimed: paint(engine, 0) };
+    return { skipped: skipped, undoable: undoable, undone: undone, caretAfterUndo: caretAfterUndo, erased: paint(engine, 0), caretAfterErase: engine.caretIndex };
 }
 
 // SpaceErrorDotTest's cells, hand-built for the same reason the desktop builds them by hand: the rule
@@ -1967,9 +1969,10 @@ function syllableAids() {
 
 out.syllableAids = syllableAids();
 
-// Backlog 347: a press out past the RUSH CAP is awarded Meh and marked (judgedPastRushCap), and the
-// browser draws it in the off-time warn tint rather than as a hit, the same class a Premature press
-// takes. An ordinary Meh (struck by the clock) stays a hit.
+// Backlog 347 drew a press out past the RUSH CAP (awarded Meh, marked judgedPastRushCap) in the
+// off-time warn tint. PR 3 removed the cap, so the engine never marks a cell and the renderer no
+// longer reads the mark: a Meh is a hit even on a cell carrying a stale one, and only an off-time
+// tier takes the warn tint.
 function rushCapTint() {
     const judged = (type, marked) => Object.assign(letterCell('c', 'correct'), { judgeType: type, judgedPastRushCap: marked });
     return {

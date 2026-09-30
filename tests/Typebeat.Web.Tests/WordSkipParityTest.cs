@@ -216,28 +216,28 @@ public class WordSkipParityTest
     }
 
     /// <summary>
-    /// <c>TheSkipWorksUnderGatekeeperToo</c>. Gatekeeper and space-skip are orthogonal: one decides
-    /// what happens to a wrong LETTER, the other lets you abandon a WORD, so a player who cannot type
-    /// past a character they keep missing is the one who needs the escape hatch most. The browser
-    /// cannot select Gatekeeper (it has no mods payload), so this is a pin on the mirror rather than
-    /// on a reachable run.
+    /// <c>GatekeeperRejectsSpaceInsteadOfSkippingUnderInputEra2</c> (PR 3's second input era), which
+    /// replaced <c>TheSkipWorksUnderGatekeeperToo</c> for every live run: the skip needs wrong input
+    /// allowed, so under Gatekeeper a space inside a word is a rejected wrong key like any other. The
+    /// browser cannot select Gatekeeper (it has no mods payload), so this is a pin on the mirror
+    /// rather than on a reachable run.
     /// </summary>
     [Test]
-    public void TheSkipWorksUnderGatekeeperToo()
+    public void GatekeeperRejectsSpaceInsteadOfSkipping()
     {
         var run = Run("underGatekeeper");
 
         Assert.Multiple(() =>
         {
-            Assert.That(Strings(run, "rejected"), Is.EqualTo(new[] { "q" }), "the wrong letter is rejected, not the space");
+            Assert.That(Strings(run, "rejected"), Is.EqualTo(new[] { "q", " " }), "the wrong letter is rejected, and so is the space");
             Assert.That(Int(run, "caretAfterRejection"), Is.EqualTo(1));
             Assert.That(Int(run, "streakAfterRejection"), Is.EqualTo(1));
 
-            Assert.That(Strings(run, "states").Take(3), Is.EqualTo(new[] { "correct", "abandoned", "abandoned" }));
-            Assert.That(Int(run, "caretIndex"), Is.EqualTo(4));
+            Assert.That(Strings(run, "states").Take(4), Is.EqualTo(new[] { "correct", "untyped", "untyped", "untyped" }), "nothing was skipped");
+            Assert.That(Int(run, "caretIndex"), Is.EqualTo(1));
             Assert.That(Int(run, "processorMisses"), Is.Zero);
-            Assert.That(Int(run, "consecutiveWrongKeys"), Is.Zero,
-                "the gap really was typed, so it resets the mash-fail streak; the skip itself never touches it");
+            Assert.That(Int(run, "consecutiveWrongKeys"), Is.EqualTo(2), "the rejected space feeds the mash-fail streak like any wrong key");
+            Assert.That(Bool(run, "canUndoWordSkip"), Is.False, "and there is no skip to undo");
         });
     }
 
@@ -260,26 +260,26 @@ public class WordSkipParityTest
     }
 
     /// <summary>
-    /// THE PROPERTY (<c>OneBackspaceFromTheGapReOpensTheWholeSkippedWord</c>). From the word gap, ONE
-    /// backspace re-enters the skipped word: every phantom cell it steps over goes back to untyped
-    /// and the caret lands on the last character actually typed, however many characters were given
-    /// up. The step-over is transparent for the same reason the one over auto-skipped punctuation is,
-    /// nothing the player put there is being erased, and it is the whole of what "re-typeable" means.
+    /// THE PROPERTY (<c>OneBackspaceUndoesTheSkipAndItsGapUnderInputEra2</c>, PR 3's second input era).
+    /// From the next word, ONE backspace undoes the whole skip: the abandoned letters go back to
+    /// untyped, the space the skip typed on the gap is erased, and the caret lands on the FIRST
+    /// abandoned cell with the correctly typed prefix intact. Before PR 3
+    /// (<c>OneBackspaceFromTheGapReOpensTheWholeSkippedWord</c>) the first press took the gap alone and
+    /// the second crossed the abandoned run and erased the last character actually typed.
     /// </summary>
     [Test]
-    public void OneBackspaceFromTheGapReOpensTheWholeSkippedWord()
+    public void OneBackspaceUndoesTheSkipAndItsGap()
     {
         var run = Run("oneBackspaceReOpensTheWord");
 
         Assert.Multiple(() =>
         {
-            Assert.That(Bool(run, "offTheGap"), Is.True);
-            Assert.That(Int(run, "caretOffTheGap"), Is.EqualTo(3), "the gap is a typed cell, an ordinary erase");
-
-            Assert.That(Bool(run, "throughTheRun"), Is.True);
-            Assert.That(Int(run, "caretIndex"), Is.Zero, "the caret lands on the last character actually typed");
-            Assert.That(Strings(run, "states").Take(3), Is.EqualTo(new[] { "untyped", "untyped", "untyped" }),
-                "and the cell it landed on is erased, as any backspace erases it");
+            Assert.That(Bool(run, "undoableBefore"), Is.True, "canUndoWordSkip, with the caret past the typed gap");
+            Assert.That(Bool(run, "undone"), Is.True);
+            Assert.That(Int(run, "caretIndex"), Is.EqualTo(1), "the caret lands on the first skipped character");
+            Assert.That(Strings(run, "states").Take(4), Is.EqualTo(new[] { "correct", "untyped", "untyped", "untyped" }),
+                "the prefix is preserved, the word re-opened and the skip's space erased too");
+            Assert.That(Bool(run, "undoableAfter"), Is.False);
         });
     }
 
@@ -296,7 +296,7 @@ public class WordSkipParityTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(Int(run, "pointsForTheInertRetype"), Is.Zero, "'c' was already earned");
+            Assert.That(Int(run, "pointsForTheInertRetype"), Is.Zero, "the gap was already earned before the undo erased it");
             Assert.That(Int(run, "pointsForTheFirstReclaimedCell"), Is.GreaterThan(0),
                 "a reclaimed cell scores; an inert retype would not");
 
@@ -342,10 +342,11 @@ public class WordSkipParityTest
     }
 
     /// <summary>
-    /// <c>TheFirstWordOfALineIsReclaimableToo</c>. A word abandoned at the very START of a line has
-    /// no keypress behind it, and the ordinary "nothing to erase" answer would make it the one
-    /// unreclaimable word on the map. One backspace re-opens it and parks the caret at the head of
-    /// the line, because the reclaim IS the state change.
+    /// <c>TheFirstWordOfALineIsReclaimableTooUnderInputEra2</c>. A word abandoned at the very START of
+    /// a line has no keypress behind it, and the ordinary "nothing to erase" answer would make it the
+    /// one unreclaimable word on the map. Since PR 3 ONE backspace erases the gap and re-opens the
+    /// word, parking the caret at the head of the line; before it a first press took the gap and a
+    /// second reclaimed the word.
     /// </summary>
     [Test]
     public void TheFirstWordOfALineIsReclaimableToo()
@@ -356,10 +357,7 @@ public class WordSkipParityTest
         {
             Assert.That(Int(run, "caretAfterSkip"), Is.EqualTo(4), "nothing typed at all, so the whole of \"cat\" goes");
 
-            Assert.That(Bool(run, "offTheGap"), Is.True);
-            Assert.That(Int(run, "caretOffTheGap"), Is.EqualTo(3));
-
-            Assert.That(Bool(run, "reclaim"), Is.True, "a reclaim IS a state change, so the press is not inert");
+            Assert.That(Bool(run, "reclaim"), Is.True, "one press erases the gap and reclaims the word");
             Assert.That(Int(run, "caretAfterReclaim"), Is.Zero);
             Assert.That(Strings(run, "statesAfterReclaim").Take(3), Is.EqualTo(new[] { "untyped", "untyped", "untyped" }));
 
@@ -427,6 +425,10 @@ public class WordSkipParityTest
     /// whose word units overrun its end with no grace of its own, which neither loader produces (both
     /// clamp a word to its line), so the same JSON gives a 700 ms overrun grace on both sides instead
     /// of the C# fixture's 250 ms boundary bump. The property is identical.</para>
+    ///
+    /// <para>Since PR 3 (<c>AnAbandonedCellHoldsTheLineOpenUnderInputEra2</c>) the one backspace undoes
+    /// the skip of the line's last word outright, so the retype starts on 'c' with no space before
+    /// it.</para>
     /// </summary>
     [Test]
     public void AnAbandonedCellHoldsTheLineOpenLikeAnUntypedOne()

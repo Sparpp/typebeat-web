@@ -274,8 +274,9 @@ function skippingTheLastWordOfALine() {
     };
 }
 
-// SpaceSkipWordTest.TheSkipWorksUnderGatekeeperToo. Orthogonal flags: one decides what happens to a
-// wrong LETTER, the other lets you abandon a WORD.
+// SpaceSkipWordTest.GatekeeperRejectsSpaceInsteadOfSkippingUnderInputEra2 (PR 3). Under Gatekeeper a
+// space inside a word is a rejected wrong key like any other, Space to skip or not; before PR 3
+// (TheSkipWorksUnderGatekeeperToo) it skipped the word there too.
 function underGatekeeper() {
     const engine = started(CAT_DOG);
     engine.allowWrongInput = false;
@@ -285,12 +286,13 @@ function underGatekeeper() {
     const caretAfterRejection = engine.caretIndex;
     const streakAfterRejection = engine.consecutiveWrongKeys;
 
-    engine.processKey(' ', 2600); // ...and space gets them out of it
+    engine.processKey(' ', 2600); // ...and so is the space
 
     return Object.assign(snapshot(engine), {
         caretAfterRejection: caretAfterRejection,
         streakAfterRejection: streakAfterRejection,
-        consecutiveWrongKeys: engine.consecutiveWrongKeys
+        consecutiveWrongKeys: engine.consecutiveWrongKeys,
+        canUndoWordSkip: engine.canUndoWordSkip
     });
 }
 
@@ -309,49 +311,53 @@ function mashingLeavesNothingToSkip() {
 // Backlog 167: the skipped word is RE-TYPEABLE.
 // ---------------------------------------------------------------------------------------------
 
-// SpaceSkipWordTest.OneBackspaceFromTheGapReOpensTheWholeSkippedWord. THE PROPERTY: one backspace
-// crosses the whole abandoned run and lands the caret on the last character actually typed.
+// SpaceSkipWordTest.OneBackspaceUndoesTheSkipAndItsGapUnderInputEra2 (PR 3). THE PROPERTY: from the
+// next word, one backspace re-opens the abandoned letters AND erases the space the skip typed,
+// parking the caret on the first abandoned cell with the typed prefix intact. (Before PR 3,
+// OneBackspaceFromTheGapReOpensTheWholeSkippedWord: the first press took the gap, the second crossed
+// the abandoned run and erased the 'c'.)
 function oneBackspaceReOpensTheWord() {
     const engine = started(CAT_DOG);
 
     engine.processKey('c', 1000);
     engine.processKey(' ', 2600);
 
-    const offTheGap = engine.processBackspace(); // an ordinary erase of the typed gap
-    const caretOffTheGap = engine.caretIndex;
-
-    const throughTheRun = engine.processBackspace(); // the one under test
+    const undoableBefore = engine.canUndoWordSkip;
+    const undone = engine.processBackspace(); // the one under test
 
     return Object.assign(snapshot(engine), {
-        offTheGap: offTheGap,
-        caretOffTheGap: caretOffTheGap,
-        throughTheRun: throughTheRun
+        undoableBefore: undoableBefore,
+        undone: undone,
+        undoableAfter: engine.canUndoWordSkip
     });
 }
 
 // SpaceSkipWordTest.RetypingAReclaimedWordEarnsRealJudgements. The cells really are earnable again:
 // ordinary judgements with ordinary points, not the scoring-inert retype of an already-earned cell.
+// Since PR 3 (RetypingAReclaimedWordEarnsRealJudgementsUnderInputEra2) one backspace undoes the
+// skip, so the retype starts on the first abandoned cell; the inert retype this case also reads is
+// the GAP's, which the undo erased and which was already earned.
 function retypingEarnsRealJudgements() {
     const engine = started(CAT_DOG);
 
     engine.processKey('c', 1000);
     engine.processKey(' ', 2600);
     engine.processBackspace();
-    engine.processBackspace();
 
     const scoreBefore = engine.score;
-
-    engine.processKey('c', 1000);     // inert: this cell was already earned
-    const scoreAfterInert = engine.score;
 
     engine.processKey('a', A_TARGET); // the first abandoned cell, earned for real
     const scoreAfterFirstReclaim = engine.score;
 
     engine.processKey('t', T_TARGET);
+    const scoreBeforeInert = engine.score;
+
+    engine.processKey(' ', 3000);     // inert: the gap was already earned before the undo erased it
+    const scoreAfterInert = engine.score;
 
     return Object.assign(snapshot(engine), {
-        pointsForTheInertRetype: scoreAfterInert - scoreBefore,
-        pointsForTheFirstReclaimedCell: scoreAfterFirstReclaim - scoreAfterInert
+        pointsForTheInertRetype: scoreAfterInert - scoreBeforeInert,
+        pointsForTheFirstReclaimedCell: scoreAfterFirstReclaim - scoreBefore
     });
 }
 
@@ -367,9 +373,7 @@ function reclaimedSkipGivesTheComboBack() {
     engine.processKey(' ', 2600); // skip "at": one break, the streak of 1 snapshotted on 'a'
     const restoredAfterTheSkip = engine.restored.slice();
 
-    engine.processBackspace();    // off the gap
-    engine.processBackspace();    // through the abandoned run, onto 'c'
-    engine.processKey('c', 1000); // inert retype
+    engine.processBackspace();    // undo the skip and its gap, preserving 'c' (PR 3)
     const restoredAfterTheErase = engine.restored.slice();
 
     engine.processKey('a', A_TARGET); // the snapshot cell: the run resumes here
@@ -391,19 +395,16 @@ function reclaimedSkipGivesTheComboBack() {
     };
 }
 
-// SpaceSkipWordTest.TheFirstWordOfALineIsReclaimableToo. A word abandoned at the very START of a
-// line has no keypress behind it, and the ordinary "nothing to erase" answer would make it the one
-// unreclaimable word on the map.
+// SpaceSkipWordTest.TheFirstWordOfALineIsReclaimableTooUnderInputEra2 (PR 3). A word abandoned at the
+// very START of a line has no keypress behind it, and the ordinary "nothing to erase" answer would
+// make it the one unreclaimable word on the map. One press erases the gap and reclaims the word.
 function firstWordOfALineIsReclaimable() {
     const engine = started(CAT_DOG);
 
     engine.processKey(' ', 1100); // nothing typed at all: the whole of "cat" goes
     const caretAfterSkip = engine.caretIndex;
 
-    const offTheGap = engine.processBackspace();
-    const caretOffTheGap = engine.caretIndex;
-
-    const reclaim = engine.processBackspace(); // a reclaim IS a state change
+    const reclaim = engine.processBackspace(); // the gap and the word, in one press
     const caretAfterReclaim = engine.caretIndex;
     const statesAfterReclaim = states(engine);
 
@@ -411,8 +412,6 @@ function firstWordOfALineIsReclaimable() {
 
     return Object.assign(snapshot(engine), {
         caretAfterSkip: caretAfterSkip,
-        offTheGap: offTheGap,
-        caretOffTheGap: caretOffTheGap,
         reclaim: reclaim,
         caretAfterReclaim: caretAfterReclaim,
         statesAfterReclaim: statesAfterReclaim
@@ -436,9 +435,7 @@ function everyAbandonedCellLeavesExactlyOnce() {
 
     engine.processKey('c', 1000);
     engine.processKey(' ', 2600);
-    engine.processBackspace();
-    engine.processBackspace();
-    engine.processKey('c', 1000);
+    engine.processBackspace(); // undoes the skip (PR 3)
     engine.processKey('a', A_TARGET);
     engine.processKey('t', T_TARGET);
     engine.processKey(' ', 3000);
@@ -474,8 +471,7 @@ function abandonedCellHoldsTheLineOpen() {
 
     const activeInsideTheGrace = engine.activeLineIndex;
 
-    const reclaim = engine.processBackspace();
-    engine.processKey(' ', 3100);
+    const reclaim = engine.processBackspace(); // undoes the skip of the line's last word (PR 3)
     engine.processKey('c', 3100);
 
     const stateOfC = engine.lines[0].cells[3].state;
@@ -578,9 +574,7 @@ function fullyReclaimedRun() {
 
     engine.processKey('c', 1000);
     engine.processKey(' ', 2600);
-    engine.processBackspace();
-    engine.processBackspace();
-    engine.processKey('c', 1000);
+    engine.processBackspace(); // undoes the skip (PR 3)
     engine.processKey('a', A_TARGET);
     engine.processKey('t', T_TARGET);
     engine.processKey(' ', 3000);

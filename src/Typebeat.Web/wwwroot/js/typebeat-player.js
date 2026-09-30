@@ -494,11 +494,11 @@
             // are still their own judgement types, which is exactly where the distinction the
             // statistics blob gives up on survives.
             //
-            // A press out past the RUSH CAP (backlog 347) takes the same warn tint: it was awarded
-            // Meh for where the caret was rather than for when the key went down, so its tier alone
-            // reads as an ordinary hit. The engine marks the cell (judgedPastRushCap, history, so a
-            // retype keeps it), and the desktop draws it at the sync tint's floor, its off-time look.
-            const onTime = (jt === 'Great' || jt === 'Ok' || jt === 'Meh') && !cell.judgedPastRushCap;
+            // A press out past the RUSH CAP took the same warn tint from backlog 347 (it was awarded
+            // Meh for where the caret was, marked judgedPastRushCap) until PR 3 removed the cap from
+            // every live run. No browser cell can carry that mark any more, so the tier alone
+            // decides: a Meh is a Meh the clock struck.
+            const onTime = (jt === 'Great' || jt === 'Ok' || jt === 'Meh');
             cls += onTime ? ' tb-c-hit' : ' tb-c-off';
         } else if (cell.state === 'wrong') {
             // Typed through wrong (the default model). The desktop shows the EXPECTED glyph in

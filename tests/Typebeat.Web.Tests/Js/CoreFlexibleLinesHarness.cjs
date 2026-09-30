@@ -176,7 +176,10 @@ const out = {};
         boundedRush: engine.boundedRush,
         manualNewlines: engine.manualNewlines,
         newlineOnTypedLetter: engine.newlineOnTypedLetter,
-        maxCharsAhead: TB.constants.FLETCHER_MAX_CHARS_AHEAD,
+        // PR 3's second input era removed the rush cap: the browser carries neither the constant
+        // nor the predicate any more, and this says so rather than letting either creep back.
+        hasRushCapConstant: TB.constants.FLETCHER_MAX_CHARS_AHEAD !== undefined,
+        hasRushCapPredicate: typeof engine.rushesPastCap === 'function',
         dragGraceMs: TB.constants.FLETCHER_DRAG_GRACE_MS
     };
 }
@@ -298,16 +301,18 @@ const out = {};
     };
 }
 
-// THE RUSH CAP is untouched by the bound and still bites on the far side of a permitted roll: entry
-// buys the player a line, never a licence to run away down it. At 12500 the playhead has reached two
-// countable chars ('a' and 'b') and so has the caret, so six chars of L1 keep it inside the cap of
-// six (backlog 347; five before it) and the seventh is over it: marked, and credited rather than
-// broken.
+// PAST A PERMITTED ROLL, where THE RUSH CAP used to bite (it is gone since PR 3's second input era).
+// At 12500 the playhead has reached two countable chars ('a' and 'b') and so has the caret, so six
+// chars of L1 put it six ahead, where the 347 cap stood, and the seventh seven ahead, past it. Every
+// press is judged on its own clock and credits combo, and nothing breaks.
 {
     const engine = automaticArm(new TB.TypingEngine(build(INSTRUMENTAL_GAP)));
 
     let breaks = 0;
     engine.onComboBroken = () => { breaks++; };
+
+    let lastType = null;
+    engine.onCharJudged = (cellIndex, type) => { lastType = type; };
 
     engine.update(1000);
     engine.processKey('a', 1000);
@@ -325,7 +330,7 @@ const out = {};
 
     engine.processKey('h', 12500);
 
-    const atTheCap = { lead: engine.charsAheadOfPlayhead(12500), combo: engine.combo, comboBreaks: breaks, marked: engine.lines[1].cells[5].judgedPastRushCap };
+    const atTheCap = { lead: engine.charsAheadOfPlayhead(12500), combo: engine.combo, comboBreaks: breaks, type: lastType };
 
     engine.processKey('i', 12500);
 
@@ -335,7 +340,7 @@ const out = {};
         leadOnArrival: leadOnArrival,
         insideTheCap: insideTheCap,
         atTheCap: atTheCap,
-        pastTheCap: { lead: engine.charsAheadOfPlayhead(12500), combo: engine.combo, comboBreaks: breaks, marked: engine.lines[1].cells[6].judgedPastRushCap }
+        pastTheCap: { lead: engine.charsAheadOfPlayhead(12500), combo: engine.combo, comboBreaks: breaks, type: lastType }
     };
 }
 
@@ -620,18 +625,16 @@ const out = {};
     };
 }
 
-// THE RUSH CAP, and the SPACE's exemption from it. Every press is at 1000, where the playhead has
-// reached exactly one countable character, so the caret's lead is the press count:
-//   a..f  the caret ends 0,1,2,3,4 then 5 characters ahead, all inside the cap, all earning combo.
-//   ' '   a word gap is not COUNTABLE, so it spends no budget: the caret is still 5 ahead and the
-//         press earns combo. With a budget it would have been the sixth and would already be at
-//         the cap's edge.
-//   g     the caret ends 6 ahead, which since backlog 347 is still INSIDE the cap of six.
-//   h     7 ahead, over it: the press lands, CREDITS combo, and is awarded Meh at best (the tier is
-//         a min over the ladder, so a press the clock already called off-time keeps that tier). The
-//         cell carries the judgedPastRushCap mark. No break, then or ever: that was the pre-347 rule.
+// NO RUSH CAP (PR 3's second input era), and the SPACE's exemption from the drift count. Every press
+// is at 1000, where the playhead has reached exactly one countable character, so the caret's lead is
+// the press count:
+//   a..f  the caret ends 0,1,2,3,4 then 5 characters ahead, all earning combo.
+//   ' '   a word gap is not COUNTABLE, so the lead stays at 5.
+//   g     6 ahead, where backlog 347's cap stood.
+//   h     7 ahead, past it: the press lands, CREDITS combo and keeps the tier its clock gave it.
+//         Under 347 it was awarded Meh at best and marked; before 347 it broke the run.
 // The clock then catches up to 8000, where the playhead has passed eight countable characters, and
-// 'i' lands back inside the cap on its own timing and unmarked, and the run is still unbroken.
+// 'i' lands on its own timing, and the run is still unbroken.
 {
     const engine = automaticArm(new TB.TypingEngine(build(RUSH_LINE)));
 
@@ -660,9 +663,8 @@ const out = {};
     engine.processKey('i', 8000);
 
     out.rushCap = {
-        // Every cell still LANDED: the cap is an accuracy penalty, not a block.
+        // Every cell LANDED: there is no cap to block or to penalise.
         states: engine.lines[0].cells.map(c => c.state),
-        marked: engine.lines[0].cells.map(c => c.judgedPastRushCap),
         leadAfterEachPress: lead,
         comboAfterEachPress: combos,
         typeAfterEachPress: types,
@@ -674,15 +676,14 @@ const out = {};
     };
 }
 
-// THE RUSH CAP'S MEH, on a line tight enough that every press at 1000 is a Great by the clock, so
-// any Meh is the cap's and not the clock's. The JS twin of the game's
-// RushCapCostsAccuracyTest.ARunCrossingTheCapKeepsItsComboAndEveryOverCapCellIsMeh, on a map of
-// the browser's own shape: "abcdefghijkl" sung [1000, 1120], so at 1000 the playhead has reached one
-// countable character and no syllable of it starts more than 120 ms later.
-//   presses 1..7 at 1000   leads 0..6, all inside the cap, all Great.
-//   presses 8, 9 at 1000   leads 7 and 8, over it: Meh, combo credited, cells marked.
-//   'j' at 1120            the song has passed all twelve targets, the caret is behind it, and the
-//                          press is judged on its timing again (Great) and unmarked.
+// NO RUSH CAP MEH (PR 3's second input era), on a line tight enough that every press at 1000 is a
+// Great by the clock, so any Meh would be a cap's and not the clock's. The JS twin of the game's
+// InputEra2Test.EachStoredEraReDerivesUnderItsOwnRushCap (the era's arm), on a map of the browser's
+// own shape: "abcdefghijkl" sung [1000, 1120], so at 1000 the playhead has reached one countable
+// character and no syllable of it starts more than 120 ms later.
+//   presses 1..9 at 1000   leads 0..8, every one a Great on its clock, combo credited. Under 347
+//                          the presses 7 and 8 ahead were awarded Meh; now they are not.
+//   'j' at 1120            the song has passed all twelve targets, and the press is a Great too.
 {
     const engine = automaticArm(new TB.TypingEngine(build(osu([
         { text: 'abcdefghijkl', start_ms: 1000, end_ms: 1120, words: [word('abcdefghijkl', 1000, 1120)] }
@@ -711,14 +712,12 @@ const out = {};
     combos.push(engine.combo);
 
     out.rushCapMeh = {
-        maxCharsAhead: TB.constants.FLETCHER_MAX_CHARS_AHEAD,
         playheadAtTheBurst: engine.playheadCountablePosition(1000),
         leadAfterEachPress: lead,
         comboAfterEachPress: combos,
         types: types,
         points: points,
         deltas: engine.lines[0].cells.slice(0, 10).map(c => c.judgedDelta),
-        marked: engine.lines[0].cells.slice(0, 10).map(c => c.judgedPastRushCap),
         comboBreaks: breaks,
         maxCombo: engine.maxCombo
     };
@@ -1380,7 +1379,7 @@ const out = {};
 // for the SUBMITTED account.
 {
     // THE REPORTED SHAPE'S FIXTURE: a short word, a LONG one, and two short ones, dense enough that
-    // the long word alone is far more than FLETCHER_MAX_CHARS_AHEAD. Nineteen cells, sixteen of them
+    // the long word alone is far more than the old FLETCHER_MAX_CHARS_AHEAD. Nineteen cells, sixteen of them
     // countable (the three gaps are not):
     //   0:a = 1000, 1:b = 1100, 2:' ' = 1200, 3:c = 1200 .. 12:l = 2100, 13:' ' = 2200,
     //   14:m = 2200, 15:n = 2300, 16:' ' = 2400, 17:o = 2400, 18:p = 2500.
@@ -1422,11 +1421,18 @@ const out = {};
         // cost the gap its tier instead). Measured where the press was actually made it is
         // 2 - 3 = -1, and the gap is judged like any other.
         //
-        // The Ctrl+A collapse then follows as the two plain backspaces it is composed of (the erase
-        // steps transparently over the abandoned cells and stops on the gap it can land on, which is
-        // the anchor the widened query now offers), and the line is typed out. Live, the run ends on
-        // exactly the clean run's max combo; under the old rule it ends one short, which is the
-        // 919 of 920 the player reported.
+        // The Ctrl+A collapse then follows as the plain backspaces it is composed of, and the line is
+        // typed out. Live, the run ends on exactly the clean run's max combo; under the old rule it
+        // ends one short, which is the 919 of 920 the player reported.
+        //
+        // Since PR 3 (the second input era) the collapse is ONE backspace: it undoes the whole skip
+        // (tryUndoWordSkip), re-opening the word and erasing the gap the skip typed, and parks the
+        // caret on the word's own head, which is the anchor the era's query offers. The retype
+        // starts there. Before PR 3 it was TWO (the first took the typed gap, the second stepped
+        // transparently over the abandoned word and erased the gap in front of it, which is where
+        // backlog 260's widened anchor pointed) and the retype started on that gap: that composition
+        // survives as legacySteps, the script a stored pre-PR 3 row was played with, which is what
+        // the cross-repo arm replays when it clears the era bits.
         headOfWordSkip: {
             steps: [
                 { op: 'update', t: 1000 },
@@ -1435,10 +1441,18 @@ const out = {};
                 // The accidental space, at the head of "cdefghijkl".
                 { op: 'key', c: ' ', t: 1200 },
 
-                // The collapse, back to the gap in front of the word that was given up whole.
-                { op: 'backspace', t: 1200 },
+                // The collapse, back to the head of the word that was given up whole.
                 { op: 'backspace', t: 1200 },
 
+                ...typeSteps(reference, 3, cellCount),
+                { op: 'update', t: 6000 },
+            ],
+            legacySteps: [
+                { op: 'update', t: 1000 },
+                ...typeSteps(reference, 0, 3),
+                { op: 'key', c: ' ', t: 1200 },
+                { op: 'backspace', t: 1200 },
+                { op: 'backspace', t: 1200 },
                 ...typeSteps(reference, 2, cellCount),
                 { op: 'update', t: 6000 },
             ]
@@ -1465,10 +1479,23 @@ const out = {};
                 { op: 'key', c: ' ', t: 1600 }, // gives up "cdefghijkl", credits the gap at 13
                 { op: 'key', c: ' ', t: 1600 }, // gives up "mn", breaks that one increment passively
 
-                { op: 'backspace', t: 1600 },
+                // The collapse (PR 3): one backspace undoes each skip, "mn" and then "cdefghijkl",
+                // landing on the head of the earlier one. Three before PR 3 (legacySteps).
                 { op: 'backspace', t: 1600 },
                 { op: 'backspace', t: 1600 },
 
+                ...typeSteps(reference, 3, cellCount),
+                { op: 'update', t: 6000 },
+            ],
+            legacySteps: [
+                { op: 'update', t: 1000 },
+                ...typeSteps(reference, 0, 3),
+                { op: 'update', t: 1600 },
+                { op: 'key', c: ' ', t: 1600 },
+                { op: 'key', c: ' ', t: 1600 },
+                { op: 'backspace', t: 1600 },
+                { op: 'backspace', t: 1600 },
+                { op: 'backspace', t: 1600 },
                 ...typeSteps(reference, 2, cellCount),
                 { op: 'update', t: 6000 },
             ]
@@ -1528,6 +1555,10 @@ const out = {};
 
         runs[name] = {
             script: scenarios[name].steps,
+            // The pre-PR 3 composition of the same gesture, emitted but NOT run here (the browser has
+            // no arm for the era before the second input era); the cross-repo arm replays it when it
+            // re-derives a stored row. The clean run gives nothing up, so it has no second script.
+            legacyScript: scenarios[name].legacySteps || scenarios[name].steps,
             readings: readings,
             combo: engine.combo,
             maxCombo: engine.maxCombo,
@@ -1548,8 +1579,8 @@ const out = {};
 
     out.losslessSkipReclaim = {
         // Pinned before the readings are, so a fixture that drifted cannot be read as an engine
-        // divergence by the cross-repo arm.
-        maxCharsAhead: TB.constants.FLETCHER_MAX_CHARS_AHEAD,
+        // divergence by the cross-repo arm. (The rush cap this section once pinned beside it,
+        // FLETCHER_MAX_CHARS_AHEAD, left the browser with PR 3's second input era.)
         fixture: {
             lines: reference.lines.map(l => ({
                 activationTime: l.activationTime,

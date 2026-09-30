@@ -26,7 +26,7 @@ namespace Typebeat.WireCompat;
 /// <item><b>The rush cap charged the space for the word it abandoned.</b> The skip walks the caret
 /// past the whole word BEFORE the same press is judged on the gap it parked on, and the cap measures
 /// the caret POSITIONALLY, so an abandoned tail plus any lead over
-/// <see cref="TypingEngine.FLETCHER_MAX_CHARS_AHEAD"/> refused that press its combo, silently: the
+/// <see cref="TypingEngine.FLETCHER_MAX_CHARS_AHEAD"/> (as it then stood) refused that press its combo, silently: the
 /// skip's own break had already zeroed the run, so nothing was announced and no claim discarded, and
 /// the gap still resolved Correct, which makes every later retype of it inert.</item>
 /// <item><b>The passive claim arm dropped the run it stood on.</b> A break taking no more than the
@@ -42,6 +42,14 @@ namespace Typebeat.WireCompat;
 /// <para>The two clients submit to the SAME leaderboards, so this is not cosmetic: both of the first
 /// two move <c>max_combo</c> and every combo portion after the skip. A browser still dropping the
 /// increment would score the identical performance lower than the desktop.</para>
+///
+/// <para>PR 3's SECOND INPUT ERA (<see cref="TypingEngine.InputEra2"/>, the live rule on both sides
+/// now) moved two things under these scripts. The rush cap is GONE, so defect A cannot recur live at
+/// all (there is no cap left to charge the space against), and one backspace undoes a whole skip,
+/// so the collapse is shorter and lands on the abandoned word's own head, which is the anchor the
+/// era offers. The browser's scripts are the era's gesture; each also carries its pre-PR 3
+/// composition (<c>legacyScript</c>), which is what the stored arm replays when it clears the
+/// era bits.</para>
 ///
 /// <para>TWO ARMS, the shape <see cref="SealComboBreakLiveParityTest"/> established. The ENGINE's own
 /// run is compared step for step, and the SUBMITTED account goes through
@@ -159,6 +167,7 @@ public class LosslessSkipReclaimLiveParityTest
         FirstLineLeadIn = true,
         // Backlog 347, the first bit of the SECOND CONFIG flags word: the browser takes it unconditionally.
         RushCapCostsAccuracy = true,
+        InputEra2 = true,
         ManualNewlines = true,
         NewlineOnTypedLetter = true,
     };
@@ -170,16 +179,23 @@ public class LosslessSkipReclaimLiveParityTest
     /// all. Bit 1 (space-skips-word) is SET, unlike in <see cref="SealComboBreakLiveParityTest"/>:
     /// the whole subject here is a space struck inside a word.
     /// </summary>
-    private static Replay Replay(bool losslessSkipReclaim, string scenario, bool rushCapCostsAccuracy = true)
+    private static Replay Replay(bool losslessSkipReclaim, string scenario, bool rushCapCostsAccuracy = true, bool inputEra2 = true)
+    {
+        // A run stored before the second input era was played with that era's backspace, so it is
+        // re-derived from the gesture as that era composed it.
+        return Replay(losslessSkipReclaim, Run(scenario).GetProperty(inputEra2 ? "script" : "legacyScript"), rushCapCostsAccuracy, inputEra2);
+    }
+
+    private static Replay Replay(bool losslessSkipReclaim, JsonElement script, bool rushCapCostsAccuracy, bool inputEra2)
     {
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2));
 
-        foreach (var step in Run(scenario).GetProperty("script").EnumerateArray())
+        foreach (var step in script.EnumerateArray())
         {
             double time = step.GetProperty("t").GetDouble();
 
@@ -204,8 +220,8 @@ public class LosslessSkipReclaimLiveParityTest
         return replay;
     }
 
-    private static TypeBeatReplayAccount Play(string scenario, bool losslessSkipReclaim = true, bool rushCapCostsAccuracy = true)
-        => TypeBeatReplayScorer.Score(Playable(), Array.Empty<Mod>(), Replay(losslessSkipReclaim, scenario, rushCapCostsAccuracy), TypoRule.Deferred, ComboRestoreRule.OnFix);
+    private static TypeBeatReplayAccount Play(string scenario, bool losslessSkipReclaim = true, bool rushCapCostsAccuracy = true, bool inputEra2 = true)
+        => TypeBeatReplayScorer.Score(Playable(), Array.Empty<Mod>(), Replay(losslessSkipReclaim, scenario, rushCapCostsAccuracy, inputEra2), TypoRule.Deferred, ComboRestoreRule.OnFix);
 
     /// <summary>The cell states as the JS mirror spells them (its own vocabulary, one for one).</summary>
     private static string StateName(CellState state) => state switch
@@ -251,8 +267,6 @@ public class LosslessSkipReclaimLiveParityTest
     {
         Assert.Multiple(() =>
         {
-            Assert.That(Section().GetProperty("maxCharsAhead").GetInt32(), Is.EqualTo(TypingEngine.FLETCHER_MAX_CHARS_AHEAD));
-
             var engine = LiveEngine();
             var lines = Section().GetProperty("fixture").GetProperty("lines");
 
@@ -286,11 +300,10 @@ public class LosslessSkipReclaimLiveParityTest
     ///
     /// <para>The readings that matter are the ones on the skipping space. Its <c>combo</c> must be 1
     /// (the gap credited) rather than 0, and its <c>charsAheadOfPlayhead</c> must be 9 (the caret
-    /// really IS out past the cap after the skip, which is what makes the fix a statement about WHERE
-    /// the measurement is taken rather than about the cap being loose). Then, on the step the
-    /// collapse ends, the caret must equal the anchor the step before it offered: a browser whose
-    /// anchor was one cell short lands behind its own selection and manufactures a typo on the next
-    /// keystroke.</para>
+    /// really IS far ahead after the skip, which is where the cap used to stand). Then, on the step
+    /// the collapse ends, the caret must equal the anchor the step before it offered: a browser whose
+    /// anchor disagreed with its own backspace lands off its own selection and manufactures a typo on
+    /// the next keystroke.</para>
     ///
     /// <para><c>runPositions</c> is asserted by LENGTH rather than by content, because the C# list is
     /// private: what is worth pinning is the invariant the fold rests on,
@@ -447,11 +460,13 @@ public class LosslessSkipReclaimLiveParityTest
     /// judgements, the accuracy and the completion are asserted EQUAL across the two arms, and why
     /// the clean run (which gives up nothing) is bit-identical under both.</para>
     ///
-    /// <para>The stored arm also clears backlog 347's extended header, which is the combination every
-    /// such row really carries (a replay from before 260 predates the second carrier too). Under the
-    /// live rush cap the skipping space would be charged a Meh rather than the run, so defect A would
-    /// part the arms on a JUDGEMENT; under the rule those rows were played with it parts them on the
-    /// combo alone, which is what this test states.</para>
+    /// <para>The stored arm also clears backlog 347's extended header (both its bits, so PR 3's second
+    /// input era too), which is the combination every such row really carries (a replay from before
+    /// 260 predates the second carrier too), and replays the gesture as that era composed it
+    /// (<c>legacyScript</c>: the old backspace needs one more press to reach the gap its widened
+    /// anchor offered). Under the 347 rush cap the skipping space would be charged a Meh rather than
+    /// the run, so defect A would part the arms on a JUDGEMENT; under the rule those rows were played
+    /// with it parts them on the combo alone, which is what this test states.</para>
     /// </summary>
     [Test]
     public void TheseScriptsReallySeparateTheTwoEras()
@@ -461,7 +476,7 @@ public class LosslessSkipReclaimLiveParityTest
             foreach (string scenario in corrected)
             {
                 var live = Play(scenario);
-                var stored = Play(scenario, losslessSkipReclaim: false, rushCapCostsAccuracy: false);
+                var stored = Play(scenario, losslessSkipReclaim: false, rushCapCostsAccuracy: false, inputEra2: false);
 
                 Assert.That(stored.MaxCombo, Is.LessThan(live.MaxCombo), $"{scenario}: the dropped increment should cost max_combo");
                 Assert.That(stored.TotalScore, Is.LessThan(live.TotalScore), $"{scenario}: and total_score");
@@ -471,7 +486,7 @@ public class LosslessSkipReclaimLiveParityTest
             }
 
             var cleanLive = Play("cleanRun");
-            var cleanStored = Play("cleanRun", losslessSkipReclaim: false, rushCapCostsAccuracy: false);
+            var cleanStored = Play("cleanRun", losslessSkipReclaim: false, rushCapCostsAccuracy: false, inputEra2: false);
 
             Assert.That(cleanStored.MaxCombo, Is.EqualTo(cleanLive.MaxCombo), "a run that gives up nothing re-derives identically");
             Assert.That(cleanStored.TotalScore, Is.EqualTo(cleanLive.TotalScore));
@@ -485,13 +500,16 @@ public class LosslessSkipReclaimLiveParityTest
     /// the rule:
     ///
     /// <list type="bullet">
-    /// <item>DEFECT A: the skipping space really is judged at a caret far out past the cap, and still
-    /// earns its gap. Nine countable characters ahead of the playhead, against a cap of six.</item>
+    /// <item>DEFECT A: the skipping space really is judged at a caret far out where the cap stood,
+    /// and still earns its gap. Nine countable characters ahead of the playhead, where the 347 cap was
+    /// six; since PR 3 there is no cap at all, so this is a pin that the gap is credited
+    /// unconditionally.</item>
     /// <item>DEFECT B: the second space really takes a PASSIVE break (one that keeps the deeper claim
     /// rather than replacing it), which is only visible as the redemption being bigger than the run
     /// the first break took: 4 rather than 3.</item>
-    /// <item>DEFECT C: the collapse lands EXACTLY on the anchor the gesture offered, rather than one
-    /// cell behind it, and the retype that follows makes no mistype.</item>
+    /// <item>DEFECT C: the collapse lands EXACTLY on the anchor the gesture offered, and the retype
+    /// that follows makes no mistype. Since PR 3 that anchor is the abandoned word's own head (the
+    /// era's backspace stops there), where backlog 260 had widened it onto the gap in front.</item>
     /// </list>
     /// </summary>
     [Test]
@@ -527,7 +545,7 @@ public class LosslessSkipReclaimLiveParityTest
                 // DEFECT C: the anchor offered before the collapse, and the caret it landed on.
                 int anchor = readings[lastSkip].GetProperty("retypeSelectionAnchor").GetInt32();
 
-                Assert.That(anchor, Is.EqualTo(2), $"{scenario}: the gap in FRONT of the wholly abandoned word");
+                Assert.That(anchor, Is.EqualTo(3), $"{scenario}: the head of the wholly abandoned word (PR 3; the gap in front of it before)");
                 Assert.That(readings[lastBackspace].GetProperty("at").GetProperty("cell").GetInt32(), Is.EqualTo(anchor),
                     $"{scenario}: the collapse ended behind its own selection, so the next letter is a manufactured typo");
             }
@@ -538,9 +556,8 @@ public class LosslessSkipReclaimLiveParityTest
             var skipStep = headOfWord[4];
 
             Assert.That(skipStep.GetProperty("charsAheadOfPlayhead").GetInt32(), Is.EqualTo(9),
-                "the caret is nine countable chars past the playhead after the skip, three over the cap");
-            Assert.That(Section().GetProperty("maxCharsAhead").GetInt32(), Is.EqualTo(6), "against a cap of six (five before backlog 347)");
-            Assert.That(skipStep.GetProperty("combo").GetInt32(), Is.EqualTo(1), "and the gap is credited: the word given up is not the player's budget");
+                "the caret is nine countable chars past the playhead after the skip, three past where the 347 cap of six stood");
+            Assert.That(skipStep.GetProperty("combo").GetInt32(), Is.EqualTo(1), "and the gap is credited: there is no cap to charge it (PR 3)");
             Assert.That(headOfWord[3].GetProperty("charsAheadOfPlayhead").GetInt32(), Is.EqualTo(-1),
                 "measured where the press was MADE, the player was not rushing at all");
 

@@ -123,7 +123,7 @@ public class WordSkipLiveParityTest
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, wrongInputOnWordGaps: true, strictSpaces: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true));
 
         foreach ((double time, char character) in keys)
             replay.Frames.Add(new TypeBeatReplayFrame(time, character));
@@ -302,9 +302,10 @@ public class WordSkipLiveParityTest
 
     /// <summary>
     /// The other half of the pair: a skip the player DOES come back for costs nothing beyond the
-    /// detour. One backspace re-enters the word, the cells earn their ordinary judgements, and the
-    /// streak the skip broke resumes on the first cell it abandoned, so the map still ends on a
-    /// perfect X with every cell typed.
+    /// detour. One backspace undoes the skip (since PR 3's second input era it re-opens the word AND
+    /// erases the gap the skip typed, parking the caret on the first abandoned cell), the cells earn
+    /// their ordinary judgements, and the streak the skip broke resumes on the first cell it
+    /// abandoned, so the map still ends on a perfect X with every cell typed.
     ///
     /// <para>The total score is deliberately NOT the clean run's, and the difference is real rather
     /// than a rounding artefact: the word gap was typed once, at combo 0 immediately after the break,
@@ -317,9 +318,7 @@ public class WordSkipLiveParityTest
         var game = Play(CatDog(), Keystrokes(
             (1000, 'c'),
             (2600, ' '),          // abandon "at"
-            (2600, backspace),    // off the typed gap
-            (2600, backspace),    // through the whole abandoned run, onto 'c'
-            (1000, 'c'),          // inert retype
+            (2600, backspace),    // undo the skip and its gap, onto 'a' (PR 3)
             (a_target, 'a'),      // the snapshot cell: the run resumes here
             (t_target, 't'), (3000, ' '), (3000, 'd'), (o_target, 'o'), (g_target, 'g')));
 
@@ -392,12 +391,147 @@ public class WordSkipLiveParityTest
         var game = Play(CatDog(), Keystrokes(
             (1000, 'c'),
             (2600, ' '),
-            (2600, backspace),
-            (2600, backspace),
-            (1000, 'c'), (a_target, 'a'), (t_target, 't'), (3000, ' '), (3000, 'd'),
+            (2600, backspace), // undo the skip and its gap (PR 3)
+            (a_target, 'a'), (t_target, 't'), (3000, ' '), (3000, 'd'),
             (3800, ' '))); // abandon the rest of "dog"
 
         Assert.That(game.Statistics.GetValueOrDefault(HitResult.Miss), Is.EqualTo(2), "only the word nobody came back for");
         AssertSameAccount("everyAbandonedCellLeavesExactlyOnce", game, Browser("everyAbandonedCellLeavesExactlyOnce"));
     }
+
+    #region PR 3's second input era, engine against engine
+
+    /// <summary>"cat dog" as the ENGINE wants it, for the two era pins below.</summary>
+    private static LyricBeatmap CatDogLyrics() => new LyricBeatmap
+    {
+        Metadata = new LyricBeatmapMetadata { Artist = "a", Title = "t", FolderPath = @"X:\nowhere", AudioFileName = "a.mp3" },
+        Lines = [Line("cat dog", 1000, 6000, 5000, Unit("cat", 1000, 3000), Unit("dog", 3000, 5000))],
+        Granularity = TimingGranularity.Line,
+    };
+
+    /// <summary>
+    /// A started engine on the live rules, with the second input era a parameter so each pin below
+    /// can show the era is what it is about (clear, the same keys do something else).
+    /// </summary>
+    private static TypingEngine LiveEngine(bool inputEra2, bool allowWrongInput = true)
+    {
+        var engine = new TypingEngine(CatDogLyrics())
+        {
+            AllowWrongInput = allowWrongInput,
+            SyllableTiming = true,
+            CharTimedStretch = true,
+            FirstCharTiming = true,
+            WrongInputOnWordGaps = true,
+            StrictSpaces = true,
+            SpaceSkipsWord = true,
+            FletcherEnabled = true,
+            FlexibleLineSnap = true,
+            BoundedRush = true,
+            BackDatedSealBreak = true,
+            LosslessSkipReclaim = true,
+            FoldsDisplacedClaim = true,
+            FirstLineLeadIn = true,
+            RushCapCostsAccuracy = true,
+            InputEra2 = inputEra2,
+            ManualNewlines = true,
+            NewlineOnTypedLetter = true,
+        };
+
+        engine.Update(1000);
+        return engine;
+    }
+
+    private static string[] States(TypingEngine engine) => engine.Lines[0].Cells.Select(c => c.State switch
+    {
+        CellState.Untyped => "untyped",
+        CellState.Correct => "correct",
+        CellState.Wrong => "wrong",
+        CellState.Missed => "missed",
+        CellState.AutoSkipped => "autoskip",
+        CellState.Abandoned => "abandoned",
+        _ => c.State.ToString(),
+    }).ToArray();
+
+    private static string[] Strings(JsonElement run, string key) => run.GetProperty(key).EnumerateArray().Select(e => e.GetString()!).ToArray();
+
+    /// <summary>
+    /// BACKSPACE UNDOES A WORD SKIP (PR 3, <c>TypingEngine.tryUndoWordSkip</c>), the browser's
+    /// <c>oneBackspaceReOpensTheWord</c> run against the game's engine: 'c', a space that abandons
+    /// "at" and types the gap, then ONE backspace. Both sides land the caret on the first abandoned
+    /// cell with 'c' kept and the word and its gap re-opened, and both report the undo available
+    /// before the press and gone after it. The same keys on the era before it take the gap alone and
+    /// leave the word abandoned, which is what makes this a pin on the era.
+    /// </summary>
+    [Test]
+    public void OneBackspaceUndoesASkipOnBothSides()
+    {
+        var browser = Browser("oneBackspaceReOpensTheWord");
+
+        TypingEngine play(bool era2, out bool undoableBefore)
+        {
+            var engine = LiveEngine(era2);
+            Assert.That(engine.ProcessKey('c', 1000), Is.True);
+            Assert.That(engine.ProcessKey(' ', 2600), Is.True);
+            undoableBefore = engine.CanUndoWordSkip;
+            Assert.That(engine.ProcessBackspace(), Is.True);
+            return engine;
+        }
+
+        var live = play(era2: true, out bool liveUndoable);
+        var stored = play(era2: false, out _);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(browser.GetProperty("undoableBefore").GetBoolean(), Is.EqualTo(liveUndoable), "canUndoWordSkip before the press");
+            Assert.That(browser.GetProperty("undoableAfter").GetBoolean(), Is.EqualTo(live.CanUndoWordSkip), "and after it");
+            Assert.That(browser.GetProperty("caretIndex").GetInt32(), Is.EqualTo(live.CaretIndex), "caret");
+            Assert.That(Strings(browser, "states"), Is.EqualTo(States(live)), "cell states");
+            Assert.That(browser.GetProperty("combo").GetInt32(), Is.EqualTo(live.Combo), "combo");
+            Assert.That(live.CaretIndex, Is.EqualTo(1), "the first abandoned cell");
+
+            Assert.That(stored.CaretIndex, Is.EqualTo(3), "the era before it takes the typed gap alone");
+            Assert.That(States(stored)[1], Is.EqualTo("abandoned"), "and leaves the word abandoned");
+        });
+    }
+
+    /// <summary>
+    /// SPACE TO SKIP NEEDS WRONG INPUT (PR 3). The browser's <c>underGatekeeper</c> run (Gatekeeper,
+    /// Space to skip on: 'c', a rejected 'q', then a space inside "cat") against the game's engine on
+    /// the same keys: both REJECT the space as a wrong key, leaving the caret on 'a', nothing
+    /// abandoned and the mash-fail streak at two. The browser can never select Gatekeeper, so this
+    /// is a pin on the mirror rather than on a reachable run; the same keys on the era before it
+    /// skip the word, which is what makes it a pin on the era.
+    /// </summary>
+    [Test]
+    public void GatekeeperRejectsASpaceInsideAWordOnBothSides()
+    {
+        var browser = Browser("underGatekeeper");
+
+        TypingEngine play(bool era2)
+        {
+            var engine = LiveEngine(era2, allowWrongInput: false);
+            Assert.That(engine.ProcessKey('c', 1000), Is.True);
+            Assert.That(engine.ProcessKey('q', 1600), Is.True);
+            Assert.That(engine.ProcessKey(' ', 2600), Is.True);
+            return engine;
+        }
+
+        var live = play(era2: true);
+        var stored = play(era2: false);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(browser.GetProperty("caretIndex").GetInt32(), Is.EqualTo(live.CaretIndex), "caret");
+            Assert.That(Strings(browser, "states"), Is.EqualTo(States(live)), "cell states");
+            Assert.That(browser.GetProperty("consecutiveWrongKeys").GetInt32(), Is.EqualTo(live.ConsecutiveWrongKeys), "mash-fail streak");
+            Assert.That(browser.GetProperty("canUndoWordSkip").GetBoolean(), Is.EqualTo(live.CanUndoWordSkip));
+            Assert.That(live.CaretIndex, Is.EqualTo(1), "rejected: the caret holds on 'a'");
+            Assert.That(live.ConsecutiveWrongKeys, Is.EqualTo(2));
+
+            Assert.That(stored.CaretIndex, Is.EqualTo(4), "the era before it skipped \"at\" under Gatekeeper too");
+            Assert.That(States(stored)[1], Is.EqualTo("abandoned"));
+        });
+    }
+
+    #endregion
 }

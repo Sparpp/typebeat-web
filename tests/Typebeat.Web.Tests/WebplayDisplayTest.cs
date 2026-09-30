@@ -2138,17 +2138,19 @@ public class WebplayDisplayTest
     /// not see which word a stray space had given up, which is exactly what a Ctrl+A recovery needs
     /// them to see. The class composes with the untyped colour, and it goes on the reclaim.
     ///
-    /// <para>Skip-on "ab cd": 'a', then a space on 'b' abandons it and pays the gap. The first
-    /// backspace erases the gap (the word stays abandoned), the second steps over 'b', re-opening
-    /// it, and erases 'a'.</para>
+    /// <para>Skip-on "ab cd": 'a', then a space on 'b' abandons it and pays the gap. Since PR 3 (the
+    /// second input era, SpaceSkipWordTest.OneBackspaceUndoesTheSkipAndItsGapUnderInputEra2) the
+    /// first backspace undoes the whole skip, erasing the gap and re-opening 'b' with the caret on
+    /// it; the second erases 'a'. Before PR 3 the first press took the gap alone and the second
+    /// stepped over 'b' onto 'a'.</para>
     /// </summary>
     [Test]
     public void AWordSkipsAbandonedCellsDrawDimmedUntilReclaimed()
     {
         var run = CellFeedback().GetProperty("abandoned");
         var skipped = run.GetProperty("skipped");
-        var gapErased = run.GetProperty("gapErased");
-        var reclaimed = run.GetProperty("reclaimed");
+        var undone = run.GetProperty("undone");
+        var erased = run.GetProperty("erased");
         string css = SiteCss();
 
         Assert.Multiple(() =>
@@ -2157,13 +2159,18 @@ public class WebplayDisplayTest
             Assert.That(Glyph(skipped, 1), Is.EqualTo("b"), "it still shows its own character");
             Assert.That(Cls(skipped, 0), Is.EqualTo("tb-c tb-c-hit"));
             Assert.That(Cls(skipped, 3), Is.EqualTo("tb-c tb-c-todo"), "an untouched cell is not abandoned");
-            // The skipping space was accepted past a flawed word, so the gap earns the dot too.
-            Assert.That(Dot(skipped, 2), Is.True);
+            // Since PR 3 a skip leaves no dot: only a gap holding a wrong character of its own earns one.
+            Assert.That(Dot(skipped, 2), Is.False, "skipping is not typing in the gap");
+            Assert.That(run.GetProperty("undoable").GetBoolean(), Is.True, "canUndoWordSkip, the caret just past the typed gap");
 
-            Assert.That(Cls(gapErased, 1), Is.EqualTo("tb-c tb-c-todo tb-c-abandoned"), "still given up");
-            Assert.That(Dot(gapErased, 2), Is.False, "an untyped gap has not been spaced past");
+            Assert.That(Cls(undone, 1), Is.EqualTo("tb-c tb-c-todo"), "one press takes the dim off");
+            Assert.That(Cls(undone, 2), Is.EqualTo("tb-c tb-c-todo"), "and erases the gap the skip typed");
+            Assert.That(Cls(undone, 0), Is.EqualTo("tb-c tb-c-hit"), "keeping the typed prefix");
+            Assert.That(Num(run, "caretAfterUndo"), Is.EqualTo(1), "the caret parks on the first abandoned cell");
+            Assert.That(Dot(undone, 2), Is.False);
 
-            Assert.That(Cls(reclaimed, 1), Is.EqualTo("tb-c tb-c-todo"), "the reclaim takes the dim off");
+            Assert.That(Cls(erased, 0), Is.EqualTo("tb-c tb-c-todo"), "the second press erases 'a'");
+            Assert.That(Num(run, "caretAfterErase"), Is.EqualTo(0));
 
             Assert.That(Rule(css, ".tb-c-abandoned"), Does.Contain("opacity: .7;"));
         });
@@ -2340,20 +2347,21 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
-    /// Backlog 347: a press out past the RUSH CAP is awarded Meh, and the browser draws it in the
-    /// off-time warn tint (<c>tb-c-off</c>, the class a Premature/Lagging press takes) because its
-    /// tier alone would read as an ordinary hit. A Meh the CLOCK struck stays a hit, so the class is
-    /// keyed on the engine's <c>judgedPastRushCap</c> mark and not on the tier.
+    /// Backlog 347 drew a press out past the RUSH CAP (awarded Meh) in the off-time warn tint,
+    /// keyed on the engine's <c>judgedPastRushCap</c> mark. PR 3's second input era removed the cap
+    /// from every live run, so the engine never sets the mark and the renderer stopped reading it:
+    /// the class is keyed on the TIER alone, a Meh is a hit even on a cell carrying a stale mark,
+    /// and only an off-time tier (<c>tb-c-off</c>) takes the warn tint.
     /// </summary>
     [Test]
-    public void AnOverCapMehIsDrawnInTheOffTimeWarnTint()
+    public void AMehIsAHitNowThatNoPressIsJudgedPastARushCap()
     {
         var tint = Harness().GetProperty("rushCapTint");
 
         Assert.Multiple(() =>
         {
             Assert.That(tint.GetProperty("plainMeh").GetString(), Is.EqualTo("tb-c tb-c-hit"));
-            Assert.That(tint.GetProperty("rushCapMeh").GetString(), Is.EqualTo("tb-c tb-c-off"));
+            Assert.That(tint.GetProperty("rushCapMeh").GetString(), Is.EqualTo("tb-c tb-c-hit"), "the stale mark is not read");
             Assert.That(tint.GetProperty("premature").GetString(), Is.EqualTo("tb-c tb-c-off"));
             Assert.That(tint.GetProperty("rushCapPremature").GetString(), Is.EqualTo("tb-c tb-c-off"));
         });
