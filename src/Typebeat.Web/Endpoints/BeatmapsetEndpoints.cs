@@ -63,7 +63,8 @@ public static class BeatmapsetEndpoints
                    s.favourite_count AS favouriteCount,
                    s.submitted_at    AS submittedAt,
                    s.updated_at      AS updatedAt,
-                   u.username        AS creator
+                   u.username        AS creator,
+                   s.language        AS language
             FROM beatmapsets s
             JOIN users u ON u.id = s.owner_id
             WHERE s.id = @setId
@@ -123,7 +124,8 @@ public static class BeatmapsetEndpoints
             HasVideo = set.HasVideo,
             // Echoed so the wizard can preselect the explicit toggle when updating a set.
             Explicit = set.Explicit,
-            Beatmaps = beatmaps.Select(b => new APIBeatmapResponse
+            SongLanguage = set.Language,
+            Beatmaps =beatmaps.Select(b => new APIBeatmapResponse
             {
                 Id = (int)b.Id,
                 BeatmapsetId = (int)set.Id,
@@ -202,7 +204,9 @@ public static class BeatmapsetEndpoints
         int FavouriteCount,
         DateTime SubmittedAt,
         DateTime UpdatedAt,
-        string Creator);
+        string Creator,
+        // Appended last: Dapper matches this positional record's constructor by column order.
+        string Language);
 
     private sealed record BeatmapRow(
         long Id,

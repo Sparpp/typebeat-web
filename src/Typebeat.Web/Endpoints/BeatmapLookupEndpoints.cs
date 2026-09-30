@@ -91,6 +91,8 @@ public static class BeatmapLookupEndpoints
                 RankedDate = row.Status == "ranked" ? row.UpdatedAt : null,
                 LastUpdated = row.UpdatedAt,
                 Explicit = row.Explicit,
+                // Fills a local Unspecified language for maps whose .osu carries no Language: line.
+                SongLanguage = row.Language,
             },
         });
     }
@@ -117,7 +119,8 @@ public static class BeatmapLookupEndpoints
                bs.explicit        AS explicit,
                u.username         AS creator,
                bs.submitted_at    AS submittedAt,
-               bs.updated_at      AS updatedAt
+               bs.updated_at      AS updatedAt,
+               bs.language        AS language
         FROM beatmaps b
         JOIN beatmapsets bs ON bs.id = b.set_id
         JOIN users u ON u.id = bs.owner_id
@@ -149,5 +152,7 @@ public static class BeatmapLookupEndpoints
         // timestamptz arrives from Npgsql as UTC DateTime; a DateTimeOffset ctor param makes
         // Dapper's constructor matching fail at runtime ("no matching signature").
         DateTime SubmittedAt,
-        DateTime UpdatedAt);
+        DateTime UpdatedAt,
+        // Appended last: Dapper matches this positional record's constructor by column order.
+        string Language);
 }

@@ -130,6 +130,40 @@ public class BeatmapWireShapeTest
     }
 
     [Test]
+    public void SongLanguage_IsAlwaysEmitted_AndNeverUnderTheLanguageKey()
+    {
+        var set = (JObject)Serialize()["beatmapset"]!;
+
+        Assert.Multiple(() =>
+        {
+            // Present and empty (never null, never omitted) when the set has no language.
+            Assert.That(set.ContainsKey("song_language"), Is.True);
+            Assert.That(set["song_language"]!.Type, Is.EqualTo(JTokenType.String));
+            Assert.That((string)set["song_language"]!, Is.EqualTo(""));
+            // The client binds "language" to osu's {id, name} object; a string there would break it.
+            Assert.That(set.ContainsKey("language"), Is.False);
+        });
+
+        var withLanguage = new APIBeatmapSetResponse
+        {
+            Id = 7,
+            Title = "t",
+            Artist = "a",
+            Status = "ranked",
+            Creator = "mapper",
+            UserId = 3,
+            Covers = BeatmapCovers.Placeholder("https://host/img/default-cover.jpg"),
+            SubmittedDate = DateTimeOffset.UnixEpoch,
+            RankedDate = null,
+            LastUpdated = DateTimeOffset.UnixEpoch,
+            SongLanguage = "japanese",
+        };
+
+        var json = JObject.Parse(JsonConvert.SerializeObject(withLanguage, WireJson.Settings));
+        Assert.That((string)json["song_language"]!, Is.EqualTo("japanese"));
+    }
+
+    [Test]
     public void CoversFromCoverKey_BuildVersionKeyedUrls()
     {
         var covers = BeatmapCovers.FromCoverKey("https://host", "covers/7/3");

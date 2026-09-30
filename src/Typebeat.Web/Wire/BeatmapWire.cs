@@ -73,6 +73,11 @@ public sealed class APIBeatmapResponse
 /// Status, Ranked (ranked_date) and Submitted (submitted_date) off this; the rest is UI-facing.
 /// Covers is a value-type struct client-side (never null), but osu-web always sends the object,
 /// so we emit it with placeholder URLs.
+///
+/// The set's song language travels as <c>song_language</c>, not under its column's name
+/// (<c>beatmapsets.language</c>): the client's APIBeatmapSet already binds <c>language</c> to
+/// osu's <c>{id, name}</c> object, so a bare string there would fail to deserialize the whole
+/// response. The metadata lookup reads it to fill a map whose .osu predates the Language: key.
 /// </summary>
 public sealed class APIBeatmapSetResponse
 {
@@ -151,6 +156,15 @@ public sealed class APIBeatmapSetResponse
     /// </summary>
     [JsonProperty("explicit")]
     public bool Explicit { get; init; }
+
+    /// <summary>
+    /// The set's song language (beatmapsets.language): a canonical BeatmapLanguages name, or
+    /// empty when nothing has determined one. Always emitted, never null, so the client can tell
+    /// "the server knows none" from an older server that sends no key. See the class remarks for
+    /// why it is not called <c>language</c>.
+    /// </summary>
+    [JsonProperty("song_language")]
+    public string SongLanguage { get; init; } = string.Empty;
 
     // Null on the nested-inside-a-beatmap variant (lookup), where the key must be OMITTED:
     // the client's APIBeatmapSet.Beatmaps defaults to an empty array and an explicit JSON null

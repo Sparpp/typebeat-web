@@ -229,7 +229,8 @@ public static class ProfileScoreEndpoints
         s.owner_id AS OwnerId, s.title AS Title, s.artist AS Artist,
         s.title_unicode AS TitleUnicode, s.artist_unicode AS ArtistUnicode,
         s.cover_key AS CoverKey, s.status AS Status, s.explicit AS Explicit,
-        s.submitted_at AS SubmittedAt, s.updated_at AS UpdatedAt, u.username::text AS Creator
+        s.submitted_at AS SubmittedAt, s.updated_at AS UpdatedAt, u.username::text AS Creator,
+        s.language AS Language
         """;
 
     private static ProfileScoreWire toWire(ProfileScoreRow r, ScoreUserWire user, string urlBase)
@@ -280,6 +281,7 @@ public static class ProfileScoreEndpoints
         TitleUnicode = b.TitleUnicode,
         ArtistUnicode = b.ArtistUnicode,
         Explicit = b.Explicit,
+        SongLanguage = b.Language,
     };
 
     private static APIBeatmapResponse buildBeatmap(BeatmapDisplayRow b, APIBeatmapSetResponse set) => new()
@@ -328,6 +330,7 @@ public static class ProfileScoreEndpoints
         public DateTime SubmittedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
         public string Creator { get; set; } = string.Empty;
+        public string Language { get; set; } = string.Empty;
     }
 
     private sealed class ProfileScoreRow : BeatmapDisplayRow
