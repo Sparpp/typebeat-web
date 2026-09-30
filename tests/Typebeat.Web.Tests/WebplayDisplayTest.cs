@@ -2338,4 +2338,24 @@ public class WebplayDisplayTest
             Assert.That(aids.GetProperty("classFreestyleLit").GetString(), Does.Not.Contain("tb-c-sung"));
         });
     }
+
+    /// <summary>
+    /// Backlog 347: a press out past the RUSH CAP is awarded Meh, and the browser draws it in the
+    /// off-time warn tint (<c>tb-c-off</c>, the class a Premature/Lagging press takes) because its
+    /// tier alone would read as an ordinary hit. A Meh the CLOCK struck stays a hit, so the class is
+    /// keyed on the engine's <c>judgedPastRushCap</c> mark and not on the tier.
+    /// </summary>
+    [Test]
+    public void AnOverCapMehIsDrawnInTheOffTimeWarnTint()
+    {
+        var tint = Harness().GetProperty("rushCapTint");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(tint.GetProperty("plainMeh").GetString(), Is.EqualTo("tb-c tb-c-hit"));
+            Assert.That(tint.GetProperty("rushCapMeh").GetString(), Is.EqualTo("tb-c tb-c-off"));
+            Assert.That(tint.GetProperty("premature").GetString(), Is.EqualTo("tb-c tb-c-off"));
+            Assert.That(tint.GetProperty("rushCapPremature").GetString(), Is.EqualTo("tb-c tb-c-off"));
+        });
+    }
 }

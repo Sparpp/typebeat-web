@@ -68,7 +68,7 @@ public class FlexibleLinesParityTest
             Assert.That(defaults.GetProperty("boundedRush").GetBoolean(), Is.True, "and live means the bounded rush, the pre-218 era being unreachable here");
             Assert.That(defaults.GetProperty("manualNewlines").GetBoolean(), Is.True, "and the manual newline, the desktop's shipped default since PR 2 (backlog 307)");
             Assert.That(defaults.GetProperty("newlineOnTypedLetter").GetBoolean(), Is.True, "and the typed-through newline, which rides the same setting");
-            Assert.That(defaults.GetProperty("maxCharsAhead").GetInt32(), Is.EqualTo(5), "TypingEngine.FLETCHER_MAX_CHARS_AHEAD");
+            Assert.That(defaults.GetProperty("maxCharsAhead").GetInt32(), Is.EqualTo(6), "TypingEngine.FLETCHER_MAX_CHARS_AHEAD, loosened from five by backlog 347");
             Assert.That(defaults.GetProperty("dragGraceMs").GetDouble(), Is.EqualTo(1500), "TypingEngine.FLETCHER_DRAG_GRACE_MS");
         });
     }
@@ -210,8 +210,10 @@ public class FlexibleLinesParityTest
     /// THE RUSH CAP is untouched by the bound and still bites on the far side of a permitted roll:
     /// entry buys the player a line, never a licence to run away down it. At 12500 the playhead has
     /// reached two countable characters ('a' and 'b') and so has the caret, so the lead is zero on
-    /// arrival; five characters of the new line keep it inside <c>FLETCHER_MAX_CHARS_AHEAD</c> and
-    /// the combo climbs from 2 to 7, and the sixth costs the run exactly as it does inside one line.
+    /// arrival; six characters of the new line keep it inside <c>FLETCHER_MAX_CHARS_AHEAD</c> (six
+    /// since backlog 347) and the combo climbs from 2 to 8, and the seventh is over it exactly as it
+    /// is inside one line: marked (and so awarded Meh at best) and still CREDITED, since the cap
+    /// costs accuracy and not the run.
     /// </summary>
     [Test]
     public void TheRushCapStillAppliesAfterAPermittedRoll()
@@ -229,10 +231,16 @@ public class FlexibleLinesParityTest
             Assert.That(inside.GetProperty("combo").GetInt32(), Is.EqualTo(7));
             Assert.That(inside.GetProperty("comboBreaks").GetInt32(), Is.Zero);
 
+            var atTheCap = cap.GetProperty("atTheCap");
+            Assert.That(atTheCap.GetProperty("lead").GetInt32(), Is.EqualTo(6), "the sixth is ON the cap and inside it");
+            Assert.That(atTheCap.GetProperty("combo").GetInt32(), Is.EqualTo(8));
+            Assert.That(atTheCap.GetProperty("marked").GetBoolean(), Is.False);
+
             var past = cap.GetProperty("pastTheCap");
-            Assert.That(past.GetProperty("lead").GetInt32(), Is.EqualTo(6), "the sixth is over it");
-            Assert.That(past.GetProperty("combo").GetInt32(), Is.Zero);
-            Assert.That(past.GetProperty("comboBreaks").GetInt32(), Is.EqualTo(1));
+            Assert.That(past.GetProperty("lead").GetInt32(), Is.EqualTo(7), "the seventh is over it");
+            Assert.That(past.GetProperty("marked").GetBoolean(), Is.True, "and pays for it in judgement");
+            Assert.That(past.GetProperty("combo").GetInt32(), Is.EqualTo(9), "not in combo");
+            Assert.That(past.GetProperty("comboBreaks").GetInt32(), Is.Zero);
         });
     }
 
@@ -519,19 +527,21 @@ public class FlexibleLinesParityTest
     /// reached exactly one countable character, so the caret's lead is simply the press count and
     /// the ladder can be read straight off it.
     ///
-    /// <para>THE CAP IS A COMBO PENALTY, NOT A BLOCK. Every cell of the line still lands and still
-    /// scores; what the excursion costs is the run. The break fires ONCE, on the press that crosses
-    /// the line, and the presses that follow it out take no further break because there is no streak
-    /// left to take. It measures where the CARET is and not how well the press was timed, which is
-    /// why it can refuse combo to a press the ladder graded Great.</para>
+    /// <para>SINCE BACKLOG 347 THE CAP IS AN ACCURACY PENALTY, NOT A BLOCK AND NOT A BREAK. Every
+    /// cell of the line still lands and every press still credits combo; what a press out past the
+    /// cap costs is its TIER, awarded Meh at best (a min over the ladder, so a press the clock
+    /// already called off-time keeps that tier, which is what this fixture's second-apart targets
+    /// make of the rushed presses). The cell is marked, which is what the Meh and the warn tint key
+    /// on. The cap is six (it was five, and the press that crossed it zeroed the run once per
+    /// excursion); the C# keeps that as its pre-347 era. The pure Meh, on presses the clock calls
+    /// Great, is <see cref="AnOverCapPressIsAwardedMehAndKeepsTheRun"/>.</para>
     ///
     /// <para>THE SPACE IS EXEMPT, and that is the seventh press here rather than an aside: a word gap
-    /// is not COUNTABLE, so it spends no budget. The caret is 5 ahead before it and 5 ahead after it,
-    /// and the press earns combo. Had the gap cost a character it would have been the sixth and would
-    /// have broken the run one press early.</para>
+    /// is not COUNTABLE, so it spends no budget. The caret is 5 ahead before it and 5 ahead after it.
+    /// Had the gap cost a character, 'g' would have been seven ahead and marked.</para>
     /// </summary>
     [Test]
-    public void PressingPastTheRushCapCostsTheComboOnceAndThenReArms()
+    public void PressingPastTheRushCapCostsTheJudgementNotTheRun()
     {
         var cap = Section("rushCap");
 
@@ -544,17 +554,24 @@ public class FlexibleLinesParityTest
             Assert.That(JsHarness.Doubles(cap, "leadAfterEachPress"), Is.EqualTo(new double[] { 0, 1, 2, 3, 4, 5, 5, 6, 7 }),
                 "the word gap is the 7th press and leaves the lead where it found it: a space spends no rush budget");
 
-            // The fifth character ahead is still fine and the sixth is not, so combo climbs to 7
-            // (six letters plus the free gap) and the press that puts the caret 6 ahead zeroes it.
-            Assert.That(JsHarness.Doubles(cap, "comboAfterEachPress"), Is.EqualTo(new double[] { 1, 2, 3, 4, 5, 6, 7, 0, 0 }));
-            Assert.That(cap.GetProperty("comboBreaks").GetInt32(), Is.EqualTo(1),
-                "one break for the excursion: the press after it is further out still and has no streak left to take");
-            Assert.That(cap.GetProperty("maxComboBeforeTheCatchUp").GetInt32(), Is.EqualTo(7));
+            // The sixth character ahead is still fine and the seventh is not, but nothing breaks:
+            // combo climbs through the whole burst.
+            Assert.That(JsHarness.Doubles(cap, "comboAfterEachPress"), Is.EqualTo(new double[] { 1, 2, 3, 4, 5, 6, 7, 8, 9 }));
+            Assert.That(cap.GetProperty("comboBreaks").GetInt32(), Is.Zero, "the cap breaks nothing");
+            Assert.That(cap.GetProperty("maxComboBeforeTheCatchUp").GetInt32(), Is.EqualTo(9));
 
-            // The clock catches up, the caret is back inside the cap, and the run rebuilds. That is
-            // the re-arm: the cap does not latch, so the next excursion breaks the new streak too.
+            // Only the press seven ahead ('h', cell 8) is marked; 'g' six ahead is not. Both are
+            // Premature by the clock (pressed at 1000 against syllables far later), which the cap
+            // never lifts.
+            Assert.That(cap.GetProperty("marked").EnumerateArray().Select(m => m.GetBoolean()),
+                Is.EqualTo(new[] { false, false, false, false, false, false, false, false, true, false }));
+            Assert.That(cap.GetProperty("typeAfterEachPress")[8].GetString(), Is.EqualTo("Premature"), "the cap's tier is a min: an off-time press stays off-time");
+
+            // The clock catches up, the caret is back inside the cap, and 'i' is judged on its own
+            // timing, unmarked, on an unbroken run.
             Assert.That(cap.GetProperty("leadAfterCatchUp").GetInt32(), Is.EqualTo(1));
-            Assert.That(cap.GetProperty("comboAfterCatchUp").GetInt32(), Is.EqualTo(1));
+            Assert.That(cap.GetProperty("comboAfterCatchUp").GetInt32(), Is.EqualTo(10));
+            Assert.That(cap.GetProperty("typeAfterCatchUp").GetString(), Is.EqualTo("Great"));
         });
     }
 
@@ -920,4 +937,35 @@ public class FlexibleLinesParityTest
     }
 
     #endregion
+
+    /// <summary>
+    /// THE RUSH CAP'S MEH (backlog 347), the JS twin of the game's
+    /// <c>RushCapCostsAccuracyTest.ARunCrossingTheCapKeepsItsComboAndEveryOverCapCellIsMeh</c>, on a
+    /// line tight enough ("abcdefghijkl" sung over [1000, 1120]) that every press at 1000 is a Great
+    /// by the clock, so each Meh is the cap's. Presses 1..7 leave the caret 0..6 ahead (inside the cap
+    /// of six), presses 8 and 9 leave it 7 and 8 ahead: Meh, TRUE deltas recorded, combo credited
+    /// (57 = round(50 * (1 + 7/50)) and 58 at the pre-increment combos 7 and 8), cells marked. The
+    /// song then catches up and 'j' is judged on its timing again: Great, unmarked. No break at all.
+    /// </summary>
+    [Test]
+    public void AnOverCapPressIsAwardedMehAndKeepsTheRun()
+    {
+        var meh = Section("rushCapMeh");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(meh.GetProperty("maxCharsAhead").GetInt32(), Is.EqualTo(6));
+            Assert.That(meh.GetProperty("playheadAtTheBurst").GetInt32(), Is.EqualTo(1));
+            Assert.That(JsHarness.Doubles(meh, "leadAfterEachPress"), Is.EqualTo(new double[] { 0, 1, 2, 3, 4, 5, 6, 7, 8 }));
+            Assert.That(JsHarness.Doubles(meh, "comboAfterEachPress"), Is.EqualTo(new double[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }));
+            Assert.That(meh.GetProperty("types").EnumerateArray().Select(t => t.GetString()),
+                Is.EqualTo(new[] { "Great", "Great", "Great", "Great", "Great", "Great", "Great", "Meh", "Meh", "Great" }));
+            Assert.That(JsHarness.Doubles(meh, "points"), Is.EqualTo(new double[] { 300, 306, 312, 318, 324, 330, 336, 57, 58, 354 }));
+            Assert.That(JsHarness.Doubles(meh, "deltas")[7], Is.EqualTo(-60), "the Meh keeps the delta the clock measured");
+            Assert.That(meh.GetProperty("marked").EnumerateArray().Select(m => m.GetBoolean()),
+                Is.EqualTo(new[] { false, false, false, false, false, false, false, true, true, false }));
+            Assert.That(meh.GetProperty("comboBreaks").GetInt32(), Is.Zero);
+            Assert.That(meh.GetProperty("maxCombo").GetInt32(), Is.EqualTo(10));
+        });
+    }
 }

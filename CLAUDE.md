@@ -170,7 +170,28 @@ WireCompat is where that is provable, because it is the only project that compil
   it unconditionally (`firstLineTypingOpensAt`), so every parity fixture that feeds the C# arm sets
   `FirstLineLeadIn = true` (or `firstLineLeadIn: true` on its CONFIG frame).
   `EngineFuzzLiveParityTest`'s generator presses inside the head start on half its runs and counts
-  the openings (`leadInOpens`). PR 2 also made **authored pauses** (a word's `pauses` array, or the
+  the openings (`leadInOpens`). **The first flags word is FULL at bit 16** (the .osr decoder's
+  `Parsing.ParseFloat` rejects a MouseY above `MAX_COORDINATE_VALUE` 131072), so since backlog 347
+  eras ride a **SECOND CONFIG-style header frame**: sentinel `TypeBeatReplayFrame.CONFIG_EXTENDED`
+  (0x01), written straight after the CONFIG frame at the same time, MouseX = 1, MouseY = a second
+  flags word numbered from bit 0 on the first word's terms (the same 131071 ceiling, so a third
+  carrier, 0x02, is the move after bit 16 of this one). `ReplayEngineFeed.Apply` CLEARS every
+  second-word flag on the CONFIG frame and sets them from the extended one, so a replay with no
+  extended frame reads the word as all false, and an older client IGNORES the unknown sentinel
+  (any code below 0x20 it does not know resolves no cell). **Second-word bit 0** is
+  `RushCapCostsAccuracy`: a press that leaves the caret more than `FLETCHER_MAX_CHARS_AHEAD`
+  countable characters past the playhead is AWARDED Meh (`rushCapTier`, a min over the ladder, so
+  Premature/Lagging stay put) with its true delta, credits combo like any other hit (no break, no
+  discarded claim), and marks the cell (`judgedPastRushCap`, history, so an inert retype re-derives
+  the Meh and `typebeat-player.js` draws it in the `tb-c-off` warn tint), and the same bit loosens
+  the cap from five to six. Clear, the C# re-derives the pre-347 rule (cap five, the press graded on
+  the clock but the run zeroed once per excursion). The browser takes the new rule
+  unconditionally, so every live parity fixture sets `RushCapCostsAccuracy = true` on its bare engine
+  and appends `CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true)` after its CONFIG frame.
+  `EngineFuzzLiveParityTest` counts `rushCapMehs` (a rushed press announced as Meh on a marked
+  cell) and `ClearingTheExtendedHeaderReDerivesTheComboBreakAtFive` proves the scorer follows the
+  header; `tools/score-recalc` needs no axis for it (the header travels in the .osr), pinned by
+  `ScoreRecalcTest.TheRushCapEraTravelsInTheSecondHeaderThroughTheOsr`. PR 2 also made **authored pauses** (a word's `pauses` array, or the
   legacy single `pause` object) scoring surface: `usableRests` / `pausedWordOf` /
   `tokenCellTargets` mirror `Gameplay/PausedWord.cs` and `TypingLine.tokenCellTargets`, and move
   both the per-cell targets and the judgement groups. `SyllableSplitParityTest` pins them through

@@ -640,6 +640,152 @@ public class ScoreRecalcTest
         }
     }
 
+    /// <summary>
+    /// BACKLOG 347's SECOND CONFIG HEADER through the real file format. The rush-cap era does not
+    /// ride the first flags word (it was full at bit 16) but a second header frame of its own,
+    /// <see cref="TypeBeatReplayFrame.CONFIG_EXTENDED"/>, and this tool re-derives a row by decoding
+    /// the uploaded .osr through the game's own decoder and scorer, so the header is read wherever
+    /// the frames are, never by a table here. This pins that the header survives the .osr the client
+    /// uploads, that the tool reads it, and that it is not decorative.
+    ///
+    /// <para>The run: "abcdefghijkl" timed 10 ms apart from 1000, nine presses at 1000 (the caret
+    /// runs out to eight ahead, every press a Great by the clock), then the last three on time. With
+    /// the header set, the presses seven and eight ahead are awarded Meh and the run never breaks
+    /// (max_combo 12); without it (every row stored before 347) the press six ahead breaks the run at
+    /// the old cap of five. Each row reproduces from its own replay. Crossed, the live replay cannot
+    /// reproduce the row the old rule priced, which is only true if the tool read the header.</para>
+    /// </summary>
+    [Test]
+    public void TheRushCapEraTravelsInTheSecondHeaderThroughTheOsr()
+    {
+        var ruleset = new TypeBeatRuleset();
+        var map = RushMap();
+
+        var osuText = new StringWriter();
+        ruleset.EncodeToNativeFormat(map, null, osuText);
+        byte[] osu = Encoding.UTF8.GetBytes(osuText.ToString());
+        string md5 = Convert.ToHexStringLower(MD5.HashData(osu));
+
+        string dir = Path.Combine(Path.GetTempPath(), "typebeat-recalc-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+
+        try
+        {
+            string packagePath = Path.Combine(dir, "set.osz");
+
+            using (var zip = ZipFile.Open(packagePath, ZipArchiveMode.Create))
+            using (var entry = zip.CreateEntry("map.osu").Open())
+                entry.Write(osu);
+
+            using var source = new ReplayArchive("http://localhost", Path.Combine(dir, "cache"));
+            source.IndexPackage(packagePath);
+
+            ReplayArchive.DecodedReplay throughOsr(Replay replay)
+            {
+                var score = new Score
+                {
+                    Replay = replay,
+                    ScoreInfo = new ScoreInfo
+                    {
+                        Ruleset = ruleset.RulesetInfo,
+                        BeatmapInfo = new BeatmapInfo { MD5Hash = md5 },
+                        User = new typebeat.Game.Online.API.Requests.Responses.APIUser { Username = "recalc" },
+                        Date = new DateTimeOffset(2026, 9, 30, 0, 0, 0, TimeSpan.Zero),
+                    },
+                };
+
+                using var stream = new MemoryStream();
+                new LegacyScoreEncoder(score, map).Encode(stream);
+
+                var decoded = source.Decode(stream.ToArray());
+                Assert.That(decoded?.Score, Is.Not.Null, "the package must resolve the replay's beatmap hash");
+                return decoded!;
+            }
+
+            var liveReplay = RushReplay(withExtendedHeader: true);
+            var oldReplay = RushReplay(withExtendedHeader: false);
+
+            var liveDecoded = throughOsr(liveReplay);
+            var oldDecoded = throughOsr(oldReplay);
+
+            // Priced on the map the package decodes to, which is the map the client really played:
+            // the .osu round trip is not required to be identical to the in-memory fixture.
+            var liveStored = StoredFor(liveDecoded.Playable!, liveReplay);
+            var oldStored = StoredFor(oldDecoded.Playable!, oldReplay);
+
+            var live = Recalculation.Run(liveStored, liveDecoded);
+            var old = Recalculation.Run(oldStored, oldDecoded);
+            var crossed = Recalculation.Run(oldStored, liveDecoded);
+
+            Assert.Multiple(() =>
+            {
+                var frames = liveDecoded.Score!.Replay.Frames.Cast<TypeBeatReplayFrame>().ToList();
+                Assert.That(frames[1].IsConfigExtended && frames[1].RushCapCostsAccuracy, Is.True, "the second header survives the .osr, set");
+                Assert.That(oldDecoded.Score!.Replay.Frames.Cast<TypeBeatReplayFrame>().Any(f => f.IsConfigExtended), Is.False);
+
+                Assert.That(live.Skip, Is.EqualTo(SkipReason.None), "the live-era row reproduces from its own .osr");
+                Assert.That(live.NewMaxCombo, Is.EqualTo(12), "live era: the rush never broke the run");
+                Assert.That(live.NewStatistics!.GetValueOrDefault("meh"), Is.EqualTo(2), "live era: the presses seven and eight ahead are Mehs");
+
+                Assert.That(old.Skip, Is.EqualTo(SkipReason.None), "the pre-347 row reproduces from its own .osr");
+                Assert.That(old.NewMaxCombo, Is.LessThan(12), "pre-347 era: the cap of five broke the run");
+                Assert.That(old.NewStatistics!.GetValueOrDefault("meh"), Is.Zero, "pre-347 era: every press graded on the clock");
+
+                Assert.That(crossed.Skip, Is.Not.EqualTo(SkipReason.None), "the header is read: the live replay cannot reproduce the old row");
+            });
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    /// <summary>One line, "abcdefghijkl" over [1000, 1120] (targets 10 ms apart), inside a window to 60000.</summary>
+    private static TypeBeatBeatmap RushMap()
+    {
+        var line = new LyricLine
+        {
+            RawText = word,
+            StartTime = 1000,
+            EndTime = 60000,
+            // Equal to the unit's end: the .osu writer times the words across the SUNG span, so a
+            // longer one would come back from the package with its targets stretched.
+            SingEndTime = 1120,
+            Units = new[] { new TimedUnit { Text = word, StartTime = 1000, EndTime = 1120 } },
+        };
+
+        var map = new TypeBeatBeatmap();
+        map.HitObjects.Add(new TypeBeatHitObject { StartTime = 1000, LineIndex = 0, Line = line, Granularity = TimingGranularity.Line });
+
+        map.BeatmapInfo.Ruleset = new TypeBeatRuleset().RulesetInfo;
+        map.BeatmapInfo.Metadata.Artist = "Test";
+        map.BeatmapInfo.Metadata.Title = "Rush";
+
+        foreach (var hitObject in map.HitObjects)
+            hitObject.ApplyDefaults(new ControlPointInfo(), new BeatmapDifficulty(), CancellationToken.None);
+
+        return map;
+    }
+
+    /// <summary>Nine presses at 1000 on the unpinned caret, then 'j', 'k', 'l' at 1120.</summary>
+    private static Replay RushReplay(bool withExtendedHeader)
+    {
+        var replay = new Replay();
+
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, flexibleLines: true, boundedRush: true));
+
+        if (withExtendedHeader)
+            replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true));
+
+        for (int i = 0; i < 9; i++)
+            replay.Frames.Add(new TypeBeatReplayFrame(1000, word[i]));
+
+        for (int i = 9; i < word.Length; i++)
+            replay.Frames.Add(new TypeBeatReplayFrame(1120, word[i]));
+
+        return replay;
+    }
+
     #region Supersede (backlog 136 and 142)
 
     /// <summary>

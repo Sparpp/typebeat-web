@@ -1917,6 +1917,11 @@
             // erases the wrong character, which is the whole of what it is for. Only a fresh engine
             // (the constructor's per-cell wipe, mirroring TypingEngine.reset) puts it back.
             heldWrongBeforeJudged: false,
+            // TypingCell.JudgedPastRushCap (backlog 347): whether the cell's ONE awarded judgement was
+            // made with the caret out past the rush cap, which awarded it 'Meh' whatever its delta
+            // said (see rushCapTier). History like the flag above, so an inert retype re-derives the
+            // same Meh; also what typebeat-player.js reads to draw the cell in the off-time warn tint.
+            judgedPastRushCap: false,
             // Mirrors DrawableTypeBeatCharObject.Judged, i.e. "this cell has already handed the
             // score processor its one and only result". ApplyEngineResult bails on an already-judged
             // cell (`if (Judged) return;`) and ApplySealResults goes through the same call, so a cell
@@ -2011,6 +2016,15 @@
     // CorrectionCreditRule.Full (the pre-210 arm, which a stored row is re-derived under by the
     // recalculation tool) is one it can never be in and the clause collapses to the live
     // CorrectionCreditRule.Capped.
+    // TypeBeatResultMapping.RushCapTier (backlog 347). The tier a press is awarded when it lands with
+    // the caret out past the rush cap: the lowest hit tier, 'Meh', whatever the clock said. A min
+    // over the ladder: Great and Ok move down, Meh stays, and the off-ladder Premature / Lagging are
+    // left alone, because lifting one to Meh would PAY a press for being mistimed and out past the
+    // cap at once. Applied after awardedTier, so a corrected cell over the cap takes the lower cap.
+    function rushCapTier(type) {
+        return (type === 'Great' || type === 'Ok') ? 'Meh' : type;
+    }
+
     function awardedTier(type, heldWrongBeforeJudged) {
         if (!heldWrongBeforeJudged) return type;
         return type === 'Great' ? 'Ok' : type;
@@ -2422,11 +2436,14 @@
     const COMBO_CAP = 50;
 
     // TypingEngine.FLETCHER_MAX_CHARS_AHEAD: how many COUNTABLE characters (typeable and not a
-    // space) the caret may sit ahead of the playhead before a keypress stops earning combo. The
-    // press still lands and still scores; it simply cannot build a combo while the caret is out
-    // past the cap. Measured on the caret position AFTER the press, so the fifth char ahead is
-    // still fine and the sixth is not.
-    const FLETCHER_MAX_CHARS_AHEAD = 5;
+    // space) the caret may sit ahead of the playhead before a keypress is penalised. Since backlog
+    // 347 the penalty is the press's JUDGEMENT: it is awarded Meh whatever its timing and credits
+    // combo like any other hit (rushCapTier), and the cap loosened from five to six with it.
+    // Measured on the caret position AFTER the press, so the sixth char ahead is still fine and the
+    // seventh is not. The C# keeps the pre-347 cap of five and its combo break as an ERA
+    // (TypingEngine.RushCapCostsAccuracy, the first bit of the second CONFIG flags word); the
+    // browser only plays live, so it takes the live rule unconditionally.
+    const FLETCHER_MAX_CHARS_AHEAD = 6;
 
     // TypingEngine.FLETCHER_DRAG_GRACE_MS: extra time past a line's normal hard deadline
     // (endTime + sealGraceMs) that the engine holds the line open while the PLAYER is still on it,
@@ -2476,6 +2493,9 @@
                     // backspace by design, so only a whole-run rebuild puts it back (the C# clears
                     // it in exactly the same place, TypingEngine.reset).
                     c.heldWrongBeforeJudged = false;
+                    // ...and backlog 347's rush-cap mark (TypingCell.JudgedPastRushCap), on the same
+                    // terms: history, cleared only by a whole-run rebuild.
+                    c.judgedPastRushCap = false;
                     c.judged = false;
                 }
             }
@@ -2606,8 +2626,9 @@
             //                     normal deadline; the seal is deferred by FLETCHER_DRAG_GRACE_MS
             //                     so the caret is never yanked off a line mid-word (sealPermitted).
             //   RUSH CAP          a press that puts the caret more than FLETCHER_MAX_CHARS_AHEAD
-            //                     countable chars ahead of the playhead lands and scores as normal
-            //                     but earns no combo (rushesPastCap).
+            //                     countable chars ahead of the playhead lands, credits combo, and is
+            //                     awarded Meh whatever its timing (rushesPastCap, rushCapTier;
+            //                     backlog 347, before which it scored on the clock and broke combo).
             //   LINE-START SNAP   a caret sitting PAST the last character of its line is handed to
             //                     the next line the moment that line starts, so a player who has
             //                     FINISHED is still carried along by the song
@@ -2740,11 +2761,11 @@
             // off-time press left the list at backlog 199: it is a hit now, it breaks nothing, and
             // only a break discards a claim, so fumbling the beat between a typo and its fix no
             // longer costs the fix its restore. It rejoins the list in the C# under
-            // OffTimeRule.BreaksCombo, the pre-199 era, which this file has no arm for. The FOURTH
-            // discard seam is the flexible caret's RUSH CAP (backlog 208), which this file gained
-            // with the flexible default: a press that puts the caret more than
-            // FLETCHER_MAX_CHARS_AHEAD past the playhead zeroes a live run, and that break is as
-            // final as the seal's.
+            // OffTimeRule.BreaksCombo, the pre-199 era, which this file has no arm for. The flexible
+            // caret's RUSH CAP (backlog 208) left the list the same way at backlog 347: an over-cap
+            // press is awarded Meh and credits combo, so it breaks nothing and discards nothing. It
+            // rejoins the list in the C# only when TypingEngine.RushCapCostsAccuracy is clear, the
+            // pre-347 era, which this file has no arm for either.
             //
             // "That had a streak to take" is backlog 176: a break landing while the run is ALREADY
             // at zero costs nothing, so it leaves an outstanding claim alone rather than replacing
@@ -4487,6 +4508,9 @@
                 // set only before a cell is judged and never cleared. Announcing anything else here
                 // would show a Great on a cell whose stored result is the capped Ok.
                 type = awardedTier(classify(d, w), cell.heldWrongBeforeJudged);
+                // ...and through backlog 347's rush-cap award, for the same reason: the mark records
+                // that the first judgement was made out past the cap.
+                if (cell.judgedPastRushCap) type = rushCapTier(type);
                 cell.state = 'correct';
                 cell.typedChar = c;
                 cell.judgedDelta = d;
@@ -4504,7 +4528,6 @@
                 // with the C# engine (before backlog 251, this was also what the browser's sync
                 // tint and live sync percent saw; that display is gone, the delta is not).
                 type = awardedTier(classify(delta, w), cell.heldWrongBeforeJudged);
-                const bp = basePoints(type);
 
                 // THE RUSH CAP (backlog 208), evaluated BEFORE the caret moves: does this press put
                 // the caret more than FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead?
@@ -4516,6 +4539,20 @@
                 // they gave up rather than typed.
                 const caretForCap = caretBeforeSkip >= 0 ? caretBeforeSkip : this.caretIndex;
                 const rushedPastCap = this.fletcherEnabled && this.rushesPastCap(cell, time, caretForCap);
+
+                // WHAT THE CAP COSTS (backlog 347, TypingEngine.RushCapCostsAccuracy, the live arm):
+                // the JUDGEMENT and nothing else. The press is awarded the lowest hit tier
+                // (rushCapTier, a min over the ladder, so an off-time press is never lifted by it)
+                // and then flows through everything below exactly as a Meh struck by the clock
+                // would, combo credit included. Applied above the point ladder, as backlog 210's cap
+                // is, so the points, `counts`, onCharJudged and the osu result follow one decision.
+                // The delta is untouched.
+                if (rushedPastCap) {
+                    type = rushCapTier(type);
+                    cell.judgedPastRushCap = true;
+                }
+
+                const bp = basePoints(type);
 
                 if (bp > 0) {
                     // Multiplier reads combo BEFORE the increment; capped at COMBO_CAP => up to 2.0x.
@@ -4539,37 +4576,21 @@
                 // A space can never reach the off-time tiers at all: an untimed space is judged on a
                 // zeroed delta and always takes the top tier (see the block above).
                 //
-                // What DOES stand between the press and the increment is the RUSH CAP, which the
-                // browser gained with the flexible default (backlog 208). It is a combo penalty,
-                // not a block: the char lands and scores exactly as it would without it, but no
-                // combo may accumulate while the caret is out past the cap. The break therefore
-                // fires ONCE, on the press that crosses the line, and RE-ARMS the moment a press
-                // lands back inside it (combo starts building again, so the next excursion breaks
-                // it again). It reaches an off-time press too, and that is the coherent reading of
-                // both rules rather than an accident: the cap measures where the CARET is, not how
-                // well the press was timed, so a press it would refuse combo for cannot earn combo
-                // merely by also being mistimed.
-                if (rushedPastCap) {
-                    const hadCombo = this.combo > 0;
+                // Since backlog 347 nothing stands between the press and the increment: the RUSH
+                // CAP (which the browser gained with the flexible default, backlog 208) used to be a
+                // combo penalty here, a break once per excursion, and is now the Meh taken above.
+                // The C# keeps that break as its pre-347 era; a browser play is always live.
+                //
+                // The cell the press LANDED on, which is where this increment is recorded in the
+                // ledger (creditCombo): the caret has not moved yet (it rolls on below), and a word
+                // skip has already re-pointed it at the gap the space is judged on.
+                this.creditCombo(this.caretIndex);
 
-                    this.breakRun();
-
-                    if (hadCombo) {
-                        this.discardRestorableStreak();
-                        if (this.onComboBroken) this.onComboBroken();
-                    }
-                } else {
-                    // The cell the press LANDED on, which is where this increment is recorded in the
-                    // ledger (creditCombo): the caret has not moved yet (it rolls on below), and a
-                    // word skip has already re-pointed it at the gap the space is judged on.
-                    this.creditCombo(this.caretIndex);
-
-                    // The one press that can credit combo it also broke (backlog 243): the space
-                    // that skipped the word, now being judged on the gap the skip parked the caret
-                    // on. The combo is real and stands, but it belongs to the break, so the claim
-                    // remembers it and the next break has to beat it to take the claim away.
-                    if (skipLeftAClaimOutstanding) this.creditTheClaimsOwnPress();
-                }
+                // The one press that can credit combo it also broke (backlog 243): the space that
+                // skipped the word, now being judged on the gap the skip parked the caret on. The
+                // combo is real and stands, but it belongs to the break, so the claim remembers it
+                // and the next break has to beat it to take the claim away.
+                if (skipLeftAClaimOutstanding) this.creditTheClaimsOwnPress();
 
                 cell.state = 'correct';
                 cell.typedChar = c;
@@ -4596,13 +4617,14 @@
             this.caretIndex++;
             this.autoSkipForward();
 
-            // TypeBeatPlayfield.onCharJudged's flexible-caret arm: the RUSH CAP breaks combo on a
-            // press that is still judged Great/Ok/Meh, so the hit result alone (which INCREMENTS
-            // osu's combo) cannot carry the break. Mirror the engine's own combo by hand, AFTER the
-            // result has been applied, exactly as the wrong-keypress path does. Written against
-            // "the combo this press left behind" (the C# judgement.ComboAfter) rather than against
-            // rushedPastCap, because it has to cover the inert-retype branch too, which the C#
-            // announces through the very same raise.
+            // TypeBeatPlayfield.onCharJudged's flexible-caret arm. It existed for the RUSH CAP's
+            // combo break on a press still judged Great/Ok/Meh, which the hit result alone (it
+            // INCREMENTS osu's combo) could not carry. Since backlog 347 the live rule breaks nothing
+            // there (the over-cap press is a Meh that credits combo), so on a scoring press the
+            // engine's combo is never zero here and this carries nothing; the C# keeps the same seam
+            // for its pre-347 era. Kept rather than deleted because it is written against "the combo
+            // this press left behind" (the C# judgement.ComboAfter), which covers the inert-retype
+            // branch too, and the C# announces that through the very same raise.
             //
             // Under a pinned caret this is inert, which is why the C# gates it on the flag: there
             // every combo-zero judgement either maps to a Miss (which breaks osu's combo itself) or

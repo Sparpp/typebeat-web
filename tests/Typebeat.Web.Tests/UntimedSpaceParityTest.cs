@@ -24,7 +24,7 @@ namespace Typebeat.Web.Tests;
 /// also spends nothing of. That last one used to be a desktop-only rule (it belonged to the old
 /// Fletcher mod, which the browser could not select); backlog 208 made the flexible caret the
 /// default for every play, so it is live here now and is pinned in
-/// <see cref="FlexibleLinesParityTest.PressingPastTheRushCapCostsTheComboOnceAndThenReArms"/>,
+/// <see cref="FlexibleLinesParityTest.PressingPastTheRushCapCostsTheJudgementNotTheRun"/>,
 /// beside the cap it is the exception to.</para>
 /// </summary>
 public class UntimedSpaceParityTest

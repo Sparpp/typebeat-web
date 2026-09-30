@@ -157,6 +157,8 @@ public class LosslessSkipReclaimLiveParityTest
         LosslessSkipReclaim = losslessSkipReclaim,
         FoldsDisplacedClaim = true,
         FirstLineLeadIn = true,
+        // Backlog 347, the first bit of the SECOND CONFIG flags word: the browser takes it unconditionally.
+        RushCapCostsAccuracy = true,
         ManualNewlines = true,
         NewlineOnTypedLetter = true,
     };
@@ -168,13 +170,14 @@ public class LosslessSkipReclaimLiveParityTest
     /// all. Bit 1 (space-skips-word) is SET, unlike in <see cref="SealComboBreakLiveParityTest"/>:
     /// the whole subject here is a space struck inside a word.
     /// </summary>
-    private static Replay Replay(bool losslessSkipReclaim, string scenario)
+    private static Replay Replay(bool losslessSkipReclaim, string scenario, bool rushCapCostsAccuracy = true)
     {
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy));
 
         foreach (var step in Run(scenario).GetProperty("script").EnumerateArray())
         {
@@ -201,8 +204,8 @@ public class LosslessSkipReclaimLiveParityTest
         return replay;
     }
 
-    private static TypeBeatReplayAccount Play(string scenario, bool losslessSkipReclaim = true)
-        => TypeBeatReplayScorer.Score(Playable(), Array.Empty<Mod>(), Replay(losslessSkipReclaim, scenario), TypoRule.Deferred, ComboRestoreRule.OnFix);
+    private static TypeBeatReplayAccount Play(string scenario, bool losslessSkipReclaim = true, bool rushCapCostsAccuracy = true)
+        => TypeBeatReplayScorer.Score(Playable(), Array.Empty<Mod>(), Replay(losslessSkipReclaim, scenario, rushCapCostsAccuracy), TypoRule.Deferred, ComboRestoreRule.OnFix);
 
     /// <summary>The cell states as the JS mirror spells them (its own vocabulary, one for one).</summary>
     private static string StateName(CellState state) => state switch
@@ -443,6 +446,12 @@ public class LosslessSkipReclaimLiveParityTest
     /// only ever put back increments the old one dropped. It moves nothing else, which is why the
     /// judgements, the accuracy and the completion are asserted EQUAL across the two arms, and why
     /// the clean run (which gives up nothing) is bit-identical under both.</para>
+    ///
+    /// <para>The stored arm also clears backlog 347's extended header, which is the combination every
+    /// such row really carries (a replay from before 260 predates the second carrier too). Under the
+    /// live rush cap the skipping space would be charged a Meh rather than the run, so defect A would
+    /// part the arms on a JUDGEMENT; under the rule those rows were played with it parts them on the
+    /// combo alone, which is what this test states.</para>
     /// </summary>
     [Test]
     public void TheseScriptsReallySeparateTheTwoEras()
@@ -452,7 +461,7 @@ public class LosslessSkipReclaimLiveParityTest
             foreach (string scenario in corrected)
             {
                 var live = Play(scenario);
-                var stored = Play(scenario, losslessSkipReclaim: false);
+                var stored = Play(scenario, losslessSkipReclaim: false, rushCapCostsAccuracy: false);
 
                 Assert.That(stored.MaxCombo, Is.LessThan(live.MaxCombo), $"{scenario}: the dropped increment should cost max_combo");
                 Assert.That(stored.TotalScore, Is.LessThan(live.TotalScore), $"{scenario}: and total_score");
@@ -462,7 +471,7 @@ public class LosslessSkipReclaimLiveParityTest
             }
 
             var cleanLive = Play("cleanRun");
-            var cleanStored = Play("cleanRun", losslessSkipReclaim: false);
+            var cleanStored = Play("cleanRun", losslessSkipReclaim: false, rushCapCostsAccuracy: false);
 
             Assert.That(cleanStored.MaxCombo, Is.EqualTo(cleanLive.MaxCombo), "a run that gives up nothing re-derives identically");
             Assert.That(cleanStored.TotalScore, Is.EqualTo(cleanLive.TotalScore));
@@ -477,7 +486,7 @@ public class LosslessSkipReclaimLiveParityTest
     ///
     /// <list type="bullet">
     /// <item>DEFECT A: the skipping space really is judged at a caret far out past the cap, and still
-    /// earns its gap. Nine countable characters ahead of the playhead, against a cap of five.</item>
+    /// earns its gap. Nine countable characters ahead of the playhead, against a cap of six.</item>
     /// <item>DEFECT B: the second space really takes a PASSIVE break (one that keeps the deeper claim
     /// rather than replacing it), which is only visible as the redemption being bigger than the run
     /// the first break took: 4 rather than 3.</item>
@@ -529,8 +538,8 @@ public class LosslessSkipReclaimLiveParityTest
             var skipStep = headOfWord[4];
 
             Assert.That(skipStep.GetProperty("charsAheadOfPlayhead").GetInt32(), Is.EqualTo(9),
-                "the caret is nine countable chars past the playhead after the skip, four over the cap");
-            Assert.That(Section().GetProperty("maxCharsAhead").GetInt32(), Is.EqualTo(5), "against a cap of five");
+                "the caret is nine countable chars past the playhead after the skip, three over the cap");
+            Assert.That(Section().GetProperty("maxCharsAhead").GetInt32(), Is.EqualTo(6), "against a cap of six (five before backlog 347)");
             Assert.That(skipStep.GetProperty("combo").GetInt32(), Is.EqualTo(1), "and the gap is credited: the word given up is not the player's budget");
             Assert.That(headOfWord[3].GetProperty("charsAheadOfPlayhead").GetInt32(), Is.EqualTo(-1),
                 "measured where the press was MADE, the player was not rushing at all");

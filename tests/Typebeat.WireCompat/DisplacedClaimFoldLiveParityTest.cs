@@ -147,6 +147,8 @@ public class DisplacedClaimFoldLiveParityTest
         LosslessSkipReclaim = true,
         FoldsDisplacedClaim = foldsDisplacedClaim,
         FirstLineLeadIn = true,
+        // Backlog 347, the first bit of the SECOND CONFIG flags word: the browser takes it unconditionally.
+        RushCapCostsAccuracy = true,
         ManualNewlines = true,
         NewlineOnTypedLetter = true,
     };
@@ -164,6 +166,7 @@ public class DisplacedClaimFoldLiveParityTest
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: foldsDisplacedClaim, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true));
 
         foreach (var step in Run(scenario).GetProperty("script").EnumerateArray())
         {

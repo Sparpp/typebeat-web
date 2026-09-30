@@ -249,7 +249,17 @@ const FIXTURES = {
     }, {
         text: 'cdefghij', start_ms: 14000, end_ms: 15000,
         words: [{ text: 'cdefghij', start_ms: 14000, end_ms: 15000, score: 1 }]
-    }], 30000)
+    }], 30000),
+
+    // Backlog 347's fixture: ONE nine-letter syllable, "strengths" sung over [1000, 1900] (point
+    // targets 100 ms apart), so a press anywhere inside the sung second is judged 0 by the clock
+    // while the caret's lead is still counted on the point targets. That is the one shape where a
+    // press can be seven characters ahead AND a Great by the clock, i.e. where the rush cap's Meh
+    // award is visible at all. The line ends at the vocal end + 3000 = 4900, inside the 5000 song.
+    rushSyllable: osu([{
+        text: 'strengths', start_ms: 1000, end_ms: 1900,
+        words: [{ text: 'strengths', start_ms: 1000, end_ms: 1900, score: 1 }]
+    }], 5000)
 };
 
 // PR 2's AUTHORED PAUSES, as the editor writes them (see PAUSED_LINES below).
@@ -755,9 +765,17 @@ function play(name, keys, spaceSkipsWord) {
     //                  handed on by the next line starting, with no press of its own.
     //   dragHolds      DRAG FREEDOM: a line the player was still typing refused its own seal, which
     //                  is the only thing sealPermitted answering false can mean.
-    //   rushCapBreaks  THE RUSH CAP: a press that put the caret more than
-    //                  FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead, and so earned no
-    //                  combo however well it was timed.
+    //   rushCapMehs    THE RUSH CAP: a press that put the caret more than
+    //                  FLETCHER_MAX_CHARS_AHEAD countable chars past the playhead and was therefore
+    //                  AWARDED Meh however well it was timed, crediting combo like any other hit
+    //                  (backlog 347; it used to break the run instead). Counted only where the cap
+    //                  answered true AND the press then announced 'Meh' on a cell carrying the
+    //                  judgedPastRushCap mark, so a port that lost the award, or answered the cap
+    //                  and then judged on the clock, reads zero here.
+    //   rushCapDowngrades  the sharper half of the same counter: a cap Meh on a press the CLOCK
+    //                  called Great or Ok (its judged delta classifies above Meh), i.e. one the award
+    //                  actually changed. A sweep whose over-cap presses were all Meh or off-time by
+    //                  the clock anyway would be vacuous for the award, and it once was.
     //
     // Backlog 218 adds a fifth on the same principle, and it is the sharpest of the set because it
     // is the one whose ABSENCE would be invisible:
@@ -780,7 +798,8 @@ function play(name, keys, spaceSkipsWord) {
     let rollForwards = 0;
     let lineSnaps = 0;
     let dragHolds = 0;
-    let rushCapBreaks = 0;
+    let rushCapMehs = 0;
+    let rushCapDowngrades = 0;
     let refusedRolls = 0;
     let lineStepBacks = 0;
 
@@ -891,10 +910,30 @@ function play(name, keys, spaceSkipsWord) {
     // one (the caret as it stood BEFORE a word skip moved it), and a spy that dropped it would hand
     // the real method an undefined index, which reads out of the prefix table as NaN and silently
     // answers "no rush" for the whole sweep.
+    let rushedThisPress = false;
+
     engine.rushesPastCap = function (...args) {
         const rushed = rushesPastCap(...args);
-        if (rushed) rushCapBreaks++;
+        if (rushed) rushedThisPress = true;
         return rushed;
+    };
+
+    // The judgement the rushed press announced, read on the engine's own callback (chained, so any
+    // listener already attached still hears it). The cap is evaluated inside the same processKey
+    // call that announces the press, so the flag is consumed here and never outlives its press.
+    const priorCharJudged = engine.onCharJudged;
+    engine.onCharJudged = function (cellIndex, type, points) {
+        if (rushedThisPress && type === 'Meh') {
+            const line = engine.lines[engine.activeLineIndex];
+            const cell = line && line.cells[cellIndex];
+            if (cell && cell.judgedPastRushCap) {
+                rushCapMehs++;
+                const clock = TB.classify(cell.judgedDelta, TB.WINDOWS);
+                if (clock === 'Great' || clock === 'Ok') rushCapDowngrades++;
+            }
+        }
+        rushedThisPress = false;
+        if (priorCharJudged) priorCharJudged(cellIndex, type, points);
     };
 
     // THE HEALTH ARM (backlog 306). The run plays under the pool's NO FAIL veto (see the header), so
@@ -995,7 +1034,8 @@ function play(name, keys, spaceSkipsWord) {
         rollForwards: rollForwards,
         lineSnaps: lineSnaps,
         dragHolds: dragHolds,
-        rushCapBreaks: rushCapBreaks,
+        rushCapMehs: rushCapMehs,
+        rushCapDowngrades: rushCapDowngrades,
         refusedRolls: refusedRolls,
         lineStepBacks: lineStepBacks,
         leadInOpens: leadInOpens,
@@ -1340,19 +1380,19 @@ const SCRIPTED = [
                [6500, 'g'], [7000, 'h'], [7500, 'i']]
     },
     {
-        // Backlog 208, THE RUSH CAP and its RE-ARM. Nine presses at 1000, where the playhead has
-        // reached exactly one countable character: the caret is 1, 2, 3, 4 and then 5 characters
-        // ahead through 't','h','e','q','u' (the word gap spends no budget), all of which still earn
-        // combo, and the sixth countable press 'i' puts it 6 ahead, which is over
-        // FLETCHER_MAX_CHARS_AHEAD and earns none. 'c' and 'k' follow it out past the cap and take
-        // no further break, because the run is already at zero.
+        // Backlog 208, THE RUSH CAP, re-read by backlog 347. Nine presses at 1000, where the playhead
+        // has reached exactly one countable character: the caret is 1, 2, 3, 4 and then 5 characters
+        // ahead through 't','h','e','q','u' (the word gap spends no budget), and the sixth countable
+        // press 'i' puts it 6 ahead, ON the cap of six and inside it. 'c' and 'k' go on to 7 and 8,
+        // over it: each is awarded Meh at best and CREDITS combo, and nothing breaks.
         //
         // The clock then catches up: by 3000 the playhead has passed nine countable targets and the
-        // caret is on the ninth, so "brown" is typed back INSIDE the cap and the run rebuilds, which
-        // is the re-arm. Typing 'n' finishes the line and rolls the caret straight on to "fox
-        // jumps", where the same excursion happens again at 3800 and breaks the rebuilt run: two
-        // breaks with an earned streak between them is what says the cap re-arms rather than
-        // latching.
+        // caret is on the ninth, so "brown" is typed back INSIDE the cap and judged on its timing
+        // again. Typing 'n' finishes the line and rolls the caret straight on to "fox jumps", where
+        // the same excursion happens again at 3800 and is paid for in Mehs again: the cap is
+        // re-evaluated per press. Under the pre-347 era (the C# with the extended CONFIG header
+        // clear) the same script breaks at five, twice, which is what
+        // EngineFuzzLiveParityTest.ClearingTheExtendedHeaderReDerivesTheComboBreakAtFive holds.
         // Backlog 218, THE RUSH BOUND, written out rather than left to a seed because it is the one
         // shape whose absence is invisible: both arms would agree on the UNBOUNDED roll and stay
         // green. "ab" is typed out on time at 1000 and 1500, which is eleven seconds before entry
@@ -1370,6 +1410,18 @@ const SCRIPTED = [
         keys: [[1000, 'a'], [1500, 'b'], [6000, 'c'], [9000, 'd'],
                [12500, 'c'], [12500, 'd'], [12500, 'e'], [12500, 'f'], [12500, 'g'], [12500, 'h'],
                [14750, 'i'], [14875, 'j']]
+    },
+    {
+        // Backlog 347, THE RUSH CAP'S MEH ON A WELL-TIMED PRESS, written out because the generated
+        // sweep's rushes mostly run so far ahead of the song that the clock has already called them
+        // Meh or off-time, which the award leaves alone: a port that lost the award would read the
+        // same there. All nine letters of "strengths" at 1000, where the playhead has reached one
+        // countable character and the whole word is one sung syllable: every press is 0 by the
+        // clock, the caret runs out to 0..8 ahead, and the presses seven and eight ahead ('h', 's')
+        // are awarded Meh, credit combo and are marked. The run never breaks.
+        name: 'scripted/rushCapMehOnTime', fixture: 'rushSyllable', spaceSkipsWord: false, skipPresses: 0,
+        keys: [[1000, 's'], [1000, 't'], [1000, 'r'], [1000, 'e'], [1000, 'n'], [1000, 'g'],
+               [1000, 't'], [1000, 'h'], [1000, 's']]
     },
     {
         name: 'scripted/rushPastTheCap', fixture: 'quickBrownFox', spaceSkipsWord: false, skipPresses: 0,

@@ -493,7 +493,13 @@
             // distinct warn tint as a free hint. The RENDERING is untouched by 199: the two tiers
             // are still their own judgement types, which is exactly where the distinction the
             // statistics blob gives up on survives.
-            cls += (jt === 'Great' || jt === 'Ok' || jt === 'Meh') ? ' tb-c-hit' : ' tb-c-off';
+            //
+            // A press out past the RUSH CAP (backlog 347) takes the same warn tint: it was awarded
+            // Meh for where the caret was rather than for when the key went down, so its tier alone
+            // reads as an ordinary hit. The engine marks the cell (judgedPastRushCap, history, so a
+            // retype keeps it), and the desktop draws it at the sync tint's floor, its off-time look.
+            const onTime = (jt === 'Great' || jt === 'Ok' || jt === 'Meh') && !cell.judgedPastRushCap;
+            cls += onTime ? ' tb-c-hit' : ' tb-c-off';
         } else if (cell.state === 'wrong') {
             // Typed through wrong (the default model). The desktop shows the EXPECTED glyph in
             // error red on a LYRIC cell, not the char that was pressed, so only the colour changes

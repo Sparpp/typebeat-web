@@ -1079,6 +1079,16 @@ public static class Recalculation
         //    Such a row fails the default on the SPACE axis like any other, and the search fixes it
         //    there. This would need revisiting only if Easy's window scale were ever retuned, or if
         //    Hard Rock's stopped being recoverable from the replay's own CONFIG frame.
+        //
+        //    THE RUSH CAP (backlog 347) IS NOT AN AXIS HERE EITHER, for the same reason. What a press
+        //    out past the cap cost (the combo at a cap of five, or a Meh at six) rides the replay
+        //    itself, on the SECOND header frame (TypeBeatReplayFrame.CONFIG_EXTENDED, second flags
+        //    word bit 0), because the first word was full. The .osr this tool decodes carries it,
+        //    ReplayEngineFeed.Apply clears it on the CONFIG frame and sets it from that header, and a
+        //    row stored before 347 has no such frame and re-derives on the combo break it was played
+        //    under. So neither sweep holds or moves it: like every CONFIG-carried era, a supersede
+        //    run re-judges a pre-347 row with its own rush-cap rule, not today's.
+        //    ScoreRecalcTest.TheRushCapEraTravelsInTheSecondHeaderThroughTheOsr pins the read.
         TypeBeatReplayAccount ScoreUnder(SearchedEra candidate) => TypeBeatReplayScorer.Score(
             playable,
             mods,

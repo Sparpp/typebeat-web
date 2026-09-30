@@ -1967,4 +1967,19 @@ function syllableAids() {
 
 out.syllableAids = syllableAids();
 
+// Backlog 347: a press out past the RUSH CAP is awarded Meh and marked (judgedPastRushCap), and the
+// browser draws it in the off-time warn tint rather than as a hit, the same class a Premature press
+// takes. An ordinary Meh (struck by the clock) stays a hit.
+function rushCapTint() {
+    const judged = (type, marked) => Object.assign(letterCell('c', 'correct'), { judgeType: type, judgedPastRushCap: marked });
+    return {
+        plainMeh: D.cellClass(judged('Meh', false), false, false),
+        rushCapMeh: D.cellClass(judged('Meh', true), false, false),
+        premature: D.cellClass(judged('Premature', false), false, false),
+        rushCapPremature: D.cellClass(judged('Premature', true), false, false)
+    };
+}
+
+out.rushCapTint = rushCapTint();
+
 process.stdout.write(JSON.stringify(out));

@@ -233,6 +233,12 @@ public class EngineFuzzLiveParityTest
                     Line("cdefghij", 14000, 18000, 15000, Unit("cdefghij", 14000, 15000)),
                 ];
 
+            // Backlog 347's RUSH CAP Meh fixture, CoreFuzzHarness.cjs's rushSyllable: one nine-letter
+            // syllable, so a press seven characters ahead of the point-target playhead is still 0 by
+            // the span clock and the cap's award is the only thing that makes it a Meh.
+            case "rushSyllable":
+                return [Line("strengths", 1000, 4900, 1900, Unit("strengths", 1000, 1900))];
+
             default:
                 throw new ArgumentOutOfRangeException(nameof(name), name, "unknown fixture");
         }
@@ -322,6 +328,16 @@ public class EngineFuzzLiveParityTest
     /// finished its line while the browser parks it for the player's own newline, and every
     /// keystroke after it would land on a different line.</para>
     ///
+    /// <para>Since backlog 347 every replay also carries the SECOND header,
+    /// <see cref="TypeBeatReplayFrame.CONFIG_EXTENDED"/>, with its bit 0 set
+    /// (<see cref="TypingEngine.RushCapCostsAccuracy"/>): a press out past the rush cap is awarded
+    /// Meh and credits combo, and the cap is six. The browser takes that rule unconditionally, and
+    /// the C# defaults it OFF (a replay with no extended header re-derives the combo break at five).
+    /// Without the header the two arms would part on the first press seven characters ahead: a Meh
+    /// on an unbroken run on one side, a clock-graded press that zeroes the run on the other. The
+    /// sweep counts the browser's cap Mehs (<c>rushCapMehs</c>) so it can prove it reaches the rule
+    /// at all.</para>
+    ///
     /// <para>Bit 5 is the one that cannot be read as a single fact, which is why it is a parameter
     /// here rather than a constant: bit 5 CLEAR means a PINNED caret for a plain old replay, but an
     /// unpinned caret WITHOUT the line-start snap for one carrying the retired "FT" acronym, so
@@ -329,11 +345,12 @@ public class EngineFuzzLiveParityTest
     /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>. The sweep passes no mods, so the frame is
     /// the whole of the answer here.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true, bool manualNewlines = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true, bool manualNewlines = true, bool rushCapCostsAccuracy = true)
     {
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming, backDatedSealBreak: backDatedSealBreak, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: foldsDisplacedClaim, manualNewlines: manualNewlines, newlineOnTypedLetter: manualNewlines, firstLineLeadIn: firstLineLeadIn));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -662,6 +679,40 @@ public class EngineFuzzLiveParityTest
     }
 
     /// <summary>
+    /// THE SECOND HEADER IS WHAT RECONCILES THE TWO ARMS on the rush cap (backlog 347), proven on the
+    /// harness's own <c>scripted/rushPastTheCap</c> case: nine presses at 1000 that run the caret out
+    /// to seven ahead, a catch-up, and a second excursion on the next line. With the extended header
+    /// set the C# arm reproduces the browser's submitted account exactly (the sweep above says so);
+    /// with it CLEARED, which is what every replay stored before 347 carries, the same keystrokes
+    /// re-derive the combo break at five, and the account parts from the browser's on max_combo and
+    /// total_score. That is both halves: the scorer follows the flag, and the flag is not decorative.
+    /// </summary>
+    [Test]
+    public void ClearingTheExtendedHeaderReDerivesTheComboBreakAtFive()
+    {
+        var browserCase = browser_runs.Value.GetProperty("cases").EnumerateArray()
+            .Single(c => c.GetProperty("name").GetString() == "scripted/rushPastTheCap");
+
+        string fixture = browserCase.GetProperty("fixture").GetString()!;
+        var map = Map(GranularityOf(fixture), Fixture(fixture));
+        var keys = browserCase.GetProperty("keys");
+        var submitted = browserCase.GetProperty("submitted");
+
+        var live = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), Keystrokes(keys, spaceSkipsWord: false), TypoRule.Deferred, ComboRestoreRule.OnFix);
+        var stored = TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(), Keystrokes(keys, spaceSkipsWord: false, rushCapCostsAccuracy: false), TypoRule.Deferred, ComboRestoreRule.OnFix);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(browserCase.GetProperty("rushCapMehs").GetInt32(), Is.GreaterThan(0), "the script really does rush past the cap");
+            Assert.That(submitted.GetProperty("maxCombo").GetInt32(), Is.EqualTo(live.MaxCombo), "live arm: the browser's max_combo");
+            Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(live.TotalScore), "live arm: the browser's total_score");
+
+            Assert.That(stored.MaxCombo, Is.LessThan(live.MaxCombo), "stored arm: the cap of five broke the run the live rule keeps");
+            Assert.That(stored.TotalScore, Is.Not.EqualTo(live.TotalScore), "stored arm: a different account");
+        });
+    }
+
+    /// <summary>
     /// The sweep is only worth what it exercises, so this pins the SHAPE of what was generated
     /// rather than any one run: the cases have to reach every scoring tier, both exits from a typo,
     /// real misses and a spread of ranks, or a green run above means nothing. It reads the browser
@@ -675,7 +726,7 @@ public class EngineFuzzLiveParityTest
         int withTypos = 0, withMisses = 0, withOk = 0, withMeh = 0, perfect = 0;
         int skipPresses = 0, comboRestores = 0, backspaces = 0, passiveBreaks = 0, spanJudgements = 0, gapTypos = 0;
         int parkedGapTypos = 0, stepOvers = 0, midWordSpaceTypos = 0, stretchPointJudgements = 0, firstCharJudgements = 0;
-        int rollForwards = 0, lineSnaps = 0, dragHolds = 0, rushCapBreaks = 0, refusedRolls = 0;
+        int rollForwards = 0, lineSnaps = 0, dragHolds = 0, rushCapMehs = 0, rushCapDowngrades = 0, refusedRolls = 0;
         int lineStepBacks = 0;
         int ownCreditBreaks = 0;
         int leadInOpens = 0, pauseJudgements = 0;
@@ -706,7 +757,8 @@ public class EngineFuzzLiveParityTest
             rollForwards += browserCase.GetProperty("rollForwards").GetInt32();
             lineSnaps += browserCase.GetProperty("lineSnaps").GetInt32();
             dragHolds += browserCase.GetProperty("dragHolds").GetInt32();
-            rushCapBreaks += browserCase.GetProperty("rushCapBreaks").GetInt32();
+            rushCapMehs += browserCase.GetProperty("rushCapMehs").GetInt32();
+            rushCapDowngrades += browserCase.GetProperty("rushCapDowngrades").GetInt32();
             refusedRolls += browserCase.GetProperty("refusedRolls").GetInt32();
             lineStepBacks += browserCase.GetProperty("lineStepBacks").GetInt32();
             leadInOpens += browserCase.GetProperty("leadInOpens").GetInt32();
@@ -810,7 +862,12 @@ public class EngineFuzzLiveParityTest
             Assert.That(rollForwards, Is.Zero, "a finished line rolled the caret on by itself: the sweep is not on the manual arm");
             Assert.That(lineSnaps, Is.Zero, "a parked caret was snapped on by the next line starting: the sweep is not on the manual arm");
             Assert.That(dragHolds, Is.GreaterThan(0), "no run held a line open past its deadline for a player still typing it");
-            Assert.That(rushCapBreaks, Is.GreaterThan(0), "no run put the caret out past the rush cap");
+            Assert.That(rushCapMehs, Is.GreaterThan(0), "no run was awarded a Meh for a press out past the rush cap (backlog 347)");
+
+            // ...and the sharper half: a cap Meh on a press the CLOCK called Great or Ok, which is the
+            // only kind the award changes. Without it (scripted/rushCapMehOnTime supplies it) a port
+            // that dropped the award would still agree with the C# on every case above.
+            Assert.That(rushCapDowngrades, Is.GreaterThan(0), "no run had a well-timed press downgraded to Meh by the rush cap");
 
             // Backlog 218's own rule, counted on entryPermitted, the engine's own predicate, and only
             // where it answered FALSE: a press finished a line more than FLETCHER_DRAG_GRACE_MS

@@ -300,8 +300,9 @@ const out = {};
 
 // THE RUSH CAP is untouched by the bound and still bites on the far side of a permitted roll: entry
 // buys the player a line, never a licence to run away down it. At 12500 the playhead has reached two
-// countable chars ('a' and 'b') and so has the caret, so five chars of L1 keep it inside the cap and
-// the sixth is over it.
+// countable chars ('a' and 'b') and so has the caret, so six chars of L1 keep it inside the cap of
+// six (backlog 347; five before it) and the seventh is over it: marked, and credited rather than
+// broken.
 {
     const engine = automaticArm(new TB.TypingEngine(build(INSTRUMENTAL_GAP)));
 
@@ -324,12 +325,17 @@ const out = {};
 
     engine.processKey('h', 12500);
 
+    const atTheCap = { lead: engine.charsAheadOfPlayhead(12500), combo: engine.combo, comboBreaks: breaks, marked: engine.lines[1].cells[5].judgedPastRushCap };
+
+    engine.processKey('i', 12500);
+
     out.rushCapAfterARoll = {
         rolledOnto: rolledOnto,
         playhead: playhead,
         leadOnArrival: leadOnArrival,
         insideTheCap: insideTheCap,
-        pastTheCap: { lead: engine.charsAheadOfPlayhead(12500), combo: engine.combo, comboBreaks: breaks }
+        atTheCap: atTheCap,
+        pastTheCap: { lead: engine.charsAheadOfPlayhead(12500), combo: engine.combo, comboBreaks: breaks, marked: engine.lines[1].cells[6].judgedPastRushCap }
     };
 }
 
@@ -618,20 +624,26 @@ const out = {};
 // reached exactly one countable character, so the caret's lead is the press count:
 //   a..f  the caret ends 0,1,2,3,4 then 5 characters ahead, all inside the cap, all earning combo.
 //   ' '   a word gap is not COUNTABLE, so it spends no budget: the caret is still 5 ahead and the
-//         press earns combo. With a budget it would have been the sixth and broken the run.
-//   g     the caret ends 6 ahead, which is over the cap: the press still lands and still scores, and
-//         earns no combo. ONE break.
-//   h     further out still, and no second break: the run is already at zero.
+//         press earns combo. With a budget it would have been the sixth and would already be at
+//         the cap's edge.
+//   g     the caret ends 6 ahead, which since backlog 347 is still INSIDE the cap of six.
+//   h     7 ahead, over it: the press lands, CREDITS combo, and is awarded Meh at best (the tier is
+//         a min over the ladder, so a press the clock already called off-time keeps that tier). The
+//         cell carries the judgedPastRushCap mark. No break, then or ever: that was the pre-347 rule.
 // The clock then catches up to 8000, where the playhead has passed eight countable characters, and
-// 'i' lands back inside the cap and the run RE-ARMS.
+// 'i' lands back inside the cap on its own timing and unmarked, and the run is still unbroken.
 {
     const engine = automaticArm(new TB.TypingEngine(build(RUSH_LINE)));
 
     let breaks = 0;
     engine.onComboBroken = () => { breaks++; };
 
+    let lastType = null;
+    engine.onCharJudged = (cellIndex, type) => { lastType = type; };
+
     const lead = [];
     const combos = [];
+    const types = [];
 
     engine.update(1000);
 
@@ -639,6 +651,7 @@ const out = {};
         engine.processKey(c, 1000);
         lead.push(engine.charsAheadOfPlayhead(1000));
         combos.push(engine.combo);
+        types.push(lastType);
     }
 
     const cappedMaxCombo = engine.maxCombo;
@@ -647,14 +660,67 @@ const out = {};
     engine.processKey('i', 8000);
 
     out.rushCap = {
-        // Every cell still LANDED: the cap is a combo penalty, not a block.
+        // Every cell still LANDED: the cap is an accuracy penalty, not a block.
         states: engine.lines[0].cells.map(c => c.state),
+        marked: engine.lines[0].cells.map(c => c.judgedPastRushCap),
         leadAfterEachPress: lead,
         comboAfterEachPress: combos,
+        typeAfterEachPress: types,
         comboBreaks: breaks,
         maxComboBeforeTheCatchUp: cappedMaxCombo,
         leadAfterCatchUp: engine.charsAheadOfPlayhead(8000),
-        comboAfterCatchUp: engine.combo
+        comboAfterCatchUp: engine.combo,
+        typeAfterCatchUp: lastType
+    };
+}
+
+// THE RUSH CAP'S MEH, on a line tight enough that every press at 1000 is a Great by the clock, so
+// any Meh is the cap's and not the clock's. The JS twin of the game's
+// RushCapCostsAccuracyTest.ARunCrossingTheCapKeepsItsComboAndEveryOverCapCellIsMeh, on a map of
+// the browser's own shape: "abcdefghijkl" sung [1000, 1120], so at 1000 the playhead has reached one
+// countable character and no syllable of it starts more than 120 ms later.
+//   presses 1..7 at 1000   leads 0..6, all inside the cap, all Great.
+//   presses 8, 9 at 1000   leads 7 and 8, over it: Meh, combo credited, cells marked.
+//   'j' at 1120            the song has passed all twelve targets, the caret is behind it, and the
+//                          press is judged on its timing again (Great) and unmarked.
+{
+    const engine = automaticArm(new TB.TypingEngine(build(osu([
+        { text: 'abcdefghijkl', start_ms: 1000, end_ms: 1120, words: [word('abcdefghijkl', 1000, 1120)] }
+    ], 20000))));
+
+    let breaks = 0;
+    engine.onComboBroken = () => { breaks++; };
+
+    const types = [];
+    const points = [];
+    engine.onCharJudged = (cellIndex, type, p) => { types.push(type); points.push(p); };
+
+    const lead = [];
+    const combos = [];
+
+    engine.update(1000);
+
+    for (const c of 'abcdefghi') {
+        engine.processKey(c, 1000);
+        lead.push(engine.charsAheadOfPlayhead(1000));
+        combos.push(engine.combo);
+    }
+
+    engine.update(1120);
+    engine.processKey('j', 1120);
+    combos.push(engine.combo);
+
+    out.rushCapMeh = {
+        maxCharsAhead: TB.constants.FLETCHER_MAX_CHARS_AHEAD,
+        playheadAtTheBurst: engine.playheadCountablePosition(1000),
+        leadAfterEachPress: lead,
+        comboAfterEachPress: combos,
+        types: types,
+        points: points,
+        deltas: engine.lines[0].cells.slice(0, 10).map(c => c.judgedDelta),
+        marked: engine.lines[0].cells.slice(0, 10).map(c => c.judgedPastRushCap),
+        comboBreaks: breaks,
+        maxCombo: engine.maxCombo
     };
 }
 
@@ -1352,8 +1418,9 @@ const out = {};
         //
         // The skip walks the caret to the gap at 13, twelve countable characters along, and the SAME
         // press is then judged there: measured at the caret it moved to, that is 12 - 3 = 9 past a
-        // cap of 5 and the gap earns nothing. Measured where the press was actually made it is
-        // 2 - 3 = -1, and the gap is credited like any other.
+        // cap of 6 (5 when 260 landed, when it cost the gap its combo; since backlog 347 it would
+        // cost the gap its tier instead). Measured where the press was actually made it is
+        // 2 - 3 = -1, and the gap is judged like any other.
         //
         // The Ctrl+A collapse then follows as the two plain backspaces it is composed of (the erase
         // steps transparently over the abandoned cells and stops on the gap it can land on, which is
@@ -1386,9 +1453,9 @@ const out = {};
         //
         // Both spaces land at 1600 rather than at 1200 so that defect A is not what this scenario
         // measures: by 1600 the playhead has passed seven countable characters, so the second space
-        // is measured at 12 - 7 = 5, exactly ON the cap and inside it. At 1200 it would be refused by
-        // the cap on its own merits (the caret really is out past the bound before that press) and
-        // the fold would have nothing to fold.
+        // is measured at 12 - 7 = 5, inside the cap (it was exactly ON the pre-347 cap of five). At
+        // 1200 it would be over the cap on its own merits (the caret really is out past the bound
+        // before that press), which is not what this scenario is about.
         doubleSpace: {
             steps: [
                 { op: 'update', t: 1000 },
