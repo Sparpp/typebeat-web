@@ -1087,7 +1087,10 @@ public static class Recalculation
         //    ReplayEngineFeed.Apply clears it on the CONFIG frame and sets it from that header, and a
         //    row stored before 347 has no such frame and re-derives on the combo break it was played
         //    under. So neither sweep holds or moves it: like every CONFIG-carried era, a supersede
-        //    run re-judges a pre-347 row with its own rush-cap rule, not today's.
+        //    run re-judges a pre-347 row with its own rush-cap rule, not today's. PR 3's second input
+        //    era (bit 1 of the same word, TypingEngine.InputEra2: no rush cap, the backspace that
+        //    undoes a word skip, Space to skip only under wrong input) rides the same header on the
+        //    same terms, so it is not an axis either.
         //    ScoreRecalcTest.TheRushCapEraTravelsInTheSecondHeaderThroughTheOsr pins the read.
         TypeBeatReplayAccount ScoreUnder(SearchedEra candidate) => TypeBeatReplayScorer.Score(
             playable,
