@@ -106,7 +106,10 @@ jobs:
       - name: Ship source to server
         run: |
           tar czf - --exclude=.git --exclude=external . \
-            | ssh -i ~/.ssh/deploy_key root@46.62.142.5 'tar xzf - -C /opt/typebeat-web'
+            | ssh -i ~/.ssh/deploy_key root@46.62.142.5 'tar xzf - -C /opt/typebeat-web && chmod +x /opt/typebeat-web/deploy/up.sh'
+          # up.sh is executable in git (mode 100755) now, but the chmod stays: the first
+          # deploy after it was committed (as 100644) shipped it over the box's executable copy and
+          # every later step died with "Permission denied" (2026-09-30).
 
       # Gate: build the image BEFORE touching the running container, so a broken build
       # never takes production down (learned the hard way).
@@ -145,8 +148,8 @@ jobs:
       # "Disk"). Pruned LAST, after the build, so every layer this deploy could reuse was still
       # there when it mattered; the cost is that the next deploy rebuilds from the image layers
       # rather than the build cache, which is seconds on the app. Deliberately in CI and not in
-      # deploy/up.sh: that script exists only on the box and is not in git, so a change there
-      # would be invisible here.
+      # deploy/up.sh: that script is the thin compose wrapper the box runs, and a prune belongs
+      # with the deploy that made the layers, not with every compose call.
       - name: Prune docker build cache
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'docker builder prune -f'
 
