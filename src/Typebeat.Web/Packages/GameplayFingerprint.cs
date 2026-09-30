@@ -45,8 +45,10 @@ namespace Typebeat.Web.Packages;
 ///
 /// <para>
 /// WHAT IS OUT, so these edits keep the rank: title, artist, both unicode variants, creator,
-/// difficulty name, source, tags, language, background, video, preview time, BPM/timing points,
-/// the .osu filename, the beatdrop, and (since <see cref="VERSION"/> 2, backlog 330) every
+/// difficulty name, source, tags, language, background, video, preview time, BPM/timing points
+/// (since PR 3 the editor's BPM tools write real, multiple <c>[TimingPoints]</c> rows and an
+/// <c>[Editor]</c> BeatDivisor, and both stay out: no cell target reads them, so a BPM-only save
+/// keeps the rank; <c>LyricParserParityTest</c> pins it), the .osu filename, the beatdrop, and (since <see cref="VERSION"/> 2, backlog 330) every
 /// <c>"original"</c> key of the section, line and word alike. An original is the lyric as the song
 /// WRITES it in its own script: display and authoring data that no cell, target time or rating
 /// reads (the player types <c>"text"</c>, and only <c>"text"</c>), so adding a map's source script,

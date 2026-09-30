@@ -28,8 +28,9 @@ public static class SyntheticPackage
     /// <summary>
     /// The [Lyrics] payload of the game's own pace regression test
     /// (LyricPaceStatisticsTest.ComputesBoundaryWindowPace): "ab cd", 2 words, 5 typeable cells,
-    /// boundary window 3000 ms (start 1000 -> line end 4000) -> CPM 100, WPM 20 (CPM/5 since
-    /// LyricPace v15), 2.5 cells per word.
+    /// boundary window 3000 ms (start 1000 -> line end 4000) -> per-line CPM 100, WPM 20 (CPM/5
+    /// since LyricPace v15), 2.5 cells per word. The whole-map figure reads the 2000 ms of word spans
+    /// since v23 (nothing after the vocal end is charged): CPM 150, WPM 30.
     /// </summary>
     public const string PaceRegressionLyrics =
         """
@@ -46,9 +47,10 @@ public static class SyntheticPackage
     /// <see cref="PaceRegressionLyrics"/> rates exactly zero at every rate and on every arm: five
     /// cells is under the chunked axis's 16-character floor. That is the right answer for that map,
     /// but it makes any "the rating travels" or "the rate moves the rating" claim vacuous. This
-    /// lyric clears the floor at all three rates and keeps arithmetic a reader can check: the sung
-    /// window is 2000 ms of spans plus the 1000 ms tail to the line's end (exactly the break
-    /// threshold, so still singing), so 23 cells over 3000 ms is 460 CPM, 92 WPM.</para>
+    /// lyric clears the floor at all three rates and keeps arithmetic a reader can check: since
+    /// LyricPace v23 the whole-map rate charges the 2000 ms of word spans and nothing after the vocal
+    /// end, so 23 cells over 2000 ms is 690 CPM, 138 WPM (it was 3000 ms, 92 WPM, while the 1000 ms
+    /// tail to the line's end still counted).</para>
     /// </summary>
     public const string RatedLyrics =
         """
@@ -79,7 +81,12 @@ public static class SyntheticPackage
         // The mapper-chosen lyric font (backlog 291), written in [General] only when set,
         // exactly like the Language line below: an unset map emits neither key.
         string lyricFont = "",
-        string lyricFontFile = "")
+        string lyricFontFile = "",
+        // PR 3's editor timing, as the game's writer now emits it: an [Editor] section with the
+        // beat divisor (written only when set) and the authored [TimingPoints] rows in place of the
+        // one placeholder row (null keeps the placeholder).
+        int? beatDivisor = null,
+        IReadOnlyList<string>? timingPoints = null)
     {
         var sb = new StringBuilder();
 
@@ -143,8 +150,18 @@ public static class SyntheticPackage
         }
 
         sb.Append('\n');
+
+        if (beatDivisor != null)
+        {
+            sb.Append("[Editor]\n");
+            sb.Append($"BeatDivisor: {beatDivisor}\n");
+            sb.Append('\n');
+        }
+
         sb.Append("[TimingPoints]\n");
-        sb.Append("0,500,4,2,0,100,1,0\n");
+
+        foreach (string row in timingPoints ?? ["0,500,4,2,0,100,1,0"])
+            sb.Append(row).Append('\n');
         sb.Append('\n');
         sb.Append("[Lyrics]\n");
         sb.Append(lyrics.ReplaceLineEndings("\n"));

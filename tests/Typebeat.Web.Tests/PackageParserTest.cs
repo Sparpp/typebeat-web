@@ -90,6 +90,38 @@ public class PackageParserTest
         });
     }
 
+    /// <summary>
+    /// PR 3's EDITOR TIMING, in a file shaped like the game's new writer output: an [Editor] section
+    /// with BeatDivisor and several [TimingPoints] rows (a kiai effect row, negative beat length,
+    /// folded in) in place of the one placeholder row. The parser takes the set's BPM from the
+    /// first uninherited row as it always did and ignores the rest; the lyrics, pace, ratings and
+    /// gameplay fingerprint are exactly those of the same map without editor timing. The game's
+    /// own encoder output is held against both parsers in WireCompat's LyricParserParityTest.
+    /// </summary>
+    [Test]
+    public void Parse_EditorTimingSection_LeavesGameplayAlone()
+    {
+        string[] rows = ["-123.456789,468.75,4,2,0,100,1,0", "8012.345678,666.75,7,2,0,100,1,8", "9000.25,-100,4,2,0,100,0,1"];
+
+        var edited = BeatmapPackageParser.ParseDifficulty("map.osu",
+            SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: SyntheticPackage.RatedLyrics, beatDivisor: 3, timingPoints: rows)));
+        var plain = BeatmapPackageParser.ParseDifficulty("map.osu",
+            SyntheticPackage.Utf8(SyntheticPackage.OsuText(lyrics: SyntheticPackage.RatedLyrics)));
+
+        var files = new List<PackageFileEntry> { new PackageFileEntry(new byte[32], 5, "audio.mp3") };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(edited.Bpm, Is.EqualTo(128).Within(1e-9), "60000 / 468.75, the first uninherited row");
+            Assert.That(plain.Bpm, Is.EqualTo(120), "the placeholder row");
+            Assert.That(edited.LyricSectionLines, Is.EqualTo(plain.LyricSectionLines));
+            Assert.That(edited.Pace, Is.EqualTo(plain.Pace));
+            Assert.That(edited.RatingsJson, Is.EqualTo(plain.RatingsJson));
+            Assert.That(GameplayFingerprint.Compute(edited, files), Is.EqualTo(GameplayFingerprint.Compute(plain, files)),
+                "editor timing is not gameplay");
+        });
+    }
+
     [Test]
     public void Parse_LyricsSection_DrivesPaceAndLengths()
     {

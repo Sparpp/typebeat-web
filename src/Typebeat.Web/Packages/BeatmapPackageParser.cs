@@ -298,7 +298,11 @@ public static class BeatmapPackageParser
                 case "TimingPoints":
                 {
                     // time,beatLength,... first uninherited (positive beatLength) point wins.
-                    // (LyricOsuFormat writes exactly one: "0,500,4,2,0,100,1,0" -> 120 BPM.)
+                    // LyricOsuFormat writes one placeholder row ("0,500,4,2,0,100,1,0" -> 120 BPM)
+                    // unless the editor's BPM tools authored timing (PR 3), in which case it writes
+                    // every authored row, kiai effect rows (negative beatLength) folded in, and an
+                    // [Editor] section with BeatDivisor this parser ignores. None of it reaches a
+                    // cell, a rating or the gameplay fingerprint: every target comes from [Lyrics].
                     if (bpm != null)
                         break;
 

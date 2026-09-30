@@ -1,6 +1,10 @@
+using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using typebeat.Game.Beatmaps;
+using typebeat.Game.Beatmaps.ControlPoints;
+using typebeat.Game.Beatmaps.Timing;
 using typebeat.Game.IO;
 using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 using typebeat.Game.Rulesets.TypeBeat.Objects;
@@ -423,6 +427,105 @@ public class LyricParserParityTest
                 }
             }
         });
+    }
+
+    /// <summary>
+    /// PR 3's EDITOR TIMING in the stored file. The game's writer now emits an <c>[Editor]</c> section
+    /// (<c>BeatDivisor:</c>) and as many <c>[TimingPoints]</c> rows as the editor's BPM tools authored,
+    /// kiai effect points folded in, where it used to write the one placeholder row
+    /// <c>0,500,4,2,0,100,1,0</c>. None of it is gameplay: every cell target comes from
+    /// <c>[Lyrics]</c>. So the same map written with and without editor timing has to parse, rate,
+    /// pace, validate and FINGERPRINT identically on the server, and decode to the same cells in
+    /// the browser; only the bytes (checksum_md5) and the set's BPM (the first uninherited row, as
+    /// it always was) may differ.
+    ///
+    /// <para>The fingerprint decision, made here and documented on <see cref="GameplayFingerprint"/>:
+    /// timing points and the beat divisor stay OUT of it, as BPM always was, so a BPM-only editor
+    /// save keeps a ranked map's rank. The game's own local status check compares the whole
+    /// encoding and is stricter; the server's rule has always been "what the player types against",
+    /// and editor timing is not that.</para>
+    /// </summary>
+    [Test]
+    public void AFileWithEditorTimingParsesRatesAndFingerprintsLikeTheSameMapWithout()
+    {
+        TimingControlPoint[] timing =
+        [
+            new TimingControlPoint { Time = -123.456789, BeatLength = 60000 / 128.0 },
+            new TimingControlPoint { Time = 8012.345678, BeatLength = 60000 / 89.987654321, TimeSignature = new TimeSignature(7), OmitFirstBarLine = true },
+        ];
+        EffectControlPoint[] effects = [new EffectControlPoint { Time = 9000.25, KiaiMode = true }];
+
+        string edited = LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(),
+            beatmapId: 11, beatmapSetId: 7, editorTimingPoints: timing, editorEffectPoints: effects, beatDivisor: 3);
+        string plain = LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(), beatmapId: 11, beatmapSetId: 7);
+
+        var clientEdited = ClientDecode(edited);
+        var serverEdited = ServerParse(edited);
+        var serverPlain = ServerParse(plain);
+
+        byte[] audio = Encoding.UTF8.GetBytes("audio");
+        var files = new List<PackageFileEntry> { new PackageFileEntry(SHA256.HashData(audio), audio.Length, "audio.mp3") };
+
+        using var zip = new MemoryStream();
+
+        using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach ((string name, byte[] bytes) in new[] { ("map.osu", Encoding.UTF8.GetBytes(edited)), ("audio.mp3", audio) })
+            {
+                using var entry = archive.CreateEntry(name).Open();
+                entry.Write(bytes);
+            }
+        }
+
+        zip.Position = 0;
+        var package = BeatmapPackageParser.Parse(zip);
+
+        string[] browser = LyricDecodeInBrowser(plain, edited);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(edited, Does.Contain("[Editor]\r\nBeatDivisor: 3").Or.Contain("[Editor]\nBeatDivisor: 3"), "the premise: the new writer emits the section");
+            Assert.That(clientEdited.BeatmapInfo.BeatDivisor, Is.EqualTo(3), "the game reads it back");
+            Assert.That(clientEdited.ControlPointInfo.TimingPoints.Count, Is.EqualTo(2), "and both authored timing rows");
+
+            Assert.That(serverEdited.LyricSectionLines, Is.EqualTo(serverPlain.LyricSectionLines), "the [Lyrics] section is untouched");
+            Assert.That(serverEdited.Pace, Is.EqualTo(serverPlain.Pace), "pace and difficulty_rating");
+            Assert.That(serverEdited.RatingsJson, Is.EqualTo(serverPlain.RatingsJson), "the eighteen-cell matrix");
+            Assert.That(GameplayFingerprint.Compute(serverEdited, files), Is.EqualTo(GameplayFingerprint.Compute(serverPlain, files)),
+                "editor timing is not gameplay, so the fingerprint does not move");
+            Assert.That(serverEdited.ChecksumMd5, Is.Not.EqualTo(serverPlain.ChecksumMd5), "while the bytes do");
+
+            Assert.That(serverPlain.Bpm, Is.EqualTo(120), "the placeholder row");
+            Assert.That(serverEdited.Bpm, Is.EqualTo(128).Within(1e-9), "the first uninherited row, the set's BPM as it always was");
+
+            Assert.That(() => PackageValidator.Validate(package, 7, [11], "mapper"), Throws.Nothing, "the package validates");
+
+            Assert.That(browser[1], Is.EqualTo(browser[0]), "the browser decodes the same cells from both files");
+        });
+    }
+
+    /// <summary>The browser's decode of each file (its lines, both streams), as raw JSON text.</summary>
+    private static string[] LyricDecodeInBrowser(params string[] osus)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"typebeat-lyricdecode-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(osus), new UTF8Encoding(false));
+
+        try
+        {
+            var result = NodeHarness.Run("CoreLyricDecodeHarness.cjs", path);
+            return Enumerable.Range(0, osus.Length).Select(i => result[i].GetRawText()).ToArray();
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // A leftover temp file is not worth failing a fidelity test over.
+            }
+        }
     }
 
     [Test]
