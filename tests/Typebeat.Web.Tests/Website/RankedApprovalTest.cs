@@ -13,9 +13,10 @@ namespace Typebeat.Web.Tests.Website;
 /// The ranked-by-approval loop end to end, against a dedicated pending set (the shared
 /// <see cref="PublicSiteSeed.PendingId"/> must STAY pending for the listing/set-page tests):
 /// non-reviewers 404 on the Rank/Unrank POSTs; a score submitted while the set is pending
-/// stores unranked and leaves the game-facing leaderboard empty; a reviewer's Rank flip makes
-/// a NEW submission rank and appear (with a self-hosted absolute avatar_url); Unrank returns
-/// the set to pending. Plus the website leaderboard section's ranked-only gate.
+/// stores unranked and leaves the game-facing leaderboard empty; a reviewer's Rank flip carries
+/// that honest pending-era play onto the ranked board in the same request (backlog 352) and makes
+/// a NEW submission rank too (with a self-hosted absolute avatar_url); Unrank returns the set to
+/// pending. Plus the website leaderboard section's ranked-only gate.
 /// </summary>
 [TestFixture]
 [NonParallelizable]
@@ -255,7 +256,8 @@ public class RankedApprovalTest
             });
         }
 
-        // A NEW submission on the now-ranked set ranks and tops the (one-entry) leaderboard.
+        // A NEW submission on the now-ranked set ranks, and its player holds the top of the
+        // (one-entry, best-per-user) leaderboard.
         var submitted = await SubmitScoreAsync(totalScore: 999_990);
 
         Assert.Multiple(() =>
@@ -272,10 +274,14 @@ public class RankedApprovalTest
 
         Assert.Multiple(() =>
         {
-            // Exactly the post-rank score: the pending-era submission stays buried.
+            // The PENDING-ERA 1,000,000 is the typist's best: the Rank click carried it onto the
+            // board (backlog 352; it was honest in every way and played on this very .osu), so
+            // best-per-user shows it rather than the later 999,990. Before 352 it stayed buried
+            // until the next server boot.
             Assert.That((int)leaderboard["score_count"]!, Is.EqualTo(1));
             Assert.That(scores, Has.Count.EqualTo(1));
-            Assert.That((long)scores[0]["total_score"]!, Is.EqualTo(999_990));
+            Assert.That((long)scores[0]["total_score"]!, Is.EqualTo(1_000_000));
+            Assert.That((bool)scores[0]["ranked"]!, Is.True, "carried, not merely listed");
             Assert.That((long)scores[0]["user"]!["id"]!, Is.EqualTo(typistId));
 
             // avatar_url is never null (the client would fall back to a ppy CDN): the
@@ -307,19 +313,18 @@ public class RankedApprovalTest
             Assert.That(html, Does.Not.Contain("podium"));
         });
 
-        // The map is pending again, so the API is back to serving its UNRANKED board: the
-        // pending-era 1,000,000 returns and the ranked-era 999,990 stays buried, exactly as the
-        // website's own Unranked tab (ranked = false) would list it. The Rank/Unrank lever is
-        // authoritative in both directions and neither board's rows ever cross onto the other.
+        // The map is pending again, so the API is back to serving its UNRANKED board (ranked =
+        // false rows only). It is EMPTY: the pending-era 1,000,000 was carried onto the ranked
+        // board by the Rank click and, like the 999,990 submitted while ranked, keeps its flag.
+        // Unranking was deliberately left unchanged by backlog 352, so it re-flags nothing, and
+        // a later re-rank finds nothing left to carry.
         var leaderboard = await GetLeaderboardAsync();
         var scores = (JArray)leaderboard["scores"]!;
 
         Assert.Multiple(() =>
         {
-            Assert.That((int)leaderboard["score_count"]!, Is.EqualTo(1));
-            Assert.That(scores, Has.Count.EqualTo(1));
-            Assert.That((long)scores[0]["total_score"]!, Is.EqualTo(1_000_000), "the unranked board, not the buried ranked one");
-            Assert.That((bool)scores[0]["ranked"]!, Is.False);
+            Assert.That((int)leaderboard["score_count"]!, Is.Zero, "every play on the set is ranked-flagged now");
+            Assert.That(scores, Is.Empty);
         });
     }
 

@@ -7,6 +7,7 @@ using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Social;
+using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Pages.Beatmapsets;
 
@@ -19,13 +20,14 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// POST handlers: Favourite (toggle + denormalized counter bump), Report (reports table),
 /// Description (owner/reviewer edit of the set's plain-text description), Comment and
 /// DeleteComment (the comments section below the lyrics, backlog 295),
-/// and the reviewer-only Rank/Unrank pair (pending ⇄ ranked, nothing else).
+/// and the reviewer-only Rank/Unrank pair (pending ⇄ ranked, nothing else; a Rank also carries
+/// the set's honest pending-era plays onto its board in the same request, backlog 352).
 /// Hidden sets are visible to their owner only. Removed sets 404 for the public but stay
 /// viewable by their owner and by admins (the owner's profile deliberately lists them, and a
 /// DMCA'd mapper deserves to see the Removed pill instead of a dead link; the download
 /// endpoint already granted the owner the same access).
 /// </summary>
-public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageModel
+public sealed class SetModel(Db db, IFileStore fileStore, ILogger<SetModel> logger) : TypebeatPageModel
 {
     private const int max_report_reason_length = 4000;
 
@@ -527,11 +529,45 @@ public sealed class SetModel(Db db, ILogger<SetModel> logger) : TypebeatPageMode
             {
                 logger.LogWarning(e, "Set {SetId} transitioned {From}->{To} but the audit row failed.", id, from, to);
             }
+
+            if (to == "ranked")
+                await carryPendingPlaysAsync(id);
         }
 
         // Wrong-state POSTs (double-submit, stale tab) are benign: land back on the page, which
         // shows the current state. A nonexistent set is a real 404, already answered above.
         return Redirect($"/beatmapsets/{id}");
+    }
+
+    /// <summary>
+    /// Carries the set's pending-era plays onto its ranked board IN THIS REQUEST (backlog 352):
+    /// the boot sweep's own pass (<see cref="SetRankRefund.RunForSetAsync"/>, same plan, same
+    /// version rule, narrowed to this set), then the boot pricing (<see cref="PpBackfill"/>,
+    /// narrowed the same way), so the page the reviewer is redirected to already lists the plays
+    /// with their pp. Unranking has no counterpart: a carried play keeps its flag, exactly as a
+    /// play submitted while the set was ranked does.
+    ///
+    /// <para>
+    /// BEST-EFFORT, like the audit row above: the rank has already committed, and a failure here
+    /// must not 500 it. Each re-ranked row commits on its own, so a failure part way leaves some
+    /// rows carried and the rest for the next boot's sweep, which reconsiders every unranked row
+    /// on every ranked set and prices whatever it or this left stale. Run to completion even if the
+    /// reviewer's browser goes away, for the same reason.
+    /// </para>
+    /// </summary>
+    private async Task carryPendingPlaysAsync(long id)
+    {
+        try
+        {
+            int carried = await SetRankRefund.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);
+
+            if (carried > 0)
+                await PpBackfill.RunAsync(db, logger, CancellationToken.None, setId: id);
+        }
+        catch (Exception e)
+        {
+            logger.LogWarning(e, "Set {SetId} was ranked but carrying its pending-era plays failed; the next boot's sweep will retry.", id);
+        }
     }
 
     // ---- display helpers ----

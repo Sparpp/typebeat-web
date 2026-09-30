@@ -1,4 +1,5 @@
 using Typebeat.Web.Data;
+using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Scoring;
 
@@ -30,10 +31,22 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
-/// WHY NOT FIX IT AT THE RANK BUTTON. Because that is a second place to get it right, and it would
-/// still leave the five existing rows. A reviewer ranking a set can simply let the next boot pick
-/// the plays up; the sweep is the one implementation and it also covers a set ranked by hand in
-/// SQL, an unrank-and-rerank, and any future path that moves <c>beatmapsets.status</c>.
+/// THE RANK BUTTON RUNS IT TOO, SCOPED (backlog 352). Waiting for the next boot left a freshly
+/// ranked set's pending-era plays off its board for days. So <c>Set.cshtml.cs</c>'s rank
+/// transition calls <see cref="RunForSetAsync"/> straight after a successful pending to ranked
+/// flip, then prices what it carried through <see cref="Packages.PpBackfill"/> narrowed to the
+/// same set. That is the SAME plan through the same runner, not a second implementation: the set
+/// id only narrows the candidate query. The boot sweep stays exactly as it was, as the safety net
+/// for a set ranked by hand in SQL, a button run that failed (it is best-effort there), and any
+/// future path that moves <c>beatmapsets.status</c>.
+/// </para>
+///
+/// <para>
+/// THE VERSION RULE (backlog 352), on both paths: a play is carried only when the version it was
+/// played on has the current version's gameplay, i.e. its token's hash is the current checksum or
+/// the two versions share a <see cref="Packages.GameplayFingerprint"/>. A play on an earlier upload
+/// with different timing or a different recording stays unranked. See
+/// <see cref="PlayedVersionRule"/> for how the earlier version is recovered and what it declines.
 /// </para>
 ///
 /// <para>
@@ -82,10 +95,19 @@ public static class SetRankRefund
         NewRequiredSeconds: row => PlayTimeGate.RequiredSeconds(row.DrainLengthS, row.SkippableS, row.Rate),
         AppliesTo: _ => true,
         Summary: "the set was pending at submit time and is ranked now",
-        Standing: true);
+        Standing: true,
+        VersionRule: true);
 
-    public static Task<int> RunAsync(Db db, ILogger logger, CancellationToken ct = default)
-        => GateRefund.RunAsync(db, logger, plan, ct);
+    /// <summary>The boot sweep: every ranked set.</summary>
+    public static Task<int> RunAsync(Db db, IFileStore fileStore, ILogger logger, CancellationToken ct = default)
+        => GateRefund.RunAsync(db, logger, plan, ct, setId: null, fileStore);
+
+    /// <summary>
+    /// The identical pass over ONE set, for the rank button: same plan, same checks, same audit
+    /// row, only the candidate query narrowed to <paramref name="setId"/>.
+    /// </summary>
+    public static Task<int> RunForSetAsync(Db db, IFileStore fileStore, ILogger logger, long setId, CancellationToken ct = default)
+        => GateRefund.RunAsync(db, logger, plan, ct, setId, fileStore);
 
     /// <summary>
     /// Whether this row is an honest play on a now-ranked set. Public so a test can assert the

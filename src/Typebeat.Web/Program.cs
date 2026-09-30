@@ -146,8 +146,13 @@ await RateGateRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger)
 // sweep with no migration key guarding it: the condition is intrinsically re-checkable, so a set
 // ranked at any point in the future heals its plays at the next boot with no further code. It runs
 // after both gate refunds (a row either of them re-ranks is no longer a candidate here) and BEFORE
-// PpBackfill, which is what actually prices the rows it flips.
-await SetRankRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
+// PpBackfill, which is what actually prices the rows it flips. Since backlog 352 the rank button runs
+// the same pass scoped to its set in the request itself, so this is the safety net (a set ranked in
+// SQL, a button run that failed); it reads stored .osu blobs for the version rule, hence the store.
+await SetRankRefund.RunAsync(
+    app.Services.GetRequiredService<Db>(),
+    app.Services.GetRequiredService<IFileStore>(),
+    app.Logger);
 
 // Recompute stored per-score pp for rows below the current PerformancePoints.VERSION
 // (020_performance_points.sql). Runs LAST of the sweeps: it reads beatmaps.sr_dt / sr_ht, which

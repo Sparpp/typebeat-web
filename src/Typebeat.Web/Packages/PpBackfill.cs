@@ -48,7 +48,13 @@ namespace Typebeat.Web.Packages;
 /// </summary>
 public static class PpBackfill
 {
-    public static async Task RunAsync(Db db, ILogger logger, CancellationToken ct = default)
+    /// <summary>
+    /// Prices every stale row, or with <paramref name="setId"/> only the stale rows on that one
+    /// set's difficulties: the rank button prices the plays it has just carried through here in the
+    /// same request (backlog 352), so the board the reviewer lands on shows real pp. Nothing else
+    /// differs, which is the point: there is one pricing path, not a second copy of it.
+    /// </summary>
+    public static async Task RunAsync(Db db, ILogger logger, CancellationToken ct = default, long? setId = null)
     {
         await using var conn = await db.OpenAsync(ct);
 
@@ -70,8 +76,9 @@ public static class PpBackfill
                 FROM scores s
                 JOIN beatmaps b ON b.id = s.beatmap_id
                 WHERE s.pp_version < @version
+                  AND (@setId::bigint IS NULL OR b.set_id = @setId)
                 """,
-                new { version = PerformancePoints.VERSION }))
+                new { version = PerformancePoints.VERSION, setId }))
             .ToList();
 
         if (stale.Count == 0)
@@ -122,8 +129,8 @@ public static class PpBackfill
         }
 
         logger.LogInformation(
-            "pp backfill: {Written}/{Stale} scores recomputed to pp v{Version} ({Pending} awaiting a rate star rating, {Failed} errored).",
-            written, stale.Count, PerformancePoints.VERSION, pending, failed);
+            "pp backfill{Scope}: {Written}/{Stale} scores recomputed to pp v{Version} ({Pending} awaiting a rate star rating, {Failed} errored).",
+            setId is { } scoped ? $" (set {scoped})" : "", written, stale.Count, PerformancePoints.VERSION, pending, failed);
     }
 
     private sealed record StaleScore(

@@ -1,6 +1,7 @@
 using Dapper;
 using Newtonsoft.Json;
 using Typebeat.Web.Data;
+using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Scoring;
 
@@ -124,6 +125,14 @@ public static class GateRefund
     /// today, alongside every other submit-time condition.</item>
     /// </list>
     /// </param>
+    /// <param name="VersionRule">
+    /// TRUE when a row may only be re-ranked if the map version it was PLAYED on is, as far as
+    /// gameplay goes, the current one (<see cref="PlayedVersionRule"/>, backlog 352). A gate
+    /// correction does not need it (the gate misjudged the very map the play was on), but a pass
+    /// that carries a play onto a board ranked LATER does: the set may have been re-uploaded
+    /// since. Applied after every other check, so blobs are only ever read for a row that would
+    /// otherwise be re-ranked.
+    /// </param>
     public sealed record Plan(
         string MigrationKey,
         string CandidateFilterSql,
@@ -131,10 +140,27 @@ public static class GateRefund
         Func<CandidateRow, double> NewRequiredSeconds,
         Func<CandidateRow, bool> AppliesTo,
         string Summary,
-        bool Standing = false);
+        bool Standing = false,
+        bool VersionRule = false);
 
-    public static async Task<int> RunAsync(Db db, ILogger logger, Plan plan, CancellationToken ct = default)
+    /// <summary>
+    /// Runs one pass. <paramref name="setId"/> narrows the candidates to one set's rows (the rank
+    /// button's same-request run, backlog 352) and changes nothing else: the rows it sees are
+    /// decided exactly as the boot sweep would decide them. <paramref name="fileStore"/> is where a
+    /// <see cref="Plan.VersionRule"/> pass reads earlier versions' .osu blobs from, and is required
+    /// for such a pass.
+    /// </summary>
+    public static async Task<int> RunAsync(
+        Db db,
+        ILogger logger,
+        Plan plan,
+        CancellationToken ct = default,
+        long? setId = null,
+        IFileStore? fileStore = null)
     {
+        if (plan.VersionRule && fileStore == null)
+            throw new ArgumentNullException(nameof(fileStore), $"{plan.MigrationKey} applies the version rule, which reads stored blobs.");
+
         await using var conn = await db.OpenAsync(ct);
 
         // The audit table only exists once 016 has been applied; on a database mid-migration
@@ -154,8 +180,13 @@ public static class GateRefund
             : "AND NOT EXISTS (SELECT 1 FROM score_refunds r WHERE r.migration = @migration AND r.score_id = s.id)";
 
         // Candidates: unranked, passed, on a currently-ranked set, with an anchored elapsed time,
-        // not already refunded by THIS pass, plus whatever the plan narrows to. Everything else is
-        // decided per row below.
+        // not already refunded by THIS pass, plus whatever the plan narrows to (and, for a scoped
+        // run, on the one set). Everything else is decided per row below.
+        //
+        // The token's beatmap_hash rides along for the version rule. It is joined as ONE
+        // pre-grouped scan rather than a correlated lookup per row, because score_tokens has no
+        // index on score_id; a score has at most one token (the PUT stamps score_id once), and
+        // DISTINCT ON keeps that true even for a hand-edited table.
         var candidates = (await conn.QueryAsync<CandidateRow>(
             $"""
             SELECT s.id                                              AS scoreId,
@@ -169,29 +200,49 @@ public static class GateRefund
                    EXTRACT(EPOCH FROM (s.ended_at - s.started_at))::double precision AS elapsedS,
                    b.drain_length_s                                  AS drainLengthS,
                    b.skippable_s                                     AS skippableS,
-                   COALESCE(bd.blocked, false)                       AS buildBlocked
+                   COALESCE(bd.blocked, false)                       AS buildBlocked,
+                   b.set_id                                          AS setId,
+                   b.id                                              AS beatmapId,
+                   b.checksum_md5                                    AS currentChecksum,
+                   bs.current_version                                AS currentVersion,
+                   t.beatmap_hash                                    AS playedHash
             FROM scores s
             JOIN beatmaps b ON b.id = s.beatmap_id
             JOIN beatmapsets bs ON bs.id = b.set_id
             LEFT JOIN builds bd ON bd.id = s.build_id
+            LEFT JOIN (SELECT DISTINCT ON (score_id) score_id, beatmap_hash
+                       FROM score_tokens
+                       WHERE score_id IS NOT NULL
+                       ORDER BY score_id, id) t ON t.score_id = s.id
             WHERE NOT s.ranked
               AND s.passed
               AND s.started_at IS NOT NULL
               AND bs.status = 'ranked'
+              AND (@setId::bigint IS NULL OR b.set_id = @setId)
               AND {plan.CandidateFilterSql}
               {alreadyRefunded}
             """,
-            new { migration = plan.MigrationKey })).ToList();
+            new { migration = plan.MigrationKey, setId })).ToList();
 
         if (candidates.Count == 0)
             return 0;
 
         int refunded = 0;
+        int versionDeclined = 0;
+        var versionRule = plan.VersionRule ? new PlayedVersionRule(fileStore!, logger) : null;
 
         foreach (var row in candidates)
         {
             if (!Qualifies(plan, row))
                 continue;
+
+            if (versionRule != null && !PlayedVersionRule.IsCarried(await versionRule.JudgeAsync(conn, row, ct)))
+            {
+                // Honest in every other way, but played on a map that is not (or cannot be shown
+                // to be) the one that was ranked. It stays unranked, and is counted in the log.
+                versionDeclined++;
+                continue;
+            }
 
             await using var tx = await conn.BeginTransactionAsync(ct);
 
@@ -234,11 +285,11 @@ public static class GateRefund
             await tx.CommitAsync(ct);
         }
 
-        if (refunded > 0)
+        if (refunded > 0 || versionDeclined > 0)
         {
             logger.LogInformation(
-                "{Migration}: {Refunded}/{Candidates} unranked scores re-ranked ({Summary}).",
-                plan.MigrationKey, refunded, candidates.Count, plan.Summary);
+                "{Migration}{Scope}: {Refunded}/{Candidates} unranked scores re-ranked ({Summary}); {VersionDeclined} declined by the version rule.",
+                plan.MigrationKey, setId is { } scoped ? $" (set {scoped})" : "", refunded, candidates.Count, plan.Summary, versionDeclined);
         }
 
         return refunded;
@@ -297,7 +348,12 @@ public static class GateRefund
         return true;
     }
 
-    /// <summary>One refund candidate, as stored. Times in seconds, both lengths in map time.</summary>
+    /// <summary>
+    /// One refund candidate, as stored. Times in seconds, both lengths in map time. The last five
+    /// columns feed <see cref="PlayedVersionRule"/>: which difficulty and set, the checksum and
+    /// version that are current, and the .osu hash the play's token was issued for (null when the
+    /// score has no token).
+    /// </summary>
     public sealed record CandidateRow(
         long ScoreId,
         long UserId,
@@ -309,7 +365,12 @@ public static class GateRefund
         double ElapsedS,
         double DrainLengthS,
         double SkippableS,
-        bool BuildBlocked)
+        bool BuildBlocked,
+        long SetId,
+        long BeatmapId,
+        string CurrentChecksum,
+        int CurrentVersion,
+        string? PlayedHash)
     {
         private IReadOnlyList<StoredMod>? parsedMods;
 

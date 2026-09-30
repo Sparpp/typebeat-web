@@ -1,13 +1,20 @@
 using System.Net;
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
+using Typebeat.Web.Data;
+using Typebeat.Web.Scoring;
+using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
 /// Beatmapset page: header + stats box + XSS-safe plain-text description, the best-per-user
 /// leaderboard (engine judgement names, no unranked rows), the favourite toggle and report
-/// POST handlers, visibility rules for hidden/removed sets, and the /beatmaps/{id} 301.
+/// POST handlers, visibility rules for hidden/removed sets, and the /beatmaps/{id} 301. Plus the
+/// reviewer's Rank carrying the set's honest pending-era plays onto its board in the same request
+/// (backlog 352).
 /// </summary>
 public class SetPageTest
 {
@@ -593,6 +600,313 @@ public class SetPageTest
             Assert.That(unknown.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
             Assert.That(hidden.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
         });
+    }
+
+    // ---- the rank button carries the set's pending-era plays (backlog 352) ----
+    //
+    // Each case seeds its OWN pending set, map and typists (dedicated users, never the shared seed
+    // ones), and one dedicated reviewer signs in once for all of them: every sign-in spends the
+    // per-account login budget.
+
+    private const string carry_reviewer_name = "carry reviewer";
+    private const string carry_reviewer_password = "carryreview-123456";
+
+    private static HttpClient? carryReviewer;
+    private static long carryBuildId;
+
+    /// <summary>
+    /// Ranking a pending set flips its honest unranked plays AND prices them inside the POST, so
+    /// the page the reviewer is redirected to already has them on its ranked board, before any
+    /// server boot. A Puppeteer play on the same set stays off it.
+    /// </summary>
+    [Test]
+    public async Task Rank_CarriesAndPricesTheSetsHonestPendingPlays_InTheSameRequest()
+    {
+        var (setId, mapId) = await seedPendingCarrySetAsync("Carried Anthem");
+
+        long one = await seedPendingPlayAsync(mapId, "carry typist one", 900_000);
+        long two = await seedPendingPlayAsync(mapId, "carry typist two", 800_000);
+        long three = await seedPendingPlayAsync(mapId, "carry typist three", 700_000);
+        long puppeteer = await seedPendingPlayAsync(mapId, "carry puppeteer", 950_000, modsJson: """[{"acronym": "PT"}]""");
+
+        var reviewer = await carryReviewerAsync();
+
+        using var response = await postReviewAsync(reviewer, setId, "Rank");
+        string html = await response.Content.ReadAsStringAsync();
+
+        // Read BEFORE anything else could reprice: this is what the rank request itself left.
+        var rows = await scoreRowsAsync(one, two, three, puppeteer);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(response.RequestMessage!.RequestUri!.AbsolutePath, Is.EqualTo($"/beatmapsets/{setId}"));
+            Assert.That(html, Does.Contain(">Ranked</span>"));
+
+            // The redirected page's ranked board lists all three typists, in score order.
+            Assert.That(html, Does.Contain("podium"));
+            Assert.That(html, Does.Contain("carry typist one"));
+            Assert.That(html, Does.Contain("carry typist two"));
+            Assert.That(html, Does.Contain("carry typist three"));
+            Assert.That(html.IndexOf("carry typist two", StringComparison.Ordinal),
+                Is.LessThan(html.IndexOf("carry typist three", StringComparison.Ordinal)));
+            Assert.That(html, Does.Not.Contain("carry puppeteer"), "PT is unranked at every configuration");
+
+            foreach (long id in new[] { one, two, three })
+            {
+                Assert.That(rows[id].Ranked, Is.True, $"score {id} carried");
+                Assert.That(rows[id].PpVersion, Is.EqualTo(PerformancePoints.VERSION), $"score {id} priced in the rank request");
+                Assert.That(rows[id].Pp, Is.GreaterThan(0), $"score {id} earned real pp");
+            }
+
+            Assert.That(rows[puppeteer].Ranked, Is.False);
+            Assert.That(rows[puppeteer].Pp, Is.Zero);
+        });
+
+        // Nothing is left for the safety net: the boot sweep's own plan, over this set, carries
+        // nothing more (the unscoped sweep would also walk the other fixtures' rows in this shared
+        // database, so it is pinned on its own database in SetRankRefundVersionTest instead).
+        int leftover = await runSweepForSetAsync(setId);
+        int oneAudits = await refundAuditCountAsync(one);
+        int puppeteerAudits = await refundAuditCountAsync(puppeteer);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(leftover, Is.Zero);
+            Assert.That(oneAudits, Is.EqualTo(1));
+            Assert.That(puppeteerAudits, Is.Zero);
+        });
+    }
+
+    /// <summary>
+    /// The carry is best-effort, like the rank's audit row: a failure inside it logs and the rank
+    /// still lands. FAULT INJECTION, not a seam: a trigger makes the refund's own
+    /// <c>score_refunds</c> insert raise for the seeded play, so the real code path throws from
+    /// the real place. The boot sweep then heals it once the fault is gone.
+    /// </summary>
+    [Test]
+    public async Task Rank_WhenTheCarryFails_StillRanksTheSet()
+    {
+        var (setId, mapId) = await seedPendingCarrySetAsync("Faulted Anthem");
+        long play = await seedPendingPlayAsync(mapId, "carry faulted typist", 850_000);
+
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        await conn.ExecuteAsync(
+            $"""
+            CREATE OR REPLACE FUNCTION carry_fault_{play}() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.score_id = {play} THEN RAISE EXCEPTION 'injected carry fault'; END IF;
+                RETURN NEW;
+            END $$;
+            CREATE TRIGGER carry_fault_{play} BEFORE INSERT ON score_refunds
+                FOR EACH ROW EXECUTE FUNCTION carry_fault_{play}();
+            """);
+
+        HttpStatusCode status;
+        string path;
+
+        try
+        {
+            using var response = await postReviewAsync(await carryReviewerAsync(), setId, "Rank");
+            status = response.StatusCode;
+            path = response.RequestMessage!.RequestUri!.AbsolutePath;
+        }
+        finally
+        {
+            await conn.ExecuteAsync($"DROP TRIGGER carry_fault_{play} ON score_refunds; DROP FUNCTION carry_fault_{play}();");
+        }
+
+        string? setStatus = await conn.ExecuteScalarAsync<string>("SELECT status FROM beatmapsets WHERE id = @setId", new { setId });
+        int rankAudits = await conn.ExecuteScalarAsync<int>(
+            "SELECT count(*)::int FROM moderation_actions WHERE set_id = @setId AND action = 'rank'", new { setId });
+        bool carried = await conn.ExecuteScalarAsync<bool>("SELECT ranked FROM scores WHERE id = @play", new { play });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo(HttpStatusCode.OK), "a failed carry must not 500 the rank");
+            Assert.That(path, Is.EqualTo($"/beatmapsets/{setId}"));
+            Assert.That(setStatus, Is.EqualTo("ranked"));
+            Assert.That(rankAudits, Is.EqualTo(1));
+            Assert.That(carried, Is.False, "the faulted row rolled back");
+        });
+
+        // With the fault gone, the safety net (the boot sweep's plan) picks it up.
+        int healed = await runSweepForSetAsync(setId);
+
+        Assert.That(healed, Is.EqualTo(1));
+    }
+
+    /// <summary>
+    /// Unrank leaves carried plays as they are (backlog 352 changes nothing about unranking), and
+    /// a re-rank carries only what is new since: never the same score twice, one audit row each.
+    /// </summary>
+    [Test]
+    public async Task UnrankThenRerank_CarriesNothingTwice()
+    {
+        var (setId, mapId) = await seedPendingCarrySetAsync("Twice Ranked Anthem");
+
+        long first = await seedPendingPlayAsync(mapId, "carry twice one", 900_000);
+        long second = await seedPendingPlayAsync(mapId, "carry twice two", 800_000);
+
+        var reviewer = await carryReviewerAsync();
+
+        using (var rank = await postReviewAsync(reviewer, setId, "Rank"))
+            Assert.That(rank.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        using (var unrank = await postReviewAsync(reviewer, setId, "Unrank"))
+            Assert.That(unrank.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        // A play made while the set is pending AGAIN: the only thing the re-rank should carry.
+        long third = await seedPendingPlayAsync(mapId, "carry twice three", 700_000);
+
+        var afterUnrank = await scoreRowsAsync(first, second);
+
+        using (var rerank = await postReviewAsync(reviewer, setId, "Rank"))
+            Assert.That(rerank.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var afterRerank = await scoreRowsAsync(first, second, third);
+
+        var audits = new Dictionary<long, int>();
+
+        foreach (long id in new[] { first, second, third })
+            audits[id] = await refundAuditCountAsync(id);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(afterUnrank[first].Ranked, Is.True, "unranking re-flags nothing");
+            Assert.That(afterUnrank[second].Ranked, Is.True);
+            Assert.That(afterRerank[third].Ranked, Is.True, "the re-rank carries the new pending-era play");
+
+            foreach (var (id, count) in audits)
+                Assert.That(count, Is.EqualTo(1), $"score {id}: one audit row, carried once");
+        });
+    }
+
+    /// <summary>The boot sweep's own plan, narrowed to one set, against the host's database and store.</summary>
+    private static async Task<int> runSweepForSetAsync(long setId)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+
+        return await SetRankRefund.RunForSetAsync(
+            new Db(dataSource), WebsiteFixture.Services.GetRequiredService<IFileStore>(), NullLogger.Instance, setId);
+    }
+
+    private static async Task<HttpClient> carryReviewerAsync()
+    {
+        if (carryReviewer != null)
+            return carryReviewer;
+
+        await using (var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString))
+        {
+            await conn.OpenAsync();
+
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO users (username, email, password_hash, country_code, map_reviewer)
+                VALUES (@name, 'carry.reviewer@example.com', @hash, 'US', true)
+                """,
+                new { name = carry_reviewer_name, hash = new Typebeat.Web.Auth.PasswordService().Hash(carry_reviewer_password) });
+
+            carryBuildId = await conn.ExecuteScalarAsync<long>(
+                "INSERT INTO builds (version_hash, blocked) VALUES ('carry-test-build', false) RETURNING id");
+        }
+
+        carryReviewer = await SignedInBrowserAsync(carry_reviewer_name, carry_reviewer_password);
+        return carryReviewer;
+    }
+
+    /// <summary>A pending set owned by the seeded mapper, with one priceable difficulty.</summary>
+    private static async Task<(long SetId, long MapId)> seedPendingCarrySetAsync(string title)
+    {
+        await carryReviewerAsync();
+
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        long setId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist, status, submitted_at, updated_at)
+            VALUES (@ownerId, @title, 'The Carriers', 'pending', now() - interval '5 days', now() - interval '5 days')
+            RETURNING id
+            """,
+            new { ownerId = PublicSiteSeed.MapperId, title });
+
+        // Zero drain, so the play-time gate clears; a rating matrix, so a carried play can be priced.
+        long mapId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating, filename, ratings)
+            VALUES (@setId, 'type!beat', @checksum, 60, 0, 2.0, 'map.osu', @ratings::jsonb)
+            RETURNING id
+            """,
+            new { setId, checksum = Guid.NewGuid().ToString("N"), ratings = TestRatings.Json(2.0) });
+
+        return (setId, mapId);
+    }
+
+    /// <summary>
+    /// A play exactly as the submit path stores one on a pending set: passed, clean, unranked,
+    /// already settled at pp 0 at the CURRENT pp version (so only a real reprice moves it), with
+    /// the completed token naming the map's current .osu.
+    /// </summary>
+    private static async Task<long> seedPendingPlayAsync(long mapId, string username, long totalScore, string modsJson = "[]")
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        long userId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO users (username, email, password_hash, country_code)
+            VALUES (@username, @email, 'x', 'US')
+            RETURNING id
+            """,
+            new { username, email = username.Replace(' ', '.') + "@example.com" });
+
+        long scoreId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO scores
+                (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
+                 mods, statistics, maximum_statistics, build_id, started_at, ended_at, pp, pp_version)
+            VALUES
+                (@userId, @mapId, @totalScore, 1.0, 1.0, 5, 'X', true, false,
+                 CAST(@modsJson AS jsonb), '{"great": 5}'::jsonb, '{"great": 5}'::jsonb, @buildId,
+                 now() - interval '60 seconds', now(), 0, @ppVersion)
+            RETURNING id
+            """,
+            new { userId, mapId, totalScore, modsJson, buildId = carryBuildId, ppVersion = PerformancePoints.VERSION });
+
+        await SetRankRefundTest.insertTokenAsync(conn, userId, mapId, carryBuildId, scoreId);
+
+        return scoreId;
+    }
+
+    private static async Task<HttpResponseMessage> postReviewAsync(HttpClient client, long setId, string handler)
+    {
+        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, $"/beatmapsets/{setId}");
+
+        return await client.PostAsync($"/beatmapsets/{setId}?handler={handler}",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = token }));
+    }
+
+    private static async Task<Dictionary<long, (bool Ranked, double Pp, int PpVersion)>> scoreRowsAsync(params long[] ids)
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        return (await conn.QueryAsync<(long Id, bool Ranked, double Pp, int PpVersion)>(
+                "SELECT id, ranked, pp, pp_version FROM scores WHERE id = ANY(@ids)", new { ids }))
+            .ToDictionary(r => r.Id, r => (r.Ranked, r.Pp, r.PpVersion));
+    }
+
+    private static async Task<int> refundAuditCountAsync(long scoreId)
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        return await conn.ExecuteScalarAsync<int>(
+            "SELECT count(*)::int FROM score_refunds WHERE migration = @migration AND score_id = @scoreId",
+            new { migration = SetRankRefund.MIGRATION_KEY, scoreId });
     }
 
     // ---- helpers ----

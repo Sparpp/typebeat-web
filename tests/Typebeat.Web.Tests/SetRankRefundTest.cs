@@ -2,7 +2,9 @@ using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Typebeat.Web.Data;
+using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
+using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Tests;
 
@@ -45,6 +47,12 @@ public class SetRankRefundTest
 
     private NpgsqlDataSource dataSource = null!;
 
+    // Empty: every row in this fixture was played on the map's current .osu (its token carries the
+    // current checksum), so the version rule never has to read a blob here. The versioned cases
+    // live in SetRankRefundVersionTest below, against real ingested versions.
+    private string fileRoot = null!;
+    private LocalFileStore fileStore = null!;
+
     private long typistId;
     private int refunded;
 
@@ -63,6 +71,7 @@ public class SetRankRefundTest
     private long failedId;        // a failed play
     private long overCeilingId;   // a total its own statistics cannot justify
     private long blockedBuildId;  // a blocked build
+    private long tokenlessId;     // no score_tokens row: nothing names the version it was played on
 
     // Already ranked and already priced: never a candidate, and its pp stamp must not be reset.
     private long alreadyRankedId;
@@ -80,6 +89,9 @@ public class SetRankRefundTest
         await Db.EnsureExtensionsAsync(connection_string);
 
         dataSource = NpgsqlDataSource.Create(connection_string);
+
+        fileRoot = Path.Combine(Path.GetTempPath(), "typebeat-setrank-" + Guid.NewGuid().ToString("N"));
+        fileStore = new LocalFileStore(fileRoot);
 
         // The whole schema, not a replay up to some migration: this pass is not a migration.
         await new Db(dataSource).MigrateAsync(NullLogger.Instance);
@@ -124,12 +136,13 @@ public class SetRankRefundTest
             failedId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId, passed: false, rank: "F");
             overCeilingId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId, totalScore: 1_500_000);
             blockedBuildId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: blockedBuild);
+            tokenlessId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId, withToken: false);
 
             alreadyRankedId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId,
                 ranked: true, ppVersion: PerformancePoints.VERSION);
         }
 
-        refunded = await SetRankRefund.RunAsync(new Db(dataSource), NullLogger.Instance);
+        refunded = await SetRankRefund.RunAsync(new Db(dataSource), fileStore, NullLogger.Instance);
     }
 
     [OneTimeTearDown]
@@ -137,6 +150,9 @@ public class SetRankRefundTest
     {
         if (dataSource != null)
             await dataSource.DisposeAsync();
+
+        if (fileRoot != null && Directory.Exists(fileRoot))
+            Directory.Delete(fileRoot, recursive: true);
     }
 
     [Test]
@@ -193,6 +209,7 @@ public class SetRankRefundTest
             (failedId, "a failed play"),
             (overCeilingId, "a total its own statistics cannot justify"),
             (blockedBuildId, "a blocked build"),
+            (tokenlessId, "no token, so no evidence of which version it was played on (the version rule, backlog 352)"),
         };
 
         var stillUnranked = new List<(string Why, bool Ranked)>();
@@ -241,7 +258,7 @@ public class SetRankRefundTest
         var before = (await conn.QueryAsync<(long Id, bool Ranked, int PpVersion)>(
             "SELECT id, ranked, pp_version FROM scores ORDER BY id")).ToList();
 
-        int again = await SetRankRefund.RunAsync(new Db(dataSource), NullLogger.Instance);
+        int again = await SetRankRefund.RunAsync(new Db(dataSource), fileStore, NullLogger.Instance);
 
         var after = (await conn.QueryAsync<(long Id, bool Ranked, int PpVersion)>(
             "SELECT id, ranked, pp_version FROM scores ORDER BY id")).ToList();
@@ -267,7 +284,7 @@ public class SetRankRefundTest
         await conn.ExecuteAsync(
             "UPDATE beatmapsets SET status = 'ranked' WHERE title = 'Still In Review'");
 
-        int healed = await SetRankRefund.RunAsync(new Db(dataSource), NullLogger.Instance);
+        int healed = await SetRankRefund.RunAsync(new Db(dataSource), fileStore, NullLogger.Instance);
 
         Assert.Multiple(() =>
         {
@@ -312,8 +329,10 @@ public class SetRankRefundTest
         string rank = "X",
         long totalScore = 400_000,
         string modsJson = "[]",
-        int ppVersion = 20)
-        => await conn.ExecuteScalarAsync<long>(
+        int ppVersion = 20,
+        bool withToken = true)
+    {
+        long id = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO scores
                 (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
@@ -325,4 +344,322 @@ public class SetRankRefundTest
             RETURNING id
             """,
             new { typistId, beatmapId, totalScore, rank, passed, ranked, modsJson, buildId, elapsed, ppVersion });
+
+        // The token both submit paths write, issued for the map's CURRENT .osu, which is what
+        // names the version the play was on (backlog 352).
+        if (withToken)
+            await insertTokenAsync(conn, typistId, beatmapId, buildId, id);
+
+        return id;
+    }
+
+    /// <summary>
+    /// A completed score token. <paramref name="beatmapHash"/> defaults to the difficulty's
+    /// current checksum, exactly as both token endpoints refuse any other.
+    /// </summary>
+    internal static Task insertTokenAsync(NpgsqlConnection conn, long userId, long beatmapId, long buildId, long scoreId, string? beatmapHash = null)
+        => conn.ExecuteAsync(
+            """
+            INSERT INTO score_tokens (user_id, beatmap_id, beatmap_hash, build_id, score_id)
+            SELECT @userId, b.id, COALESCE(@beatmapHash, b.checksum_md5), @buildId, @scoreId
+            FROM beatmaps b WHERE b.id = @beatmapId
+            """,
+            new { userId, beatmapId, beatmapHash, buildId, scoreId });
+}
+
+/// <summary>
+/// THE VERSION RULE of <see cref="SetRankRefund"/> (backlog 352), against real ingested versions:
+/// a play is carried only when the version it was played on (its token's hash) is the current
+/// .osu, or shares the current version's <see cref="GameplayFingerprint"/>. Each case owns a fresh
+/// set so they cannot see each other, and runs the SCOPED pass the rank button uses and then the
+/// boot sweep, so the rule is pinned on both paths.
+/// </summary>
+[TestFixture]
+[NonParallelizable]
+public class SetRankRefundVersionTest
+{
+    private const string database_name = "typebeat_setrankversiontests";
+
+    private const string connection_string =
+        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
+
+    private const string admin_connection_string =
+        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+
+    /// <summary>The rated fixture lyric, retimed: same words, every time moved. A gameplay change.</summary>
+    private const string retimed_lyrics =
+        """
+        {"version":2,"song_end_ms":4000,"granularity":"Word"}
+        {"text":"neon lights are calling","start_ms":1100,"end_ms":3100,"words":[{"text":"neon","start_ms":1100,"end_ms":1600,"score":1},{"text":"lights","start_ms":1600,"end_ms":2100,"score":1},{"text":"are","start_ms":2100,"end_ms":2500,"score":1},{"text":"calling","start_ms":2500,"end_ms":3100,"score":1}]}
+        """;
+
+    private NpgsqlDataSource dataSource = null!;
+    private Db db = null!;
+    private LocalFileStore fileStore = null!;
+    private PackageIngest ingest = null!;
+    private string fileRoot = null!;
+
+    private long uploaderId;
+    private long typistId;
+    private long buildId;
+
+    [OneTimeSetUp]
+    public async Task OneTimeSetUp()
+    {
+        await using (var admin = new NpgsqlConnection(admin_connection_string))
+        {
+            await admin.OpenAsync();
+            await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
+            await admin.ExecuteAsync($"CREATE DATABASE {database_name}");
+        }
+
+        await Db.EnsureExtensionsAsync(connection_string);
+
+        dataSource = NpgsqlDataSource.Create(connection_string);
+        db = new Db(dataSource);
+        await db.MigrateAsync(NullLogger.Instance);
+
+        fileRoot = Path.Combine(Path.GetTempPath(), "typebeat-setrankversion-" + Guid.NewGuid().ToString("N"));
+        fileStore = new LocalFileStore(fileRoot);
+        ingest = new PackageIngest(db, fileStore, new CoverGenerator(), new PreviewGenerator(), NullLogger<PackageIngest>.Instance);
+
+        await using var conn = await db.OpenAsync();
+
+        uploaderId = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO users (username, email, password_hash, country_code) VALUES ('uploader', 'uploader@example.com', 'x', 'US') RETURNING id");
+        typistId = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO users (username, email, password_hash, country_code) VALUES ('early bird', 'early.bird@example.com', 'x', 'US') RETURNING id");
+        buildId = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO builds (version_hash, blocked) VALUES ('clean-build', false) RETURNING id");
+    }
+
+    [OneTimeTearDown]
+    public async Task OneTimeTearDown()
+    {
+        if (dataSource != null)
+            await dataSource.DisposeAsync();
+
+        if (fileRoot != null && Directory.Exists(fileRoot))
+            Directory.Delete(fileRoot, recursive: true);
+    }
+
+    [Test]
+    public async Task APlayBeforeAGameplayChangingReupload_StaysUnranked_OnBothPaths()
+    {
+        var (setId, mapId) = await newPendingSetAsync();
+
+        long before = await playOnCurrentVersionAsync(mapId);
+
+        // Same words, every time shifted: the edit the fingerprint exists to see.
+        await uploadAsync(setId, mapId, lyrics: retimed_lyrics);
+
+        long after = await playOnCurrentVersionAsync(mapId);
+
+        await rankAsync(setId);
+
+        int scoped = await SetRankRefund.RunForSetAsync(db, fileStore, NullLogger.Instance, setId);
+        int boot = await SetRankRefund.RunAsync(db, fileStore, NullLogger.Instance);
+
+        bool beforeRanked = await rankedOf(before);
+        bool afterRanked = await rankedOf(after);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(beforeRanked, Is.False, "played on timing that is not the timing that was ranked");
+            Assert.That(afterRanked, Is.True, "the rule is not a blanket refusal: a play on the ranked version is carried");
+            Assert.That(scoped, Is.EqualTo(1));
+            Assert.That(boot, Is.Zero, "the boot sweep applies the same rule and finds nothing more to carry");
+        });
+    }
+
+    [Test]
+    public async Task APlayBeforeAMetadataOnlyReupload_IsCarried()
+    {
+        var (setId, mapId) = await newPendingSetAsync();
+
+        long before = await playOnCurrentVersionAsync(mapId);
+
+        // Title, artist, tags and difficulty name: the .osu hash moves, the gameplay does not.
+        await uploadAsync(setId, mapId, title: "Neon Nights (Remastered)", artist: "Synth Rider and Friends", version: "insane", tags: "renamed");
+
+        string? played, current;
+
+        await using (var conn = await db.OpenAsync())
+        {
+            played = await conn.ExecuteScalarAsync<string>("SELECT beatmap_hash FROM score_tokens WHERE score_id = @before", new { before });
+            current = await conn.ExecuteScalarAsync<string>("SELECT checksum_md5 FROM beatmaps WHERE id = @mapId", new { mapId });
+        }
+
+        Assert.That(played, Is.Not.EqualTo(current), "precondition: the play really was on an earlier .osu");
+
+        await rankAsync(setId);
+
+        int scoped = await SetRankRefund.RunForSetAsync(db, fileStore, NullLogger.Instance, setId);
+        bool beforeRanked = await rankedOf(before);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(scoped, Is.EqualTo(1));
+            Assert.That(beforeRanked, Is.True, "a cosmetic re-upload must not strand the plays made before it");
+        });
+    }
+
+    [Test]
+    public async Task APlayBeforeAnAudioSwap_StaysUnranked()
+    {
+        var (setId, mapId) = await newPendingSetAsync();
+
+        long before = await playOnCurrentVersionAsync(mapId);
+
+        // A different recording AND a retitle, so the .osu hash moves as well: only the
+        // fingerprint (which hashes the audio bytes of each version's own manifest) can see it.
+        await uploadAsync(setId, mapId, title: "Neon Nights (Live)", audio: "a different recording");
+
+        await rankAsync(setId);
+
+        int scoped = await SetRankRefund.RunForSetAsync(db, fileStore, NullLogger.Instance, setId);
+        bool beforeRanked = await rankedOf(before);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(scoped, Is.Zero);
+            Assert.That(beforeRanked, Is.False, "the timing matches, the recording it was played to does not");
+        });
+    }
+
+    [Test]
+    public async Task AHashNoStoredVersionProduces_StaysUnranked()
+    {
+        var (setId, mapId) = await newPendingSetAsync();
+
+        // A token for an .osu that no version of this set ever shipped (the manifest was edited
+        // in place outside the ingest): nothing to fingerprint, so nothing to carry.
+        long orphan = await insertScoreAsync(mapId, beatmapHash: "0123456789abcdef0123456789abcdef");
+
+        await rankAsync(setId);
+
+        int scoped = await SetRankRefund.RunForSetAsync(db, fileStore, NullLogger.Instance, setId);
+        bool orphanRanked = await rankedOf(orphan);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(scoped, Is.Zero);
+            Assert.That(orphanRanked, Is.False);
+        });
+    }
+
+    [Test]
+    public async Task AScopedRun_TouchesOnlyItsOwnSet()
+    {
+        var (setA, mapA) = await newPendingSetAsync();
+        var (setB, mapB) = await newPendingSetAsync();
+
+        long onA = await playOnCurrentVersionAsync(mapA);
+        long onB = await playOnCurrentVersionAsync(mapB);
+
+        await rankAsync(setA);
+        await rankAsync(setB);
+
+        int scoped = await SetRankRefund.RunForSetAsync(db, fileStore, NullLogger.Instance, setA);
+        bool aRanked = await rankedOf(onA);
+        bool bRanked = await rankedOf(onB);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(scoped, Is.EqualTo(1));
+            Assert.That(aRanked, Is.True);
+            Assert.That(bRanked, Is.False, "set B is the boot sweep's, not set A's button");
+        });
+
+        // Put the world back for the other cases' boot-sweep assertions.
+        Assert.That(await SetRankRefund.RunForSetAsync(db, fileStore, NullLogger.Instance, setB), Is.EqualTo(1));
+    }
+
+    // ---- helpers ----
+
+    private async Task<(long SetId, long MapId)> newPendingSetAsync()
+    {
+        long setId, mapId;
+
+        await using (var conn = await db.OpenAsync())
+        {
+            setId = await conn.ExecuteScalarAsync<long>(
+                "INSERT INTO beatmapsets (owner_id, status, intended_status) VALUES (@uploaderId, 'hidden', 'pending') RETURNING id",
+                new { uploaderId });
+            mapId = await conn.ExecuteScalarAsync<long>(
+                "INSERT INTO beatmaps (set_id, checksum_md5) VALUES (@setId, md5(random()::text)) RETURNING id", new { setId });
+        }
+
+        await uploadAsync(setId, mapId);
+
+        await using (var conn = await db.OpenAsync())
+            await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'pending' WHERE id = @setId", new { setId });
+
+        return (setId, mapId);
+    }
+
+    private async Task uploadAsync(
+        long setId,
+        long mapId,
+        string lyrics = SyntheticPackage.RatedLyrics,
+        string title = "Neon Nights",
+        string artist = "Synth Rider",
+        string version = "type!beat",
+        string tags = "typebeat lyrics typing",
+        string audio = "fake audio bytes")
+    {
+        (string Name, byte[] Content)[] entries =
+        [
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+                title: title, titleUnicode: title, artist: artist, artistUnicode: artist, version: version, tags: tags,
+                beatmapId: mapId, beatmapSetId: setId, lyrics: lyrics))),
+            ("audio.mp3", SyntheticPackage.Utf8(audio)),
+            ("bg.jpg", SyntheticPackage.TinyPng()),
+        ];
+
+        using var zip = SyntheticPackage.Zip(entries);
+        var parsed = BeatmapPackageParser.Parse(zip);
+
+        PackageValidator.Validate(parsed, setId, [mapId], "uploader");
+
+        await using var scope = await ingest.BeginSetScopeAsync(setId);
+        await ingest.IngestAsync(scope, zip, parsed, setId, uploaderId);
+    }
+
+    private async Task rankAsync(long setId)
+    {
+        await using var conn = await db.OpenAsync();
+        await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'ranked' WHERE id = @setId", new { setId });
+    }
+
+    /// <summary>An honest unranked play whose token names the difficulty's .osu as it is NOW.</summary>
+    private Task<long> playOnCurrentVersionAsync(long mapId) => insertScoreAsync(mapId, beatmapHash: null);
+
+    private async Task<long> insertScoreAsync(long mapId, string? beatmapHash)
+    {
+        await using var conn = await db.OpenAsync();
+
+        long id = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO scores
+                (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
+                 mods, statistics, maximum_statistics, build_id, started_at, ended_at, pp, pp_version)
+            VALUES
+                (@typistId, @mapId, 400000, 0.97, 1.0, 10, 'X', true, false,
+                 '[]'::jsonb, '{"great": 10}'::jsonb, '{"great": 10}'::jsonb, @buildId,
+                 now() - interval '95 seconds', now(), 0, 0)
+            RETURNING id
+            """,
+            new { typistId, mapId, buildId });
+
+        await SetRankRefundTest.insertTokenAsync(conn, typistId, mapId, buildId, id, beatmapHash);
+
+        return id;
+    }
+
+    private async Task<bool> rankedOf(long id)
+    {
+        await using var conn = await db.OpenAsync();
+        return await conn.ExecuteScalarAsync<bool>("SELECT ranked FROM scores WHERE id = @id", new { id });
+    }
 }
