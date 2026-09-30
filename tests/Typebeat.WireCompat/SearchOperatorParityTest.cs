@@ -130,26 +130,33 @@ public class SearchOperatorParityTest
         });
     }
 
+    /// <summary>
+    /// BPM IS A SITE-ONLY OPERATOR SINCE PR 3. The game dropped the <c>bpm</c> keyword from song
+    /// select (with its BPM sort, group and HUD counter), so <c>bpm=128</c> is free search text there
+    /// now and there is no game half left to hold the site's against. The site KEEPS its operator, as
+    /// it keeps <c>lang:</c>, <c>lyrics:</c> and <c>explicit:</c> which the game never had: removing a
+    /// working website search operator is a product decision, not a mirror, and it is flagged for the
+    /// owner rather than taken here. This pins both halves of that: the game really does leave the
+    /// keyword unparsed (so if it ever comes back, this fails and the equality sweep this replaced
+    /// has to come back with it), and the site still reads it with the 0.5 tolerance the game used.
+    /// </summary>
     [Test]
-    public async Task BpmEquality_MatchesTheGame()
+    public async Task BpmIsASiteOnlyOperatorSinceTheGameDroppedIt()
     {
-        // Quarter steps are exact in binary, so the 0.5 edges are hit exactly on both sides.
-        double[] bpms = Enumerable.Range(400, 400).Select(i => i / 4.0).ToArray();
-        var mismatches = new List<string>();
-
         foreach (string op in equalityOperators)
         {
-            foreach (string operand in new[] { "128", "128.5", "150", "99.75" })
-            {
-                string query = "bpm" + op + operand;
-                var site = await SiteMatchesAsync(query, "s", "bpm", bpms);
-                var game = bpms.Where(v => GameMatches(query, new ClientBeatmap { BPM = v })).ToHashSet();
+            string query = "bpm" + op + "128";
+            var criteria = new ClientCriteria();
+            applyQueries.Invoke(null, [criteria, query]);
 
-                Collect(mismatches, query, site, game);
-            }
+            Assert.That(criteria.SearchText?.Trim(), Is.EqualTo(query), $"the game no longer parses {query}; it is search text there");
         }
 
-        Assert.That(mismatches, Is.Empty, string.Join("\n", mismatches.Take(20)));
+        // Quarter steps are exact in binary, so the 0.5 edges are hit exactly.
+        double[] bpms = Enumerable.Range(400, 400).Select(i => i / 4.0).ToArray();
+        var site = await SiteMatchesAsync("bpm=128", "s", "bpm", bpms);
+
+        Assert.That(site.OrderBy(v => v), Is.EqualTo(bpms.Where(v => v > 127.5 && v < 128.5)), "the site's own bpm= keeps the game's old 0.5 tolerance");
     }
 
     [Test]
