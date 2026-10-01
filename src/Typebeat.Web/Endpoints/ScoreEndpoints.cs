@@ -1,7 +1,9 @@
 using System.Globalization;
 using Dapper;
 using Newtonsoft.Json;
+using Microsoft.Extensions.Caching.Memory;
 using Typebeat.Web.Auth;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Wire;
@@ -86,9 +88,12 @@ public static class ScoreEndpoints
 
     public static void Map(IEndpointRouteBuilder app)
     {
-        app.MapPost("/api/v2/beatmaps/{beatmapId:long}/solo/scores", CreateToken).RequireBearer();
-        app.MapPut("/api/v2/beatmaps/{beatmapId:long}/solo/scores/{tokenId:long}", SubmitScore).RequireBearer();
-        app.MapGet("/api/v2/beatmaps/{beatmapId:long}/scores", Leaderboard).RequireBearer();
+        // Rate limits (backlog 366, Auth/RateLimits.cs): speed bumps keyed by the bearer token. A
+        // 429 here costs the player the score in both clients, so these budgets are deliberately
+        // far above anything a person can play.
+        app.MapPost("/api/v2/beatmaps/{beatmapId:long}/solo/scores", CreateToken).RequireBearer().RequireRateLimiting(RateLimits.ScoreToken);
+        app.MapPut("/api/v2/beatmaps/{beatmapId:long}/solo/scores/{tokenId:long}", SubmitScore).RequireBearer().RequireRateLimiting(RateLimits.ScoreSubmit);
+        app.MapGet("/api/v2/beatmaps/{beatmapId:long}/scores", Leaderboard).RequireBearer().RequireRateLimiting(RateLimits.Leaderboard);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -457,6 +462,12 @@ public static class ScoreEndpoints
 
         await tx.CommitAsync(ctx.RequestAborted);
 
+        // Cached reads that show this play (backlog 366): its board memo, its set (play count) and
+        // its player's profile. After the commit, so a concurrent reader cannot re-cache the old state.
+        long? scoreSetId = await conn.ExecuteScalarAsync<long?>(
+            "SELECT set_id FROM beatmaps WHERE id = @beatmapId", new { beatmapId });
+        await ctx.RequestServices.GetRequiredService<CacheEviction>().AfterScoreAsync(scoreSetId, beatmapId, user.Id);
+
         var response = new MultiplayerScoreWire
         {
             Id = scoreId,
@@ -517,6 +528,75 @@ public static class ScoreEndpoints
 
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
+        // The board's SHARED slice (set status, top rows, participant count) is the same for every
+        // caller on this host, and the game fetches it once per beatmap selected, so a busy map
+        // would otherwise run the same three queries for every player scrolling past it. It is
+        // memoised for CacheEviction.BoardMemoTtl (5 s) and dropped by every score submit, replay
+        // upload and rank change; the caller's own row and position below stay live.
+        var eviction = ctx.RequestServices.GetRequiredService<CacheEviction>();
+        string memoKey = eviction.BoardKey(beatmapId, limit, ctx.Request);
+
+        if (!eviction.Memo.TryGetValue(memoKey, out BoardSlice? slice) || slice is null)
+        {
+            slice = await readBoardSliceAsync(conn, ctx, beatmapId, limit);
+            eviction.Memo.Set(memoKey, slice, CacheEviction.BoardMemoTtl);
+        }
+
+        if (slice.WantRanked is not bool wantRanked)
+            return WireJson.Ok(new ScoresCollectionWire { ScoreCount = 0, Scores = [], UserScore = null });
+
+        var scores = slice.Scores;
+        int scoreCount = slice.ScoreCount;
+
+        // The caller's own best score + its global position, if they have one.
+        var callerBest = await conn.QuerySingleOrDefaultAsync<LeaderboardRow>(
+            $"""
+            SELECT s.id                 AS scoreId,
+                   s.user_id            AS userId,
+                   s.total_score        AS totalScore,
+                   s.accuracy           AS accuracy,
+                   s.max_combo          AS maxCombo,
+                   s.rank               AS rank,
+                   s.ended_at           AS endedAt,
+                   s.statistics::text   AS statisticsJson,
+                   s.maximum_statistics::text AS maximumStatisticsJson,
+                   s.mods::text         AS modsJson,
+                   s.replay_key IS NOT NULL AS hasReplay,
+                   u.username           AS username,
+                   u.country_code       AS countryCode,
+                   u.avatar_key         AS avatarKey
+            FROM scores s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND {BeatmapLeaderboard.OnBoard("s")}
+            ORDER BY {BeatmapLeaderboard.Order("s")}
+            LIMIT 1
+            """,
+            new { beatmapId, userId = user.Id, wantRanked });
+
+        ScoreWithPositionWire? userScore = null;
+        if (callerBest is not null)
+        {
+            int position = await PositionOf(conn, null, beatmapId, callerBest.TotalScore, callerBest.ScoreId, wantRanked);
+            userScore = new ScoreWithPositionWire { Position = position, Score = ToSoloScoreWire(ctx, callerBest, beatmapId, wantRanked) };
+        }
+
+        return WireJson.Ok(new ScoresCollectionWire
+        {
+            ScoreCount = scoreCount,
+            Scores = scores,
+            UserScore = userScore,
+        });
+    }
+
+    /// <summary>
+    /// The part of a leaderboard response every caller shares: which board the map serves (null
+    /// for none), its top rows as wire objects (their URLs are this request's host, which is part
+    /// of the memo key), and the participant count.
+    /// </summary>
+    private sealed record BoardSlice(bool? WantRanked, List<SoloScoreWire> Scores, int ScoreCount);
+
+    private static async Task<BoardSlice> readBoardSliceAsync(Npgsql.NpgsqlConnection conn, HttpContext ctx, long beatmapId, int limit)
+    {
         // Which board this map serves is decided by its set's CURRENT status, re-read here (never
         // trusted from the stored scores.ranked flags) so the reviewer's Rank/Unrank lever stays
         // authoritative in both directions:
@@ -549,7 +629,7 @@ public static class ScoreEndpoints
         };
 
         if (board is not bool wantRanked)
-            return WireJson.Ok(new ScoresCollectionWire { ScoreCount = 0, Scores = [], UserScore = null });
+            return new BoardSlice(null, [], 0);
 
         // Best score per user (DISTINCT ON over ix_scores_leaderboard), passed plays on the selected
         // board only, then the global ordering by total score. Failed scores never appear. Both the
@@ -595,44 +675,7 @@ public static class ScoreEndpoints
             $"SELECT COUNT(DISTINCT user_id) FROM scores WHERE beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("scores")}",
             new { beatmapId, wantRanked });
 
-        // The caller's own best score + its global position, if they have one.
-        var callerBest = await conn.QuerySingleOrDefaultAsync<LeaderboardRow>(
-            $"""
-            SELECT s.id                 AS scoreId,
-                   s.user_id            AS userId,
-                   s.total_score        AS totalScore,
-                   s.accuracy           AS accuracy,
-                   s.max_combo          AS maxCombo,
-                   s.rank               AS rank,
-                   s.ended_at           AS endedAt,
-                   s.statistics::text   AS statisticsJson,
-                   s.maximum_statistics::text AS maximumStatisticsJson,
-                   s.mods::text         AS modsJson,
-                   s.replay_key IS NOT NULL AS hasReplay,
-                   u.username           AS username,
-                   u.country_code       AS countryCode,
-                   u.avatar_key         AS avatarKey
-            FROM scores s
-            JOIN users u ON u.id = s.user_id
-            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND {BeatmapLeaderboard.OnBoard("s")}
-            ORDER BY {BeatmapLeaderboard.Order("s")}
-            LIMIT 1
-            """,
-            new { beatmapId, userId = user.Id, wantRanked });
-
-        ScoreWithPositionWire? userScore = null;
-        if (callerBest is not null)
-        {
-            int position = await PositionOf(conn, null, beatmapId, callerBest.TotalScore, callerBest.ScoreId, wantRanked);
-            userScore = new ScoreWithPositionWire { Position = position, Score = ToSoloScoreWire(ctx, callerBest, beatmapId, wantRanked) };
-        }
-
-        return WireJson.Ok(new ScoresCollectionWire
-        {
-            ScoreCount = scoreCount,
-            Scores = scores,
-            UserScore = userScore,
-        });
+        return new BoardSlice(wantRanked, scores, scoreCount);
     }
 
     // ---- helpers ----

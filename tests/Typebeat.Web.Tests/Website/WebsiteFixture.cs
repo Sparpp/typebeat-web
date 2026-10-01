@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using Typebeat.Web.Auth;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Email;
 
 namespace Typebeat.Web.Tests.Website;
@@ -61,8 +62,9 @@ public class WebsiteFixture
     /// </summary>
     public static CapturingEmailSender Emails { get; } = new();
 
-    // Each browser client is stamped with a unique CF-Connecting-IP so per-IP rate limiters
-    // (registration 3/hour, login 10/5min) never collide across tests.
+    // Each browser client is stamped with a unique client IP (as X-Forwarded-For, the header the
+    // proxy sends) so per-IP rate limiters (registration 3/hour, login 10/5min, the anonymous read
+    // cap, the report limit) never collide across tests.
     private static int ipCounter;
 
     [OneTimeSetUp]
@@ -76,8 +78,9 @@ public class WebsiteFixture
         factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
         {
             // Production's proxy configuration, so the host trusts Cloudflare's CF-IPCountry the way
-            // it does live (CountryResolver honours it only behind the proxy). No test sends
-            // X-Forwarded-*, so the forwarded-headers middleware this also enables is inert here.
+            // it does live (CountryResolver honours it only behind the proxy). It also enables the
+            // forwarded-headers middleware, which is how a browser client's X-Forwarded-For (see
+            // ClientIpHandler) becomes the connection address GetClientIp reads, exactly as live.
             b.UseSetting(CountryResolver.ProxyFlag, "true");
 
             b.ConfigureTestServices(services =>
@@ -125,23 +128,39 @@ public class WebsiteFixture
     public static HttpClient CreateNoRedirectClient()
         => factory!.CreateDefaultClient(BaseAddress);
 
-    /// <summary>A fresh, unique CF-Connecting-IP so a caller can claim its own rate-limit bucket.</summary>
+    /// <summary>
+    /// A fresh, unique client IP so a caller can claim its own rate-limit bucket. Sent as
+    /// X-Forwarded-For it becomes the connection address; sent as CF-Connecting-IP on a request
+    /// with no forwarded header it is GetClientIp's fallback (the test host has no address).
+    /// </summary>
     public static string NextClientIp()
     {
         int n = Interlocked.Increment(ref ipCounter);
         return $"10.{(n >> 16) & 255}.{(n >> 8) & 255}.{n & 255}";
     }
 
-    /// <summary>Stamps a fixed CF-Connecting-IP on every request (GetClientIp reads it first).</summary>
+    /// <summary>
+    /// Stamps a fixed X-Forwarded-For on every request: what Caddy sends live, and what
+    /// UseForwardedHeaders turns into Connection.RemoteIpAddress (which GetClientIp reads first).
+    /// </summary>
     private sealed class ClientIpHandler(string ip) : DelegatingHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            request.Headers.Remove("CF-Connecting-IP");
-            request.Headers.Add("CF-Connecting-IP", ip);
+            request.Headers.Remove("X-Forwarded-For");
+            request.Headers.Add("X-Forwarded-For", ip);
             return base.SendAsync(request, cancellationToken);
         }
     }
+
+    /// <summary>
+    /// Drops every output-cache entry and every in-process memo (backlog 366). A seed that writes
+    /// through SQL bypasses the app's own eviction calls, so it must call this once it is done, or
+    /// a page some earlier test fetched anonymously keeps serving its pre-seed body for up to a
+    /// minute.
+    /// </summary>
+    public static Task EvictAllAsync()
+        => Services.GetRequiredService<CacheEviction>().EvictAllAsync();
 
     /// <summary>
     /// Seeds a user directly (bypassing the flow) with a real PBKDF2 hash, returning its id.

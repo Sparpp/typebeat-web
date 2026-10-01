@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Dapper;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 
 namespace Typebeat.WireCompat;
@@ -254,6 +255,40 @@ public class ServerFixture
                  '[]'::jsonb, '{"great":40,"ok":2}'::jsonb, '{"great":42}'::jsonb)
             """,
             new { userId = PlayerUserId, beatmapId = PendingBeatmapId });
+    }
+
+    /// <summary>
+    /// Drops every output-cache entry and the board and lookup memos (backlog 366), for a test
+    /// that changes through SQL something an earlier read may have cached.
+    /// </summary>
+    public static Task EvictAllAsync()
+        => factory!.Services.GetRequiredService<Typebeat.Web.Caching.CacheEviction>().EvictAllAsync();
+
+    /// <summary>
+    /// Inserts a fresh 24 h bearer token (and its refresh token) for <paramref name="userId"/> and
+    /// returns both raw values. A test that spends a rate-limit budget uses its own token, because
+    /// bearer budgets are keyed by token and <see cref="BearerToken"/> is shared by the whole suite.
+    /// </summary>
+    public static async Task<(string Access, string Refresh)> IssueTokenAsync(long userId)
+    {
+        string access = "wc-" + Guid.NewGuid().ToString("N");
+        string refresh = access + "-refresh";
+
+        await using var conn = new NpgsqlConnection(ConnectionString);
+        await conn.OpenAsync();
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO oauth_tokens (user_id, access_hash, refresh_hash, access_expires_at, refresh_expires_at)
+            VALUES (@userId, @accessHash, @refreshHash, now() + interval '1 day', now() + interval '30 days')
+            """,
+            new
+            {
+                userId,
+                accessHash = SHA256.HashData(Encoding.UTF8.GetBytes(access)),
+                refreshHash = SHA256.HashData(Encoding.UTF8.GetBytes(refresh)),
+            });
+
+        return (access, refresh);
     }
 
     /// <summary>A client-authenticated request builder for the seeded player.</summary>

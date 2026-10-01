@@ -1,6 +1,8 @@
 using System.Text;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Search;
 
@@ -12,7 +14,12 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// keyset "show more" paging: 50 per page, cursor on (sort key, id) carried in plain querystring
 /// links so the page needs no JavaScript. With free text on the default sort the match tier leads
 /// the order (and the cursor, as <c>after_tier</c>); an explicit sort keeps its own order.
+///
+/// <para>Output-cached for anonymous visitors for 30 s (backlog 366): the query keys the cache
+/// varies by are the handler's own bindings below, so a new binding must be added to the
+/// "listing" policy in Caching/CachePolicies.cs or two queries would share one page.</para>
 /// </summary>
+[OutputCache(PolicyName = CachePolicies.Listing)]
 public sealed class ListingModel(Db db) : TypebeatPageModel
 {
     public const int PageSize = 50;

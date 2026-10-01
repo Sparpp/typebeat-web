@@ -1,6 +1,8 @@
 using System.Globalization;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Social;
@@ -26,7 +28,12 @@ namespace Typebeat.Web.Pages.Users;
 /// as "maps you've SS'd", matching how the game presents grades on results/leaderboards.
 /// Accuracy is the plain average over those same per-map bests (the game aggregates nothing
 /// today, UserWire serves zeroed statistics, so this page defines the semantics).
+///
+/// <para>The anonymous GET is output-cached for 30 s (backlog 366) and tagged user:{id} once the
+/// id is resolved, so a score by this player evicts it at once; the follow, pin and reorder forms
+/// render only for a signed-in viewer, whom the cache never serves.</para>
 /// </summary>
+[OutputCache(PolicyName = CachePolicies.Profile)]
 public sealed class ProfileModel(Db db) : TypebeatPageModel
 {
     private const int score_section_size = 20;
@@ -209,6 +216,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             return NotFound();
 
         ProfileUser = user;
+        CachePolicies.AddTag(HttpContext, CacheTags.User(id));
 
         // The section order, read on its own rather than as a 9th column on the query above: that
         // one materializes the positional UserHeader record, where appending a column means

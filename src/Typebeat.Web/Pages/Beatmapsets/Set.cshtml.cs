@@ -1,8 +1,10 @@
 using System.Globalization;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Newtonsoft.Json.Linq;
 using Typebeat.Web.Auth;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
@@ -26,7 +28,13 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// viewable by their owner and by admins (the owner's profile deliberately lists them, and a
 /// DMCA'd mapper deserves to see the Removed pill instead of a dead link; the download
 /// endpoint already granted the owner the same access).
+///
+/// <para>Backlog 366: this page is NOT output-cached (an anonymous view renders the report form,
+/// whose antiforgery token is per visitor; owner decision 2026-10-01). The "report" rate-limit
+/// policy is attached to the whole page because Razor Pages handlers share one endpoint; the
+/// policy itself counts only the Report POST.</para>
 /// </summary>
+[EnableRateLimiting(RateLimits.Report)]
 public sealed class SetModel(Db db, IFileStore fileStore, ILogger<SetModel> logger) : TypebeatPageModel
 {
     private const int max_report_reason_length = 4000;
@@ -532,6 +540,11 @@ public sealed class SetModel(Db db, IFileStore fileStore, ILogger<SetModel> logg
 
             if (to == "ranked")
                 await carryPendingPlaysAsync(id);
+
+            // Every cached read that shows the status (the set's API, the listing and landing
+            // cards, the rankings, the owner's profile, every board and lookup memo) goes now
+            // rather than up to a minute from now (backlog 366).
+            await HttpContext.RequestServices.GetRequiredService<CacheEviction>().AfterSetStatusAsync(id, ownerId);
         }
 
         // Wrong-state POSTs (double-submit, stale tab) are benign: land back on the page, which

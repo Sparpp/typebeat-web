@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Newtonsoft.Json;
 using Npgsql;
 using Typebeat.Web.Auth;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Storage;
@@ -107,12 +108,16 @@ public static class PlayEndpoints
         var versions = app.ServiceProvider.GetService<IFileVersionProvider>();
         Revision = versions is null ? null : ComputeRevision(versions);
 
-        app.MapGet("/play/map/{setId:long}/diffs", GetDiffsAsync);
-        app.MapGet("/play/map/{setId:long}/osu", GetOsuAsync);
+        // Backlog 366: the picker's diffs and the .osu text are the same bytes for every anonymous
+        // visitor of a published set, so they are output-cached (tag set:{setId}, evicted on every
+        // upload and score). The audio and font streams are NOT: range requests make a poor cache
+        // entry, so they only tell browsers and the edge they may keep them (see mediaCacheHeader).
+        app.MapGet("/play/map/{setId:long}/diffs", GetDiffsAsync).CacheOutput(CachePolicies.PlayMap);
+        app.MapGet("/play/map/{setId:long}/osu", GetOsuAsync).CacheOutput(CachePolicies.PlayMap);
         app.MapGet("/play/map/{setId:long}/audio", GetAudioAsync);
         app.MapGet("/play/map/{setId:long}/font", GetFontAsync);
-        app.MapPost("/play/token", CreateTokenAsync);
-        app.MapPost("/play/submit", SubmitScoreAsync);
+        app.MapPost("/play/token", CreateTokenAsync).RequireRateLimiting(RateLimits.ScoreToken);
+        app.MapPost("/play/submit", SubmitScoreAsync).RequireRateLimiting(RateLimits.ScoreSubmit);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -216,6 +221,7 @@ public static class PlayEndpoints
         if (stream is null)
             return Results.NotFound();
 
+        mediaCacheHeader(ctx);
         return Results.Stream(stream, AudioContentType(audioName), enableRangeProcessing: true);
     }
 
@@ -252,6 +258,7 @@ public static class PlayEndpoints
         if (stream is null)
             return Results.NotFound();
 
+        mediaCacheHeader(ctx);
         return Results.Stream(stream, FontContentType(fontName), enableRangeProcessing: true);
     }
 
@@ -615,6 +622,8 @@ public static class PlayEndpoints
             _ => null,
         };
         bool? onBoard = board is bool wantRanked && passed && ranked == wantRanked ? wantRanked : null;
+        long? scoreSetId = await conn.ExecuteScalarAsync<long?>(
+            "SELECT set_id FROM beatmaps WHERE id = @beatmapId", new { beatmapId }, tx);
 
         // The position reported is the player's BEST row on that board (what the board itself
         // lists), and personal_best says whether that best is THIS play, so a run that did not
@@ -624,6 +633,9 @@ public static class PlayEndpoints
             : null;
 
         await tx.CommitAsync(ctx.RequestAborted);
+
+        // Cached reads that show this play (backlog 366), dropped after the commit.
+        await ctx.RequestServices.GetRequiredService<CacheEviction>().AfterScoreAsync(scoreSetId, beatmapId, user.Id);
 
         return WireJson.Ok(new
         {
@@ -662,8 +674,23 @@ public static class PlayEndpoints
         if (BeatmapsetEndpoints.IsPublished(row.Status))
             return true;
 
+        // An unpublished set's media is its owner's alone: never stored by the output cache, and
+        // private to every cache downstream (backlog 366).
+        CachePolicies.DoNotStore(ctx);
+
         var requester = ctx.SessionUser() ?? await ctx.ResolveBearerAsync();
         return requester?.Id == row.OwnerId;
+    }
+
+    /// <summary>
+    /// Audio and font bytes of a PUBLISHED set may be kept by browsers and the Cloudflare edge for
+    /// five minutes (an upload changes the .osu that names them, so a stale blob is never asked for
+    /// for long); an unpublished set's already carries private, no-store from the media gate.
+    /// </summary>
+    private static void mediaCacheHeader(HttpContext ctx)
+    {
+        if (string.IsNullOrEmpty(ctx.Response.Headers.CacheControl))
+            ctx.Response.Headers.CacheControl = "public, max-age=300";
     }
 
     /// <summary>The <c>?diff={beatmapId}</c> a media request named, or 0 for "the set's primary".</summary>

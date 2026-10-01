@@ -406,7 +406,7 @@ public class FirstPlacesTest
         await using var conn = Db();
         await conn.OpenAsync();
 
-        return await conn.ExecuteScalarAsync<long>(
+        long id = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO scores
                 (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
@@ -417,5 +417,10 @@ public class FirstPlacesTest
             RETURNING id
             """,
             new { userId, beatmapId, totalScore, ranked, passed, endedAt = endedAt ?? DateTime.UtcNow });
+
+        // A SQL seed bypasses the submit path's cache eviction, and a dethroned holder's profile is
+        // otherwise only refreshed by its TTL.
+        await WebsiteFixture.EvictAllAsync();
+        return id;
     }
 }

@@ -23,6 +23,7 @@ public sealed class ErrorModel : TypebeatPageModel
     {
         404 => "This page skipped a beat.",
         403 => "That verse isn't yours to sing.",
+        429 => "Slow down, you're typing ahead of the beat.",
         >= 500 => "We dropped the mic, something broke on our side.",
         _ => "That request fell out of rhythm.",
     };
@@ -30,6 +31,7 @@ public sealed class ErrorModel : TypebeatPageModel
     public string Detail => Code switch
     {
         404 => "The page may have been removed, renamed, or never existed at all.",
+        429 => "Too many requests from here in a short time. Wait a minute and try again.",
         >= 500 => "It's been noted. Try again in a moment.",
         _ => "Head back and try another route.",
     };

@@ -3,6 +3,7 @@ using Dapper;
 using Microsoft.AspNetCore.Http.Features;
 using Npgsql;
 using Typebeat.Web.Auth;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Storage;
@@ -55,7 +56,10 @@ public static class ReplayEndpoints
 
     public static void Map(IEndpointRouteBuilder app)
     {
-        app.MapPut("/api/v2/scores/{scoreId:long}/replay", UploadAsync).RequireBearer().WithReplayBodyLimit();
+        // The hourly per-user cap below stays; the per-minute policy (backlog 366) stops a burst
+        // before it reaches the database at all. The game backfills a few replays per board fetch.
+        app.MapPut("/api/v2/scores/{scoreId:long}/replay", UploadAsync).RequireBearer().WithReplayBodyLimit()
+            .RequireRateLimiting(RateLimits.ReplayUpload);
 
         // Public: leaderboards are public, and the client fetches a replay for any row it shows.
         app.MapGet("/api/v2/scores/{scoreId:long}/replay", DownloadAsync);
@@ -123,13 +127,17 @@ public static class ReplayEndpoints
         using (var buffer = new MemoryStream(replay, writable: false))
             await store.WriteObjectAsync(key, buffer, ctx.RequestAborted);
 
-        await conn.ExecuteAsync(
+        long? replayBeatmapId = await conn.ExecuteScalarAsync<long?>(
             """
             UPDATE scores
             SET replay_key = @key, replay_bytes = @bytes, replay_uploaded_at = now()
             WHERE id = @scoreId
+            RETURNING beatmap_id
             """,
             new { key, bytes = replay.Length, scoreId });
+
+        // The board row's has_replay just flipped (backlog 366: the board memo is dropped).
+        await ctx.RequestServices.GetRequiredService<CacheEviction>().AfterReplayAsync(replayBeatmapId);
 
         return Results.NoContent();
     }

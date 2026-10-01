@@ -227,6 +227,8 @@ public class RankingsPageTest
             long fillerId = await insertUserAsync(conn, $"rk page {i:000}");
             await insertScoreAsync(conn, fillerId, pagingMap, 1_000 + i, pp: 0.5 + i * 0.001);
         }
+
+        await WebsiteFixture.EvictAllAsync();
     }
 
     /// <summary>Σ pp·decay^i over the seeded equal-value plays: 100 · (1 − DECAY^12) / (1 − DECAY).</summary>
@@ -843,6 +845,7 @@ public class RankingsPageTest
         try
         {
             IndexModel.PageSize = 1_000_000;
+            await WebsiteFixture.EvictAllAsync();
 
             using var response = await WebsiteFixture.Client.GetAsync("/rankings");
             string html = await response.Content.ReadAsStringAsync();
@@ -858,6 +861,7 @@ public class RankingsPageTest
         finally
         {
             IndexModel.PageSize = normal;
+            await WebsiteFixture.EvictAllAsync();
         }
     }
 
@@ -874,6 +878,7 @@ public class RankingsPageTest
         try
         {
             IndexModel.PageSize = 10;
+            await WebsiteFixture.EvictAllAsync();
 
             await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
             await conn.OpenAsync();
@@ -907,6 +912,7 @@ public class RankingsPageTest
         finally
         {
             IndexModel.PageSize = normal;
+            await WebsiteFixture.EvictAllAsync();
         }
     }
 

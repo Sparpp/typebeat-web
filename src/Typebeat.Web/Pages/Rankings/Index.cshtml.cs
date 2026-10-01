@@ -1,5 +1,7 @@
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
+using Typebeat.Web.Caching;
 using Newtonsoft.Json.Linq;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
@@ -38,7 +40,10 @@ namespace Typebeat.Web.Pages.Rankings;
 /// than 404ing, for the same reason an unknown <c>?board</c> falls back to the main board: the
 /// URL is linked-to and shareable, and a stale query string must still render something.
 /// </para>
+///
+/// <para>Output-cached for anonymous visitors for 60 s, varying by board and page (backlog 366).</para>
 /// </summary>
+[OutputCache(PolicyName = CachePolicies.Rankings)]
 public sealed class IndexModel(Db db) : TypebeatPageModel
 {
     public const string PerformanceBoard = "performance";

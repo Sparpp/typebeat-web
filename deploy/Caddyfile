@@ -1,13 +1,29 @@
 # Caddy auto-provisions a Let's Encrypt cert for each name once DNS points at the box.
 # Requires ports 80/443 reachable from the internet (ufw already allows them).
 
+# Client IP (backlog 366). Only a peer inside Cloudflare's published ranges may name the visitor
+# through CF-Connecting-IP; any other peer (the grey-cloud bss.* hosts, a direct-to-origin caller)
+# is its own client IP whatever headers it sends. Every reverse_proxy below then hands the app
+# exactly that one address as X-Forwarded-For, which UseForwardedHeaders turns into
+# Connection.RemoteIpAddress, the only thing GetClientIp (and so every rate limit) reads.
+# Ranges from https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6 (fetched
+# 2026-10-01). Cloudflare changes them rarely; re-check them when this file is next touched.
+{
+	servers {
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		client_ip_headers CF-Connecting-IP
+	}
+}
+
 # The canonical site. Moved here from typebeat.mingda.sh, which stays up below for the clients
 # that have it compiled in.
 typebeat.sh {
 	encode zstd gzip
 
 	# WebSocket upgrade for /ws/notifications is handled transparently by reverse_proxy.
-	reverse_proxy app:8080
+	reverse_proxy app:8080 {
+		header_up X-Forwarded-For {client_ip}
+	}
 
 	log {
 		output stdout
@@ -37,7 +53,9 @@ typebeat.mingda.sh {
 	}
 	redir @browser https://typebeat.sh{uri} temporary
 
-	reverse_proxy app:8080
+	reverse_proxy app:8080 {
+		header_up X-Forwarded-For {client_ip}
+	}
 
 	log {
 		output stdout
@@ -56,7 +74,13 @@ typebeat.mingda.sh {
 bss.typebeat.sh, bss.typebeat.mingda.sh {
 	encode zstd gzip
 
-	reverse_proxy app:8080
+	# Grey-cloud: no Cloudflare edge sits in front of these names, so a CF-Connecting-IP arriving
+	# here is always forged. Dropped so nothing downstream can ever be tempted to read it.
+	request_header -CF-Connecting-IP
+
+	reverse_proxy app:8080 {
+		header_up X-Forwarded-For {client_ip}
+	}
 
 	log {
 		output stdout

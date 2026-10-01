@@ -1,4 +1,6 @@
 using Dapper;
+using Microsoft.AspNetCore.OutputCaching;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Storage;
 
@@ -9,7 +11,11 @@ namespace Typebeat.Web.Pages;
 /// of up to 8 published sets rendered with the shared card partial. The download button links to
 /// the /download page, which picks the platform; it only shows when at least one platform's build
 /// is actually stored, otherwise a signed-out visitor gets the sign-up CTA in its place.
+///
+/// <para>Output-cached for anonymous visitors for 60 s (backlog 366, Caching/CachePolicies.cs):
+/// the stats line counts every score row on each render.</para>
 /// </summary>
+[OutputCache(PolicyName = CachePolicies.Landing)]
 public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) : TypebeatPageModel
 {
     public long Players { get; private set; }

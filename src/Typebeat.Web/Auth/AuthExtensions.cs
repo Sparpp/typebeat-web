@@ -35,19 +35,25 @@ public static class AuthExtensions
         => (AuthedUser?)ctx.Items[item_key] ?? throw new InvalidOperationException("Endpoint is missing RequireBearer().");
 
     /// <summary>
-    /// Best-effort client IP for rate limiting. Behind Cloudflare the connection/XFF chain ends
-    /// at a CF edge IP (shared by many players), so prefer CF-Connecting-IP when present. A
-    /// direct-to-origin caller can spoof that header, but the in-memory limiters are documented
-    /// speed bumps; Cloudflare WAF rules are the real production layer.
+    /// The client IP every rate limit keys on. <c>Connection.RemoteIpAddress</c> wins whenever it
+    /// is set: behind the proxy (TYPEBEAT_BEHIND_PROXY) UseForwardedHeaders has already rewritten
+    /// it from the one X-Forwarded-For value Caddy sends, and Caddy only takes that from
+    /// CF-Connecting-IP when the peer is a Cloudflare edge (deploy/Caddyfile, trusted_proxies),
+    /// so a direct-to-origin caller cannot pick its own bucket. A raw CF-Connecting-IP is read
+    /// only when there is no connection address at all (an in-process test host), and "unknown"
+    /// when neither exists; the anonymous read cap exempts that last case (see RateLimits).
     /// </summary>
     public static string GetClientIp(this HttpContext ctx)
     {
-        string cf = ctx.Request.Headers["CF-Connecting-IP"].ToString();
-        if (!string.IsNullOrEmpty(cf))
-            return cf;
+        if (ctx.Connection.RemoteIpAddress is { } remote)
+            return remote.ToString();
 
-        return ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        string cf = ctx.Request.Headers["CF-Connecting-IP"].ToString();
+        return string.IsNullOrEmpty(cf) ? UnknownClientIp : cf;
     }
+
+    /// <summary>What <see cref="GetClientIp"/> answers when the request carries no address at all.</summary>
+    public const string UnknownClientIp = "unknown";
 
     /// <summary>Resolves the Authorization header to a user without enforcing it (for optional-auth routes).</summary>
     public static async Task<AuthedUser?> ResolveBearerAsync(this HttpContext ctx)
