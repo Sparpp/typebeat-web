@@ -668,7 +668,7 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(1.3022384832687535), "the shipped (chunked) reading");
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(1.2952833163873501), "the shipped (chunked) reading");
             Assert.That(LyricDifficulty.Compute(map, 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.EqualTo(1.4250280885191169),
                 "the envelope arm, with the typability the public API applies");
 
@@ -780,8 +780,8 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(oneLine), Is.EqualTo(2.1219807076449064), "23 cells: four words + the 3 spaces between them");
-            Assert.That(LyricDifficulty.Compute(fourLines), Is.EqualTo(1.2898243645309204), "20 cells: no space over a line break");
+            Assert.That(LyricDifficulty.Compute(oneLine), Is.EqualTo(2.1018069517667728), "23 cells: four words + the 3 spaces between them");
+            Assert.That(LyricDifficulty.Compute(fourLines), Is.EqualTo(1.2784399447242352), "20 cells: no space over a line break");
 
             Assert.That(LyricDifficulty.Compute(oneLine), Is.GreaterThan(LyricDifficulty.Compute(fourLines)),
                 "the extra keystrokes have to be worth something, whatever the axis");
@@ -793,9 +793,10 @@ public class LyricPaceTest
     /// what a beatmap row stores as <c>difficulty_rating</c>, <c>sr_dt</c> and <c>sr_ht</c> and what
     /// PerformancePoints prices a rate play from. All three moved to the chunked axis at the rework
     /// (they read 6.2607 / 8.1643 / 11.7630 on the envelope), and again at v22's overlapping profile
-    /// (7.4381 / 9.6646 / 13.9120 before it). The rate PREMIUMS moved less than the level did:
-    /// x1.4657 for Double Time and x0.7883 for Half Time now, against x1.4394 and x0.7696 on the
-    /// v21 chunked axis and x1.4409 and x0.7668 on the envelope.
+    /// (7.4381 / 9.6646 / 13.9120 before it), and a third time at v24, where an unsubdivided word
+    /// became one segment (6.8820 / 8.7300 / 12.7955 before it). The rate PREMIUMS moved less than
+    /// the level did: x1.4658 for Double Time and x0.7884 for Half Time now, against x1.4394 and
+    /// x0.7696 on the v21 chunked axis and x1.4409 and x0.7668 on the envelope.
     /// </summary>
     [Test]
     public void DifficultyRating_TheRateTripleIsPinned()
@@ -804,9 +805,9 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(map, 0.75), Is.EqualTo(6.8819518298858675), "sr_ht");
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(8.7299529590602383), "difficulty_rating");
-            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(12.79553147510407), "sr_dt");
+            Assert.That(LyricDifficulty.Compute(map, 0.75), Is.EqualTo(6.8277402216711653), "sr_ht");
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(8.6605850300065299), "difficulty_rating");
+            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(12.694611634615599), "sr_dt");
         });
     }
 
@@ -820,15 +821,15 @@ public class LyricPaceTest
         //
         // The fixture was chosen to sit clear of 10 at 1.00x and pass it at 1.50x, which was the
         // asymmetry the live catalogue had. The v21 chunked axis passed 10 at BOTH rates; v22's
-        // overlapping profile brings the base back under it (9.82), so the asymmetry is back in this
+        // overlapping profile brings the base back under it (9.82, 9.74 since v24), so the asymmetry is back in this
         // shape. What the pins say is the thing the test exists for, that neither figure is
         // truncated anywhere.
         var map = denseMap(lineCount: 40, wordsPerLine: 6, lineMs: 2000);
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(9.8175567027913466).Within(1e-9), "clear of 10 at 1.00x");
-            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(14.173383552005099).Within(1e-9), "under the old ceiling this read exactly 10.00");
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(9.7403999749190024).Within(1e-9), "clear of 10 at 1.00x");
+            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(14.062221324374589).Within(1e-9), "under the old ceiling this read exactly 10.00");
         });
     }
 
@@ -942,9 +943,9 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(gapped), Is.EqualTo(7.4303440228201012));
-            Assert.That(LyricDifficulty.Compute(gapped, 1.50), Is.EqualTo(10.111577663275279), "sr_dt");
-            Assert.That(LyricDifficulty.Compute(denseHalf), Is.EqualTo(7.7944375322526236), "the dense half alone");
+            Assert.That(LyricDifficulty.Compute(gapped), Is.EqualTo(7.3608261938824215));
+            Assert.That(LyricDifficulty.Compute(gapped, 1.50), Is.EqualTo(9.9989298988167334), "sr_dt");
+            Assert.That(LyricDifficulty.Compute(denseHalf), Is.EqualTo(7.7333046888624128), "the dense half alone");
 
             Assert.That(LyricDifficulty.Compute(gapped), Is.LessThan(LyricDifficulty.Compute(denseHalf)),
                 "the chunked axis charges for the easy tail behind the gap");
@@ -1552,8 +1553,10 @@ public class LyricPaceTest
     ///
     /// <para>The values themselves were re-taken at v22 (PR 2's overlapping chunk profile and
     /// sandbox dials) and are the SHIPPED (chunked) readings; on the v21 chunked grid the same six
-    /// fixtures read 22.0419 / 31.9733 / 5.6213 / 7.4381 / 9.6646 / 13.9120. The claim did not move,
-    /// only the baseline.</para>
+    /// fixtures read 22.0419 / 31.9733 / 5.6213 / 7.4381 / 9.6646 / 13.9120. They were re-taken
+    /// again at v24 (backlog 363: a word the map does not subdivide is one segment, and none of
+    /// these fixtures subdivides anything), from 21.0821 / 30.9491 / 5.1650 / 6.8820 / 8.7300 /
+    /// 12.7955. The claim did not move, only the baseline.</para>
     /// </summary>
     [Test]
     public void DifficultyRating_AMapWithNoFreestyleSlotsRatesBitIdenticallyToBeforeTheyWerePriced()
@@ -1564,14 +1567,14 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(big), Is.EqualTo(21.082086838738505));
-            Assert.That(LyricDifficulty.Compute(big, 1.50), Is.EqualTo(30.949092598971315));
-            Assert.That(LyricDifficulty.Compute(realistic), Is.EqualTo(5.1650041718866406));
-            Assert.That(LyricDifficulty.Compute(mid, 0.75), Is.EqualTo(6.8819518298858675));
-            Assert.That(LyricDifficulty.Compute(mid), Is.EqualTo(8.7299529590602383));
-            Assert.That(LyricDifficulty.Compute(mid, 1.50), Is.EqualTo(12.79553147510407));
+            Assert.That(LyricDifficulty.Compute(big), Is.EqualTo(20.916395725603415));
+            Assert.That(LyricDifficulty.Compute(big, 1.50), Is.EqualTo(30.706334165525064));
+            Assert.That(LyricDifficulty.Compute(realistic), Is.EqualTo(5.1243366042448653));
+            Assert.That(LyricDifficulty.Compute(mid, 0.75), Is.EqualTo(6.8277402216711653));
+            Assert.That(LyricDifficulty.Compute(mid), Is.EqualTo(8.6605850300065299));
+            Assert.That(LyricDifficulty.Compute(mid, 1.50), Is.EqualTo(12.694611634615599));
             // No mark and no capital in the pool, so the Literate stream is the same stream.
-            Assert.That(LyricDifficulty.Compute(mid, 1, literate: true), Is.EqualTo(8.7299529590602383));
+            Assert.That(LyricDifficulty.Compute(mid, 1, literate: true), Is.EqualTo(8.6605850300065299));
         });
     }
 

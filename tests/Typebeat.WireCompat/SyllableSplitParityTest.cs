@@ -509,12 +509,15 @@ public class SyllableSplitParityTest
                             Assert.That(browserCells[c].GetProperty("target").GetDouble(), Is.EqualTo(line.Cells[c].TargetTime), $"{what}[{i}][{c}]: target");
                         }
 
+                        // The LIVE grouping (backlog 363), selected explicitly: the browser plays live
+                        // only, and the line also carries the stored-era natural one.
+                        var grouping = line.AuthoredGrouping;
                         var browserGroups = browserLine.GetProperty("syllables");
-                        Assert.That(browserGroups.GetArrayLength(), Is.EqualTo(line.Syllables.Count), $"{what}[{i}]: syllable count");
+                        Assert.That(browserGroups.GetArrayLength(), Is.EqualTo(grouping.Groups.Count), $"{what}[{i}]: syllable count");
 
-                        for (int g = 0; g < line.Syllables.Count && g < browserGroups.GetArrayLength(); g++)
+                        for (int g = 0; g < grouping.Groups.Count && g < browserGroups.GetArrayLength(); g++)
                         {
-                            var group = line.Syllables[g];
+                            var group = grouping.Groups[g];
                             var browserGroup = browserGroups[g];
 
                             Assert.That(browserGroup.GetProperty("startCell").GetInt32(), Is.EqualTo(group.StartCell), $"{what}[{i}] syllable {g}: startCell");
@@ -527,7 +530,7 @@ public class SyllableSplitParityTest
                         Assert.That(browserMembership.GetArrayLength(), Is.EqualTo(line.Cells.Count), $"{what}[{i}]: cellSyllable length");
 
                         for (int c = 0; c < line.Cells.Count && c < browserMembership.GetArrayLength(); c++)
-                            Assert.That(browserMembership[c].GetInt32(), Is.EqualTo(line.SyllableIndexOf(c)), $"{what}[{i}][{c}]: syllable membership");
+                            Assert.That(browserMembership[c].GetInt32(), Is.EqualTo(grouping.IndexOf(c)), $"{what}[{i}][{c}]: syllable membership");
                     }
                 }
             }
@@ -564,8 +567,8 @@ public class SyllableSplitParityTest
                     {
                         int[] browserMarkers = browserLines[i].GetProperty("syllableMarkerCells").EnumerateArray().Select(e => e.GetInt32()).ToArray();
 
-                        Assert.That(browserMarkers, Is.EqualTo(lines[i].SyllableMarkerCells.ToArray()), $"{one.Name}.{variant}[{i}]: syllable marker cells");
-                        totalMarkers += lines[i].SyllableMarkerCells.Count;
+                        Assert.That(browserMarkers, Is.EqualTo(lines[i].AuthoredGrouping.MarkerCells.ToArray()), $"{one.Name}.{variant}[{i}]: syllable marker cells");
+                        totalMarkers += lines[i].AuthoredGrouping.MarkerCells.Count;
                     }
                 }
             }

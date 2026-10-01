@@ -112,6 +112,7 @@ public class KeyHandlerOrderLiveParityTest
         // Backlog 347, the first bit of the SECOND CONFIG flags word: the browser takes it unconditionally.
         RushCapCostsAccuracy = true,
         InputEra2 = true,
+        AuthoredSyllablesOnly = true,
         ManualNewlines = true,
         NewlineOnTypedLetter = true,
         AllowWrongInput = true,

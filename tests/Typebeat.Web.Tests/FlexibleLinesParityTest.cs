@@ -943,6 +943,11 @@ public class FlexibleLinesParityTest
     /// the two past six included, is a Great on its clock with its ordinary points (342 and 348 at the
     /// pre-increment combos 7 and 8, where backlog 347 awarded Meh for 57 and 58). The song then
     /// catches up and 'j' is a Great too. No break at all.
+    ///
+    /// <para>Since backlog 363 the unsubdivided word is ONE group over its whole unit [1000, 1120],
+    /// so every press here lands inside the span it is judged against and measures 0. 'h' used to
+    /// open the gameplay syllabifier's natural group at 1060 and measured -60; that cut is no longer
+    /// made live, and the Great it was pinned to show is still what the clock gives.</para>
     /// </summary>
     [Test]
     public void APressFarPastThePlayheadIsJudgedOnItsClockAndKeepsTheRun()
@@ -956,7 +961,7 @@ public class FlexibleLinesParityTest
             Assert.That(JsHarness.Doubles(meh, "comboAfterEachPress"), Is.EqualTo(new double[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }));
             Assert.That(meh.GetProperty("types").EnumerateArray().Select(t => t.GetString()), Is.All.EqualTo("Great"), "no press is lowered to Meh");
             Assert.That(JsHarness.Doubles(meh, "points"), Is.EqualTo(new double[] { 300, 306, 312, 318, 324, 330, 336, 342, 348, 354 }));
-            Assert.That(JsHarness.Doubles(meh, "deltas")[7], Is.EqualTo(-60), "the delta the clock measured, which is a Great");
+            Assert.That(JsHarness.Doubles(meh, "deltas")[7], Is.EqualTo(0), "the delta the clock measured inside the word's one span, which is a Great");
             Assert.That(meh.GetProperty("comboBreaks").GetInt32(), Is.Zero);
             Assert.That(meh.GetProperty("maxCombo").GetInt32(), Is.EqualTo(10));
         });

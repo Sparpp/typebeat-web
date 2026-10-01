@@ -41,6 +41,12 @@ const TB = global.window.TypeBeatCore;
 // Fixture 1: ComboRestoreTest's map. One line, "abcdefgh", eight cells over [1000, 5000], so cell i
 // targets exactly 1000 + 500i and every press can be struck dead on its own target: nothing but the
 // wrong keys can ever break a run. Line granularity, matching the C# fixture's TimingGranularity.Line.
+//
+// The word carries an AUTHORED split, abc|defgh (a boundary at 2500 and split_chars [3]), since
+// backlog 363. That was the gameplay syllabifier's natural cut, which live play no longer makes: an
+// unsubdivided "abcdefgh" is one group over [1000, 5000], and the off-time case below needs cell 3 to
+// OPEN a group. Authoring the same cut keeps both spans and every target (1000 + 500i) exactly where
+// they were, so no press below moves.
 // ---------------------------------------------------------------------------------------------
 const WORD = 'abcdefgh';
 
@@ -53,7 +59,9 @@ const WORD_OSU =
     '[Lyrics]\n' +
     '{"granularity":"line","version":2,"song_end_ms":20000}\n' +
     '{"text":"abcdefgh","start_ms":1000,"end_ms":5000,"words":[' +
-    '{"text":"abcdefgh","start_ms":1000,"end_ms":5000,"score":1}]}\n';
+    '{"text":"abcdefgh","start_ms":1000,"end_ms":5000,"score":1,' +
+    '"syllables":[{"text":"abc","start_ms":1000,"end_ms":2500},{"text":"defgh","start_ms":2500,"end_ms":5000}],' +
+    '"split_chars":[3]}]}\n';
 
 const WRONG_KEY = 'z'; // not in "abcdefgh", so it is reliably wrong on every cell
 
@@ -293,8 +301,8 @@ function sameCellFumbledTwice() {
 // THE PRESS TIMES ARE THE BROWSER'S, NOT THE C# FIXTURE'S, for the reason CoreUntimedSpaceHarness
 // records for its 5100: that fixture drives a bare TypingEngine judged on each cell's own point
 // target, while the browser only ever plays live and judges a cell against its SYLLABLE's sung
-// span. This line's spans are cells 0-2 over [1000, 2500] and cells 3-7 over [2500, 5000], so the
-// off-time press is cell 3 struck at 4600 (cell 3 OPENS the second group, so since backlog 247 it is
+// span. This line's spans are cells 0-2 over [1000, 2500] and cells 3-7 over [2500, 5000] (the
+// authored split, see fixture 1), so the off-time press is cell 3 struck at 4600 (cell 3 OPENS the second group, so since backlog 247 it is
 // judged from that group's START: 2100 late, off the one ladder whose Meh bound is 600) and the
 // ordinary press after it is cell 4 struck at 5500 (a non-opening cell, so it keeps the whole span
 // and is 500 past its end, still on the ladder, an honest Meh). Same shape as the C# case, same

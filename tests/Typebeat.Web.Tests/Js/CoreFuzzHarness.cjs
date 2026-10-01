@@ -151,9 +151,15 @@ const FIXTURES = {
     // Backlog 179's own surface. Every fixture above is built from ONE-syllable words, so each of
     // their tokens resolves to a single group spanning the whole word: real span judgement, but
     // never the case where a word carries SEVERAL spans and a press has to land in the right one.
-    // These words do: "tonight" splits to|night, "little" to lit|tle and "people" to peo|ple (a
-    // pinned exception), so the boundary between two spans of the same word is scoring surface here
-    // and a syllabifier that split one character off moves the account.
+    // These words used to: the gameplay syllabifier split "tonight" to|night, "little" lit|tle and
+    // "people" peo|ple. Since backlog 363 only the mapper subdivides, and none of these words is
+    // subdivided, so live (the browser, and the C# arm under second-word bit 2) every one of them is
+    // ONE group over its whole unit, exactly like "cake". That makes this fixture the sweep's pin on
+    // the change itself: a polysyllabic word nobody subdivided is judged as one span on both sides.
+    // Several spans inside one word are still reached, by the subtimed, authoredSplit and pausedWords
+    // fixtures, where the mapper authored them. The C# stored-era arm still cuts these words
+    // naturally, which EngineFuzzLiveParityTest.ClearingTheConfigFrameSyllableBitReDerivesTheClassicRule
+    // pins without this harness.
     //
     // "cake" is the shape the rule was asked for: one group over the whole word, so every character
     // of it is perfectly timed anywhere inside the sung span rather than only on its own point.
@@ -1199,12 +1205,15 @@ const SCRIPTED = [
     },
     {
         // Backlog 179's asked-for shape, on "cake tonight" / "little people". Every character is
-        // pressed WELL AHEAD of its own point target but still inside the sung span of the syllable
-        // it belongs to, so under the span rule every one of them is delta 0 and the whole map is
-        // typed clean. Under the classic point rule the same fingers would be graded Ok and Meh:
-        // "cake" runs [1000, 2400] but its 'e' points at 2050, and the "night" span runs
-        // [2857.14, 4000] while its 'n' points at 2857.14 and its trailing 't' at 3771.43, so a
-        // press at 3900 is dead centre of the syllable and a full second late on the character.
+        // pressed WELL AHEAD of its own point target but still inside the sung span it belongs to,
+        // so under the span rule every one of them is delta 0 and the whole map is typed clean.
+        // Under the classic point rule the same fingers would be graded Ok and Meh: "cake" runs
+        // [1000, 2400] but its 'e' points at 2050, and "tonight" runs [2400, 4000] while its 'n'
+        // points at 2857.14 and its trailing 't' at 3771.43, so a press at 3900 is inside the word's
+        // span and a full second late on the character. Since backlog 363 each word is one span (see
+        // the fixture), so the opening press of every word is on its start and nothing else opens a
+        // group: 25 Greats. The stored natural era cut "to|night" and so on, and graded the same
+        // fingers 22 Greats and 3 Mehs.
         name: 'scripted/insideTheSpan', fixture: 'syllableWords', spaceSkipsWord: false, skipPresses: 0,
         keys: [[1000, 'c'], [1100, 'a'], [1200, 'k'], [1300, 'e'], [2400, ' '],
                [2500, 't'], [2600, 'o'], [3900, 'n'], [3910, 'i'], [3920, 'g'], [3930, 'h'], [3940, 't'],
@@ -1213,10 +1222,11 @@ const SCRIPTED = [
     },
     {
         // The other side of the same rule: presses OUTSIDE the span, which are graded on the signed
-        // distance to the nearer edge and so still move through the whole ladder. 'n' and 'i' land
-        // before the "night" span opens at 2857.14 (early by 437 and 357, both nearer the edge than
-        // their own points), and 'g', 'h', 't' land after it closes at 4000. The two engines have to
-        // agree tier for tier here, not only on the zero inside.
+        // distance to the nearer edge and so still move through the whole ladder. 'g', 'h' and 't'
+        // land after the "tonight" span closes at 4000 (late by 500, 700 and 900). 'n' and 'i' used
+        // to land before the natural "night" span opened at 2857.14; since backlog 363 the word is
+        // one span from 2400, so they are inside it. The two engines have to agree tier for tier
+        // here, not only on the zero inside.
         name: 'scripted/offSpanEdges', fixture: 'syllableWords', spaceSkipsWord: false, skipPresses: 0,
         keys: [[1000, 'c'], [1050, 'a'], [2380, 'k'], [2390, 'e'], [2400, ' '],
                [2400, 't'], [2410, 'o'], [2420, 'n'], [2500, 'i'], [4500, 'g'], [4700, 'h'], [4900, 't']]

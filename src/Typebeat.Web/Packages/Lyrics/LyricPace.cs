@@ -414,6 +414,26 @@ public static class LyricPace
     /// No column is added, so no migration comes with it, and <c>PerformancePoints.VERSION</c> stays
     /// where it is.</para>
     ///
+    /// <para>v24 = ONLY THE MAPPER SUBDIVIDES (backlog 363, mirrored from the game's
+    /// <c>LyricDifficulty</c> and <c>ChunkedEndurance</c>, whose difficulty calculator moves to
+    /// version 5 in the same change). The engine no longer syllabifies a word at gameplay: a word
+    /// with no authored boundary and no usable pause plays as ONE group spanning its unit, and the
+    /// rating follows it. <see cref="LyricDifficulty.NaturalSyllables"/> returns 1 for such a word
+    /// (0 still for a token the syllabifier refuses), so <c>PressIntervals</c> reads it as one
+    /// segment and <c>ChunkedEndurance.JudgementWindows</c> counts one window for it. The
+    /// syllabifier now runs once, at the CLIENT's import, and reaches this server as ordinary
+    /// stored <c>syllables</c> objects plus <c>split_chars</c>, which <see cref="LyricTiming"/>
+    /// already parses; the server still never reads pipes. Stored maps are NOT migrated: an
+    /// unsubdivided word in a stored blob simply rates as one segment from this version on.
+    /// All six star columns and every cell of the <c>beatmaps.ratings</c> matrix can move (a map
+    /// the aligner subdivided barely moves; one with no subdivision at all drops), so
+    /// <see cref="PaceBackfill"/> re-rates the whole catalogue at boot and stamps
+    /// <c>pp_version = 0</c> on every score of every row it rewrites, and <see cref="PpBackfill"/>
+    /// reprices them in the same boot, exactly as at v21. The pace figures, the counts, the curve
+    /// columns and <c>skippable_s</c> are untouched. No column is added, so no migration comes with
+    /// it. <c>PerformancePoints.VERSION</c> stays at 24: this is a rating-only change (the
+    /// precedent of v17 and v21), and the pp FORMULA does not move.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -426,7 +446,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 23;
+    public const int VERSION = 24;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's

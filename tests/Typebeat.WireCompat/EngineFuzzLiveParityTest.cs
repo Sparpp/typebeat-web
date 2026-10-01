@@ -342,6 +342,14 @@ public class EngineFuzzLiveParityTest
     /// <c>farAheadClockHits</c>) so it can prove it reaches the rule at all, and pins that none of
     /// them was awarded a Meh or broke the run.</para>
     ///
+    /// <para>Since backlog 363 the extended header carries bit 2 as well
+    /// (<see cref="TypingEngine.AuthoredSyllablesOnly"/>, so the live word is 7): a word the map does
+    /// not subdivide is ONE syllable group over its unit. The browser takes that unconditionally,
+    /// and the C# defaults it OFF so a stored replay re-derives the gameplay syllabifier's natural
+    /// groups. Without it the C# arm would judge every unsubdivided polysyllabic word against
+    /// invented groups (a press inside the word but before the natural cut's later group a Meh
+    /// there, a dead-on Great here).</para>
+    ///
     /// <para>Bit 5 is the one that cannot be read as a single fact, which is why it is a parameter
     /// here rather than a constant: bit 5 CLEAR means a PINNED caret for a plain old replay, but an
     /// unpinned caret WITHOUT the line-start snap for one carrying the retired "FT" acronym, so
@@ -349,12 +357,12 @@ public class EngineFuzzLiveParityTest
     /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>. The sweep passes no mods, so the frame is
     /// the whole of the answer here.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true, bool manualNewlines = true, bool rushCapCostsAccuracy = true, bool inputEra2 = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true, bool manualNewlines = true, bool rushCapCostsAccuracy = true, bool inputEra2 = true, bool authoredSyllablesOnly = true)
     {
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming, backDatedSealBreak: backDatedSealBreak, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: foldsDisplacedClaim, manualNewlines: manualNewlines, newlineOnTypedLetter: manualNewlines, firstLineLeadIn: firstLineLeadIn));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: authoredSyllablesOnly));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -432,6 +440,12 @@ public class EngineFuzzLiveParityTest
                     var line = TypingLine.FromLyricLine(lines[i]);
                     var browserLine = browserLines[i];
 
+                    // The browser plays live only, so it is held against the LIVE grouping
+                    // (backlog 363): only the mapper subdivides, and an unsubdivided word is one
+                    // group over its unit. Selected explicitly, because the line also carries the
+                    // stored-era natural grouping a replay without the bit re-derives on.
+                    var grouping = line.AuthoredGrouping;
+
                     Assert.That(browserLine.GetProperty("endTime").GetDouble(), Is.EqualTo(line.EndTime), $"{fixture.Name}[{i}]: endTime");
                     Assert.That(browserLine.GetProperty("activationTime").GetDouble(), Is.EqualTo(line.ActivationTime), $"{fixture.Name}[{i}]: activationTime");
                     Assert.That(browserLine.GetProperty("firstVocalTime").GetDouble(), Is.EqualTo(line.FirstVocalTime), $"{fixture.Name}[{i}]: firstVocalTime");
@@ -452,15 +466,15 @@ public class EngineFuzzLiveParityTest
                     // The SYLLABLE groups (backlog 179), pinned here for the same reason the cells
                     // are: they are what a press on a grouped cell is judged against, so a group
                     // that drifted would surface as an account divergence and be blamed on the
-                    // engine. This holds the whole derivation at once, the syllabifier's splits,
-                    // the forced count on a subtimed word, the stylised gate that leaves
-                    // "ohhh" ungrouped, the dropped groups and the monotonic clamp.
+                    // engine. This holds the whole derivation at once, the one group of an
+                    // unsubdivided word, the forced count on a subtimed word, the stylised gate that
+                    // leaves "ohhh" ungrouped, the dropped groups and the monotonic clamp.
                     var browserGroups = browserLine.GetProperty("syllables");
-                    Assert.That(browserGroups.GetArrayLength(), Is.EqualTo(line.Syllables.Count), $"{fixture.Name}[{i}]: syllable count");
+                    Assert.That(browserGroups.GetArrayLength(), Is.EqualTo(grouping.Groups.Count), $"{fixture.Name}[{i}]: syllable count");
 
-                    for (int g = 0; g < line.Syllables.Count && g < browserGroups.GetArrayLength(); g++)
+                    for (int g = 0; g < grouping.Groups.Count && g < browserGroups.GetArrayLength(); g++)
                     {
-                        var group = line.Syllables[g];
+                        var group = grouping.Groups[g];
                         var browserGroup = browserGroups[g];
 
                         Assert.That(browserGroup.GetProperty("startCell").GetInt32(), Is.EqualTo(group.StartCell), $"{fixture.Name}[{i}] syllable {g}: startCell");
@@ -475,7 +489,7 @@ public class EngineFuzzLiveParityTest
                     Assert.That(browserMembership.GetArrayLength(), Is.EqualTo(line.Cells.Count), $"{fixture.Name}[{i}]: cellSyllable length");
 
                     for (int c = 0; c < line.Cells.Count && c < browserMembership.GetArrayLength(); c++)
-                        Assert.That(browserMembership[c].GetInt32(), Is.EqualTo(line.SyllableIndexOf(c)), $"{fixture.Name}[{i}][{c}]: syllable membership");
+                        Assert.That(browserMembership[c].GetInt32(), Is.EqualTo(grouping.IndexOf(c)), $"{fixture.Name}[{i}][{c}]: syllable membership");
 
                     // The STRETCH flags (backlog 209), the second half of what decides WHICH rule
                     // judges a press: a freestyle slot, or a cell of a run of three or more identical
@@ -487,7 +501,7 @@ public class EngineFuzzLiveParityTest
                     Assert.That(browserStretch.GetArrayLength(), Is.EqualTo(line.Cells.Count), $"{fixture.Name}[{i}]: charTimedStretch length");
 
                     for (int c = 0; c < line.Cells.Count && c < browserStretch.GetArrayLength(); c++)
-                        Assert.That(browserStretch[c].GetBoolean(), Is.EqualTo(line.IsCharTimedStretch(c)), $"{fixture.Name}[{i}][{c}]: char-timed stretch");
+                        Assert.That(browserStretch[c].GetBoolean(), Is.EqualTo(grouping.IsCharTimedStretch(c)), $"{fixture.Name}[{i}][{c}]: char-timed stretch");
                 }
             }
         });
@@ -519,7 +533,7 @@ public class EngineFuzzLiveParityTest
             if (authored.Cells[c].TargetTime != derived.Cells[c].TargetTime)
                 movedTargets++;
 
-            if (authored.SyllableIndexOf(c) != derived.SyllableIndexOf(c))
+            if (authored.AuthoredGrouping.IndexOf(c) != derived.AuthoredGrouping.IndexOf(c))
                 movedMembership++;
         }
 
@@ -708,7 +722,8 @@ public class EngineFuzzLiveParityTest
             var map = Map(GranularityOf(fixture), Fixture(fixture));
 
             return TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(),
-                Keystrokes(browserCase.GetProperty("keys"), spaceSkipsWord: false, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2),
+                // A stored-era arm predates backlog 363 too, so it clears bit 2 with bit 1.
+                Keystrokes(browserCase.GetProperty("keys"), spaceSkipsWord: false, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2),
                 TypoRule.Deferred, ComboRestoreRule.OnFix);
         }
 
@@ -990,7 +1005,9 @@ public class EngineFuzzLiveParityTest
                 if (paused.Cells[c].TargetTime != plain.Cells[c].TargetTime)
                     movedTargets++;
 
-                if (paused.SyllableIndexOf(c) != plain.SyllableIndexOf(c))
+                // The live grouping on both sides (backlog 363): with its pauses gone an
+                // unsubdivided word is one group, so the count is pauses against one group.
+                if (paused.AuthoredGrouping.IndexOf(c) != plain.AuthoredGrouping.IndexOf(c))
                     movedMembership++;
             }
         }
@@ -1004,11 +1021,11 @@ public class EngineFuzzLiveParityTest
 
             // "yooooooooou": cells 1..9 are the nine 'o's, split 5 | 4 by the authored cut.
             for (int c = 1; c <= 9; c++)
-                Assert.That(stretchLine.IsCharTimedStretch(c), Is.False, $"'o' cell {c}: a run a divider paces into spans is not char-timed");
+                Assert.That(stretchLine.AuthoredGrouping.IsCharTimedStretch(c), Is.False, $"'o' cell {c}: a run a divider paces into spans is not char-timed");
 
             // "heyyyyy" starts at cell 12; its trailing four 'y's (cells 15..18) are one run the divider merely starts.
             for (int c = 15; c <= 18; c++)
-                Assert.That(stretchLine.IsCharTimedStretch(c), Is.True, $"'y' cell {c}: a run a divider only starts stays char-timed");
+                Assert.That(stretchLine.AuthoredGrouping.IsCharTimedStretch(c), Is.True, $"'y' cell {c}: a run a divider only starts stays char-timed");
         });
     }
 
@@ -1030,6 +1047,12 @@ public class EngineFuzzLiveParityTest
     /// rather than read from it so this test needs no node: every character is pressed well ahead
     /// of its own point target but inside the sung span of its syllable, which is exactly the shape
     /// the two rules disagree about.</para>
+    ///
+    /// <para>All three arms are STORED eras and write no extended header, so second-word bit 2
+    /// (<see cref="TypingEngine.AuthoredSyllablesOnly"/>, backlog 363) is clear and every one of
+    /// them re-derives the gameplay syllabifier's natural groups ("to|night", "lit|tle", "peo|ple"). That is
+    /// why the spans and the hybrid counts below still hold: the browser, which plays one group per
+    /// unsubdivided word, now scores this same script as 25 Greats on the live sweep instead.</para>
     /// </summary>
     [Test]
     public void ClearingTheConfigFrameSyllableBitReDerivesTheClassicRule()

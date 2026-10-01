@@ -98,6 +98,12 @@ public class UnderlinePaceParityTest
     /// A map built to reach BOTH hued ends of the ramp and the neutral middle: sixteen lines whose
     /// words run from a slow drawl to a fast burst, so the fast and slow quartiles are populated and
     /// ties (identically paced words) share a rank.
+    ///
+    /// <para>"charlie" carries an AUTHORED subdivision, char|lie, cut at the middle of the word with
+    /// <c>split_chars</c> [4] (backlog 363). The subdivision-cut coverage below used to be reached by
+    /// the gameplay syllabifier's automatic marks on these unsubdivided words; only the mapper
+    /// subdivides now, so the synthetic map has to author one or the cut would only ever be
+    /// exercised by the env-supplied real maps.</para>
     /// </summary>
     private static string SyntheticOsu()
     {
@@ -114,7 +120,12 @@ public class UnderlinePaceParityTest
 
             foreach (string w in words.Take(2 + k % 3))
             {
-                wordJson.Add($"{{\"text\":\"{w}\",\"start_ms\":{t.ToString(CultureInfo.InvariantCulture)},\"end_ms\":{(t + wordMs).ToString(CultureInfo.InvariantCulture)},\"score\":1}}");
+                string subdivision = w == "charlie"
+                    ? $",\"syllables\":[{{\"text\":\"char\",\"start_ms\":{t.ToString(CultureInfo.InvariantCulture)},\"end_ms\":{(t + wordMs / 2).ToString(CultureInfo.InvariantCulture)}}},"
+                      + $"{{\"text\":\"lie\",\"start_ms\":{(t + wordMs / 2).ToString(CultureInfo.InvariantCulture)},\"end_ms\":{(t + wordMs).ToString(CultureInfo.InvariantCulture)}}}],\"split_chars\":[4]"
+                    : string.Empty;
+
+                wordJson.Add($"{{\"text\":\"{w}\",\"start_ms\":{t.ToString(CultureInfo.InvariantCulture)},\"end_ms\":{(t + wordMs).ToString(CultureInfo.InvariantCulture)},\"score\":1{subdivision}}}");
                 t += wordMs + (k % 4) * 60;
             }
 
@@ -183,11 +194,12 @@ public class UnderlinePaceParityTest
     /// Every band of every line of every fixture, in the mode /play draws (the RELATIVE one since
     /// PR 3): same count, same cell range, same colour. Coverage is asserted alongside, so the sweep
     /// cannot pass on maps that stopped reaching either hued end, and on the subdivision cut PR 3
-    /// added (a word is cut again at its syllable markers, automatic ones included).
+    /// added (a word is cut again at its syllable markers, which since backlog 363 are the mapper's
+    /// own subdivisions only).
     /// </summary>
     [Test]
     public void TheBrowserBandsMatchUnderlinePaceOnEveryFixture()
-        => AssertBands("lines", lines => UnderlinePace.BuildRelativeBands(lines));
+        => AssertBands("lines", lines => UnderlinePace.BuildRelativeBands(lines, authoredSyllablesOnly: true));
 
     /// <summary>
     /// The same sweep in the whole-map percentile mode (<see cref="UnderlinePace.BuildBands"/>, the
@@ -221,11 +233,11 @@ public class UnderlinePaceParityTest
                 for (int k = 0; k < expected.Length && k < browserLines.GetArrayLength(); k++)
                 {
                     Assert.That(browserCells[k].GetInt32(), Is.EqualTo(lines[k].Cells.Count), $"{name}[{k}]: cell count");
-                    Assert.That(browserMaps[m].GetProperty("markers")[k].GetInt32(), Is.EqualTo(lines[k].SyllableMarkerCells.Count), $"{name}[{k}]: subdivision cuts");
-                    markers += lines[k].SyllableMarkerCells.Count;
+                    Assert.That(browserMaps[m].GetProperty("markers")[k].GetInt32(), Is.EqualTo(lines[k].AuthoredGrouping.MarkerCells.Count), $"{name}[{k}]: subdivision cuts");
+                    markers += lines[k].AuthoredGrouping.MarkerCells.Count;
                     Assert.That(browserMaps[m].GetProperty("sungEnds")[k].GetDouble(), Is.EqualTo(UnderlinePace.SungEndOf(lines[k])), $"{name}[{k}]: sung end");
 
-                    var segments = UnderlinePace.SegmentLine(lines[k]);
+                    var segments = UnderlinePace.SegmentLine(lines[k], authoredSyllablesOnly: true);
                     var browserSpeeds = browserMaps[m].GetProperty("speeds")[k];
                     Assert.That(browserSpeeds.GetArrayLength(), Is.EqualTo(segments.Length), $"{name}[{k}]: segment count");
 

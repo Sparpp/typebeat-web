@@ -18,9 +18,12 @@ public sealed class TimedUnit
     /// them: the pace figures do not, and the envelope model spreads a word's cells uniformly across
     /// its whole span. The rhythm arm of the chunked axis DOES (see
     /// <c>LyricDifficulty.PressIntervals</c>): a cell is judged inside its own syllable's sung span,
-    /// so a subdivided word offers a different set of judgement intervals from the syllabified
-    /// fallback, and a mirror that dropped the boundaries would rate every subdivided map
-    /// differently from the client. Empty by default, so every caller that builds a unit by hand
+    /// so a subdivided word offers a different set of judgement intervals from the one-segment
+    /// fallback (since LyricPace v24, backlog 363: the engine no longer syllabifies at gameplay), and
+    /// a mirror that dropped the boundaries would rate every subdivided map differently from the
+    /// client. The client's import pass now writes its syllabifier's cut here, as ordinary
+    /// <c>syllables</c> objects (with <c>split_chars</c>, which only the engines read), so these are
+    /// the only route by which that cut reaches a stored rating. Empty by default, so every caller that builds a unit by hand
     /// (the tests, the interpolation fallback) reads exactly as it did.</para>
     ///
     /// <para>NOT PORTED, and the one place the two sides can still disagree: the '|' SPLIT MARKER
