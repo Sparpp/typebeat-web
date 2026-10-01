@@ -45,6 +45,11 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Docker's default is 10 s between SIGTERM and SIGKILL, shorter than ASP.NET's 30 s graceful
+    # shutdown, so a swap could kill in-flight requests (an upload's complete, a score submit) and
+    # a startup sweep mid-row. 30 s lets the host drain (backlog 368). Applies to containers
+    # created after this line, which a deploy's `up -d app` does on its first run with it.
+    stop_grace_period: 30s
     logging:
       driver: json-file
       options:

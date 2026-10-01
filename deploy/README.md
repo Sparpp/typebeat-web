@@ -35,11 +35,11 @@ docker compose -p typebeat-web --project-directory /opt/typebeat-web \
 (`typebeat-web-app-1`, `typebeat-web_appdata`), and `--project-directory` is what puts the build
 context back on the repo root. Getting either wrong is the failure above.
 
-**`up.sh` exists only on the box and is NOT in this repo**, so nothing here can review it, and a
-change to it is invisible to CI (which is why the prune steps live in `ci.yml` instead). Its
-contents are not reproduced here because they have never been read into git. **Owner action: copy
-`/opt/typebeat-web/deploy/up.sh` into the repo and commit it**, after which this section can point
-at the file instead of describing its invocation.
+`up.sh` is tracked in this repo as `deploy/up.sh` (mode 100755). It is the whole wrapper:
+`cd /opt/typebeat-web` and then `docker compose --project-directory /opt/typebeat-web -f
+deploy/compose.prod.yml --env-file deploy/.env "$@"`. Every deploy ships it over the box's copy
+(and re-applies the executable bit, see the Ship step in `ci.yml`), so a change to it is reviewed
+and deployed like any other file.
 
 ## First deploy
 
@@ -59,10 +59,82 @@ at the file instead of describing its invocation.
 
 ## Update
 
+A deploy is a push to `main` (through `./ship-website.ps1` from the parent repo, never a bare
+`git push`); CI builds the image on the box, swaps the app container, reloads caddy and checks
+`/health`. By hand on the box the equivalent is `./deploy/up.sh up -d --build`.
+
+What a deploy costs the users (backlog 368): only the MIGRATIONS run before the new container
+listens. The backfill sweeps (Pace, Fingerprint, Language, the refunds, Pp) run afterwards in the
+`StartupSweeps` hosted service, so pages, scores and logins work as soon as the app is up. Two
+things wait for the sweeps and answer **503 with Retry-After** until they are through: BSS package
+ingest (the full upload, the patch, the upload-session complete; the game retries a 503, and a
+chunked upload keeps its chunks) and the website's Rank button. `/health` is liveness and never
+waits; `/health/ready` says `sweeping`, `ready` or `failed: <Stage>`. The log line to watch for is
+`Startup sweeps: done in N s`. A sweep that throws no longer kills the boot: it is logged as
+`Startup sweeps: <Stage> FAILED`, the sweeps after it do not run, the rank button opens, and
+package ingest stays refused if the failure was at or before the fingerprint backfill (opening it
+would let a re-upload demote a ranked map), until a restart.
+
+### Shipping under load
+
+Most deploys need none of this. Use it for a deploy whose diff has a new migration, a
+`LyricPace.VERSION` or `GameplayFingerprint.VERSION` bump (each re-sweeps the whole catalogue at
+boot), or a `PerformancePoints.VERSION` bump (re-prices every score):
+
+1. Pick a low-traffic hour.
+2. Check for uploads in flight: `docker exec typebeat-web-app-1 ls /data/upload-sessions` (an
+   in-progress chunked upload survives the swap, but its complete is held until the sweeps finish).
+3. Read the diff for new files under `src/Typebeat.Web/Data/Migrations/` (are they additive? see
+   Rollback below) and for the VERSION bumps above.
+4. Optionally turn maintenance on: `touch /opt/typebeat-web/deploy/maintenance.on`. Every request
+   then answers 503 with Retry-After (a small page for browsers, a plain-text body for the game and
+   the API) EXCEPT `/health` and `/health/ready`, so CI's health check still sees the app and the
+   deploy does not roll itself back. No reload is needed (see `deploy/maintenance.caddy`).
+5. Ship (`./ship-website.ps1`).
+6. Watch the boot: `docker logs -f typebeat-web-app-1` until `Startup sweeps: done`, or poll
+   `curl -s https://typebeat.sh/health/ready` until it says `ready`.
+7. Maintenance off: `rm /opt/typebeat-web/deploy/maintenance.on`.
+8. Check `curl https://typebeat.sh/health` says `ok`, and that one upload goes through.
+
+The flag is git-ignored, so a deploy's tar never creates or removes it: if you turned it on, only
+you turn it off. During an ordinary swap (no flag) a browser page load that hits the gap between
+the old container stopping and the new one listening gets a "restarting" page (503, Retry-After 15)
+instead of a bare 502; the game and the API keep the bare 502, which they already retry. NOT YET
+VERIFIED: whether Cloudflare passes that origin 503 page through untouched (it should, since it only
+substitutes its own page when it cannot reach the origin, but check once from a browser during a
+deploy).
+
+### Rollback (automatic)
+
+The deploy job tags the image the RUNNING app container was created from as
+`typebeat-web-app:previous` before it builds. If the swap or the health check fails, the
+"Roll back to the previous image" step prints the failing container's last 150 log lines, runs
+`docker tag typebeat-web-app:previous typebeat-web-app` and
+`./deploy/up.sh up -d --no-build --no-deps --force-recreate app`, and re-checks `/health`. The job
+stays red either way. A failed build or caddy reload does not trigger it (the running app was never
+touched). The same by hand:
+
 ```
-git pull   # once the repo is under version control
-./deploy/up.sh up -d --build
+docker image ls typebeat-web-app          # latest and previous
+docker tag typebeat-web-app:previous typebeat-web-app
+./deploy/up.sh up -d --no-build --no-deps --force-recreate app
 ```
+
+Limits, read them before relying on it:
+
+- **Migrations are forward-only.** The old binary ignores the applied migrations it does not know
+  (`Db.MigrateAsync`) and runs against the newer schema, so a rollback is safe only when the failed
+  deploy's migrations were additive (new tables, new nullable columns, new indexes). A rename, a
+  drop or a NOT NULL without a default can leave the old binary broken too; then fix forward.
+- **A `GameplayFingerprint.VERSION` bump** makes the rollback re-sweep the whole catalogue at boot
+  (the backfill compares versions with NOT LIKE, both ways), and the next good deploy sweeps it
+  again. Package ingest is held for both sweeps. Pace and pp versions use `<` and are untouched by
+  a rollback.
+- **The Caddyfile is not rolled back**: a broken Caddyfile fails the reload step (caddy keeps the
+  old config) and needs a fix forward.
+- `:previous` is whatever was RUNNING, so after a deploy that went red without rolling back (a
+  failed caddy reload, say) it is the new image. Check `docker image ls typebeat-web-app` before a
+  manual rollback.
 
 After any `deploy/Caddyfile` change, verify the running container actually sees the new content
 (CI reloads caddy on every deploy, but if the md5s below ever differ, run
@@ -356,6 +428,14 @@ digests and stop being shared with the dangling old one, which then holds its ow
 Dangling only (no `-a`): nothing tagged is removed, and an image still used by a container cannot be
 pruned at all. It runs after the health check and the caddy reload, so the image being served is
 tagged and in use by then.
+
+One extra image is kept on purpose since backlog 368: before each build the deploy tags the image
+the running container uses as `typebeat-web-app:previous` (the automatic rollback's target, see
+Update, "Rollback"). Being tagged, it survives `docker image prune -f`; retagging it on the next
+deploy leaves the one before it dangling, which that deploy's prune then collects. So a healthy box
+holds exactly two app images, `latest` and `previous` (check with `docker image ls
+typebeat-web-app`), plus, briefly, a failed deploy's image after a rollback, until the next green
+deploy prunes it.
 
 Check what is actually there with `docker system df` (the `RECLAIMABLE` column) and
 `docker image ls -f dangling=true`. Old images from BEFORE this step landed are not cleaned by the

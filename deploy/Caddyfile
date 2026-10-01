@@ -5,6 +5,7 @@
 # that have it compiled in.
 typebeat.sh {
 	encode zstd gzip
+	import /etc/caddy/deploy/maintenance.caddy
 
 	# WebSocket upgrade for /ws/notifications is handled transparently by reverse_proxy.
 	reverse_proxy app:8080
@@ -29,6 +30,7 @@ www.typebeat.sh {
 # browsers; switch to permanent once typebeat.sh has settled.
 typebeat.mingda.sh {
 	encode zstd gzip
+	import /etc/caddy/deploy/maintenance.caddy
 
 	@browser {
 		method GET
@@ -55,6 +57,7 @@ typebeat.mingda.sh {
 # permissive. The mingda.sh name is what shipped clients fall back to, so it stays.
 bss.typebeat.sh, bss.typebeat.mingda.sh {
 	encode zstd gzip
+	import /etc/caddy/deploy/maintenance.caddy
 
 	reverse_proxy app:8080
 
