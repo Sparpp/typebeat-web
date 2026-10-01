@@ -323,6 +323,10 @@ BuddyEndpoints.Map(app);
 // and likewise 404 when it is unset. Added after the 2026-09-04 disk-full outage.
 OpsEndpoints.Map(app);
 
+// Offsite backup freshness for the same bot (backlog 367), same gate: ages of the stamps
+// deploy/backup.sh writes after each verified R2 upload.
+OpsBackupsEndpoints.Map(app);
+
 // The in-browser web player's backend (score tokens/submission + map/audio serving). Additive;
 // cookie-session authed, mirrors the bearer score flow in ScoreEndpoints.
 PlayEndpoints.Map(app);
