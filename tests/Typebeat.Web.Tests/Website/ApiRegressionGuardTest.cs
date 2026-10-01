@@ -20,7 +20,12 @@ public class ApiRegressionGuardTest
         Assert.Multiple(() =>
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-            Assert.That(body, Is.EqualTo("ok"));
+            // The liveness contract since backlog 365 (DiskGuard.HealthBody): the body STARTS with
+            // "ok" while nothing is refused, carrying a note when the disk is low or unreadable
+            // ("ok disk-low 6.9 GiB free" is what CI's runner answers). The uptime monitor and
+            // ci.yml's grep key on that prefix; the exact "ok" of a healthy disk is pinned in
+            // DiskGuardTest, where the probe is under the test's control rather than the host's.
+            Assert.That(body, Does.StartWith("ok"));
         });
     }
 
@@ -63,7 +68,7 @@ public class ApiRegressionGuardTest
         Assert.Multiple(() =>
         {
             Assert.That(liveStatus, Is.EqualTo(HttpStatusCode.OK));
-            Assert.That(liveBody, Is.EqualTo("ok"));
+            Assert.That(liveBody, Does.StartWith("ok"), "liveness, whatever the host's disk reads");
             Assert.That(readyStatus, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
             Assert.That(readyBody, Is.EqualTo("sweeping"), "plain body, never the styled error page");
             Assert.That(readyRetry, Is.EqualTo(TimeSpan.FromSeconds(StartupSweepGate.RetryAfterSeconds)));
