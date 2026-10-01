@@ -304,21 +304,41 @@ public class ListingPageTest
         // Other tests insert sets through SQL; the count above must describe the page read below.
         await WebsiteFixture.EvictAllAsync();
 
-        string page1 = await GetHtml("/beatmapsets");
-        Assert.That(CardIds(page1), Has.Count.EqualTo(50));
+        // Walk the cursor to the END rather than assuming exactly two pages: the suite's other
+        // fixtures publish sets of their own (the SEO sitemap seed, the R2 and disk-guard hosts),
+        // and how many are visible depends on the run order. What the walk pins is the contract:
+        // every page but the last is full, pages never overlap, the union is the whole listing,
+        // and only the last page offers no further cursor.
+        var seen = new List<long>();
+        string url = "/beatmapsets";
+        int pages = 0;
 
-        var showMore = Regex.Match(page1, "href=\"(/beatmapsets\\?[^\"]*after=[^\"]*)\"");
-        Assert.That(showMore.Success, Is.True, "page 1 must link a cursor page");
+        while (true)
+        {
+            string page = await GetHtml(url);
+            var ids = CardIds(page);
+            pages++;
 
-        string page2 = await GetHtml(WebUtility.HtmlDecode(showMore.Groups[1].Value));
-        var page2Ids = CardIds(page2);
+            Assert.That(ids.Intersect(seen), Is.Empty, $"cursor page {pages} must not overlap an earlier page");
+            seen.AddRange(ids);
+
+            var showMore = Regex.Match(page, "href=\"(/beatmapsets\\?[^\"]*after=[^\"]*)\"");
+
+            if (!showMore.Success)
+            {
+                Assert.That(ids, Has.Count.GreaterThan(0), "the last page must still carry cards");
+                break;
+            }
+
+            Assert.That(ids, Has.Count.EqualTo(50), $"page {pages} offers a cursor, so it must be full");
+            Assert.That(pages, Is.LessThan(20), "runaway cursor walk");
+            url = WebUtility.HtmlDecode(showMore.Groups[1].Value);
+        }
 
         Assert.Multiple(() =>
         {
-            Assert.That(page2Ids, Has.Count.EqualTo(totalPublic - 50));
-            Assert.That(page2Ids.Intersect(CardIds(page1)), Is.Empty, "cursor pages must not overlap");
-            Assert.That(Regex.IsMatch(page2, "href=\"/beatmapsets\\?[^\"]*after="), Is.False,
-                "the last page must not offer another cursor link");
+            Assert.That(pages, Is.GreaterThan(1), "the seed overflows one page, so the walk must take a cursor at least once");
+            Assert.That(seen, Has.Count.EqualTo(totalPublic), "the cursor walk must reach every public set exactly once");
         });
     }
 
