@@ -76,6 +76,22 @@ services:
       # repo's build-macos.yml workflow always deploys the installer under the stable name
       # typebeat-macos.pkg, so set TYPEBEAT_GAME_DOWNLOAD_MACOS once in deploy/.env.
       TYPEBEAT_GAME_DOWNLOAD_MACOS: "${TYPEBEAT_GAME_DOWNLOAD_MACOS:-}"
+      # The public Cloudflare R2 bucket (backlog 364, DUAL-HOME). With all five set, the installers,
+      # the feed's *.nupkg and published beatmap packages answer a request on the Cloudflare hosts
+      # with a 302 to TYPEBEAT_R2_PUBLIC_BASE_URL (an https custom domain such as
+      # https://dl.typebeat.sh), while the direct bss.* hosts keep streaming from /data. Any one
+      # empty = the feature is off and every route is byte-identical to before (the startup log
+      # says which). ENDPOINT is the account's S3 endpoint, https://<ACCOUNT_ID>.r2.cloudflarestorage.com,
+      # never a proxied zone (100 MB body cap). The token is the SERVER's bucket-scoped Object
+      # Read and Write token, not CI's. TYPEBEAT_R2_DIRECT_HOSTS (comma separated) overrides the
+      # default direct hosts bss.typebeat.sh,bss.typebeat.mingda.sh. Run the releases backfill
+      # (deploy/README.md, "Large downloads on Cloudflare R2") BEFORE filling these in.
+      TYPEBEAT_R2_ENDPOINT: "${TYPEBEAT_R2_ENDPOINT:-}"
+      TYPEBEAT_R2_BUCKET: "${TYPEBEAT_R2_BUCKET:-}"
+      TYPEBEAT_R2_ACCESS_KEY_ID: "${TYPEBEAT_R2_ACCESS_KEY_ID:-}"
+      TYPEBEAT_R2_SECRET_ACCESS_KEY: "${TYPEBEAT_R2_SECRET_ACCESS_KEY:-}"
+      TYPEBEAT_R2_PUBLIC_BASE_URL: "${TYPEBEAT_R2_PUBLIC_BASE_URL:-}"
+      TYPEBEAT_R2_DIRECT_HOSTS: "${TYPEBEAT_R2_DIRECT_HOSTS:-}"
       # Shared key for the Discord bot's private score feed (GET /api/v2/scores/recent).
       # Unset = the endpoint 404s and the feature is simply off, so this is safe to leave blank.
       TYPEBEAT_BUDDY_KEY: "${TYPEBEAT_BUDDY_KEY:-}"

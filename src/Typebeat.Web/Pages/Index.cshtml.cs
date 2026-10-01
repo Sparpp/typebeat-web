@@ -10,7 +10,7 @@ namespace Typebeat.Web.Pages;
 /// the /download page, which picks the platform; it only shows when at least one platform's build
 /// is actually stored, otherwise a signed-out visitor gets the sign-up CTA in its place.
 /// </summary>
-public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) : TypebeatPageModel
+public sealed class IndexModel(Db db, GameInstallers installers, IConfiguration config) : TypebeatPageModel
 {
     public long Players { get; private set; }
     public long ScoresTotal { get; private set; }
@@ -28,7 +28,7 @@ public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) :
     {
         AccountDeleted = HttpContext.Request.Query.ContainsKey("deleted");
 
-        GameDownloadAvailable = await AnyGameDownloadAvailableAsync(config, store, HttpContext.RequestAborted);
+        GameDownloadAvailable = await AnyGameDownloadAvailableAsync(config, installers.ExistsAsync, HttpContext.RequestAborted);
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
@@ -67,13 +67,22 @@ public sealed class IndexModel(Db db, IFileStore store, IConfiguration config) :
     ///
     /// Public and static purely so it can be pinned without booting a second test host.
     /// </summary>
-    public static async Task<bool> AnyGameDownloadAvailableAsync(IConfiguration config, IFileStore store, CancellationToken ct = default)
+    public static Task<bool> AnyGameDownloadAvailableAsync(IConfiguration config, IFileStore store, CancellationToken ct = default)
+        => AnyGameDownloadAvailableAsync(config, (fileName, token) => store.ObjectExistsAsync(StoreKeys.Download(fileName), token), ct);
+
+    /// <summary>
+    /// The same loop over any existence check: the page passes <see cref="GameInstallers.ExistsAsync"/>,
+    /// which is the local store when the public bucket is off and the bucket (cached) then the
+    /// local store when it is on (backlog 364).
+    /// </summary>
+    public static async Task<bool> AnyGameDownloadAvailableAsync(
+        IConfiguration config, Func<string, CancellationToken, Task<bool>> installerExists, CancellationToken ct = default)
     {
         foreach (string configKey in GameDownloadKeys.All)
         {
             string? fileName = config[configKey];
 
-            if (!string.IsNullOrEmpty(fileName) && await store.ObjectExistsAsync(StoreKeys.Download(fileName), ct))
+            if (!string.IsNullOrEmpty(fileName) && await installerExists(fileName, ct))
                 return true;
         }
 

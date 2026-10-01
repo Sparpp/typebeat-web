@@ -95,6 +95,18 @@ caches keep serving until you finish all four steps:
    without a purge every cache ages out within a day; the purge closes that window.
 4. If the takedown was a DMCA notice, note the set id + notice reference in the report row
    (`reports` table) so repeat-infringer tracking works.
+5. With the R2 bucket configured (see "Large downloads on Cloudflare R2" below), the set's public
+   package copies live there too, under unguessable `packages/<SET_ID>/<v>-<hash>.typb` keys that a
+   redirect may already have handed out. The status flip stops new redirects at once; delete the
+   copies and purge the download host:
+   ```
+   aws s3 rm --recursive "s3://$R2_BUCKET/packages/<SET_ID>/" \
+     --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" --region auto
+   docker exec -it typebeat-web-postgres-1 psql -U typebeat -d typebeat \
+     -c "UPDATE set_versions SET public_key = NULL WHERE set_id = <SET_ID>;"
+   ```
+   then purge `https://dl.typebeat.sh/packages/<SET_ID>/*` in Cloudflare (Caching, Purge by URL
+   or by prefix). Copies are cached for a day (`public, max-age=86400`), like covers.
 
 Browser caches cannot be purged remotely; the one-day `max-age` bounds them.
 
@@ -263,7 +275,7 @@ automatically now, and the parts that still need you.
 
 | What | On 2026-09-04 | Held down by |
 |---|---|---|
-| `/data/downloads/releases/*.nupkg` (Velopack update feed) | 44 GB | the ship path prunes after every upload |
+| `/data/downloads/releases/*.nupkg` (Velopack update feed) | 44 GB | the ship path prunes after every upload (on the box AND, when configured, in R2) |
 | docker build cache | 7 GB | `docker builder prune -f`, last step of every CI deploy |
 | dangling `<none>` app images, one per deploy | not measured | `docker image prune -f`, added after the SECOND fill, below |
 | container json logs (caddy's alone) | 352 MB | `logging:` caps in `compose.prod.yml`, 10m x 3 per service |
@@ -303,6 +315,11 @@ delta, on three channels, forever). What it keeps, in order of authority:
 than the window: Velopack falls back to the newest Full package when no delta chain reaches it, and
 the newest Full is always feed-referenced by rule 1. `-DryRun` prints the exact delete list and
 stops, which is the way to sanity-check it after changing `Keep`.
+
+With R2 configured (backlog 364) every nupkg is uploaded to the bucket as well as the box, and the
+prune runs a second pass over the bucket's `downloads/releases/` with the SAME keep set, regex and
+`Keep`, so the two copies never drift. The Linux and macOS build workflows do the same. The bucket
+pass is skipped (with a message) when its credentials are absent, and the box pass still runs.
 
 ### Container logs (automatic, but NOT retroactive)
 
@@ -514,6 +531,69 @@ un-versioned names, so their keys are set once and never change:
 
 All three must be declared in `compose.prod.yml`'s `environment:` block: compose does not forward
 undeclared host env vars, so an `.env` entry with no matching declaration is silently ignored.
+
+With R2 configured the installers are ALSO uploaded to the bucket (`downloads/<name>`, Cache-Control
+`no-cache` because the names are stable, so the edge revalidates by ETag). The card then takes its
+size from the bucket's copy (cached about a minute) and `/download/game*` on the Cloudflare hosts
+302s there; the box keeps its copy for the direct mirror link and as the fallback when the bucket
+has none. The keys above still decide which cards exist.
+
+## Large downloads on Cloudflare R2 (dual-home, backlog 364)
+
+Off until ALL five of `TYPEBEAT_R2_ENDPOINT`, `TYPEBEAT_R2_BUCKET`, `TYPEBEAT_R2_ACCESS_KEY_ID`,
+`TYPEBEAT_R2_SECRET_ACCESS_KEY` and `TYPEBEAT_R2_PUBLIC_BASE_URL` are set; with any one missing the
+app logs `Public object store: disabled (...)` at startup and every route behaves exactly as before.
+On, a request on a Cloudflare-proxied host (`typebeat.sh`, `typebeat.mingda.sh`) for one of these
+gets a `302` (Cache-Control `no-store`) to the bucket's custom domain, AFTER the visibility gate and
+the download counter:
+
+| Route | Redirects when | Bucket key |
+|---|---|---|
+| `/download/game`, `-linux`, `-macos` | the bucket holds the installer | `downloads/<name>` |
+| `/releases/*.nupkg` | always (so the bucket must hold every live nupkg BEFORE you switch on) | `downloads/releases/<name>` |
+| `/beatmapsets/<id>/download` and the `/api/v2` alias | the set is published and `set_versions.public_key` is set; never for `?noVideo=1` | `packages/<id>/<v>-<hash16>.typb` |
+
+The direct-origin hosts (`bss.typebeat.sh`, `bss.typebeat.mingda.sh`, override with
+`TYPEBEAT_R2_DIRECT_HOSTS`) never redirect: they exist for players whose transfers stall on the
+Cloudflare path, which the bucket's domain is on too. Manifests (`RELEASES`, `releases.*.json`,
+`assets.*.json`), `bundled-*.typb`, covers, previews and `/play` audio always stay on the box. The
+box keeps every byte it has today; the bucket only holds COPIES and is not a backup.
+
+Packages reach the bucket from `PackageIngest` after each commit (a failure is logged and the
+download streams locally), the ingest's prune deletes the bucket copies of versions it prunes, and a
+background backfill copies the latest package of every published set that has none yet (it starts
+with the app, is never awaited, and resumes on the next boot). Installers and nupkgs reach it from
+`ship-client.ps1` and the Linux/macOS workflows.
+
+**Turning it on, in order:**
+
+1. Cloudflare: create the bucket; connect a custom domain in the same zone (for example
+   `dl.typebeat.sh`) and DISABLE the `r2.dev` URL; add a Cache Rule for that host, "Eligible for
+   cache", Edge TTL "use cache-control header", and do not cache 404s (`.nupkg`, `.typb` and
+   `.AppImage` are not cached by default); make sure WAF and Bot Fight Mode do not challenge the
+   Velopack or osu.Framework user agents there. Free plan: files over 512 MB are not edge-cached.
+   No bucket CORS is needed.
+2. Two bucket-scoped R2 API tokens with Object Read and Write: one for the server, one for CI and
+   `ship-client.ps1`. Never the account-wide token.
+3. Backfill the release feed and the installers from the box, then verify:
+   ```
+   docker run --rm -v typebeat-web_appdata:/data \
+     -e RCLONE_CONFIG_R2_TYPE=s3 -e RCLONE_CONFIG_R2_PROVIDER=Cloudflare \
+     -e RCLONE_CONFIG_R2_ACCESS_KEY_ID=... -e RCLONE_CONFIG_R2_SECRET_ACCESS_KEY=... \
+     -e RCLONE_CONFIG_R2_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com \
+     rclone/rclone copy /data/downloads/releases r2:<BUCKET>/downloads/releases \
+       --include '*.nupkg' --header-upload 'Cache-Control: public, max-age=86400'
+   ```
+   plus the same for the three installers into `r2:<BUCKET>/downloads/` with
+   `--header-upload 'Cache-Control: no-cache'`, then `rclone check` both. Confirm the volume name
+   with `docker volume ls` first. Every nupkg a live manifest names must be there: a delta that
+   404s fails the update.
+4. `deploy/.env`: the five `TYPEBEAT_R2_*` values (the server's token), then
+   `./deploy/up.sh up -d app`, and check the startup log line names the bucket.
+5. Rolling back is emptying one of the five and recreating the app container.
+
+The game polls `bss.typebeat.sh/releases` FIRST and `typebeat.sh/releases` only as a fallback, so
+update egress only moves to R2 once a client release swaps that order (a separate client change).
 
 ## Enabling "Continue with Google"
 

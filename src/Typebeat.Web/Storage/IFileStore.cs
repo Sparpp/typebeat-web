@@ -69,6 +69,16 @@ public static class StoreKeys
     public static string Package(long setId, int versionNo) => $"packages/{setId}/{versionNo}.typb";
 
     /// <summary>
+    /// The PUBLIC bucket's copy of that package (stored in <c>set_versions.public_key</c>):
+    /// <c>packages/{setId}/{versionNo}-{sha16}.typb</c>, where <paramref name="sha256"/> is the hash
+    /// of the assembled zip. Content-unique and unguessable, so a rolled-back ingest never puts an
+    /// object there, a re-cut version never collides with a cached edge copy, and the package of a
+    /// hidden set cannot be enumerated.
+    /// </summary>
+    public static string PublicPackage(long setId, int versionNo, byte[] sha256)
+        => $"packages/{setId}/{versionNo}-{Convert.ToHexStringLower(sha256)[..16]}.typb";
+
+    /// <summary>
     /// A score's uploaded replay (legacy .osr): <c>replays/{scoreId}.osr</c>. A named (mutable)
     /// object, not a content-addressed blob: it is unique to one score, so there is no dedup to
     /// win, and the upload contract lets the owner overwrite their own, which write-once blobs

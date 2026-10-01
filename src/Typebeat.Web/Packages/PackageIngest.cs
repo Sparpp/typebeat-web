@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using Dapper;
 using Npgsql;
 using Typebeat.Web.Data;
@@ -44,13 +45,20 @@ namespace Typebeat.Web.Packages;
 ///
 /// Cover/preview generation failures (ffmpeg missing, bad image, ...) can only degrade the
 /// result (statuses in <see cref="IngestResult"/>), never fail the upload.
+///
+/// The PUBLIC bucket copy (backlog 364, <see cref="IPublicObjectStore"/>) is the one artifact
+/// written AFTER the commit, never before: an attempt that rolls back must never reach a CDN, and
+/// its content-unique key means the copy can never be a stale edge entry of a different attempt.
+/// It is best-effort like the pruning: a failure leaves <c>set_versions.public_key</c> NULL and
+/// the download route streams the local package as it always did.
 /// </summary>
 public sealed class PackageIngest(
     Db db,
     IFileStore fileStore,
     CoverGenerator coverGenerator,
     PreviewGenerator previewGenerator,
-    ILogger<PackageIngest> logger)
+    ILogger<PackageIngest> logger,
+    IPublicObjectStore? publicStore = null)
 {
     /// <summary>
     /// The weighted search-vector expression. MUST stay in sync with the backfill UPDATE in
@@ -216,6 +224,10 @@ public sealed class PackageIngest(
                     await assemblePackageAsync(packageKeyForLatest, currentFiles, ct);
 
                 await scope.CommitAsync(ct);
+
+                // The same repair for the public copy: a version whose upload to the bucket failed
+                // (or predates the bucket) gets one on the mapper's identical resubmission.
+                await PublishPackageAsync(latestVersion.VersionId, onlyIfMissing: true, ct);
 
                 return new IngestResult(setId, latestVersion.VersionNo, false, package.Files, "unchanged", "unchanged");
             }
@@ -514,6 +526,11 @@ public sealed class PackageIngest(
 
         await scope.CommitAsync(ct);
 
+        // ---- the public bucket copy (backlog 364), after the commit by design: see the class
+        //      remarks. Before the prune, so the prune's bucket pass never races this upload. ----
+
+        await PublishPackageAsync(versionId, onlyIfMissing: false, ct);
+
         // ---- disk hygiene (after the commit; best-effort): assembled per-version packages are
         //      pure derivatives (reassemblable from the content-addressed blobs at any time)
         //      and downloads only ever serve the LATEST version, so beyond a one-version safety
@@ -534,9 +551,17 @@ public sealed class PackageIngest(
     /// <summary>
     /// Deletes assembled package objects older than (latest, latest-1). Walks downward and
     /// stops at the first absent object: earlier ingests already pruned everything below it.
+    ///
+    /// <para>The public bucket's copies of the same versions go in a SEPARATE pass that reads
+    /// <c>set_versions.public_key</c> rather than probing, and is deliberately not gated on the
+    /// local walk's early break: the local objects and the bucket objects are pruned on different
+    /// histories (a bucket enabled after a set's local packages were already pruned), so one being
+    /// absent says nothing about the other.</para>
     /// </summary>
     private async Task prunePackagesBeyondLatestTwoAsync(long setId, int latestVersionNo, CancellationToken ct)
     {
+        await prunePublicPackagesAsync(setId, latestVersionNo, ct);
+
         try
         {
             for (int versionNo = latestVersionNo - 2; versionNo >= 1; versionNo--)
@@ -554,6 +579,122 @@ public sealed class PackageIngest(
             logger.LogWarning(e, "Package pruning failed for set {SetId} (latest v{VersionNo}).", setId, latestVersionNo);
         }
     }
+
+    /// <summary>The bucket half of the prune: every version at or below latest-2 that still has a public copy.</summary>
+    private async Task prunePublicPackagesAsync(long setId, int latestVersionNo, CancellationToken ct)
+    {
+        if (publicStore is not { Enabled: true })
+            return;
+
+        try
+        {
+            await using var conn = await db.OpenAsync(ct);
+
+            var stale = (await conn.QueryAsync<(long Id, string PublicKey)>(
+                """
+                SELECT id AS Id, public_key AS PublicKey
+                FROM set_versions
+                WHERE set_id = @setId AND version_no <= @cutoff AND public_key IS NOT NULL
+                ORDER BY version_no
+                """,
+                new { setId, cutoff = latestVersionNo - 2 })).ToList();
+
+            foreach (var version in stale)
+            {
+                await publicStore.DeleteAsync(version.PublicKey, ct);
+
+                await conn.ExecuteAsync(
+                    "UPDATE set_versions SET public_key = NULL WHERE id = @id AND public_key = @key",
+                    new { id = version.Id, key = version.PublicKey });
+            }
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            logger.LogWarning(e, "Public package pruning failed for set {SetId} (latest v{VersionNo}).", setId, latestVersionNo);
+        }
+    }
+
+    /// <summary>
+    /// Uploads one committed version's assembled package to the public bucket under its
+    /// content-unique key (<see cref="StoreKeys.PublicPackage"/>) and records the key in
+    /// <c>set_versions.public_key</c>. Returns true when the version has a bucket copy afterwards.
+    ///
+    /// <para>Never throws for a store or database failure: it logs and returns false, leaving the
+    /// column as it was, and the download route streams locally for a NULL key. A no-op returning
+    /// false when the store is disabled, the version is gone, or its local package is missing.
+    /// <paramref name="onlyIfMissing"/> skips a version that already has a key (the repair path and
+    /// the backfill); the fresh-version path always uploads.</para>
+    ///
+    /// <para>Content-Disposition is frozen at PUT time from the set's CURRENT artist and title, the
+    /// same "{artist} - {title}.typb" the local stream sends.</para>
+    /// </summary>
+    public async Task<bool> PublishPackageAsync(long versionId, bool onlyIfMissing, CancellationToken ct = default)
+    {
+        if (publicStore is not { Enabled: true })
+            return false;
+
+        try
+        {
+            await using var conn = await db.OpenAsync(ct);
+
+            var version = await conn.QuerySingleOrDefaultAsync<PublishRow>(
+                """
+                SELECT v.set_id      AS SetId,
+                       v.version_no  AS VersionNo,
+                       v.package_key AS PackageKey,
+                       v.public_key  AS PublicKey,
+                       s.artist      AS Artist,
+                       s.title       AS Title
+                FROM set_versions v
+                JOIN beatmapsets s ON s.id = v.set_id
+                WHERE v.id = @versionId
+                """,
+                new { versionId });
+
+            if (version?.PackageKey is null)
+                return false;
+
+            if (onlyIfMissing && version.PublicKey != null)
+                return true;
+
+            await using var local = await fileStore.OpenObjectReadAsync(version.PackageKey, ct);
+
+            if (local == null)
+                return false;
+
+            // The local store hands back a seekable FileStream; anything else is buffered so the
+            // hash pass and the upload can both read it from the start.
+            await using var buffered = local.CanSeek ? null : new MemoryStream();
+
+            if (buffered != null)
+                await local.CopyToAsync(buffered, ct);
+
+            Stream content = buffered ?? local;
+
+            content.Position = 0;
+            byte[] sha256 = await SHA256.HashDataAsync(content, ct);
+            content.Position = 0;
+
+            string key = StoreKeys.PublicPackage(version.SetId, version.VersionNo, sha256);
+            string filename = Endpoints.MediaEndpoints.SanitizeFilename($"{version.Artist} - {version.Title}.typb");
+
+            await publicStore.PutAsync(key, content, "application/octet-stream",
+                PublicObjectMetadata.PackageCacheControl, PublicObjectMetadata.AttachmentDisposition(filename), ct);
+
+            await conn.ExecuteAsync(
+                "UPDATE set_versions SET public_key = @key WHERE id = @versionId",
+                new { key, versionId });
+
+            return true;
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            logger.LogWarning(e, "Public package upload failed for set version {VersionId}; downloads stream locally.", versionId);
+            return false;
+        }
+    }
+
+    private sealed record PublishRow(long SetId, int VersionNo, string? PackageKey, string? PublicKey, string Artist, string Title);
 
     /// <summary>
     /// The moderation_actions.action value an automatic demotion writes, deliberately distinct

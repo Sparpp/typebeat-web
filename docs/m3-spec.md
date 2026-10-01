@@ -34,7 +34,9 @@ per-section files under the session scratchpad
   `deploy/verify-user.sh <username>` (docker-exec psql UPDATE).
 - **Storage:** local disk behind an `IFileStore` abstraction (`/data` volume in prod), content
   paths `files/{sha256hex}`, covers `covers/{setId}/{version}/{size}.jpg`, previews
-  `previews/{setId}.mp3`, downloads `downloads/`. R2 swap later = new IFileStore impl.
+  `previews/{setId}.mp3`, downloads `downloads/`. Since backlog 364 the large downloads are also
+  copied to a public R2 bucket (`IPublicObjectStore`, a parallel store, not an IFileStore swap) and
+  302 there on the Cloudflare hosts; see deploy/README.md "Large downloads on Cloudflare R2".
 - **Upload cap ~95 MB** (Cloudflare proxied request bodies cap at 100 MB on our plan). Kestrel
   default is ~28.6 MB — must be raised per-endpoint on the BSS routes only. Since backlog 189, BSS
   uploads arrive via the direct-origin host (`bss.typebeat.sh`, DNS-only, not proxied
