@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Npgsql;
 using Typebeat.Web.Auth;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Storage;
@@ -278,6 +279,9 @@ public static class BssEndpoints
 
             await tx.CommitAsync(ctx.RequestAborted);
 
+            // Metadata the set's cached reads show may just have changed (backlog 366).
+            await ctx.RequestServices.GetRequiredService<CacheEviction>().AfterSetChangedAsync(setId, user.Id);
+
             // The latest version's manifest ([] for a fresh set): the client's replace-vs-patch pivot.
             var files = await ingest.GetLatestVersionFilesAsync(setId, ctx.RequestAborted);
 
@@ -357,7 +361,7 @@ public static class BssEndpoints
         // Enter the per-set critical section only now that the body is fully buffered.
         await using var scope = await ingest.BeginSetScopeAsync(setId, ctx.RequestAborted);
 
-        return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, "full", logger, ctx.RequestAborted);
+        return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, "full", logger, ctx.RequestServices.GetRequiredService<CacheEviction>(), ctx.RequestAborted);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -477,7 +481,7 @@ public static class BssEndpoints
             }
         }
 
-        return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, "patch", logger, ctx.RequestAborted);
+        return await parseValidateIngestAsync(buffer, setId, user, ingest, scope, "patch", logger, ctx.RequestServices.GetRequiredService<CacheEviction>(), ctx.RequestAborted);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -816,7 +820,7 @@ public static class BssEndpoints
     /// </summary>
     private static async Task<IResult> parseValidateIngestAsync(
         Stream package, long setId, AuthedUser user, PackageIngest ingest, PackageIngest.SetScope scope,
-        string route, ILogger logger, CancellationToken ct)
+        string route, ILogger logger, CacheEviction eviction, CancellationToken ct)
     {
         // Read under the scope's lock: the snapshot validation pins embedded ids against.
         long[] allocatedIds = (await scope.Connection.QueryAsync<long>(
@@ -837,6 +841,11 @@ public static class BssEndpoints
         }
 
         await ingest.IngestAsync(scope, package, parsed, setId, user.Id, ct);
+
+        // The version is committed (IngestAsync commits the scope, publish flip included): every
+        // cached read of the set, the listing, the landing strip, the owner's profile and the
+        // lookup memo goes (backlog 366).
+        await eviction.AfterSetChangedAsync(setId, user.Id);
 
         return Results.NoContent();
     }

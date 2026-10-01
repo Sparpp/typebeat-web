@@ -1,5 +1,6 @@
 using Dapper;
 using Typebeat.Web.Auth;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Wire;
 
@@ -28,7 +29,9 @@ public static class BeatmapsetEndpoints
 {
     public static void Map(IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v2/beatmapsets/{setId:long}", GetBeatmapSetAsync);
+        // Output-cached for anonymous callers only (backlog 366): an authed one gets has_favourited
+        // and their own hidden sets, so the policy refuses any bearer or session request outright.
+        app.MapGet("/api/v2/beatmapsets/{setId:long}", GetBeatmapSetAsync).CacheOutput(CachePolicies.SetApi);
 
         // Fetched at login by the client. The literal "me/beatmapset-favourites" route
         // out-specifies MeEndpoints' "me/{ruleset}" template, so both can coexist.
@@ -73,6 +76,10 @@ public static class BeatmapsetEndpoints
 
         if (set is null || (!IsPublished(set.Status) && requester?.Id != set.OwnerId))
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");
+
+        // Only a published set is world-readable; its owner's view of a hidden one is not.
+        if (!IsPublished(set.Status))
+            CachePolicies.DoNotStore(ctx);
 
         // Live difficulties only: filename IS NOT NULL ⇔ part of the current version (the
         // BSS lifecycle convention, dropped diffs keep their rows for the scores FK).

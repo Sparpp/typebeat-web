@@ -594,6 +594,7 @@ public class BssSubmissionFlowTest
             await conn.ExecuteAsync(
                 "UPDATE beatmapsets SET status = @unpublished WHERE id = @unrankedSetId",
                 new { unpublished, unrankedSetId });
+            await BssFixture.EvictAllAsync();
 
             using (var download = await BssFixture.Client.GetAsync($"/beatmapsets/{unrankedSetId}/download"))
                 Assert.That(download.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), $"anonymous download of a '{unpublished}' set");

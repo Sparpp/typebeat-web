@@ -301,6 +301,9 @@ public class ListingPageTest
 
         Assert.That(totalPublic, Is.GreaterThan(50), "seed must overflow one page");
 
+        // Other tests insert sets through SQL; the count above must describe the page read below.
+        await WebsiteFixture.EvictAllAsync();
+
         string page1 = await GetHtml("/beatmapsets");
         Assert.That(CardIds(page1), Has.Count.EqualTo(50));
 

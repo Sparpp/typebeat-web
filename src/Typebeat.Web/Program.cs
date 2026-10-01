@@ -4,6 +4,7 @@ using Dapper;
 using Npgsql;
 using Typebeat.Web;
 using Typebeat.Web.Auth;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Email;
 using Typebeat.Web.Endpoints;
@@ -120,6 +121,12 @@ builder.Services.AddRazorPages();
 // AddRazorPages already registered the antiforgery services. Additive: the page pipeline still
 // validates form tokens as before. The /play mutating endpoints validate explicitly via IAntiforgery.
 builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
+
+// Spike survival (backlog 366): anonymous-only output caching with tag eviction, and the ASP.NET
+// rate limiter. Both are registered in their own files (Caching/CachePolicies.cs,
+// Auth/RateLimits.cs), which carry the policy tables and the reasons behind every number.
+builder.Services.AddTypebeatOutputCache();
+builder.Services.AddTypebeatRateLimiter();
 
 var app = builder.Build();
 
@@ -305,6 +312,14 @@ app.UseRouting();
 // HttpContext.Items. Bearer-API and anonymous requests pass straight through.
 app.UseSessionCookieAuth();
 
+// Backlog 366. AFTER the session middleware, because both read ctx.SessionUser(): the limiter to
+// key a signed-in visitor by id, the cache to refuse them. Limiter first, so a request the cache
+// would answer still spends its anonymous-read budget. Then Cache-Control: private, no-store on
+// every personal response that chose no header of its own.
+app.UseRateLimiter();
+app.UseOutputCache();
+app.UsePrivateNoStore();
+
 // Core routes (health, placeholder site, menu content).
 // GET + HEAD: uptime monitors (e.g. UptimeRobot's plain HTTP checks) probe with HEAD, which
 // MapGet alone would 405. The DB round-trip runs for both, so HEAD still proves the full chain.
@@ -319,7 +334,7 @@ app.MapMethods("/health", new[] { HttpMethods.Get, HttpMethods.Head }, async (Db
 });
 
 // The in-game menu banner polls this (repointed from assets.ppy.sh in the client).
-app.MapGet("/menu-content.json", () => WireJson.Ok(new { images = Array.Empty<object>() }));
+app.MapGet("/menu-content.json", () => WireJson.Ok(new { images = Array.Empty<object>() })).CacheOutput(CachePolicies.Static1h);
 
 // /robots.txt and /sitemap.xml for search engines (backlog 369), wire routes like the line above.
 SeoEndpoints.Map(app);

@@ -123,6 +123,13 @@ public class BssFixture
         dataSource = NpgsqlDataSource.Create(ConnectionString);
     }
 
+    /// <summary>
+    /// Drops every output-cache entry and in-process memo, for a test that changes through SQL
+    /// something an earlier anonymous read may have cached (the app's own writes evict for themselves).
+    /// </summary>
+    public static Task EvictAllAsync()
+        => factory!.Services.GetRequiredService<Typebeat.Web.Caching.CacheEviction>().EvictAllAsync();
+
     [OneTimeTearDown]
     public async Task OneTimeTearDown()
     {

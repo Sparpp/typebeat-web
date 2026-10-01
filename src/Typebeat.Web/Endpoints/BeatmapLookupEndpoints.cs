@@ -1,5 +1,7 @@
 using Dapper;
+using Microsoft.Extensions.Caching.Memory;
 using Typebeat.Web.Auth;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Wire;
 
@@ -25,7 +27,9 @@ public static class BeatmapLookupEndpoints
 {
     public static void Map(IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v2/beatmaps/lookup", HandleAsync).RequireBearer();
+        // A pack import fires one lookup per difficulty, so this gets a deep token bucket rather
+        // than a window (backlog 366, Auth/RateLimits.cs).
+        app.MapGet("/api/v2/beatmaps/lookup", HandleAsync).RequireBearer().RequireRateLimiting(RateLimits.Lookup);
     }
 
     private static async Task<IResult> HandleAsync(HttpContext ctx, Db db)
@@ -38,21 +42,26 @@ public static class BeatmapLookupEndpoints
         bool hasId = int.TryParse(ctx.Request.Query["id"], out int id) && id > 0;
 
         // Resolve by checksum first, then by online id. Neither present → nothing to look up.
-        LookupRow? row;
-        await using (var conn = await db.OpenAsync(ctx.RequestAborted))
+        // A FOUND row is memoised for CacheEviction.LookupMemoTtl (backlog 366): a pack import
+        // asks for the same handful of maps again on every metadata refresh, and every upload or
+        // rank change drops the whole memo. A miss is never memoised, so a map published a second
+        // ago is found at once.
+        var eviction = ctx.RequestServices.GetRequiredService<CacheEviction>();
+        string? memoKey = checksum is not null ? eviction.LookupKey("c", checksum)
+            : hasId ? eviction.LookupKey("i", id.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            : null;
+
+        LookupRow? row = null;
+        if (memoKey is not null && !eviction.Memo.TryGetValue(memoKey, out row))
         {
-            if (checksum is not null)
-            {
-                row = await conn.QuerySingleOrDefaultAsync<LookupRow>(baseQuery + "AND b.checksum_md5 = @checksum", new { checksum });
-            }
-            else if (hasId)
-            {
-                row = await conn.QuerySingleOrDefaultAsync<LookupRow>(baseQuery + "AND b.id = @id", new { id });
-            }
-            else
-            {
-                row = null;
-            }
+            await using var conn = await db.OpenAsync(ctx.RequestAborted);
+
+            row = checksum is not null
+                ? await conn.QuerySingleOrDefaultAsync<LookupRow>(baseQuery + "AND b.checksum_md5 = @checksum", new { checksum })
+                : await conn.QuerySingleOrDefaultAsync<LookupRow>(baseQuery + "AND b.id = @id", new { id });
+
+            if (row is not null)
+                eviction.Memo.Set(memoKey, row, CacheEviction.LookupMemoTtl);
         }
 
         if (row is null)

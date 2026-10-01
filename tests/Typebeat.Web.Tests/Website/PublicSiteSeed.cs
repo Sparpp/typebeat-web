@@ -493,6 +493,9 @@ public static class PublicSiteSeed
             await conn.ExecuteAsync(
                 $"UPDATE beatmapsets s SET search = {PackageIngest.SearchVectorSql} FROM users u WHERE u.id = s.owner_id");
 
+            // Seeded through SQL, past the app's own eviction calls: drop anything cached before.
+            await WebsiteFixture.EvictAllAsync();
+
             seeded = true;
         }
         finally
