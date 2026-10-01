@@ -32,6 +32,9 @@ public class BssFixture
 
     public static HttpClient Client { get; private set; } = null!;
 
+    /// <summary>The running host's service provider, for reaching the app's singletons (the disk guard's test seam).</summary>
+    public static IServiceProvider Services => factory!.Services;
+
     private static WebApplicationFactory<Program>? factory;
     private static NpgsqlDataSource? dataSource;
     private static string? previousDb;

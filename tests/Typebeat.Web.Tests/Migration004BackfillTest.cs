@@ -177,6 +177,8 @@ public class Migration004BackfillTest
             "038_country_chosen.sql",
             "039_lyrics_original.sql",
             "040_search_trigram.sql",
+            // 041 is reserved for backlog 364 (a numbering gap, like 021).
+            "042_replay_retention.sql",
         }));
     }
 

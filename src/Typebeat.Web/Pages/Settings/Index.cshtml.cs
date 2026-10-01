@@ -37,7 +37,7 @@ namespace Typebeat.Web.Pages.Settings;
 /// </summary>
 public sealed class IndexModel(
     Db db, IFileStore store, TokenService tokens, GoogleOidc google, GoogleCookies googleCookies,
-    PasswordService passwords, EmailCodeService codes, IEmailSender email, ILogger<IndexModel> logger) : TypebeatPageModel
+    PasswordService passwords, EmailCodeService codes, IEmailSender email, DiskGuard disk, ILogger<IndexModel> logger) : TypebeatPageModel
 {
     public const int MaxDescriptionLength = 2000;
 
@@ -314,6 +314,10 @@ public sealed class IndexModel(
 
         if (file.Length > max_image_bytes)
             return await failAsync(id, $"That {what} is too large (max {max_image_bytes / (1024 * 1024)} MB).");
+
+        // Disk guard (backlog 365): below the upload floor nothing new is written to the store.
+        if (disk.Current is { UploadsRefused: true } refusedAt)
+            return await failAsync(id, DiskGuard.UploadRefusal(refusedAt));
 
         // A version stamp makes the stored key (and its URL) unique per upload, so replacements
         // are cache-safe. Milliseconds avoids a collision on rapid re-uploads.

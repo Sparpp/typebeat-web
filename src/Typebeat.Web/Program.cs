@@ -7,6 +7,7 @@ using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
 using Typebeat.Web.Email;
 using Typebeat.Web.Endpoints;
+using Typebeat.Web.Ops;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Storage;
@@ -81,6 +82,21 @@ if (builder.Configuration["TYPEBEAT_FILE_ROOT"] is { Length: > 0 } fileRoot)
 // Upload/package pipeline (M3). File root: TYPEBEAT_FILE_ROOT (prod: the /data volume; dev
 // default ./data). Everything under it is content-addressed or set-scoped; see StoreKeys.
 builder.Services.AddSingleton<IFileStore>(_ => LocalFileStore.FromConfiguration(builder.Configuration));
+
+// Disk guard (backlog 365): refuses replay, BSS and avatar/banner writes below the upload floor and
+// new score tokens at the critical level, before a full disk takes Postgres down. Same probe as
+// GET /api/v2/ops/disk (OpsEndpoints.Measure); thresholds from TYPEBEAT_DISK_*_GB.
+builder.Services.AddSingleton(sp => new DiskGuard(
+    DiskGuardOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()),
+    logger: sp.GetRequiredService<ILoggerFactory>().CreateLogger<DiskGuard>()));
+
+// Housekeeping (backlog 365), the app's first hosted service: hourly token/download-log/cover/upload
+// session cleanup and replay retention (TYPEBEAT_REPLAY_SWEEP, dryrun by default). Off unless
+// TYPEBEAT_HOUSEKEEPING=true, so test hosts never run it. The status is registered either way for
+// the ops endpoint's lastSweepAt.
+builder.Services.AddSingleton<HousekeepingStatus>();
+if (Flags.IsEnabled(builder.Configuration, HousekeepingOptions.EnabledKey))
+    builder.Services.AddHostedService<Housekeeping>();
 builder.Services.AddSingleton<CoverGenerator>();
 builder.Services.AddSingleton<PreviewGenerator>();
 builder.Services.AddSingleton<PackageIngest>();
@@ -194,6 +210,18 @@ catch (Exception ex) when (ex is IOException or ArgumentException or Unauthorize
     app.Logger.LogWarning("Disk: could not read usage for the file root ({Reason}), so GET /api/v2/ops/disk will 503 and the Discord disk alert is BLIND.", ex.Message);
 }
 
+// The guard's view of the same disk (backlog 365): level, thresholds and the postgres probe. Never
+// throws (a failed probe is part of the line); a Warning when anything is already being refused.
+{
+    var diskGuard = app.Services.GetRequiredService<DiskGuard>();
+    string guardLine = diskGuard.StartupLine();
+
+    if (diskGuard.Current.Level is DiskLevel.Normal or DiskLevel.Low)
+        app.Logger.LogInformation("{GuardLine}", guardLine);
+    else
+        app.Logger.LogWarning("{GuardLine}", guardLine);
+}
+
 // Behind the Caddy reverse proxy, honor X-Forwarded-For / X-Forwarded-Proto so Request.Scheme is
 // "https" (the notification_endpoint must be wss://, cover/avatar URLs must be https://) and
 // Connection.RemoteIpAddress is the real client IP (the rate limiters key on it). Only enabled
@@ -274,11 +302,14 @@ app.UseSessionCookieAuth();
 // Core routes (health, placeholder site, menu content).
 // GET + HEAD: uptime monitors (e.g. UptimeRobot's plain HTTP checks) probe with HEAD, which
 // MapGet alone would 405. The DB round-trip runs for both, so HEAD still proves the full chain.
-app.MapMethods("/health", new[] { HttpMethods.Get, HttpMethods.Head }, async (Db db) =>
+// The body is "ok" while nothing is refused and "degraded: ..." (still 200, never containing "ok")
+// once the disk guard refuses writes, so UptimeRobot's keyword monitor alerts on its own; see
+// DiskGuard.HealthBody and deploy/README.md, Monitoring.
+app.MapMethods("/health", new[] { HttpMethods.Get, HttpMethods.Head }, async (Db db, DiskGuard disk) =>
 {
     await using var conn = await db.OpenAsync();
     await conn.ExecuteScalarAsync<int>("SELECT 1");
-    return Results.Text("ok");
+    return Results.Text(DiskGuard.HealthBody(disk.Current));
 });
 
 // The in-game menu banner polls this (repointed from assets.ppy.sh in the client).

@@ -279,10 +279,9 @@ and neither covers the other.
 - `/data/files/` content-addressed blobs. Write-once by design (`IFileStore`: "Blobs are write-once
   and never deleted here"), which is what makes old package versions reconstructible. It grows with
   every distinct uploaded file, forever, and a takedown deliberately leaves the blobs behind.
-- `/data/replays/{scoreId}.osr`, one per score, capped at 5 MB each (`ReplayEndpoints.MaxReplayBytes`)
-  and never pruned. Bounded only by how many scores exist.
-- `/data/covers/{setId}/{versionNo}/`, one cover set per submitted VERSION. The per-version package
-  prune does not cover these.
+- `/data/replays/{scoreId}.osr`, one per score, capped at 5 MB each (`ReplayEndpoints.MaxReplayBytes`).
+  Housekeeping's replay retention (below) can prune them, but it ships in DRY RUN: until you set
+  `TYPEBEAT_REPLAY_SWEEP=on` they are still never pruned.
 - Postgres (`pgdata`). No cap, and it is the component a full disk kills first.
 - `/root` release staging from the client ship path, and the systemd journal: both manual, below.
 
@@ -447,6 +446,80 @@ Quick manual check, from anywhere:
 curl -sS -H "X-Buddy-Key: $TYPEBEAT_BUDDY_KEY" https://typebeat.sh/api/v2/ops/disk
 ```
 
+### Disk guard and housekeeping (automatic, backlog 365)
+
+The alerting above only TELLS you. Since backlog 365 the app also defends itself, so a fill degrades
+uploads instead of taking Postgres (and with it every page) down.
+
+**The disk guard** (`src/Typebeat.Web/Storage/DiskGuard.cs`) classifies the same statvfs reading the
+ops endpoint takes, cached for `TYPEBEAT_DISK_PROBE_SECONDS` (15):
+
+| Level | When | Effect |
+|---|---|---|
+| `normal` | above every threshold | nothing |
+| `low` | under `TYPEBEAT_DISK_LOW_GB` (10 GiB) free | report only; `/health` says `ok disk-low ...` |
+| `uploads_refused` | the file root under `TYPEBEAT_DISK_UPLOAD_FLOOR_GB` (5 GiB) | replay PUT and every BSS write answer 507, avatar/banner uploads show a form error, `/health` says `degraded: ...` |
+| `critical` | the Postgres filesystem under `TYPEBEAT_DISK_CRITICAL_GB` (2 GiB, WAL headroom) | all of the above, plus new score TOKENS answer 503, so a player is told before playing |
+| `unknown` | a probe failed or read a zero-size filesystem | nothing is refused; `/health` says `ok disk-unknown` |
+
+Score SUBMISSION is never refused: a play that already holds a token is one row and is accepted. A
+refused replay upload is not lost either: the game re-uploads its own best replays from the
+leaderboard once space is back. Every level change logs a `Disk: level A -> B` warning, and the boot
+line now has a second half, `Disk: guard level ...`, with the thresholds and which filesystem the
+critical level watches.
+
+**The Postgres probe.** With `TYPEBEAT_PG_PROBE_PATH` empty the critical level reads the file root,
+which is right while pgdata and appdata share the root disk. Once pgdata moves to its own device,
+mount it read-only into the app (`pgdata:/pgdata-probe:ro` under `app.volumes` in
+`compose.prod.yml`) and set `TYPEBEAT_PG_PROBE_PATH=/pgdata-probe` in `deploy/.env`. Tradeoff to
+approve first: the app container can then read the database files (it already holds the password).
+Keep `/` watched by at least one probe after that move, see the pinned assumption above.
+
+**`GET /api/v2/ops/disk` gained four additive fields**: `level` (the classification above, of THIS
+reading, a pure function of the numbers and not an edge, so the "no server-side state" rule holds),
+`pgFreeBytes` (only when the Postgres probe is distinct, otherwise null), `replayBytes` (the sum of
+stored replay sizes, null if the database cannot answer) and `lastSweepAt` (the last completed
+housekeeping pass, null before the first). The bot reads with `.get`, so it ignores them until it is
+taught a second edge on `level`.
+
+**Housekeeping** (`src/Typebeat.Web/Ops/Housekeeping.cs`), the app's first background service, on
+when `TYPEBEAT_HOUSEKEEPING=true` (compose's default), first pass two minutes after boot, then
+hourly, under a Postgres advisory lock. Each pass deletes, in batches of 5000:
+
+- `oauth_tokens` revoked, or with both halves expired, more than 7 days ago (every refresh and every
+  website session inserts one, so this table only grew);
+- `email_tokens` expired more than 7 days ago;
+- `score_tokens` NEVER CONSUMED and older than 7 days (a consumed token is read by the refund and
+  played-version rules and is never touched);
+- `beatmapset_downloads` rows older than 365 days (the per-set `download_count` is a separate
+  column, so counts do not move);
+- expired chunked upload sessions;
+- cover jpegs of set versions below latest - 1, except the version `cover_key` names. The ingest now
+  also prunes the version that just left the window, so after the first pass this is a catch-up only.
+
+Content-addressed blobs under `/data/files/` are still never deleted. The pass never runs VACUUM:
+after the FIRST pass on the box, run `VACUUM (ANALYZE) oauth_tokens, score_tokens, email_tokens;`
+by hand, and keep `VACUUM FULL` for a maintenance window.
+
+**Replay retention**, `TYPEBEAT_REPLAY_SWEEP=off|dryrun|on`, **dryrun by default**. A stored replay is
+KEPT when any of these holds: it is among the player's top `TYPEBEAT_REPLAY_KEEP_TOP_N` (3) plays on
+that beatmap on its board (ranked and unranked separately, passed plays first, then the board
+order); it is pinned; it was uploaded within `TYPEBEAT_REPLAY_KEEP_DAYS` (30); someone else watched
+it within `TYPEBEAT_REPLAY_KEEP_VIEWED_DAYS` (90). Everything else is pruned: the object is deleted,
+`replay_key` nulled and `scores.replay_pruned_at` stamped (migration 042); the score row itself is
+untouched and a later re-upload clears the stamp. `TYPEBEAT_REPLAY_SOFT_CAP_GB` (10) only warns; a
+keeper is never deleted to meet it. In dryrun each pass logs:
+
+```
+docker logs typebeat-web-app-1 | grep 'replay sweep'
+Housekeeping: replay sweep dryrun, would prune N replays, B bytes (x GiB); y GiB of replays stored.
+```
+
+**Before flipping it to `on`:** announce it (a pruned replay can no longer be watched or re-derived),
+make sure a fresh weekly appdata tar exists, and note that `tools/score-recalc` now reports pruned
+rows as their own case, `pruned`, which a bare `--unreplayable keep|unrank` does NOT decide: a
+supersede run that hits one needs `--unreplayable pruned=keep` (recommended) or `pruned=unrank`.
+
 ### Diagnosing a fill (owner, on the box)
 
 In order. This is the 2026-09-26 sequence: it finds where the space went before touching anything,
@@ -481,6 +554,12 @@ cause: a wedged Postgres is the symptom, never the cause.
 
 - Uptime: UptimeRobot keyword monitor on `https://typebeat.sh/health` (keyword `ok`,
   5-min interval). Public status page: <https://stats.uptimerobot.com/E7XRJ7vfer>.
+- `/health` answers 200 with one of: `ok`; `ok disk-low <n> GiB free`; `ok disk-unknown`; or, once
+  the disk guard refuses writes, `degraded: disk <n> GiB free, writes refused` (plus
+  `, scores paused` at the critical level). The degraded body never contains the substring `ok`,
+  so the keyword monitor alerts on it by itself, independently of the Discord bot. CI's post-deploy
+  check accepts `^(ok|degraded)`, so a deploy onto a nearly full disk is not marked failed. A
+  database outage is still a 500.
 - **Failure signature: if EVERYTHING 500s and Postgres looks unhealthy, check `df -h` first.** A
   full disk presents as a database fault, not a disk fault: Postgres logs
   `57P03 the database system is in recovery mode` (or refuses to start at all), the app's every

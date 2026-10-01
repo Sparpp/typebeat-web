@@ -297,10 +297,13 @@ public static class BssEndpoints
     // ---------------------------------------------------------------------------------------------
     // PUT /bss/beatmapsets/{id}: full package upload (single "beatmapArchive" file part).
     // ---------------------------------------------------------------------------------------------
-    private static async Task<IResult> UploadFullPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, ILoggerFactory loggerFactory)
+    private static async Task<IResult> UploadFullPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, DiskGuard disk, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
         var logger = loggerFactory.CreateLogger("BssUpload");
+
+        if (diskRefusal(disk) is { } diskError)
+            return diskError;
 
         if (await gateUploadAsync(ctx, db, setId, user) is { } gateError)
             return gateError;
@@ -361,10 +364,13 @@ public static class BssEndpoints
     // PATCH /bss/beatmapsets/{id}: delta upload, latest version overlaid with filesChanged
     // minus filesDeleted, rebuilt into a full package, then the same ingest path.
     // ---------------------------------------------------------------------------------------------
-    private static async Task<IResult> PatchPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, IFileStore fileStore, ILoggerFactory loggerFactory)
+    private static async Task<IResult> PatchPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, IFileStore fileStore, DiskGuard disk, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
         var logger = loggerFactory.CreateLogger("BssUpload");
+
+        if (diskRefusal(disk) is { } diskError)
+            return diskError;
 
         if (await gateUploadAsync(ctx, db, setId, user) is { } gateError)
             return gateError;
@@ -489,10 +495,13 @@ public static class BssEndpoints
     /// a network failure must not burn a slot doing it. The limiter is consumed at complete.
     /// </summary>
     private static async Task<IResult> CreateUploadSessionAsync(
-        long setId, HttpContext ctx, Db db, UploadSessionStore sessions, ILoggerFactory loggerFactory)
+        long setId, HttpContext ctx, Db db, UploadSessionStore sessions, DiskGuard disk, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
         var logger = loggerFactory.CreateLogger("BssUpload");
+
+        if (diskRefusal(disk) is { } diskError)
+            return diskError;
 
         BssUploadSessionRequest? request;
 
@@ -575,7 +584,7 @@ public static class BssEndpoints
     /// that never saw a 204 can simply send the chunk again.
     /// </summary>
     private static async Task<IResult> PutUploadSessionChunkAsync(
-        string sessionId, int index, HttpContext ctx, UploadSessionStore sessions, ILoggerFactory loggerFactory)
+        string sessionId, int index, HttpContext ctx, UploadSessionStore sessions, DiskGuard disk, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
         var logger = loggerFactory.CreateLogger("BssUpload");
@@ -586,6 +595,9 @@ public static class BssEndpoints
         // Closing server-side bounds every connection at a single chunk whatever the client does
         // with its pool.
         ctx.Response.Headers.Connection = "close";
+
+        if (diskRefusal(disk) is { } diskError)
+            return diskError;
 
         var session = await sessions.TryGetAsync(sessionId, ctx.RequestAborted);
 
@@ -645,10 +657,13 @@ public static class BssEndpoints
     /// </summary>
     private static async Task<IResult> CompleteUploadSessionAsync(
         string sessionId, HttpContext ctx, Db db, PackageIngest ingest, IFileStore fileStore,
-        UploadSessionStore sessions, ILoggerFactory loggerFactory)
+        UploadSessionStore sessions, DiskGuard disk, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
         var logger = loggerFactory.CreateLogger("BssUpload");
+
+        if (diskRefusal(disk) is { } diskError)
+            return diskError;
 
         var session = await sessions.TryGetAsync(sessionId, ctx.RequestAborted);
 
@@ -744,6 +759,18 @@ public static class BssEndpoints
     // ---------------------------------------------------------------------------------------------
     // Shared plumbing.
     // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Disk guard (backlog 365): every BSS route that writes to the store answers 507 Insufficient
+    /// Storage below the upload floor, FIRST, so a refused upload consumes no rate-limiter slot and
+    /// no body is buffered. 507 rather than 503 on purpose: the game's submission flow treats 502,
+    /// 503 and 504 as a gateway blip and retries for minutes, while any other status fails the step
+    /// at once and shows this message (an APIException, never a failover retry).
+    /// </summary>
+    private static IResult? diskRefusal(DiskGuard disk)
+        => disk.Current is { UploadsRefused: true } status
+            ? WireJson.Error(StatusCodes.Status507InsufficientStorage, DiskGuard.UploadRefusal(status))
+            : null;
 
     /// <summary>Common gate for both upload routes: rate limit, verified account, owned live set.</summary>
     private static async Task<IResult?> gateUploadAsync(HttpContext ctx, Db db, long setId, AuthedUser user)
