@@ -595,6 +595,8 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         Favourites = favourites;
 
         ViewData["Title"] = ProfileUser.Username;
+        // One canonical per profile whether it was reached by name or by id.
+        ViewData["CanonicalPath"] = $"/users/{ProfileUser.Id}";
         ViewData["MetaDescription"] = $"{ProfileUser.Username}'s type!beat profile: scores, maps and favourites.";
 
         return Page();

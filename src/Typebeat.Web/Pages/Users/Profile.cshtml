@@ -18,7 +18,7 @@
 <section class="profile-header">
     @if (Model.ProfileUser.CoverUrl is string coverUrl)
     {
-        <img class="profile-cover profile-cover--image" src="@coverUrl" alt="" aria-hidden="true" />
+        <img class="profile-cover profile-cover--image" src="@coverUrl" alt="" aria-hidden="true" width="@Typebeat.Web.Packages.ProfileMedia.BannerWidth" height="@Typebeat.Web.Packages.ProfileMedia.BannerHeight" />
     }
     else
     {
@@ -27,7 +27,7 @@
     <div class="profile-header__bar">
         @if (Model.ProfileUser.AvatarUrl is string avatarUrl)
         {
-            <img class="profile-avatar" src="@avatarUrl" alt="" />
+            <img class="profile-avatar" src="@avatarUrl" alt="" width="@Typebeat.Web.Packages.ProfileMedia.AvatarSize" height="@Typebeat.Web.Packages.ProfileMedia.AvatarSize" />
         }
         else
         {
@@ -235,7 +235,7 @@
                         <div class="score-row__thumb">
                             @if (row.CoverUrl is not null)
                             {
-                                <img src="@row.CoverUrl" alt="" loading="lazy" />
+                                <img src="@row.CoverUrl" alt="" width="150" height="150" loading="lazy" />
                             }
                             else
                             {

@@ -731,9 +731,10 @@ public class RankingsPageTest
             // target is byte-identical to the Score tab's own href.
             Assert.That(scoreHtml, Does.Contain("rel=\"prev\" aria-label=\"Previous page\" href=\"/rankings?board=score\""));
 
-            // The current page is a highlighted span, not a link: nothing links to page 2.
+            // The current page is a highlighted span, not a link: nothing links to page 2. (The
+            // head's canonical names page 2 by design, backlog 369, so only hrefs are checked.)
             Assert.That(scoreHtml, Does.Contain("<span class=\"pager-item is-current\" aria-current=\"page\">2</span>"));
-            Assert.That(scoreHtml, Does.Not.Contain("page=2\""));
+            Assert.That(scoreHtml, Does.Not.Contain("href=\"/rankings?board=score&amp;page=2\""));
 
             // The main board's pager carries no board param at all.
             Assert.That(performanceHtml, Does.Contain("href=\"/rankings?page=3\""));

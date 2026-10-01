@@ -12,4 +12,10 @@ public static class SiteLinks
     /// <c>data-discord-url</c> of its stage root so the player script carries no URL of its own.
     /// </summary>
     public const string DISCORD_INVITE = "https://discord.gg/yAR2PDPgBB";
+
+    /// <summary>
+    /// The game's public source repository. Rendered by the footer's Source link and named in
+    /// the landing and download pages' VideoGame JSON-LD <c>sameAs</c>.
+    /// </summary>
+    public const string SOURCE_REPOSITORY = "https://github.com/Sparpp/typebeat";
 }

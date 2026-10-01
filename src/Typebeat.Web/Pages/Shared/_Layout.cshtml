@@ -1,8 +1,22 @@
 @{
     var sessionUser = Context.SessionUser();
-    string fullTitle = ViewData["Title"] is string title ? $"{title} · type!beat" : "type!beat";
+    // A page may set the whole title (FullTitle, the landing's) instead of the usual Title, which
+    // gets the " · type!beat" suffix.
+    string fullTitle = ViewData["FullTitle"] as string
+        ?? (ViewData["Title"] is string title ? $"{title} · type!beat" : "type!beat");
     string metaDescription = ViewData["MetaDescription"] as string
         ?? "type!beat: the free lyric-typing rhythm game. The words drop with the music; keep up with your keyboard.";
+
+    // Search and share metadata (backlog 369). The canonical names typebeat.sh whatever host
+    // served the page; a page whose path is not its preferred URL (a profile reached by name)
+    // sets CanonicalPath. Pages under Seo.IsNoIndex get noindex and no canonical.
+    bool noIndex = Seo.IsNoIndex(Context.Request.Path);
+    string canonicalUrl = ViewData["CanonicalPath"] is string canonicalPath
+        ? Seo.CanonicalUrl(canonicalPath)
+        : Seo.CanonicalUrl(Context.Request.Path, Context.Request.Query);
+    // Every page has a share image (its own, or the default), so every card is the large one.
+    string shareImage = ViewData["OgImage"] as string ?? Seo.DEFAULT_OG_IMAGE;
+    string? jsonLd = ViewData["JsonLd"] as string;
 }
 <!DOCTYPE html>
 <html lang="en">
@@ -11,15 +25,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>@fullTitle</title>
     <meta name="description" content="@metaDescription" />
+    @if (noIndex)
+    {
+        <meta name="robots" content="noindex" />
+    }
+    else
+    {
+        <link rel="canonical" href="@canonicalUrl" />
+    }
     <meta property="og:site_name" content="type!beat" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="@fullTitle" />
     <meta property="og:description" content="@metaDescription" />
-    @if (ViewData["OgImage"] is string ogImage)
+    <meta property="og:url" content="@canonicalUrl" />
+    <meta property="og:image" content="@shareImage" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="@fullTitle" />
+    <meta name="twitter:description" content="@metaDescription" />
+    <meta name="twitter:image" content="@shareImage" />
+    @if (jsonLd is not null)
     {
-        <meta property="og:image" content="@ogImage" />
+        @* Written raw as one string: as markup, the tag helpers would encode the "+" in the type
+           attribute. The JSON is serialised by Seo with the default encoder (<, > and & escaped),
+           so it cannot close the element early. *@
+        @Html.Raw("<script type=\"application/ld+json\">" + jsonLd + "</script>")
     }
     <link rel="icon" href="~/favicon.svg" type="image/svg+xml" />
+    @* The one self-hosted font, fetched early instead of after the stylesheet is parsed. *@
+    <link rel="preload" href="/fonts/jetbrainsmono-latin-wght.woff2" as="font" type="font/woff2" crossorigin />
+    @if (ViewData["PreloadImage"] is string preloadImage)
+    {
+        @* The page's largest paint (the landing's demo poster), requested before the CSS is parsed. *@
+        <link rel="preload" href="@preloadImage" as="image" />
+    }
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <script src="~/js/preview-player.js" asp-append-version="true" defer></script>
     <script src="~/js/favourite.js" asp-append-version="true" defer></script>
@@ -49,7 +87,7 @@
                 <a class="user-chip" href="/users/@sessionUser.Id">
                     @if (sessionUser.AvatarKey is string avatarKey)
                     {
-                        <img class="user-chip__avatar" src="/@avatarKey" alt="" />
+                        <img class="user-chip__avatar" src="/@avatarKey" alt="" width="26" height="26" />
                     }
                     else
                     {
@@ -80,7 +118,7 @@
     <div class="container footer-inner">
         <a href="@SiteLinks.DISCORD_INVITE">Discord</a>
         <a href="https://stats.uptimerobot.com/E7XRJ7vfer">Server status</a>
-        <a href="https://github.com/Sparpp/typebeat">Source</a>
+        <a href="@SiteLinks.SOURCE_REPOSITORY">Source</a>
         <a href="/legal/dmca">DMCA</a>
         <a href="/legal/privacy">Privacy</a>
         <span class="footer-copy">type!beat</span>
