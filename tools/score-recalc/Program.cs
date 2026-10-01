@@ -303,7 +303,8 @@ internal static class Cli
                     b.sr_literate_ht             AS SrLiterateHt,
                     b.checksum_md5               AS CurrentChecksumMd5,
                     s.user_id                    AS UserId,
-                    b.ratings::text              AS Ratings
+                    b.ratings::text              AS Ratings,
+                    s.replay_pruned_at IS NOT NULL AS ReplayPruned
              FROM scores s
              JOIN beatmaps b ON b.id = s.beatmap_id
              WHERE s.ruleset_id = 0 {filter} {ceiling}
@@ -534,6 +535,8 @@ internal static class Cli
                                    beatmap-missing  the .osu could not be fetched (a FETCH failure)
                                    beatmap-changed  the set was re-uploaded; that .osu is gone
                                    failed-run       passed = false, so health is not re-derivable
+                                   pruned           the server's retention sweep deleted the replay
+                                                    (never set by a bare keep|unrank: name it)
                                  There is no default. supersede-apply refuses to run until every
                                  case the sweep ACTUALLY HIT has a policy, and never asks about one
                                  it did not hit.
@@ -763,7 +766,7 @@ internal static class Cli
                     return false;
                 }
 
-                foreach (var value in Enum.GetValues<UnreplayableCase>())
+                foreach (var value in WritePlan.CoveredByABarePolicy)
                     into[value] = all;
 
                 return true;

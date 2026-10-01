@@ -462,6 +462,9 @@ public static class Report
         UnreplayableCase.FailedRun =>
             "passed = false. Health is not simulated and both 109 and 133 moved when a cell costs it, so where this "
             + "run would have ended today is not derivable. It is also not competing for a board place.",
+        UnreplayableCase.Pruned =>
+            "the replay existed and the server's retention sweep deleted it (never a top play on its board, never pinned). "
+            + "Recommended keep. A bare keep|unrank does not cover this case: pass pruned=keep or pruned=unrank.",
         _ => string.Empty,
     };
 
@@ -817,6 +820,7 @@ public static class Report
     private static string Describe(SkipReason reason) => reason switch
     {
         SkipReason.NoReplay => "no stored replay",
+        SkipReason.ReplayPruned => "replay pruned by retention",
         SkipReason.UndecodableReplay => "replay did not decode",
         SkipReason.BeatmapUnavailable => "beatmap not fetched",
         SkipReason.BeatmapReuploaded => "beatmap re-uploaded since",

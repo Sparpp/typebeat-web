@@ -261,7 +261,7 @@ public static class PlayEndpoints
     // (the player sends both ids since backlog 230, and the last two since backlog 312; a set-only
     // body still resolves the set's primary difficulty). Response: { "id": <long> }.
     // ---------------------------------------------------------------------------------------------
-    private static async Task<IResult> CreateTokenAsync(HttpContext ctx, Db db, IAntiforgery antiforgery)
+    private static async Task<IResult> CreateTokenAsync(HttpContext ctx, Db db, IAntiforgery antiforgery, DiskGuard disk)
     {
         var user = ctx.SessionUser();
         if (user is null)
@@ -275,6 +275,10 @@ public static class PlayEndpoints
         {
             return WireJson.Error(StatusCodes.Status400BadRequest, "invalid antiforgery token");
         }
+
+        // Disk guard (backlog 365): the same rule as the bearer token route, critical level only.
+        if (disk.Current.TokensRefused)
+            return WireJson.Error(StatusCodes.Status503ServiceUnavailable, DiskGuard.TokenRefusal);
 
         TokenRequest? request;
         try

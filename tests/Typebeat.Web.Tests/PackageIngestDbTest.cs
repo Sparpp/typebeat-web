@@ -423,6 +423,19 @@ public class PackageIngestDbTest
             Assert.That(oldest, Is.False, "latest-2 is pruned after the commit");
         });
 
+        // Backlog 365: the covers follow the same window. v1 had a background, so its eight
+        // buckets existed; v2's are the ones cover_key names (v3 carries no background).
+        bool v1Cover = await fileStore.ObjectExistsAsync(StoreKeys.Cover(setId, 1, "cover"));
+        bool v1Cover2x = await fileStore.ObjectExistsAsync(StoreKeys.Cover(setId, 1, "slimcover@2x"));
+        bool v2Cover = await fileStore.ObjectExistsAsync(StoreKeys.Cover(setId, 2, "cover"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(v1Cover, Is.False, "latest-2's covers are pruned with its package");
+            Assert.That(v1Cover2x, Is.False, "every bucket, @2x included");
+            Assert.That(v2Cover, Is.True, "latest-1 is kept (and is what cover_key names here)");
+        });
+
         // The blobs behind v1 are untouched; content-addressed storage is never pruned here.
         foreach (var file in result.Files)
             Assert.That(await fileStore.BlobExistsAsync(file.Sha256), Is.True, file.Filename);
@@ -1002,6 +1015,91 @@ public class PackageIngestDbTest
 
         await using var scope = await ingest.BeginSetScopeAsync(rankedSetId);
         await ingest.IngestAsync(scope, zip, parsed, rankedSetId, uploaderId);
+    }
+
+    /// <summary>
+    /// The cover prune's exception (backlog 365): a version whose covers cover_key still names is
+    /// never pruned, however far behind latest it falls, because those ARE the covers the site
+    /// shows. The ingest only ever prunes the one version that just left the window, so a version
+    /// skipped that way is left for the housekeeping sweep, which catches it once cover_key moves.
+    /// </summary>
+    [Test]
+    public async Task CoverPrune_KeepsTheVersionCoverKeyNames_AndTheSweepCatchesItUpLater()
+    {
+        long id;
+        long diff;
+
+        await using (var conn = await db.OpenAsync())
+        {
+            id = await conn.ExecuteScalarAsync<long>(
+                "INSERT INTO beatmapsets (owner_id, status, intended_status) VALUES (@uploaderId, 'hidden', 'pending') RETURNING id",
+                new { uploaderId });
+            diff = await conn.ExecuteScalarAsync<long>(
+                "INSERT INTO beatmaps (set_id, checksum_md5) VALUES (@id, md5(random()::text)) RETURNING id", new { id });
+        }
+
+        async Task ingestVersionAsync(string title, bool withBackground)
+        {
+            var entries = new List<(string, byte[])>
+            {
+                ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(title: title, titleUnicode: title, beatmapId: diff, beatmapSetId: id))),
+                ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            };
+
+            if (withBackground)
+                entries.Add(("bg.jpg", SyntheticPackage.TinyPng()));
+
+            using var zip = SyntheticPackage.Zip(entries.ToArray());
+            var parsed = BeatmapPackageParser.Parse(zip);
+            PackageValidator.Validate(parsed, id, [diff], "uploader");
+
+            await using var scope = await ingest.BeginSetScopeAsync(id);
+            await ingest.IngestAsync(scope, zip, parsed, id, uploaderId);
+        }
+
+        async Task<string?> coverKeyAsync()
+        {
+            await using var conn = await db.OpenAsync();
+            return await conn.ExecuteScalarAsync<string?>("SELECT cover_key FROM beatmapsets WHERE id = @id", new { id });
+        }
+
+        Task<bool> v1CoverExists() => fileStore.ObjectExistsAsync(StoreKeys.Cover(id, 1, "card"));
+
+        await ingestVersionAsync("Cover Keeper One", withBackground: true);
+        await ingestVersionAsync("Cover Keeper Two", withBackground: false);
+        await ingestVersionAsync("Cover Keeper Three", withBackground: false);
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await coverKeyAsync(), Is.EqualTo(StoreKeys.CoverPrefix(id, 1)), "v2 and v3 had no background, so cover_key still names v1");
+            Assert.That(await v1CoverExists(), Is.True, "v1 is latest-2 but it is the cover the site shows, so it is kept");
+        });
+
+        await ingestVersionAsync("Cover Keeper Four", withBackground: true);
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await coverKeyAsync(), Is.EqualTo(StoreKeys.CoverPrefix(id, 4)));
+            Assert.That(await v1CoverExists(), Is.True, "the ingest prunes only the version that just left the window (v2), so v1 waits for the sweep");
+        });
+
+        Typebeat.Web.Ops.HousekeepingReport report;
+
+        await using (var conn = await db.OpenAsync())
+        {
+            report = await Typebeat.Web.Ops.Housekeeping.RunOnceAsync(
+                conn, fileStore, new Typebeat.Web.Ops.HousekeepingOptions { ReplaySweep = Typebeat.Web.Ops.ReplaySweepMode.Off }, DateTimeOffset.UtcNow);
+        }
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await v1CoverExists(), Is.False, "the sweep removes v1 once cover_key has moved on");
+            Assert.That(report.CoverObjects, Is.GreaterThanOrEqualTo(CoverGenerator.Sizes.Count * 2));
+            Assert.That(await fileStore.ObjectExistsAsync(StoreKeys.Cover(id, 4, "card")), Is.True, "the latest covers are never touched");
+        });
+
+        Assert.That(CoverPrune.PrunableVersions(id, 4, StoreKeys.CoverPrefix(id, 1)), Is.EqualTo(new[] { 2 }),
+            "below latest - 1, minus the version cover_key names");
     }
 
     private async Task<string?> statusOfAsync(long id)

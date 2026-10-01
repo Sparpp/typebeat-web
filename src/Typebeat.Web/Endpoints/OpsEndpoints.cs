@@ -1,3 +1,5 @@
+using Typebeat.Web.Data;
+using Typebeat.Web.Ops;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Endpoints;
@@ -41,6 +43,15 @@ namespace Typebeat.Web.Endpoints;
 /// and posts only on the crossing. Do not add hysteresis, a "should I alert" flag or a
 /// last-alerted timestamp here: two consumers polling the same server-side edge would each eat
 /// the other's transition.</para>
+///
+/// <para>Backlog 365 added four fields, all additive (the bot reads with .get, so it ignores them
+/// until it wants them): <c>level</c>, the <see cref="DiskGuard"/>'s classification of THIS reading
+/// (<see cref="DiskGuard.Classify"/>, a pure function of the numbers, not an edge: the endpoint
+/// still remembers nothing), <c>pgFreeBytes</c> when Postgres is probed on its own filesystem
+/// (<c>TYPEBEAT_PG_PROBE_PATH</c>, null otherwise), <c>replayBytes</c> (SUM of the stored replays'
+/// sizes; null when the database cannot answer, since a disk alert must not fail because the
+/// database is the thing in trouble) and <c>lastSweepAt</c> (the last completed housekeeping pass,
+/// null when it has not run).</para>
 /// </summary>
 public static class OpsEndpoints
 {
@@ -49,26 +60,24 @@ public static class OpsEndpoints
         app.MapGet("/api/v2/ops/disk", Disk);
     }
 
-    private static IResult Disk(HttpContext ctx, IConfiguration config)
+    private static async Task<IResult> Disk(HttpContext ctx, IConfiguration config, DiskGuard disk, Db db, HousekeepingStatus housekeeping)
     {
         // Same gate as the score feed: unset key = the whole feature is off and 404s.
         if (!BuddyEndpoints.Authorised(ctx, config, out IResult? failure))
             return failure!;
 
-        string root = FileRoot(config);
+        string root = disk.Options.FileRoot;
 
-        DiskReadout readout;
+        // A fresh reading, never the guard's cache: the bot polls every few minutes and deserves
+        // the number as of now. Same probe, same Measure, so this IS the guard's view too.
+        var status = disk.Refresh();
 
-        try
-        {
-            readout = Measure(root);
-        }
-        catch (Exception ex) when (ex is IOException or ArgumentException or UnauthorizedAccessException)
+        if (status.Files is not { } readout)
         {
             // A readout that cannot be taken must not answer 200 with zeroes: a "0 percent used"
             // is indistinguishable from a healthy disk and would silence the alert permanently.
             return Results.Problem(
-                $"could not read disk usage for '{root}': {ex.Message}",
+                $"could not read disk usage for '{root}': {status.FilesError}",
                 statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -84,13 +93,39 @@ public static class OpsEndpoints
                 statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
+        long? replayBytes;
+
+        try
+        {
+            await using var conn = await db.OpenAsync(ctx.RequestAborted);
+            replayBytes = await Housekeeping.StoredReplayBytesAsync(conn, ctx.RequestAborted);
+        }
+        catch (Exception ex) when (ex is Npgsql.NpgsqlException or TimeoutException or InvalidOperationException)
+        {
+            replayBytes = null;
+        }
+
         return Results.Json(new
         {
             totalBytes = readout.TotalBytes,
             freeBytes = readout.FreeBytes,
             usedPercent = readout.UsedPercent,
+            level = LevelName(status.Level),
+            pgFreeBytes = status.PgProbeDistinct ? status.Postgres?.FreeBytes : null,
+            replayBytes,
+            lastSweepAt = housekeeping.LastSweepAt?.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
         });
     }
+
+    /// <summary>The wire spelling of a level: snake_case, stable, what a bot edge would compare.</summary>
+    public static string LevelName(DiskLevel level) => level switch
+    {
+        DiskLevel.Normal => "normal",
+        DiskLevel.Low => "low",
+        DiskLevel.UploadsRefused => "uploads_refused",
+        DiskLevel.Critical => "critical",
+        _ => "unknown",
+    };
 
     /// <summary>
     /// The file root the app itself writes to, resolved exactly as <see cref="LocalFileStore"/>

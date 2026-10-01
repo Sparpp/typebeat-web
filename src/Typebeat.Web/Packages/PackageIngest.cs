@@ -544,6 +544,7 @@ public sealed class PackageIngest(
         //      a correctness problem. ----
 
         await prunePackagesBeyondLatestTwoAsync(setId, versionNo, ct);
+        await pruneCoversBeyondLatestTwoAsync(conn, setId, versionNo, ct);
 
         return new IngestResult(setId, versionNo, true, package.Files, coverStatus, previewStatus);
     }
@@ -695,6 +696,35 @@ public sealed class PackageIngest(
     }
 
     private sealed record PublishRow(long SetId, int VersionNo, string? PackageKey, string? PublicKey, string Artist, string Title);
+
+    /// <summary>
+    /// The cover half of the same hygiene (backlog 365): the version that just fell out of the
+    /// (latest, latest-1) window loses its eight cover jpegs, unless <c>cover_key</c> still names it
+    /// (see <see cref="CoverPrune"/>). Only that ONE version, so an ingest costs at most sixteen
+    /// deletes; anything older that was skipped because cover_key named it at the time, or that
+    /// predates this prune, is the housekeeping sweep's catch-up. Runs after the commit on the
+    /// scope's connection (no transaction left on it), and like the package prune only logs on
+    /// failure.
+    /// </summary>
+    private async Task pruneCoversBeyondLatestTwoAsync(NpgsqlConnection conn, long setId, int latestVersionNo, CancellationToken ct)
+    {
+        int versionNo = latestVersionNo - 2;
+
+        if (versionNo < 1)
+            return;
+
+        try
+        {
+            string? coverKey = await conn.ExecuteScalarAsync<string?>(
+                "SELECT cover_key FROM beatmapsets WHERE id = @setId", new { setId });
+
+            await CoverPrune.PruneVersionAsync(fileStore, setId, versionNo, coverKey, ct);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            logger.LogWarning(e, "Cover pruning failed for set {SetId} (latest v{VersionNo}).", setId, latestVersionNo);
+        }
+    }
 
     /// <summary>
     /// The moderation_actions.action value an automatic demotion writes, deliberately distinct

@@ -58,7 +58,11 @@ public sealed record StoredScore(
     // as a number. That is stricter than the six columns were (difficulty_rating is NOT NULL, so an
     // offline run with a local .osu parse used to get a price out of them), and it is the honest
     // reading: a v22 price reads a figure only a full parse of the map produces.
-    string? Ratings = null)
+    string? Ratings = null,
+    // scores.replay_pruned_at IS NOT NULL (042_replay_retention.sql): the server's housekeeping
+    // deleted this row's replay under its retention rule, so HasReplay is false for a reason that
+    // is NOT "never uploaded". APPENDED for the same positional-mapping reason as Ratings.
+    bool ReplayPruned = false)
 {
     /// <summary>
     /// Whether this row was judged on a LADDER THIS CODE NO LONGER HAS, i.e. whether reproducing it
@@ -285,6 +289,13 @@ public enum SkipReason
     /// <summary>The row has no stored replay, so there is nothing to re-derive from.</summary>
     NoReplay,
 
+    /// <summary>
+    /// The row HAD a replay and the server's retention sweep deleted it (backlog 365,
+    /// <c>scores.replay_pruned_at</c>). As unrecoverable as <see cref="NoReplay"/>, but a different
+    /// fact: the play was recorded, and only stopped being checkable when the server chose to.
+    /// </summary>
+    ReplayPruned,
+
     /// <summary>The stored bytes did not decode as a type!beat replay.</summary>
     UndecodableReplay,
 
@@ -426,6 +437,7 @@ public sealed record RecalcResult(
     /// investigate, never to rewrite the row.
     /// </summary>
     public bool Unreplayable => Skip is SkipReason.NoReplay
+                                     or SkipReason.ReplayPruned
                                      or SkipReason.UndecodableReplay
                                      or SkipReason.EmptyReplay
                                      or SkipReason.BeatmapUnavailable
@@ -1008,7 +1020,7 @@ public static class Recalculation
     public static RecalcResult Run(StoredScore stored, ReplayArchive.DecodedReplay? decoded, bool backfillMistypes = false, RecalcMode mode = RecalcMode.Reproduce)
     {
         if (!stored.HasReplay)
-            return Skipped(stored, SkipReason.NoReplay, null, mode);
+            return Skipped(stored, stored.ReplayPruned ? SkipReason.ReplayPruned : SkipReason.NoReplay, null, mode);
 
         if (decoded is null)
             return Skipped(stored, SkipReason.UndecodableReplay, null, mode);

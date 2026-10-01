@@ -4,6 +4,7 @@ using Newtonsoft.Json;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
+using Typebeat.Web.Storage;
 using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
@@ -96,9 +97,15 @@ public static class ScoreEndpoints
     // Form fields (CreateSoloScoreRequest.cs:30-32): version_hash, beatmap_hash, ruleset_id.
     // Response is APIScoreToken { "id": <long> }.
     // ---------------------------------------------------------------------------------------------
-    private static async Task<IResult> CreateToken(long beatmapId, HttpContext ctx, Db db)
+    private static async Task<IResult> CreateToken(long beatmapId, HttpContext ctx, Db db, DiskGuard disk)
     {
         var user = ctx.AuthedUser();
+
+        // Disk guard (backlog 365): only at the CRITICAL level (Postgres' own headroom), and only the
+        // token, so the player is told before playing (the game posts "Score will not be
+        // submitted") rather than after. Submitting against a token already issued is never refused.
+        if (disk.Current.TokensRefused)
+            return WireJson.Error(StatusCodes.Status503ServiceUnavailable, DiskGuard.TokenRefusal);
 
         var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
         string versionHash = form["version_hash"].ToString();

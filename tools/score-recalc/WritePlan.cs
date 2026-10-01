@@ -57,6 +57,18 @@ public enum UnreplayableCase
     /// A failed run is not competing for a leaderboard place, so leaving it is nearly free.
     /// </summary>
     FailedRun,
+
+    /// <summary>
+    /// <c>replay_pruned_at IS NOT NULL</c>: the replay existed and the server's housekeeping deleted
+    /// it under the retention rule (backlog 365), which only ever prunes a play that is NOT among
+    /// the player's top plays on that map and board. RECOMMENDED POLICY: keep, for the NoReplay
+    /// reasons, and more so: the row was verifiable once, and the infrastructure chose to stop it
+    /// being so. Deliberately NOT covered by a bare <c>--unreplayable keep|unrank</c> (see
+    /// <see cref="WritePlan.CoveredByABarePolicy"/>): turning the sweep on must never silently
+    /// change what an already-scripted supersede run does, so this case needs <c>pruned=...</c>
+    /// spelled out.
+    /// </summary>
+    Pruned,
 }
 
 /// <summary>What a supersede sweep does with a row it could not re-derive.</summary>
@@ -219,6 +231,7 @@ public sealed class WritePlan
     public static UnreplayableCase CaseOf(SkipReason reason) => reason switch
     {
         SkipReason.NoReplay => UnreplayableCase.NoReplay,
+        SkipReason.ReplayPruned => UnreplayableCase.Pruned,
         SkipReason.UndecodableReplay => UnreplayableCase.Unreadable,
         SkipReason.EmptyReplay => UnreplayableCase.EmptyReplay,
         SkipReason.BeatmapUnavailable => UnreplayableCase.BeatmapMissing,
@@ -236,8 +249,16 @@ public sealed class WritePlan
         UnreplayableCase.BeatmapMissing => "beatmap-missing",
         UnreplayableCase.BeatmapChanged => "beatmap-changed",
         UnreplayableCase.FailedRun => "failed-run",
+        UnreplayableCase.Pruned => "pruned",
         _ => value.ToString(),
     };
+
+    /// <summary>
+    /// The cases a bare <c>--unreplayable keep|unrank</c> sets at once: every case except
+    /// <see cref="UnreplayableCase.Pruned"/>, which always needs its own explicit policy.
+    /// </summary>
+    public static IReadOnlyList<UnreplayableCase> CoveredByABarePolicy { get; } =
+        Enum.GetValues<UnreplayableCase>().Where(c => c != UnreplayableCase.Pruned).ToList();
 
     public static bool TryParseCase(string name, out UnreplayableCase value)
     {

@@ -1112,6 +1112,47 @@ public class ScoreRecalcTest
     }
 
     /// <summary>
+    /// Backlog 365: a row whose replay the server's retention sweep deleted (replay_pruned_at set) is
+    /// its own case, Pruned, distinct from NoReplay, and a bare keep|unrank does NOT decide it. A
+    /// supersede plan that hit a pruned row therefore refuses until pruned=... is named, so turning
+    /// the sweep on can never silently change what an already-scripted supersede run does.
+    /// </summary>
+    [Test]
+    public void APrunedReplayIsItsOwnCase_AndABarePolicyDoesNotDecideIt()
+    {
+        var map = Beatmap();
+        var stored = StoredFor(map, FixedTypoReplay(map));
+
+        var pruned = Recalculation.Run(stored with { HasReplay = false, ReplayPruned = true }, null, mode: RecalcMode.Supersede);
+        var neverUploaded = Recalculation.Run(stored with { HasReplay = false }, null, mode: RecalcMode.Supersede);
+        var results = new[] { pruned, neverUploaded };
+
+        var bare = WritePlan.CoveredByABarePolicy.ToDictionary(c => c, _ => UnreplayablePolicy.Unrank);
+        var barePlan = WritePlan.Build(results, RecalcMode.Supersede, bare, filtered: false);
+
+        var named = new Dictionary<UnreplayableCase, UnreplayablePolicy>(bare) { [UnreplayableCase.Pruned] = UnreplayablePolicy.Keep };
+        var namedPlan = WritePlan.Build(results, RecalcMode.Supersede, named, filtered: false);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pruned.Skip, Is.EqualTo(SkipReason.ReplayPruned));
+            Assert.That(pruned.Unreplayable, Is.True);
+            Assert.That(WritePlan.CaseOf(pruned.Skip), Is.EqualTo(UnreplayableCase.Pruned));
+            Assert.That(neverUploaded.Skip, Is.EqualTo(SkipReason.NoReplay), "a never-uploaded replay stays NoReplay");
+
+            Assert.That(WritePlan.CoveredByABarePolicy, Has.No.Member(UnreplayableCase.Pruned));
+            Assert.That(WritePlan.CoveredByABarePolicy, Has.Member(UnreplayableCase.NoReplay));
+            Assert.That(WritePlan.TryParseCase("pruned", out var parsed) && parsed == UnreplayableCase.Pruned, Is.True);
+
+            Assert.That(barePlan.Undecided, Is.EquivalentTo(new[] { UnreplayableCase.Pruned }), "a bare policy leaves Pruned undecided");
+            Assert.That(barePlan.Unranked.Select(r => r.Skip), Is.EquivalentTo(new[] { SkipReason.NoReplay }), "the bare policy decided only the never-uploaded row");
+
+            Assert.That(namedPlan.Undecided, Is.Empty);
+            Assert.That(namedPlan.Unranked.Select(r => r.Skip), Is.EquivalentTo(new[] { SkipReason.NoReplay }), "pruned=keep leaves the pruned row ranked");
+        });
+    }
+
+    /// <summary>
     /// The command surface, which is the reason a supersede sweep cannot be started by accident. The
     /// mode rides on the COMMAND NAME, so no flag on 'apply' reaches it and a wrong guess at a flag
     /// is an error rather than a silently ignored option; and 'supersede-apply' wants three separate

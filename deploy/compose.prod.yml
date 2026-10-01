@@ -63,6 +63,27 @@ services:
       # volume so container swaps keep the files; deploy/backup.sh tars it WEEKLY (cron lines
       # in the script header; they are not installed automatically).
       TYPEBEAT_FILE_ROOT: "/data"
+      # Disk guard (backlog 365, Storage/DiskGuard.cs): below the upload floor replay, BSS and
+      # avatar/banner writes answer 507 and /health says "degraded"; at the critical level new score
+      # tokens are refused too. Empty = the defaults (10 / 5 / 2 GiB, a 15 s probe cache).
+      TYPEBEAT_DISK_LOW_GB: "${TYPEBEAT_DISK_LOW_GB:-}"
+      TYPEBEAT_DISK_UPLOAD_FLOOR_GB: "${TYPEBEAT_DISK_UPLOAD_FLOOR_GB:-}"
+      TYPEBEAT_DISK_CRITICAL_GB: "${TYPEBEAT_DISK_CRITICAL_GB:-}"
+      TYPEBEAT_DISK_PROBE_SECONDS: "${TYPEBEAT_DISK_PROBE_SECONDS:-}"
+      # The filesystem the critical level watches. Empty = the file root, which is correct while
+      # pgdata and appdata share the root disk. Once pgdata moves to its own device, mount it
+      # read-only on app (pgdata:/pgdata-probe:ro) and set this to /pgdata-probe (deploy/README.md).
+      TYPEBEAT_PG_PROBE_PATH: "${TYPEBEAT_PG_PROBE_PATH:-}"
+      # Hourly housekeeping (Ops/Housekeeping.cs): expired tokens, the download log past 365 days,
+      # upload sessions, stale covers, and replay retention. The replay sweep is off|dryrun|on and
+      # stays dryrun (logs "would prune N replays") until the owner flips it after an announcement
+      # and a fresh appdata tar. Set TYPEBEAT_HOUSEKEEPING=false in deploy/.env to stop the service.
+      TYPEBEAT_HOUSEKEEPING: "${TYPEBEAT_HOUSEKEEPING:-true}"
+      TYPEBEAT_REPLAY_SWEEP: "${TYPEBEAT_REPLAY_SWEEP:-dryrun}"
+      TYPEBEAT_REPLAY_KEEP_TOP_N: "${TYPEBEAT_REPLAY_KEEP_TOP_N:-}"
+      TYPEBEAT_REPLAY_KEEP_DAYS: "${TYPEBEAT_REPLAY_KEEP_DAYS:-}"
+      TYPEBEAT_REPLAY_KEEP_VIEWED_DAYS: "${TYPEBEAT_REPLAY_KEEP_VIEWED_DAYS:-}"
+      TYPEBEAT_REPLAY_SOFT_CAP_GB: "${TYPEBEAT_REPLAY_SOFT_CAP_GB:-}"
       # Filename of the game-client release zip under {TYPEBEAT_FILE_ROOT}/downloads/, the
       # /download page's CTA. Set it in deploy/.env like the other TYPEBEAT_* keys (compose
       # does NOT forward undeclared host env vars; without this line an .env entry is

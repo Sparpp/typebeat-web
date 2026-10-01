@@ -64,7 +64,7 @@ public static class ReplayEndpoints
     // ---------------------------------------------------------------------------------------------
     // PUT: store (or overwrite) the caller's own replay for one score.
     // ---------------------------------------------------------------------------------------------
-    private static async Task<IResult> UploadAsync(long scoreId, HttpContext ctx, Db db, IFileStore store, ILoggerFactory loggerFactory)
+    private static async Task<IResult> UploadAsync(long scoreId, HttpContext ctx, Db db, IFileStore store, DiskGuard disk, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
 
@@ -83,6 +83,12 @@ public static class ReplayEndpoints
 
         if (ownerId != user.Id)
             return WireJson.Error(StatusCodes.Status403Forbidden, "not your score");
+
+        // Disk guard (backlog 365): below the upload floor nothing is written, and the refusal
+        // comes BEFORE the body is read. The game's upload is fire-and-forget (ReplayUploader drops
+        // a failure silently) and its leaderboard backfill re-uploads once space is back.
+        if (disk.Current is { UploadsRefused: true } refusedAt)
+            return WireJson.Error(StatusCodes.Status507InsufficientStorage, DiskGuard.UploadRefusal(refusedAt));
 
         // Cheap reject when the client declares an over-cap length up front.
         if (ctx.Request.ContentLength is long declared && declared > MaxReplayBytes)
@@ -126,7 +132,7 @@ public static class ReplayEndpoints
         await conn.ExecuteAsync(
             """
             UPDATE scores
-            SET replay_key = @key, replay_bytes = @bytes, replay_uploaded_at = now()
+            SET replay_key = @key, replay_bytes = @bytes, replay_uploaded_at = now(), replay_pruned_at = NULL
             WHERE id = @scoreId
             """,
             new { key, bytes = replay.Length, scoreId });

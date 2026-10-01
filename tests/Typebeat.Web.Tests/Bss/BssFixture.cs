@@ -49,7 +49,7 @@ public class BssFixture
     /// <summary>TYPEBEAT_GAME_DOWNLOAD on this host; TYPEBEAT_GAME_DOWNLOAD_LINUX/_MACOS stay unset.</summary>
     public const string InstallerFileName = "typebeat-test-Setup.exe";
 
-    /// <summary>The running host's service provider (the R2 tests reach its singletons through it).</summary>
+    /// <summary>The running host's service provider (the R2 tests and the disk guard's test seam reach its singletons through it).</summary>
     public static IServiceProvider Services => factory!.Services;
 
     private static WebApplicationFactory<Program>? factory;

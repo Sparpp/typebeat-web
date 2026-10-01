@@ -143,11 +143,14 @@ jobs:
       # cleanup steps below never ran, although the site came up healthy a minute later
       # (2026-09-30). Six minutes covers a re-rate of the whole pool several times over; a genuinely
       # broken container still fails here, only later.
+      # The body is "ok", or "degraded: ..." (still 200) while the app's disk guard refuses writes
+      # (backlog 365, DiskGuard.HealthBody): a deploy onto a nearly full disk has still deployed, and
+      # UptimeRobot's "ok" keyword monitor is what alerts on the degraded state.
       - name: Health check
         run: |
           sleep 5
-          curl -fsS --retry 60 --retry-delay 5 --retry-max-time 360 --retry-all-errors https://typebeat.sh/health | grep -q ok
-          curl -fsS --retry 20 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -q ok
+          curl -fsS --retry 60 --retry-delay 5 --retry-max-time 360 --retry-all-errors https://typebeat.sh/health | grep -qE '^(ok|degraded)'
+          curl -fsS --retry 20 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -qE '^(ok|degraded)'
           echo "healthy"
 
       # The build cache is what the box pays for the app image build, and nothing ever collected
