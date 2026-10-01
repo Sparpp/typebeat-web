@@ -30,6 +30,22 @@ public static class WireJson
     public static IResult Error(int statusCode, string message)
         => new NewtonsoftJsonResult(new { error = message }, statusCode);
 
+    /// <summary>
+    /// A 503 in the same error envelope, with a Retry-After header: a temporary refusal the caller
+    /// should retry (the game's submission flow already retries a 503 as a gateway blip).
+    /// </summary>
+    public static IResult Unavailable(string message, int retryAfterSeconds)
+        => new RetryAfterResult(Error(StatusCodes.Status503ServiceUnavailable, message), retryAfterSeconds);
+
+    private sealed class RetryAfterResult(IResult inner, int retryAfterSeconds) : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return inner.ExecuteAsync(httpContext);
+        }
+    }
+
     private sealed class NewtonsoftJsonResult(object payload, int statusCode) : IResult
     {
         public async Task ExecuteAsync(HttpContext httpContext)

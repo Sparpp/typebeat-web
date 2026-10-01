@@ -12,6 +12,7 @@ using Newtonsoft.Json;
 using Npgsql;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Ops;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Storage;
 using Typebeat.Web.Wire;
@@ -297,10 +298,13 @@ public static class BssEndpoints
     // ---------------------------------------------------------------------------------------------
     // PUT /bss/beatmapsets/{id}: full package upload (single "beatmapArchive" file part).
     // ---------------------------------------------------------------------------------------------
-    private static async Task<IResult> UploadFullPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, DiskGuard disk, ILoggerFactory loggerFactory)
+    private static async Task<IResult> UploadFullPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, DiskGuard disk, StartupSweepGate sweeps, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
         var logger = loggerFactory.CreateLogger("BssUpload");
+
+        if (sweepRefusal(sweeps) is { } sweepError)
+            return sweepError;
 
         if (diskRefusal(disk) is { } diskError)
             return diskError;
@@ -364,10 +368,13 @@ public static class BssEndpoints
     // PATCH /bss/beatmapsets/{id}: delta upload, latest version overlaid with filesChanged
     // minus filesDeleted, rebuilt into a full package, then the same ingest path.
     // ---------------------------------------------------------------------------------------------
-    private static async Task<IResult> PatchPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, IFileStore fileStore, DiskGuard disk, ILoggerFactory loggerFactory)
+    private static async Task<IResult> PatchPackageAsync(long setId, HttpContext ctx, Db db, PackageIngest ingest, IFileStore fileStore, DiskGuard disk, StartupSweepGate sweeps, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
         var logger = loggerFactory.CreateLogger("BssUpload");
+
+        if (sweepRefusal(sweeps) is { } sweepError)
+            return sweepError;
 
         if (diskRefusal(disk) is { } diskError)
             return diskError;
@@ -657,10 +664,15 @@ public static class BssEndpoints
     /// </summary>
     private static async Task<IResult> CompleteUploadSessionAsync(
         string sessionId, HttpContext ctx, Db db, PackageIngest ingest, IFileStore fileStore,
-        UploadSessionStore sessions, DiskGuard disk, ILoggerFactory loggerFactory)
+        UploadSessionStore sessions, DiskGuard disk, StartupSweepGate sweeps, ILoggerFactory loggerFactory)
     {
         var user = ctx.AuthedUser();
         var logger = loggerFactory.CreateLogger("BssUpload");
+
+        // Before anything reads the session: a refused complete leaves it (and its chunks) intact,
+        // so the client's retry completes the very same upload once the gate opens.
+        if (sweepRefusal(sweeps) is { } sweepError)
+            return sweepError;
 
         if (diskRefusal(disk) is { } diskError)
             return diskError;
@@ -771,6 +783,16 @@ public static class BssEndpoints
         => disk.Current is { UploadsRefused: true } status
             ? WireJson.Error(StatusCodes.Status507InsufficientStorage, DiskGuard.UploadRefusal(status))
             : null;
+
+    /// <summary>
+    /// Startup sweep gate (backlog 368): the three routes that hand a package to the ingest answer
+    /// 503 with Retry-After until <see cref="GameplayFingerprintBackfill"/> has run in this process
+    /// (see <see cref="StartupSweepGate"/>), FIRST, before the disk guard, the rate limiter or any body
+    /// read, so a refused attempt costs the mapper nothing. 503 on purpose, the opposite of the disk
+    /// guard's 507: this one clears by itself in a minute or two, and the game retries a 503.
+    /// </summary>
+    private static IResult? sweepRefusal(StartupSweepGate sweeps)
+        => sweeps.IngestOpen ? null : sweeps.IngestRefusal();
 
     /// <summary>Common gate for both upload routes: rate limit, verified account, owned live set.</summary>
     private static async Task<IResult?> gateUploadAsync(HttpContext ctx, Db db, long setId, AuthedUser user)

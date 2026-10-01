@@ -120,6 +120,10 @@ public class BssFixture
         using (var probe = await Client.GetAsync("/health"))
             probe.EnsureSuccessStatusCode();
 
+        // Since backlog 368 the startup sweeps run in a hosted service after the host listens; wait
+        // for them so nothing seeded below races a sweep (they used to finish before startup did).
+        await StartupSweepHosts.AwaitAsync(factory.Services);
+
         dataSource = NpgsqlDataSource.Create(ConnectionString);
     }
 

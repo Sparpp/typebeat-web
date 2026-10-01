@@ -65,6 +65,7 @@ public class DownloadPageTest
         try
         {
             using var client = factory.CreateDefaultClient(WebsiteFixture.BaseAddress, new RedirectHandler());
+            await StartupSweepHosts.AwaitAsync(factory.Services);
 
             using var page = await client.GetAsync("/download");
             string html = await page.Content.ReadAsStringAsync();

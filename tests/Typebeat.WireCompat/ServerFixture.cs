@@ -2,6 +2,8 @@ using System.Security.Cryptography;
 using System.Text;
 using Dapper;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Typebeat.Web.Ops;
 using Npgsql;
 
 namespace Typebeat.WireCompat;
@@ -112,6 +114,12 @@ public class ServerFixture
         // A no-op request forces host startup to complete (and surfaces migration errors early).
         using (var probe = await Client.GetAsync("/health"))
             probe.EnsureSuccessStatusCode();
+
+        // Since backlog 368 the startup sweeps run in a hosted service after the host listens; wait
+        // for them so nothing seeded below races a sweep (they used to finish before startup did).
+        var sweeps = factory.Services.GetRequiredService<StartupSweepGate>();
+        await sweeps.Completed.WaitAsync(TimeSpan.FromMinutes(2));
+        Assert.That(sweeps.State, Is.EqualTo(StartupSweepState.Done), $"startup sweeps failed at {sweeps.FailedStage}");
 
         await seedAsync();
     }

@@ -75,6 +75,7 @@ public class DownloadEndpointTest
         try
         {
             using var client = factory.CreateDefaultClient(WebsiteFixture.BaseAddress, new RedirectHandler());
+            await StartupSweepHosts.AwaitAsync(factory.Services);
 
             using var download = await client.GetAsync("/download/game");
             byte[] body = await download.Content.ReadAsByteArrayAsync();

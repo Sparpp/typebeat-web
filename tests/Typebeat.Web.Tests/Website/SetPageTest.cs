@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Typebeat.Web.Data;
+using Typebeat.Web.Ops;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Storage;
 
@@ -736,6 +737,68 @@ public class SetPageTest
         int healed = await runSweepForSetAsync(setId);
 
         Assert.That(healed, Is.EqualTo(1));
+    }
+
+    /// <summary>
+    /// Backlog 368: while the startup sweeps are still running, the rank button refuses BEFORE it
+    /// changes anything (503, Retry-After, plain text): the set stays pending, no audit row, no carry.
+    /// Unranking carries nothing and is not held. Driven through the gate's override on the existing
+    /// host; once it is cleared the same press ranks as normal.
+    /// </summary>
+    [Test]
+    public async Task Rank_WhileTheStartupSweepsRun_Is503AndChangesNothing()
+    {
+        var (setId, mapId) = await seedPendingCarrySetAsync("Held Anthem");
+        long play = await seedPendingPlayAsync(mapId, "carry held typist", 880_000);
+
+        var reviewer = await carryReviewerAsync();
+        var gate = WebsiteFixture.Services.GetRequiredService<StartupSweepGate>();
+
+        HttpStatusCode heldStatus;
+        TimeSpan? retryAfter;
+        string heldBody;
+
+        gate.StateOverride = StartupSweepState.Running;
+
+        try
+        {
+            using var held = await postReviewAsync(reviewer, setId, "Rank");
+            heldStatus = held.StatusCode;
+            retryAfter = held.Headers.RetryAfter?.Delta;
+            heldBody = await held.Content.ReadAsStringAsync();
+        }
+        finally
+        {
+            gate.StateOverride = null;
+        }
+
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        string? statusWhileHeld = await conn.ExecuteScalarAsync<string>("SELECT status FROM beatmapsets WHERE id = @setId", new { setId });
+        int auditsWhileHeld = await conn.ExecuteScalarAsync<int>(
+            "SELECT count(*)::int FROM moderation_actions WHERE set_id = @setId", new { setId });
+        var rowsWhileHeld = await scoreRowsAsync(play);
+
+        using (var rank = await postReviewAsync(reviewer, setId, "Rank"))
+            Assert.That(rank.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var rowsAfter = await scoreRowsAsync(play);
+
+        // Off the public listing again: ListingPageTest walks exactly two pages of published sets
+        // in this shared database, and one more would spill onto a third.
+        await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'hidden' WHERE id = @setId", new { setId });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(heldStatus, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+            Assert.That(retryAfter, Is.EqualTo(TimeSpan.FromSeconds(StartupSweepGate.RetryAfterSeconds)));
+            Assert.That(heldBody, Does.Contain("Nothing was changed"));
+            Assert.That(statusWhileHeld, Is.EqualTo("pending"));
+            Assert.That(auditsWhileHeld, Is.Zero);
+            Assert.That(rowsWhileHeld[play].Ranked, Is.False);
+            Assert.That(rowsAfter[play].Ranked, Is.True, "the press after the gate opens carries as normal");
+        });
     }
 
     /// <summary>
