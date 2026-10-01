@@ -1,48 +1,54 @@
 # typebeat-web
 
-The entire server side of [type!beat](../typebeat-osu): the osu-web APIv2 dialect the game
-client speaks (accounts, score submission, per-map leaderboards, beatmap lookup, M1 scope),
-plus (later milestones) beatmap hosting/downloads and the public website.
+o/
 
-Architecture, wire contract, and milestone plan: `../type!beat/docs/online-architecture.md`.
+The website and server side of [type!beat](https://github.com/Sparpp/typebeat)
 
-## Stack
+Accounts, score submission, leaderboards, beatmap hosting and a browser version of the game, all behind [typebeat.sh](https://typebeat.sh/)
 
-- ASP.NET Core (.NET 10), minimal APIs; Razor Pages for the website from M3.
-- **Newtonsoft.Json for every wire response**: the client deserializes with Newtonsoft
-  attribute semantics; see `Wire/Wire.cs`. Never serialize an API response with
-  System.Text.Json.
-- PostgreSQL 16, Dapper + hand-written SQL. Migrations are plain SQL files embedded in the
-  binary (`Data/Migrations/*.sql`), applied at startup in filename order.
-- Opaque bearer tokens (SHA-256 at rest), refresh rotation with a 60s grace window.
+[![Website](https://img.shields.io/badge/website-typebeat.sh-blue)](https://typebeat.sh/)
+[![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/yAR2PDPgBB)
+[![YouTube](https://img.shields.io/badge/youtube-@typebeatgame-FF0000?logo=youtube&logoColor=white)](https://www.youtube.com/@typebeatgame)
 
-## Dev quickstart
+## Building
+
+Requires the [.NET SDK](https://dotnet.microsoft.com/download) (.NET 10) and a
+PostgreSQL database.
 
 ```
-docker compose -f compose.dev.yml up -d     # postgres:16 on localhost:5432
-dotnet run --project src/Typebeat.Web       # http://localhost:5089 (matches the client's dev endpoint)
+git clone https://github.com/Sparpp/typebeat-web
+cd typebeat-web
+docker compose -f compose.dev.yml up -d
+dotnet run --project src/Typebeat.Web
 ```
 
-A debug build of the game (or any build with `TYPEBEAT_API_URL=http://localhost:5089`)
-then talks to this instance.
+The site then answers on `http://localhost:5089`, which is the endpoint a debug
+build of the game client talks to. Point the app at a different database with
+`TYPEBEAT_DB`; the schema is applied on startup from `src/Typebeat.Web/Data/Migrations`.
+
+Or open `typebeat-web.slnx` in your IDE.
+
+The tests that prove the website and the game client still agree on scoring
+compile the game as well, so they need a checkout of
+[`typebeat`](https://github.com/Sparpp/typebeat) beside this one (or the
+`external/typebeat-osu` submodule):
+
+```
+git submodule update --init external/typebeat-osu
+dotnet test
+```
 
 ## Layout
 
-- `src/Typebeat.Web`: the app. `Endpoints/` one static module per wire endpoint group;
-  `Wire/` response conventions + DTOs; `Auth/` token + password services; `Data/` Db + SQL.
-- `tools/seed`: packages a lyriclab `.osz` for online play: assigns IDs, injects them into
-  each `.osu`'s `[Metadata]`, hashes the FINAL bytes (the beatmap_hash identity contract),
-  inserts DB rows, emits the finalized `.osz` to import into the client.
-- `tools/admin`: block/unblock builds, unrank scores, restrict users, issue/revoke a
-  short-lived bearer token for a user (the origin-side ingest op in `deploy/README.md`).
-- `tests/Typebeat.Web.Tests`: unit tests (NUnit).
+| Path | What |
+|---|---|
+| `src/Typebeat.Web` | The app: the API the game client speaks, the website (Razor Pages), the browser player, scoring and difficulty rating |
+| `tests/Typebeat.Web.Tests` | The test suite |
+| `tests/Typebeat.WireCompat` | Compiles the game client against the server and pins that the two agree on the wire and on every mirrored formula |
+| `tools/` | Operator tools: seeding maps, admin actions, score recalculation and reprice reports |
+| `deploy/` | Production deployment: Docker Compose, Caddy, backups, runbook |
+| `docs/` | The performance points spec and other design notes |
 
-## Iron rules
+## Licence
 
-1. Beatmap bytes are hashed once, after ID injection, and never rewritten afterwards;
-   whatever is served for download must be exactly the hashed bytes.
-2. Download endpoints 302-redirect to object storage; server code never streams `.osz` bytes.
-3. Score-submit error strings (`invalid token`, `expired token`,
-   `invalid or missing beatmap_hash`, `outdated client`) are exact-matched by the client;
-   never reword.
-4. Never branch on the client's `x-api-version` header; accept and log any positive integer.
+typebeat-web is MIT-licensed; see [LICENCE](LICENCE).
