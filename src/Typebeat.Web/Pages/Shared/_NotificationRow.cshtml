@@ -18,7 +18,7 @@
     <button type="submit" class="notif-row @(Model.IsUnread ? "is-unread" : "")">
         @if (Model.SetCoverUrl is string cover)
         {
-            <img class="notif-row__cover" src="@cover" alt="" loading="lazy" />
+            <img class="notif-row__cover" src="@cover" alt="" width="40" height="40" loading="lazy" />
         }
         else
         {

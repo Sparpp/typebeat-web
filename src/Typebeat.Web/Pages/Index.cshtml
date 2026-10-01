@@ -2,8 +2,15 @@
 @using System.Globalization
 @model IndexModel
 @{
-    ViewData["MetaDescription"] = "type!beat is a free rhythm game played on your keyboard: "
-        + "the lyrics are the notes. Download for Windows, macOS or Linux, grab community maps and chase the leaderboards.";
+    // Generic search phrases, once each (backlog 369): "lyric typing rhythm game", "type to
+    // the beat", "typing game with music". The visible line under the hero carries the first.
+    string description = "type!beat is a free lyric typing rhythm game: type to the beat as the words "
+        + "drop with the song. A typing game with music, in your browser or on Windows, macOS and Linux, "
+        + "with community maps and leaderboards.";
+    ViewData["FullTitle"] = Seo.LANDING_TITLE;
+    ViewData["MetaDescription"] = description;
+    ViewData["JsonLd"] = Seo.VideoGameJsonLd(Seo.CanonicalUrl("/"), description);
+    ViewData["PreloadImage"] = "/media/widedemo-poster.jpg";
 }
 
 @if (Model.AccountDeleted)
@@ -14,6 +21,7 @@
 <section class="hero">
     <p class="hero-kicker">// built from osu!</p>
     <h1 class="hero-title">type to the b<span class="tail">eat</span></h1>
+    <p class="hero-sub">the free lyric typing rhythm game</p>
     <div class="hero-actions">
         <a class="btn btn-primary btn-big" href="/play">play in browser</a>
         @if (Model.GameDownloadAvailable)

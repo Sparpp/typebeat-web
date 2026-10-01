@@ -284,6 +284,9 @@ app.MapMethods("/health", new[] { HttpMethods.Get, HttpMethods.Head }, async (Db
 // The in-game menu banner polls this (repointed from assets.ppy.sh in the client).
 app.MapGet("/menu-content.json", () => WireJson.Ok(new { images = Array.Empty<object>() }));
 
+// /robots.txt and /sitemap.xml for search engines (backlog 369), wire routes like the line above.
+SeoEndpoints.Map(app);
+
 // Sentry verification: deliberately throws so error capture can be proven end-to-end. Gated
 // behind an env flag (normally unset) so production has no open crash surface to spam.
 if (Flags.IsEnabled(app.Configuration, "TYPEBEAT_ENABLE_DEBUG_THROW"))
@@ -347,7 +350,9 @@ static bool IsWireRoute(HttpContext ctx)
            || path.StartsWithSegments("/ws")
            || path.StartsWithSegments("/health")
            || path.StartsWithSegments("/debug")
-           || path == "/menu-content.json";
+           || path == "/menu-content.json"
+           || path == "/robots.txt"
+           || path == "/sitemap.xml";
 }
 
 // Exposed for WebApplicationFactory-based tests (wire-compat harness, Stage C).

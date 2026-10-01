@@ -5,7 +5,7 @@
     <a class="user-row__avatar-link" href="/users/@Model.Id" aria-hidden="true" tabindex="-1">
         @if (Model.AvatarUrl is string avatarUrl)
         {
-            <img class="user-row__avatar" src="@avatarUrl" alt="" loading="lazy" />
+            <img class="user-row__avatar" src="@avatarUrl" alt="" width="40" height="40" loading="lazy" />
         }
         else
         {

@@ -271,6 +271,8 @@ public sealed class SetModel(Db db, IFileStore fileStore, ILogger<SetModel> logg
             $"{Set.Artist}: {Set.Title}, mapped by {Set.Creator}. Type it in type!beat.";
         if (Set.CoverKey is not null)
             ViewData["OgImage"] = $"{Request.Scheme}://{Request.Host}/{Set.CoverKey}/cover.jpg";
+        ViewData["JsonLd"] = Seo.MusicRecordingJsonLd(
+            Seo.CanonicalUrl($"/beatmapsets/{id}"), Set.Title, Set.Artist, ViewData["OgImage"] as string);
 
         return Page();
     }
