@@ -111,12 +111,24 @@ jobs:
           # deploy after it was committed (as 100644) shipped it over the box's executable copy and
           # every later step died with "Permission denied" (2026-09-30).
 
+      # Rollback point (backlog 368): tag the image the RUNNING container was created from as
+      # typebeat-web-app:previous, before the build below moves the typebeat-web-app tag onto the
+      # new image. Taken from the container (not from the tag) so it is always what is actually
+      # serving, including after an earlier rollback. Exactly one extra tagged image: retagging
+      # leaves the one before it dangling, and the prune at the end collects that on a green run,
+      # while `docker image prune -f` never removes a tagged image. No container (a fresh box) is
+      # not an error, there is just nothing to roll back to.
+      - name: Keep the running image as previous
+        run: |
+          ssh -i ~/.ssh/deploy_key root@46.62.142.5 'id=$(docker inspect --format "{{.Image}}" typebeat-web-app-1 2>/dev/null)             && docker tag "$id" typebeat-web-app:previous && echo "kept $id as typebeat-web-app:previous"             || echo "no running app container, nothing to keep"'
+
       # Gate: build the image BEFORE touching the running container, so a broken build
       # never takes production down (learned the hard way).
       - name: Build image on server
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web && ./deploy/up.sh build app'
 
       - name: Swap container
+        id: swap
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web && ./deploy/up.sh up -d app'
 
       # Caddyfile changes used to never reach the running container (backlog 190): the old
@@ -136,22 +148,48 @@ jobs:
       # moved the site to typebeat.sh checked the new name first, got Cloudflare 525s because Caddy
       # had no vhost for it yet, failed, and so skipped the very reload that would have fixed it.
       # The old host is checked too, since every client shipped before the move still talks to it.
-      # PATIENT on purpose: the app does not listen until Program.cs has run the migrations, then
-      # PaceBackfill (which re-rates EVERY ranked map whenever LyricPace's VERSION moved, about 0.3 to
-      # 0.65 s per map) and PpBackfill. The deploy that carried LyricPace v22 took well over the old
-      # 35 s window (5 s + 10 x 3 s), Caddy answered 502 throughout, this step went red and the
-      # cleanup steps below never ran, although the site came up healthy a minute later
-      # (2026-09-30). Six minutes covers a re-rate of the whole pool several times over; a genuinely
-      # broken container still fails here, only later.
+      # PATIENT on purpose, although less needed since backlog 368: the deploy that carried
+      # LyricPace v22 took well over the old 35 s window (5 s + 10 x 3 s) because the app did not
+      # listen until Program.cs had run the migrations AND every backfill sweep (PaceBackfill
+      # re-rates EVERY ranked map whenever LyricPace's VERSION moves, about 0.3 to 0.65 s per map);
+      # Caddy answered 502 throughout, this step went red and the cleanup steps below never ran,
+      # although the site came up healthy a minute later (2026-09-30). Since backlog 368 only the
+      # migrations run before the app listens; the sweeps run in the StartupSweeps hosted service
+      # behind a gate (BSS package ingest and the rank button answer 503 until it opens), and
+      # /health is liveness, so it answers as soon as the app is up. The six-minute window stays
+      # until a deploy has proved that, then it can shrink back toward 35 s. A genuinely broken
+      # container still fails here, and the Roll back step below then restores the previous image.
       # The body is "ok", or "degraded: ..." (still 200) while the app's disk guard refuses writes
       # (backlog 365, DiskGuard.HealthBody): a deploy onto a nearly full disk has still deployed, and
       # UptimeRobot's "ok" keyword monitor is what alerts on the degraded state.
       - name: Health check
+        id: health
         run: |
           sleep 5
           curl -fsS --retry 60 --retry-delay 5 --retry-max-time 360 --retry-all-errors https://typebeat.sh/health | grep -qE '^(ok|degraded)'
           curl -fsS --retry 20 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -qE '^(ok|degraded)'
           echo "healthy"
+
+      # Automatic rollback (backlog 368), ONLY when the swap or the health check itself failed (a
+      # failed swap may already have removed the old container). A red build or a failed caddy
+      # reload does not trigger it (an earlier step failing skips the later ones, whose outcome is
+      # then "skipped", not "failure"), and those leave the running app alone. It prints
+      # the failing container's last log lines, points typebeat-web-app back at :previous and
+      # recreates ONLY the app (--no-build, because the app has a build section and up would
+      # otherwise rebuild the broken source; --no-deps, so postgres and caddy are untouched), then
+      # re-checks health. The job stays red either way: a rollback is a failed deploy.
+      # Limits (deploy/README.md, "Rollback"): migrations are forward-only, so this is safe only
+      # when the failed deploy's migrations were additive (the old binary skips names it does not
+      # know but runs against the newer schema); a GameplayFingerprint VERSION bump makes the
+      # rollback re-sweep the whole catalogue (and the next good deploy re-sweep it again); the
+      # Caddyfile is NOT rolled back.
+      - name: Roll back to the previous image
+        if: failure() && (steps.health.outcome == 'failure' || steps.swap.outcome == 'failure')
+        run: |
+          ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web             && echo "--- last log lines of the failing container ---"             && { docker logs --tail 150 typebeat-web-app-1 2>&1 || true; }             && docker image inspect typebeat-web-app:previous >/dev/null             && docker tag typebeat-web-app:previous typebeat-web-app             && ./deploy/up.sh up -d --no-build --no-deps --force-recreate app'
+          sleep 5
+          curl -fsS --retry 60 --retry-delay 5 --retry-max-time 360 --retry-all-errors https://typebeat.sh/health | grep -qE '^(ok|degraded)'
+          echo "rolled back to typebeat-web-app:previous and it is healthy; this deploy still FAILED"
 
       # The build cache is what the box pays for the app image build, and nothing ever collected
       # it: on 2026-09-04 it had reached 7 GB and helped fill the 75 GB disk (see deploy/README.md,
@@ -177,7 +215,8 @@ jobs:
       # own full copy (the apt layer is the bulk of it) rather than just the published-app diff.
       #
       # Dangling only: no `-a`, so nothing tagged is ever removed (the retired aligner image is
-      # tagged, so it survives for the owner to remove deliberately, per deploy/README.md), and an
+      # tagged, so it survives for the owner to remove deliberately, per deploy/README.md; so does
+      # typebeat-web-app:previous, the one rollback point the step before the build keeps), and an
       # image a container still uses cannot be pruned at all. Runs LAST, after the health check
       # and the caddy reload, so the image this deploy is actually serving from is tagged and in
       # use by then.

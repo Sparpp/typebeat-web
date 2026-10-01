@@ -1,4 +1,6 @@
 using System.Net;
+using Microsoft.Extensions.DependencyInjection;
+using Typebeat.Web.Ops;
 
 namespace Typebeat.Web.Tests.Website;
 
@@ -19,6 +21,54 @@ public class ApiRegressionGuardTest
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(body, Is.EqualTo("ok"));
+        });
+    }
+
+    /// <summary>
+    /// Backlog 368: /health is LIVENESS and never waits for the startup sweeps (the deploy's health
+    /// check and its automatic rollback key on it), while /health/ready reports them: 503 with
+    /// Retry-After and "sweeping" until the chain is through, then 200 "ready". Driven through the
+    /// gate's override on this host, whose real chain the fixture already waited for.
+    /// </summary>
+    [Test]
+    public async Task Health_StaysLiveness_WhileTheStartupSweepsRun_AndReadyReportsThem()
+    {
+        var gate = WebsiteFixture.Services.GetRequiredService<StartupSweepGate>();
+
+        HttpStatusCode liveStatus, readyStatus;
+        string liveBody, readyBody;
+        TimeSpan? readyRetry;
+
+        gate.StateOverride = StartupSweepState.Running;
+
+        try
+        {
+            using var live = await WebsiteFixture.Client.GetAsync("/health");
+            liveStatus = live.StatusCode;
+            liveBody = await live.Content.ReadAsStringAsync();
+
+            using var ready = await WebsiteFixture.Client.GetAsync("/health/ready");
+            readyStatus = ready.StatusCode;
+            readyBody = await ready.Content.ReadAsStringAsync();
+            readyRetry = ready.Headers.RetryAfter?.Delta;
+        }
+        finally
+        {
+            gate.StateOverride = null;
+        }
+
+        using var readyAfter = await WebsiteFixture.Client.GetAsync("/health/ready");
+        string readyAfterBody = await readyAfter.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(liveStatus, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(liveBody, Is.EqualTo("ok"));
+            Assert.That(readyStatus, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+            Assert.That(readyBody, Is.EqualTo("sweeping"), "plain body, never the styled error page");
+            Assert.That(readyRetry, Is.EqualTo(TimeSpan.FromSeconds(StartupSweepGate.RetryAfterSeconds)));
+            Assert.That(readyAfter.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(readyAfterBody, Is.EqualTo("ready"));
         });
     }
 

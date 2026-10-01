@@ -13,3 +13,6 @@ backups/
 # beside the repo root; both are gigabytes of prod-derived data and never belong in git.
 .score-recalc-cache/
 supersede*.json
+# The Caddy maintenance switch (deploy/maintenance.caddy): the flag's presence on the box IS the
+# state, so it must never be tracked (the deploy tar would then create or overwrite it).
+deploy/maintenance.on

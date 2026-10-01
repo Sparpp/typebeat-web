@@ -83,6 +83,11 @@ if (builder.Configuration["TYPEBEAT_FILE_ROOT"] is { Length: > 0 } fileRoot)
 // Upload/package pipeline (M3). File root: TYPEBEAT_FILE_ROOT (prod: the /data volume; dev
 // default ./data). Everything under it is content-addressed or set-scoped; see StoreKeys.
 builder.Services.AddSingleton<IFileStore>(_ => LocalFileStore.FromConfiguration(builder.Configuration));
+// The boot-time backfill sweeps (backlog 368), a hosted service so the app listens as soon as the
+// migrations are applied; registered ahead of the public package backfill, which waits on the gate.
+builder.Services.AddSingleton<StartupSweepGate>();
+builder.Services.AddHostedService<StartupSweeps>();
+
 // Backlog 364: the public R2 bucket the big downloads 302 to on the Cloudflare hosts (dual-home; off
 // unless every TYPEBEAT_R2_* key is set, and then nothing changes), plus its installer catalog and
 // the never-awaited package backfill.
@@ -130,63 +135,12 @@ builder.Services.AddTypebeatRateLimiter();
 
 var app = builder.Build();
 
+// Backlog 368: only the extensions (above) and the migrations (here) run before the app listens.
+// The backfill sweeps that used to follow this line (Pace, Fingerprint, Language, SkipGate,
+// RateGate, SetRank, Pp, same order) run in the StartupSweeps hosted service registered above,
+// so a deploy is down for the migrations alone; BSS package ingest and the rank button answer 503
+// with Retry-After until StartupSweepGate opens, and /health stays liveness.
 await app.Services.GetRequiredService<Db>().MigrateAsync(app.Logger);
-
-// Recompute stored wpm/star/word/char numbers for rows written under an older pace arithmetic
-// (LyricPace.VERSION bumps). No-op when everything is current.
-await PaceBackfill.RunAsync(
-    app.Services.GetRequiredService<Db>(),
-    app.Services.GetRequiredService<IFileStore>(),
-    app.Logger);
-
-// Fill beatmaps.gameplay_fingerprint for every live difficulty that has none, or whose stored value
-// predates the current GameplayFingerprint.VERSION (030_gameplay_fingerprint.sql). MUST run before
-// the app serves a request, which it does: every map ranked before this feature deployed has no
-// stored fingerprint, and the ingest reads a missing one as "changed", so without this sweep the
-// first re-upload of each would demote a ranked map for a metadata-only edit. Independent of the
-// pace sweep above (it reads the stored blobs, not the pace columns), but kept after it so all the
-// blob-reading sweeps sit together. No-op once every live difficulty is current.
-await GameplayFingerprintBackfill.RunAsync(
-    app.Services.GetRequiredService<Db>(),
-    app.Services.GetRequiredService<IFileStore>(),
-    app.Logger);
-
-// Detect the song language of every set that still has none (019_language.sql), offline, from the
-// lyric text the backfill above is what fills in, so it MUST run after it. Only ever writes rows
-// that are still unset, so a mapper's own language tag is never overwritten. No-op once every set
-// is either classified or known-unclassifiable.
-await LanguageBackfill.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
-
-// Re-rank scores the pre-task-47 play-time gate unranked purely for using the in-game skip button
-// (016_refund_skip_gate.sql). Must run AFTER the backfill: it reads beatmaps.skippable_s, which the
-// backfill is what fills in. No-op once every victim is recorded in score_refunds.
-await SkipGateRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
-
-// Re-rank scores the rate-blind play-time gate unranked purely for playing at an up-rate
-// (017_rate_gate_refund.sql). Runs after the skip refund so a row that only needed THAT correction
-// is already ranked, and therefore no longer a candidate here; a play that needed both is refunded
-// by this one. No-op once every victim is recorded in score_refunds.
-await RateGateRefund.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
-
-// Re-rank scores that were honest in every way and were stored unranked only because their SET was
-// still pending when they were submitted (backlog 270). Unlike the two above this is a STANDING
-// sweep with no migration key guarding it: the condition is intrinsically re-checkable, so a set
-// ranked at any point in the future heals its plays at the next boot with no further code. It runs
-// after both gate refunds (a row either of them re-ranks is no longer a candidate here) and BEFORE
-// PpBackfill, which is what actually prices the rows it flips. Since backlog 352 the rank button runs
-// the same pass scoped to its set in the request itself, so this is the safety net (a set ranked in
-// SQL, a button run that failed); it reads stored .osu blobs for the version rule, hence the store.
-await SetRankRefund.RunAsync(
-    app.Services.GetRequiredService<Db>(),
-    app.Services.GetRequiredService<IFileStore>(),
-    app.Logger);
-
-// Recompute stored per-score pp for rows below the current PerformancePoints.VERSION
-// (020_performance_points.sql). Runs LAST of the sweeps: it reads beatmaps.sr_dt / sr_ht, which
-// PaceBackfill is what fills in (and which it stamps every affected score back to version 0 for),
-// and it reads scores.ranked, which the two refund sweeps above may have just flipped on. No-op
-// once every score is current.
-await PpBackfill.RunAsync(app.Services.GetRequiredService<Db>(), app.Logger);
 
 // Which email path is live (helps confirm prod is actually sending, not just logging codes).
 // The log fallback means verification/login codes are NOT delivered; the site still says
@@ -331,6 +285,19 @@ app.MapMethods("/health", new[] { HttpMethods.Get, HttpMethods.Head }, async (Db
     await using var conn = await db.OpenAsync();
     await conn.ExecuteScalarAsync<int>("SELECT 1");
     return Results.Text(DiskGuard.HealthBody(disk.Current));
+});
+
+// Readiness, separate from the liveness above (backlog 368): "ready" once the startup sweeps are
+// through, otherwise a 503 with Retry-After and "sweeping" or "failed: Stage". Nothing alerts on it
+// and CI does not gate on it; it is for watching a deploy finish (deploy/README.md, Update).
+app.MapMethods("/health/ready", new[] { HttpMethods.Get, HttpMethods.Head }, (HttpContext ctx, StartupSweepGate gate) =>
+{
+    if (gate.State != StartupSweepState.Done)
+        ctx.Response.Headers.RetryAfter = StartupSweepGate.RetryAfterSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    return Results.Text(gate.ReadinessBody(), statusCode: gate.State == StartupSweepState.Done
+        ? StatusCodes.Status200OK
+        : StatusCodes.Status503ServiceUnavailable);
 });
 
 // The in-game menu banner polls this (repointed from assets.ppy.sh in the client).

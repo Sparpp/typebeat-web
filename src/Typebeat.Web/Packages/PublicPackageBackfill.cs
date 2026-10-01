@@ -9,7 +9,8 @@ namespace Typebeat.Web.Packages;
 /// D8): the sets uploaded before the bucket existed have <c>set_versions.public_key</c> NULL, and
 /// until they get one their downloads keep streaming from the box.
 ///
-/// <para>A hosted service, started after the startup sweeps and NEVER awaited by them, because a
+/// <para>A hosted service that waits for the startup sweeps (<see cref="Ops.StartupSweepGate"/>,
+/// backlog 368) and is NEVER awaited by them or by anything else, because a
 /// catalogue of packages over the network takes far longer than a deploy's health window. It
 /// returns at once when the store is disabled, so an unconfigured box does nothing at all.
 /// Idempotent and resumable: it only ever picks versions whose key is still NULL, one at a time,
@@ -24,6 +25,7 @@ public sealed class PublicPackageBackfill(
     Db db,
     IPublicObjectStore publicStore,
     PackageIngest ingest,
+    Ops.StartupSweepGate sweeps,
     ILogger<PublicPackageBackfill> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -36,6 +38,9 @@ public sealed class PublicPackageBackfill(
 
         try
         {
+            // After the startup sweeps, as when they ran before the host started (finished or failed,
+            // either way): their database work goes first, this long network job after it.
+            await sweeps.Completed.WaitAsync(stoppingToken);
             await RunAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

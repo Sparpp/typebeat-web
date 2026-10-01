@@ -6,6 +6,7 @@ using Newtonsoft.Json.Linq;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
+using Typebeat.Web.Ops;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Social;
@@ -35,7 +36,7 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// policy itself counts only the Report POST.</para>
 /// </summary>
 [EnableRateLimiting(RateLimits.Report)]
-public sealed class SetModel(Db db, IFileStore fileStore, ILogger<SetModel> logger) : TypebeatPageModel
+public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweeps, ILogger<SetModel> logger) : TypebeatPageModel
 {
     private const int max_report_reason_length = 4000;
 
@@ -513,6 +514,21 @@ public sealed class SetModel(Db db, IFileStore fileStore, ILogger<SetModel> logg
 
         if (ownerId is null || (ownerId == CurrentUser.Id && !CurrentUser.IsAdmin))
             return NotFound();
+
+        // Startup sweep gate (backlog 368): a rank carries the set's pending plays with the same
+        // SetRankRefund and PpBackfill passes the boot chain may still be running, so until the chain
+        // is through the rank is refused BEFORE anything changes (503, Retry-After), and the reviewer
+        // simply presses again a minute later. Unranking carries nothing and is never held.
+        if (to == "ranked" && !sweeps.RankOpen)
+        {
+            Response.Headers.RetryAfter = StartupSweepGate.RetryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            return new ContentResult
+            {
+                StatusCode = StatusCodes.Status503ServiceUnavailable,
+                ContentType = "text/plain; charset=utf-8",
+                Content = "The server is finishing its startup maintenance after a deploy. Nothing was changed; go back and press Rank again in a minute.",
+            };
+        }
 
         int changed = await conn.ExecuteAsync(
             "UPDATE beatmapsets SET status = @to, updated_at = now() WHERE id = @id AND status = @from",
