@@ -105,6 +105,30 @@ public class DiskGuardTest
         });
     }
 
+    // ---- the real probe ----
+
+    /// <summary>
+    /// The file root is created on its first write, so a fresh host (CI's Linux runner, where this
+    /// read as Unknown and turned /health into "ok disk-unknown") probes a directory that does not
+    /// exist yet. The probe must answer for the filesystem that directory will sit on.
+    /// </summary>
+    [Test]
+    public void ProbeFilesystem_AnswersForADirectoryThatDoesNotExistYet()
+    {
+        string missing = Path.Combine(Path.GetTempPath(), "typebeat-diskguard-" + Guid.NewGuid().ToString("N"), "files");
+        Assume.That(Directory.Exists(missing), Is.False);
+
+        (long total, long free) = OpsEndpoints.ProbeFilesystem(missing);
+        (long knownTotal, long _) = OpsEndpoints.ProbeFilesystem(Path.GetTempPath());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(total, Is.GreaterThan(0));
+            Assert.That(free, Is.GreaterThanOrEqualTo(0));
+            Assert.That(total, Is.EqualTo(knownTotal), "the same filesystem as its nearest existing ancestor");
+        });
+    }
+
     // ---- the cache window ----
 
     [Test]

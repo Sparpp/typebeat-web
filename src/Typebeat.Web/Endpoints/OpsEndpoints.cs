@@ -227,9 +227,27 @@ public static class OpsEndpoints
     {
         string full = Path.GetFullPath(path);
 
-        return OperatingSystem.IsWindows()
-            ? Path.GetPathRoot(full) ?? full
-            : full;
+        if (OperatingSystem.IsWindows())
+            return Path.GetPathRoot(full) ?? full;
+
+        // On Unix DriveInfo throws for a path that does not exist yet, and the file root is only
+        // created on its first write (a fresh test host, a CI runner, a box before the first
+        // upload). The filesystem it WILL sit on is the one its nearest existing ancestor sits on,
+        // so walk up to that; the probe then answers the same whether or not the directory exists,
+        // instead of reading as Unknown until the first file lands.
+        string probe = full;
+
+        while (!Directory.Exists(probe))
+        {
+            string? parent = Path.GetDirectoryName(probe);
+
+            if (string.IsNullOrEmpty(parent) || parent == probe)
+                break;
+
+            probe = parent;
+        }
+
+        return probe;
     }
 
     /// <summary>One filesystem's occupancy. <paramref name="UsedPercent"/> is 0-100, two decimals.</summary>
