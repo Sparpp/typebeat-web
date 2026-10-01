@@ -110,8 +110,9 @@
     // end instead of the line's singEndTime). typebeat-player.js is handed the already-built line,
     // not its units, so this is read off the line's own syllable groups (buildSyllables, in
     // typebeat-core.js) instead: the LAST group of a line always closes on its own token's unit end
-    // ("last group of the token closes on the WORD's end"), and every non-empty last token gets a
-    // group unless it is a stylised triple-letter run (isSyllabifiable), so this recovers the true
+    // ("last group of the token closes on the WORD's end"; since backlog 363 an unsubdivided last
+    // token is ONE group over its whole unit, which closes there too), and every non-empty last
+    // token gets a group unless it is a stylised triple-letter run (isSyllabifiable), so this recovers the true
     // value for real content. Falls back to singEndTime only when the line produced no groups at
     // all, mirroring the game's Units.Count == 0 fallback for a line with no word timing.
     //
@@ -577,7 +578,8 @@
 
     /// The SUNG-SYLLABLE HIGHLIGHT's feed (mirrors LyricStage.currentSyllableIn): the index of the
     /// group of `line` whose [startTime, endTime] span contains `time`, or -1 between spans (and over
-    /// a stylised token, which owns no group). The desktop feeds this every frame under every
+    /// a stylised token, which owns no group). Since backlog 363 a word the map does not subdivide is
+    /// ONE group over its unit, so it lights whole, exactly as the editor shows it. The desktop feeds this every frame under every
     /// playhead style, and the untyped, non-freestyle cells of that group lift to SungChar
     /// (LyricLineDisplay.CellFillColour); cellClass() is where the lift lands here.
     function currentSyllableIn(line, time) {

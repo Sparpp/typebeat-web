@@ -1222,9 +1222,10 @@ public static class LyricDifficulty
     /// (<c>TypingEngine.SyllableTiming</c>), except that a syllable's FIRST character is
     /// anchored to the syllable's start so the group's opening sits on the clock, and except for
     /// STRETCH cells (a freestyle slot, or a run of three or more identical characters inside
-    /// one group), which keep their own point target. A word the mapper did not subdivide is
-    /// syllabified by the engine, so it is syllabified here too, and a word the syllabifier
-    /// REFUSES outright keeps point targets throughout.</para>
+    /// one group), which keep their own point target. A word the mapper did not subdivide is ONE
+    /// group spanning its unit in the engine (backlog 363: only the mapper subdivides), so it is
+    /// one segment here too, and a word the syllabifier REFUSES outright keeps point targets
+    /// throughout.</para>
     ///
     /// <para>The syllables are cut by INDEX, not by the syllables' text lengths, because that is
     /// how the engine spreads a word's cells (see <c>TypingLine.syllableCharTarget</c>), and a
@@ -1352,10 +1353,11 @@ public static class LyricDifficulty
     }
 
     /// <summary>
-    /// How many syllables the engine finds in a word the mapper did not subdivide: vowel runs,
-    /// with a silent final 'e' folded back in ("flame" is one syllable, "water" two), and 0 for
-    /// a token the syllabifier REFUSES (three identical characters in a row), which is the one
-    /// case that stays point-timed.
+    /// How many syllables the engine plays a word the mapper did not subdivide as: ONE, the
+    /// word's whole unit (backlog 363, the engine no longer syllabifies at gameplay), and 0 for a
+    /// token the syllabifier REFUSES (three identical characters in a row), which is the one case
+    /// that stays point-timed. Before 363 this counted vowel runs, a reduced stand-in for the
+    /// engine's automatic split.
     /// </summary>
     internal static int NaturalSyllables(string token)
     {
@@ -1371,38 +1373,9 @@ public static class LyricDifficulty
                 return 0;
         }
 
-        var letters = new List<char>();
-
-        for (int i = 0; i < lower.Length; i++)
-        {
-            char c = lower[i];
-
-            if (c < 'a' || c > 'z')
-                continue;
-
-            letters.Add(c);
-        }
-
-        if (letters.Count == 0)
-            return 0;
-
-        int runs = 0;
-        bool vowel = false;
-
-        foreach (char c in letters)
-        {
-            bool isVowel = "aeiouy".IndexOf(c) >= 0;
-
-            if (isVowel && !vowel)
-                runs++;
-
-            vowel = isVowel;
-        }
-
-        if (letters.Count > 2 && letters[^1] == 'e' && runs > 1)
-            runs--;
-
-        return Math.Max(1, Math.Min(letters.Count, runs));
+        // Only the mapper subdivides (backlog 363): a word with no authored boundary is ONE
+        // judgement window spanning its unit.
+        return 1;
     }
 
     /// <summary>

@@ -406,6 +406,126 @@ public class LyricPaceParityTest
         });
     }
 
+    /// <summary>
+    /// AN IMPORTED MAP, through both production readers (backlog 363). The client no longer
+    /// syllabifies at gameplay: it syllabifies ONCE, at import (<c>ImportSyllables</c>), and writes
+    /// the result into the map as ordinary authored subdivisions, each word's <c>syllables</c>
+    /// objects plus its <c>split_chars</c>. The server never reads pipes and never syllabifies, so
+    /// that stored form is the ONLY route by which the import's cut can reach a stored rating, and
+    /// this is the pin that it does.
+    ///
+    /// <para>The map is plain words with no subdivision at all, which is what an LRC import hands the
+    /// pass. After <c>ImportSyllables.ApplyToTimingJson</c> and the game's own writer
+    /// (<c>LyricOsuFormat.GenerateOsu</c>): every polysyllabic word carries objects and
+    /// <c>split_chars</c> in the stored bytes; the server's parse (<c>BeatmapPackageParser</c>, the
+    /// ingest path) reads the same boundaries the game's decoder does, unit for unit; the client's
+    /// split survives its decode; both ratings are the same number; and that number is NOT the
+    /// unimported map's, so the boundaries really are rating input on the server rather than parsed
+    /// and dropped. The client's live grouping of the imported map also equals the stored-era natural
+    /// grouping of the plain one, group for group, which is the import's own contract.</para>
+    /// </summary>
+    [Test]
+    public void AnImportedMapsSyllablesAreReadAndRatedByTheServer()
+    {
+        string[] words = ["apple", "river", "wonderful", "table", "people", "go"];
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var lines = new List<string>();
+        double t = 1000;
+
+        for (int k = 0; k < 12; k++)
+        {
+            double lineStart = t;
+            var wordJson = new List<string>();
+
+            foreach (string w in words)
+            {
+                double end = t + 300 + 40 * (k % 4);
+                wordJson.Add($"{{\"text\":\"{w}\",\"start_ms\":{t.ToString(inv)},\"end_ms\":{end.ToString(inv)},\"score\":1}}");
+                t = end;
+            }
+
+            lines.Add($"{{\"text\":\"{string.Join(" ", words)}\",\"start_ms\":{lineStart.ToString(inv)},\"end_ms\":{t.ToString(inv)},\"words\":[{string.Join(",", wordJson)}]}}");
+            t += 400;
+        }
+
+        string plainJson = $"{{\"version\":2,\"song_end_ms\":{(t + 1000).ToString(inv)},\"lines\":[{string.Join(",", lines)}]}}";
+        string importedJson = typebeat.Game.Rulesets.TypeBeat.Beatmaps.ImportSyllables.ApplyToTimingJson(plainJson);
+
+        string plainOsu = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", plainJson);
+        string importedOsu = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", importedJson);
+
+        var clientPlain = clientLines(plainOsu);
+        var clientImported = clientLines(importedOsu);
+        var serverPlain = serverLines(plainOsu);
+        var serverImported = serverLines(importedOsu);
+
+        var storedWords = System.Text.Json.Nodes.JsonNode.Parse(importedJson)!["lines"]![0]!["words"]!.AsArray();
+
+        Assert.Multiple(() =>
+        {
+            // The stored form: objects plus split_chars on a polysyllabic word, nothing on "go".
+            Assert.That(storedWords[0]!["syllables"]!.AsArray().Select(s => s!["text"]!.GetValue<string>()), Is.EqualTo(new[] { "ap", "ple" }),
+                "the import writes syllable OBJECTS into the stored words");
+            Assert.That(storedWords[0]!["split_chars"]!.AsArray().Select(s => s!.GetValue<int>()), Is.EqualTo(new[] { 2 }), "and always the split beside them");
+            Assert.That(storedWords[5]!["syllables"], Is.Null, "a one-syllable word is left alone");
+
+            Assert.That(serverImported.Count, Is.EqualTo(clientImported.Count), "line count");
+
+            int subdivided = 0;
+
+            for (int l = 0; l < clientImported.Count && l < serverImported.Count; l++)
+            {
+                Assert.That(serverImported[l].Units.Count, Is.EqualTo(clientImported[l].Units.Count), $"line {l}: unit count");
+
+                for (int u = 0; u < clientImported[l].Units.Count && u < serverImported[l].Units.Count; u++)
+                {
+                    var c = clientImported[l].Units[u];
+                    var s = serverImported[l].Units[u];
+
+                    Assert.That(s.SyllableBoundaries, Is.EqualTo(c.SyllableBoundaries), $"line {l} unit {u}: the server reads the boundaries the client does");
+                    Assert.That(c.SyllableSplits.Count, Is.EqualTo(c.SyllableBoundaries.Count), $"line {l} unit {u}: the client keeps the split the import wrote");
+
+                    if (s.SyllableBoundaries.Count > 0)
+                        subdivided++;
+                }
+
+                Assert.That(serverPlain[l].Units.All(x => x.SyllableBoundaries.Count == 0), Is.True, $"line {l}: the plain map carries no subdivision");
+
+                // The import's contract: the live grouping of the imported map IS the natural one
+                // the plain map's stored era re-derives, so a stored replay and a fresh import agree
+                // on every group.
+                var importedLine = typebeat.Game.Rulesets.TypeBeat.Gameplay.TypingLine.FromLyricLine(clientImported[l]);
+                var plainLine = typebeat.Game.Rulesets.TypeBeat.Gameplay.TypingLine.FromLyricLine(clientPlain[l]);
+                Assert.That(importedLine.AuthoredGrouping.Groups, Is.EqualTo(plainLine.NaturalGrouping.Groups), $"line {l}: imported live groups are the plain map's natural groups");
+            }
+
+            Assert.That(subdivided, Is.EqualTo(12 * 5), "every polysyllabic word of every line is subdivided");
+
+            double serverRating = ServerPace.Compute(serverImported).DifficultyRating;
+            double clientRating = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty.Compute(clientImported);
+
+            Assert.That(serverRating, Is.EqualTo(clientRating), "the imported map rates the same on both sides");
+            Assert.That(ServerPace.Compute(serverPlain).DifficultyRating, Is.EqualTo(typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty.Compute(clientPlain)),
+                "and so does the plain one");
+            Assert.That(serverRating, Is.Not.EqualTo(ServerPace.Compute(serverPlain).DifficultyRating),
+                "the import's boundaries are rating input on the server, not parsed and dropped");
+        });
+
+        static IReadOnlyList<ClientLine> clientLines(string osu)
+        {
+            typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricBeatmapDecoder.Register();
+
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(osu));
+            using var reader = new typebeat.Game.IO.LineBufferedReader(stream);
+            var decoded = typebeat.Game.Beatmaps.Formats.Decoder.GetDecoder<typebeat.Game.Beatmaps.Beatmap>(reader).Decode(reader);
+
+            return decoded.HitObjects.OfType<typebeat.Game.Rulesets.TypeBeat.Objects.TypeBeatHitObject>().OrderBy(h => h.LineIndex).Select(h => h.Line).ToArray();
+        }
+
+        static IReadOnlyList<ServerLine> serverLines(string osu)
+            => Typebeat.Web.Packages.BeatmapPackageParser.ParseDifficulty("map.osu", System.Text.Encoding.UTF8.GetBytes(osu)).Lines;
+    }
+
     [Test]
     public void TheVersionsThatGateTheSweepsAreTheOnesTheChangeLandedAt()
     {
@@ -416,10 +536,10 @@ public class LyricPaceParityTest
         // the game and the pace one gates the column the pp one now depends on.
         Assert.Multiple(() =>
         {
-            // 23 since PR 3: the whole-map average's capped pauses and the curve's playback-time
-            // window re-derive beatmaps.wpm, target_wpm and the curve columns. No rating moves and
-            // the pp formula does not move, so its VERSION stays.
-            Assert.That(ServerPace.VERSION, Is.EqualTo(23));
+            // 24 since backlog 363: an unsubdivided word rates as ONE segment, so every star column
+            // and the ratings matrix re-derive. A rating-only change: the pp formula does not move,
+            // so its VERSION stays.
+            Assert.That(ServerPace.VERSION, Is.EqualTo(24));
             Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(24)); // pp:version
         });
     }

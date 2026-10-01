@@ -1158,7 +1158,16 @@ public class PerformancePointsParityTest
             double hardRock = matrix.TryGet(ServerArm.HardRock, false, 1.0)!.Value.Stars;
 
             Assert.That(none, Is.GreaterThan(0), "the fixture must actually rate as something");
-            Assert.That(easy, Is.Not.EqualTo(none), "Easy must be a different rating, or the arm is not a rating input");
+
+            // Except on the dense fixture since backlog 363: every one of its words is syllabifiable
+            // and unsubdivided, so the live arm reads each as ONE judgement window, which is exactly
+            // Easy's word shelter, and the two arms rate identically. That is the change working (it
+            // used to differ only through the gameplay syllabifier's invented cuts); the other five
+            // fixtures still hold the arm axis apart.
+            if (fixtureName == "dense")
+                Assert.That(easy, Is.EqualTo(none), "an unsubdivided map's live windows are its words, which is Easy's shelter");
+            else
+                Assert.That(easy, Is.Not.EqualTo(none), "Easy must be a different rating, or the arm is not a rating input");
             Assert.That(hardRock, Is.Not.EqualTo(none), "and so must Hard Rock");
             Assert.That(matrix.TryGet(ServerArm.None, false, ClientPp.DOUBLE_TIME_BASE_RATE)!.Value.Stars, Is.GreaterThan(none),
                 "and a faster clock must rate harder");

@@ -1509,8 +1509,9 @@ internal static class ChunkedEndurance
 
     /// <summary>
     /// How many independent judgement WINDOWS a word's cells are read against under the live
-    /// (syllable) shelter: one per authored syllable, the engine's own syllabification when the
-    /// mapper did not subdivide, and one per cell for a word the syllabifier refuses outright.
+    /// (syllable) shelter: one per authored syllable, ONE when the mapper did not subdivide
+    /// (<see cref="LyricDifficulty.NaturalSyllables"/>, backlog 363: the engine no longer
+    /// syllabifies at gameplay), and one per cell for a word the syllabifier refuses outright.
     /// This is how finely the map subdivides its timing, which is the quantity the
     /// window-density premium prices.
     /// </summary>

@@ -112,6 +112,8 @@ WireCompat is where that is provable, because it is the only project that compil
 | `src/Typebeat.Web/Packages/Lyrics/InstrumentalGaps.cs` | `typebeat.Game.Rulesets.TypeBeat/Gameplay/InstrumentalGaps.cs` |
 | `src/Typebeat.Web/wwwroot/js/typebeat-player.js` (`computeGaps` + its four constants) | the same `InstrumentalGaps.cs`, via the row above |
 | `src/Typebeat.Web/wwwroot/js/typebeat-core.js` | the C# `TypingEngine` / `TypeBeatScoreProcessor` |
+| `src/Typebeat.Web/wwwroot/js/typebeat-core.js` (`buildSyllables`, the LIVE grouping only: since backlog 363 an unsubdivided, unpaused, syllabifiable word is ONE group over its unit; no copy of the C# stored-era natural grouping) | `typebeat.Game.Rulesets.TypeBeat/Gameplay/TypingLine.cs` (`buildSyllables`, `authoredOnly: true`, i.e. `AuthoredGrouping`) |
+| `src/Typebeat.Web/wwwroot/js/typebeat-core.js` (`splitPoints`, `isSyllabifiable` and the rest of the Syllabifier port; still scoring surface through `derivedSplits` for a subdivided word with no valid `split_chars`, and through the `isSyllabifiable` gate) | `typebeat.Game.Rulesets.TypeBeat/Gameplay/Syllabifier.cs` |
 | `src/Typebeat.Web/wwwroot/js/typebeat-player.js` (`buildPaceBands` and its `pace*` helpers, the underline pace hue; display only. Since PR 3 a word is also cut at its `syllableMarkerCells` and `buildPaceBands` is the RELATIVE mode LyricStage draws, `BuildRelativeBands` at `DEFAULT_MAX_CHANGE_PERCENT`; the whole-map rank mode is `buildRankedPaceBands`. `UnderlinePaceParityTest` pins both on the synthetic and env-supplied real maps) | `typebeat.Game.Rulesets.TypeBeat/UI/UnderlinePace.cs` |
 | `src/Typebeat.Web/Packages/Lyrics/Romaniser.cs` (identical below the `using` lines except the namespace line; pinned by `RomaniserParityTest` over the game repo's `NonVisual/fixtures/romaniser/*.tsv`, which the WireCompat csproj links in; the JS has no copy, since it only decodes already-romanised text). DELIBERATE DIVERGENCE since PR 3: the game's `LyricOriginals` runs `JapaneseReading` (Kawazu + the LibNMeCab IPA dictionary: kanji readings and word boundaries) BEFORE this romaniser. The server has no dictionary and will not get one, so its mirror covers exactly what it covered before; kanji romanisation happens only in the client at import and reaches the server as already-romanised stored text plus the `original` field | `typebeat.Game.Rulesets.TypeBeat/Beatmaps/Romaniser.cs` |
 
@@ -119,7 +121,12 @@ WireCompat is where that is provable, because it is the only project that compil
   byte-compatible, or browser `/play` scores diverge from desktop on the same leaderboards. Any
   engine edit needs a matching JS edit. It does **not** compute pp. Since backlog 179 it also ports
   `Gameplay/Syllabifier.cs` and `TypingLine.buildSyllables`, because a press on a grouped cell is
-  judged against its syllable's sung SPAN: a split one character off moves a real judgement. The
+  judged against its syllable's sung SPAN: a split one character off moves a real judgement. Since
+  backlog 363 only the MAPPER subdivides: a word with no authored boundary and no usable pause is
+  ONE group over its unit (a stylised word, `isSyllabifiable` false, stays ungrouped), and the
+  syllabifier runs once, at the client's import, reaching the stored map as ordinary `syllables`
+  objects plus `split_chars`. The JS port stays, because `derivedSplits` still forces it on a
+  subdivided word whose `split_chars` is missing or invalid. The
   browser has no era axis (it only plays live, writes no replay frames, and `/play/submit` carries
   the aggregate account alone), so it judges on spans unconditionally, which is why
   `EngineFuzzLiveParityTest` has to set **flags bit 2** in the CONFIG frames it feeds the C# arm:
@@ -186,7 +193,7 @@ WireCompat is where that is provable, because it is the only project that compil
   five to six. Clear, the C# re-derives the pre-347 rule (cap five, the press graded on the clock
   but the run zeroed once per excursion). Both are STORED eras since PR 3 (bit 1 below removed the
   cap live), but every live parity fixture still sets `RushCapCostsAccuracy = true` on its bare
-  engine, because the live client records it, and appends `CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true)` after its
+  engine, because the live client records it, and appends `CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true)` after its
   CONFIG frame. **Second-word bit 1** (value 2, PR 3) is `InputEra2`, the SECOND INPUT ERA, set for
   every live stack and so unconditional here with no flag: NO RUSH CAP at all (the C# skips
   `rushesPastCap`, so bit 0 is recorded but inert live; the browser carries no cap constant, no
@@ -196,7 +203,14 @@ WireCompat is where that is provable, because it is the only project that compil
   Gatekeeper a mid-word space is a rejected wrong key), and the refined RETYPE ANCHOR (a gap typo
   selects the word before it, a wholly abandoned word anchors on its own head, leading auto-skipped
   punctuation is stepped over). So every live parity fixture sets `InputEra2 = true` beside
-  `RushCapCostsAccuracy = true`, and the extended word is 3. `EngineFuzzLiveParityTest` counts
+  `RushCapCostsAccuracy = true`. **Second-word bit 2** (value 4, backlog 363) is
+  `AuthoredSyllablesOnly`, also set for every live stack and unconditional here: a word the map
+  does not subdivide is ONE syllable group over its unit (`TypingLine.AuthoredGrouping`); clear,
+  the C# re-derives the gameplay syllabifier's natural groups (`NaturalGrouping`), which is what
+  every replay stored before it was judged on. So every live parity fixture also sets
+  `AuthoredSyllablesOnly = true` (or `authoredSyllablesOnly: true` on the extended frame), every
+  bare `TypingLine.FromLyricLine` comparison reads `AuthoredGrouping` explicitly, stored-era arms
+  leave the bit clear with bit 1, and the extended word is 7. `EngineFuzzLiveParityTest` counts
   `farAheadPresses` / `farAheadClockHits` (presses past where the 347 cap stood) and pins
   `farAheadMehAwards` / `farAheadBreaks` at ZERO; `EachStoredRushEraReDerivesUnderItsOwnHeader`
   proves the scorer follows both bits; `WordSkipLiveParityTest` and `WordInputParityTest` pin the
@@ -263,7 +277,8 @@ WireCompat is where that is provable, because it is the only project that compil
   check compares the whole encoding and is stricter). `LyricParserParityTest` holds the game's own
   encoder output against the server parse, the validator, the fingerprint and the browser decode.
 - **Display rules the browser mirrors moved in PR 3 too**: syllable markers (`syllableMarkerCells`)
-  now include AUTOMATIC splits, and the space error dot (`spaceErrorDots`) marks only a gap holding a
+  now include AUTOMATIC splits (since backlog 363 there are none at play time, so the marks are the
+  mapper's subdivisions only), and the space error dot (`spaceErrorDots`) marks only a gap holding a
   wrong character of its own. The sung-highlight brightness, text pop-in and caret smoothing
   settings PR 3 added are desktop-only presentation and are not mirrored. PR 3 also dropped the
   `bpm` keyword from song select; the site keeps `bpm:` as a site-only operator, like `lang:`.

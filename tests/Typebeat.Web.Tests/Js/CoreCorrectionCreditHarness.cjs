@@ -19,6 +19,13 @@
 // are cells 0-2 over [1000, 2500] and cells 3-7 over [2500, 5000], so the ladder can only be walked
 // from the anchor the live rule gives the cell every case here spoils and fixes, cell 3.
 //
+// THAT SPLIT IS AUTHORED SINCE BACKLOG 363. It used to be the gameplay syllabifier's natural cut of
+// the unsubdivided word (abc|defgh); live play no longer invents one, so an unsubdivided "abcdefgh"
+// would be ONE group over [1000, 5000] with cell 3 inside it and every press there a dead-on Great.
+// The map therefore carries the mapper's subdivision (a boundary at 2500 and split_chars [3]), which
+// reproduces the old spans and leaves every cell target where it was (1000 + 500i), so every case
+// below presses exactly where it did.
+//
 // THAT ANCHOR IS THE SPAN'S START SINCE BACKLOG 247, and it used to be the span's end. Cell 3 OPENS
 // the second group, and the first cell of a group is now judged on the signed distance from
 // StartTime rather than paid 0 anywhere inside the span, so the offsets below run from 2500 where
@@ -65,7 +72,9 @@ const WORD_OSU =
     '[Lyrics]\n' +
     '{"granularity":"line","version":2,"song_end_ms":20000}\n' +
     '{"text":"abcdefgh","start_ms":1000,"end_ms":5000,"words":[' +
-    '{"text":"abcdefgh","start_ms":1000,"end_ms":5000,"score":1}]}\n';
+    '{"text":"abcdefgh","start_ms":1000,"end_ms":5000,"score":1,' +
+    '"syllables":[{"text":"abc","start_ms":1000,"end_ms":2500},{"text":"defgh","start_ms":2500,"end_ms":5000}],' +
+    '"split_chars":[3]}]}\n';
 
 const WRONG_KEY = 'z'; // not in "abcdefgh", so it is reliably wrong on every cell
 

@@ -236,7 +236,7 @@ public class PackageIngestDbTest
             // anything after the final vocal end.
             Assert.That((double)beatmap.Wpm, Is.EqualTo(138).Within(1e-6));
             Assert.That(beatmap.Difficulty, Is.EqualTo(starsAtRate(1)).Within(1e-12), "the model's own reading of the stored blob");
-            Assert.That(beatmap.Difficulty, Is.EqualTo(3.6308745015818906).Within(1e-9)); // chunked-axis stars, LyricPace v22
+            Assert.That(beatmap.Difficulty, Is.EqualTo(3.6210541182715925).Within(1e-9)); // chunked-axis stars, LyricPace v24 (3.6309 at v22, before an unsubdivided word became one segment)
             Assert.That(beatmap.Lyrics, Is.EqualTo("neon lights are calling")); // the lyrics: search haystack
 
             // 033_target_wpm.sql: written by the same upsert. Since LyricPace v21 it is the map's

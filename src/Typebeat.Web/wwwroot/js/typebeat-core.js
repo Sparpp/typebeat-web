@@ -839,8 +839,11 @@
     // ---------------------------------------------------------------------------
     // Syllabifier: rule-based English syllabification of ONE gameplay word (mirrors
     // typebeat.Game.Rulesets.TypeBeat/Gameplay/Syllabifier.cs, rule for rule). This is scoring
-    // surface since backlog 179: the groups it produces are the time SPANS a keypress is judged
-    // against, so a split that lands one character off moves a real judgement.
+    // surface since backlog 179: the split it picks is a time SPAN a keypress is judged against,
+    // so a split that lands one character off moves a real judgement. Since backlog 363 it no
+    // longer cuts an UNSUBDIVIDED word at play time (that word is one group, see buildSyllables);
+    // it is reached only through derivedSplits, for a subdivided word whose split_chars is missing
+    // or invalid, and isSyllabifiable still gates which unsubdivided words are grouped at all.
     //
     // The analysis is orthographic phonotactics, not a dictionary: vowel groups are syllable
     // nuclei (y is a vowel when it is not an onset glide, and u is silent in qu/gu+vowel), a run
@@ -1221,9 +1224,9 @@
         return 4; // C|C
     }
 
-    // Groups a line's cells into SYLLABLES (mirrors TypingLine.buildSyllables, backlog 174/178/179):
-    // per whitespace token, the syllabifier decides WHICH characters form each syllable and the
-    // timing data decides WHEN it is sung. Pure derivation: no cell target moves, so the classic
+    // Groups a line's cells into SYLLABLES (mirrors TypingLine.buildSyllables, backlog 174/178/179/363):
+    // per whitespace token, the map's authored subdivisions decide WHICH characters form each
+    // syllable and the timing data decides WHEN it is sung. Pure derivation: no cell target moves, so the classic
     // sweep and every readout built on it stay byte-identical.
     //
     // A token whose unit carries mapper subtimings (N boundaries = N + 1 syllables) is split with
@@ -1233,12 +1236,16 @@
     // over-forced short word) the first G - 1 boundary times are the interior edges and the last
     // group runs to the unit's end.
     //
-    // A token WITHOUT subtimings is split naturally and each group's span is read off the EXISTING
-    // flat-ramp char targets: it starts at its first cell's target and ends where the next group
-    // starts (last group of the token: the unit's end). That natural arm is GATED on
-    // isSyllabifiable: a stylised spelling like "wooooooords" gets NO groups and its cells stay at
-    // syllableIndexOf -1, keeping the classic per-character point judgement. The gate does NOT
-    // apply to a subtimed token: the mapper hand-authored its count, and that is authoritative.
+    // A token WITHOUT subtimings (and without a usable pause) is ONE group spanning the unit's
+    // [start, end], the subtimed arm's own edge convention (backlog 363, the C# AuthoredGrouping):
+    // only the mapper subdivides, so the browser judges, lights and marks exactly the word the
+    // editor shows. The automatic syllabifier no longer cuts at play time; it runs once, at import,
+    // and its cut reaches this code as authored syllables plus split_chars. The browser plays live
+    // only, so it carries no copy of the C# stored-era NaturalGrouping. That one-group arm is still
+    // GATED on isSyllabifiable (CHOICE A): a stylised spelling like "wooooooords" gets NO groups and
+    // its cells stay at syllableIndexOf -1, keeping the classic per-character point judgement. The
+    // gate does NOT apply to a subtimed token: the mapper hand-authored its count, and that is
+    // authoritative.
     //
     // Split indices index the TOKEN string and are mapped to cells through the same projection that
     // assigned the targets, so punctuation lands inside the syllable of the letter it attaches to.
@@ -1255,9 +1262,9 @@
 
         // Parallel to the two above, for the display marks (backlog 317, mirrors TypingLine's
         // groupTokenBase): which group each group's token started at, so a mark stays inside its
-        // word even where the default stream turned a hyphen into a space. Since PR 3 every
-        // surviving interior group is marked, authored or automatic alike, so there is no longer a
-        // per-group "was this subtimed" flag beside it.
+        // word even where the default stream turned a hyphen into a space. Every surviving interior
+        // group is marked, and since backlog 363 every one of them is authored (a subdivision or a
+        // pause cut), so there is no per-group "was this subtimed" flag beside it.
         const groupTokenBase = [];
         const tokens = text.split(' ');
         let tokStart = 0;
@@ -1280,13 +1287,14 @@
             const paused = unit ? pausedWordOf(token, unitStart, unitEnd, unit) : null;
 
             // A stylised spelling gets no groups at all UNLESS the mapper subtimed it, in which case
-            // the hand-authored count wins over anything the rules would have guessed.
+            // the hand-authored count wins over anything the rules would have guessed. An
+            // unsubdivided, unpaused word is ONE group over its unit (backlog 363): no split at all.
             if (token.length > 0 && (subtimed || paused !== null || isSyllabifiable(token))) {
                 const splits = paused !== null
                     ? paused.splits
                     : subtimed
                         ? splitsFor(token, boundaries.length + 1, unit ? unit.splits : null)
-                        : splitPoints(token);
+                        : EMPTY_SPLITS;
                 const groupBase = starts.length;
                 const groupCount = splits.length + 1;
 
@@ -1302,8 +1310,9 @@
                         starts.push(g === 0 ? unitStart : boundaries[g - 1]);
                         ends.push(g === groupCount - 1 ? unitEnd : boundaries[g]);
                     } else {
-                        starts.push(NaN);
-                        ends.push(g === groupCount - 1 ? unitEnd : NaN);
+                        // The one group of an unsubdivided word: the unit's own span.
+                        starts.push(unitStart);
+                        ends.push(unitEnd);
                     }
                 }
 
@@ -1342,10 +1351,10 @@
             lastCell[g] = i;
         }
 
-        // Resolve the target-derived spans. Starts first (a group starts at its first cell's
-        // target), then the NaN ends: only a non-last group of an un-subtimed token has one, and its
-        // successor sits in the same token and always owns a letter or digit cell, so its start is
-        // known; the fallback degenerate span is defensive only.
+        // Resolve any target-derived span. Since backlog 363 no arm above pushes a NaN edge (the
+        // un-subtimed natural cut that did is the C# stored-era NaturalGrouping, which the browser
+        // never plays), so these loops only ever see a NaN that came in on the unit itself. They
+        // stay because the C# resolution pass they mirror is shared by both of its groupings.
         for (let g = 0; g < provisional; g++) {
             if (isNaN(starts[g]) && firstCell[g] >= 0) starts[g] = cells[firstCell[g]].target;
         }
@@ -1378,8 +1387,9 @@
         }
 
         // The display marks (backlog 317, mirrors TypingLine.SyllableMarkerCells), read off the
-        // groups that survived: each group's startCell IS the gap its boundary falls in, whether the
-        // split was authored or derived by the syllabifier (PR 3 dropped the authored-only gate). A mark
+        // groups that survived: each group's startCell IS the gap its boundary falls in. PR 3 dropped
+        // the authored-only gate, and since backlog 363 every split reaching here is authored anyway
+        // (a subdivision, or an authored pause), so an unsubdivided word has nothing to mark. A mark
         // needs a surviving EARLIER group of the same token (something rendered to its left inside
         // the word), and a cut landing on or just after a word-gap SPACE cell (a dash the default
         // stream turned into a space) is suppressed. Write-only: nothing above reads it, so no
