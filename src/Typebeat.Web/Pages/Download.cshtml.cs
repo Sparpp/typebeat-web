@@ -11,8 +11,12 @@ namespace Typebeat.Web.Pages;
 /// bytes stream from the /download/game, /download/game-linux and /download/game-macos endpoints
 /// (MediaEndpoints); this page only decides which buttons to show and their sizes. A platform
 /// with no configured or stored build renders a "coming soon" state instead of a dead link.
+///
+/// Existence and size come from <see cref="GameInstallers"/>: the local store, or with the public
+/// bucket configured (backlog 364) the bucket's copy first (cached about a minute, since this page
+/// would otherwise HEAD the bucket three times per view) and the local file second.
 /// </summary>
-public sealed class DownloadModel(IFileStore store, IConfiguration config) : TypebeatPageModel
+public sealed class DownloadModel(GameInstallers installers, IConfiguration config) : TypebeatPageModel
 {
     /// <summary>
     /// Direct-origin host, proxied by the same Caddy in front of this app, so every root-relative
@@ -51,13 +55,10 @@ public sealed class DownloadModel(IFileStore store, IConfiguration config) : Typ
         if (string.IsNullOrEmpty(fileName))
             return PlatformDownload.Unavailable(os);
 
-        // A seekable read stream is the cheapest way to both confirm the object exists and size it.
-        await using var stream = await store.OpenObjectReadAsync(StoreKeys.Download(fileName), HttpContext.RequestAborted);
-
-        if (stream is null)
+        if (await installers.SizeAsync(fileName, HttpContext.RequestAborted) is not { } size)
             return PlatformDownload.Unavailable(os);
 
-        return new PlatformDownload(os, true, fileName, stream.Length, href);
+        return new PlatformDownload(os, true, fileName, size, href);
     }
 
     /// <summary>

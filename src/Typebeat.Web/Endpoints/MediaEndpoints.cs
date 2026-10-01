@@ -35,6 +35,12 @@ namespace Typebeat.Web.Endpoints;
 ///
 /// Hidden/removed sets serve media only to their owner (cookie session or bearer); covers of
 /// a DMCA'd set must not remain fetchable, and unpublished shells are nobody's business.
+///
+/// DUAL-HOME (backlog 364): with the public bucket configured (<see cref="IPublicObjectStore"/>),
+/// the three big-byte routes (installers, feed nupkgs, the full package download) answer a request
+/// on a Cloudflare-proxied host with a 302 to the bucket's custom domain, AFTER every gate and
+/// counter, while the direct-origin bss.* hosts keep streaming from the box. With it unconfigured
+/// wantsRedirect always declines and every route is exactly what it was.
 /// </summary>
 public static class MediaEndpoints
 {
@@ -86,12 +92,12 @@ public static class MediaEndpoints
         // downloads/{TYPEBEAT_GAME_DOWNLOAD_MACOS}, the macOS .pkg installer). The /download page
         // links here per-platform. 404 when the platform's build is unconfigured or unstored.
         // Anonymous: anyone can grab the game.
-        app.MapGet("/download/game", (HttpContext ctx, IConfiguration config, IFileStore store)
-            => DownloadArtifactAsync(ctx, config, store, GameDownloadKeys.Windows));
-        app.MapGet("/download/game-linux", (HttpContext ctx, IConfiguration config, IFileStore store)
-            => DownloadArtifactAsync(ctx, config, store, GameDownloadKeys.Linux));
-        app.MapGet("/download/game-macos", (HttpContext ctx, IConfiguration config, IFileStore store)
-            => DownloadArtifactAsync(ctx, config, store, GameDownloadKeys.Macos));
+        app.MapGet("/download/game", (HttpContext ctx, IConfiguration config, IFileStore store, IPublicObjectStore publicStore, GameInstallers installers)
+            => DownloadArtifactAsync(ctx, config, store, publicStore, installers, GameDownloadKeys.Windows));
+        app.MapGet("/download/game-linux", (HttpContext ctx, IConfiguration config, IFileStore store, IPublicObjectStore publicStore, GameInstallers installers)
+            => DownloadArtifactAsync(ctx, config, store, publicStore, installers, GameDownloadKeys.Linux));
+        app.MapGet("/download/game-macos", (HttpContext ctx, IConfiguration config, IFileStore store, IPublicObjectStore publicStore, GameInstallers installers)
+            => DownloadArtifactAsync(ctx, config, store, publicStore, installers, GameDownloadKeys.Macos));
 
         // The Velopack update feed (downloads/releases/{file}): the release manifest + full
         // package the installed client's VelopackUpdateManager polls (SimpleWebSource at
@@ -153,12 +159,18 @@ public static class MediaEndpoints
         return Results.Stream(stream, "image/jpeg");
     }
 
-    private static async Task<IResult> DownloadArtifactAsync(HttpContext ctx, IConfiguration config, IFileStore store, string configKey)
+    private static async Task<IResult> DownloadArtifactAsync(
+        HttpContext ctx, IConfiguration config, IFileStore store, IPublicObjectStore publicStore, GameInstallers installers, string configKey)
     {
         string? fileName = config[configKey];
 
         if (string.IsNullOrEmpty(fileName))
             return Results.NotFound();
+
+        // The bucket copy, when there is one (a ship uploads it beside the box's copy). An
+        // installer the bucket does not hold still streams from the box rather than 404ing.
+        if (wantsRedirect(ctx, publicStore) && await installers.PublicSizeAsync(fileName, ctx.RequestAborted) != null)
+            return redirectTo(ctx, publicStore, StoreKeys.Download(fileName));
 
         var stream = await store.OpenObjectReadAsync(StoreKeys.Download(fileName), ctx.RequestAborted);
 
@@ -181,11 +193,22 @@ public static class MediaEndpoints
     /// releases prefix. Manifests (extensionless RELEASES / *.json) get no-cache so a new release
     /// is visible immediately; packages (*.nupkg, *.exe) are content-named and effectively
     /// immutable, but a bounded day keeps takedown behavior consistent with other media.
+    ///
+    /// <para>Backlog 364: a *.nupkg on a Cloudflare host redirects to the bucket's
+    /// downloads/releases/{file} without consulting the box (both copies are uploaded and pruned
+    /// by the same ship scripts, and every current nupkg is backfilled before the bucket is
+    /// switched on). The MANIFESTS never redirect: they are KB-sized, Velopack appends per-client
+    /// query parameters to them, their no-cache is what makes a release visible at once, and both
+    /// prunes and the ship verify read them here. bundled-*.typb is not a nupkg and stays here
+    /// too.</para>
     /// </summary>
-    private static async Task<IResult> ServeReleaseAssetAsync(string file, HttpContext ctx, IFileStore store)
+    private static async Task<IResult> ServeReleaseAssetAsync(string file, HttpContext ctx, IFileStore store, IPublicObjectStore publicStore)
     {
         if (string.IsNullOrEmpty(file) || file.Contains(".."))
             return Results.NotFound();
+
+        if (file.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase) && wantsRedirect(ctx, publicStore))
+            return redirectTo(ctx, publicStore, StoreKeys.Release(file));
 
         var stream = await store.OpenObjectReadAsync(StoreKeys.Release(file), ctx.RequestAborted);
 
@@ -212,7 +235,7 @@ public static class MediaEndpoints
     /// <para>The visibility gate and the counter bump both sit ABOVE the variant branch: the two
     /// options are one download route with one gate, and neither can become a path around it.</para>
     /// </summary>
-    private static async Task<IResult> DownloadAsync(long setId, HttpContext ctx, Db db, IFileStore store)
+    private static async Task<IResult> DownloadAsync(long setId, HttpContext ctx, Db db, IFileStore store, IPublicObjectStore publicStore)
     {
         var requester = ctx.SessionUser() ?? await ctx.ResolveBearerAsync();
 
@@ -224,7 +247,8 @@ public static class MediaEndpoints
                    s.owner_id   AS ownerId,
                    s.artist     AS artist,
                    s.title      AS title,
-                   v.package_key AS packageKey
+                   v.package_key AS packageKey,
+                   v.public_key  AS publicKey
             FROM beatmapsets s
             LEFT JOIN set_versions v
                    ON v.set_id = s.id
@@ -270,6 +294,17 @@ public static class MediaEndpoints
 
         if (noVideo)
             return await StreamAudioOnlyAsync(package, row, filename, ctx);
+
+        // Backlog 364: the full package of a PUBLISHED set with a bucket copy is handed off, AFTER
+        // the gate and the counter above (which is why the 302 carries no-store: an edge-cached
+        // redirect would skip both). The audio-only arm above is a live filter of the LOCAL
+        // package and never redirects; a hidden set's owner keeps the local stream; a NULL key (no
+        // copy yet, or its upload failed) streams locally as before.
+        if (row.PublicKey != null && BeatmapsetEndpoints.IsPublished(row.Status) && wantsRedirect(ctx, publicStore))
+        {
+            await package.DisposeAsync();
+            return redirectTo(ctx, publicStore, row.PublicKey);
+        }
 
         return Results.Stream(package, "application/octet-stream", fileDownloadName: filename, enableRangeProcessing: true);
     }
@@ -464,6 +499,25 @@ public static class MediaEndpoints
         return range.Ranges.Any(r => r.From == 0);
     }
 
+    /// <summary>
+    /// True when this request should be handed to the public bucket: the bucket is configured and
+    /// the request did NOT arrive on a direct-origin host. The direct hosts (bss.typebeat.sh and
+    /// its legacy twin) exist for the players whose sustained transfers stall on the Cloudflare
+    /// path, and the bucket's custom domain is on that path, so they always stream from the box.
+    /// </summary>
+    private static bool wantsRedirect(HttpContext ctx, IPublicObjectStore publicStore)
+        => publicStore.Enabled && !publicStore.IsDirectHost(ctx.Request.Host.Host);
+
+    /// <summary>
+    /// The 302 itself. <c>no-store</c> because the redirect is issued AFTER the visibility gate and
+    /// the download counter: a cached 302 would let the edge or a browser skip both.
+    /// </summary>
+    private static IResult redirectTo(HttpContext ctx, IPublicObjectStore publicStore, string key)
+    {
+        ctx.Response.Headers.CacheControl = "no-store";
+        return Results.Redirect(publicStore.PublicUrl(key), permanent: false);
+    }
+
     /// <summary>Published sets (BeatmapsetEndpoints.IsPublished) are world-readable; hidden/removed media only for the owner.</summary>
     private static async Task<bool> canSeeSetMediaAsync(HttpContext ctx, Db db, long setId)
     {
@@ -533,5 +587,5 @@ public static class MediaEndpoints
         return buffer.ToArray();
     });
 
-    private sealed record DownloadRow(string Status, long OwnerId, string Artist, string Title, string? PackageKey);
+    private sealed record DownloadRow(string Status, long OwnerId, string Artist, string Title, string? PackageKey, string? PublicKey);
 }

@@ -177,6 +177,7 @@ public class Migration004BackfillTest
             "038_country_chosen.sql",
             "039_lyrics_original.sql",
             "040_search_trigram.sql",
+            "041_set_versions_public_key.sql",
         }));
     }
 

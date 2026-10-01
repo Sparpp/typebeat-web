@@ -81,6 +81,10 @@ if (builder.Configuration["TYPEBEAT_FILE_ROOT"] is { Length: > 0 } fileRoot)
 // Upload/package pipeline (M3). File root: TYPEBEAT_FILE_ROOT (prod: the /data volume; dev
 // default ./data). Everything under it is content-addressed or set-scoped; see StoreKeys.
 builder.Services.AddSingleton<IFileStore>(_ => LocalFileStore.FromConfiguration(builder.Configuration));
+// Backlog 364: the public R2 bucket the big downloads 302 to on the Cloudflare hosts (dual-home; off
+// unless every TYPEBEAT_R2_* key is set, and then nothing changes), plus its installer catalog and
+// the never-awaited package backfill.
+builder.Services.AddPublicObjectStore(builder.Configuration);
 builder.Services.AddSingleton<CoverGenerator>();
 builder.Services.AddSingleton<PreviewGenerator>();
 builder.Services.AddSingleton<PackageIngest>();
@@ -171,6 +175,8 @@ if (emailSender is LogEmailSender && app.Configuration.GetValue<bool>("TYPEBEAT_
     app.Logger.LogWarning("Email sender: LogEmailSender, codes are only written to this log, NO emails are delivered. Set TYPEBEAT_RESEND_API_KEY to enable real delivery.");
 else
     app.Logger.LogInformation("Email sender: {Sender}", emailSender.GetType().Name);
+
+app.Logger.LogInformation("Public object store: {Mode}", app.Services.GetRequiredService<IPublicObjectStore>().Description);
 
 // How full the disk is, once, at boot. The box filled twice (2026-09-04 and 2026-09-26) and both
 // times the first symptom was the site being gone: the alert chain added after the first fill needs
