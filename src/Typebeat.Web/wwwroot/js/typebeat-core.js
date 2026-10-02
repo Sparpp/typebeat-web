@@ -284,6 +284,18 @@
         return isFinite(version) ? version : FALLBACK_FORMAT_VERSION;
     }
 
+    // The mapper's FREESTYLE colour (backlog 384): [General] "FreestyleColour: #rrggbb", display
+    // only. Mirrors the game's FreestyleColourKey.Parse: a '#' and exactly six hex digits, either
+    // case, anything else reads as ABSENT, and absent is the default violet (TypeBeatStyle.
+    // FreestyleChar, also the CSS fallback of .tb-c-free). Returned lowercase, as the game writes it.
+    const DEFAULT_FREESTYLE_COLOUR = '#c792ea';
+    const FREESTYLE_COLOUR_VALUE = /^#[0-9a-fA-F]{6}$/;
+
+    function parseFreestyleColour(value) {
+        const text = value === undefined || value === null ? '' : String(value).trim();
+        return FREESTYLE_COLOUR_VALUE.test(text) ? text.toLowerCase() : null;
+    }
+
     // The map's own TRACK GAIN (PR 1), a linear multiplier on the song's samples: 1 plays the file
     // as imported, and a hand-edited value is clamped to [0, MAX_AUDIO_GAIN] on read. Mirrors
     // BeatmapMetadata.DEFAULT_AUDIO_GAIN / MAX_AUDIO_GAIN and the [Metadata] AudioGain case of the
@@ -394,6 +406,8 @@
             beatmapSetId: parseInt(metadata['BeatmapSetID'] || '0', 10) || 0,
             formatVersion: formatVersion === null ? FALLBACK_FORMAT_VERSION : formatVersion,
             audioGain,
+            // The LAST FreestyleColour line wins, malformed or not, as in the game's decoder.
+            freestyleColour: parseFreestyleColour(general['FreestyleColour']),
             header,
             lineObjs
         };
@@ -1906,6 +1920,9 @@
             audioFilename: parsed.audioFilename,
             // The map's track gain, applied by the player to the decoded samples (applyTrackGain).
             audioGain: parsed.audioGain === undefined ? DEFAULT_AUDIO_GAIN : parsed.audioGain,
+            // The map's freestyle colour (backlog 384), '#rrggbb' or null for the default; display
+            // only, the player paints .tb-c-free with it and nothing here reads it.
+            freestyleColour: parsed.freestyleColour === undefined ? null : parsed.freestyleColour,
             // [General] AudioLeadIn, carried through untouched for the player's clock start
             // (gameplayStartTime). Nothing in the engine or the scorer reads it.
             audioLeadIn: parsed.audioLeadIn === undefined ? 0 : parsed.audioLeadIn,
@@ -5209,6 +5226,8 @@
         // The map's track gain (PR 1): the TryParse-mirroring read and the in-place scale and clamp
         // the player runs on the decoded audio, exported so the harnesses can pin both.
         parseAudioGain, applyTrackGain,
+        // The map's freestyle colour (backlog 384): its strict read and the default it falls back to.
+        parseFreestyleColour, DEFAULT_FREESTYLE_COLOUR,
         // The syllabifier and the group derivation, exported so the fidelity harnesses can hold
         // them against the game's own Syllabifier / TypingLine.Syllables word for word.
         isSyllabifiable, countSyllables, splitPoints, buildSyllables, syllableIndexOf,

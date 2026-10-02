@@ -2995,8 +2995,10 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
    state rules, and duplicated at .tb-line-cur specificity, so the colour wins in every state:
    this violet is an IDENTITY signal ("this slot was free"), not a state signal, and it has to
    keep saying that for the rest of the play. (Before backlog 251 removed it, this was also
-   deliberately outside the sync tint above, for the same identity-vs-state reason.) */
-.tb-c-free, .tb-line-cur .tb-c-free { color: #c792ea; }
+   deliberately outside the sync tint above, for the same identity-vs-state reason.) Since
+   backlog 384 the colour is the MAP's own (the player root's --tb-free, from [General]
+   FreestyleColour); the fallback is the default violet, for a page that never sets it. */
+.tb-c-free, .tb-line-cur .tb-c-free { color: var(--tb-free, #c792ea); }
 
 /* LyricLineDisplay.PlayJudgementFeedback: ScaleTo(1.25) then ScaleTo(1, 120, OutQuint). The
    curve is the usual cubic fit of OutQuint; the length is PERFECT_POP_MS in typebeat-player.js,

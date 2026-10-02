@@ -543,6 +543,13 @@
         return cls;
     }
 
+    // The colour tb-c-free paints (backlog 384): the map's own FreestyleColour, or the default
+    // violet when it carries none. mountPlayer hands it to the stylesheet as the --tb-free custom
+    // property on the player root, so the cell classes above stay exactly as they were.
+    function freestyleColourOf(beatmap) {
+        return beatmap && beatmap.freestyleColour ? beatmap.freestyleColour : Core.DEFAULT_FREESTYLE_COLOUR;
+    }
+
     /// The GLYPH a non-freestyle cell shows, the companion of cellClass() and pure for the same
     /// reason (LyricLineDisplay.CellGlyph). Almost always the cell's own expected character: a
     /// lyric cell shows its lyric character in every state, and a WRONG one shows that character
@@ -1871,6 +1878,7 @@
 
         container.innerHTML = '';
         const root = el('div', 'tb-player');
+        root.style.setProperty('--tb-free', freestyleColourOf(beatmap));
         container.appendChild(root);
 
         // --- scaffold --------------------------------------------------------
@@ -3492,6 +3500,8 @@
         // fold, the combo out of its maximum, a failed run's judged accuracy and the metadata.
         resultCells,
         resultMetaHtml,
+        // The freestyle colour the stage paints (backlog 384), pure, pinned by WireCompat.
+        freestyleColourOf,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,
