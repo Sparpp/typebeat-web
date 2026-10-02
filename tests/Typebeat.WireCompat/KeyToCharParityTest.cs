@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using osuTK.Input;
 using typebeat.Game.Rulesets.TypeBeat.Gameplay;
+using typebeat.Game.Input;
 
 namespace Typebeat.WireCompat;
 
