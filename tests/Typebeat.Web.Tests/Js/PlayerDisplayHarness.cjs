@@ -1016,75 +1016,55 @@ function keyOrderRun(presses = KEY_ORDER_PRESSES, map = build(KEY_ORDER_OSU), en
     };
 }
 
-// --- keystroke to character (backlog 309) ---
+// --- keystroke to characters (backlogs 309, 383) ---
 //
-// The pinned table, one row per [e.key, e.code, shiftKey, prevWasDead]: keyToChar's answer for
-// each (null = dropped). WebplayDisplayTest holds the answers; WireCompat's KeyToCharParityTest
-// generates a far larger table from the game's KeyCharMap and runs it through KeyToCharHarness.cjs.
-const KEY_TO_CHAR_ROWS = [
-    // rule 1: e.key is already typeable, whatever the position (Dvorak 'e' sits on KeyD)
-    ['a', 'KeyA', false, false], ['A', 'KeyA', true, false], ['e', 'KeyD', false, false],
-    ['7', 'Digit7', false, false], ['5', 'Numpad5', false, false], ['a', 'KeyQ', false, true],
-    // rule 2: the vowel after a dead key, folded; only on a letter position, only after a dead key
-    ['ê', 'KeyE', false, true], ['Ê', 'KeyE', true, true], ['â', 'KeyQ', false, true],
-    ['ë', 'KeyE', false, true], ['ý', 'KeyY', false, true],
-    ['ê', 'KeyE', false, false], ['ö', 'Semicolon', false, true], ['ù', 'Quote', false, true],
-    ['ç', 'Digit9', false, true], ['ß', 'Minus', false, true], ['Dead', 'BracketLeft', false, true],
-    // rule 3: the digit row and keypad by position, whatever Shift or the layout says
-    ['!', 'Digit1', true, false], ['@', 'Digit2', true, false], ['é', 'Digit2', false, false],
-    ['à', 'Digit0', false, false], ['&', 'Digit1', false, false], ['§', 'Digit3', true, false],
-    ['End', 'Numpad1', false, false], ['Insert', 'Numpad0', true, false],
-    // rule 4: a non-Latin letter types its position, cased as e.key is
-    ['ф', 'KeyA', false, false], ['Ф', 'KeyA', true, false], ['я', 'KeyZ', false, false],
-    ['ς', 'KeyW', false, false], ['Σ', 'KeyS', true, false], ['ب', 'KeyF', false, false],
-    // rule 5: dropped
-    [',', 'KeyM', false, false], ['?', 'KeyM', true, false], [';', 'KeyQ', false, false],
-    ['Dead', 'BracketLeft', false, false], ['Dead', 'Equal', true, false],
-    ['ö', 'Semicolon', false, false], ['ü', 'BracketLeft', false, false], ['ß', 'Minus', false, false],
-    ['ж', 'Semicolon', false, false], ['б', 'Comma', false, false], ['ù', 'Quote', false, false],
-    ['é', 'KeyE', false, false], ['Unidentified', 'KeyA', false, false], ['Process', 'KeyA', false, false],
-    ['Shift', 'ShiftLeft', true, false], ['.', 'Period', false, false], ['ñ', 'Semicolon', false, false]
+// The pinned table, one row per [e.key, e.code, chord]: keyToChars's answer for each ('' = types
+// nothing). WebplayDisplayTest holds the answers; WireCompat's KeyToCharParityTest holds the fold
+// under it (foldTyped) against the game's own TextInputFold.Fold, through KeyToCharHarness.cjs.
+const KEY_TO_CHARS_ROWS = [
+    // rule 1: the digit row and keypad by position, whatever Shift or the layout says (not in a chord)
+    ['7', 'Digit7', false], ['5', 'Numpad5', false],
+    ['!', 'Digit1', false], ['@', 'Digit2', false], ['é', 'Digit2', false],
+    ['à', 'Digit0', false], ['&', 'Digit1', false], ['§', 'Digit3', false],
+    ['End', 'Numpad1', false], ['Insert', 'Numpad0', false],
+    ['²', 'Digit2', true], ['@', 'Digit2', true],
+    // rule 2: e.key folded, whatever the position (Dvorak 'e' sits on KeyD)
+    ['a', 'KeyA', false], ['A', 'KeyA', false], ['e', 'KeyD', false],
+    ['ê', 'KeyE', false], ['Ê', 'KeyE', false], ['â', 'KeyQ', false], ['é', 'KeyE', false],
+    ['ö', 'Semicolon', false], ['Ö', 'Semicolon', false], ['ü', 'BracketLeft', false],
+    ['ß', 'Minus', false], ['ù', 'Quote', false], ['ñ', 'Semicolon', false], ['æ', 'Quote', false],
+    ['ą', 'KeyA', true], ['ę', 'KeyE', true], ['å', 'KeyA', true],
+    // ...and inert where the fold has nothing: a non-Latin letter, a mark without Literate, a symbol
+    ['ф', 'KeyA', false], ['Ф', 'KeyA', false], ['ς', 'KeyW', false], ['ب', 'KeyF', false],
+    [',', 'KeyM', false], ['?', 'KeyM', false], [';', 'KeyQ', false], ['.', 'Period', false],
+    ['€', 'KeyE', true], ['@', 'KeyQ', true],
+    // a named key types nothing
+    ['Dead', 'BracketLeft', false], ['Dead', 'Equal', false], ['Unidentified', 'KeyA', false],
+    ['Process', 'KeyA', false], ['Shift', 'ShiftLeft', false], ['Enter', 'Enter', false],
+    // rule 3: the spacebar is ' ', by its key when e.key says nothing printable
+    [' ', 'Space', false], ['Unidentified', 'Space', false], [' ', 'Space', false], ['^', 'Space', false]
 ];
 
-function keyToCharTable() {
-    return KEY_TO_CHAR_ROWS.map(([key, code, shift, dead]) => ({
-        key: key, code: code, shift: shift, dead: dead,
-        ch: D.keyToChar({ key: key, code: code, shiftKey: shift }, dead)
+function keyToCharsTable() {
+    return KEY_TO_CHARS_ROWS.map(([key, code, chord]) => ({
+        key: key, code: code, chord: chord,
+        chars: D.keyToChars({ key: key, code: code }, chord)
     }));
 }
 
 function keyEv(key, code, mods) {
     const e = fakeKey(key, mods);
     e.code = code;
+    const altGraph = !!(mods && mods.altGraph);
+    e.getModifierState = function (name) { return name === 'AltGraph' && altGraph; };
     return e;
 }
 
-// The dead-key state through the SHIPPED router, on "ab cd": an Azerty circumflex, then Shift (a
-// modifier, which must not end the sequence), then the composed capital on the KeyQ position, is
-// the lyric's 'a'; 'b' follows on its own cell rather than one cell early.
+// A dead key through the SHIPPED router, on "ab cd": an Azerty circumflex, then Shift, then the
+// composed capital on the KeyQ position, is the lyric's 'a' (the fold takes the circumflex off);
+// 'b' follows on its own cell rather than one cell early. No dead-key state is involved since
+// backlog 383: the composed vowel folds like any other character.
 function routedDeadKeyComposes() {
-    const map = build(abcdOsu);
-    const engine = engineFor(map);
-    const host = keyHostFor(engine, map);
-    const calls = spyOnOps(engine);
-    const trail = [];
-
-    host.clock = 1000;
-    D.routeKeyDown(keyEv('Dead', 'BracketLeft'), host); trail.push(host.prevWasDead);
-    D.routeKeyDown(keyEv('Shift', 'ShiftLeft', { shift: true }), host); trail.push(host.prevWasDead);
-    D.routeKeyDown(keyEv('Â', 'KeyQ', { shift: true }), host); trail.push(host.prevWasDead);
-    host.clock = 1500;
-    D.routeKeyDown(keyEv('b', 'KeyB'), host); trail.push(host.prevWasDead);
-
-    return {
-        chars: calls.filter(c => c.fn === 'key').map(c => c.c),
-        states: engine.lines[0].cells.slice(0, 2).map(c => c.state),
-        deadTrail: trail
-    };
-}
-
-// A dead key followed by any OTHER key ends the sequence: a composed vowel after that is dropped.
-function routedDeadKeyEnds() {
     const map = build(abcdOsu);
     const engine = engineFor(map);
     const host = keyHostFor(engine, map);
@@ -1092,11 +1072,115 @@ function routedDeadKeyEnds() {
 
     host.clock = 1000;
     D.routeKeyDown(keyEv('Dead', 'BracketLeft'), host);
-    D.routeKeyDown(keyEv('a', 'KeyQ'), host);
+    D.routeKeyDown(keyEv('Shift', 'ShiftLeft', { shift: true }), host);
+    D.routeKeyDown(keyEv('Â', 'KeyQ', { shift: true }), host);
     host.clock = 1500;
-    D.routeKeyDown(keyEv('ê', 'KeyE'), host);
+    D.routeKeyDown(keyEv('b', 'KeyB'), host);
 
-    return { chars: calls.filter(c => c.fn === 'key').map(c => c.c), prevWasDead: host.prevWasDead };
+    return {
+        chars: calls.filter(c => c.fn === 'key').map(c => c.c),
+        states: engine.lines[0].cells.slice(0, 2).map(c => c.state)
+    };
+}
+
+// One judgement per physical press: an OS key-repeat of a typing key reaches nothing.
+function routedRepeatDropped() {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    const host = keyHostFor(engine, map);
+    const calls = spyOnOps(engine);
+
+    host.clock = 1000; D.routeKeyDown(keyEv('a', 'KeyA'), host);
+    const repeat = keyEv('a', 'KeyA', { repeat: true });
+    host.clock = 1030; D.routeKeyDown(repeat, host);
+
+    return { chars: calls.filter(c => c.fn === 'key').map(c => c.c), caret: engine.caretIndex };
+}
+
+// 'ß' spells out: two presses at the one instant, in order, on a lyric that reads "ss".
+const ssOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":4000}\n' +
+    '{"text":"ss ab","start_ms":1000,"end_ms":3000,"words":[' +
+    '{"text":"ss","start_ms":1000,"end_ms":2000,"score":1},' +
+    '{"text":"ab","start_ms":2000,"end_ms":3000,"score":1}]}\n';
+
+function routedEszett() {
+    const map = build(ssOsu);
+    const engine = engineFor(map);
+    const host = keyHostFor(engine, map);
+    const calls = spyOnOps(engine);
+    const e = keyEv('ß', 'Minus');
+    host.clock = 1200.4;
+    D.routeKeyDown(e, host);
+
+    const keys = calls.filter(c => c.fn === 'key');
+    return {
+        chars: keys.map(c => c.c), times: keys.map(c => c.t), prevented: e.prevented,
+        states: engine.lines[0].cells.slice(0, 2).map(c => c.state)
+    };
+}
+
+// A Cyrillic letter is inert (the positional emulation is gone): no press, and the key is left alone.
+function routedNonLatinInert() {
+    const map = build(abcdOsu);
+    const engine = engineFor(map);
+    const host = keyHostFor(engine, map);
+    const calls = spyOnOps(engine);
+    const e = keyEv('ф', 'KeyA');
+    host.clock = 1000;
+    D.routeKeyDown(e, host);
+    return { keyCalls: calls.filter(c => c.fn === 'key').length, prevented: e.prevented };
+}
+
+// The modifier chords, each on a fresh "ab cd" at the first cell after 'a' was typed (so a Ctrl+A
+// gesture would have a typo-free run and select nothing, while a typed 'b' is visible): which ones
+// type, and that an AltGr chord on the KeyA position never selects.
+function routedChords() {
+    const cases = [
+        ['altGrB', 'b', 'KeyB', { ctrl: true, alt: true, altGraph: true }],
+        ['altGrOgonek', 'ą', 'KeyA', { ctrl: true, alt: true }],
+        ['optionMacA', 'å', 'KeyA', { alt: true }],
+        ['optionMacInert', '∫', 'KeyB', { alt: true }],
+        ['ctrlAltPlainB', 'b', 'KeyB', { ctrl: true, alt: true }],
+        ['altPlainB', 'b', 'KeyB', { alt: true }],
+        ['ctrlB', 'b', 'KeyB', { ctrl: true }],
+        ['metaB', 'b', 'KeyB', { meta: true }],
+        ['altGrRepeatB', 'b', 'KeyB', { ctrl: true, alt: true, altGraph: true, repeat: true }],
+        ['altGrDigit', '²', 'Digit2', { ctrl: true, alt: true, altGraph: true }]
+    ];
+
+    const out = {};
+    for (const [name, key, code, mods] of cases) {
+        const map = build(abcdOsu);
+        const engine = engineFor(map);
+        const host = keyHostFor(engine, map);
+        host.clock = 1000; D.routeKeyDown(keyEv('a', 'KeyA'), host);
+        const calls = spyOnOps(engine);
+        const e = keyEv(key, code, mods);
+        host.clock = 1500;
+        D.routeKeyDown(e, host);
+        out[name] = {
+            chars: calls.filter(c => c.fn === 'key').map(c => c.c),
+            prevented: e.prevented,
+            selected: host.selection !== null
+        };
+    }
+
+    // The AltGr carve-out from the Ctrl+A gesture: with a typo behind the caret Ctrl+A selects it,
+    // and the same chord as AltGr ('ą', Ctrl plus Alt) types instead and selects nothing.
+    function overTypo(key, mods) {
+        const map = build(abcdOsu);
+        const engine = engineFor(map);
+        const host = keyHostFor(engine, map);
+        host.clock = 1000; D.routeKeyDown(keyEv('x', 'KeyX'), host);
+        const calls = spyOnOps(engine);
+        host.clock = 1500; D.routeKeyDown(keyEv(key, 'KeyA', mods), host);
+        return { chars: calls.filter(c => c.fn === 'key').map(c => c.c), selected: host.selection !== null };
+    }
+
+    out.ctrlAOverTypo = overTypo('a', { ctrl: true });
+    out.altGrAOverTypo = overTypo('ą', { ctrl: true, alt: true });
+    return out;
 }
 
 // The digit row by position through the router: Shift+1 reaches processKey as '1'.
@@ -1418,9 +1502,12 @@ const out = {
     })(),
 
     // ---- keystroke to character (backlog 309) ----
-    keyToChar: keyToCharTable(),
+    keyToChars: keyToCharsTable(),
     routedDeadKeyComposes: routedDeadKeyComposes(),
-    routedDeadKeyEnds: routedDeadKeyEnds(),
+    routedRepeatDropped: routedRepeatDropped(),
+    routedEszett: routedEszett(),
+    routedNonLatinInert: routedNonLatinInert(),
+    routedChords: routedChords(),
     routedShiftDigit: routedShiftDigit(),
 
     // ---- the HP bar and the start gate (backlog 306) ----

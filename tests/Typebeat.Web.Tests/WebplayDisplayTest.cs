@@ -1558,59 +1558,56 @@ public class WebplayDisplayTest
         => LyricTiming.ParseSection(lyrics.ReplaceLineEndings("\n").Split('\n')).Lines;
 
     /// <summary>
-    /// Keystroke to character (backlog 309): keyToChar's answer per (e.key, e.code, Shift, previous
-    /// keydown was dead), null meaning dropped. The desktop reasoning behind each row lives on
-    /// keyToChar itself; WireCompat's KeyToCharParityTest holds a generated table against the
-    /// game's KeyCharMap.
+    /// Keystroke to characters (backlogs 309, 383): keyToChars's answer per (e.key, e.code, chord),
+    /// the empty string meaning the press types nothing. The desktop reasoning behind each row lives
+    /// on keyToChars itself; WireCompat's KeyToCharParityTest holds the fold under it against the
+    /// game's TextInputFold.Fold.
     /// </summary>
-    private static readonly (string Key, string Code, bool Shift, bool Dead, string? Expected)[] keyToCharPins =
+    private static readonly (string Key, string Code, bool Chord, string Expected)[] keyToCharsPins =
     [
-        // rule 1: e.key already typeable
-        ("a", "KeyA", false, false, "a"), ("A", "KeyA", true, false, "A"), ("e", "KeyD", false, false, "e"),
-        ("7", "Digit7", false, false, "7"), ("5", "Numpad5", false, false, "5"), ("a", "KeyQ", false, true, "a"),
-        // rule 2: the composed vowel after a dead key, on a letter position only
-        ("ê", "KeyE", false, true, "e"), ("Ê", "KeyE", true, true, "E"), ("â", "KeyQ", false, true, "a"),
-        ("ë", "KeyE", false, true, "e"), ("ý", "KeyY", false, true, "y"),
-        ("ê", "KeyE", false, false, null), ("ö", "Semicolon", false, true, null), ("ù", "Quote", false, true, null),
-        ("ç", "Digit9", false, true, "9"), ("ß", "Minus", false, true, null), ("Dead", "BracketLeft", false, true, null),
-        // rule 3: digit row and keypad by position
-        ("!", "Digit1", true, false, "1"), ("@", "Digit2", true, false, "2"), ("é", "Digit2", false, false, "2"),
-        ("à", "Digit0", false, false, "0"), ("&", "Digit1", false, false, "1"), ("§", "Digit3", true, false, "3"),
-        ("End", "Numpad1", false, false, "1"), ("Insert", "Numpad0", true, false, "0"),
-        // rule 4: a non-Latin letter types its position, in e.key's case
-        ("ф", "KeyA", false, false, "a"), ("Ф", "KeyA", true, false, "A"), ("я", "KeyZ", false, false, "z"),
-        ("ς", "KeyW", false, false, "w"), ("Σ", "KeyS", true, false, "S"), ("ب", "KeyF", false, false, "f"),
-        // rule 5: dropped (the Azerty comma on KeyM and the Greek ';' on KeyQ are Latin punctuation)
-        (",", "KeyM", false, false, null), ("?", "KeyM", true, false, null), (";", "KeyQ", false, false, null),
-        ("Dead", "BracketLeft", false, false, null), ("Dead", "Equal", true, false, null),
-        ("ö", "Semicolon", false, false, null), ("ü", "BracketLeft", false, false, null), ("ß", "Minus", false, false, null),
-        ("ж", "Semicolon", false, false, null), ("б", "Comma", false, false, null), ("ù", "Quote", false, false, null),
-        ("é", "KeyE", false, false, null), ("Unidentified", "KeyA", false, false, null), ("Process", "KeyA", false, false, null),
-        ("Shift", "ShiftLeft", true, false, null), (".", "Period", false, false, null), ("ñ", "Semicolon", false, false, null),
+        // rule 1: digit row and keypad by position, outside a chord
+        ("7", "Digit7", false, "7"), ("5", "Numpad5", false, "5"),
+        ("!", "Digit1", false, "1"), ("@", "Digit2", false, "2"), ("é", "Digit2", false, "2"),
+        ("à", "Digit0", false, "0"), ("&", "Digit1", false, "1"), ("§", "Digit3", false, "3"),
+        ("End", "Numpad1", false, "1"), ("Insert", "Numpad0", false, "0"),
+        ("²", "Digit2", true, ""), ("@", "Digit2", true, ""),
+        // rule 2: e.key folded, wherever it sits
+        ("a", "KeyA", false, "a"), ("A", "KeyA", false, "A"), ("e", "KeyD", false, "e"),
+        ("ê", "KeyE", false, "e"), ("Ê", "KeyE", false, "E"), ("â", "KeyQ", false, "a"), ("é", "KeyE", false, "e"),
+        ("ö", "Semicolon", false, "o"), ("Ö", "Semicolon", false, "O"), ("ü", "BracketLeft", false, "u"),
+        ("ß", "Minus", false, "ss"), ("ù", "Quote", false, "u"), ("ñ", "Semicolon", false, "n"), ("æ", "Quote", false, "ae"),
+        ("ą", "KeyA", true, "a"), ("ę", "KeyE", true, "e"), ("å", "KeyA", true, "a"),
+        // ...inert where the fold has nothing (no positional letter for a non-Latin layout any more)
+        ("ф", "KeyA", false, ""), ("Ф", "KeyA", false, ""), ("ς", "KeyW", false, ""), ("ب", "KeyF", false, ""),
+        (",", "KeyM", false, ""), ("?", "KeyM", false, ""), (";", "KeyQ", false, ""), (".", "Period", false, ""),
+        ("€", "KeyE", true, ""), ("@", "KeyQ", true, ""),
+        // a named key types nothing
+        ("Dead", "BracketLeft", false, ""), ("Dead", "Equal", false, ""), ("Unidentified", "KeyA", false, ""),
+        ("Process", "KeyA", false, ""), ("Shift", "ShiftLeft", false, ""), ("Enter", "Enter", false, ""),
+        // rule 3: the spacebar
+        (" ", "Space", false, " "), ("Unidentified", "Space", false, " "), (" ", "Space", false, " "), ("^", "Space", false, ""),
     ];
 
     [Test]
-    public void KeyToChar_TranslatesEachRowOfThePinnedTable()
+    public void KeyToChars_TranslatesEachRowOfThePinnedTable()
     {
-        var rows = Harness().GetProperty("keyToChar");
-        var observed = new Dictionary<(string, string, bool, bool), string?>();
+        var rows = Harness().GetProperty("keyToChars");
+        var observed = new Dictionary<(string, string, bool), string>();
 
         foreach (var row in rows.EnumerateArray())
         {
-            var ch = row.GetProperty("ch");
-            observed[(row.GetProperty("key").GetString()!, row.GetProperty("code").GetString()!,
-                      row.GetProperty("shift").GetBoolean(), row.GetProperty("dead").GetBoolean())]
-                = ch.ValueKind == JsonValueKind.Null ? null : ch.GetString();
+            observed[(row.GetProperty("key").GetString()!, row.GetProperty("code").GetString()!, row.GetProperty("chord").GetBoolean())]
+                = row.GetProperty("chars").GetString()!;
         }
 
-        Assert.That(observed, Has.Count.EqualTo(keyToCharPins.Length), "the harness rows and the pins are the same table");
+        Assert.That(observed, Has.Count.EqualTo(keyToCharsPins.Length), "the harness rows and the pins are the same table");
 
         Assert.Multiple(() =>
         {
-            foreach (var (key, code, shift, dead, expected) in keyToCharPins)
+            foreach (var (key, code, chord, expected) in keyToCharsPins)
             {
-                Assert.That(observed.TryGetValue((key, code, shift, dead), out string? got), Is.True, $"row {key}/{code} is in the harness");
-                Assert.That(got, Is.EqualTo(expected), $"keyToChar({key}, {code}, shift={shift}, prevDead={dead})");
+                Assert.That(observed.TryGetValue((key, code, chord), out string? got), Is.True, $"row {key}/{code} is in the harness");
+                Assert.That(got, Is.EqualTo(expected), $"keyToChars({key}, {code}, chord={chord})");
             }
         });
     }
@@ -1640,29 +1637,75 @@ public class WebplayDisplayTest
     }
 
     [Test]
-    public void KeyToChar_TheRouterCarriesTheDeadKeyStateAcrossShift()
+    public void KeyToChars_TheRouterTypesTheFoldOncePerPress()
     {
         var root = Harness();
         var composes = root.GetProperty("routedDeadKeyComposes");
-        var ends = root.GetProperty("routedDeadKeyEnds");
+        var repeat = root.GetProperty("routedRepeatDropped");
+        var eszett = root.GetProperty("routedEszett");
+        var nonLatin = root.GetProperty("routedNonLatinInert");
         var digit = root.GetProperty("routedShiftDigit");
 
         Assert.Multiple(() =>
         {
-            // Dead, Shift, 'Â' on KeyQ: the Shift keeps the sequence open, the capital lands on 'a',
-            // and 'b' lands on its own cell.
+            // Dead, Shift, 'Â' on KeyQ: the composed capital folds to 'A' on the lyric's 'a', and 'b'
+            // lands on its own cell.
             Assert.That(JsHarness.Strings(composes, "chars"), Is.EqualTo(new[] { "A", "b" }));
             Assert.That(JsHarness.Strings(composes, "states"), Is.EqualTo(new[] { "correct", "correct" }));
-            Assert.That(composes.GetProperty("deadTrail").EnumerateArray().Select(e => e.GetBoolean()),
-                Is.EqualTo(new[] { true, true, false, false }));
 
-            // Any other key ends it: 'ê' after an intervening 'a' is dropped.
-            Assert.That(JsHarness.Strings(ends, "chars"), Is.EqualTo(new[] { "a" }));
-            Assert.That(ends.GetProperty("prevWasDead").GetBoolean(), Is.False);
+            // An OS key-repeat is not a press: one judgement for the held key.
+            Assert.That(JsHarness.Strings(repeat, "chars"), Is.EqualTo(new[] { "a" }));
+            Assert.That(Num(repeat, "caret"), Is.EqualTo(1));
+
+            // 'ß' types "ss": two presses at the one rounded instant, both correct, swallowed.
+            Assert.That(JsHarness.Strings(eszett, "chars"), Is.EqualTo(new[] { "s", "s" }));
+            Assert.That(eszett.GetProperty("times").EnumerateArray().Select(t => t.GetDouble()), Is.EqualTo(new[] { 1200.0, 1200.0 }));
+            Assert.That(JsHarness.Strings(eszett, "states"), Is.EqualTo(new[] { "correct", "correct" }));
+            Assert.That(Flag(eszett, "prevented"), Is.True);
+
+            // A Cyrillic letter is inert, and left to the browser.
+            Assert.That(Num(nonLatin, "keyCalls"), Is.EqualTo(0));
+            Assert.That(Flag(nonLatin, "prevented"), Is.False);
 
             // Shift+1 reaches the engine as the digit, and is swallowed.
             Assert.That(JsHarness.Strings(digit, "chars"), Is.EqualTo(new[] { "1" }));
-            Assert.That(digit.GetProperty("prevented").GetBoolean(), Is.True);
+            Assert.That(Flag(digit, "prevented"), Is.True);
+        });
+    }
+
+    /// <summary>
+    /// The modifier chords (backlog 383): an AltGr chord (Ctrl plus Alt, or the browser's own
+    /// AltGraph) and a macOS Option chord TYPE what they commit and are never a gesture; a Ctrl or
+    /// Meta chord, a repeat, and a chord whose e.key is only the plain legend (nothing composed) type
+    /// nothing; the digit row is not positional inside a chord.
+    /// </summary>
+    [Test]
+    public void KeyToChars_AltGrAndOptionChordsTypeAndNeverSelect()
+    {
+        var chords = Harness().GetProperty("routedChords");
+
+        string?[] Chars(string name) => JsHarness.Strings(chords.GetProperty(name), "chars");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Chars("altGrB"), Is.EqualTo(new[] { "b" }));
+            Assert.That(Flag(chords.GetProperty("altGrB"), "prevented"), Is.True);
+            Assert.That(Chars("altGrOgonek"), Is.EqualTo(new[] { "a" }));
+            Assert.That(Chars("optionMacA"), Is.EqualTo(new[] { "a" }));
+
+            foreach (string inert in new[] { "optionMacInert", "ctrlAltPlainB", "altPlainB", "ctrlB", "metaB", "altGrRepeatB", "altGrDigit" })
+            {
+                Assert.That(Chars(inert), Is.Empty, inert);
+                Assert.That(Flag(chords.GetProperty(inert), "prevented"), Is.False, $"{inert} is left to the browser");
+            }
+
+            foreach (var row in chords.EnumerateObject().Where(r => r.Name != "ctrlAOverTypo"))
+                Assert.That(Flag(row.Value, "selected"), Is.False, $"{row.Name} selects nothing");
+
+            // Over a typo, Ctrl+A selects it; the same position as AltGr ('ą') types instead.
+            Assert.That(Flag(chords.GetProperty("ctrlAOverTypo"), "selected"), Is.True);
+            Assert.That(Chars("ctrlAOverTypo"), Is.Empty);
+            Assert.That(Chars("altGrAOverTypo"), Is.EqualTo(new[] { "a" }));
         });
     }
 

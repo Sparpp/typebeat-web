@@ -1175,66 +1175,164 @@
 
     function isSpace(e) { return e.key === ' ' || e.code === 'Space'; }
 
-    // KEYSTROKE TO CHARACTER (backlog 309), for every key that is not Space. The desktop maps
-    // PHYSICAL positions through KeyCharMap under the player's KeyboardLayout setting; on the
-    // non-Literate surface /play plays that means Shift and Caps change a letter's case and nothing
-    // else, the digit row types digits whatever the modifier or layout, a dead-key position is
-    // inert and the vowel after it types its base letter, and a non-Latin OS layout still types by
-    // position. The browser reads the OS layout's own e.key instead, which is the better answer for
-    // Dvorak, Colemak and a default-setting Azerty player, so it is kept as rule 1 and the
-    // positional model is only borrowed where e.key has nothing typeable to say:
+    // THE CHARACTER RULE (backlog 383), the mirror of TextInputFold.Fold
+    // (typebeat.Game.Rulesets.TypeBeat/Gameplay/TextInputFold.cs). Since 383 the desktop no longer
+    // maps physical keys through layout tables: it types what the OS COMMITTED for the press, folded
+    // onto the typing surface by the lyric's own fold, and e.key is the browser's name for that same
+    // committed character. So the same character in types the same presses out, which WireCompat's
+    // KeyToCharParityTest holds against TextInputFold.Fold itself:
     //
-    //   1. e.key itself, when it is already a letter or digit.
-    //   2. After a DEAD keydown, the composed vowel folded to its base letter ('ê' to 'e'), which
-    //      is right because the lyric is diacritic-folded on both sides (typebeat-core.js's
-    //      normalizer). Without this the vowel was dropped and every key after it landed one cell
-    //      early as a typo. Only on a LETTER position: a dead key followed by a key it cannot
-    //      compose with reports that key's own character, and folding the QWERTZ 'ö' (Semicolon)
-    //      or the Azerty 'ù' (Quote) or 'ç' (Digit9) there would type a letter where the desktop
-    //      types nothing, or a digit.
-    //   3. The digit row and keypad give their digit whatever e.key says: Shift+1 ('!'), an Azerty
-    //      digit key unshifted ('é'), a keypad key with Num Lock off ('End'). KeyCharMap.cs's
-    //      tryMapLower answers the digit for all of these, since Shift only cases letters.
-    //   4. A letter POSITION gives its letter only when e.key is a letter outside Latin script (a
-    //      Cyrillic or Greek layout), cased as e.key is. Never for Latin punctuation: the Azerty
-    //      ',' on KeyM stays inert exactly as KeyCharMap keeps it inert, so a habitual comma is
-    //      never a wrong key.
-    //   5. Everything else is dropped (null), including the QWERTZ umlaut and eszett positions,
-    //      which KeyCharMap leaves unmapped too.
+    //   - a Latin letter with diacritics types its BASE letter (NFD, combining marks dropped), so
+    //     'é' types 'e' and a decomposed "e" + U+0301 types it too;
+    //   - the special letters SPELL OUT in order, Typeability.SPECIAL_LETTERS (typebeat-core.js's
+    //     copy, 'ß' types "ss") and Romaniser.LATIN_EXTRAS (TYPED_LATIN_EXTRAS below, 'ħ' types "h");
+    //   - the typographic variants fold as Typeability.FoldTypographic folds them (LyricBeatmap.cs):
+    //     curly quotes to the straight ones, the dashes to '-', the no-break spaces to a space;
+    //   - case is kept (the engine folds it away without Literate, as it always did);
+    //   - a supported mark (Core.isPunctuation) types only when `punctuation` is asked for, which is
+    //     the Literate mod's surface and so never /play's; without it a habitual comma is inert;
+    //   - EVERYTHING ELSE IS INERT ('€', '&', a Cyrillic letter, a control char): no press at all,
+    //     never a wrong key.
     //
-    // prevWasDead: whether the previous non-modifier keydown was a dead key (routeKeyDown tracks it
-    // on the host).
-    const DIGIT_CODE_RE = /^(?:Digit|Numpad)([0-9])$/;
-    const LETTER_CODE_RE = /^Key([A-Z])$/;
-    const NON_LATIN_LETTER_RE = /^(?=\p{L}$)\P{Script=Latin}$/u;
+    // foldTyped returns the presses as a string, '' when nothing in `committed` is typeable.
 
-    function keyToChar(e, prevWasDead) {
+    // Romaniser.LATIN_EXTRAS (Beatmaps/Romaniser.cs): the Latin letters with no canonical
+    // decomposition that the import's romaniser spells, which TextInputFold reads alongside
+    // SPECIAL_LETTERS. The romaniser itself has no browser copy (it runs once, at import); this one
+    // table is needed here because a keyboard can type these letters directly.
+    const TYPED_LATIN_EXTRAS = Object.freeze({
+        'ħ': 'h', 'Ħ': 'H',
+        'ŧ': 't', 'Ŧ': 'T',
+        'ſ': 's',
+        'ƒ': 'f', 'Ƒ': 'F',
+        'ə': 'e', 'Ə': 'E',
+        'ĳ': 'ij', 'Ĳ': 'IJ',
+        'ŀ': 'l', 'Ŀ': 'L',
+        'ǉ': 'lj', 'ǈ': 'Lj', 'Ǉ': 'LJ',
+        'ǌ': 'nj', 'ǋ': 'Nj', 'Ǌ': 'NJ',
+        'ǆ': 'dz', 'ǅ': 'Dz', 'Ǆ': 'DZ',
+        'ʻ': "'", 'ʼ': "'",
+    });
+
+    // Typeability.FoldTypographic (Beatmaps/LyricBeatmap.cs), the C# switch verbatim, escaped so the
+    // no-break spaces cannot decay into plain ones.
+    const TYPOGRAPHIC_FOLDS = Object.freeze({
+        '‘': "'", '’': "'", '‚': "'", '′': "'",
+        '“': '"', '”': '"', '„': '"', '″': '"',
+        '–': '-', '—': '-', '―': '-', '−': '-',
+        ' ': ' ', ' ': ' ', ' ': ' ',
+    });
+
+    const SPECIAL_LETTERS = Core.constants.SPECIAL_LETTERS;
+    const NON_SPACING_MARK_RE = /^\p{Mn}$/u;
+
+    // TextInputFold.Typeable: a typeable char (Typeability.IsTypeable: a-z, A-Z, 0-9 and space), or
+    // a supported mark when punctuation is set.
+    function typedCharIsTypeable(c, punctuation) {
+        return c === ' ' || KEY_RE.test(c) || (!!punctuation && Core.isPunctuation(c));
+    }
+
+    function foldTyped(committed, punctuation) {
+        if (typeof committed !== 'string' || committed.length === 0) return '';
+
+        // TextInputFold walks UTF-16 chars, and so does this loop: a surrogate half is inert on both
+        // sides. String.prototype.normalize never throws, where .NET's does on invalid Unicode and
+        // the C# then folds the raw string; either way the halves are inert.
+        const decomposed = committed.normalize('NFD');
+        let out = '';
+
+        for (let i = 0; i < decomposed.length; i++) {
+            const c = decomposed[i];
+            if (NON_SPACING_MARK_RE.test(c)) continue;
+
+            const spelled = Object.prototype.hasOwnProperty.call(SPECIAL_LETTERS, c) ? SPECIAL_LETTERS[c]
+                : Object.prototype.hasOwnProperty.call(TYPED_LATIN_EXTRAS, c) ? TYPED_LATIN_EXTRAS[c] : null;
+
+            if (spelled !== null) {
+                for (const s of spelled) if (typedCharIsTypeable(s, punctuation)) out += s;
+                continue;
+            }
+
+            const folded = Object.prototype.hasOwnProperty.call(TYPOGRAPHIC_FOLDS, c) ? TYPOGRAPHIC_FOLDS[c] : c;
+            if (typedCharIsTypeable(folded, punctuation)) out += folded;
+        }
+
+        return out;
+    }
+
+    // KEYSTROKE TO CHARACTERS (backlogs 309, 383): the presses one keydown types, as a string ('' for
+    // none), on the surface /play plays (never Literate, so punctuation is always off). e.key IS the
+    // OS layout's committed character, so the rule is the desktop's TypeBeatPlayfield key handler
+    // (OnKeyDown's typing-key arm, then TypeLatinText):
+    //
+    //   1. The digit row and keypad give their digit whatever e.key says, outside a chord: Shift+1
+    //      ('!'), an Azerty digit key unshifted ('é'), a keypad key with Num Lock off ('End').
+    //      TypingKeys.TryPositionalDigit, the one positional rule the default surface keeps.
+    //   2. A printable e.key is folded by foldTyped, whatever key position it came from: a Cyrillic
+    //      letter is inert (the player switches to a Latin layout, as on the desktop), a QWERTZ 'ö'
+    //      types 'o' and 'ß' types "ss", and a dead key's composed vowel ('ê' after the circumflex)
+    //      types its base letter through the same rule as everything else. No dead-key state is
+    //      tracked: the dead keydown itself reports 'Dead', which is not printable.
+    //   3. The spacebar with nothing printable to say ('Unidentified', 'Process') is the ' '
+    //      character: the desktop's PressPlan.Space falling back to its key when no commit comes.
+    //   4. Everything else types nothing.
+    //
+    // chord: the press is an AltGr or Option chord (isTypingChord), where the desktop types the OS
+    // commit only (pressFor(PressPlan.Type) from the modifier fall-through), so rule 1 is skipped.
+    const DIGIT_CODE_RE = /^(?:Digit|Numpad)([0-9])$/;
+    // A named key value ('Enter', 'Dead', 'F1', 'Unidentified') rather than a character.
+    const NAMED_KEY_RE = /^[A-Za-z][A-Za-z0-9]+$/;
+
+    function isPrintableKey(key) {
+        return typeof key === 'string' && key.length > 0 && !NAMED_KEY_RE.test(key);
+    }
+
+    function keyToChars(e, chord) {
         const key = typeof e.key === 'string' ? e.key : '';
         const code = typeof e.code === 'string' ? e.code : '';
 
-        if (key.length === 1 && KEY_RE.test(key)) return key;
-
-        const letter = LETTER_CODE_RE.exec(code);
-
-        if (prevWasDead && letter && key.length === 1) {
-            const folded = key.normalize('NFD').replace(/[̀-ͯ]/g, '');
-            if (folded.length === 1 && KEY_RE.test(folded)) return folded;
+        if (!chord) {
+            const digit = DIGIT_CODE_RE.exec(code);
+            if (digit) return digit[1];
         }
 
-        const digit = DIGIT_CODE_RE.exec(code);
-        if (digit) return digit[1];
+        if (isPrintableKey(key)) return foldTyped(key, false);
 
-        if (letter && NON_LATIN_LETTER_RE.test(key)) {
-            const lower = letter[1].toLowerCase();
-            return key !== key.toLowerCase() ? lower.toUpperCase() : lower;
-        }
+        if (code === 'Space') return ' ';
 
-        return null;
+        return '';
     }
 
-    // The keys that never end a dead-key sequence: pressing Shift (or AltGr, which Windows reports
-    // as Control then AltGraph) between the dead key and its vowel is how a capital is composed.
-    const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'OS']);
+    // TypingKeys.CommitsText by e.code: the keys that commit text on some layout (the letter, digit
+    // and punctuation block, the keypad's digits and operators, the spacebar).
+    const COMMITS_TEXT_CODE_RE = /^(?:Key[A-Z]|Digit[0-9]|Numpad[0-9]|NumpadDivide|NumpadMultiply|NumpadSubtract|NumpadAdd|NumpadDecimal|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|IntlBackslash|Semicolon|Quote|Comma|Period|Slash|Space)$/;
+
+    function commitsText(e) {
+        return COMMITS_TEXT_CODE_RE.test(typeof e.code === 'string' ? e.code : '');
+    }
+
+    // OnKeyDown's freshTextPress: a FRESH press (an OS repeat is never a press) of a key that commits
+    // text, never under Command, and never under Ctrl without Alt (no platform commits text for a
+    // Ctrl chord). Ctrl+Alt stays one because that is how Windows reports AltGr, and Option (Alt)
+    // alone commits on macOS. routeKeyDown reads it for the AltGr carve-out from the gestures.
+    function isFreshTextPress(e) {
+        return !e.repeat && commitsText(e) && !e.metaKey && (!e.ctrlKey || e.altKey);
+    }
+
+    // A modifier CHORD that types: the desktop's modifier fall-through, which hands a fresh text
+    // press to the pairing (pressFor(PressPlan.Type)) so that whatever the chord COMMITS is typed.
+    // A Ctrl-less fresh press under no Alt never reaches that fall-through, so Alt is required.
+    //
+    // The browser needs one rule the desktop does not. SDL hands the game only what the OS really
+    // committed, and a real shortcut commits nothing, while e.key under a chord that composes nothing
+    // (Windows Alt+A, Ctrl+Alt+A on a US layout) still names the plain legend 'a'. So a chord's e.key
+    // counts as committed only when it is not a plain letter or digit, or when the browser itself
+    // reports AltGraph held.
+    function isTypingChord(e) {
+        if (!e.altKey || !isFreshTextPress(e)) return false;
+        const altGraph = typeof e.getModifierState === 'function' && !!e.getModifierState('AltGraph');
+        return altGraph || !KEY_RE.test(typeof e.key === 'string' ? e.key : '');
+    }
 
     // TypeBeatPlayfield's narrow Space carve-out for the UNPINNED caret: finishing a line parks the
     // caret at the head of the next one, and a habitual trailing space there must not be typed into
@@ -1300,25 +1398,39 @@
     //   gaps, introTarget,      the map's skip windows (computeGaps / introSkipTarget)
     //   getSelection(), setSelection(sel),   the retype selection (backlog 182)
     //   performSkip(target)     the seek
-    //   prevWasDead             written here: whether the last non-modifier keydown was a dead
-    //                           key (keyToChar's rule 2)
     // }
     function routeKeyDown(e, host) {
         const engine = host.engine;
-
-        // Read and advance the dead-key state FIRST, before any branch can return, so every
-        // non-modifier keydown (a gesture, an Enter, a repeat, a dropped key) ends a sequence.
-        const prevWasDead = !!host.prevWasDead;
-        if (!MODIFIER_KEYS.has(e.key)) host.prevWasDead = e.key === 'Dead';
 
         // The two word-level gestures the player owns (backlog 182), and Enter's line skip, are
         // carved out BEFORE the modifier fall-through: every other Ctrl/Alt/Meta combo is left to
         // the browser. Enter reaches its gesture under Ctrl or Alt because the desktop's SkipLine
         // binding matches with KeyCombinationMatchingMode.Any (TypeBeatInputManager); Meta stays
         // excluded for the reason isWordGesture gives (backlog 283).
-        const wordGesture = isWordGesture(e);
+        //
+        // ...and an ALTGR chord is a character, never a gesture (backlog 383, OnKeyDown's
+        // `gesture != null && freshTextPress && e.ControlPressed && e.AltPressed`): Windows reports
+        // AltGr as Ctrl plus Alt and the gestures match their modifiers loosely, so without this a
+        // Polish AltGr+A ('ą') would select back to the last typo instead of typing its 'a'.
+        let wordGesture = isWordGesture(e);
+        if (wordGesture && e.ctrlKey && e.altKey && isFreshTextPress(e)) wordGesture = false;
         const enter = e.key === 'Enter' && !e.metaKey;
-        if ((e.ctrlKey || e.altKey || e.metaKey) && !wordGesture && !enter) return;
+        if ((e.ctrlKey || e.altKey || e.metaKey) && !wordGesture && !enter) {
+            // ...but whatever such a chord COMMITS is still typed (backlog 383, the desktop's
+            // modifier fall-through): AltGr on Windows and Option on macOS are how a layout reaches
+            // the characters it has no plain key for ('@', a Polish 'ę'). The chord is otherwise
+            // left to the browser, as every other Ctrl/Alt/Meta combo is.
+            if (isTypingChord(e)) {
+                const chars = keyToChars(e, true);
+                if (chars) {
+                    const t = roundHalfEven(host.now());
+                    engine.update(t);
+                    e.preventDefault();
+                    typeChars(host, chars, t);
+                }
+            }
+            return;
+        }
 
         // THE KEYSTROKE PROTOCOL (backlog 20's replay-determinism contract, which the desktop has
         // always followed and the browser now does too): quantise the press to whole milliseconds
@@ -1451,20 +1563,26 @@
             }
         }
 
-        let ch = null;
-        if (isSpace(e)) ch = ' ';
-        else ch = keyToChar(e, prevWasDead);
-        if (ch !== null) {
+        const chars = keyToChars(e, false);
+        if (chars) {
             e.preventDefault();
-            // A retype selection is consumed FIRST, so this key lands on the anchor cell: mass
-            // backspace, then the ordinary judged keypress. Space is not special here, nor is any
-            // other typeable key: "collapse, then process normally" is the whole rule. The
-            // desktop suspends its line-complete fall-through to the skip overlay while a
-            // selection is live, and so does this file: skipAllowed() takes the selection, so a
-            // key arriving over one is a typing key even on a line that reads complete, and
-            // control has already fallen through to here.
+            typeChars(host, chars, t);
+        }
+    }
+
+    // TypeBeatPlayfield's TypeLatinText: every press keyToChars made of one keydown ('ss' for a
+    // 'ß') is one ordinary processKey at the same instant, in order.
+    //
+    // A retype selection is consumed FIRST, so the press lands on the anchor cell: mass backspace,
+    // then the ordinary judged keypress. Space is not special here, nor is any other typeable key:
+    // "collapse, then process normally" is the whole rule. The desktop suspends its line-complete
+    // fall-through to the skip overlay while a selection is live, and so does this file:
+    // skipAllowed() takes the selection, so a key arriving over one is a typing key even on a line
+    // that reads complete, and control has already fallen through to here.
+    function typeChars(host, chars, t) {
+        for (const ch of chars) {
             collapseSelection(host);
-            engine.processKey(ch, t);
+            host.engine.processKey(ch, t);
         }
     }
 
@@ -1939,8 +2057,7 @@
             introTarget: introTarget,
             getSelection: function () { return selection; },
             setSelection: setSelection,
-            performSkip: function (target) { performSkip(target); },
-            prevWasDead: false
+            performSkip: function (target) { performSkip(target); }
         };
 
         // THE KEY GATE (backlog 311). The lifecycle keys (Escape, hold-`, hold-Ctrl+`) are taken
@@ -3346,9 +3463,11 @@
         isWordGesture,
         spaceIsDropped,
         routeKeyDown,
-        // Keystroke to character (backlog 309), pinned by the display harness and held against
-        // the game's KeyCharMap by WireCompat's KeyToCharParityTest.
-        keyToChar,
+        // Keystroke to characters (backlogs 309, 383), pinned by the display harness, and the fold
+        // under it, held against the game's TextInputFold.Fold by WireCompat's KeyToCharParityTest.
+        keyToChars,
+        foldTyped,
+        isTypingChord,
         // The HP bar and the start gate's copy (backlog 306), exported so the display harness pins
         // the bar's read of the health account and the copy's HP clause.
         healthBar,
