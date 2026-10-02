@@ -107,6 +107,104 @@ public class LandingPageTest
     }
 
     /// <summary>
+    /// Backlog 375: the three hero figures are links, left to right players to the Performance
+    /// board, scores to the Top plays board, maps to the browse page. Each anchor wraps the WHOLE
+    /// phrase (figure and caption), so the hit target is not just the digits.
+    /// </summary>
+    [Test]
+    public async Task Landing_HeroStats_AreThreeFullPhraseLinks_InOrder()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync("/");
+        var links = heroStatLinks(await response.Content.ReadAsStringAsync());
+
+        Assert.That(links.Select(l => l.Href), Is.EqualTo(new[]
+        {
+            "/rankings",
+            "/rankings?board=" + Typebeat.Web.Pages.Rankings.IndexModel.PlaysBoard,
+            "/beatmapsets",
+        }));
+        Assert.That(links.Select(l => l.Caption), Is.EqualTo(new[] { "registered players", "scores", "maps available" }));
+        Assert.That(links.Select(l => l.Href).ElementAt(1), Is.EqualTo("/rankings?board=plays"), "the Top plays board's query value");
+    }
+
+    /// <summary>Each anchor's aria-label reads the figure and caption as shown, then names where the
+    /// link goes, so a screen reader hears the destination and not just the number.</summary>
+    [Test]
+    public async Task Landing_HeroStats_AriaLabelsNameTheDestination()
+    {
+        using var response = await WebsiteFixture.Client.GetAsync("/");
+        var links = heroStatLinks(await response.Content.ReadAsStringAsync());
+
+        Assert.That(links, Has.Count.EqualTo(3));
+        Assert.Multiple(() =>
+        {
+            foreach (var link in links)
+                Assert.That(link.AriaLabel, Does.StartWith($"{link.Figure} {link.Caption}, "), "the label reads the visible phrase first");
+
+            Assert.That(links[0].AriaLabel, Does.EndWith("see the performance ranking"));
+            Assert.That(links[1].AriaLabel, Does.EndWith("see the top plays ranking"));
+            Assert.That(links[2].AriaLabel, Does.EndWith("browse the maps"));
+        });
+    }
+
+    /// <summary>
+    /// The landing page is output cached for anonymous visitors (backlog 366): a cache hit must
+    /// serve the same three links as the render that filled it. Evicts first so the first read
+    /// is a fresh render, then the second read is the stored entry.
+    /// </summary>
+    [Test]
+    public async Task Landing_HeroStats_CachedAndUncachedRendersAgree()
+    {
+        await WebsiteFixture.EvictAllAsync();
+
+        using var fresh = await WebsiteFixture.Client.GetAsync("/");
+        using var cached = await WebsiteFixture.Client.GetAsync("/");
+        string freshStats = heroStatsSlice(await fresh.Content.ReadAsStringAsync());
+        string cachedStats = heroStatsSlice(await cached.Content.ReadAsStringAsync());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(fresh.Headers.Age, Is.Null, "the first read after eviction renders");
+            Assert.That(cached.Headers.Age, Is.Not.Null, "the second read is a cache hit");
+            Assert.That(cachedStats, Is.EqualTo(freshStats));
+            Assert.That(heroStatLinks(cachedStats), Has.Count.EqualTo(3));
+        });
+    }
+
+    private sealed record HeroStatLink(string Href, string AriaLabel, string Figure, string Caption);
+
+    private static readonly System.Text.RegularExpressions.Regex hero_stat_link = new(
+        "<a class=\"hero-stats__link\" href=\"(?<href>[^\"]*)\" aria-label=\"(?<label>[^\"]*)\"><span><strong>(?<figure>[0-9,]+)</strong> (?<caption>[^<]+)</span></a>");
+
+    /// <summary>The <c>hero-stats</c> paragraph alone, so a link elsewhere on the page (the nav also
+    /// links /rankings and /beatmapsets) cannot satisfy an assertion meant for the stats line.</summary>
+    private static string heroStatsSlice(string html)
+    {
+        int start = html.IndexOf("<p class=\"hero-stats\">", StringComparison.Ordinal);
+        Assert.That(start, Is.GreaterThanOrEqualTo(0), "hero stats line");
+
+        int end = html.IndexOf("</p>", start, StringComparison.Ordinal);
+        Assert.That(end, Is.GreaterThan(start), "hero stats line end");
+
+        return html[start..(end + "</p>".Length)];
+    }
+
+    /// <summary>Every stats anchor in document order. The pattern requires the anchor to wrap the
+    /// span holding BOTH the figure and its caption; a link around the digits alone would not match.</summary>
+    private static List<HeroStatLink> heroStatLinks(string html)
+    {
+        string stats = html.StartsWith("<p class=\"hero-stats\">", StringComparison.Ordinal) ? html : heroStatsSlice(html);
+
+        return hero_stat_link.Matches(stats)
+                             .Select(m => new HeroStatLink(
+                                 System.Net.WebUtility.HtmlDecode(m.Groups["href"].Value),
+                                 System.Net.WebUtility.HtmlDecode(m.Groups["label"].Value),
+                                 m.Groups["figure"].Value,
+                                 m.Groups["caption"].Value))
+                             .ToList();
+    }
+
+    /// <summary>
     /// The landing hero's markup alone (<c>&lt;section class="hero"&gt;</c> up to its
     /// <c>&lt;/section&gt;</c>). The footer links to the same Discord invite, so a hero assertion
     /// has to be scoped or it would pass on the footer's copy. Public because DownloadPageTest

@@ -47,10 +47,17 @@
     {
         <p class="hero-note">Builds aren't signed yet, so your OS may warn on first launch :(</p>
     }
+    @{
+        string players = Model.Players.ToString("N0", CultureInfo.InvariantCulture);
+        string scores = Model.ScoresTotal.ToString("N0", CultureInfo.InvariantCulture);
+        string maps = Model.Maps.ToString("N0", CultureInfo.InvariantCulture);
+    }
+    @* Each figure links to the page that explains it; the anchor wraps the whole phrase so the
+       hit target is the figure and its caption, not the digits alone. *@
     <p class="hero-stats">
-        <span><strong>@Model.Players.ToString("N0", CultureInfo.InvariantCulture)</strong> registered players</span>
-        <span><strong>@Model.ScoresTotal.ToString("N0", CultureInfo.InvariantCulture)</strong> scores</span>
-        <span><strong>@Model.Maps.ToString("N0", CultureInfo.InvariantCulture)</strong> maps available</span>
+        <a class="hero-stats__link" href="/rankings" aria-label="@players registered players, see the performance ranking"><span><strong>@players</strong> registered players</span></a>
+        <a class="hero-stats__link" href="/rankings?board=@Typebeat.Web.Pages.Rankings.IndexModel.PlaysBoard" aria-label="@scores scores, see the top plays ranking"><span><strong>@scores</strong> scores</span></a>
+        <a class="hero-stats__link" href="/beatmapsets" aria-label="@maps maps available, browse the maps"><span><strong>@maps</strong> maps available</span></a>
     </p>
     <div class="hero-demo">
         <video class="hero-demo__video"

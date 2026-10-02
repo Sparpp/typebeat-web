@@ -835,6 +835,31 @@ img { max-width: 100%; }
     color: var(--violet);
 }
 
+/* Each stat is a link to the page behind it. The anchor keeps the muted caption colour (the
+   figure stays lime through the rule above) and adds feedback on hover/focus only: an underline
+   and the restrained lime glow. The padding is cancelled by an equal negative margin, so the hit
+   target grows for touch without moving anything. */
+.hero-stats__link {
+    color: inherit;
+    padding: var(--space-1) var(--space-2);
+    margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-2));
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+    transition: box-shadow 0.15s ease;
+}
+
+.hero-stats__link:hover,
+.hero-stats__link:focus-visible {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    box-shadow: var(--glow-violet);
+}
+
+.hero-stats__link:focus-visible {
+    outline: 2px solid var(--violet-bright);
+    outline-offset: 2px;
+}
+
 /* Demo reel under the stats line: a framed, self-contained gameplay clip. */
 .hero-demo {
     margin: var(--space-7) auto 0;
