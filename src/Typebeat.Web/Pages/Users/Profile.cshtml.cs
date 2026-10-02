@@ -568,13 +568,22 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         // ---- card sections ----
 
         // Owned maps: everyone sees published sets; the owner also sees their hidden and
-        // removed sets (the card's status pill explains itself).
+        // removed sets (the card's status pill explains itself), EXCEPT a hidden set that never
+        // completed an upload. The BSS wizard creates every set as a 'hidden' placeholder with
+        // empty title and artist and flips it on its first successful ingest (BssEndpoints), so a
+        // failed or abandoned first upload leaves a placeholder behind forever (rows are never
+        // deleted; retries reuse it). It has nothing a card can show: no title, no artist, no
+        // difficulty, 0.0 stars, and it is not something the mapper did on purpose. 'Never
+        // completed' is the repo-wide marker, no live difficulty (filename IS NOT NULL), the same
+        // test the card's own HasPlayableDiff and the set page use; a hidden set WITH a live
+        // difficulty still shows to its owner as before (backlog 385).
         bool ownProfile = viewerId == id;
 
         var maps = (await conn.QueryAsync<BeatmapsetCardModel>(
             $"""
              {BeatmapsetCardSql.Select}
              WHERE s.owner_id = @id AND (s.status IN ('pending', 'unranked', 'ranked') OR @ownProfile)
+               AND (s.status <> 'hidden' OR EXISTS (SELECT 1 FROM beatmaps lb WHERE lb.set_id = s.id AND lb.filename IS NOT NULL))
              ORDER BY s.submitted_at DESC, s.id DESC
              LIMIT {card_section_size + 1}
              """,

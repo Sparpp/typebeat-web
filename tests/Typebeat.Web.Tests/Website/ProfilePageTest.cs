@@ -29,6 +29,7 @@ public class ProfilePageTest
     private static long starRankedSetId;
     private static long starSecondSetId;
     private static long starHiddenSetId;
+    private static long starPlaceholderSetId;
 
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
@@ -62,8 +63,16 @@ public class ProfilePageTest
         starSecondSetId = await InsertSetAsync(conn, starId, "Star Bside", "The Profile Makers", "pending", days: -4);
         starHiddenSetId = await InsertSetAsync(conn, starId, "Star Secret Stash", "Should Stay Off", "hidden", days: -3);
 
+        // A hidden set the owner never finished uploading: the BSS placeholder as the wizard
+        // leaves it when the first upload fails, empty title and artist and no difficulty at all
+        // (backlog 385). It must not surface on the owner's profile either.
+        starPlaceholderSetId = await InsertSetAsync(conn, starId, "", "", "hidden", days: -1);
+
         long beatmapA = await InsertBeatmapAsync(conn, starRankedSetId, wpm: 90, stars: 3.6);
         long beatmapB = await InsertBeatmapAsync(conn, starSecondSetId, wpm: 60, stars: 2.4);
+        // The hidden set the owner DID upload keeps a live difficulty, which is what separates it
+        // from the placeholder above.
+        await InsertBeatmapAsync(conn, starHiddenSetId, wpm: 75, stars: 3.0);
 
         // Map A: best 800k S (95%), a weaker 500k A that per-map-best folding must hide.
         await InsertScoreAsync(conn, starId, beatmapA, 800_000, 0.95, "S");
@@ -133,6 +142,7 @@ public class ProfilePageTest
             Assert.That(html, Does.Contain($"data-set-id=\"{starSecondSetId}\""));
             Assert.That(html, Does.Contain(">Pending</span>"));
             Assert.That(html, Does.Not.Contain("Star Secret Stash"));
+            Assert.That(html, Does.Not.Contain($"data-set-id=\"{starPlaceholderSetId}\""));
 
             // Favourites: the favourited (covered) seed set renders as a card.
             Assert.That(html, Does.Contain($"data-set-id=\"{PublicSiteSeed.CoveredSetId}\""));
@@ -155,6 +165,7 @@ public class ProfilePageTest
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(html, Does.Contain("Star Secret Stash"));
             Assert.That(html, Does.Contain($"data-set-id=\"{starHiddenSetId}\""));
+            Assert.That(html, Does.Not.Contain($"data-set-id=\"{starPlaceholderSetId}\""), "a never-uploaded placeholder has nothing to show, even to its owner");
         });
     }
 
