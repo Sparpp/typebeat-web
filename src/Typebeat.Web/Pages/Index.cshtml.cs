@@ -8,6 +8,8 @@ namespace Typebeat.Web.Pages;
 
 /// <summary>
 /// Landing page: hero (slogan, live stats line, download/sign-up CTAs) plus a "newest maps" strip
+/// (ranked and unranked sets only: a set still awaiting review is browsable but not front-page
+/// material, owner's call 2026-10-02; the stats line still counts it as available)
 /// of up to 8 published sets rendered with the shared card partial. The download button links to
 /// the /download page, which picks the platform; it only shows when at least one platform's build
 /// is actually stored, otherwise a signed-out visitor gets the sign-up CTA in its place.
@@ -54,7 +56,7 @@ public sealed class IndexModel(Db db, GameInstallers installers, IConfiguration 
             BeatmapsetCardSql.Select +
             """
 
-            WHERE s.status IN ('pending', 'unranked', 'ranked') AND (NOT u.restricted OR s.owner_id = @viewerId)
+            WHERE s.status IN ('unranked', 'ranked') AND (NOT u.restricted OR s.owner_id = @viewerId)
             ORDER BY s.submitted_at DESC, s.id DESC
             LIMIT 8
             """,

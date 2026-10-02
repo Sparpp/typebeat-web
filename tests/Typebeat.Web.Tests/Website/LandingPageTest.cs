@@ -50,6 +50,10 @@ public class LandingPageTest
 
             // Hidden sets must not leak onto the landing strip.
             Assert.That(html, Does.Not.Contain("Hidden Gem Nobody"));
+
+            // Neither does a set still awaiting review (2026-10-02): the strip is ranked and
+            // unranked only, although the set stays browsable and counted on the stats line.
+            Assert.That(html, Does.Not.Contain($"data-set-id=\"{PublicSiteSeed.PendingId}\""));
         });
     }
 
