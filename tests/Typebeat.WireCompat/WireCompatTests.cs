@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
+using Dapper;
 using Newtonsoft.Json;
+using Npgsql;
 using Newtonsoft.Json.Linq;
 using typebeat.Game.Beatmaps;
 using typebeat.Game.Online.API;
@@ -177,6 +179,57 @@ public class WireCompatTests
         Assert.That(beatmap.Status, Is.EqualTo(BeatmapOnlineStatus.Ranked), "\"ranked\" must bind to the ranked enum member");
         Assert.That(beatmap.OnlineBeatmapSetID, Is.EqualTo((int)ServerFixture.SeededBeatmapSetId));
         Assert.That(beatmap.BeatmapSet, Is.Not.Null, "nested beatmapset must be populated");
+    }
+
+    // (d2) The set's song language rides the lookup as `song_language` (backlog 373): the server writes
+    // its canonical BeatmapLanguages name, the client reads it through APIBeatmapSet.SongLanguage and
+    // decodes it with BeatmapLanguageExtensions.FromCanonicalName, which is what fills an Unspecified
+    // realm row for a map whose .osu carries no Language: line. Both directions are pinned here, and
+    // the empty case, which the client must read as Unspecified rather than fail on. One set per
+    // language rather than one set rewritten in place: a FOUND lookup row is memoised for
+    // CacheEviction.LookupMemoTtl (backlog 366), so a rewrite would read back the first answer.
+    [Test]
+    public async Task BeatmapLookup_CarriesTheSetsSongLanguage_InTheClientsCanonicalForm()
+    {
+        await using var conn = new NpgsqlConnection(ServerFixture.ConnectionString);
+
+        var cases = Enum.GetValues<BeatmapLanguage>().Where(l => l != BeatmapLanguage.Unspecified)
+                        .Select(l => (language: l, canonical: l.ToCanonicalName()))
+                        .Append((language: BeatmapLanguage.Unspecified, canonical: string.Empty))
+                        .ToList();
+
+        for (int i = 0; i < cases.Count; i++)
+        {
+            var (language, canonical) = cases[i];
+            string checksum = $"5a{i:x2}".PadRight(32, 'f');
+
+            long setId = await conn.ExecuteScalarAsync<long>(
+                """
+                INSERT INTO beatmapsets (owner_id, title, artist, status, language)
+                VALUES (@ownerId, 'Wire Compat Language', 'Harness', 'ranked', @language)
+                RETURNING id
+                """,
+                new { ownerId = ServerFixture.OwnerUserId, language = canonical });
+
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO beatmaps (set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s, difficulty_rating)
+                VALUES (@setId, 'type!beat', 0, @checksum, 60, 30, 1.5)
+                """,
+                new { setId, checksum });
+
+            using var req = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/beatmaps/lookup?checksum={checksum}");
+            using var resp = await client.SendAsync(req);
+
+            Assert.That(resp.IsSuccessStatusCode, Is.True, $"lookup status {(int)resp.StatusCode}");
+
+            var beatmap = JsonConvert.DeserializeObject<APIBeatmap>(await resp.Content.ReadAsStringAsync());
+            Assert.That(beatmap?.BeatmapSet, Is.Not.Null);
+
+            Assert.That(beatmap!.BeatmapSet!.SongLanguage, Is.EqualTo(canonical),
+                language == BeatmapLanguage.Unspecified ? "a set with no language sends the empty string, never null" : $"{language} must travel as its canonical name");
+            Assert.That(BeatmapLanguageExtensions.FromCanonicalName(beatmap.BeatmapSet.SongLanguage), Is.EqualTo(language), $"{language} must decode back on the client");
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
