@@ -46,11 +46,16 @@ public class PlayDiffMediaTest
             // this one response covers both arms: a pill reading 180 here would be reading the
             // wrong column.
             Assert.That((double)diffs[0]["wpm"]!, Is.EqualTo(165).Within(1e-9));
+            // The plain average rides beside it as avg_wpm (PR 5): /play's underline pace hue draws
+            // its map-relative bands against it, as the desktop does by default. It is never the
+            // target, which would recolour every band against the fastest fifth of the map.
+            Assert.That((double)diffs[0]["avg_wpm"]!, Is.EqualTo(180).Within(1e-9), "the average, not the target");
 
             Assert.That((long)diffs[1]["id"]!, Is.EqualTo(PublicSiteSeed.MultiDiffEasyId));
             Assert.That((string?)diffs[1]["version_name"], Is.EqualTo("twin easy"));
             Assert.That((double)diffs[1]["stars"]!, Is.EqualTo(2.0).Within(1e-9));
             Assert.That((double)diffs[1]["wpm"]!, Is.EqualTo(60).Within(1e-9), "no target stored, so the average stands in");
+            Assert.That((double)diffs[1]["avg_wpm"]!, Is.EqualTo(60).Within(1e-9));
 
             // The colour is the site's one ramp, not a second one ported into the player script.
             Assert.That((string?)diffs[0]["colour"], Is.EqualTo(Typebeat.Web.DifficultyColour.ForStars(6.0)));

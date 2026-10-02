@@ -20,7 +20,11 @@ namespace Typebeat.WireCompat;
 /// band before it, at <see cref="UnderlinePace.DEFAULT_MAX_CHANGE_PERCENT"/>), so that is what
 /// <c>buildPaceBands</c> is held against; the whole-map percentile mode
 /// (<see cref="UnderlinePace.BuildBands"/>) is kept on both sides and held against
-/// <c>buildRankedPaceBands</c>.
+/// <c>buildRankedPaceBands</c>. PR 5 made the MAP-RELATIVE mode
+/// (<see cref="UnderlinePace.BuildMapRelativeBands"/>, each band against the map's average WPM) the
+/// desktop's default, and /play draws it as <c>buildMapRelativePaceBands</c> whenever the diffs
+/// route serves the average, so that is held against it too, with the average both sides read
+/// computed once by <see cref="LyricPaceStatistics"/> (the figure <c>beatmaps.wpm</c> stores).
 ///
 /// <para>Display only, so a drift here moves no score; it would still show a /play player a
 /// different map from the one the desktop shows, which is what the mirror table forbids. The
@@ -54,6 +58,23 @@ public class UnderlinePaceParityTest
         (1.2, 1, 10), (1.2, 1, 500), (0.9, 1, 50), (1.25, 1, 25), (2.5, 1, 150),
     ];
 
+    /// <summary>
+    /// (speed, average, max change percent, expected rank) for
+    /// <see cref="UnderlinePace.ColourForMapAverage"/>, in WPM at an average of 200 (the ramp reads a
+    /// RATIO, so any common unit will do, and WPM keeps the ratios exact). At p percent full green is
+    /// 200 / (1 + p/100) and full red 200 * (1 + p/200): the threshold cases at 25, 50, 100 and 150,
+    /// the neutral average, the clamp past both ends, a zero speed (full green) and a zero average
+    /// (neutral). A null max change is the default (100). The expected rank is the
+    /// <see cref="UnderlinePace.ColourForRank"/> the colour must equal, checked on the C# first.
+    /// </summary>
+    private static readonly (double Speed, double Average, double? MaxChange, double Rank)[] map_average_probes =
+    [
+        (100, 200, 100, 0), (200, 200, 100, 0.5), (300, 200, 100, 1), (50, 200, 100, 0), (400, 200, 100, 1),
+        (160, 200, 25, 0), (225, 200, 25, 1), (400d / 3, 200, 50, 0), (250, 200, 50, 1), (80, 200, 150, 0), (350, 200, 150, 1),
+        (0, 200, null, 0), (100, 200, null, 0), (300, 200, null, 1), (250, 200, null, 0.875), (150, 200, null, 1d / 6),
+        (100, 0, null, 0.5),
+    ];
+
     private static readonly Lazy<(List<(string Name, string Osu)> Maps, JsonElement Browser)> run = new(() =>
     {
         var maps = Fixtures();
@@ -65,6 +86,7 @@ public class UnderlinePaceParityTest
                 payload.Append(',');
 
             payload.Append("{\"name\":").Append(JsonSerializer.Serialize(maps[i].Name));
+            payload.Append(",\"avgWpm\":").Append(Json(AverageWpmOf(Decode(maps[i].Osu))));
             payload.Append(",\"osu\":").Append(JsonSerializer.Serialize(maps[i].Osu)).Append('}');
         }
 
@@ -72,6 +94,8 @@ public class UnderlinePaceParityTest
         payload.Append(string.Join(",", rank_probes.Select(r => r is double d ? d.ToString("R", CultureInfo.InvariantCulture) : "null")));
         payload.Append("],\"previous\":[");
         payload.Append(string.Join(",", previous_probes.Select(p => $"[{Json(p.Speed)},{Json(p.Previous)},{Json(p.MaxChange)}]")));
+        payload.Append("],\"mapAverage\":[");
+        payload.Append(string.Join(",", map_average_probes.Select(p => $"[{Json(p.Speed)},{Json(p.Average)},{Json(p.MaxChange)}]")));
         payload.Append("]}");
 
         string path = Path.Combine(Path.GetTempPath(), $"typebeat-pacebands-{Guid.NewGuid():N}.json");
@@ -180,6 +204,14 @@ public class UnderlinePaceParityTest
                       .ToArray();
     }
 
+    /// <summary>
+    /// The map's whole-map average WPM as the desktop's lyric stack reads it for the map-relative
+    /// mode (<see cref="LyricPaceStatistics"/> over the lines' sources, default stream), which is
+    /// the figure the server stores as <c>beatmaps.wpm</c> and serves to /play as <c>avg_wpm</c>.
+    /// </summary>
+    private static double AverageWpmOf(TypingLine[] lines)
+        => LyricPaceStatistics.Compute(lines.Select(l => l.Source), false).AverageWpm;
+
     private static string Json(double? value) => value is double d ? d.ToString("R", CultureInfo.InvariantCulture) : "null";
 
     private static void AssertColour(JsonElement browser, Color4 expected, string what)
@@ -209,7 +241,19 @@ public class UnderlinePaceParityTest
     public void TheBrowserRankedBandsMatchBuildBandsOnEveryFixture()
         => AssertBands("ranked", UnderlinePace.BuildBands);
 
-    private static void AssertBands(string mode, Func<TypingLine[], PaceBand[][]> build)
+    /// <summary>
+    /// The same sweep in the MAP-RELATIVE mode (<see cref="UnderlinePace.BuildMapRelativeBands"/>),
+    /// the desktop's default since PR 5 and what /play draws when the map's average WPM is served,
+    /// against the same average on both sides. This mode is neutral only on a band paced at
+    /// EXACTLY the average, which no real fixture is guaranteed to hold, so the sweep does not
+    /// demand a neutral band; <see cref="TheMapAverageRampMatchesColourForMapAverage"/> pins the
+    /// neutral average directly.
+    /// </summary>
+    [Test]
+    public void TheBrowserMapRelativeBandsMatchBuildMapRelativeBandsOnEveryFixture()
+        => AssertBands("mapRelative", lines => UnderlinePace.BuildMapRelativeBands(lines, AverageWpmOf(lines), authoredSyllablesOnly: true), requireNeutral: false);
+
+    private static void AssertBands(string mode, Func<TypingLine[], PaceBand[][]> build, bool requireNeutral = true)
     {
         var (maps, browser) = run.Value;
         var browserMaps = browser.GetProperty("maps");
@@ -275,7 +319,8 @@ public class UnderlinePaceParityTest
             Assert.That(total, Is.GreaterThan(0), "the fixtures produced bands");
             Assert.That(fast, Is.GreaterThan(0), "the fixtures reach the fast (red) end of the ramp");
             Assert.That(slow, Is.GreaterThan(0), "the fixtures reach the slow (green) end of the ramp");
-            Assert.That(neutralBands, Is.GreaterThan(0), "the fixtures keep a neutral middle");
+            if (requireNeutral)
+                Assert.That(neutralBands, Is.GreaterThan(0), "the fixtures keep a neutral middle");
             Assert.That(markers, Is.GreaterThan(0), "the fixtures cut at least one word at a syllable subdivision");
         });
 
@@ -304,6 +349,39 @@ public class UnderlinePaceParityTest
                     : UnderlinePace.ColourForPreviousSpeed(speed, previous);
 
                 AssertColour(probes[i], expected, $"speed {speed} after {previous?.ToString(CultureInfo.InvariantCulture) ?? "nothing"} at {maxChange?.ToString(CultureInfo.InvariantCulture) ?? "default"}");
+            }
+        });
+    }
+
+    /// <summary>
+    /// <see cref="UnderlinePace.ColourForMapAverage"/> against the browser's
+    /// <c>paceColourForMapAverage</c>, and both against the rank each threshold case must land on:
+    /// the full-green and full-red thresholds at every clamp-legal percentage, the neutral average,
+    /// the clamp past both ends, a zero speed and a zero average.
+    /// </summary>
+    [Test]
+    public void TheMapAverageRampMatchesColourForMapAverage()
+    {
+        var probes = run.Value.Browser.GetProperty("mapAverageProbes");
+
+        Assert.That(probes.GetArrayLength(), Is.EqualTo(map_average_probes.Length));
+
+        Assert.Multiple(() =>
+        {
+            for (int i = 0; i < map_average_probes.Length; i++)
+            {
+                var (speed, average, maxChange, rank) = map_average_probes[i];
+                var expected = maxChange is double max
+                    ? UnderlinePace.ColourForMapAverage(speed, average, max)
+                    : UnderlinePace.ColourForMapAverage(speed, average);
+                string what = $"{speed.ToString(CultureInfo.InvariantCulture)} against {average.ToString(CultureInfo.InvariantCulture)} at {maxChange?.ToString(CultureInfo.InvariantCulture) ?? "default"}";
+
+                var atRank = UnderlinePace.ColourForRank(rank);
+                Assert.That(expected.R, Is.EqualTo(atRank.R).Within(colour_tolerance), $"{what}: C# lands on rank {rank} (R)");
+                Assert.That(expected.G, Is.EqualTo(atRank.G).Within(colour_tolerance), $"{what}: C# lands on rank {rank} (G)");
+                Assert.That(expected.B, Is.EqualTo(atRank.B).Within(colour_tolerance), $"{what}: C# lands on rank {rank} (B)");
+                Assert.That(expected.A, Is.EqualTo(atRank.A).Within(colour_tolerance), $"{what}: C# lands on rank {rank} (A)");
+                AssertColour(probes[i], expected, what);
             }
         });
     }

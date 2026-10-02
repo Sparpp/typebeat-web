@@ -595,13 +595,17 @@
     // The rail under a line is cut into one band per WORD (the word gap that closes it included),
     // and since PR 3 per syllable subdivision too (a word is cut again at each of its
     // syllableMarkerCells). Each band is tinted by its speed in countable cells per millisecond, in
-    // one of two modes. The RELATIVE mode (UnderlinePace.BuildRelativeBands, the one the desktop's
-    // LyricStage draws since PR 3 and therefore what /play draws) compares each band with the band
-    // before it, across line breaks: a DEFAULT_MAX_CHANGE_PERCENT rise reaches the full error red, the
-    // same fall the full slow green. The WHOLE-MAP mode (UnderlinePace.BuildBands, the pre-PR 3 draw,
-    // kept for the mirror) ranks every band against the map: the middle half stays the neutral rail,
-    // the fast quartile shades red and the slow one green. Both lift from 0.20 to 0.34 alpha. Display
-    // only; nothing judges, scores or submits off it. Pinned against both C# builders in WireCompat.
+    // one of three modes. The MAP-RELATIVE mode (UnderlinePace.BuildMapRelativeBands, the desktop's
+    // default PaceColourMode since PR 5 and therefore what /play draws when the map's average WPM is
+    // known) compares each band with the map's average pace: at DEFAULT_MAX_CHANGE_PERCENT, half that
+    // much faster than the average reaches the full error red and twice as slow the full slow green.
+    // The RELATIVE mode (UnderlinePace.BuildRelativeBands, the desktop's draw from PR 3 to PR 5 and
+    // /play's fallback when no average is served) compares each band with the band before it, across
+    // line breaks: a DEFAULT_MAX_CHANGE_PERCENT rise reaches the full error red, the same fall the
+    // full slow green. The WHOLE-MAP mode (UnderlinePace.BuildBands, the pre-PR 3 draw, kept for the
+    // mirror) ranks every band against the map: the middle half stays the neutral rail, the fast
+    // quartile shades red and the slow one green. All lift from 0.20 to 0.34 alpha. Display only;
+    // nothing judges, scores or submits off it. Pinned against all three C# builders in WireCompat.
     const PACE_NEUTRAL_ALPHA = 0.20;      // UnderlinePace.NEUTRAL_ALPHA
     const PACE_HUED_ALPHA = 0.34;         // UnderlinePace.HUED_ALPHA
     const PACE_NEUTRAL_LO_RANK = 0.25;    // UnderlinePace.NEUTRAL_LO_RANK
@@ -610,6 +614,9 @@
     // UnderlinePace.DEFAULT_MAX_CHANGE_PERCENT, the desktop's PaceColourMaxChange setting default.
     // /play has no settings surface, so it takes the default, as it does every display setting.
     const PACE_DEFAULT_MAX_CHANGE_PERCENT = 100;
+    // LyricPaceStatistics.CHARS_PER_WORD: how BuildMapRelativeBands turns an average WPM into the
+    // countable cells per millisecond a band's speed is measured in.
+    const PACE_CHARS_PER_WORD = 5;
     // TypeBeatStyle.SungAccent (#7ec8e3), ErrorChar (#ca4754) and PaceSlowAccent (#6ed26e), as the
     // desktop's byte-constructed Color4s: channels in [0, 1].
     const PACE_SUNG_ACCENT = { r: 126 / 255, g: 200 / 255, b: 227 / 255 };
@@ -674,6 +681,30 @@
         }
         if (change < 0) {
             return paceColourForRank(PACE_NEUTRAL_LO_RANK - Math.min(-change / threshold, 1) * PACE_NEUTRAL_LO_RANK);
+        }
+        return paceColourForRank(0.5);
+    }
+
+    /// UnderlinePace.ColourForMapAverage: the MAP-RELATIVE mode's band colour, from the band's speed
+    /// against the map's average, both in the same units. At a maximum change of p percent, full
+    /// green is average / (1 + p/100) and full red is average * (1 + p/200); the average itself is
+    /// neutral. A non-finite speed or a non-finite or non-positive average is neutral, and a speed at
+    /// or below zero is the full green end (rank 0). The threshold is clamped to [25, 150] percent,
+    /// and a non-finite one falls back to the default.
+    function paceColourForMapAverage(speed, averageSpeed, maxChangePercent) {
+        if (!isFinite(speed) || !isFinite(averageSpeed) || averageSpeed <= 0) return paceColourForRank(0.5);
+        if (speed <= 0) return paceColourForRank(0);
+        const max = maxChangePercent === undefined ? PACE_DEFAULT_MAX_CHANGE_PERCENT : maxChangePercent;
+        const threshold = isFinite(max)
+            ? Math.min(150, Math.max(25, max)) / 100
+            : PACE_DEFAULT_MAX_CHANGE_PERCENT / 100;
+        if (speed > averageSpeed) {
+            const amount = Math.min((speed / averageSpeed - 1) / (threshold / 2), 1);
+            return paceColourForRank(PACE_NEUTRAL_HI_RANK + amount * (1 - PACE_NEUTRAL_HI_RANK));
+        }
+        if (speed < averageSpeed) {
+            const amount = Math.min((averageSpeed / speed - 1) / threshold, 1);
+            return paceColourForRank(PACE_NEUTRAL_LO_RANK - amount * PACE_NEUTRAL_LO_RANK);
         }
         return paceColourForRank(0.5);
     }
@@ -754,11 +785,12 @@
     /// endCellExclusive, colour } per line. Each line's last segment closes on the END of its sung
     /// polyline (UnderlinePace.SungEndOf reads TypingLine.SweepEndTime, which is that anchor), taken
     /// from buildSungPoints so the band and the fill drawn over it cannot drift apart, and each line
-    /// is cut at its own syllableMarkerCells as well as its word gaps. `relativeToPrevious` picks the
-    /// colour: each band against the band before it, across line breaks
-    /// (paceColourForPreviousSpeed), or its map-wide rank (paceColourForRank). Run ONCE per map,
-    /// beside sungPoints; never per frame.
-    function paceBandsOf(lines, sungPointsPerLine, relativeToPrevious, maxChangePercent) {
+    /// is cut at its own syllableMarkerCells as well as its word gaps. The colour is each band
+    /// against the map's average speed when `mapAverageSpeed` is a number
+    /// (paceColourForMapAverage), else, by `relativeToPrevious`, against the band before it, across
+    /// line breaks (paceColourForPreviousSpeed), or its map-wide rank (paceColourForRank). Run ONCE
+    /// per map, beside sungPoints; never per frame.
+    function paceBandsOf(lines, sungPointsPerLine, relativeToPrevious, maxChangePercent, mapAverageSpeed) {
         const perLine = new Array(lines.length);
         const speeds = [];
         for (let k = 0; k < lines.length; k++) {
@@ -766,14 +798,17 @@
             perLine[k] = paceSegmentLine(lines[k].cells, points[points.length - 1].t, lines[k].syllableMarkerCells);
             for (const segment of perLine[k]) speeds.push(segment.speed);
         }
-        const ranks = relativeToPrevious ? [] : paceRanksOf(speeds);
+        const mapRelative = typeof mapAverageSpeed === 'number';
+        const ranks = relativeToPrevious || mapRelative ? [] : paceRanksOf(speeds);
         let at = 0;
         let previousSpeed = null;
         return perLine.map(function (segments) {
             return segments.map(function (segment) {
-                const colour = relativeToPrevious
-                    ? paceColourForPreviousSpeed(segment.speed, previousSpeed, maxChangePercent)
-                    : paceColourForRank(ranks[at]);
+                const colour = mapRelative
+                    ? paceColourForMapAverage(segment.speed, mapAverageSpeed, maxChangePercent)
+                    : relativeToPrevious
+                        ? paceColourForPreviousSpeed(segment.speed, previousSpeed, maxChangePercent)
+                        : paceColourForRank(ranks[at]);
                 previousSpeed = segment.speed;
                 at++;
                 return {
@@ -786,9 +821,19 @@
     }
 
     /// UnderlinePace.BuildRelativeBands at DEFAULT_MAX_CHANGE_PERCENT: what the desktop's LyricStage
-    /// draws since PR 3, and therefore what /play draws.
+    /// drew from PR 3 to PR 5, and what /play draws when the map's average WPM is not known.
     function buildPaceBands(lines, sungPointsPerLine) {
         return paceBandsOf(lines, sungPointsPerLine, true, PACE_DEFAULT_MAX_CHANGE_PERCENT);
+    }
+
+    /// UnderlinePace.BuildMapRelativeBands at DEFAULT_MAX_CHANGE_PERCENT: the desktop's default
+    /// PaceColourMode since PR 5, drawn by /play whenever the map's average WPM is known. The
+    /// average arrives in words per minute (beatmaps.wpm, the same whole-map average the desktop
+    /// reads off LyricPaceStatistics) and is converted to countable cells per millisecond exactly as
+    /// the C# converts it.
+    function buildMapRelativePaceBands(lines, sungPointsPerLine, averageWpm) {
+        return paceBandsOf(lines, sungPointsPerLine, false, PACE_DEFAULT_MAX_CHANGE_PERCENT,
+            averageWpm * PACE_CHARS_PER_WORD / 60000);
     }
 
     /// UnderlinePace.BuildBands, the whole-map percentile mode the desktop drew before PR 3. Not
@@ -1689,10 +1734,15 @@
         // The SONG's playhead, per line, precomputed once: independent of where the player is,
         // which is the whole point (you can see yourself rushing or dragging against it).
         const sungPoints = beatmap.lines.map(buildSungPoints);
-        // The underline PACE HUE's bands (backlog 317, UnderlinePace.BuildBands), one array per line,
-        // precomputed once beside the playhead: the colours are map constants, ranked across the
-        // whole map, so no per-frame path may ever reach this.
-        const paceBands = buildPaceBands(beatmap.lines, sungPoints);
+        // The underline PACE HUE's bands (backlog 317, UnderlinePace), one array per line,
+        // precomputed once beside the playhead: the colours are map constants, so no per-frame path
+        // may ever reach this. MAP-RELATIVE (the desktop's default since PR 5) when the host served
+        // the map's average WPM (opts.averageWpm, the diffs route's avg_wpm), and the RELATIVE mode
+        // otherwise, which is what /play drew before.
+        const averageWpm = opts.averageWpm;
+        const paceBands = typeof averageWpm === 'number' && isFinite(averageWpm) && averageWpm > 0
+            ? buildMapRelativePaceBands(beatmap.lines, sungPoints, averageWpm)
+            : buildPaceBands(beatmap.lines, sungPoints);
 
         // The skippable stretches of this map, computed once: the qualifying instrumental gaps
         // (the mirror of what the server priced into beatmaps.skippable_s) and the intro run-up.
@@ -3250,10 +3300,12 @@
         currentSyllableIn,
         paceColourForRank,
         paceColourForPreviousSpeed,
+        paceColourForMapAverage,
         paceSegmentLine,
         paceRanksOf,
         buildPaceBands,
         buildRankedPaceBands,
+        buildMapRelativePaceBands,
         paceColourCss,
         // The cell-state feedback (backlog 316): the space error dot rule and its pulse curve,
         // pure, so the display harness pins them against the desktop's SpaceErrorDotTest cases.
