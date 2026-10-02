@@ -89,8 +89,9 @@ builder.Services.AddSingleton<StartupSweepGate>();
 builder.Services.AddHostedService<StartupSweeps>();
 
 // Backlog 364: the public R2 bucket the big downloads 302 to on the Cloudflare hosts (dual-home; off
-// unless every TYPEBEAT_R2_* key is set, and then nothing changes), plus its installer catalog and
-// the never-awaited package backfill.
+// unless every TYPEBEAT_R2_* key is set, and then nothing changes), plus its installer catalog,
+// the never-awaited package backfill and (backlog 380) the releases mirror that copies
+// /data/downloads to the bucket's downloads/ prefix.
 builder.Services.AddPublicObjectStore(builder.Configuration);
 
 // Disk guard (backlog 365): refuses replay, BSS and avatar/banner writes below the upload floor and
@@ -348,6 +349,9 @@ OpsEndpoints.Map(app);
 // Offsite backup freshness for the same bot (backlog 367), same gate: ages of the stamps
 // deploy/backup.sh writes after each verified R2 upload.
 OpsBackupsEndpoints.Map(app);
+
+// The releases mirror's last sweep and failing files (backlog 380), same gate.
+OpsMirrorEndpoints.Map(app);
 
 // The in-browser web player's backend (score tokens/submission + map/audio serving). Additive;
 // cookie-session authed, mirrors the bearer score flow in ScoreEndpoints.

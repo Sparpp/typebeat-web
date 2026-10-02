@@ -252,6 +252,9 @@ public class PublicObjectStoreUnitTest
             throw new IOException("bucket unreachable");
         }
 
+        public Task<IReadOnlyList<PublicObjectInfo>> ListAsync(string prefix, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<PublicObjectInfo>>([]);
+
         public string PublicUrl(string key) => "https://dl.example/" + key;
         public bool IsDirectHost(string host) => false;
     }

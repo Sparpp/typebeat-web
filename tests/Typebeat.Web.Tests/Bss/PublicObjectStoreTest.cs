@@ -377,6 +377,7 @@ public class PublicObjectStoreTest
         writeLocal(StoreKeys.Release("RELEASES"), Encoding.UTF8.GetBytes("manifest"));
         writeLocal(StoreKeys.Release("releases.r2test.json"), Encoding.UTF8.GetBytes("{}"));
         writeLocal(StoreKeys.Release("bundled-r2test.typb"), Encoding.UTF8.GetBytes("bundled"));
+        bucket.Seed(StoreKeys.Release(nupkg), nupkgBytes);
 
         using (var cf = await BssFixture.Client.GetAsync($"/releases/{nupkg}"))
             assertRedirect(cf, $"downloads/releases/{nupkg}");
@@ -418,6 +419,55 @@ public class PublicObjectStoreTest
                 Assert.That(off.StatusCode, Is.EqualTo(HttpStatusCode.OK));
                 Assert.That(off.Headers.CacheControl?.ToString(), Is.EqualTo("public, max-age=86400"));
             });
+        }
+    }
+
+    [Test]
+    public async Task ReleaseFeed_ANupkgTheBucketLacks_StreamsFromTheBox_AndRedirectsOnceTheBucketHoldsIt()
+    {
+        // Backlog 380: the window between a ship landing on the box and the mirror uploading it.
+        const string nupkg = "typebeat-r2test-1.2.4-delta.nupkg";
+        byte[] nupkgBytes = Encoding.UTF8.GetBytes("delta bytes");
+        writeLocal(StoreKeys.Release(nupkg), nupkgBytes);
+
+        try
+        {
+            using (var notYet = await BssFixture.Client.GetAsync($"/releases/{nupkg}"))
+            {
+                Assert.Multiple(async () =>
+                {
+                    Assert.That(notYet.StatusCode, Is.EqualTo(HttpStatusCode.OK), "a Cloudflare host streams what the bucket lacks");
+                    Assert.That(notYet.Headers.CacheControl?.ToString(), Is.EqualTo("public, max-age=86400"));
+                    Assert.That(await notYet.Content.ReadAsByteArrayAsync(), Is.EqualTo(nupkgBytes));
+                });
+            }
+
+            // The mirror's upload, and the stat cache entry it forgets after every PUT.
+            bucket.Seed(StoreKeys.Release(nupkg), nupkgBytes);
+            installers.Forget(StoreKeys.Release(nupkg));
+
+            using (var mirrored = await BssFixture.Client.GetAsync($"/releases/{nupkg}"))
+                assertRedirect(mirrored, $"downloads/releases/{nupkg}");
+
+            using (var direct = await BssFixture.Client.GetAsync($"{direct_host}/releases/{nupkg}"))
+                Assert.That(direct.StatusCode, Is.EqualTo(HttpStatusCode.OK), "the direct hosts still stream");
+
+            // A bucket object the box no longer has still redirects (the bucket holds it); a
+            // package in neither is a plain 404 on either host.
+            File.Delete(localPath(StoreKeys.Release(nupkg)));
+
+            using (var bucketOnly = await BssFixture.Client.GetAsync($"/releases/{nupkg}"))
+                assertRedirect(bucketOnly, $"downloads/releases/{nupkg}");
+
+            bucket.Objects.Clear();
+            installers.ClearCache();
+
+            using (var neither = await BssFixture.Client.GetAsync($"/releases/{nupkg}"))
+                Assert.That(neither.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        }
+        finally
+        {
+            File.Delete(localPath(StoreKeys.Release(nupkg)));
         }
     }
 

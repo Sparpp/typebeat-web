@@ -180,6 +180,21 @@ public class ApiRegressionGuardTest
     }
 
     [Test]
+    public async Task OpsMirror_WithNoBuddyKeyConfigured_IsInvisible()
+    {
+        // The releases mirror readout (backlog 380) sits behind the same gate as the disk readout,
+        // so with TYPEBEAT_BUDDY_KEY unset it must 404 with no body too.
+        using var response = await WebsiteFixture.Client.GetAsync("/api/v2/ops/mirror");
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(body, Is.Empty);
+        });
+    }
+
+    [Test]
     public async Task RegistrationPost_WrongUserAgent_StillExact403Envelope()
     {
         // POST /users is the game client's registration wire route; only GET/HEAD /users/* is

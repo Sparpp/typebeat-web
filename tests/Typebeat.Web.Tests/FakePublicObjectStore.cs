@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Tests;
@@ -13,7 +14,11 @@ public sealed class FakePublicObjectStore : IPublicObjectStore
 {
     public const string PublicBaseUrl = "https://dl.example.test";
 
-    public sealed record StoredObject(byte[] Bytes, string ContentType, string CacheControl, string? ContentDisposition);
+    /// <summary>
+    /// One object. <paramref name="ETag"/> is what a listing reports: the hex MD5 of the bytes, as
+    /// R2 answers for a single-part PUT, unless a test seeds a multipart-shaped one.
+    /// </summary>
+    public sealed record StoredObject(byte[] Bytes, string ContentType, string CacheControl, string? ContentDisposition, string ETag);
 
     public bool Enabled { get; set; }
 
@@ -48,7 +53,8 @@ public sealed class FakePublicObjectStore : IPublicObjectStore
         using var buffer = new MemoryStream();
         await content.CopyToAsync(buffer, ct);
 
-        Objects[key] = new StoredObject(buffer.ToArray(), contentType, cacheControl, contentDisposition);
+        byte[] bytes = buffer.ToArray();
+        Objects[key] = new StoredObject(bytes, contentType, cacheControl, contentDisposition, md5(bytes));
         Log.Enqueue("PUT " + key);
     }
 
@@ -65,6 +71,24 @@ public sealed class FakePublicObjectStore : IPublicObjectStore
     public Task<long?> StatAsync(string key, CancellationToken ct = default)
         => Task.FromResult(Enabled && Objects.TryGetValue(key, out var o) ? (long?)o.Bytes.LongLength : null);
 
+    public Task<IReadOnlyList<PublicObjectInfo>> ListAsync(string prefix, CancellationToken ct = default)
+    {
+        if (!Enabled)
+            return Task.FromResult<IReadOnlyList<PublicObjectInfo>>([]);
+
+        if (FailLists)
+            throw new IOException("fake bucket unreachable");
+
+        return Task.FromResult<IReadOnlyList<PublicObjectInfo>>(Objects
+            .Where(o => o.Key.StartsWith(prefix, StringComparison.Ordinal))
+            .OrderBy(o => o.Key, StringComparer.Ordinal)
+            .Select(o => new PublicObjectInfo(o.Key, o.Value.Bytes.LongLength, o.Value.ETag))
+            .ToArray());
+    }
+
+    /// <summary>When set, every listing throws.</summary>
+    public bool FailLists { get; set; }
+
     public string PublicUrl(string key)
         => Enabled
             ? PublicObjectStoreOptions.BuildPublicUrl(PublicBaseUrl, key)
@@ -77,12 +101,18 @@ public sealed class FakePublicObjectStore : IPublicObjectStore
     {
         Enabled = false;
         FailPuts = false;
+        FailLists = false;
         OnPut = null;
         Objects.Clear();
         Log.Clear();
     }
 
-    /// <summary>Stores an object directly, as a ship script would (no metadata checks).</summary>
-    public void Seed(string key, byte[] bytes, string cacheControl = "no-cache")
-        => Objects[key] = new StoredObject(bytes, "application/octet-stream", cacheControl, null);
+    /// <summary>
+    /// Stores an object directly, as a ship script would (no metadata checks). <paramref name="etag"/>
+    /// defaults to the bytes' MD5; pass a "{hash}-{parts}" one for a multipart upload.
+    /// </summary>
+    public void Seed(string key, byte[] bytes, string cacheControl = "no-cache", string? etag = null)
+        => Objects[key] = new StoredObject(bytes, "application/octet-stream", cacheControl, null, etag ?? md5(bytes));
+
+    private static string md5(byte[] bytes) => Convert.ToHexStringLower(MD5.HashData(bytes));
 }

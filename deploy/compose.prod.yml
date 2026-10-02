@@ -110,8 +110,9 @@ services:
       # says which). ENDPOINT is the account's S3 endpoint, https://<ACCOUNT_ID>.r2.cloudflarestorage.com,
       # never a proxied zone (100 MB body cap). The token is the SERVER's bucket-scoped Object
       # Read and Write token, not CI's. TYPEBEAT_R2_DIRECT_HOSTS (comma separated) overrides the
-      # default direct hosts bss.typebeat.sh,bss.typebeat.mingda.sh. Run the releases backfill
-      # (deploy/README.md, "Large downloads on Cloudflare R2") BEFORE filling these in.
+      # default direct hosts bss.typebeat.sh,bss.typebeat.mingda.sh. With them set the app also
+      # mirrors /data/downloads (feed nupkgs, installers) to the bucket itself (backlog 380), see
+      # deploy/README.md, "Large downloads on Cloudflare R2".
       TYPEBEAT_R2_ENDPOINT: "${TYPEBEAT_R2_ENDPOINT:-}"
       TYPEBEAT_R2_BUCKET: "${TYPEBEAT_R2_BUCKET:-}"
       TYPEBEAT_R2_ACCESS_KEY_ID: "${TYPEBEAT_R2_ACCESS_KEY_ID:-}"

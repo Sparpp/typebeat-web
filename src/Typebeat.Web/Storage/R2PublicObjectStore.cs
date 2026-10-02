@@ -83,6 +83,25 @@ public sealed class R2PublicObjectStore : IPublicObjectStore, IDisposable
         }
     }
 
+    public async Task<IReadOnlyList<PublicObjectInfo>> ListAsync(string prefix, CancellationToken ct = default)
+    {
+        var objects = new List<PublicObjectInfo>();
+        var request = new ListObjectsV2Request { BucketName = options.Bucket, Prefix = prefix };
+
+        while (true)
+        {
+            var page = await client.ListObjectsV2Async(request, ct);
+
+            foreach (var o in page.S3Objects ?? [])
+                objects.Add(new PublicObjectInfo(o.Key, o.Size ?? 0, o.ETag?.Trim('"')));
+
+            if (page.IsTruncated != true || string.IsNullOrEmpty(page.NextContinuationToken))
+                return objects;
+
+            request.ContinuationToken = page.NextContinuationToken;
+        }
+    }
+
     public string PublicUrl(string key) => PublicObjectStoreOptions.BuildPublicUrl(options.PublicBaseUrl, key);
 
     public bool IsDirectHost(string host) => options.DirectHosts.Contains(host);

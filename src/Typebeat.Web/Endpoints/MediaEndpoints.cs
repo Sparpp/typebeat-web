@@ -194,20 +194,24 @@ public static class MediaEndpoints
     /// is visible immediately; packages (*.nupkg, *.exe) are content-named and effectively
     /// immutable, but a bounded day keeps takedown behavior consistent with other media.
     ///
-    /// <para>Backlog 364: a *.nupkg on a Cloudflare host redirects to the bucket's
-    /// downloads/releases/{file} without consulting the box (both copies are uploaded and pruned
-    /// by the same ship scripts, and every current nupkg is backfilled before the bucket is
-    /// switched on). The MANIFESTS never redirect: they are KB-sized, Velopack appends per-client
-    /// query parameters to them, their no-cache is what makes a release visible at once, and both
-    /// prunes and the ship verify read them here. bundled-*.typb is not a nupkg and stays here
-    /// too.</para>
+    /// <para>Backlog 364, narrowed by 380: a *.nupkg on a Cloudflare host redirects to the bucket's
+    /// downloads/releases/{file} only when the bucket HOLDS it (the installers' rule,
+    /// <see cref="GameInstallers.PublicReleaseSizeAsync"/>, a stat cached for a minute), and
+    /// otherwise streams from the box. The bucket copy is the box's, mirrored by
+    /// <see cref="ReleasesMirror"/>, so between a ship landing on the box and the mirror uploading
+    /// it (or with the mirror down) an updater still gets its package. The MANIFESTS never
+    /// redirect: they are KB-sized, Velopack appends per-client query parameters to them, their
+    /// no-cache is what makes a release visible at once, and both prunes and the ship verify read
+    /// them here. bundled-*.typb is not a nupkg and stays here too.</para>
     /// </summary>
-    private static async Task<IResult> ServeReleaseAssetAsync(string file, HttpContext ctx, IFileStore store, IPublicObjectStore publicStore)
+    private static async Task<IResult> ServeReleaseAssetAsync(
+        string file, HttpContext ctx, IFileStore store, IPublicObjectStore publicStore, GameInstallers installers)
     {
         if (string.IsNullOrEmpty(file) || file.Contains(".."))
             return Results.NotFound();
 
-        if (file.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase) && wantsRedirect(ctx, publicStore))
+        if (file.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase) && wantsRedirect(ctx, publicStore)
+            && await installers.PublicReleaseSizeAsync(file, ctx.RequestAborted) != null)
             return redirectTo(ctx, publicStore, StoreKeys.Release(file));
 
         var stream = await store.OpenObjectReadAsync(StoreKeys.Release(file), ctx.RequestAborted);
@@ -215,8 +219,7 @@ public static class MediaEndpoints
         if (stream == null)
             return Results.NotFound();
 
-        bool isManifest = !file.Contains('.') || file.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
-        ctx.Response.Headers.CacheControl = isManifest ? "no-cache" : "public, max-age=86400";
+        ctx.Response.Headers.CacheControl = ReleasesMirror.IsManifest(file) ? "no-cache" : "public, max-age=86400";
 
         return Results.Stream(stream, "application/octet-stream", enableRangeProcessing: true);
     }

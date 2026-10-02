@@ -37,6 +37,13 @@ public interface IPublicObjectStore
     /// <summary>The stored object's size in bytes, or null when it is absent.</summary>
     Task<long?> StatAsync(string key, CancellationToken ct = default);
 
+    /// <summary>
+    /// Every object whose key starts with <paramref name="prefix"/>, with its size and ETag (the
+    /// releases mirror's view of what the bucket holds, backlog 380). Complete: a backend that
+    /// pages its listing pages through all of it.
+    /// </summary>
+    Task<IReadOnlyList<PublicObjectInfo>> ListAsync(string prefix, CancellationToken ct = default);
+
     /// <summary>The absolute https URL the public custom domain serves <paramref name="key"/> at.</summary>
     string PublicUrl(string key);
 
@@ -48,6 +55,13 @@ public interface IPublicObjectStore
     /// </summary>
     bool IsDirectHost(string host);
 }
+
+/// <summary>
+/// One listed object. <paramref name="ETag"/> is as the backend reports it, quotes stripped: for a
+/// single-part PUT on R2 (and S3) it is the hex MD5 of the bytes, for a multipart upload it is
+/// "{hash}-{parts}" and says nothing about the content.
+/// </summary>
+public sealed record PublicObjectInfo(string Key, long Size, string? ETag);
 
 /// <summary>
 /// The configuration of the public bucket. All five of TYPEBEAT_R2_ENDPOINT, TYPEBEAT_R2_BUCKET,
@@ -143,6 +157,9 @@ public sealed class DisabledPublicObjectStore(string reason = "not configured") 
         => throw new InvalidOperationException("The public object store is disabled.");
 
     public Task<long?> StatAsync(string key, CancellationToken ct = default) => Task.FromResult<long?>(null);
+
+    public Task<IReadOnlyList<PublicObjectInfo>> ListAsync(string prefix, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PublicObjectInfo>>([]);
 
     public string PublicUrl(string key) => throw new InvalidOperationException("The public object store is disabled.");
 

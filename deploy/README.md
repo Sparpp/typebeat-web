@@ -347,7 +347,7 @@ automatically now, and the parts that still need you.
 
 | What | On 2026-09-04 | Held down by |
 |---|---|---|
-| `/data/downloads/releases/*.nupkg` (Velopack update feed) | 44 GB | the ship path prunes after every upload (on the box AND, when configured, in R2) |
+| `/data/downloads/releases/*.nupkg` (Velopack update feed) | 44 GB | the ship path prunes the box after every upload; with R2 configured the app's releases mirror deletes the pruned files from the bucket (backlog 380) |
 | docker build cache | 7 GB | `docker builder prune -f`, last step of every CI deploy |
 | dangling `<none>` app images, one per deploy | not measured | `docker image prune -f`, added after the SECOND fill, below |
 | container json logs (caddy's alone) | 352 MB | `logging:` caps in `compose.prod.yml`, 10m x 3 per service |
@@ -387,10 +387,10 @@ than the window: Velopack falls back to the newest Full package when no delta ch
 the newest Full is always feed-referenced by rule 1. `-DryRun` prints the exact delete list and
 stops, which is the way to sanity-check it after changing `Keep`.
 
-With R2 configured (backlog 364) every nupkg is uploaded to the bucket as well as the box, and the
-prune runs a second pass over the bucket's `downloads/releases/` with the SAME keep set, regex and
-`Keep`, so the two copies never drift. The Linux and macOS build workflows do the same. The bucket
-pass is skipped (with a message) when its credentials are absent, and the box pass still runs.
+With R2 configured the bucket follows the box by itself (backlog 380, the releases mirror in
+"Large downloads on Cloudflare R2" below): a nupkg this prune deletes from `/data/downloads/releases`
+is deleted from the bucket's `downloads/releases/` on the mirror's next sweep, so the prune only ever
+has to touch the box.
 
 ### Container logs (automatic, but NOT retroactive)
 
@@ -691,8 +691,9 @@ un-versioned names, so their keys are set once and never change:
 All three must be declared in `compose.prod.yml`'s `environment:` block: compose does not forward
 undeclared host env vars, so an `.env` entry with no matching declaration is silently ignored.
 
-With R2 configured the installers are ALSO uploaded to the bucket (`downloads/<name>`, Cache-Control
-`no-cache` because the names are stable, so the edge revalidates by ETag). The card then takes its
+With R2 configured the app's releases mirror ALSO copies the installers to the bucket
+(`downloads/<name>`, Cache-Control `no-cache` because the names are stable, so the edge revalidates
+by ETag). The card then takes its
 size from the bucket's copy (cached about a minute) and `/download/game*` on the Cloudflare hosts
 302s there; the box keeps its copy for the direct mirror link and as the fallback when the bucket
 has none. The keys above still decide which cards exist.
@@ -709,7 +710,7 @@ the download counter:
 | Route | Redirects when | Bucket key |
 |---|---|---|
 | `/download/game`, `-linux`, `-macos` | the bucket holds the installer | `downloads/<name>` |
-| `/releases/*.nupkg` | always (so the bucket must hold every live nupkg BEFORE you switch on) | `downloads/releases/<name>` |
+| `/releases/*.nupkg` | the bucket holds the file (since backlog 380; a stat cached about a minute) | `downloads/releases/<name>` |
 | `/beatmapsets/<id>/download` and the `/api/v2` alias | the set is published and `set_versions.public_key` is set; never for `?noVideo=1` | `packages/<id>/<v>-<hash16>.typb` |
 
 The direct-origin hosts (`bss.typebeat.sh`, `bss.typebeat.mingda.sh`, override with
@@ -721,8 +722,24 @@ box keeps every byte it has today; the bucket only holds COPIES and is not a bac
 Packages reach the bucket from `PackageIngest` after each commit (a failure is logged and the
 download streams locally), the ingest's prune deletes the bucket copies of versions it prunes, and a
 background backfill copies the latest package of every published set that has none yet (it starts
-with the app, is never awaited, and resumes on the next boot). Installers and nupkgs reach it from
-`ship-client.ps1` and the Linux/macOS workflows.
+with the app, is never awaited, and resumes on the next boot).
+
+Installers and nupkgs reach it from the BOX, not from the ship paths (backlog 380): the app's
+releases mirror (`Storage/ReleasesMirror.cs`) owns the bucket's `downloads/` prefix. It sweeps at
+start, on every change under `/data/downloads` (a file watcher, debounced 10 s) and every 5 minutes
+regardless. Each sweep uploads every file in `/data/downloads/releases` except the manifests
+(`RELEASES`, `releases.*.json`, `assets.*.json`, never mirrored) and dot-named temps, plus the
+configured installers, whenever the bucket's object is missing, a different size, or (for an object
+it wrote itself, whose ETag is the MD5) different content; and it deletes every object under
+`downloads/` whose box file is gone, except when the box holds nothing mirrorable at all (an
+unmounted root must not empty the bucket). It never touches `packages/`. Each upload or delete is
+tried three times; whatever still fails is retried on the next sweep. One log line per sweep
+(`docker logs typebeat-web-app-1 | grep "Releases mirror"`), and `GET /api/v2/ops/mirror` (the
+`X-Buddy-Key` gate, 404 when `TYPEBEAT_BUDDY_KEY` is unset) returns the last sweep's counts and
+`error`, and every failing key with when it first failed. Because a nupkg only redirects once the
+bucket holds it, a mirror that is behind or down means updates stream from the box, never a 404 at
+the edge. Objects the 364 backfill uploaded multipart carry an ETag that is not the MD5, so for those
+a size match is accepted (counted as `unverified`) rather than re-uploading every package once.
 
 **Turning it on, in order:**
 
@@ -732,9 +749,11 @@ with the app, is never awaited, and resumes on the next boot). Installers and nu
    `.AppImage` are not cached by default); make sure WAF and Bot Fight Mode do not challenge the
    Velopack or osu.Framework user agents there. Free plan: files over 512 MB are not edge-cached.
    No bucket CORS is needed.
-2. Two bucket-scoped R2 API tokens with Object Read and Write: one for the server, one for CI and
-   `ship-client.ps1`. Never the account-wide token.
-3. Backfill the release feed and the installers from the box, then verify:
+2. One bucket-scoped R2 API token with Object Read and Write, for the server. Never the
+   account-wide token. (CI and `ship-client.ps1` no longer need one since backlog 380.)
+3. Optional since backlog 380 (the mirror's first sweep uploads everything the bucket lacks, and
+   the nupkg redirect waits for it): backfill the release feed and the installers from the box by
+   hand, then verify:
    ```
    docker run --rm -v typebeat-web_appdata:/data \
      -e RCLONE_CONFIG_R2_TYPE=s3 -e RCLONE_CONFIG_R2_PROVIDER=Cloudflare \

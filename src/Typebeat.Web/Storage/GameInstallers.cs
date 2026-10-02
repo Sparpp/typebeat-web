@@ -23,12 +23,24 @@ public sealed class GameInstallers(IFileStore store, IPublicObjectStore publicSt
     /// The bucket copy's size, or null when the store is disabled, the object is absent, or the
     /// stat failed (logged, not cached: the local file is the fallback either way).
     /// </summary>
-    public async Task<long?> PublicSizeAsync(string fileName, CancellationToken ct = default)
+    public Task<long?> PublicSizeAsync(string fileName, CancellationToken ct = default)
+        => PublicKeySizeAsync(StoreKeys.Download(fileName), ct);
+
+    /// <summary>
+    /// The same answer for one Velopack feed file (downloads/releases/{file}), which is what the
+    /// /releases/*.nupkg redirect asks since backlog 380: a nupkg redirects only once the bucket
+    /// holds it, so the window between a ship landing on the box and the mirror uploading it (or a
+    /// mirror that is down) streams from the box instead of 404ing at the edge.
+    /// </summary>
+    public Task<long?> PublicReleaseSizeAsync(string file, CancellationToken ct = default)
+        => PublicKeySizeAsync(StoreKeys.Release(file), ct);
+
+    /// <summary>The cached stat of any public key; see <see cref="PublicSizeAsync"/>.</summary>
+    public async Task<long?> PublicKeySizeAsync(string key, CancellationToken ct = default)
     {
         if (!publicStore.Enabled)
             return null;
 
-        string key = StoreKeys.Download(fileName);
         long now = Environment.TickCount64;
 
         if (statCache.TryGetValue(key, out var cached) && cached.ExpiresAt > now)
@@ -42,7 +54,7 @@ public sealed class GameInstallers(IFileStore store, IPublicObjectStore publicSt
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
-            logger.LogWarning(e, "Public store stat failed for {Key}; falling back to the local installer.", key);
+            logger.LogWarning(e, "Public store stat failed for {Key}; falling back to the local copy.", key);
             return null;
         }
 
@@ -68,4 +80,10 @@ public sealed class GameInstallers(IFileStore store, IPublicObjectStore publicSt
 
     /// <summary>Forgets every cached stat (tests, and nothing else, need this).</summary>
     public void ClearCache() => statCache.Clear();
+
+    /// <summary>
+    /// Forgets one key's cached stat. The releases mirror calls it after every PUT and DELETE it
+    /// makes, so a redirect never outlives the object it points at by a cache period.
+    /// </summary>
+    public void Forget(string key) => statCache.TryRemove(key, out _);
 }
