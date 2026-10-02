@@ -6,9 +6,12 @@
 // For each map it builds the browser's beatmap exactly as /play does (Core.buildBeatmap over
 // Core.parseLyricOsu, the default stream), runs the player's own precompute (display.buildPaceBands,
 // the RELATIVE mode /play draws since PR 3, which closes each line on buildSungPoints' last anchor
-// as mountPlayer does) and the whole-map RANKED mode beside it (display.buildRankedPaceBands), and
-// reports every band's cell range and colour under both. The previous-speed ramp is probed on its
-// own too (display.paceColourForPreviousSpeed).
+// as mountPlayer does), the whole-map RANKED mode beside it (display.buildRankedPaceBands) and the
+// MAP-RELATIVE mode /play draws since PR 5 when the map's average WPM is served
+// (display.buildMapRelativePaceBands, against the average the C# side hands over as `avgWpm`), and
+// reports every band's cell range and colour under all three. The previous-speed and map-average
+// ramps are probed on their own too (display.paceColourForPreviousSpeed,
+// display.paceColourForMapAverage).
 //
 // Usage: node PlayerPaceBandsHarness.cjs <path to typebeat-core.js> <path to the maps JSON>
 
@@ -38,6 +41,7 @@ const maps = input.maps.map(function (one) {
     const points = beatmap.lines.map(D.buildSungPoints);
     const bands = D.buildPaceBands(beatmap.lines, points);
     const ranked = D.buildRankedPaceBands(beatmap.lines, points);
+    const mapRelative = D.buildMapRelativePaceBands(beatmap.lines, points, one.avgWpm);
     const sungEnds = points.map(p => p[p.length - 1].t);
     const report = lineBands => lineBands.map(b => ({
         startCell: b.startCell,
@@ -58,7 +62,8 @@ const maps = input.maps.map(function (one) {
         speeds: beatmap.lines.map((line, k) => D.paceSegmentLine(line.cells, sungEnds[k], line.syllableMarkerCells).map(s => s.speed)),
         markers: beatmap.lines.map(line => (line.syllableMarkerCells || []).length),
         lines: bands.map(report),
-        ranked: ranked.map(report)
+        ranked: ranked.map(report),
+        mapRelative: mapRelative.map(report)
     };
 });
 
@@ -77,4 +82,10 @@ const previousProbes = input.previous.map(function (p) {
     return { r: c.r, g: c.g, b: c.b, a: c.a };
 });
 
-process.stdout.write(JSON.stringify({ maps: maps, rankProbes: rankProbes, previousProbes: previousProbes }));
+// ColourForMapAverage over [speed, average, maxChange] triples, null maxChange the default.
+const mapAverageProbes = (input.mapAverage || []).map(function (p) {
+    const c = D.paceColourForMapAverage(p[0], p[1], p[2] === null ? undefined : p[2]);
+    return { r: c.r, g: c.g, b: c.b, a: c.a };
+});
+
+process.stdout.write(JSON.stringify({ maps: maps, rankProbes: rankProbes, previousProbes: previousProbes, mapAverageProbes: mapAverageProbes }));

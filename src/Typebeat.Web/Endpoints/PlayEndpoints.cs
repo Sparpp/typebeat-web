@@ -145,7 +145,12 @@ public static class PlayEndpoints
                    -- average as the fallback so a difficulty the LyricPace v18 backfill has not
                    -- reached still shows a figure rather than losing the pill. Same substitution
                    -- and same fallback as the listing card's chip (BeatmapsetCardSql).
-                   coalesce(b.target_wpm, b.wpm::double precision) AS wpm
+                   coalesce(b.target_wpm, b.wpm::double precision) AS wpm,
+                   -- The plain whole-map average, which /play's underline pace hue draws its
+                   -- map-relative bands against (the desktop's default since PR 5 reads the same
+                   -- LyricPaceStatistics average). Null for a row LyricPace never priced, and the
+                   -- player then falls back to its relative bands.
+                   b.wpm::double precision AS avgWpm
             FROM beatmaps b
             WHERE b.set_id = @setId AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
             ORDER BY b.difficulty_rating DESC, b.id ASC
@@ -160,6 +165,7 @@ public static class PlayEndpoints
                 version_name = d.VersionName,
                 stars = d.Stars,
                 wpm = d.Wpm,
+                avg_wpm = d.AvgWpm,
                 colour = DifficultyColour.ForStars(d.Stars),
             }).ToList(),
         });
@@ -927,7 +933,7 @@ public static class PlayEndpoints
     private sealed record ServedOsuRow(string Filename, string ChecksumMd5);
 
     /// <summary>One live difficulty, as the picker's difficulty step renders it.</summary>
-    private sealed record DiffRow(long Id, string VersionName, double Stars, double? Wpm);
+    private sealed record DiffRow(long Id, string VersionName, double Stars, double? Wpm, double? AvgWpm);
 
     private sealed record BestScoreRow(long Id, long TotalScore);
 

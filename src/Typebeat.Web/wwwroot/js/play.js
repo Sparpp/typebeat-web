@@ -321,6 +321,11 @@
                 // (its [Metadata] Creator) by the player, so it needs no threading here.
                 stars: diffRow && typeof diffRow.stars === 'number' ? diffRow.stars : null,
                 difficulty: (diffRow && diffRow.version_name) || null,
+                // The map's whole-map average WPM (beatmaps.wpm, the diffs route's avg_wpm), which
+                // the underline pace hue draws its map-relative bands against, as the desktop does
+                // by default since PR 5. Absent (a deep link whose row was not found, or a row
+                // LyricPace never priced), the player falls back to the relative bands.
+                averageWpm: diffRow && typeof diffRow.avg_wpm === 'number' ? diffRow.avg_wpm : null,
                 onExit: showPicker,
                 onPlayStart: () => { tokenPromise = createToken(setId, diffId, beatmapHash); },
                 // Consulted while the results card is being built, once per card, so a "play again"

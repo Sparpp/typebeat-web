@@ -976,9 +976,10 @@ public class PackageIngestDbTest
 
     /// <summary>
     /// Creates a set with two allocated difficulty rows, ingests a first version carrying only
-    /// difficulty A, and forces it to 'ranked' exactly as a reviewer would.
+    /// difficulty A (on <paramref name="lyrics"/> when given, the fixture lyric otherwise), and
+    /// forces it to 'ranked' exactly as a reviewer would.
     /// </summary>
-    private async Task<(long SetId, long DiffA, long DiffB)> newRankedSetAsync()
+    private async Task<(long SetId, long DiffA, long DiffB)> newRankedSetAsync(string? lyrics = null)
     {
         await using var conn = await db.OpenAsync();
 
@@ -996,7 +997,9 @@ public class PackageIngestDbTest
         rankedDiffB = b;
 
         await ingestRankedAsync(
-            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id))),
+            ("a.osu", SyntheticPackage.Utf8(lyrics is null
+                ? SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id)
+                : SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id, lyrics: lyrics))),
             ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
             ("bg.jpg", SyntheticPackage.TinyPng()));
 
@@ -1602,6 +1605,74 @@ public class PackageIngestDbTest
             ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")));
 
         Assert.That(await fontOf(), Is.Null, "an upload without the key clears the stored font");
+    }
+
+    /// <summary>
+    /// ORIGINALS ARE NOT GAMEPLAY, end to end through the ingest (backlog 330/332 against the
+    /// backlog 173 demotion rule). A ranked map whose lyrics carry originals is re-uploaded with
+    /// ONLY its originals edited (a word original respelled, a line original added where there was
+    /// none): a new version is cut and the file's checksum moves, but the gameplay fingerprint does
+    /// not, so the set stays ranked with nothing audited, the original text the site shows is
+    /// updated, and the board's scores stay where they were.
+    /// </summary>
+    [Test]
+    [Order(27)]
+    public async Task OriginalsOnlyChange_KeepsTheRank_AndTheBoard()
+    {
+        string ranked = OriginalTextTest.original_lyrics;
+        var (id, a, _) = await newRankedSetAsync(ranked);
+
+        string respelled = ranked
+            .Replace("\"original\":\"мир\"", "\"original\":\"миру\"")
+            .Replace("{\"text\":\"hello world\",", "{\"text\":\"hello world\",\"original\":\"хелло ворлд\",");
+
+        Assert.That(respelled, Does.Contain("миру").And.Contain("хелло ворлд"), "the fixture still carries the spellings this edits");
+
+        (string? Fingerprint, string? Checksum, string? Original) before;
+        long scoreId;
+
+        await using (var conn = await db.OpenAsync())
+        {
+            before = await conn.QuerySingleAsync<(string?, string?, string?)>(
+                "SELECT gameplay_fingerprint, checksum_md5, lyrics_original FROM beatmaps WHERE id = @a", new { a });
+
+            scoreId = await conn.ExecuteScalarAsync<long>(
+                """
+                INSERT INTO scores (user_id, beatmap_id, total_score, accuracy, max_combo, rank, passed, ranked)
+                VALUES (@uploaderId, @a, 500000, 0.97, 40, 'A', true, true)
+                RETURNING id
+                """,
+                new { uploaderId, a });
+        }
+
+        Assert.That(before.Original, Is.EqualTo("Привет мир\n"), "the ranked version's originals: line 1's own, none on line 2");
+
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id, lyrics: respelled))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("ranked"), "an originals-only edit is not a gameplay change");
+        Assert.That(await auditOfAsync(id), Is.Empty);
+
+        await using (var conn = await db.OpenAsync())
+        {
+            var after = await conn.QuerySingleAsync<(string? Fingerprint, string? Checksum, string? Original)>(
+                "SELECT gameplay_fingerprint, checksum_md5, lyrics_original FROM beatmaps WHERE id = @a", new { a });
+            int version = await conn.ExecuteScalarAsync<int>("SELECT current_version FROM beatmapsets WHERE id = @id", new { id });
+            var score = await conn.QuerySingleAsync<(long BeatmapId, bool Ranked)>(
+                "SELECT beatmap_id AS BeatmapId, ranked AS Ranked FROM scores WHERE id = @scoreId", new { scoreId });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(version, Is.EqualTo(2), "a new version WAS cut");
+                Assert.That(after.Checksum, Is.Not.EqualTo(before.Checksum), "the .osu bytes changed, so its checksum moved");
+                Assert.That(after.Fingerprint, Is.EqualTo(before.Fingerprint), "and the gameplay fingerprint did not");
+                Assert.That(after.Original, Is.EqualTo("Привет мир\nхелло ворлд"), "the originals the site shows were updated");
+                Assert.That(score.BeatmapId, Is.EqualTo(a), "the score stays on its difficulty");
+                Assert.That(score.Ranked, Is.True, "and on the board");
+            });
+        }
     }
 
     private static string readEmbeddedMigration(string name)

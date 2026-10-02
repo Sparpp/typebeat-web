@@ -154,6 +154,7 @@ public class HealthLiveParityTest
         RushCapCostsAccuracy = true,
         InputEra2 = true,
         AuthoredSyllablesOnly = true,
+        AlignSubdivisionTargets = true,
         ManualNewlines = true,
         NewlineOnTypedLetter = true,
     };
@@ -455,7 +456,7 @@ public class HealthLiveParityTest
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: SpaceSkipsWord(name), syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true));
 
         foreach (var step in Scenario(name).GetProperty("script").EnumerateArray())
         {

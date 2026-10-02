@@ -111,6 +111,7 @@ public class WpmClockArmLiveParityTest
         RushCapCostsAccuracy = true,
         InputEra2 = true,
         AuthoredSyllablesOnly = true,
+        AlignSubdivisionTargets = true,
         ManualNewlines = manualNewlines,
         NewlineOnTypedLetter = manualNewlines,
     };

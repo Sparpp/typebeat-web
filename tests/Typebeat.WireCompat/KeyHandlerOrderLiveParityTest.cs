@@ -113,6 +113,7 @@ public class KeyHandlerOrderLiveParityTest
         RushCapCostsAccuracy = true,
         InputEra2 = true,
         AuthoredSyllablesOnly = true,
+        AlignSubdivisionTargets = true,
         ManualNewlines = true,
         NewlineOnTypedLetter = true,
         AllowWrongInput = true,

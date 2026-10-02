@@ -581,6 +581,7 @@ public class WordInputParityTest
             RushCapCostsAccuracy = true,
             InputEra2 = true,
             AuthoredSyllablesOnly = true,
+            AlignSubdivisionTargets = true,
             ManualNewlines = true,
             NewlineOnTypedLetter = true,
         };
@@ -795,7 +796,7 @@ public class WordInputParityTest
         {
             foreach (var scenario in all_scenarios)
             {
-                var cells = new TypingEngine(Load(scenario.Osu), scenario.Literate).Lines[0].Cells;
+                var cells = new TypingEngine(Load(scenario.Osu), scenario.Literate) { AlignSubdivisionTargets = true }.Lines[0].Cells;
                 var browserScenario = BrowserScenario(scenario.Name);
 
                 var expected = browserScenario.GetProperty("expected");
