@@ -805,31 +805,53 @@
     // Without a usable pause this is exactly the old per-char syllableCharTarget call; a PAUSED word
     // is timed stretch by stretch, each over its own span with its own boundaries and cell cuts
     // (TypingLine.fillPausedStretches), so no cell has a target inside a rest.
+    //
+    // Since PR 5 the targets of a subdivided word follow its EFFECTIVE letter cut (the C#'s
+    // AlignSubdivisionTargets, extended CONFIG bit 3, which the live factory sets): with no valid
+    // split_chars the derived split (splitsFor) is turned into cell cuts and drives the spread, so
+    // the caret meets the judgement groups at the same letters instead of an index-even spread
+    // drifting into unrelated ones. The browser only plays live, so it takes the rule
+    // unconditionally, as it takes bit 2.
     function tokenCellTargets(token, unitStart, unitEnd, unit, k) {
         const ramp = new Array(Math.max(0, k)).fill(0);
 
         if (k <= 0) return ramp;
 
-        const boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
+        let boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
         const paused = unit ? pausedWordOf(token, unitStart, unitEnd, unit) : null;
 
         if (paused !== null) {
             for (const piece of paused.pieces) {
+                let pb = piece.boundaries;
+                let pc = piece.cellCuts;
+
+                // A stretch with no authored cell cut of its own times its cells on the cut it is
+                // judged on: the stretch's own char cuts, rebased onto the stretch's text.
+                if (pc === null && pb.length > 0) {
+                    const splits = piece.cuts.map(c => c - piece.firstChar);
+                    pc = cellCuts(token.substring(piece.firstChar, piece.firstChar + piece.charCount), splits);
+                    pb = pb.slice(0, splits.length);
+                }
+
                 for (let j = 0; j < piece.cellCount; j++) {
-                    ramp[piece.firstCell + j] = syllableCharTarget(piece.startTime, piece.endTime, piece.boundaries, piece.cellCount, j, piece.cellCuts);
+                    ramp[piece.firstCell + j] = syllableCharTarget(piece.startTime, piece.endTime, pb, piece.cellCount, j, pc);
                 }
             }
 
             return ramp;
         }
 
-        // An AUTHORED char split (backlog 181, "ap|ple") replaces the even distribution within the
-        // word: the mapper's own cut says how many chars ride each segment, so the same split drives
-        // the targets here and the judgement groups in buildSyllables. Derived (absent, or stale)
-        // leaves the index-even spread untouched.
-        const cuts = (unit && isAuthoredValid(token, boundaries.length + 1, unit.splits))
-            ? cellCuts(token, unit.splits)
-            : null;
+        // The EFFECTIVE char split drives the spread within the word: an AUTHORED split (backlog
+        // 181, "ap|ple") when it is valid, the derived one otherwise, the same split buildSyllables
+        // builds the judgement groups from. A short word can yield fewer groups than requested; its
+        // final group then owns the tail, so the boundaries past the split count are dropped.
+        let cuts = null;
+
+        if (boundaries.length > 0) {
+            const splits = splitsFor(token, boundaries.length + 1, unit.splits);
+            cuts = cellCuts(token, splits);
+            boundaries = boundaries.slice(0, splits.length);
+        }
 
         for (let j = 0; j < k; j++) ramp[j] = syllableCharTarget(unitStart, unitEnd, boundaries, k, j, cuts);
 
@@ -1528,11 +1550,13 @@
     // segment, and the k chars are distributed evenly by index across the segments. With no
     // boundaries this is exactly unitStart + j*(unitEnd-unitStart)/k; char j = 0 lands on unitStart.
     //
-    // `cuts`, when given (cellCuts of an AUTHORED split, backlog 181), replaces that even
-    // distribution with the mapper's own: segment s covers cell-index range [cuts[s], cuts[s+1])
-    // instead of [s*k/S, (s+1)*k/S], so "ap|ple" puts two chars on the first syllable and three on
-    // the second however long the word is. Null means derived, and the arithmetic below is then
-    // untouched, which is what makes a map with no authored split flatten byte-identically.
+    // `cuts`, when given (cellCuts of the word's EFFECTIVE split: authored since backlog 181, and
+    // since PR 5 the derived one too, see tokenCellTargets), replaces that even distribution with
+    // the split's own: segment s covers cell-index range [cuts[s], cuts[s+1]) instead of
+    // [s*k/S, (s+1)*k/S], so "ap|ple" puts two chars on the first syllable and three on the second
+    // however long the word is. Null (or a cut of the wrong length) leaves the index-even
+    // arithmetic below, which the C# keeps for its stored pre-PR 5 era; the browser only reaches it
+    // for a word with no boundaries, where both branches agree.
     function syllableCharTarget(unitStart, unitEnd, boundaries, k, j, cuts) {
         if (k <= 0) return unitStart;
         if (boundaries.length === 0) return unitStart + j * (unitEnd - unitStart) / k;
@@ -1594,9 +1618,10 @@
             let k = 0;
             for (let t = 0; t < token.length; t++) if (isCell(token[t])) k++;
 
-            // Per-cell targets for this token, which is where syllable subdivisions, an AUTHORED
-            // char split (backlog 181) and an authored PAUSE warp the char-to-time mapping (see
-            // tokenCellTargets, mirroring TypingLine.tokenCellTargets).
+            // Per-cell targets for this token, which is where syllable subdivisions, the word's
+            // effective char split (authored since backlog 181, derived too since PR 5) and an
+            // authored PAUSE warp the char-to-time mapping (see tokenCellTargets, mirroring
+            // TypingLine.tokenCellTargets on its aligned live era).
             const ramp = tokenCellTargets(token, unitStart, unitEnd, unit, k);
 
             let j = 0;
@@ -2726,6 +2751,11 @@
             // countable cell's target time sorted ascending, so the playhead's position is a binary
             // search; countableBase[k] plus countablePrefix[k][i] says where line k cell i sits in
             // that stream, so the caret's position is a lookup. All immutable after construction.
+            // The C# rebuilds this stream when its subdivision-target era flips (PR 5,
+            // AlignSubdivisionTargets), because its lines can be re-laid after construction. The
+            // browser never flips: beatmap.lines already carries buildCells' final, aligned targets
+            // (tokenCellTargets takes the rule unconditionally), so one build per play reads the
+            // same stream the live C# engine ends up with.
             this.countableBase = new Array(this.lines.length);
             this.countablePrefix = new Array(this.lines.length);
 
