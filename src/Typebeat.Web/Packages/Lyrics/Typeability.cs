@@ -20,8 +20,8 @@ public static class Typeability
     /// </summary>
     public const char FREESTYLE_MARKER = '&';
 
-    // LyricBeatmap.cs:39-43: accepted set is a subset of what the client's KeyCharMap can
-    // produce (ASCII letters/digits/space); everything else auto-skips. Deliberately excludes
+    // LyricBeatmap.cs:39-43: accepted set is what the client's text-input fold (TextInputFold,
+    // backlog 383) can type (ASCII letters/digits/space); everything else auto-skips. Deliberately excludes
     // FREESTYLE_MARKER: a freestyle cell matches every key rather than this one. Deliberately
     // excludes PUNCTUATION too: a mark is only ever typed under the client's Literate mod, so it
     // must not count as a plain typeable char for the difficulty model, the interpolation weights
