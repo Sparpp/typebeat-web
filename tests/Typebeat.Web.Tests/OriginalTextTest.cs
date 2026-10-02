@@ -24,9 +24,10 @@ public class OriginalTextTest
 
     /// <summary>
     /// The SAME map with its originals, exactly where the game's encoder writes them: straight after
-    /// each "text", line and word, and only where they differ.
+    /// each "text", line and word, and only where they differ. Internal so the ingest pin
+    /// (<c>PackageIngestDbTest.OriginalsOnlyChange_KeepsTheRank_AndTheBoard</c>) ranks this same map.
     /// </summary>
-    private const string original_lyrics =
+    internal const string original_lyrics =
         """
         {"version":2,"song_end_ms":9000,"granularity":"Syllable"}
         {"text":"Privet mir","original":"Привет мир","start_ms":1000,"end_ms":2800,"words":[{"text":"Privet","original":"Привет","start_ms":1000,"end_ms":1900,"score":1,"syllables":[{"text":"Pri","start_ms":1000,"end_ms":1400},{"text":"vet","start_ms":1400,"end_ms":1900}]},{"text":"mir","original":"мир","start_ms":1900,"end_ms":2800,"score":1}]}
