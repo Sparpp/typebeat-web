@@ -178,7 +178,7 @@ public class OriginalTextParityTest
 
                 for (int l = 0; l < Math.Min(withOriginals.Length, client.Count); l++)
                 {
-                    var cells = typebeat.Game.Rulesets.TypeBeat.Gameplay.TypingLine.FromLyricLine(client[l], literate).Cells;
+                    var cells = typebeat.Game.Rulesets.TypeBeat.Gameplay.TypingLine.FromLyricLine(client[l], literate, alignSubdivisionTargets: true).Cells;
 
                     Assert.That(withOriginals[l].GetProperty("text").GetString(), Is.EqualTo(client[l].RawText), $"{arm} line {l}: browser text");
                     Assert.That(withOriginals[l].GetProperty("stream").GetString(), Is.EqualTo(new string(cells.Select(c => c.Expected).ToArray())),

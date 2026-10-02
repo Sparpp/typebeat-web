@@ -53,9 +53,11 @@ public class SyllableSplitParityTest
     /// <summary>
     /// "beautiful" over [1000, 1900] with one subdivision at 1450, plus the authored split.
     /// The demonstrator: the syllabifier's own answer for a two-segment "beautiful" IS [4], so an
-    /// authored [4] leaves the GROUPS alone and moves only the targets, which is exactly the gap
-    /// the feature exists to close (the even spread times the 't' before the boundary it is grouped
-    /// after). An authored [6] moves both.
+    /// authored [4] leaves the GROUPS alone. Before PR 5 it moved the targets, which was the gap
+    /// the feature existed to close (the even spread timed the 't' before the boundary it is
+    /// grouped after); since PR 5 the live targets follow the derived cut too
+    /// (<see cref="TypingEngine.AlignSubdivisionTargets"/>), so an authored [4] equals the derived
+    /// reading outright and moves nothing. An authored [6] moves both.
     /// </summary>
     private static string Beautiful(int[]? splits)
         => Encoded(Line("beautiful", 1000, 2500, 1900, Unit("beautiful", 1000, 1900, splits, 1450)));
@@ -105,8 +107,10 @@ public class SyllableSplitParityTest
 
     private static Case[] BuildCases() =>
     [
-        // The demonstrator, both halves of it.
-        new Case("beautifulSameGroupsMovedTargets", false, Beautiful([4]), Beautiful(null), true, false),
+        // The demonstrator, both halves of it. The first moved the targets alone until PR 5 aligned
+        // the derived arm's targets with its groups; authored [4] IS the derived cut, so it is now
+        // a no-op like bananaEvenCutIsANoOp (the name is kept so the history reads).
+        new Case("beautifulSameGroupsMovedTargets", false, Beautiful([4]), Beautiful(null), false, false),
         new Case("beautifulMovedBoth", false, Beautiful([6]), Beautiful(null), true, true),
 
         // Two subdivisions: ban|a|na against the derived ba|na|na.
@@ -404,7 +408,7 @@ public class SyllableSplitParityTest
         var hitObjects = DecodeObjects(osu);
         var granularity = hitObjects.Count > 0 ? hitObjects[0].Granularity : TimingGranularity.Line;
 
-        return (granularity, hitObjects.Select(h => TypingLine.FromLyricLine(h.Line, literate)).ToArray());
+        return (granularity, hitObjects.Select(h => TypingLine.FromLyricLine(h.Line, literate, alignSubdivisionTargets: true)).ToArray());
     }
 
     /// <summary>The map as the production decoder reads it, units and all.</summary>
@@ -632,11 +636,13 @@ public class SyllableSplitParityTest
     /// <summary>
     /// The property the whole feature exists for, asserted on the BROWSER'S OWN readings: on a word
     /// whose authored split SURVIVED validation, every cell's target time lies inside the span of
-    /// the group that judges it, because the one cut fed both. The derived arm promises no such
-    /// thing ("beautiful" is the live counter-example, which is why the cases below skip any map
-    /// whose split the loader rejected), so this is the browser holding its two readings against
-    /// EACH OTHER rather than against the C# arm: a port that honoured split_chars for the targets
-    /// and not for the groups would agree with nothing and fail here first.
+    /// the group that judges it, because the one cut fed both. Before PR 5 the derived arm promised
+    /// no such thing (its index-even spread timed the 't' of a derived "beau|tiful" before the
+    /// boundary it is grouped after); since PR 5 the live targets follow the derived cut as well,
+    /// but this pin still reads only the authored maps (a map whose split the loader rejected is
+    /// skipped), so it stays the browser holding its two readings against EACH OTHER rather than
+    /// against the C# arm: a port that honoured split_chars for the targets and not for the groups
+    /// would agree with nothing and fail here first.
     /// </summary>
     [Test]
     public void EveryAuthoredCellIsJudgedByAGroupThatContainsItsTarget()
@@ -648,7 +654,7 @@ public class SyllableSplitParityTest
             foreach (var one in all_cases)
             {
                 // Ask the production loader whether it kept the split at all; a rejected one is
-                // back on the derived arm and promises nothing.
+                // back on the derived arm, which is not what this pin reads.
                 bool authoredSurvived = DecodeObjects(one.Authored)
                     .Any(h => h.Line.Units.Any(u => u.SyllableSplits.Count > 0));
 

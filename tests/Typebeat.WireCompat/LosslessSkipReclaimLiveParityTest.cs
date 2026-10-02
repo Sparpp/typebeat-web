@@ -169,6 +169,7 @@ public class LosslessSkipReclaimLiveParityTest
         RushCapCostsAccuracy = true,
         InputEra2 = true,
         AuthoredSyllablesOnly = true,
+        AlignSubdivisionTargets = true,
         ManualNewlines = true,
         NewlineOnTypedLetter = true,
     };
@@ -194,7 +195,7 @@ public class LosslessSkipReclaimLiveParityTest
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2));
 
         foreach (var step in script.EnumerateArray())
         {
