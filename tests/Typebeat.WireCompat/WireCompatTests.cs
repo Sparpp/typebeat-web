@@ -232,6 +232,78 @@ public class WireCompatTests
         }
     }
 
+    // (d3) The set-level vocals-stem flag rides the lookup as `has_vocals_stem` (backlog 396): the server
+    // says whether the set's CURRENT version carries vocals.ogg/vocals.wav, and the client binds it to
+    // APIBeatmapSet.HasVocalsStem, which the update-availability predicate reads against the local copy's
+    // stem presence. Both directions pinned here, and the false case (an ordinary set).
+    [Test]
+    public async Task BeatmapLookup_CarriesTheSetsVocalsStemFlag_InTheClientsCanonicalForm()
+    {
+        await using var conn = new NpgsqlConnection(ServerFixture.ConnectionString);
+
+        // A set whose current version carries the stem: a stem-less version 1 and a version 2 that adds
+        // vocals.ogg (the backfill's exact shape). A brand-new checksum, so the lookup memo cannot answer.
+        long stemSetId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist, status)
+            VALUES (@ownerId, 'Wire Compat Stem', 'Harness', 'ranked')
+            RETURNING id
+            """,
+            new { ownerId = ServerFixture.OwnerUserId });
+
+        byte[] stemSha = System.Security.Cryptography.SHA256.HashData("wire-compat-stem"u8.ToArray());
+        await conn.ExecuteAsync("INSERT INTO files (sha256, size) VALUES (@sha, 4) ON CONFLICT DO NOTHING", new { sha = stemSha });
+
+        long stemVersion = await conn.ExecuteScalarAsync<long>(
+            "INSERT INTO set_versions (set_id, version_no) VALUES (@setId, 1) RETURNING id", new { setId = stemSetId });
+        await conn.ExecuteAsync(
+            "INSERT INTO version_files (version_id, sha256, filename) VALUES (@versionId, @sha, 'vocals.ogg')",
+            new { versionId = stemVersion, sha = stemSha });
+        await conn.ExecuteAsync("UPDATE beatmapsets SET current_version = 1 WHERE id = @setId", new { setId = stemSetId });
+
+        string stemChecksum = "5b0e" + Guid.NewGuid().ToString("N")[..28];
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO beatmaps (set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s, difficulty_rating)
+            VALUES (@setId, 'type!beat', 0, @checksum, 60, 30, 1.5)
+            """,
+            new { setId = stemSetId, checksum = stemChecksum });
+
+        // An ordinary set: its current version's manifest carries no stem, so the flag is false.
+        string plainChecksum = "5b0f" + Guid.NewGuid().ToString("N")[..28];
+        long plainSetId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist, status)
+            VALUES (@ownerId, 'Wire Compat No Stem', 'Harness', 'ranked')
+            RETURNING id
+            """,
+            new { ownerId = ServerFixture.OwnerUserId });
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO beatmaps (set_id, version_name, ruleset_id, checksum_md5, total_length_s, drain_length_s, difficulty_rating)
+            VALUES (@setId, 'type!beat', 0, @checksum, 60, 30, 1.5)
+            """,
+            new { setId = plainSetId, checksum = plainChecksum });
+
+        using (var stemReq = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/beatmaps/lookup?checksum={stemChecksum}"))
+        using (var stemResp = await client.SendAsync(stemReq))
+        {
+            var stem = JsonConvert.DeserializeObject<APIBeatmap>(await stemResp.Content.ReadAsStringAsync());
+
+            Assert.That(stem?.BeatmapSet, Is.Not.Null);
+            Assert.That(stem!.BeatmapSet!.HasVocalsStem, Is.True, "a backfilled set reports its stem through the client DTO");
+        }
+
+        using (var plainReq = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/beatmaps/lookup?checksum={plainChecksum}"))
+        using (var plainResp = await client.SendAsync(plainReq))
+        {
+            var plain = JsonConvert.DeserializeObject<APIBeatmap>(await plainResp.Content.ReadAsStringAsync());
+
+            Assert.That(plain?.BeatmapSet, Is.Not.Null);
+            Assert.That(plain!.BeatmapSet!.HasVocalsStem, Is.False, "an ordinary set reports false");
+        }
+    }
+
     // ---------------------------------------------------------------------------------------------
     // (e) Score loop: create token → backdate → submit SoloScoreInfo → MultiplayerScore.
     // ---------------------------------------------------------------------------------------------
