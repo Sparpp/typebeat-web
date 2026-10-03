@@ -163,6 +163,33 @@ public static class StemBackfill
     }
 
     /// <summary>
+    /// Whether the set's CURRENT version carries a vocals stem file (a <c>version_files</c> row named
+    /// <c>vocals.ogg</c> or <c>vocals.wav</c>). One indexed EXISTS scoped to the set, so the metadata
+    /// lookup can answer it per set without touching blob storage. Follows
+    /// <c>beatmapsets.current_version</c> (the same version the download route serves), not the
+    /// highest version number, so a version cut that has not been published cannot report a stem the
+    /// client would not actually download.
+    /// </summary>
+    public static async Task<bool> CurrentVersionHasStemAsync(Db db, long setId, CancellationToken ct = default)
+    {
+        await using var conn = await db.OpenAsync(ct);
+
+        // The two literals mirror StemFilenames (the download/attach contract); kept inline so the
+        // name test is a plain indexed lookup the planner can use as-is.
+        return await conn.ExecuteScalarAsync<bool>(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM beatmapsets s
+                JOIN set_versions sv ON sv.set_id = s.id AND sv.version_no = s.current_version
+                JOIN version_files vf ON vf.version_id = sv.id
+                WHERE s.id = @setId
+                  AND lower(vf.filename) IN ('vocals.ogg', 'vocals.wav'))
+            """,
+            new { setId });
+    }
+
+    /// <summary>
     /// Opens the current version's blob for the named file, so the ops endpoint can stream a set's
     /// audio to the local Demucs pass. Returns null when the file is not in the manifest.
     /// </summary>

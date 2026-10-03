@@ -166,6 +166,29 @@ public sealed class APIBeatmapSetResponse
     [JsonProperty("song_language")]
     public string SongLanguage { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Whether the set's CURRENT online version carries an isolated vocals stem file
+    /// (<c>vocals.ogg</c> / <c>vocals.wav</c>, backlog 392/393). Set-level because a stem lives beside
+    /// the song, not per difficulty, and every difficulty of a set downloads the same package.
+    ///
+    /// <para>
+    /// The client's UPDATE offer keys on this (backlog 396): a stem-only version cut leaves every
+    /// <c>.osu</c> MD5 unchanged, so neither the MD5 path nor the version-time path can see it, and a
+    /// client that already holds the audio never re-fetches a version that only added a file. The
+    /// client reads this against the vocals stem its LOCAL copy carries
+    /// (<c>VocalsStem.FilenameIn</c>): online-has-a-stem AND local-has-none means the local copy is
+    /// missing a file the online version offers, so the update must be offered.
+    /// </para>
+    ///
+    /// <para>
+    /// Defaults to false: a server that predates this field (or a route that does not compute it)
+    /// deserialises to "no stem", which reads as "nothing to offer" rather than manufacturing an
+    /// offer for every map. Emitted on both the lookup and the beatmapset GET.
+    /// </para>
+    /// </summary>
+    [JsonProperty("has_vocals_stem")]
+    public bool HasVocalsStem { get; init; }
+
     // Null on the nested-inside-a-beatmap variant (lookup), where the key must be OMITTED:
     // the client's APIBeatmapSet.Beatmaps defaults to an empty array and an explicit JSON null
     // would overwrite it with null under Newtonsoft. The set GET emits the real list.
