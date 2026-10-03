@@ -195,6 +195,29 @@ public class ApiRegressionGuardTest
     }
 
     [Test]
+    public async Task OpsStems_WithNoBuddyKeyConfigured_IsInvisible()
+    {
+        // The vocals-stem backfill ops surface (backlog 393) sits behind the same gate as the other
+        // ops readouts: with TYPEBEAT_BUDDY_KEY unset, as on this host, every one of its routes must
+        // 404 with no body, so an un-opted-in deployment does not expose an operator tool that would
+        // write to stored sets.
+        using var missing = await WebsiteFixture.Client.GetAsync("/api/v2/ops/stems/missing");
+        using var audio = await WebsiteFixture.Client.GetAsync("/api/v2/ops/stems/audio/1?sha256=00");
+        using var attach = await WebsiteFixture.Client.PutAsync("/api/v2/ops/stems/1",
+            new System.Net.Http.ByteArrayContent([1, 2, 3]));
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(await missing.Content.ReadAsStringAsync(), Is.Empty);
+            Assert.That(audio.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(await audio.Content.ReadAsStringAsync(), Is.Empty);
+            Assert.That(attach.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(await attach.Content.ReadAsStringAsync(), Is.Empty);
+        });
+    }
+
+    [Test]
     public async Task RegistrationPost_WrongUserAgent_StillExact403Envelope()
     {
         // POST /users is the game client's registration wire route; only GET/HEAD /users/* is

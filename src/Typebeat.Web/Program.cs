@@ -353,6 +353,11 @@ OpsBackupsEndpoints.Map(app);
 // The releases mirror's last sweep and failing files (backlog 380), same gate.
 OpsMirrorEndpoints.Map(app);
 
+// The isolated-vocals-stem backfill (backlog 393), same gate: enumerate the sets missing a stem,
+// stream a set's audio to the local Demucs pass, and attach the produced vocals.ogg as a new
+// rank-safe version. Operator-only; see OpsStemEndpoints.
+OpsStemEndpoints.Map(app);
+
 // The in-browser web player's backend (score tokens/submission + map/audio serving). Additive;
 // cookie-session authed, mirrors the bearer score flow in ScoreEndpoints.
 PlayEndpoints.Map(app);

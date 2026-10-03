@@ -974,6 +974,10 @@ public class PackageIngestDbTest
     private long rankedDiffA;
     private long rankedDiffB;
 
+    /// <summary>The set <see cref="RankKeepsAfterStemBackfill_AndTheFingerprintIsInvariant"/> attached
+    /// a stem to, so the enumeration test can assert it is no longer listed.</summary>
+    private long stemmedSetId;
+
     /// <summary>
     /// Creates a set with two allocated difficulty rows, ingests a first version carrying only
     /// difficulty A (on <paramref name="lyrics"/> when given, the fixture lyric otherwise), and
@@ -1673,6 +1677,253 @@ public class PackageIngestDbTest
                 Assert.That(score.Ranked, Is.True, "and on the board");
             });
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Isolated-vocals-stem backfill (backlog 393). The load-bearing claim is rank-safety: attaching
+    // a vocals.ogg to a ranked set leaves the gameplay fingerprint byte-identical and does not
+    // demote, while the new version snapshot still resolves the same audio+osu and adds the stem.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>Fake-but-stable stem bytes; the attach path hashes whatever it is handed.</summary>
+    private static byte[] stemBytes() => SyntheticPackage.Utf8("fake isolated vocals ogg bytes");
+
+    /// <summary>
+    /// <see cref="GameplayFingerprint.Compute"/> for <paramref name="osuFilename"/> over a specific
+    /// stored version's manifest, read exactly as the fingerprint backfill does (the .osu blob is
+    /// parsed, the manifest is the file list its audio resolves against). This is the SAME function
+    /// the ingest's demotion check calls, so a difference between two versions here IS a demotion.
+    /// </summary>
+    private async Task<string> FingerprintAtVersionAsync(long setId, int versionNo, string osuFilename)
+    {
+        await using var conn = await db.OpenAsync();
+
+        long versionId = await conn.ExecuteScalarAsync<long>(
+            "SELECT id FROM set_versions WHERE set_id = @setId AND version_no = @versionNo", new { setId, versionNo });
+
+        var manifest = (await conn.QueryAsync<(byte[] Sha256, long Size, string Filename)>(
+                """
+                SELECT vf.sha256 AS Sha256, f.size AS Size, vf.filename AS Filename
+                FROM version_files vf JOIN files f ON f.sha256 = vf.sha256
+                WHERE vf.version_id = @versionId
+                """,
+                new { versionId }))
+            .Select(f => new PackageFileEntry(f.Sha256, f.Size, f.Filename))
+            .ToList();
+
+        var osu = GameplayFingerprint.Resolve(manifest, osuFilename)!;
+
+        byte[] bytes;
+
+        await using (var blob = await fileStore.OpenBlobReadAsync(osu.Sha256))
+        using (var buffer = new MemoryStream())
+        {
+            await blob.CopyToAsync(buffer);
+            bytes = buffer.ToArray();
+        }
+
+        var diff = BeatmapPackageParser.ParseDifficulty(osu.Filename, bytes);
+        return GameplayFingerprint.Compute(diff, manifest);
+    }
+
+    /// <summary>
+    /// THE load-bearing pin for backlog 393. Attaching a vocals stem to a ranked set must leave the
+    /// gameplay fingerprint byte-identical, which is what keeps the demotion comparison (a pure
+    /// function of the fingerprint) from firing, and the set must stay ranked with nothing audited.
+    ///
+    /// <para>
+    /// The fingerprint is recomputed over BOTH the pre-attach (v1) and post-attach (v2) manifests
+    /// through the real <see cref="GameplayFingerprint.Compute"/>, not merely read off the stored
+    /// column: the stored column cannot move on a stem attach (this path never touches it), so a
+    /// column-only assertion would pass even if the recipe had started hashing the stem. Computing
+    /// over the manifests is what proves the RECIPE is invariant.
+    /// </para>
+    /// </summary>
+    [Test]
+    [Order(28)]
+    public async Task RankKeepsAfterStemBackfill_AndTheFingerprintIsInvariant()
+    {
+        var (id, a, _) = await newRankedSetAsync();
+        stemmedSetId = id;
+
+        (string? Fingerprint, string Md5, int Version) before;
+
+        await using (var conn = await db.OpenAsync())
+        {
+            await conn.ExecuteAsync("UPDATE beatmapsets SET updated_at = now() - interval '1 hour' WHERE id = @id", new { id });
+
+            before = await conn.QuerySingleAsync<(string?, string, int)>(
+                "SELECT gameplay_fingerprint, checksum_md5, (SELECT current_version FROM beatmapsets WHERE id = @id) FROM beatmaps WHERE id = @a",
+                new { id, a });
+        }
+
+        Assert.That(await statusOfAsync(id), Is.EqualTo("ranked"), "the fixture starts ranked");
+
+        string fingerprintV1 = await FingerprintAtVersionAsync(id, 1, "a.osu");
+
+        var result = await StemBackfill.AttachVocalsStemAsync(db, fileStore, id, stemBytes());
+
+        Assert.That(result.CutNewVersion, Is.True, "the first attach cuts a version");
+
+        string fingerprintV2 = await FingerprintAtVersionAsync(id, 2, "a.osu");
+
+        await using (var conn = await db.OpenAsync())
+        {
+            var after = await conn.QuerySingleAsync<(string? Fingerprint, string Md5, int Version, double AgeSeconds)>(
+                """
+                SELECT b.gameplay_fingerprint AS Fingerprint,
+                       b.checksum_md5 AS Md5,
+                       (SELECT current_version FROM beatmapsets WHERE id = @id) AS Version,
+                       extract(epoch FROM (now() - (SELECT updated_at FROM beatmapsets WHERE id = @id))) AS AgeSeconds
+                FROM beatmaps b WHERE b.id = @a
+                """,
+                new { id, a });
+
+            Assert.Multiple(() =>
+            {
+                // THE claim, computed through the real recipe over the two manifests: identical, so
+                // demoteIfGameplayChangedAsync (a pure function of this) would see no change.
+                Assert.That(fingerprintV2, Is.EqualTo(fingerprintV1),
+                    "attaching a stem must not move the gameplay fingerprint, recomputed over the new manifest");
+                Assert.That(fingerprintV2, Is.EqualTo(before.Fingerprint),
+                    "and the recomputed v2 fingerprint still equals what ingest stored for v1");
+
+                // The stored column is untouched too (belt), and the .osu bytes were not rewritten.
+                Assert.That(after.Fingerprint, Is.EqualTo(before.Fingerprint));
+                Assert.That(after.Md5, Is.EqualTo(before.Md5), "the .osu bytes were not rewritten either");
+
+                // The update identity the client polls: bumped, so the client offers the UPDATE.
+                Assert.That(after.Version, Is.EqualTo(before.Version + 1), "a new version was cut");
+                Assert.That(after.AgeSeconds, Is.LessThan(60), "updated_at was bumped so the client offers the update");
+            });
+        }
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await statusOfAsync(id), Is.EqualTo("ranked"), "a stem attach must not demote a ranked set");
+            Assert.That(await auditOfAsync(id), Is.Empty, "and it must not write an auto_unrank audit row");
+        });
+    }
+
+    [Test]
+    [Order(29)]
+    public async Task StemBackfill_SnapshotCarriesEveryExistingFilePlusTheStem()
+    {
+        var (id, a, _) = await newRankedSetAsync();
+
+        var beforeManifest = await ingest.GetLatestVersionFilesAsync(id);
+        var audioBefore = beforeManifest.Single(f => f.Filename == "audio.mp3");
+        var osuBefore = beforeManifest.Single(f => f.Filename == "a.osu");
+
+        var result = await StemBackfill.AttachVocalsStemAsync(db, fileStore, id, stemBytes());
+
+        var afterManifest = await ingest.GetLatestVersionFilesAsync(id);
+
+        Assert.Multiple(() =>
+        {
+            // A snapshot is the WHOLE package, not a delta: every existing file rides forward with
+            // its byte-for-byte identity, so the fingerprint's two inputs are unchanged.
+            Assert.That(afterManifest, Has.Count.EqualTo(beforeManifest.Count + 1));
+            Assert.That(afterManifest.Single(f => f.Filename == "audio.mp3").Sha256Hex, Is.EqualTo(audioBefore.Sha256Hex));
+            Assert.That(afterManifest.Single(f => f.Filename == "a.osu").Sha256Hex, Is.EqualTo(osuBefore.Sha256Hex));
+            Assert.That(afterManifest.Any(f => f.Filename == StemBackfill.VocalsFilename), Is.True, "the stem was added");
+            Assert.That(result.VersionNo, Is.EqualTo(2));
+        });
+
+        // The blob really landed, and the new version's assembled download package carries the stem,
+        // so a client's UPDATE serves a package that resolves it.
+        byte[] stemSha = SHA256.HashData(stemBytes());
+        Assert.That(await fileStore.BlobExistsAsync(stemSha), Is.True);
+
+        await using var packageStream = await fileStore.OpenObjectReadAsync(StoreKeys.Package(id, 2));
+        Assert.That(packageStream, Is.Not.Null, "the new version's package object exists before the version row");
+
+        using var buffer = new MemoryStream();
+        await packageStream!.CopyToAsync(buffer);
+
+        var reparsed = BeatmapPackageParser.Parse(buffer);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reparsed.Files.Any(f => f.Filename == StemBackfill.VocalsFilename), Is.True,
+                "the download package carries the stem, which VocalsStem.FilenameIn then finds");
+            Assert.That(reparsed.Files.Select(f => (f.Sha256Hex, f.Size, f.Filename)).ToHashSet()
+                    .SetEquals(afterManifest.Select(f => (f.Sha256Hex, f.Size, f.Filename)).ToHashSet()),
+                Is.True, "and it matches the manifest exactly");
+        });
+    }
+
+    [Test]
+    [Order(30)]
+    public async Task StemBackfill_IsIdempotent_AndMissingStemEnumerationIsCorrect()
+    {
+        // A set that has NOT been backfilled is listed; the one from Order(28)/(29) is not.
+        var (listedId, listedDiff, _) = await newRankedSetAsync();
+
+        var missingBefore = await StemBackfill.ListMissingStemAsync(db, fileStore, NullLogger.Instance);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(missingBefore.Any(r => r.SetId == listedId), Is.True, "a stem-less set is enumerated");
+            Assert.That(missingBefore.Any(r => r.SetId == stemmedSetId), Is.False, "the set backfilled above now has a stem");
+        });
+
+        var listed = missingBefore.Single(r => r.SetId == listedId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(listed.AudioFilename, Is.EqualTo("audio.mp3"));
+            Assert.That(listed.AudioSha256Hex, Is.EqualTo(Convert.ToHexStringLower(SHA256.HashData(SyntheticPackage.Utf8("fake audio bytes")))));
+            Assert.That(listed.LiveDiffs, Is.EqualTo(1));
+        });
+
+        // A second attach is a no-op: no version is cut and the current version is unchanged.
+        await StemBackfill.AttachVocalsStemAsync(db, fileStore, listedId, stemBytes());
+        int versionAfterFirst = await currentVersionOf(listedId);
+
+        var second = await StemBackfill.AttachVocalsStemAsync(db, fileStore, listedId, stemBytes());
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(second.CutNewVersion, Is.False, "an already-stemmed set is not re-cut");
+            Assert.That(second.VersionNo, Is.EqualTo(versionAfterFirst));
+            Assert.That(await currentVersionOf(listedId), Is.EqualTo(versionAfterFirst));
+
+            // And it drops out of the enumeration.
+            var missingAfter = await StemBackfill.ListMissingStemAsync(db, fileStore, NullLogger.Instance);
+            Assert.That(missingAfter.Any(r => r.SetId == listedId), Is.False);
+        });
+
+        // The audio the driver separates is served straight from the store.
+        await using var audio = await StemBackfill.OpenAudioBlobAsync(db, fileStore, listedId, listed.AudioSha256Hex);
+        Assert.That(audio, Is.Not.Null);
+
+        using var buffer = new MemoryStream();
+        await audio!.CopyToAsync(buffer);
+        Assert.That(buffer.ToArray(), Is.EqualTo(SyntheticPackage.Utf8("fake audio bytes")));
+    }
+
+    [Test]
+    [Order(31)]
+    public async Task StemBackfill_RefusesASetWithNoVersion()
+    {
+        long id;
+
+        await using (var conn = await db.OpenAsync())
+        {
+            id = await conn.ExecuteScalarAsync<long>(
+                "INSERT INTO beatmapsets (owner_id, status, intended_status) VALUES (@uploaderId, 'hidden', 'pending') RETURNING id",
+                new { uploaderId });
+        }
+
+        Assert.ThrowsAsync<StemBackfill.StemBackfillException>(
+            () => StemBackfill.AttachVocalsStemAsync(db, fileStore, id, stemBytes()));
+    }
+
+    private async Task<int> currentVersionOf(long id)
+    {
+        await using var conn = await db.OpenAsync();
+        return await conn.ExecuteScalarAsync<int>("SELECT current_version FROM beatmapsets WHERE id = @id", new { id });
     }
 
     private static string readEmbeddedMigration(string name)
