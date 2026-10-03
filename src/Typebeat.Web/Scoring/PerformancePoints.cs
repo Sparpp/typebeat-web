@@ -972,7 +972,7 @@ public static class PerformancePoints
     /// so eighteen cells are stored and this reads exactly one of them.</para>
     ///
     /// <para>A stack carrying MORE THAN ONE rate mod is tamper-shaped by construction (the client
-    /// makes DT / NC / HT mutually exclusive), so it is treated as ineligible rather than guessed
+    /// makes DT / NC / HT / DC mutually exclusive), so it is treated as ineligible rather than guessed
     /// at, exactly as <see cref="ModMultiplier"/> treats it as the conservative case for
     /// scoring.</para>
     ///

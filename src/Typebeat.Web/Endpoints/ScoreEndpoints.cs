@@ -37,7 +37,7 @@ public static class ScoreEndpoints
     /// (forward-compatible); the caller ANDs this across all mods.
     ///
     /// <para>
-    /// The rate mods (DT/NC/HT) are ranked at EVERY speed, not just their default: the client pays
+    /// The rate mods (DT/NC/HT/DC) are ranked at EVERY speed, not just their default: the client pays
     /// them on a continuous curve (<see cref="RateMultiplier"/>), so an odd rate is priced, not
     /// banned. Only the always-unranked set above disqualifies a play.
     /// </para>
@@ -283,7 +283,7 @@ public static class ScoreEndpoints
         // from map time into real time by the play's RATE, must have elapsed since the token was
         // created (created_at is the server wall-clock anchor, 001_init.sql:126). The allowance is
         // what the in-game skip button may legally remove from this map; the rate is the submitted
-        // speed_change of DT/NC/HT, read from the very same normalized stack that prices the score
+        // speed_change of DT/NC/HT/DC, read from the very same normalized stack that prices the score
         // just above, so the gate and the multiplier can never disagree about how fast the play was.
         // See PlayTimeGate. Too fast is not an error; osu accepts and flags; we take the safe route
         // and store it unranked.
@@ -303,7 +303,7 @@ public static class ScoreEndpoints
 
         // Mirror the client's per-mod Ranked flag: a score is ranked only if every mod is ranked at
         // its submitted configuration. Always-unranked mods (Mashing/Relax "RX"; the time-ramp Wind
-        // Up/Down "WU"/"WD") disqualify it. The rate mods (DT/NC/HT) no longer do at ANY speed: the
+        // Up/Down "WU"/"WD") disqualify it. The rate mods (DT/NC/HT/DC) no longer do at ANY speed: the
         // rate is paid on a continuous curve instead of being banned off the default.
         bool modsRanked = submission.Mods is null || submission.Mods.All(ModConfigRanked);
 
@@ -884,7 +884,7 @@ public static class ScoreEndpoints
         public string? Acronym { get; set; }
 
         // e.g. { "speed_change": 1.01 } on a DoubleTime. The client pins speed_change onto every
-        // DT/NC/HT it submits, even at the default; it prices the play and is stored for display.
+        // DT/NC/HT/DC it submits, even at the default; it prices the play and is stored for display.
         [JsonProperty("settings")]
         public Dictionary<string, object>? Settings { get; set; }
     }

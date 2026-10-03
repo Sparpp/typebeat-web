@@ -30,7 +30,7 @@ public class ScoreModsTest
         // Historic rows (submitted before the rate was ranked) carry no settings and cannot be
         // backfilled. Under the old rules a ranked bare DT could ONLY have been the default 1.50x,
         // so the default is not a guess; it renders like any other rate, unmarked.
-        var mods = ScoreMods.Parse("""[{"acronym":"DT"},{"acronym":"HT"},{"acronym":"NC"}]""");
+        var mods = ScoreMods.Parse("""[{"acronym":"DT"},{"acronym":"HT"},{"acronym":"NC"},{"acronym":"DC"}]""");
 
         Assert.Multiple(() =>
         {
@@ -38,6 +38,9 @@ public class ScoreModsTest
             Assert.That(mods[1].RateLabel, Is.EqualTo("0.75x"));
             Assert.That(mods[1].Title, Is.EqualTo("Half Time 0.75x"));
             Assert.That(mods[2].RateLabel, Is.EqualTo("1.50x"));
+            // A stored DC row with no settings reads as the client's 0.75x default, like HT.
+            Assert.That(mods[3].RateLabel, Is.EqualTo("0.75x"));
+            Assert.That(mods[3].Title, Is.EqualTo("Daycore 0.75x"));
         });
     }
 

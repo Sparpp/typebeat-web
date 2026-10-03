@@ -19,7 +19,7 @@ public static class ModInfo
         // (see the Fletcher note below). There is no assist family to put DX in: Mashing is
         // "automation" because it plays the map for you, and Dyslexia does not.
         "DT" or "NC" or "FL" or "SD" or "LT" or "GK" or "RH" or "HR" or "RE" => "increase",
-        "HT" or "NF" or "EZ" => "reduction",
+        "HT" or "DC" or "NF" or "EZ" => "reduction",
         "RX" => "automation",
         _ => "other",
     };
@@ -30,6 +30,7 @@ public static class ModInfo
         "DT" => "Double Time",
         "NC" => "Nightcore",
         "HT" => "Half Time",
+        "DC" => "Daycore",
         "EZ" => "Easy",
         "HR" => "Hard Rock",
         "NF" => "No Fail",

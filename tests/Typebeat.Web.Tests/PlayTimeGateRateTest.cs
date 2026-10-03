@@ -141,11 +141,13 @@ public class PlayTimeGateRateTest
             Assert.That(RateMods.EffectiveRate([("dt", 1.5)]), Is.EqualTo(1.5), "acronyms are case-insensitive");
             Assert.That(RateMods.EffectiveRate([("NC", 1.2), ("FL", null)]), Is.EqualTo(1.2));
             Assert.That(RateMods.EffectiveRate([("HT", 0.6)]), Is.EqualTo(0.6));
+            Assert.That(RateMods.EffectiveRate([("DC", 0.6)]), Is.EqualTo(0.6), "Daycore is a rate mod too");
 
             // No speed_change means the client's default, the only rate a pre-task-27 client
             // omitted the key at.
             Assert.That(RateMods.EffectiveRate([("DT", null)]), Is.EqualTo(1.5));
             Assert.That(RateMods.EffectiveRate([("HT", null)]), Is.EqualTo(0.75));
+            Assert.That(RateMods.EffectiveRate([("DC", null)]), Is.EqualTo(0.75));
 
             // The client makes the rate mods mutually exclusive, so a stack holding two of them is
             // tamper-shaped and is read at its SLOWEST member, the strictest bound available.

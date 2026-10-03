@@ -150,6 +150,12 @@ public class RateMultiplierTest
             Assert.That(ModMultiplier.For("HT", 0.50), Is.EqualTo(0.10).Within(1e-12));
             Assert.That(ModMultiplier.For("HT", 0.90), Is.EqualTo(0.70).Within(1e-12));
 
+            // Daycore is HT's pitch-preserving twin: same curve, same prices at the same rate.
+            Assert.That(ModMultiplier.For("DC", null), Is.EqualTo(0.25).Within(1e-12), "absent rate = the 0.75x default");
+            Assert.That(ModMultiplier.For("DC", 0.50), Is.EqualTo(0.10).Within(1e-12));
+            Assert.That(ModMultiplier.For("DC", 0.90), Is.EqualTo(0.70).Within(1e-12));
+            Assert.That(ModMultiplier.For("DC", 0.75), Is.EqualTo(ModMultiplier.For("HT", 0.75)).Within(1e-12), "DC and HT must price identically");
+
             // Ramps: rates are not persisted, so they are priced at the most any ramp could pay.
             Assert.That(ModMultiplier.For("WU", null), Is.EqualTo(1.46).Within(1e-12));
             Assert.That(ModMultiplier.For("WD", null), Is.EqualTo(1.46).Within(1e-12));

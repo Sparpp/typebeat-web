@@ -9,7 +9,7 @@ namespace Typebeat.Web;
 /// One mod badge on a score display: the acronym, plus the track rate when the mod is a rate mod.
 ///
 /// <para>
-/// The rate is part of the badge because type!beat ranks DT/NC/HT at every speed and pays each one
+/// The rate is part of the badge because type!beat ranks DT/NC/HT/DC at every speed and pays each one
 /// differently, so a bare "DT" would be ambiguous between a 1.01x nudge and a 2.00x sprint. The
 /// client welds the same number to its own mod icons; the site shows it in the same
 /// <c>{rate:N2}x</c> form so a play reads identically in both places.
@@ -17,7 +17,7 @@ namespace Typebeat.Web;
 /// </summary>
 /// <param name="Acronym">Uppercased mod acronym as stored in the scores.mods jsonb.</param>
 /// <param name="Rate">
-/// Track rate for a rate mod, else null. Never null for DT/NC/HT: a row with no stored
+/// Track rate for a rate mod, else null. Never null for DT/NC/HT/DC: a row with no stored
 /// <c>speed_change</c> reads as the client default (see <see cref="ScoreMods.Parse"/>).
 /// </param>
 public readonly record struct ScoreMod(string Acronym, double? Rate)

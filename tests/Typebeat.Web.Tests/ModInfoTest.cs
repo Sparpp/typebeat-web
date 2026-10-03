@@ -63,6 +63,20 @@ public class ModInfoTest
     }
 
     /// <summary>
+    /// Daycore (backlog 395), Half Time's pitch-PRESERVING twin. A difficulty REDUCTION like HT, so
+    /// it badges green beside Half Time rather than falling through to "other".
+    /// </summary>
+    [Test]
+    public void Daycore_RendersAsRankedDifficultyReductionBadge()
+    {
+        Assert.That(ModInfo.CategoryClass("DC"), Is.EqualTo("reduction"));
+        Assert.That(ModInfo.Name("DC"), Is.EqualTo("Daycore"));
+
+        Assert.That(ModInfo.CategoryClass("dc"), Is.EqualTo("reduction"));
+        Assert.That(ModInfo.Name("dc"), Is.EqualTo("Daycore"));
+    }
+
+    /// <summary>
     /// Hard Rock (backlog 150), the halved judgement windows. A difficulty INCREASE, so it badges
     /// red beside Double Time and Flashlight rather than falling through to "other".
     /// </summary>

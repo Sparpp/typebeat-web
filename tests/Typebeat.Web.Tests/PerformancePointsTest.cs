@@ -1328,6 +1328,9 @@ public class PerformancePointsTest
             Assert.That(RateMods.DefaultSpeed("DT"), Is.EqualTo(RateMods.DoubleTimeBaseRate));
             Assert.That(RateMods.DefaultSpeed("NC"), Is.EqualTo(RateMods.DoubleTimeBaseRate));
             Assert.That(RateMods.DefaultSpeed("HT"), Is.EqualTo(RateMods.HalfTimeBaseRate));
+            // Daycore is HT's pitch-preserving twin: same base rate, so it reads the HT matrix cell.
+            Assert.That(RateMods.DefaultSpeed("DC"), Is.EqualTo(RateMods.HalfTimeBaseRate));
+            Assert.That(RateMods.IsRateMod("DC"), Is.True);
 
             Assert.That(BeatmapRatings.Rates, Is.EqualTo(new[] { 1.0, RateMods.DoubleTimeBaseRate, RateMods.HalfTimeBaseRate }).AsCollection);
         });

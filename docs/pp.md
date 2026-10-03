@@ -157,7 +157,7 @@ stored `ranked = false` and therefore earn no pp.
   **literally true again since the 2026-09-06 amendment below**, which deletes the Half Time mirror
   penalty the 2026-08-07 amendment added: from v3 to v19 Half Time was the one rate priced by
   something other than its rating, and it is not any more. DECIDED:
-  only the **base rates** (DT 1.5x, HT 0.75x) are pp-eligible. A custom rate makes the play
+  only the **base rates** (DT/NC 1.5x, HT/DC 0.75x) are pp-eligible. A custom rate makes the play
   **pp-ineligible only**: it still ranks on the score leaderboards exactly as today (the
   variable-rate ranking feature is preserved, no retroactive unranking), it just earns 0 pp.
   KNOWN AND UNPRICED since 2026-08-13 (backlog 150): the rate mods now scale the JUDGEMENT WINDOWS

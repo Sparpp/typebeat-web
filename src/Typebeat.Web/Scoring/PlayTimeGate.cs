@@ -63,7 +63,7 @@ public static class PlayTimeGate
     /// </summary>
     /// <param name="rate">
     /// The play's track rate: 1.0 for a stack with no rate mod (the browser player always), or the
-    /// submitted speed_change of DT/NC/HT (see <see cref="RateMods.EffectiveRate"/>). Below 1 it
+    /// submitted speed_change of DT/NC/HT/DC (see <see cref="RateMods.EffectiveRate"/>). Below 1 it
     /// makes the requirement LONGER, which is correct: a Half Time play does take more real time.
     /// </param>
     public static double RequiredSeconds(double drainLengthS, double skippableS, double rate = 1.0)

@@ -3,28 +3,30 @@ using System.Globalization;
 namespace Typebeat.Web.Scoring;
 
 /// <summary>
-/// The rate mods (Double Time, Nightcore, Half Time) and the one setting of theirs the server
-/// cares about, <c>speed_change</c>.
+/// The rate mods (Double Time, Nightcore, Half Time, Daycore) and the one setting of theirs the
+/// server cares about, <c>speed_change</c>.
 ///
 /// <para>
 /// Since the client ranks these at every speed, the rate is score-affecting data, not cosmetics: it
 /// prices the play (<see cref="ModMultiplier"/>) and it has to be shown on the badge, or a "DT" on a
 /// board is ambiguous between a 1.01x nudge and a 2.00x sprint. The client therefore pins
-/// <c>settings.speed_change</c> onto every DT/NC/HT it submits, even at the default (its
+/// <c>settings.speed_change</c> onto every DT/NC/HT/DC it submits, even at the default (its
 /// <c>Mod.AlwaysSerializeSetting</c> hook).
 /// </para>
 ///
 /// <para>
-/// The ranges mirror the client's sliders (<c>ModDoubleTime</c> / <c>ModHalfTime</c>
-/// <c>SpeedChange</c>): DT/NC [1.01, 2.00], HT [0.50, 0.99], both stepping by 0.01. A submitted
-/// value is snapped to 2 decimals and clamped into range before it is stored or priced, so a
-/// tampered "speed_change": 40 buys a 2.00x play, not a 40x one.
+/// The ranges mirror the client's sliders (<c>ModDoubleTime</c> / <c>ModHalfTime</c> /
+/// <c>ModDaycore</c> <c>SpeedChange</c>): DT/NC [1.01, 2.00], HT/DC [0.50, 0.99], both stepping by
+/// 0.01. A submitted value is snapped to 2 decimals and clamped into range before it is stored or
+/// priced, so a tampered "speed_change": 40 buys a 2.00x play, not a 40x one.
 /// </para>
 ///
 /// <para>
-/// Daycore ("DC") is deliberately NOT listed: type!beat's ruleset ships no Daycore mod (Half Time
-/// carries the pitch toggle). An acronym that is not listed here keeps no settings at all and is
-/// priced by the conservative unknown-mod cap.
+/// Daycore ("DC") IS listed: it is type!beat's pitch-PRESERVING Half Time, ranked at every speed in
+/// [0.50x, 0.99x] and paid on the same curve. It shares HT's range and default, so an unlisted DC
+/// would price at the conservative unknown-mod cap instead of the 0.75x-rate value an honest DC
+/// play earns. It is NOT in <see cref="UnrankedMods"/>: like the other rate mods it ranks at every
+/// speed.
 /// </para>
 /// </summary>
 public static class RateMods
@@ -40,6 +42,9 @@ public static class RateMods
         ["DT"] = new Range(1.01, 2.00, 1.50),
         ["NC"] = new Range(1.01, 2.00, 1.50),
         ["HT"] = new Range(0.50, 0.99, 0.75),
+        // Daycore is HT's pitch-preserving twin: same slider, same 0.75x default, same continuous
+        // curve, so it prices identically to HT at the same rate. Its BASE rate is HT's base rate.
+        ["DC"] = new Range(0.50, 0.99, 0.75),
     };
 
     /// <summary>
@@ -117,7 +122,7 @@ public static class RateMods
     /// <para>
     /// Slowest, not fastest, because the gate divides its requirement by this number: a higher rate
     /// buys a shorter real-time bound, so the slowest member is the strictest reading of a stack.
-    /// The client makes DT/NC/HT mutually exclusive, so a stack with two rate mods in it is
+    /// The client makes DT/NC/HT/DC mutually exclusive, so a stack with two rate mods in it is
     /// tamper-shaped by construction and gets the reading that concedes the least. Each member is
     /// read exactly as it is priced (<see cref="ReadSpeedChange"/>): snapped, clamped, and falling
     /// back to the mod's default when the client sent no <c>speed_change</c>.
