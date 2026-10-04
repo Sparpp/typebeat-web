@@ -155,6 +155,9 @@ public class HealthLiveParityTest
         InputEra2 = true,
         AuthoredSyllablesOnly = true,
         AlignSubdivisionTargets = true,
+        // EARLY FINISH (bit 4 of the second CONFIG flags word, the 0x01 CONFIG_EXTENDED carrier):
+        // the final line seals the moment it is fully typed, so a bare live engine needs it set.
+        EarlyFinish = true,
         ManualNewlines = true,
         NewlineOnTypedLetter = true,
     };
@@ -456,7 +459,7 @@ public class HealthLiveParityTest
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: SpaceSkipsWord(name), syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true, earlyFinish: true));
 
         foreach (var step in Scenario(name).GetProperty("script").EnumerateArray())
         {

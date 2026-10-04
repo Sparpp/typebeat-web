@@ -1824,7 +1824,7 @@
     //                            The desktop's Gameplay/failsound sample is NOT played: its asset is
     //                            CC-BY-NC, so the browser's wind-down is silent by decision.
     //   LOWPASS_OPEN_HZ          AudioFilter.MAX_LOWPASS_CUTOFF, where the low-pass sweep starts.
-    const RESULTS_DISPLAY_DELAY_MS = 1000;
+    const RESULTS_DISPLAY_DELAY_MS = 500;
     const LINES_FADE_OUT_MS = 300;
     const FAIL_WIND_DOWN_MS = 2500;
     const FAIL_FILTER_CUTOFF_HZ = 300;

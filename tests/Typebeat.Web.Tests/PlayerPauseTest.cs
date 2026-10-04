@@ -228,7 +228,7 @@ public class PlayerPauseTest
     {
         Assert.Multiple(() =>
         {
-            Assert.That(num("endOfPlayConstants", "resultsDelayMs"), Is.EqualTo(1000));
+            Assert.That(num("endOfPlayConstants", "resultsDelayMs"), Is.EqualTo(500));
             Assert.That(num("endOfPlayConstants", "linesFadeMs"), Is.EqualTo(300));
             Assert.That(num("endOfPlayConstants", "windDownMs"), Is.EqualTo(2500));
             Assert.That(num("endOfPlayConstants", "cutoffHz"), Is.EqualTo(300));
@@ -239,8 +239,9 @@ public class PlayerPauseTest
 
     /// <summary>
     /// A completed run's score is taken the instant the engine finishes, and the card and onFinish
-    /// (the only road to /play/submit) follow 1000 ms later with those very results. Keys pressed
-    /// during the wait are swallowed and never reach the engine; a browser chord is left alone.
+    /// (the only road to /play/submit) follow 500 ms later (PR 13 halved the desktop's
+    /// RESULTS_DISPLAY_DELAY from 1000) with those very results. Keys pressed during the wait are
+    /// swallowed and never reach the engine; a browser chord is left alone.
     /// </summary>
     [Test]
     public void ACompletedRun_HoldsTheCardForTheResultsDelay_WithTheResultsTakenAtTheEnd()
@@ -255,10 +256,10 @@ public class PlayerPauseTest
             Assert.That(flag("resultsDelay", "swallowed"), Is.True);
             Assert.That(flag("resultsDelay", "chordLeftToBrowser"), Is.True);
             Assert.That(flag("resultsDelay", "keysMovedEngine"), Is.False);
-            Assert.That(flag("resultsDelay", "cardAt900"), Is.False);
-            Assert.That(num("resultsDelay", "finishesAt900"), Is.Zero);
+            Assert.That(flag("resultsDelay", "cardAt600"), Is.True, "the 500 ms deadline has passed");
+            Assert.That(num("resultsDelay", "finishesAt600"), Is.EqualTo(1));
             // The tick that ended the run is the frame the delay is measured from.
-            Assert.That(real("resultsDelay", "delayMs"), Is.InRange(1000, 1016));
+            Assert.That(real("resultsDelay", "delayMs"), Is.InRange(500, 516));
             Assert.That(num("resultsDelay", "finishes"), Is.EqualTo(1));
             Assert.That(flag("resultsDelay", "passed"), Is.True);
             Assert.That(flag("resultsDelay", "identical"), Is.True, "submitted results are the end instant's");
