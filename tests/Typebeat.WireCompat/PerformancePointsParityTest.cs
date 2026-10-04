@@ -430,7 +430,7 @@ public class PerformancePointsParityTest
 
         // And the generation itself, so a half-landed cross-repo change that bumped BOTH mirrors
         // but left docs/pp.md and the two per-repo pins behind is caught here too.
-        Assert.That(ServerPp.VERSION, Is.EqualTo(24)); // pp:version
+        Assert.That(ServerPp.VERSION, Is.EqualTo(25)); // pp:version
     }
 
     #endregion

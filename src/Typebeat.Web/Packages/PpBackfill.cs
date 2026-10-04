@@ -72,7 +72,8 @@ public static class PpBackfill
                        b.sr_literate        AS SrLiterate,
                        b.sr_literate_dt     AS SrLiterateDt,
                        b.sr_literate_ht     AS SrLiterateHt,
-                       b.ratings::text      AS Ratings
+                       b.ratings::text      AS Ratings,
+                       b.played_duration_s  AS PlayedDurationS
                 FROM scores s
                 JOIN beatmaps b ON b.id = s.beatmap_id
                 WHERE s.pp_version < @version
@@ -100,7 +101,11 @@ public static class PpBackfill
                     // price reads since PerformancePoints v22: the six rating columns above stay
                     // selected because the report surfaces read them, but the pricing itself takes
                     // one cell of this.
-                    BeatmapRatings.Parse(row.Ratings));
+                    BeatmapRatings.Parse(row.Ratings),
+                    // The short-map factor's input (044_played_duration.sql): the map's span at the
+                    // BASE rate, which ForScore divides by the play's rate. NULL is an unswept row,
+                    // read as the legacy no-cut price.
+                    row.PlayedDurationS ?? double.PositiveInfinity);
 
                 if (!settled)
                 {
@@ -146,5 +151,6 @@ public static class PpBackfill
         double? SrLiterate,
         double? SrLiterateDt,
         double? SrLiterateHt,
-        string? Ratings);
+        string? Ratings,
+        double? PlayedDurationS);
 }

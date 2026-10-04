@@ -146,11 +146,11 @@ public class PackageParserTest
             Assert.That(diff.Pace.AverageWpm, Is.EqualTo(30).Within(1e-9)); // CPM/5 since LyricPace v15
             Assert.That(diff.Pace.LineAverageCpm, Is.EqualTo(100).Within(1e-9));
             Assert.That(diff.Pace.AverageCharsPerWord, Is.EqualTo(2.5).Within(1e-9));
-            // Stars (LyricDifficulty): "ab cd" rates EXACTLY ZERO since LyricPace v22. It is five
-            // cells, and the chunked axis's 16-character floor prices a map with no window holding
-            // that many at nothing (0.82 on the v21 chunked grid, 0.67 under the envelope model at
-            // the 12.0 anchor, 0.59 at the 10.6 anchor, 0.63 under the strain model before that).
-            Assert.That(diff.Pace.DifficultyRating, Is.Zero);
+            // Stars (LyricDifficulty): "ab cd" is five cells, which the chunked axis's 16-character
+            // floor priced at EXACTLY ZERO from v22. The floor is gone at v25, so it rates again
+            // (0.93; 0.82 on the v21 chunked grid, 0.67 under the envelope model at the 12.0 anchor,
+            // 0.59 at the 10.6 anchor, 0.63 under the strain model before that).
+            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.93069279789319281));
 
             // The rolling-window columns (028_wpm_curve.sql) are NULL here, and that is the
             // unmeasurable arm of their contract rather than an omission: "ab cd" is 5 cells

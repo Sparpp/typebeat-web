@@ -855,7 +855,7 @@ public class ScoreRecalcTest
             Assert.That(superseded.NewStatistics!["ok"], Is.EqualTo(1));
             Assert.That(superseded.NewStatistics!.ContainsKey("perfect"), Is.False,
                 "no ladder the client still runs can award one");
-            Assert.That(superseded.NewRank, Is.EqualTo("X"));
+            Assert.That(superseded.NewRank, Is.EqualTo("S"), "the corrected cell is capped at Ok, so the SS is gone under the accuracy rule");
 
             // The diagnostic survives the mode change. It stops being a gate; it does not stop being
             // reported, which is the whole difference between this and loosening a threshold.
@@ -902,7 +902,7 @@ public class ScoreRecalcTest
             // follows from a capped cell still being a hit that counts as typed.
             Assert.That(supersede.NewMaxCombo, Is.EqualTo(clean.MaxCombo), "the fix resumes the streak its keypress broke");
             Assert.That(supersede.NewCompletion, Is.EqualTo(clean.Completion).Within(1e-12));
-            Assert.That(supersede.NewRank, Is.EqualTo("X"));
+            Assert.That(supersede.NewRank, Is.EqualTo("S"), "the capped cell costs the SS under the accuracy rule");
 
             // ...and what it does NOT: the corrected cell is capped at Ok, so one of the run's
             // thirteen cells is worth 100 where the clean run's is worth 300.

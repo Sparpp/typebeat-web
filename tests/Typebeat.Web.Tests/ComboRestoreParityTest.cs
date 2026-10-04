@@ -463,7 +463,7 @@ public class ComboRestoreParityTest
                 Is.EqualTo((12 * 300 + 100) / (13 * 300.0)).Within(1e-12));
             Assert.That(fixedRun.GetProperty("accuracy").GetDouble(),
                 Is.LessThan(clean.GetProperty("accuracy").GetDouble()));
-            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"), "and so are rank and its cutoffs");
+            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("S"), "and so are rank and its cutoffs");
 
             // ...and the server agrees, recomputing the browser's own dictionary through the contract
             // that judges it in production: a max_combo of 13 on a thirteen-cell map is in bounds, and
@@ -471,7 +471,7 @@ public class ComboRestoreParityTest
             var recomputed = Recompute(fixedRun);
             Assert.That(recomputed.StatisticsValid, Is.True);
             Assert.That(recomputed.Completion, Is.EqualTo(1));
-            Assert.That(recomputed.Rank, Is.EqualTo("X"));
+            Assert.That(recomputed.Rank, Is.EqualTo("S"));
             Assert.That(ScoringContract.TotalScoreWithinBounds(fixedRun.GetProperty("totalScore").GetInt64(), recomputed), Is.True);
         });
     }

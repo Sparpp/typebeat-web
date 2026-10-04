@@ -1,6 +1,7 @@
 using Dapper;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages.Lyrics;
+using Typebeat.Web.Scoring;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Packages;
@@ -116,6 +117,7 @@ public static class PaceBackfill
                         ratings = @ratings::jsonb,
                         lyric_font = @lyricFont,
                         lyrics_original = @lyricsOriginal,
+                        played_duration_s = @playedDurationS,
                         pace_version = @paceVersion
                     WHERE id = @id;
 
@@ -182,6 +184,9 @@ public static class PaceBackfill
                         // arm and no bump, for 037's reason: every blob stored before originals
                         // existed (backlog 330) has none, so '' is already right for it.
                         lyricsOriginal = diff.OriginalLyricsText,
+                        // The short-map factor's input (044_played_duration.sql), stored at the BASE
+                        // rate (the play's rate divides it at pricing, as the game's PlayedDurationFor does).
+                        playedDurationS = PerformancePoints.PlayedDurationFor(diff.Lines, mods: null),
                         paceVersion = LyricPace.VERSION,
                     });
 

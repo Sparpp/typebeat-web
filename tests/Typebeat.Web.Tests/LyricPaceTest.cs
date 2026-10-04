@@ -76,12 +76,11 @@ public class LyricPaceTest
 
             // Stars from LyricDifficulty, the SHIPPED (chunked) reading. It read 0.63 under the
             // strain model, 0.59 under the feats one, 0.5911 under the envelope at the 10.6 anchor,
-            // 0.6692 at the 12.0 anchor and 0.8197 on the chunked axis the rework shipped, and it
-            // reads EXACTLY ZERO since v22: the line carries five cells, and the chunked axis's
-            // character floor (16, the sandbox's own dial, mirrored by the envelope's
-            // LyricDifficulty.MinimumWindowChars) prices a map with no window holding that many at
-            // nothing, however fast its short bursts are. The pace figures above do not move.
-            Assert.That(pace.DifficultyRating, Is.Zero);
+            // 0.6692 at the 12.0 anchor and 0.8197 on the chunked axis the rework shipped. It read
+            // EXACTLY ZERO from v22 to v24: the line carries five cells, and the chunked axis's own
+            // character floor (16) priced a map with no window holding that many at nothing. That
+            // floor is gone at v25, so the green reading is back. The pace figures above do not move.
+            Assert.That(pace.DifficultyRating, Is.EqualTo(0.93069279789319281));
         });
     }
 
@@ -668,7 +667,7 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(1.2952833163873501), "the shipped (chunked) reading");
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(1.8489909033945315), "the shipped (chunked) reading");
             Assert.That(LyricDifficulty.Compute(map, 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.EqualTo(1.4250280885191169),
                 "the envelope arm, with the typability the public API applies");
 
@@ -727,7 +726,7 @@ public class LyricPaceTest
         Assert.Multiple(() =>
         {
             Assert.That(LyricPace.Compute([tooShort]).DifficultyRating, Is.EqualTo(4.887130687171009), "1.0 s of singing is one fast burst");
-            Assert.That(LyricPace.Compute([longEnough]).DifficultyRating, Is.EqualTo(2.4949068839517472), "3 s of the same six words is a slow one");
+            Assert.That(LyricPace.Compute([longEnough]).DifficultyRating, Is.EqualTo(2.666707015839954), "3 s of the same six words is a slow one");
 
             // The ORDER is the part worth saying out loud: the short map outrates the long one,
             // where the envelope model has it at exactly nothing.
@@ -738,7 +737,7 @@ public class LyricPaceTest
             Assert.That(LyricDifficulty.Compute([longEnough], 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.GreaterThan(0),
                 "and 3 s of it does");
 
-            Assert.That(LyricPace.Compute([belowTheFloor]).DifficultyRating, Is.Zero, "and 3 s of \"cat cat\" rates nothing: 7 cells is under the floor");
+            Assert.That(LyricPace.Compute([belowTheFloor]).DifficultyRating, Is.EqualTo(0.81774938592926361), "a sparse map now rates its own windows: the character floor is gone (PerformancePoints v25)");
             Assert.That(LyricDifficulty.Compute([belowTheFloor], 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.Zero, "on either arm");
         });
     }
@@ -750,11 +749,10 @@ public class LyricPaceTest
     /// author put them on one line or several, which is right, because across line breaks the
     /// player really does type fewer keystrokes. Mirrors the game's test of the same name.
     ///
-    /// <para>FOUR WORDS RATHER THAN TWO SINCE v22, exactly as the game's test moved: the comparison
-    /// has to clear the 16-character floor to be readable at all ("aaa bbb" carries 7 cells and now
-    /// rates zero on either layout). One line of four carries 3 spaces over the same timeline that
-    /// four lines of one carry none, which is the whole of the difference between the two
-    /// ratings below.</para>
+    /// <para>FOUR WORDS RATHER THAN TWO SINCE v22, exactly as the game's test moved: more cells make
+    /// the two layouts clearer to compare. One line of four carries 3 spaces over the same timeline
+    /// that four lines of one carry none, which is the whole of the difference between the two
+    /// ratings below. (The 16-character floor that once forced the longer fixture is gone, v25.)</para>
     /// </summary>
     [Test]
     public void DifficultyRating_AnInterWordSpaceIsACellAndBelongsToItsLine()
@@ -781,7 +779,7 @@ public class LyricPaceTest
         Assert.Multiple(() =>
         {
             Assert.That(LyricDifficulty.Compute(oneLine), Is.EqualTo(2.1018069517667728), "23 cells: four words + the 3 spaces between them");
-            Assert.That(LyricDifficulty.Compute(fourLines), Is.EqualTo(1.2784399447242352), "20 cells: no space over a line break");
+            Assert.That(LyricDifficulty.Compute(fourLines), Is.EqualTo(1.7908710384500925), "20 cells: no space over a line break");
 
             Assert.That(LyricDifficulty.Compute(oneLine), Is.GreaterThan(LyricDifficulty.Compute(fourLines)),
                 "the extra keystrokes have to be worth something, whatever the axis");

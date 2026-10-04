@@ -60,7 +60,7 @@ public class FourTierEraTest
             // ...and all three quality tiers ARE typed, so any of them alone is a full completion.
             Assert.That(allGreat.Completion, Is.EqualTo(1));
             Assert.That(allMeh.Completion, Is.EqualTo(1));
-            Assert.That(allMeh.Rank, Is.EqualTo("X"), "rank is graded on cells typed, never on timing");
+            Assert.That(allMeh.Rank, Is.EqualTo("D"), "an all-meh play has accuracy 50/300, far below the grade floor");
 
             // A clean three-tier full combo sits exactly ON its ceiling, which is the test
             // GateRefund applies to a stored row before it will re-rank it.

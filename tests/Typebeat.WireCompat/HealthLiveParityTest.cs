@@ -365,7 +365,7 @@ public class HealthLiveParityTest
                 Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(game.Account.TotalScore), $"{name}: total_score");
                 Assert.That(submitted.GetProperty("completion").GetDouble(), Is.EqualTo(TypeBeatScoreProcessor.ComputeCompletion(game.Account)), $"{name}: completion");
 
-                var rank = failed ? ScoreRank.F : TypeBeatScoreProcessor.RankFromCompletion(TypeBeatScoreProcessor.ComputeCompletion(game.Account));
+                var rank = failed ? ScoreRank.F : TypeBeatScoreProcessor.RankFromStatistics(game.Account.Accuracy, game.Account.Statistics);
                 Assert.That(submitted.GetProperty("rank").GetString(), Is.EqualTo(rank.ToString()), $"{name}: rank");
 
                 if (failed)

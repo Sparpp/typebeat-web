@@ -450,7 +450,7 @@ public static class PerformancePoints
     /// the two sweeps compose in either order and the second one settles what the first could
     /// not.</para>
     /// </summary>
-    public const int VERSION = 24;
+    public const int VERSION = 25;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -1199,6 +1199,10 @@ public static class PerformancePoints
     /// the whole price. From v3 to v19 a base-rate Half Time play took an extra multiplier here,
     /// which every path that could see one had to remember to pass; nothing does now, and the
     /// forgetting-to-pass-it failure mode is gone with it.</para>
+    ///
+    /// <para>Difficulty is rated at the played rate. The separate short-map factor uses
+    /// <paramref name="playedDurationSeconds"/>, already divided by that rate. An unknown
+    /// duration preserves legacy callers' price; every beatmap-backed caller supplies it.</para>
     /// </summary>
     public static double Compute(
         double starRating,
@@ -1208,7 +1212,8 @@ public static class PerformancePoints
         double accuracy,
         int maxCombo,
         IReadOnlyList<ScoreMod>? mods,
-        int typos = 0)
+        int typos = 0,
+        double playedDurationSeconds = double.PositiveInfinity)
     {
         // No notes describes no play; a zero or non-finite rating prices nothing.
         if (notes <= 0 || !double.IsFinite(starRating) || starRating <= 0)
@@ -1263,7 +1268,7 @@ public static class PerformancePoints
         // by misses cannot keep a consolation bonus. That is the opposite of v21's placement, which
         // is what the version bump records.
         double core = scale * difficulty * cleanliness * timing * ModMultiplier(mods, notes);
-        double pp = core * (1 + comboBonus);
+        double pp = core * (1 + comboBonus) * ShortMapMultiplier(playedDurationSeconds);
 
         return double.IsFinite(pp) && pp > 0 ? pp : 0;
     }
@@ -1306,7 +1311,8 @@ public static class PerformancePoints
         NoteCounts notes,
         double accuracy,
         int maxCombo,
-        BeatmapRatings? ratings)
+        BeatmapRatings? ratings,
+        double basePlayedDurationSeconds = double.PositiveInfinity)
     {
         if (!ranked)
             return (null, true);
@@ -1316,6 +1322,90 @@ public static class PerformancePoints
         if (stars.Stars is not double effective)
             return (null, !stars.Pending);
 
-        return (Compute(effective, notes.Notes, stars.DifficultCharacters, notes.Misses, accuracy, maxCombo, mods, notes.Typos), true);
+        // The stored span (044_played_duration.sql) is measured at the BASE rate; move it to the
+        // played rate here, the same division the game's PlayedDurationFor does, so every caller
+        // passes the map's stored figure and the cut is read at the length the player actually heard.
+        double playedDurationSeconds = double.IsFinite(basePlayedDurationSeconds)
+            ? basePlayedDurationSeconds / (EligibleRate(mods) ?? 1)
+            : basePlayedDurationSeconds;
+
+        return (Compute(effective, notes.Notes, stars.DifficultCharacters, notes.Misses, accuracy, maxCombo, mods, notes.Typos, playedDurationSeconds), true);
+    }
+
+    /// <summary>
+    /// The play's pp-eligible base rate (1.0 for no rate mod), or null when the stack carries more
+    /// than one rate mod or a non-default speed. Mirrors the game's <c>EligibleRate</c>: the server
+    /// has no live bindable, so a rate mod read here always sits at its default (which is how a
+    /// stored row with no speed_change is read), and any non-default is refused as ineligible.
+    /// </summary>
+    public static double? EligibleRate(IReadOnlyList<ScoreMod>? mods)
+    {
+        if (mods == null)
+            return 1.0;
+
+        double? rate = null;
+
+        foreach (var mod in mods)
+        {
+            if (!RateMods.IsRateMod(mod.Acronym))
+                continue;
+
+            // A second rate mod is ineligible outright.
+            if (rate != null)
+                return null;
+
+            if (!RateMods.TryGetRange(mod.Acronym, out var range))
+                return null;
+
+            rate = range.Default;
+        }
+
+        return rate ?? 1.0;
+    }
+
+    /// <summary>
+    /// First-to-last playable unit span, in seconds at the played rate. Instrumental breaks within
+    /// the mapped lyrics count, while leading audio, seal deadlines and trailing audio do not.
+    /// Empty caption-only lines have no playable units and cannot extend the span. Byte-identical
+    /// to the game's <c>PerformancePoints.PlayedDurationFor</c>.
+    /// </summary>
+    public static double PlayedDurationFor(IEnumerable<LyricLine> lines, IReadOnlyList<ScoreMod>? mods)
+    {
+        double first = double.PositiveInfinity, last = double.NegativeInfinity;
+        bool literate = IsLiterate(mods);
+
+        foreach (LyricLine line in lines)
+        {
+            foreach (TimedUnit unit in line.Units)
+            {
+                string text = literate ? unit.Text : Typeability.ToDefaultStream(unit.Text);
+
+                if (string.IsNullOrWhiteSpace(text.Replace("&", string.Empty)) || !double.IsFinite(unit.StartTime)
+                    || !double.IsFinite(unit.EndTime) || unit.EndTime < unit.StartTime)
+                    continue;
+
+                first = Math.Min(first, unit.StartTime);
+                last = Math.Max(last, unit.EndTime);
+            }
+        }
+
+        double rate = EligibleRate(mods) ?? 1;
+        return double.IsFinite(first) && double.IsFinite(last) ? Math.Max(0, last - first) / (1000 * rate) : 0;
+    }
+
+    /// <summary>
+    /// A short-map cut: 60% at zero seconds, 15% at 30, and none from 60 onward.
+    /// The quadratic joins the full-length price with zero slope. Unknown legacy durations
+    /// preserve the price; malformed durations use the maximum cut rather than evading it.
+    /// Byte-identical to the game's <c>PerformancePoints.ShortMapMultiplier</c>.
+    /// </summary>
+    public static double ShortMapMultiplier(double playedDurationSeconds)
+    {
+        if (double.IsPositiveInfinity(playedDurationSeconds))
+            return 1;
+
+        double duration = double.IsFinite(playedDurationSeconds) ? Math.Max(0, playedDurationSeconds) : 0;
+        double remaining = 1 - Math.Clamp(duration / 60, 0, 1);
+        return 1 - 0.60 * remaining * remaining;
     }
 }

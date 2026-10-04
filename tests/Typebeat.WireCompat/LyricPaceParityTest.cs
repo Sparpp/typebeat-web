@@ -536,11 +536,11 @@ public class LyricPaceParityTest
         // the game and the pace one gates the column the pp one now depends on.
         Assert.Multiple(() =>
         {
-            // 24 since backlog 363: an unsubdivided word rates as ONE segment, so every star column
-            // and the ratings matrix re-derive. A rating-only change: the pp formula does not move,
-            // so its VERSION stays.
-            Assert.That(ServerPace.VERSION, Is.EqualTo(24));
-            Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(24)); // pp:version
+            // Both moved in PR 17: the SR model drops its minimum-character window, so every star
+            // column and the ratings matrix re-derive (pace 25), and pp gains the short-map factor
+            // (pp 25). They move together here because the matrix is what pp's rating arm reads.
+            Assert.That(ServerPace.VERSION, Is.EqualTo(25));
+            Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(25)); // pp:version
         });
     }
 

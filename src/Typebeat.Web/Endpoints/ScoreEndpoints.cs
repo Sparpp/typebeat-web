@@ -134,7 +134,7 @@ public static class ScoreEndpoints
             SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                    b.difficulty_rating AS baseStars, b.sr_dt AS srDt, b.sr_ht AS srHt,
                    b.sr_literate AS srLiterate, b.sr_literate_dt AS srLiterateDt, b.sr_literate_ht AS srLiterateHt,
-                   b.ratings::text AS ratings
+                   b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
             FROM beatmaps b
             JOIN beatmapsets bs ON bs.id = b.set_id
             WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
@@ -233,7 +233,7 @@ public static class ScoreEndpoints
             SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS,
                    difficulty_rating AS baseStars, sr_dt AS srDt, sr_ht AS srHt,
                    sr_literate AS srLiterate, sr_literate_dt AS srLiterateDt, sr_literate_ht AS srLiterateHt,
-                   ratings::text AS ratings
+                   ratings::text AS ratings, played_duration_s AS playedDurationS
             FROM beatmaps WHERE id = @beatmapId
             """,
             new { beatmapId }, tx);
@@ -365,7 +365,11 @@ public static class ScoreEndpoints
             // rating columns that used to be passed here. A map the sweep has not reached carries
             // no matrix at all and leaves the play unpriced and retried, exactly as an unfilled
             // sr_dt already did for a Double Time play.
-            BeatmapRatings.Parse(beatmap.Ratings));
+            BeatmapRatings.Parse(beatmap.Ratings),
+            // The short-map factor's input (044_played_duration.sql), the map's span at the BASE
+            // rate (ForScore divides it by the play's rate). NULL is an unswept row, read as the
+            // legacy no-cut price rather than the maximum cut.
+            beatmap.PlayedDurationS ?? double.PositiveInfinity);
 
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
@@ -817,7 +821,7 @@ public static class ScoreEndpoints
         long Id, string ChecksumMd5, double DrainLengthS, double SkippableS,
         double BaseStars, double? SrDt, double? SrHt,
         double? SrLiterate, double? SrLiterateDt, double? SrLiterateHt,
-        string? Ratings);
+        string? Ratings, double? PlayedDurationS);
 
     private sealed record BestScoreRow(long Id, long TotalScore);
 

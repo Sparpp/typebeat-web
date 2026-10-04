@@ -538,7 +538,7 @@ public class WordSkipParityTest
             Assert.That(Strings(run, "statesLineOne"), Is.EqualTo(new[] { "correct", "correct" }));
             Assert.That(Int(submitted, "maxCombo"), Is.EqualTo(6), "4 held across the seal, plus the next line's two cells");
             Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(380647));
-            Assert.That(submitted.GetProperty("rank").GetString(), Is.EqualTo("C"));
+            Assert.That(submitted.GetProperty("rank").GetString(), Is.EqualTo("B"));
         });
     }
 

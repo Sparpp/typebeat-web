@@ -180,6 +180,7 @@ public class Migration004BackfillTest
             "041_set_versions_public_key.sql",
             "042_replay_retention.sql",
             "043_classic_version_marks.sql",
+            "044_played_duration.sql",
         }));
     }
 

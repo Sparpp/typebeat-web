@@ -446,7 +446,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 24;
+    public const int VERSION = 25;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's

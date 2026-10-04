@@ -136,13 +136,14 @@ public static class ScoringContract
     private const double accuracy_portion_max = 500_000;
     private const double accuracy_exponent = 5; // Math.Pow(Accuracy.Value, 5), ScoreProcessor.cs:430
 
-    // Completion → rank cutoffs (TypeBeatScoreProcessor.COMPLETION_CUTOFF_*; same band shape the
-    // base game used for accuracy, but graded on the fraction of cells typed).
-    private const double cutoff_x = 1;
-    private const double cutoff_s = 0.95;
-    private const double cutoff_a = 0.9;
-    private const double cutoff_b = 0.8;
-    private const double cutoff_c = 0.7;
+    // Accuracy → rank cutoffs, mirroring TypeBeatScoreProcessor.ACCURACY_CUTOFF_* (and its
+    // S_MISS_LIMIT): grades are awarded on timing accuracy with a missed-cell condition on SS and S.
+    private const double accuracy_cutoff_x = 0.98;
+    private const double accuracy_cutoff_s = 0.92;
+    private const double accuracy_cutoff_a = 0.85;
+    private const double accuracy_cutoff_b = 0.75;
+    private const double accuracy_cutoff_c = 0.60;
+    private const double s_miss_limit = 0.03;
 
     private static readonly IReadOnlyDictionary<string, int> empty = new Dictionary<string, int>();
 
@@ -280,7 +281,7 @@ public static class ScoringContract
         // numerator alone would suggest. (StatisticsValid is already false in this case.)
         long ceiling = denominator <= 0 ? 0 : (long)Math.Round(raw, MidpointRounding.ToEven);
 
-        return new Recomputed(accuracy, judgedAccuracy, completion, ceiling, RankFromCompletion(completion), valid, theoreticalMaxCombo, accuracyProgress);
+        return new Recomputed(accuracy, judgedAccuracy, completion, ceiling, RankFromStatistics(accuracy, statistics), valid, theoreticalMaxCombo, accuracyProgress);
     }
 
     /// <summary>
@@ -323,19 +324,35 @@ public static class ScoringContract
     }
 
     /// <summary>
-    /// Completion (0..1) → rank string, mirroring TypeBeatScoreProcessor.RankFromCompletion.
-    /// Typing every cell is an X (SS) regardless of timing; only missed cells cost the grade.
-    /// There are no mods, so the silver ranks (SH/XH) never apply. The strings match the client's
-    /// <c>ScoreRank</c> enum names, which its <c>StringEnumConverter</c> parses on the wire.
+    /// Accuracy + missed fraction → rank string, mirroring TypeBeatScoreProcessor.RankFromAccuracy.
+    /// Grades are awarded on timing accuracy, with an extra missed-cell condition on SS (no cell
+    /// missed at all) and S (under S_MISS_LIMIT of the map's cells missed). There are no mods, so
+    /// the silver ranks (SH/XH) never apply. The strings match the client's <c>ScoreRank</c> enum
+    /// names, which its <c>StringEnumConverter</c> parses on the wire.
     /// </summary>
-    public static string RankFromCompletion(double completion)
+    public static string RankFromAccuracy(double accuracy, double missedFraction)
     {
-        if (completion >= cutoff_x) return "X";
-        if (completion >= cutoff_s) return "S";
-        if (completion >= cutoff_a) return "A";
-        if (completion >= cutoff_b) return "B";
-        if (completion >= cutoff_c) return "C";
+        accuracy = double.IsFinite(accuracy) ? Math.Clamp(accuracy, 0, 1) : 0;
+        missedFraction = double.IsFinite(missedFraction) ? Math.Clamp(missedFraction, 0, 1) : 1;
+
+        if (accuracy >= accuracy_cutoff_x && missedFraction == 0) return "X";
+        if (accuracy >= accuracy_cutoff_s && missedFraction < s_miss_limit) return "S";
+        if (accuracy >= accuracy_cutoff_a) return "A";
+        if (accuracy >= accuracy_cutoff_b) return "B";
+        if (accuracy >= accuracy_cutoff_c) return "C";
         return "D";
+    }
+
+    /// <summary>
+    /// Rank from the transmitted dictionaries, mirroring TypeBeatScoreProcessor.RankFromStatistics:
+    /// the missed fraction is the misses over judged cells, from the same <see cref="PerformancePoints.CountNotes"/>
+    /// the client uses (an uncorrected typo counts as a missed cell there, exactly as it does for pp).
+    /// </summary>
+    public static string RankFromStatistics(double accuracy, IReadOnlyDictionary<string, int>? statistics)
+    {
+        var counts = PerformancePoints.CountNotes(statistics);
+        double missedFraction = counts.Notes > 0 ? (double)counts.Misses / counts.Notes : 0;
+        return RankFromAccuracy(accuracy, missedFraction);
     }
 
     // ---- HitResult numeric weights + classification ----

@@ -736,8 +736,8 @@ public class PackageIngestDbTest
 
         await PpBackfill.RunAsync(db, NullLogger.Instance);
 
-        var beatmap = await conn.QuerySingleAsync<(double Base, double Dt, string Ratings)>(
-            "SELECT difficulty_rating AS Base, sr_dt AS Dt, ratings::text AS Ratings FROM beatmaps WHERE id = 1001");
+        var beatmap = await conn.QuerySingleAsync<(double Base, double Dt, string Ratings, double? Duration)>(
+            "SELECT difficulty_rating AS Base, sr_dt AS Dt, ratings::text AS Ratings, played_duration_s AS Duration FROM beatmaps WHERE id = 1001");
 
         // The matrix the ingest wrote (034_ratings_matrix.sql), which is what the pricing reads: its
         // arm-none stars ARE the two columns above, and it carries the difficult characters as well,
@@ -749,8 +749,11 @@ public class PackageIngestDbTest
         // 120 great = 120 notes; ignore_hit is not a note (see insertPlayAsync). NO MISSES, for the
         // reason given where the plays are inserted: this fixture's note count is unrelated to its
         // 23-cell map, so any miss count at all prices every arm to zero under v22.
-        double expectedNoMod = PerformancePoints.Compute(noModCell.Stars, 120, noModCell.DifficultCharacters, 0, 0.9, 100, []);
-        double expectedDt = PerformancePoints.Compute(dtCell.Stars, 120, dtCell.DifficultCharacters, 0, 0.9, 100, []);
+        // The duration is the map's stored span (044_played_duration.sql), which the pricing now
+        // multiplies in as the short-map factor; the fixture's map is short, so it bites.
+        double duration = beatmap.Duration ?? double.PositiveInfinity;
+        double expectedNoMod = PerformancePoints.Compute(noModCell.Stars, 120, noModCell.DifficultCharacters, 0, 0.9, 100, [], playedDurationSeconds: duration);
+        double expectedDt = PerformancePoints.Compute(dtCell.Stars, 120, dtCell.DifficultCharacters, 0, 0.9, 100, [], playedDurationSeconds: duration / RateMods.DoubleTimeBaseRate);
 
         double noModPp = await ppOf(conn, noMod);
         double dtPp = await ppOf(conn, baseRateDt);
@@ -872,8 +875,8 @@ public class PackageIngestDbTest
         // Now the pace sweep reaches the map, on the VERSION arm alone.
         await PaceBackfill.RunAsync(db, fileStore, NullLogger.Instance);
 
-        var beatmap = await conn.QuerySingleAsync<(double? Lt, int PaceVersion, string Ratings)>(
-            "SELECT sr_literate AS Lt, pace_version AS PaceVersion, ratings::text AS Ratings FROM beatmaps WHERE id = 1001");
+        var beatmap = await conn.QuerySingleAsync<(double? Lt, int PaceVersion, string Ratings, double? Duration)>(
+            "SELECT sr_literate AS Lt, pace_version AS PaceVersion, ratings::text AS Ratings, played_duration_s AS Duration FROM beatmaps WHERE id = 1001");
 
         var literateCell = BeatmapRatings.Parse(beatmap.Ratings)!.TryGet(LyricDifficulty.JudgementArm.None, true, 1.0)!.Value;
 
@@ -893,7 +896,8 @@ public class PackageIngestDbTest
             // contributes nothing to modMult, so on this mark-free fixture (whose converted rating
             // equals its plain one) the play is worth exactly what the no-mod play is.
             Assert.That(priced, Is.EqualTo(PerformancePoints.Compute(
-                literateCell.Stars, 120, literateCell.DifficultCharacters, 0, 0.9, 100, [])).Within(1e-9));
+                literateCell.Stars, 120, literateCell.DifficultCharacters, 0, 0.9, 100, [],
+                playedDurationSeconds: beatmap.Duration ?? double.PositiveInfinity)).Within(1e-9));
         });
     }
 

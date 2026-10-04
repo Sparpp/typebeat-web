@@ -360,13 +360,13 @@ public class AllowWrongInputParityTest
             // 25 cells JUDGED and 24 of them TYPED, which is the denominator doing its job: 24/25 is
             // an S, not the "1 over an empty denominator" a non-resolving cell would have produced.
             Assert.That(run.GetProperty("completion").GetDouble(), Is.EqualTo(24 / 25.0).Within(1e-12));
-            Assert.That(run.GetProperty("rank").GetString(), Is.EqualTo("S"));
+            Assert.That(run.GetProperty("rank").GetString(), Is.EqualTo("A"));
 
             // ...and the server agrees, recomputing the same play through its own contract.
             var recomputed = Recompute(run);
             Assert.That(recomputed.StatisticsValid, Is.True);
             Assert.That(recomputed.Completion, Is.EqualTo(24 / 25.0).Within(1e-12));
-            Assert.That(recomputed.Rank, Is.EqualTo("S"));
+            Assert.That(recomputed.Rank, Is.EqualTo("A"));
         });
     }
 
@@ -409,7 +409,7 @@ public class AllowWrongInputParityTest
                 "the corrected cell, capped at Ok by backlog 210 however well the retype was timed");
 
             Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(1).Within(1e-12));
-            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"));
+            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("S"));
 
             Assert.That(fixedRun.GetProperty("engineMaxCombo").GetInt32(), Is.EqualTo(15),
                 "the HUD combo resumes the streak the typo broke and runs the map out");
@@ -604,7 +604,7 @@ public class AllowWrongInputParityTest
             }));
             Assert.That(fixedRun.GetProperty("maxCombo").GetInt32(), Is.EqualTo(15), "the streak came back at the fix");
             Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(1));
-            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("X"),
+            Assert.That(fixedRun.GetProperty("rank").GetString(), Is.EqualTo("S"),
                 "the cap costs accuracy, and completion and rank are untouched by it");
             Assert.That(fixedRun.GetProperty("totalScore").GetInt64(),
                 Is.LessThan(root.GetProperty("clean").GetProperty("totalScore").GetInt64()));

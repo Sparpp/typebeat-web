@@ -16,13 +16,13 @@ public class ScoringContractTest
     // ---- accuracy recompute ----
 
     [Test]
-    public void Accuracy_RecomputedFromWeights_ButRankGradesOnCompletion()
+    public void Accuracy_RecomputedFromWeights_AndGradesUseIt()
     {
         // 8×great + 1×ok + 1×meh out of 10 max-great objects.
         // numerator   = 300·8 + 100·1 + 50·1 = 2550
         // denominator = 300·10              = 3000  → accuracy = 0.85
-        // completion  = 10 typed / 10 cells = 1.0   → rank X, sloppy timing costs accuracy,
-        // score and combo, but never the grade.
+        // completion  = 10 typed / 10 cells = 1.0   → completion is a separate statistic now
+        // grade       = accuracy 0.85, no cell missed → A
         var r = ScoringContract.Recompute(
             Dict(("great", 8), ("ok", 1), ("meh", 1)),
             Dict(("great", 10)),
@@ -33,7 +33,7 @@ public class ScoringContractTest
             Assert.That(r.StatisticsValid, Is.True);
             Assert.That(r.Accuracy, Is.EqualTo(0.85).Within(1e-9));
             Assert.That(r.Completion, Is.EqualTo(1.0).Within(1e-12));
-            Assert.That(r.Rank, Is.EqualTo("X"));
+            Assert.That(r.Rank, Is.EqualTo("A"));
             Assert.That(r.TheoreticalMaxCombo, Is.EqualTo(10));
             // ceiling = round(500000·0.85 + 500000·0.85^5·1) = round(646852.65625) = 646853
             Assert.That(r.TotalScoreCeiling, Is.EqualTo(646853L));
@@ -41,18 +41,18 @@ public class ScoringContractTest
     }
 
     [Test]
-    public void WorstTimingEverywhere_StillRankX_WhenEveryCellTyped()
+    public void WorstTimingEverywhere_GradesOnAccuracy_NotCompletion()
     {
-        // The headline rule: an all-meh play (every window scraped) has accuracy 50/300 ≈ 0.167
-        // but typed 100% of the map: SS.
+        // An all-meh play (every window scraped) has accuracy 50/300 ~= 0.167. Typing every cell is
+        // no longer enough: nothing missed, but the timing is far below the D floor, so it is a D.
         var r = ScoringContract.Recompute(Dict(("meh", 10)), Dict(("great", 10)), maxCombo: 10);
 
         Assert.Multiple(() =>
         {
             Assert.That(r.StatisticsValid, Is.True);
             Assert.That(r.Accuracy, Is.EqualTo(50.0 / 300.0).Within(1e-9));
-            Assert.That(r.Completion, Is.EqualTo(1.0).Within(1e-12));
-            Assert.That(r.Rank, Is.EqualTo("X"));
+            Assert.That(r.Completion, Is.EqualTo(1.0).Within(1e-12), "the cells were still all typed");
+            Assert.That(r.Rank, Is.EqualTo("D"));
         });
     }
 
@@ -90,10 +90,10 @@ public class ScoringContractTest
             // the numerator, so rank fell for it long before accuracy did.
             Assert.That(typo.Completion, Is.EqualTo(0.9).Within(1e-12));
             Assert.That(typo.Completion, Is.EqualTo(miss.Completion).Within(1e-12));
-            Assert.That(typo.Rank, Is.EqualTo("A"));
+            Assert.That(typo.Rank, Is.EqualTo("A"), "accuracy 0.9 with 10% missed: the S miss limit refuses it");
             Assert.That(typo.Rank, Is.EqualTo(miss.Rank));
             Assert.That(meh.Completion, Is.EqualTo(1.0).Within(1e-12));
-            Assert.That(meh.Rank, Is.EqualTo("X"));
+            Assert.That(meh.Rank, Is.EqualTo("A"), "accuracy 0.883 is the same A, and no cell was missed");
 
             // The typo is a JUDGEMENT, so it is in the denominator: a play made entirely of them is
             // completion 0 and a D, not 1-over-nothing.
@@ -261,21 +261,26 @@ public class ScoringContractTest
         });
     }
 
-    // ---- rank cutoffs (TypeBeatScoreProcessor.RankFromCompletion, keep in sync) ----
+    // ---- grade ladder (TypeBeatScoreProcessor.RankFromAccuracy, keep in sync) ----
+    // Grades are awarded on accuracy with a missed-cell condition on SS (no cell missed) and S
+    // (under 3% missed). The missedFraction here is 0 except where the condition is the point.
 
-    [TestCase(1.0, "X")]
-    [TestCase(0.99, "S")]
-    [TestCase(0.95, "S")]
-    [TestCase(0.9499, "A")]
-    [TestCase(0.90, "A")]
-    [TestCase(0.8999, "B")]
-    [TestCase(0.80, "B")]
-    [TestCase(0.7999, "C")]
-    [TestCase(0.70, "C")]
-    [TestCase(0.6999, "D")]
-    [TestCase(0.0, "D")]
-    public void RankFromCompletion_MatchesCutoffs(double completion, string expected)
-        => Assert.That(ScoringContract.RankFromCompletion(completion), Is.EqualTo(expected));
+    [TestCase(1.0, 0.0, "X")]
+    [TestCase(0.98, 0.0, "X")]
+    [TestCase(0.9799, 0.0, "S")]
+    [TestCase(1.0, 0.001, "S")]
+    [TestCase(0.92, 0.0299, "S")]
+    [TestCase(0.92, 0.03, "A")]
+    [TestCase(0.9199, 0.0, "A")]
+    [TestCase(0.85, 0.15, "A")]
+    [TestCase(0.8499, 0.0, "B")]
+    [TestCase(0.75, 0.25, "B")]
+    [TestCase(0.7499, 0.0, "C")]
+    [TestCase(0.60, 0.4, "C")]
+    [TestCase(0.5999, 0.0, "D")]
+    [TestCase(0.0, 1.0, "D")]
+    public void RankFromAccuracy_MatchesCutoffs(double accuracy, double missedFraction, string expected)
+        => Assert.That(ScoringContract.RankFromAccuracy(accuracy, missedFraction), Is.EqualTo(expected));
 
     // ---- failed (partial) plays: judged-only accuracy drives the ceiling ----
     // Regression for the review finding: the client's running accuracy denominator only counts

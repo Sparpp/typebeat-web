@@ -1,0 +1,16 @@
+-- typebeat-web migration 044: the map's PLAYED DURATION, the short-map pp factor's input
+-- (PerformancePoints v25, the game's PerformancePoints.PlayedDurationFor).
+--
+-- pp now multiplies by a short-map factor measured at the played span in seconds: 60% off near zero,
+-- 15% off at 30 seconds, none from 60 onward. That span is the first-to-last playable-unit distance
+-- over the map's lyric lines, divided by the played rate, and like every other paced figure here it
+-- cannot be computed in SQL: it comes off the parsed [Lyrics] section. So this migration only adds
+-- the column, and Packages/PaceBackfill.cs fills it from the stored blob at startup; the
+-- LyricPace.VERSION bump carries it, and the same UPDATE stamps pp_version = 0 so PpBackfill then
+-- reprices every score on the map with the new factor.
+--
+-- NULL, and no DEFAULT, rather than 0: a NULL is "not measured yet" (a row the sweep has not
+-- reached), which PerformancePoints reads as the legacy no-cut price, so an unswept map keeps its
+-- old pp until it is swept rather than taking the maximum 60% cut. The game reads the same
+-- distinction through the playedDurationSeconds parameter's PositiveInfinity default.
+ALTER TABLE beatmaps ADD COLUMN played_duration_s double precision;

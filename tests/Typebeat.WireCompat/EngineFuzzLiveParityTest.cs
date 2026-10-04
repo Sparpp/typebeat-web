@@ -649,13 +649,13 @@ public class EngineFuzzLiveParityTest
     ///
     /// <para>It reaches no leaderboard, which is why this is a comparison basis rather than a bug
     /// the browser has to copy: <c>ScoreEndpoints</c> recomputes rank from the SUBMITTED statistics
-    /// through <c>ScoringContract.RankFromCompletion</c> and stores that, so the stored rank is the
+    /// through <c>ScoringContract.RankFromStatistics</c> and stores that, so the stored rank is the
     /// value computed here whichever client played the run. Comparing against it keeps the parity
-    /// this test is for (the two clients' ladders, over the same completion) without pinning the
-    /// desktop HUD's staleness into the browser.</para>
+    /// this test is for (the two clients' ladders, over the same accuracy and missed cells) without
+    /// pinning the desktop HUD's staleness into the browser.</para>
     /// </summary>
     private static ScoreRank RankOf(TypeBeatReplayAccount game)
-        => game.Rank == ScoreRank.F ? ScoreRank.F : TypeBeatScoreProcessor.RankFromCompletion(game.Completion);
+        => game.Rank == ScoreRank.F ? ScoreRank.F : TypeBeatScoreProcessor.RankFromStatistics(game.Accuracy, game.Statistics);
 
     private static int[] Ints(JsonElement element, string key)
     {

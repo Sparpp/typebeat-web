@@ -336,7 +336,7 @@ public static class PlayEndpoints
             ? await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 """
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
-                       b.difficulty_rating AS baseStars, b.ratings::text AS ratings
+                       b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.id = @beatmapId
@@ -348,7 +348,7 @@ public static class PlayEndpoints
             : await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 """
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
-                       b.difficulty_rating AS baseStars, b.ratings::text AS ratings
+                       b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked')
@@ -457,7 +457,7 @@ public static class PlayEndpoints
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
             """
             SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS,
-                   difficulty_rating AS baseStars, ratings::text AS ratings
+                   difficulty_rating AS baseStars, ratings::text AS ratings, played_duration_s AS playedDurationS
             FROM beatmaps WHERE id = @beatmapId
             """,
             new { beatmapId }, tx);
@@ -535,7 +535,10 @@ public static class PlayEndpoints
             PerformancePoints.CountNotes(statistics),
             storedAccuracy,
             storedMaxCombo,
-            BeatmapRatings.Parse(beatmap.Ratings));
+            BeatmapRatings.Parse(beatmap.Ratings),
+            // The short-map factor's input (044_played_duration.sql), the map's span at the BASE
+            // rate; the browser has no rate mods, so no division applies at this call site.
+            beatmap.PlayedDurationS ?? double.PositiveInfinity);
 
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
@@ -926,7 +929,7 @@ public static class PlayEndpoints
     // not read here).
     // Appended, never reordered: Dapper maps positional records by position (Ratings is the
     // 034_ratings_matrix.sql addition).
-    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS, double BaseStars, string? Ratings);
+    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS, double BaseStars, string? Ratings, double? PlayedDurationS);
 
     private sealed record BuildRow(long Id, bool Blocked);
 

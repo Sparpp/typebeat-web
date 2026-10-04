@@ -1426,7 +1426,7 @@ public class PerformancePointsTest
         // whose cell is missing stays pending rather than being priced with a zeroed
         // difficult-character count. If this moves, so do the game's PerformancePoints.VERSION and
         // docs/pp.md.
-        Assert.That(PerformancePoints.VERSION, Is.EqualTo(24)); // pp:version
+        Assert.That(PerformancePoints.VERSION, Is.EqualTo(25)); // pp:version
     }
 
     [Test]

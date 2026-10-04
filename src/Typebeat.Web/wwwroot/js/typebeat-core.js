@@ -5097,14 +5097,41 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Scoring: standardised total_score + statistics dicts + completion rank.
-    // Reproduces osu ScoreProcessor.ComputeTotalScore and the completion cutoffs.
+    // Scoring: standardised total_score + statistics dicts + accuracy grade.
+    // Reproduces osu ScoreProcessor.ComputeTotalScore and the accuracy cutoffs.
     // ---------------------------------------------------------------------------
-    const COMPLETION_CUTOFFS = [[1.0, 'X'], [0.95, 'S'], [0.90, 'A'], [0.80, 'B'], [0.70, 'C']];
+    // Grades are awarded on timing ACCURACY, with a missed-cell condition on SS (no cell missed at
+    // all) and S (under S_MISS_LIMIT of the map's cells missed). Mirrors TypeBeatScoreProcessor's
+    // ACCURACY_CUTOFF_* / S_MISS_LIMIT / RankFromAccuracy; keep the two in step (the completion
+    // cutoffs this replaced are gone from the client too).
+    const ACCURACY_CUTOFF_X = 0.98;
+    const ACCURACY_CUTOFF_S = 0.92;
+    const ACCURACY_CUTOFF_A = 0.85;
+    const ACCURACY_CUTOFF_B = 0.75;
+    const ACCURACY_CUTOFF_C = 0.60;
+    const S_MISS_LIMIT = 0.03;
 
-    function rankFromCompletion(completion) {
-        for (const [cut, r] of COMPLETION_CUTOFFS) if (completion >= cut) return r;
+    function rankFromAccuracy(accuracy, missedFraction) {
+        const acc = Number.isFinite(accuracy) ? Math.min(1, Math.max(0, accuracy)) : 0;
+        const missed = Number.isFinite(missedFraction) ? Math.min(1, Math.max(0, missedFraction)) : 1;
+
+        if (acc >= ACCURACY_CUTOFF_X && missed === 0) return 'X';
+        if (acc >= ACCURACY_CUTOFF_S && missed < S_MISS_LIMIT) return 'S';
+        if (acc >= ACCURACY_CUTOFF_A) return 'A';
+        if (acc >= ACCURACY_CUTOFF_B) return 'B';
+        if (acc >= ACCURACY_CUTOFF_C) return 'C';
         return 'D';
+    }
+
+    // The missed fraction over judged cells, from the same counts TypeBeatScoreProcessor's
+    // RankFromStatistics derives: notes are every NOTE_RESULTS count (great, ok, meh, the uncorrected
+    // typo and the miss), and the uncorrected typo counts as a MISSED cell exactly as it does for pp.
+    function rankFromStatistics(accuracy, counts) {
+        const unfixed = counts.good || 0;
+        const miss = counts.miss || 0;
+        const notes = counts.great + counts.ok + counts.meh + unfixed + miss;
+        const missedFraction = notes > 0 ? (miss + unfixed) / notes : 0;
+        return rankFromAccuracy(accuracy, missedFraction);
     }
 
     // The all-Great combo portion over the typeable cells, the one term of computeScore that
@@ -5210,7 +5237,7 @@
             // uninterrupted by a missed cell OR a wrong keypress (in either input model).
             maxCombo: processor.highestCombo,
             completion: completion,
-            rank: passed ? rankFromCompletion(completion) : 'F',
+            rank: passed ? rankFromStatistics(acc, { great: great, ok: ok, meh: meh, good: typos, miss: miss }) : 'F',
             statistics: statistics,
             maximumStatistics: { great: total },
             // convenience for the results screen
@@ -5269,7 +5296,7 @@
         // SyllableSegments (backlog 181): the shared authored-vs-derived split derivation, exported
         // for the same reason, so the game's own SyllableSegments can be held against it.
         isAuthoredValid, derivedSplits, splitsFor, cellCuts, segmentOf,
-        TypingEngine, computeScore, rankFromCompletion,
+        TypingEngine, computeScore, rankFromAccuracy, rankFromStatistics,
         WINDOWS, classify, toHitResult,
         freestyleTick, freestyleGlyph,
         constants: {

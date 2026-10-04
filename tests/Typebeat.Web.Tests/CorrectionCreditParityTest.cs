@@ -267,8 +267,12 @@ public class CorrectionCreditParityTest
             Assert.That(Dict(fixedRun, "statistics"), Does.Not.ContainKey("miss"));
             Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(clean.GetProperty("completion").GetDouble()));
             Assert.That(fixedRun.GetProperty("completion").GetDouble(), Is.EqualTo(1).Within(1e-12), "an Ok counts as typed exactly as a Great does");
-            Assert.That(Str(fixedRun, "rank"), Is.EqualTo(Str(clean, "rank")));
-            Assert.That(Str(fixedRun, "rank"), Is.EqualTo("X"));
+            // The grade is where the cap now shows, and the pair DIVERGES: the clean run is all
+            // Greats (an X), while the fixed run's corrected cell is capped at Ok, which drops its
+            // accuracy below the 0.92 S cutoff. The test's own name says the cap moves nothing else;
+            // under the accuracy rule the grade is one of the things it does move.
+            Assert.That(Str(clean, "rank"), Is.EqualTo("X"), "the clean run has no capped cell");
+            Assert.That(Str(fixedRun, "rank"), Is.EqualTo("A"), "the capped cell costs the fixed run its SS");
             Assert.That(Dict(fixedRun, "maximumStatistics"), Is.EquivalentTo(Dict(clean, "maximumStatistics")));
 
             // ...and the two that do.
@@ -292,7 +296,7 @@ public class CorrectionCreditParityTest
                 Is.EqualTo(50 / 2400.0).Within(1e-12), "and less by exactly the Meh credit the fold took away");
             Assert.That(unfixed.GetProperty("totalScore").GetInt64(), Is.LessThan(fixedRun.GetProperty("totalScore").GetInt64()));
             Assert.That(unfixed.GetProperty("completion").GetDouble(), Is.EqualTo(7 / 8.0).Within(1e-12));
-            Assert.That(Str(unfixed, "rank"), Is.EqualTo("B"));
+            Assert.That(Str(unfixed, "rank"), Is.EqualTo("A"));
 
             // WHAT BACKLOG 213 LEAVES ALONE, on the same account. THE WIRE DOES NOT MOVE: the
             // browser still seals the cell under its own `good` key and never as a `miss`, which is
