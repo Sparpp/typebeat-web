@@ -856,6 +856,75 @@ public class SetPageTest
             new Db(dataSource), WebsiteFixture.Services.GetRequiredService<IFileStore>(), NullLogger.Instance, setId);
     }
 
+    /// <summary>
+    /// THE RANK TRANSITION RUNS THE DOWNWARD RULE TOO (backlog 398). A set demoted to 'pending' by a
+    /// re-upload keeps its old ranked scores (030 leaves them); when a reviewer re-ranks it, the
+    /// plays that are not on the current version must come off the board in the same request, or the
+    /// board the reviewer lands on mixes every version. A play whose token names an .osu no stored
+    /// version produces is the strict arm's unprovable case: it drops. A play whose token names the
+    /// map's current .osu stays. Driven through the real POST, so the wiring is what is proven.
+    /// </summary>
+    [Test]
+    public async Task Rank_DropsPlaysOnAStaleVersion_InTheSameRequest()
+    {
+        var (setId, mapId) = await seedPendingCarrySetAsync("Stale Version Anthem");
+
+        // A ranked play left over from before the demotion: its token names an .osu no version of
+        // this set ever shipped, so the version rule cannot show it is the ranked one.
+        long stale = await seedRankedPlayAsync(mapId, "stale version typist", 950_000, beatmapHash: "0123456789abcdef0123456789abcdef");
+
+        // A ranked play whose token names the map's current .osu: SameBytes, so it survives.
+        long current = await seedRankedPlayAsync(mapId, "current version typist", 900_000, beatmapHash: null);
+
+        var reviewer = await carryReviewerAsync();
+
+        using var response = await postReviewAsync(reviewer, setId, "Rank");
+        var rows = await scoreRowsAsync(stale, current);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(rows[stale].Ranked, Is.False, "played on a version that is not the ranked one");
+            Assert.That(rows[stale].Pp, Is.Zero, "and it drops off the pp surfaces at once");
+            Assert.That(rows[current].Ranked, Is.True, "played on the ranked version");
+        });
+    }
+
+    /// <summary>
+    /// A RANKED play on a set already ranked, for the downward-rule transition test: the shape 030
+    /// leaves behind when it demotes a set to 'pending' after a re-upload, ready for the re-rank.
+    /// </summary>
+    private static async Task<long> seedRankedPlayAsync(long mapId, string username, long totalScore, string? beatmapHash)
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        long userId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO users (username, email, password_hash, country_code)
+            VALUES (@username, @email, 'x', 'US')
+            RETURNING id
+            """,
+            new { username, email = username.Replace(' ', '.') + "@example.com" });
+
+        long scoreId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO scores
+                (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
+                 mods, statistics, maximum_statistics, build_id, started_at, ended_at, pp, pp_version)
+            VALUES
+                (@userId, @mapId, @totalScore, 1.0, 1.0, 5, 'X', true, true,
+                 '[]'::jsonb, '{"great": 5}'::jsonb, '{"great": 5}'::jsonb, @buildId,
+                 now() - interval '60 seconds', now(), 80, @ppVersion)
+            RETURNING id
+            """,
+            new { userId, mapId, totalScore, buildId = carryBuildId, ppVersion = PerformancePoints.VERSION });
+
+        await SetRankRefundTest.insertTokenAsync(conn, userId, mapId, carryBuildId, scoreId, beatmapHash);
+
+        return scoreId;
+    }
+
     private static async Task<HttpClient> carryReviewerAsync()
     {
         if (carryReviewer != null)

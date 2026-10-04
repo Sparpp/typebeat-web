@@ -579,17 +579,30 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
     /// play submitted while the set was ranked does.
     ///
     /// <para>
+    /// THE OTHER DIRECTION RUNS TOO (backlog 398). Ranking a set after a re-upload must also take
+    /// the plays made on the version that used to be ranked OFF the board, or the newly-ranked board
+    /// mixes every version the set has shipped. <see cref="SetRankDemotion.RunForSetAsync"/> is the
+    /// same predicate pointed down. The two passes cannot fight over a row: the carry-up takes
+    /// UNRANKED rows and the demotion takes RANKED ones, so on any one transition a score is moved
+    /// at most once, whichever order they ran in. The demotion is listed first only because its
+    /// effect is the one the reviewer's fresh board most needs to be free of.
+    /// </para>
+    ///
+    /// <para>
     /// BEST-EFFORT, like the audit row above: the rank has already committed, and a failure here
-    /// must not 500 it. Each re-ranked row commits on its own, so a failure part way leaves some
-    /// rows carried and the rest for the next boot's sweep, which reconsiders every unranked row
-    /// on every ranked set and prices whatever it or this left stale. Run to completion even if the
-    /// reviewer's browser goes away, for the same reason.
+    /// must not 500 it. Each row commits on its own, so a failure part way leaves some rows moved
+    /// and the rest for the next boot's sweep, which reconsiders every row on every ranked set.
+    /// Run to completion even if the reviewer's browser goes away, for the same reason.
     /// </para>
     /// </summary>
     private async Task carryPendingPlaysAsync(long id)
     {
         try
         {
+            // Downward first: drop plays on a version that is no longer the ranked one, so the
+            // board this rank just reopened is current-version only before the carry adds to it.
+            await SetRankDemotion.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);
+
             int carried = await SetRankRefund.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);
 
             if (carried > 0)
@@ -597,7 +610,7 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
         }
         catch (Exception e)
         {
-            logger.LogWarning(e, "Set {SetId} was ranked but carrying its pending-era plays failed; the next boot's sweep will retry.", id);
+            logger.LogWarning(e, "Set {SetId} was ranked but settling its version-fresh plays failed; the next boot's sweep will retry.", id);
         }
     }
 

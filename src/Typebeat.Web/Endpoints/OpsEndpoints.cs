@@ -1,5 +1,6 @@
 using Typebeat.Web.Data;
 using Typebeat.Web.Ops;
+using Typebeat.Web.Scoring;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Endpoints;
@@ -58,6 +59,54 @@ public static class OpsEndpoints
     public static void Map(IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v2/ops/disk", Disk);
+        app.MapGet("/api/v2/ops/rank-version-audit", RankVersionAudit);
+    }
+
+    /// <summary>
+    /// The DRY RUN for the backlog 398 backfill: how many currently-ranked scores the downward
+    /// version rule WOULD demote, broken down by reason (a missing token, a hash no stored version
+    /// produces, a version with different gameplay), and how many it would keep. It changes nothing:
+    /// it runs <see cref="SetRankDemotion.ReportAsync"/>, the same candidate query and predicate the
+    /// real sweep uses, with every write skipped.
+    ///
+    /// <para>
+    /// It exists so the owner can size the prod impact BEFORE the backfill runs (the deploy IS the
+    /// backfill, see <see cref="Ops.StartupSweeps"/>). Given the strict arm drops the unprovable
+    /// too, the counts are the whole reason the endpoint is here rather than a log line nobody reads
+    /// until after the fact. Guarded by the same ops key as the disk readout.
+    /// </para>
+    ///
+    /// <para>
+    /// <paramref name="setId"/> narrows it to one set for a spot check. Reading blobs from the store
+    /// is what the version rule needs (to fingerprint an earlier version), so this is the same cost
+    /// as the real pass; it is an operator readout, not a hot path.
+    /// </para>
+    /// </summary>
+    private static async Task<IResult> RankVersionAudit(
+        HttpContext ctx, IConfiguration config, Db db, IFileStore store, ILoggerFactory loggerFactory)
+    {
+        if (!BuddyEndpoints.Authorised(ctx, config, out IResult? failure))
+            return failure!;
+
+        long? setId = long.TryParse(ctx.Request.Query["set_id"], System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out long parsed) && parsed > 0 ? parsed : null;
+
+        var logger = loggerFactory.CreateLogger("SetRankDemotion");
+        var report = await SetRankDemotion.ReportAsync(db, store, logger, setId, ctx.RequestAborted);
+
+        return Results.Json(new
+        {
+            setId,
+            examined = report.Examined,
+            dropped = report.Dropped,
+            kept = report.Kept,
+            reasons = new
+            {
+                missing_token = report.MissingToken,
+                no_matching_version = report.NoMatchingVersion,
+                changed_gameplay = report.ChangedGameplay,
+            },
+        });
     }
 
     private static async Task<IResult> Disk(HttpContext ctx, IConfiguration config, DiskGuard disk, Db db, HousekeepingStatus housekeeping)

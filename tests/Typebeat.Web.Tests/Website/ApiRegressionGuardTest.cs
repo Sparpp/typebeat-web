@@ -165,6 +165,21 @@ public class ApiRegressionGuardTest
     }
 
     [Test]
+    public async Task OpsRankVersionAudit_WithNoBuddyKeyConfigured_IsInvisible()
+    {
+        // The dry run for the downward version rule (backlog 398) is on the same private footing:
+        // with no key it 404s with no body, so an un-opted-in deploy exposes nothing.
+        using var response = await WebsiteFixture.Client.GetAsync("/api/v2/ops/rank-version-audit");
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(body, Is.Empty);
+        });
+    }
+
+    [Test]
     public async Task OpsBackups_WithNoBuddyKeyConfigured_IsInvisible()
     {
         // The offsite freshness readout (backlog 367) sits behind the same gate as the disk

@@ -689,7 +689,8 @@ public static class PublicSiteSeed
 
     private static async Task InsertScoreAsync(NpgsqlConnection conn, long userId, long beatmapId,
         long totalScore, double accuracy, int maxCombo, string rank, bool ranked = true)
-        => await conn.ExecuteAsync(
+    {
+        long scoreId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO scores
                 (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
@@ -697,8 +698,33 @@ public static class PublicSiteSeed
             VALUES
                 (@userId, @beatmapId, @totalScore, @accuracy, @completion, @maxCombo, @rank, true, @ranked,
                  '[]'::jsonb, '{"great":100,"ok":5,"meh":2,"miss":3}'::jsonb, '{"great":110}'::jsonb)
+            RETURNING id
             """,
             // completion matches the fixed statistics blob: 107 typed of 110 cells. (Ranks stay
             // whatever the caller seeds; these are display fixtures, not grading fixtures.)
             new { userId, beatmapId, totalScore, accuracy, completion = 107.0 / 110.0, maxCombo, rank, ranked });
+
+        // A RANKED fixture gets the token every real ranked score carries, naming the map's current
+        // .osu (backlog 398). Without it the standing version-demotion sweep at the test host's boot
+        // reads the row as "no token, nothing names its version" and demotes it, which the page
+        // assertions below would then see as an empty ranked board. The unranked fixture is not a
+        // sweep candidate at all, so it needs none.
+        if (ranked)
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO score_tokens (user_id, beatmap_id, beatmap_hash, build_id, score_id)
+                SELECT @userId, b.id, b.checksum_md5, @buildId, @scoreId
+                FROM beatmaps b WHERE b.id = @beatmapId
+                """,
+                new { userId, beatmapId, buildId = await SeedBuildIdAsync(conn), scoreId });
+    }
+
+    /// <summary>A stable build row for the seeded tokens; created once.</summary>
+    private static async Task<long> SeedBuildIdAsync(NpgsqlConnection conn)
+        => await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO builds (version_hash, blocked) VALUES ('public-site-seed', false)
+            ON CONFLICT (version_hash) DO UPDATE SET version_hash = EXCLUDED.version_hash
+            RETURNING id
+            """);
 }

@@ -90,22 +90,47 @@ public sealed class PlayedVersionRule(IFileStore fileStore, ILogger logger)
 
     public static bool IsCarried(Verdict verdict) => verdict is Verdict.SameBytes or Verdict.SameGameplay;
 
-    public async Task<Verdict> JudgeAsync(NpgsqlConnection conn, GateRefund.CandidateRow row, CancellationToken ct = default)
+    /// <summary>
+    /// The rule against a refund candidate. A thin adapter over the scalar overload below: the
+    /// predicate itself lives there ONCE, so the carry-up sweep (<see cref="GateRefund"/>) and the
+    /// downward sweep (<see cref="SetRankDemotion"/>) can never disagree about a row.
+    /// </summary>
+    public Task<Verdict> JudgeAsync(NpgsqlConnection conn, GateRefund.CandidateRow row, CancellationToken ct = default)
+        => JudgeAsync(conn, row.SetId, row.BeatmapId, row.CurrentChecksum, row.CurrentVersion, row.PlayedHash, ct);
+
+    /// <summary>
+    /// THE RULE, stated once, over the five values it actually reads: the set, the difficulty, the
+    /// difficulty's current checksum and version, and the .osu hash the play's token names (null
+    /// when the score has no token).
+    /// </summary>
+    /// <param name="setId">The set whose version history is consulted.</param>
+    /// <param name="beatmapId">The difficulty the score sits on (the .osu's embedded id is a belt for it).</param>
+    /// <param name="currentChecksum">The difficulty's <c>checksum_md5</c> as it is now: the ranked version.</param>
+    /// <param name="currentVersion">The set's <c>current_version</c>, which is the version the checksum names.</param>
+    /// <param name="playedHash">The token's <c>beatmap_hash</c>, or null/blank when there is no token.</param>
+    public async Task<Verdict> JudgeAsync(
+        NpgsqlConnection conn,
+        long setId,
+        long beatmapId,
+        string currentChecksum,
+        int currentVersion,
+        string? playedHash,
+        CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(row.PlayedHash))
+        if (string.IsNullOrWhiteSpace(playedHash))
             return Verdict.Unknown;
 
         // MD5 hex is compared case-blind: the parser writes lowercase, a client could send either.
-        string current = row.CurrentChecksum.Trim().ToLowerInvariant();
-        string played = row.PlayedHash.Trim().ToLowerInvariant();
+        string current = currentChecksum.Trim().ToLowerInvariant();
+        string played = playedHash.Trim().ToLowerInvariant();
 
         if (played == current)
             return Verdict.SameBytes;
 
-        var history = await historyOfAsync(conn, row.SetId, ct);
+        var history = await historyOfAsync(conn, setId, ct);
 
         var currentPrints = history
-                            .Where(o => o.VersionNo == row.CurrentVersion && o.Md5 == current)
+                            .Where(o => o.VersionNo == currentVersion && o.Md5 == current)
                             .Select(o => o.Fingerprint)
                             .Distinct()
                             .ToList();
@@ -113,7 +138,7 @@ public sealed class PlayedVersionRule(IFileStore fileStore, ILogger logger)
         // The .osu bytes carry the embedded BeatmapID, so an MD5 match is already this
         // difficulty; the id test is a belt for a file that states none.
         var playedPrints = history
-                           .Where(o => o.Md5 == played && (o.BeatmapId is null || o.BeatmapId == row.BeatmapId))
+                           .Where(o => o.Md5 == played && (o.BeatmapId is null || o.BeatmapId == beatmapId))
                            .Select(o => o.Fingerprint)
                            .Distinct()
                            .ToList();
