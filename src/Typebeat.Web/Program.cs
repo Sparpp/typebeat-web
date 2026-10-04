@@ -321,10 +321,14 @@ RegistrationEndpoints.Map(app);
 MeEndpoints.Map(app);
 UserEndpoints.Map(app);
 ProfileScoreEndpoints.Map(app);
+ProfileBeatmapsetEndpoints.Map(app);
+CommentEndpoints.Map(app);
+FriendEndpoints.Map(app);
 StubEndpoints.Map(app);
 NotificationsSocket.Map(app);
 BeatmapLookupEndpoints.Map(app);
 BeatmapsetEndpoints.Map(app);
+BeatmapsetSearchEndpoints.Map(app);
 ScoreEndpoints.Map(app);
 ReplayEndpoints.Map(app);
 

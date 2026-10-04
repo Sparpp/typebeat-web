@@ -61,6 +61,44 @@ public sealed class APIBeatmapResponse
     [JsonProperty("playcount")]
     public int PlayCount { get; init; }
 
+    // Passed plays (scores.passed), against playcount's every submitted play: the set overlay's success
+    // rate. Every submission inserts a scores row and bumps playcount, so the two are on the same footing.
+    // Set GET only, like the typing stats below; absent elsewhere.
+    [JsonProperty("passcount", NullValueHandling = NullValueHandling.Ignore)]
+    public int? PassCount { get; init; }
+
+    // ---- Typing stats for the client's set overlay (additive; absent on every route but the set GET). ----
+    // Null on any row the pace backfills have not reached, and the key is then omitted entirely.
+
+    [JsonProperty("word_count", NullValueHandling = NullValueHandling.Ignore)]
+    public int? WordCount { get; init; }
+
+    [JsonProperty("char_count", NullValueHandling = NullValueHandling.Ignore)]
+    public int? CharCount { get; init; }
+
+    // Average words per minute (five keystrokes to the word), the site's "Average WPM".
+    [JsonProperty("wpm", NullValueHandling = NullValueHandling.Ignore)]
+    public double? Wpm { get; init; }
+
+    [JsonProperty("target_wpm", NullValueHandling = NullValueHandling.Ignore)]
+    public double? TargetWpm { get; init; }
+
+    [JsonProperty("peak_wpm", NullValueHandling = NullValueHandling.Ignore)]
+    public double? PeakWpm { get; init; }
+
+    // The pace graph's samples, first word to last.
+    [JsonProperty("wpm_curve", NullValueHandling = NullValueHandling.Ignore)]
+    public float[]? WpmCurve { get; init; }
+
+    [JsonProperty("lyric_font", NullValueHandling = NullValueHandling.Ignore)]
+    public string? LyricFont { get; init; }
+
+    [JsonProperty("lyrics", NullValueHandling = NullValueHandling.Ignore)]
+    public string? Lyrics { get; init; }
+
+    [JsonProperty("lyrics_original", NullValueHandling = NullValueHandling.Ignore)]
+    public string? LyricsOriginal { get; init; }
+
     // Nullable: beatmaps nested inside a beatmapset response omit the back-reference, KEY AND
     // ALL (osu-web's shape; NullValueHandling.Ignore overrides the settings-level Include so
     // null never reaches the wire). The lookup endpoint always sets it.
@@ -189,11 +227,39 @@ public sealed class APIBeatmapSetResponse
     [JsonProperty("has_vocals_stem")]
     public bool HasVocalsStem { get; init; }
 
+    // The creator's plain-text description (empty when none); the set overlay shows it under the header.
+    [JsonProperty("description")]
+    public string Description { get; init; } = string.Empty;
+
+    [JsonProperty("download_count")]
+    public int DownloadCount { get; init; }
+
+    // False for pre-M3 sets with no uploaded package: the overlay's Download button must not offer a dead download.
+    [JsonProperty("has_package")]
+    public bool HasPackage { get; init; } = true;
+
+    /// <summary>
+    /// osu's availability object, which the client's set header and listing cards read to withhold the download
+    /// button (and say why) for a set that cannot be downloaded. Derived from <see cref="HasPackage"/>.
+    /// </summary>
+    [JsonProperty("availability")]
+    public BeatmapsetAvailability Availability => new() { DownloadDisabled = !HasPackage };
+
     // Null on the nested-inside-a-beatmap variant (lookup), where the key must be OMITTED:
     // the client's APIBeatmapSet.Beatmaps defaults to an empty array and an explicit JSON null
     // would overwrite it with null under Newtonsoft. The set GET emits the real list.
     [JsonProperty("beatmaps", NullValueHandling = NullValueHandling.Ignore)]
     public IReadOnlyList<APIBeatmapResponse>? Beatmaps { get; init; }
+}
+
+/// <summary>BeatmapSetOnlineAvailability: whether the set can be downloaded.</summary>
+public sealed class BeatmapsetAvailability
+{
+    [JsonProperty("download_disabled")]
+    public bool DownloadDisabled { get; init; }
+
+    [JsonProperty("more_information")]
+    public string? MoreInformation { get; init; }
 }
 
 /// <summary>

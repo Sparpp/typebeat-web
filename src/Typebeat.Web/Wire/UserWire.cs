@@ -75,8 +75,10 @@ public static class UserWire
         username = p.Username,
         country_code = p.CountryCode,
         avatar_url = AvatarUrl(scheme, host, p.AvatarKey),
-        cover_url = "",
-        cover = new { url = (string?)null, custom_url = (string?)null, id = (string?)null },
+        // The uploaded profile banner (users.cover_key), or none. The client reads the cover object
+        // over cover_url (its cover_url setter is overwritten by cover), so both carry it.
+        cover_url = coverUrl(scheme, host, p.CoverKey) ?? "",
+        cover = new { url = coverUrl(scheme, host, p.CoverKey), custom_url = coverUrl(scheme, host, p.CoverKey), id = (string?)null },
         is_supporter = false,
         is_admin = p.IsAdmin,
         is_bot = false,
@@ -101,7 +103,22 @@ public static class UserWire
         beatmap_playcounts_count = p.Sections.MostPlayed,
         monthly_playcounts = p.MonthlyPlayCounts,
         replays_watched_counts = p.ReplaysWatchedCounts,
+
+        // The Beatmaps section's headings (Scoring.ProfileBeatmapsets, the same predicates its list
+        // endpoint pages over). loved/guest/nominated have no data here and stay absent (0).
+        favourite_beatmapset_count = p.Beatmapsets.Favourite,
+        ranked_beatmapset_count = p.Beatmapsets.Ranked,
+        pending_beatmapset_count = p.Beatmapsets.Pending,
+        graveyard_beatmapset_count = p.Beatmapsets.Graveyard,
+
+        // user_follows: 'user' follows are the header's followers button, 'mapper' follows its
+        // mapping subscribers button. Restricted followers are not counted, as on the website.
+        follower_count = p.FollowerCount,
+        mapping_follower_count = p.MappingFollowerCount,
     };
+
+    private static string? coverUrl(string scheme, string host, string? coverKey)
+        => coverKey is null ? null : $"{scheme}://{host}/{coverKey}";
 
     /// <summary>Everything the user endpoint needs to render a full profile payload.
     /// JoinedAt/LastVisit are UTC DateTimes (timestamptz); "o" formatting appends the Z the
@@ -111,13 +128,17 @@ public static class UserWire
         string Username,
         string CountryCode,
         string? AvatarKey,
+        string? CoverKey,
         bool IsAdmin,
         DateTime JoinedAt,
         DateTime? LastVisit,
         object Statistics,
         Scoring.ProfileScores.SectionCounts Sections,
         IReadOnlyList<UserHistoryCountWire> MonthlyPlayCounts,
-        IReadOnlyList<UserHistoryCountWire> ReplaysWatchedCounts);
+        IReadOnlyList<UserHistoryCountWire> ReplaysWatchedCounts,
+        Scoring.ProfileBeatmapsets.BeatmapsetCounts Beatmapsets,
+        int FollowerCount,
+        int MappingFollowerCount);
 
     /// <summary>
     /// A populated UserStatistics (Users/UserStatistics.cs). grade_counts only carries ss/s/a (the
@@ -148,14 +169,20 @@ public static class UserWire
     /// </para>
     /// </summary>
     public static object ProfileStatistics(
-        double totalPp, long? ppRank, long rankedScore, long totalScore, int playCount, long playTimeS,
-        double accuracyPercent, int ss, int s, int a) => new
+        double totalPp, long? ppRank, double? ppRankPercent, long? countryRank, long rankedScore, long totalScore, int playCount, long playTimeS,
+        double accuracyPercent, int ss, int s, int a,
+        long totalHits, int maximumCombo, long replaysWatched) => new
     {
         level = new { current = 1, progress = 0 },
         // 2dp, as osu serves it: the client rounds to whole pp for display, and pinning the wire to
         // a stable number keeps the login and profile payloads byte-identical for the same user.
         pp = Math.Round(totalPp, 2, MidpointRounding.AwayFromZero),
         global_rank = ppRank is { } r ? (int?)(int)r : null,
+        // The rank as a fraction of every pp-ranked player (0..1), which the profile header's tier colour reads.
+        global_rank_percent = ppRankPercent,
+        // The same pp board within the player's country (PpRanking.CountryRankForUserAsync); null
+        // when unranked or the country is unknown, which the header shows as a dash.
+        country_rank = countryRank is { } cr ? (int?)(int)cr : null,
         ranked_score = rankedScore,
         hit_accuracy = accuracyPercent,
         play_count = playCount,
@@ -163,6 +190,10 @@ public static class UserWire
         total_score = totalScore,
         is_ranked = ppRank is not null,
         grade_counts = new { ss, s, a },
+        // The profile header's extended details (UserStatisticsWire reads them).
+        total_hits = totalHits,
+        maximum_combo = maximumCombo,
+        replays_watched_by_others = replaysWatched,
     };
 
     /// <summary>

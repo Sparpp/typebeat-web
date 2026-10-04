@@ -40,14 +40,6 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
 {
     private const int max_report_reason_length = 4000;
 
-    /// <summary>
-    /// Comment-post speed bump, keyed on the signed-in user's id: 10 comments per 5 minutes is
-    /// generous for a conversation and useless for a flood. Same in-memory pattern as the
-    /// login/register limiters; a refusal bounces back as the ?comment=slow notice (the pin
-    /// handlers' ?pin=limit idiom).
-    /// </summary>
-    private static readonly FixedWindowLimiter comment_posts = new(10, TimeSpan.FromMinutes(5));
-
     public SetDetails Set { get; private set; } = null!;
 
     /// <summary>Every difficulty in the set, hardest first (drives the difficulty selector).</summary>
@@ -299,39 +291,12 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
         if (status is null or "removed")
             return NotFound();
 
-        await using var tx = await conn.BeginTransactionAsync(HttpContext.RequestAborted);
-
-        int deleted = await conn.ExecuteAsync(
-            "DELETE FROM favourites WHERE user_id = @userId AND set_id = @id",
-            new { userId = CurrentUser.Id, id }, tx);
-
-        if (deleted > 0)
-        {
-            await conn.ExecuteAsync(
-                "UPDATE beatmapsets SET favourite_count = greatest(favourite_count - 1, 0) WHERE id = @id",
-                new { id }, tx);
-        }
-        else
-        {
-            int inserted = await conn.ExecuteAsync(
-                "INSERT INTO favourites (user_id, set_id) VALUES (@userId, @id) ON CONFLICT DO NOTHING",
-                new { userId = CurrentUser.Id, id }, tx);
-
-            if (inserted > 0)
-            {
-                await conn.ExecuteAsync(
-                    "UPDATE beatmapsets SET favourite_count = favourite_count + 1 WHERE id = @id",
-                    new { id }, tx);
-            }
-        }
-
-        await tx.CommitAsync(HttpContext.RequestAborted);
+        bool favourited = await Favourites.ToggleAsync(conn, CurrentUser.Id, id, HttpContext.RequestAborted);
 
         // A fetch()-driven toggle (the card grids) gets JSON back so the page never reloads or
         // jumps to the top; a plain form submit still redirects for no-JS fallback.
         if (string.Equals(Request.Headers["X-Requested-With"], "fetch", StringComparison.Ordinal))
         {
-            bool favourited = deleted == 0; // deleted a row → now off; else we inserted → now on
             int count = await conn.ExecuteScalarAsync<int>(
                 "SELECT favourite_count FROM beatmapsets WHERE id = @id", new { id });
             return new JsonResult(new { favourited, count });
@@ -434,7 +399,7 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
             return NotFound();
 
         // After the checks, so a 404 or an over-long refusal never burns comment budget.
-        if (!comment_posts.Allow(CurrentUser.Id.ToString(CultureInfo.InvariantCulture)))
+        if (!BeatmapsetComments.PostLimiter.Allow(CurrentUser.Id.ToString(CultureInfo.InvariantCulture)))
             return Redirect($"/beatmapsets/{id}?comment=slow#comments");
 
         await BeatmapsetComments.PostAsync(conn, id, CurrentUser.Id, normalized, HttpContext.RequestAborted);
@@ -464,16 +429,11 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
         if (deleted is null)
             return NotFound();
 
-        if (CurrentUser.CanReviewMaps && deleted.AuthorId != CurrentUser.Id && deleted.OwnerId != CurrentUser.Id)
+        if (CommentModeration.IsModeration(deleted, CurrentUser.Id, CurrentUser.CanReviewMaps))
         {
             try
             {
-                await conn.ExecuteAsync(
-                    """
-                    INSERT INTO moderation_actions (actor_id, set_id, action, note)
-                    VALUES (@actorId, @id, 'comment_delete', @note)
-                    """,
-                    new { actorId = CurrentUser.Id, id, note = $"comment {commentId}" });
+                await CommentModeration.RecordAsync(conn, CurrentUser.Id, id, commentId);
             }
             catch (Exception e)
             {
