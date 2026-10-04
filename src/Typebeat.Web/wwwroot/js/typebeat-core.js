@@ -2920,6 +2920,36 @@
             return time >= line.endTime && (time >= line.endTime + line.sealGraceMs || this.noTypeableUntyped(line));
         }
 
+        // TypingEngine.finishedEarly. EARLY FINISH (bit 4 of the second CONFIG flags word): the map's
+        // FINAL line seals the moment every one of its typeable cells is typed correctly, rather than
+        // at the line's own end, so the run (and the results card that follows) rides the player's
+        // last word instead of the song. Set for every live stack like every other era on that word,
+        // and the browser has no replay axis (it only plays live, writes no frames and re-derives no
+        // stored row), so it is baked in here exactly as AuthoredSyllablesOnly and PR 5's aligned
+        // targets are, rather than gated on a bit this file would have no way to receive.
+        //
+        // Only the FINAL line: an earlier one still seals on its own deadline, which is what keeps
+        // the stack's pacing and the drag grace below keyed on the line's own end; the last line's
+        // seal is the one that ends the run. A cell left WRONG (still fixable, and its combo break
+        // already taken at the keypress) does NOT qualify, and neither does a line with no typeable
+        // cell at all, so both keep the ordinary deadline. A player still typing when the line ends
+        // is unaffected: finishedEarly reads no clock, so the line simply seals at its end as before.
+        finishedEarly(index) {
+            if (index !== this.lines.length - 1) return false;
+
+            let anyTypeable = false;
+
+            for (const c of this.lines[index].cells) {
+                if (!c.typeable) continue;
+
+                if (c.state !== 'correct') return false;
+
+                anyTypeable = true;
+            }
+
+            return anyTypeable;
+        }
+
         // TypingEngine.sealPermitted. DRAG FREEDOM (backlog 208): a line the player is still typing
         // must not be force-sealed out from under them at its normal deadline. The seal is deferred
         // while the caret is on the line, up to FLETCHER_DRAG_GRACE_MS past its hard deadline; past
@@ -3924,9 +3954,11 @@
 
             // (2) seal every line whose deadline passed, in order. sealPermitted is the DRAG
             //     freedom: a line the player is still typing holds off its own seal for
-            //     FLETCHER_DRAG_GRACE_MS, so the loop stops at it rather than skipping it.
+            //     FLETCHER_DRAG_GRACE_MS, so the loop stops at it rather than skipping it. The
+            //     deadline half is canSeal OR finishedEarly, and the OR is EARLY FINISH: the final
+            //     line seals the instant it is fully typed, before its own end (see finishedEarly).
             while (this.nextSealIndex < this.lines.length
-                   && this.canSeal(this.lines[this.nextSealIndex], time)
+                   && (this.canSeal(this.lines[this.nextSealIndex], time) || this.finishedEarly(this.nextSealIndex))
                    && this.sealPermitted(this.nextSealIndex, time)) {
                 const index = this.nextSealIndex;
 

@@ -582,6 +582,9 @@ public class WordInputParityTest
             InputEra2 = true,
             AuthoredSyllablesOnly = true,
             AlignSubdivisionTargets = true,
+            // EARLY FINISH (bit 4 of the second CONFIG flags word, the 0x01 CONFIG_EXTENDED carrier):
+            // the final line seals the moment it is fully typed, so a bare live engine needs it set.
+            EarlyFinish = true,
             ManualNewlines = true,
             NewlineOnTypedLetter = true,
         };

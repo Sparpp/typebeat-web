@@ -123,7 +123,7 @@ public class WordSkipLiveParityTest
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, wrongInputOnWordGaps: true, strictSpaces: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true, earlyFinish: true));
 
         foreach ((double time, char character) in keys)
             replay.Frames.Add(new TypeBeatReplayFrame(time, character));
@@ -435,6 +435,9 @@ public class WordSkipLiveParityTest
             InputEra2 = inputEra2,
             AuthoredSyllablesOnly = inputEra2,
             AlignSubdivisionTargets = inputEra2,
+            // EARLY FINISH (bit 4 of the second CONFIG flags word): stamped with the input era, so a
+            // bare live engine (inputEra2 true) carries it the way every live stack does.
+            EarlyFinish = inputEra2,
             ManualNewlines = true,
             NewlineOnTypedLetter = true,
         };

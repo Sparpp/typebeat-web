@@ -696,10 +696,11 @@ function rootOf(run) { return findByClass(run.container, 'tb-player'); }
     const chord = keydown('r', { ctrlKey: true });
     const afterKeys = JSON.stringify(TB.computeScore(run.api.engine));
 
-    advance(900);
-    const cardAt900 = !!findByClass(run.container, 'tb-results');
-    const finishesAt900 = run.log.finishes.length;
-    advance(200);
+    // 600 ms into the wait is past the (PR 13) 500 ms deadline, so the card and the submit are up.
+    advance(600);
+    const cardAt600 = !!findByClass(run.container, 'tb-results');
+    const finishesAt600 = run.log.finishes.length;
+    advance(400);
     const delayed = run.log.finishes[0];
     const delayMs = run.log.finishWalls[0] - end.wall;
     const focused = global.document.activeElement;
@@ -711,8 +712,8 @@ function rootOf(run) { return findByClass(run.container, 'tb-player'); }
         swallowed,
         chordLeftToBrowser: !chord.defaultPrevented,
         keysMovedEngine: afterKeys !== atEnd,
-        cardAt900,
-        finishesAt900,
+        cardAt600,
+        finishesAt600,
         delayMs,
         finishes: run.log.finishes.length,
         passed: JSON.parse(delayed).passed,

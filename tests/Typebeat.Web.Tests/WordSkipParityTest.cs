@@ -522,7 +522,13 @@ public class WordSkipParityTest
             Assert.That(Int(afterTheSnap, "processorMisses"), Is.Zero,
                 "and line 0 is still unsealed, the rush bound having kept the caret on it through its own deadline");
 
-            Assert.That(Int(afterSeal, "activeLineIndex"), Is.EqualTo(1));
+            // EARLY FINISH (PR 13): line 1 is the map's FINAL line and both its cells are typed by
+            // 6500, so it seals on the same 6501 update that seals line 0, and the run finishes right
+            // there rather than waiting for line 1's own end at 10000. The caret is parked nowhere,
+            // which is why activeLineIndex reads -1; the judgement is neutral, so the account below is
+            // the one a late seal would have written.
+            Assert.That(Int(afterSeal, "activeLineIndex"), Is.EqualTo(-1), "the fully typed final line ended the run early");
+            Assert.That(Bool(afterSeal, "finished"), Is.True);
             Assert.That(Int(afterSeal, "processorMisses"), Is.EqualTo(2), "the two cells nobody came back for resolved here");
             Assert.That(Int(afterSeal, "processorCombo"), Is.EqualTo(6),
                 "and left the run the player rebuilt after the skip exactly where they were holding it");

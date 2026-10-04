@@ -2022,4 +2022,94 @@ const out = {};
     out.manualNewlines = { fixture: fixtureRow, cases: cases };
 }
 
+// EARLY FINISH (bit 4 of the SECOND CONFIG flags word, the 0x01 CONFIG_EXTENDED carrier). The map's
+// FINAL line seals the moment every typeable cell of it is typed correctly rather than at the line's
+// own end, so the run (and the results card that follows) rides the player's last word instead of the
+// song. Set for every live stack, and the browser has no replay axis, so it is baked into
+// typebeat-core.js unconditionally (the same move bit 2 and PR 5's aligned targets made).
+//
+// TWO RUNS OF THE SAME KEYSTROKES. `live` is the browser's own engine, early seal and all. `legacy`
+// is the identical engine with finishedEarly stubbed to false, which is what a replay stored before
+// the era re-derives: the final line waits for its own end. The cross-repo arm
+// (Typebeat.WireCompat.EarlyFinishParityTest) drives BOTH C# arms from the same script and pins each
+// against its browser twin, so a JS that lost the early seal fails on the `live` arm and a JS that
+// sealed early under the legacy arm would fail there.
+//
+// THE MAP is two contiguous lines, every grace 0, so L0's deadline is L1's own start and L1's is the
+// song end:
+//   L0 "ab" [1000, 5000), sung [1000, 2000]: a = 1000, b = 1500. Deadline 5000 (L1's own start).
+//   L1 "cd" [5000, 10000), sung [5000, 7000]: c = 5000, d = 6000. The FINAL line; deadline 10000.
+// L0 is typed out inside a second and a half, so it is COMPLETE long before its 5000 deadline; the
+// caret is handed to L1 by the seal at 5100, and L1's two letters land by 5300. Under EarlyFinish the
+// run then ends on the very next update (5400, 4600 ms before L1's own end); without it the run waits
+// for 10000. This map is adversarial for the rule on purpose: the two arms disagree on a step nowhere
+// near a boundary, so neither can pass by sealing at the same instant for a different reason.
+{
+    const EARLY_FINISH_MAP = osu([
+        { text: 'ab', start_ms: 1000, end_ms: 2000, words: [word('ab', 1000, 2000)] },
+        { text: 'cd', start_ms: 5000, end_ms: 7000, words: [word('cd', 5000, 7000)] }
+    ], 30000);
+
+    const steps = [
+        { op: 'update', t: 1000 }, { op: 'key', c: 'a', t: 1000 },
+        { op: 'update', t: 1500 }, { op: 'key', c: 'b', t: 1500 },
+
+        // L0 seals at its 5000 deadline (nothing left untyped) and hands the caret to L1, then the
+        // final line is typed out by 5300.
+        { op: 'update', t: 5100 }, { op: 'key', c: 'c', t: 5100 },
+        { op: 'update', t: 5300 }, { op: 'key', c: 'd', t: 5300 },
+
+        // THE STEP THAT DECIDES THE ERA. Under EarlyFinish the final line seals here, 1600 ms before
+        // its own end.
+        { op: 'update', t: 5400 },
+
+        // And the legacy deadline, where the other arm seals.
+        { op: 'update', t: 7000 },
+    ];
+
+    const runs = {};
+
+    for (const name of ['live', 'legacy']) {
+        const engine = automaticArm(new TB.TypingEngine(build(EARLY_FINISH_MAP)));
+
+        if (name === 'legacy') engine.finishedEarly = () => false;
+
+        const readings = [];
+
+        for (const step of steps) {
+            if (step.op === 'update') engine.update(step.t);
+            else engine.processKey(step.c, step.t);
+
+            readings.push({
+                op: step.op,
+                t: step.t,
+                c: step.c === undefined ? null : step.c,
+                at: at(engine),
+                nextUnsealedLineIndex: engine.nextUnsealedLineIndex,
+                states: engine.lines.map(l => l.cells.map(c => c.state)),
+                finished: engine.finished,
+            });
+        }
+
+        runs[name] = { script: steps, readings: readings, finished: engine.finished };
+    }
+
+    const fixture = new TB.TypingEngine(build(EARLY_FINISH_MAP));
+
+    out.earlyFinish = {
+        // Pinned before the readings are, so a fixture that drifted cannot be read as an engine
+        // divergence by the cross-repo arm.
+        fixture: {
+            lines: fixture.lines.map(l => ({
+                startTime: l.startTime,
+                activationTime: l.activationTime,
+                endTime: l.endTime,
+                sealGraceMs: l.sealGraceMs,
+                cells: l.cells.map(c => ({ expected: c.expected, target: c.target }))
+            }))
+        },
+        runs: runs
+    };
+}
+
 process.stdout.write(JSON.stringify(out));

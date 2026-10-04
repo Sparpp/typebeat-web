@@ -747,8 +747,9 @@ public class ScoreRecalcTest
                 Assert.That(era2Frames[1].IsConfigExtended && era2Frames[1].InputEra2 && era2Frames[1].RushCapCostsAccuracy, Is.True,
                     "bit 1 survives the .osr beside bit 0");
                 Assert.That(era2Frames[1].AuthoredSyllablesOnly, Is.True, "and bit 2 (backlog 363) beside them");
-                Assert.That(era2Frames[1].AlignSubdivisionTargets, Is.True, "and bit 3 (PR 5) beside them: the live word, 15, survives whole");
-                Assert.That(frames[1].AuthoredSyllablesOnly || frames[1].AlignSubdivisionTargets, Is.False, "while the 347-era header leaves bits 2 and 3 clear");
+                Assert.That(era2Frames[1].AlignSubdivisionTargets, Is.True, "and bit 3 (PR 5) beside them");
+                Assert.That(era2Frames[1].EarlyFinish, Is.True, "and bit 4 (EARLY FINISH) beside them: the live word, 31, survives whole");
+                Assert.That(frames[1].AuthoredSyllablesOnly || frames[1].AlignSubdivisionTargets || frames[1].EarlyFinish, Is.False, "while the 347-era header leaves bits 2, 3 and 4 clear");
                 Assert.That(era2.Skip, Is.EqualTo(SkipReason.None), "the second-input-era row reproduces from its own .osr");
                 Assert.That(era2.NewMaxCombo, Is.EqualTo(12), "second input era: no cap, the run never broke");
                 Assert.That(era2.NewStatistics!.GetValueOrDefault("meh"), Is.Zero, "second input era: no cap, no Meh award");
@@ -791,8 +792,8 @@ public class ScoreRecalcTest
     /// <summary>
     /// Nine presses at 1000 on the unpinned caret, then 'j', 'k', 'l' at 1120. The extended header
     /// carries bit 0 (backlog 347) and, with <paramref name="inputEra2"/>, bit 1 (PR 3), bit 2
-    /// (backlog 363, the live grouping) and bit 3 (PR 5, the aligned subdivision targets), which is
-    /// the live word 15.
+    /// (backlog 363, the live grouping), bit 3 (PR 5, the aligned subdivision targets) and bit 4
+    /// (EARLY FINISH, the final line sealing the moment it is fully typed), which is the live word 31.
     /// </summary>
     private static Replay RushReplay(bool withExtendedHeader, bool inputEra2 = false)
     {
@@ -801,7 +802,7 @@ public class ScoreRecalcTest
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, flexibleLines: true, boundedRush: true));
 
         if (withExtendedHeader)
-            replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2));
+            replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2, earlyFinish: inputEra2));
 
         for (int i = 0; i < 9; i++)
             replay.Frames.Add(new TypeBeatReplayFrame(1000, word[i]));
