@@ -20,6 +20,13 @@ public static class BeatmapsetComments
     /// <summary>Matches the CHECK in 036 and the description/bio budget (Settings.IndexModel).</summary>
     public const int MaxBodyLength = 2000;
 
+    /// <summary>
+    /// Comment-post speed bump, keyed on the poster's user id: 10 comments per 5 minutes is generous for a
+    /// conversation and useless for a flood. Shared by the website's post handler and the game's
+    /// (CommentEndpoints), so one budget covers both rather than each granting its own.
+    /// </summary>
+    public static readonly Auth.FixedWindowLimiter PostLimiter = new(10, TimeSpan.FromMinutes(5));
+
     /// <summary>Comments shown per page of the set page's section (keyset-paged, oldest first).</summary>
     public const int PageSize = 50;
 
@@ -77,6 +84,49 @@ public static class BeatmapsetComments
                  LIMIT @limit
                  """,
                 new { setId, afterId, limit }, cancellationToken: ct))).ToList();
+
+    /// <summary>
+    /// One page of a set's comments for the game's comments section, which pages by number and
+    /// sorts both ways rather than keyset-forward like the set page. Same visibility rule as
+    /// <see cref="ListAsync"/>; id order is creation order (ids are a bigserial).
+    /// </summary>
+    public static async Task<List<CommentRowModel>> PageAsync(
+        NpgsqlConnection conn, long setId, int offset, int limit, bool newestFirst, CancellationToken ct = default)
+        => (await conn.QueryAsync<CommentRowModel>(
+            new CommandDefinition(
+                $"""
+                 SELECT c.id         AS Id,
+                        c.user_id    AS UserId,
+                        u.username::text AS Username,
+                        u.avatar_key AS AvatarKey,
+                        c.body       AS Body,
+                        c.created_at AS CreatedAt,
+                        u.country_code::text AS CountryCode
+                 FROM beatmapset_comments c
+                 JOIN users u ON u.id = c.user_id
+                 WHERE c.set_id = @setId AND {visible_predicate}
+                 ORDER BY c.id {(newestFirst ? "DESC" : "ASC")}
+                 LIMIT @limit OFFSET @offset
+                 """,
+                new { setId, offset, limit }, cancellationToken: ct))).ToList();
+
+    /// <summary>One live comment by a visible author, and the set it is on; null when there is no such comment.</summary>
+    public static async Task<FoundComment?> FindAsync(NpgsqlConnection conn, long commentId, CancellationToken ct = default)
+    {
+        var row = await conn.QuerySingleOrDefaultAsync<(long SetId, long Id, long UserId, string Username, string? AvatarKey, string Body, DateTime CreatedAt, string CountryCode)?>(
+            new CommandDefinition(
+                $"""
+                 SELECT c.set_id, c.id, c.user_id, u.username::text, u.avatar_key, c.body, c.created_at, u.country_code::text
+                 FROM beatmapset_comments c
+                 JOIN users u ON u.id = c.user_id
+                 WHERE c.id = @commentId AND {visible_predicate}
+                 """,
+                new { commentId }, cancellationToken: ct));
+
+        return row is { } r
+            ? new FoundComment(r.SetId, new CommentRowModel(r.Id, r.UserId, r.Username, r.AvatarKey, r.Body, r.CreatedAt, r.CountryCode))
+            : null;
+    }
 
     // ---- write ----
 
@@ -154,6 +204,29 @@ public static class BeatmapsetComments
                 """,
                 new { setId, commentId, viewerId, canReview }, cancellationToken: ct));
 }
+
+/// <summary>The moderation audit for a comment deletion, shared by the website's and the game's delete handlers.</summary>
+public static class CommentModeration
+{
+    /// <summary>
+    /// Whether a deletion was moderation: a reviewer removing somebody else's comment on somebody else's set.
+    /// Deleting your own comment, or tidying your own set's thread, is not.
+    /// </summary>
+    public static bool IsModeration(DeletedComment deleted, long actorId, bool canReview)
+        => canReview && deleted.AuthorId != actorId && deleted.OwnerId != actorId;
+
+    /// <summary>Writes the audit row. Callers treat it as best-effort (the deletion has already happened).</summary>
+    public static Task RecordAsync(NpgsqlConnection conn, long actorId, long setId, long commentId)
+        => conn.ExecuteAsync(
+            """
+            INSERT INTO moderation_actions (actor_id, set_id, action, note)
+            VALUES (@actorId, @setId, 'comment_delete', @note)
+            """,
+            new { actorId, setId, note = $"comment {commentId}" });
+}
+
+/// <summary>A comment and the set it is on (<see cref="BeatmapsetComments.FindAsync"/>).</summary>
+public sealed record FoundComment(long SetId, CommentRowModel Comment);
 
 /// <summary>The soft-delete's report: enough for the caller to decide whether to audit.</summary>
 /// <param name="AuthorId">Who wrote the deleted comment.</param>

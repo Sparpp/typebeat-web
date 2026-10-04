@@ -53,8 +53,7 @@ public static class StubEndpoints
         // GET /api/v2/chat/channels -> ListChannelsRequest expects a bare List<Channel>: [].
         app.MapGet("/api/v2/chat/channels", () => WireJson.Ok(Array.Empty<object>())).RequireBearer();
 
-        // GET /api/v2/friends -> GetFriendsRequest expects a bare List<APIRelation>: [].
-        app.MapGet("/api/v2/friends", () => WireJson.Ok(Array.Empty<object>())).RequireBearer();
+        // GET /api/v2/friends moved to FriendEndpoints: it now reads the player follows for real.
 
         // GET /api/v2/blocks -> GetBlocksRequest expects a bare List<APIRelation>: []. Fetched
         // unconditionally at login (LocalUserState); a 404 logs a failing request every session.

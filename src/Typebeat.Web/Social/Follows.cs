@@ -59,6 +59,23 @@ public static class Follows
     }
 
     /// <summary>
+    /// Puts one edge into the stated state (the game's explicit add / remove friend, where <see cref="ToggleAsync"/>
+    /// is the website's flip). Idempotent: following a followed player, or unfollowing one you never followed,
+    /// changes nothing.
+    /// </summary>
+    public static async Task SetAsync(
+        NpgsqlConnection conn, long followerId, long followeeId, string kind, bool on, CancellationToken ct = default)
+        => await conn.ExecuteAsync(new CommandDefinition(
+            on
+                ? """
+                  INSERT INTO user_follows (follower_id, followee_id, kind)
+                  VALUES (@followerId, @followeeId, @kind)
+                  ON CONFLICT DO NOTHING
+                  """
+                : "DELETE FROM user_follows WHERE follower_id = @followerId AND followee_id = @followeeId AND kind = @kind",
+            new { followerId, followeeId, kind }, cancellationToken: ct));
+
+    /// <summary>
     /// Follower/following counts for one profile, plus whether the viewer already follows and/or
     /// watches it. One round trip: the profile header needs all four on every view, and each is a
     /// small index probe (the PK for the viewer's own edges and the outgoing count, the
@@ -89,6 +106,22 @@ public static class Follows
                               AND f.kind = 'mapper') AS ViewerWatches
                 """,
                 new { profileId, viewerId }, cancellationToken: ct));
+
+    /// <summary>
+    /// How many users watch this user as a MAPPER ('mapper' kind), restricted watchers excluded: the
+    /// game profile header's mapping subscribers count.
+    /// </summary>
+    public static async Task<int> MapperFollowerCountAsync(
+        NpgsqlConnection conn, long userId, CancellationToken ct = default)
+        => await conn.ExecuteScalarAsync<int>(
+            new CommandDefinition(
+                """
+                SELECT count(*)
+                FROM user_follows f
+                JOIN users fu ON fu.id = f.follower_id
+                WHERE f.followee_id = @userId AND f.kind = 'mapper' AND NOT fu.restricted
+                """,
+                new { userId }, cancellationToken: ct));
 
     /// <summary>How many mappers this user watches (the /watching page's subtitle).</summary>
     public static async Task<int> WatchedMapperCountAsync(

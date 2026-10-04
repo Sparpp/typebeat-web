@@ -188,4 +188,30 @@ public static class PpRanking
 
         return row is { } r ? new UserPp(r.TotalPp, r.GlobalRank, r.PpPlayCount) : UserPp.Unranked;
     }
+
+    /// <summary>How many players hold a pp rank at all: the denominator of a rank's percentile.</summary>
+    public static async Task<long> RankedPlayerCountAsync(NpgsqlConnection conn, CancellationToken ct = default)
+        => await conn.ExecuteScalarAsync<long>(new CommandDefinition($"SELECT count(*) FROM ({PerUserTotalSql}) totals", cancellationToken: ct));
+
+    /// <summary>
+    /// One user's pp rank among players of their own country: the same board and the same
+    /// dense_rank as <see cref="ForUserAsync"/>, partitioned by <c>users.country_code</c>. Null when
+    /// the player has no pp-earning play, or when their country is the unknown 'XX', which is not a
+    /// country and so has no ranking to place anyone on.
+    /// </summary>
+    public static async Task<long?> CountryRankForUserAsync(NpgsqlConnection conn, long userId, CancellationToken ct = default)
+        => await conn.QuerySingleOrDefaultAsync<long?>(
+            new CommandDefinition(
+                $"""
+                 SELECT country_rank
+                 FROM (
+                     SELECT totals.user_id, u.country_code,
+                            dense_rank() OVER (PARTITION BY u.country_code ORDER BY totals.total_pp DESC) AS country_rank
+                     FROM ({PerUserTotalSql}) totals
+                     JOIN users u ON u.id = totals.user_id
+                 ) ranked
+                 WHERE user_id = @userId AND country_code <> 'XX'
+                 """,
+                new { userId },
+                cancellationToken: ct));
 }

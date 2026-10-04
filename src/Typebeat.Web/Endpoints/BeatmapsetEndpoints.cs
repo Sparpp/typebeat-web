@@ -37,6 +37,47 @@ public static class BeatmapsetEndpoints
         // Fetched at login by the client. The literal "me/beatmapset-favourites" route
         // out-specifies MeEndpoints' "me/{ruleset}" template, so both can coexist.
         app.MapGet("/api/v2/me/beatmapset-favourites", GetFavouritesAsync).RequireBearer();
+
+        // The set overlay's favourite button (PostBeatmapFavouriteRequest).
+        app.MapPost("/api/v2/beatmapsets/{setId:long}/favourites", PostFavouriteAsync).RequireBearer();
+    }
+
+    /// <summary>
+    /// <c>action=favourite|unfavourite</c> (a form field, as the client sends it). An explicit state rather than the
+    /// website's toggle, so a retried request lands where it was meant to. The set must be one the caller can see: a
+    /// published set, or their own hidden one (the GET's rule); anything else 404s. Answers the new
+    /// <c>favourite_count</c>, osu-web's response.
+    /// </summary>
+    private static async Task<IResult> PostFavouriteAsync(long setId, HttpContext ctx, Db db)
+    {
+        var user = ctx.AuthedUser();
+
+        string action = ctx.Request.HasFormContentType
+            ? (await ctx.Request.ReadFormAsync(ctx.RequestAborted))["action"].ToString()
+            : ctx.Request.Query["action"].ToString();
+
+        bool? favourite = action.ToLowerInvariant() switch
+        {
+            "favourite" => true,
+            "unfavourite" => false,
+            _ => null,
+        };
+
+        if (favourite is not bool on)
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "action must be favourite or unfavourite");
+
+        await using var conn = await db.OpenAsync(ctx.RequestAborted);
+
+        var set = await conn.QuerySingleOrDefaultAsync<(string Status, long OwnerId)?>(
+            "SELECT status, owner_id FROM beatmapsets WHERE id = @setId", new { setId });
+
+        if (set is not { } s || (!IsPublished(s.Status) && s.OwnerId != user.Id))
+            return WireJson.Error(StatusCodes.Status404NotFound, "not found");
+
+        await Social.Favourites.SetAsync(conn, user.Id, setId, on, ctx.RequestAborted);
+
+        int count = await conn.ExecuteScalarAsync<int>("SELECT favourite_count FROM beatmapsets WHERE id = @setId", new { setId });
+        return WireJson.Ok(new { favourite_count = count });
     }
 
     private static async Task<IResult> GetBeatmapSetAsync(long setId, HttpContext ctx, Db db)
@@ -68,7 +109,10 @@ public static class BeatmapsetEndpoints
                    s.submitted_at    AS submittedAt,
                    s.updated_at      AS updatedAt,
                    u.username        AS creator,
-                   s.language        AS language
+                   s.language        AS language,
+                   s.description     AS description,
+                   s.download_count  AS downloadCount,
+                   EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS hasPackage
             FROM beatmapsets s
             JOIN users u ON u.id = s.owner_id
             WHERE s.id = @setId
@@ -93,7 +137,17 @@ public static class BeatmapsetEndpoints
                    drain_length_s    AS drainLengthSeconds,
                    difficulty_rating AS difficultyRating,
                    version_name      AS version,
-                   play_count        AS playCount
+                   play_count        AS playCount,
+                   word_count        AS wordCount,
+                   char_count        AS charCount,
+                   wpm::double precision AS wpm,
+                   target_wpm::double precision AS targetWpm,
+                   peak_wpm::double precision   AS peakWpm,
+                   wpm_curve         AS wpmCurve,
+                   lyric_font        AS lyricFont,
+                   lyrics            AS lyrics,
+                   lyrics_original   AS lyricsOriginal,
+                   (SELECT count(*) FROM scores sc WHERE sc.beatmap_id = beatmaps.id AND sc.passed)::int AS passCount
             FROM beatmaps
             WHERE set_id = @setId AND filename IS NOT NULL
             ORDER BY difficulty_rating, id
@@ -139,7 +193,10 @@ public static class BeatmapsetEndpoints
             Explicit = set.Explicit,
             SongLanguage = set.Language,
             HasVocalsStem = hasVocalsStem,
-            Beatmaps =beatmaps.Select(b => new APIBeatmapResponse
+            Description = set.Description,
+            DownloadCount = set.DownloadCount,
+            HasPackage = set.HasPackage,
+            Beatmaps = beatmaps.Select(b => new APIBeatmapResponse
             {
                 Id = (int)b.Id,
                 BeatmapsetId = (int)set.Id,
@@ -153,6 +210,16 @@ public static class BeatmapsetEndpoints
                 Version = b.Version,
                 LastUpdated = set.UpdatedAt,
                 PlayCount = b.PlayCount,
+                PassCount = b.PassCount,
+                WordCount = b.WordCount,
+                CharCount = b.CharCount,
+                Wpm = b.Wpm,
+                TargetWpm = b.TargetWpm,
+                PeakWpm = b.PeakWpm,
+                WpmCurve = b.WpmCurve as float[],
+                LyricFont = b.LyricFont,
+                Lyrics = b.Lyrics,
+                LyricsOriginal = b.LyricsOriginal,
                 Beatmapset = null, // the outer object is the set; no back-reference.
             }).ToList(),
         });
@@ -220,7 +287,10 @@ public static class BeatmapsetEndpoints
         DateTime UpdatedAt,
         string Creator,
         // Appended last: Dapper matches this positional record's constructor by column order.
-        string Language);
+        string Language,
+        string Description,
+        int DownloadCount,
+        bool HasPackage);
 
     private sealed record BeatmapRow(
         long Id,
@@ -230,5 +300,17 @@ public static class BeatmapsetEndpoints
         double DrainLengthSeconds,
         double DifficultyRating,
         string Version,
-        int PlayCount);
+        int PlayCount,
+        int? WordCount,
+        int? CharCount,
+        double? Wpm,
+        double? TargetWpm,
+        double? PeakWpm,
+        // Npgsql hands a real[] column to Dapper as System.Array, which a float[] constructor parameter would not match.
+        Array? WpmCurve,
+        string? LyricFont,
+        string? Lyrics,
+        string? LyricsOriginal,
+        // Appended last: positional record, matched by column order.
+        int PassCount);
 }
