@@ -571,7 +571,8 @@ public static class ScoreEndpoints
                    s.replay_key IS NOT NULL AS hasReplay,
                    u.username           AS username,
                    u.country_code       AS countryCode,
-                   u.avatar_key         AS avatarKey
+                   u.avatar_key         AS avatarKey,
+                   s.pp                 AS pp
             FROM scores s
             JOIN users u ON u.id = s.user_id
             WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND {BeatmapLeaderboard.OnBoard("s")}
@@ -657,14 +658,15 @@ public static class ScoreEndpoints
                    best.has_replay         AS hasReplay,
                    best.username           AS username,
                    best.country_code       AS countryCode,
-                   best.avatar_key         AS avatarKey
+                   best.avatar_key         AS avatarKey,
+                   best.pp                 AS pp
             FROM (
                 SELECT DISTINCT ON (s.user_id)
                        s.id, s.user_id, s.total_score, s.accuracy, s.max_combo, s.rank, s.ended_at,
                        s.statistics::text AS statistics, s.maximum_statistics::text AS maximum_statistics,
                        s.mods::text AS mods,
                        s.replay_key IS NOT NULL AS has_replay,
-                       u.username, u.country_code, u.avatar_key
+                       u.username, u.country_code, u.avatar_key, s.pp
                 FROM scores s
                 JOIN users u ON u.id = s.user_id
                 WHERE s.beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("s")}
@@ -748,6 +750,8 @@ public static class ScoreEndpoints
         MaximumStatistics = ParseCounts(r.MaximumStatisticsJson),
         // Drives the client's "watch replay" action; true once the owner has uploaded the .osr
         // through PUT /api/v2/scores/{id}/replay (ReplayEndpoints).
+        // Only a ranked board's play can carry pp; an unranked-board row has none by construction.
+        Pp = ranked && r.Pp > 0 ? r.Pp : null,
         HasReplay = r.HasReplay,
         Ranked = ranked,
         User = BuildUser(ctx, r.UserId, r.Username, r.CountryCode, r.AvatarKey),
@@ -837,7 +841,9 @@ public static class ScoreEndpoints
         bool HasReplay,
         string Username,
         string CountryCode,
-        string? AvatarKey);
+        string? AvatarKey,
+        // Appended last: Dapper maps this positional record by column order.
+        double Pp);
 
     // ---- request body (subset of SoloScoreInfo the client submits, SoloScoreInfo.ForSubmission) ----
 

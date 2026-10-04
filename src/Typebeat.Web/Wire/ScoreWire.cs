@@ -77,6 +77,13 @@ public sealed class SoloScoreWire
     [JsonProperty("maximum_statistics")]
     public IDictionary<string, int> MaximumStatistics { get; init; } = new Dictionary<string, int>();
 
+    // The play's stored pp, or null when it earns none (ProfileScoreWire.Pp's rule: a stored 0 is a
+    // custom-rate or not-yet-priced play, which the pp board excludes). The set overlay's score table
+    // prints it in its pp column on a ranked map; without it every ranked row showed a "processing"
+    // spinner for a number that was already stored.
+    [JsonProperty("pp")]
+    public double? Pp { get; init; }
+
     // Whether the server holds a downloadable replay for this score
     // (GET /api/v2/scores/{id}/replay). The client binds it to ScoreInfo.HasOnlineReplay, which
     // is what enables its "watch replay" action on a leaderboard row. Declared just before

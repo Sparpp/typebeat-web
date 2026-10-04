@@ -3,6 +3,7 @@ using Dapper;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
 using Typebeat.Web.Scoring;
+using Typebeat.Web.Social;
 using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
@@ -74,11 +75,21 @@ public static class UserEndpoints
         var playMonths = await PlayHistory.ForUserAsync(conn, row.Id, ct: ctx.RequestAborted);
         var viewMonths = await ReplayViews.ForUserAsync(conn, row.Id, ct: ctx.RequestAborted);
 
+        // The Beatmaps section's headings, from the predicates its list endpoint pages over.
+        var beatmapsets = await ProfileBeatmapsets.CountsForUserAsync(conn, row.Id, ctx.RequestAborted);
+
+        // The header's two follow buttons. The viewer half of the follow state is not needed here.
+        var follows = await Follows.ProfileStateAsync(conn, row.Id, viewerId: 0, ctx.RequestAborted);
+        int mapperFollowers = await Follows.MapperFollowerCountAsync(conn, row.Id, ctx.RequestAborted);
+
         var profile = new UserWire.UserProfile(
-            row.Id, row.Username, row.CountryCode, row.AvatarKey, row.IsAdmin, row.CreatedAt, row.LastVisit, statistics,
+            row.Id, row.Username, row.CountryCode, row.AvatarKey, row.CoverKey, row.IsAdmin, row.CreatedAt, row.LastVisit, statistics,
             sections,
             playMonths.Select(m => history(m.Month, m.Plays)).ToList(),
-            viewMonths.Select(m => history(m.Month, m.Views)).ToList());
+            viewMonths.Select(m => history(m.Month, m.Views)).ToList(),
+            beatmapsets,
+            (int)follows.Followers,
+            mapperFollowers);
 
         return WireJson.Ok(UserWire.User(profile, ctx.Request.Scheme, ctx.Request.Host.Value ?? string.Empty));
     }
@@ -102,12 +113,13 @@ public static class UserEndpoints
         """
         SELECT u.id AS Id, u.username::text AS Username, u.country_code AS CountryCode,
                u.avatar_key AS AvatarKey, u.is_admin AS IsAdmin, u.created_at AS CreatedAt,
-               u.last_visit AS LastVisit
+               u.last_visit AS LastVisit, u.cover_key AS CoverKey
         FROM users u
         """;
 
     // created_at/last_visit are timestamptz; Npgsql materializes them as DateTime (Kind=Utc).
+    // Positional: Dapper matches by column order, so new columns are appended.
     private sealed record UserRow(
         long Id, string Username, string CountryCode, string? AvatarKey, bool IsAdmin,
-        DateTime CreatedAt, DateTime? LastVisit);
+        DateTime CreatedAt, DateTime? LastVisit, string? CoverKey);
 }

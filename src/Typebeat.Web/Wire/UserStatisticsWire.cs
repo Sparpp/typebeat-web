@@ -28,6 +28,14 @@ public static class UserStatisticsWire
         // as (0, null), which is exactly the "0 pp, unranked" the wire wants to say.
         var performance = await PpRanking.ForUserAsync(conn, userId, ct);
 
+        // The profile header's "Country Ranking", off the same pp board partitioned by country.
+        long? countryRank = await PpRanking.CountryRankForUserAsync(conn, userId, ct);
+
+        // The header's ranking-tier colour reads the rank as a fraction of everyone ranked (osu's global_rank_percent).
+        double? rankPercent = performance.GlobalRank is { } rank
+            ? (double)rank / Math.Max(1, await PpRanking.RankedPlayerCountAsync(conn, ct))
+            : null;
+
         // The cumulative-score board, still read for its VALUE (ranked_score). Its rank has no slot
         // on the client and is deliberately dropped rather than blended with the pp rank.
         var score = await GlobalRanking.ForUserAsync(conn, userId, ct);
@@ -39,12 +47,30 @@ public static class UserStatisticsWire
                 new { userId },
                 cancellationToken: ct));
 
+        // The profile's extended details. Total hits are osu's: every judged hit, misses excluded, summed
+        // from the lifetime per-judgement counts submissions accumulate (user_stats.hit_counts). Maximum
+        // combo is the best combo of any stored play; replays watched is every view of this player's
+        // replays by anyone (scores.replay_views, 025_replay_views.sql).
+        var extended = await conn.QuerySingleAsync<(long TotalHits, int MaximumCombo, long ReplaysWatched)>(
+            new CommandDefinition(
+                """
+                SELECT
+                    COALESCE((SELECT sum(h.value::bigint)
+                              FROM user_stats us, jsonb_each_text(us.hit_counts) h
+                              WHERE us.user_id = @userId AND h.key NOT LIKE '%miss%'), 0)::bigint AS TotalHits,
+                    COALESCE((SELECT max(max_combo) FROM scores WHERE user_id = @userId), 0)::int AS MaximumCombo,
+                    COALESCE((SELECT sum(replay_views) FROM scores WHERE user_id = @userId), 0)::bigint AS ReplaysWatched
+                """,
+                new { userId },
+                cancellationToken: ct));
+
         var (ss, s, a, accuracyPercent) = await gradeCountsAsync(conn, userId, ct);
 
         return UserWire.ProfileStatistics(
-            performance.TotalPp, performance.GlobalRank, score.RankedScore,
+            performance.TotalPp, performance.GlobalRank, rankPercent, countryRank, score.RankedScore,
             totals.TotalScore, totals.PlayCount, totals.PlayTimeS,
-            accuracyPercent, ss, s, a);
+            accuracyPercent, ss, s, a,
+            extended.TotalHits, extended.MaximumCombo, extended.ReplaysWatched);
     }
 
     /// <summary>
