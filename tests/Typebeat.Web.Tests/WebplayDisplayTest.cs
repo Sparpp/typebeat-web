@@ -578,7 +578,7 @@ public class WebplayDisplayTest
             var final = run.GetProperty("final");
             Assert.That(Flag(run, "finished"), Is.True);
             Assert.That(Num(final, "score"), Is.EqualTo(Num(final, "computeTotalScore")));
-            Assert.That(Num(final, "score"), Is.EqualTo(168724), "cross-check: 500000 * (1/3) * comboProgress + 500000 * (1/3)^5");
+            Assert.That(Num(final, "score"), Is.EqualTo(102881), "cross-check: 300000 * (1/3) * comboProgress + 700000 * (1/3)^5");
             // A completed run judged every cell, so the judged ratio and the card's whole-map one agree.
             Assert.That(Num(final, "accuracy"), Is.EqualTo(Num(final, "cardAccuracy")).Within(1e-12));
         });

@@ -342,8 +342,10 @@ public class WireCompatTests
         var score = new SoloScoreInfo
         {
             Passed = true,
-            TotalScore = 400_000,
-            TotalScoreWithoutMods = 400_000, // nomod: base == total (bounded against the provable ceiling)
+            // 380000 sits under the new 300000/700000 ceiling (391113 for this accuracy), where
+            // the old 400000 fit the old one and the server would now store it unranked.
+            TotalScore = 380_000,
+            TotalScoreWithoutMods = 380_000, // nomod: base == total (bounded against the provable ceiling)
             Accuracy = 0.75,
             MaxCombo = 8,
             RulesetID = 0,
@@ -378,7 +380,7 @@ public class WireCompatTests
 
         Assert.That(result, Is.Not.Null);
         Assert.That(result!.Position, Is.Not.Null, "a ranked submission must return a leaderboard position");
-        Assert.That(result.TotalScore, Is.EqualTo(400_000), "submitted total score must echo back");
+        Assert.That(result.TotalScore, Is.EqualTo(380_000), "submitted total score must echo back");
 
         // The enum-keyed dictionary round-trip; catches snake_case key drift.
         Assert.That(result.Statistics[HitResult.Great], Is.EqualTo(7));
@@ -460,8 +462,8 @@ public class WireCompatTests
         var score = new SoloScoreInfo
         {
             Passed = true,
-            TotalScore = 401_840,          // base × the exact 1.01x rate multiplier (1.0046)
-            TotalScoreWithoutMods = 400_000, // base bounded against the provable ceiling
+            TotalScore = 381_748,          // base × the exact 1.01x rate multiplier (1.0046)
+            TotalScoreWithoutMods = 380_000, // base bounded against the provable ceiling
             Accuracy = 0.75,
             MaxCombo = 8,
             RulesetID = 0,
@@ -482,7 +484,7 @@ public class WireCompatTests
         var result = JsonConvert.DeserializeObject<MultiplayerScore>(await submitResp.Content.ReadAsStringAsync())!;
 
         Assert.That(result.Position, Is.Not.Null, "a rate-mod play is ranked at every speed, so it takes a leaderboard position");
-        Assert.That(result.TotalScore, Is.EqualTo(401_840), "the rate-priced total must survive the bounds check unclamped");
+        Assert.That(result.TotalScore, Is.EqualTo(381_748), "the rate-priced total must survive the bounds check unclamped");
 
         await using (var verify = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString))
         {
@@ -618,7 +620,7 @@ public class WireCompatTests
         }, "reading the profile statistics must not throw");
 
         // The score loop submitted a single 400k play on the ranked seed map.
-        Assert.That(user.Statistics.RankedScore, Is.EqualTo(400_000));
+        Assert.That(user.Statistics.RankedScore, Is.EqualTo(380_000));
 
         await using var db = new Npgsql.NpgsqlConnection(ServerFixture.ConnectionString);
         await db.OpenAsync();
@@ -769,7 +771,7 @@ public class WireCompatTests
             Assert.That(score.Processed, Is.True);
             Assert.That(score.PP, Is.Not.Null.And.GreaterThan(0), "the seeded play is ranked on a ranked map");
 
-            Assert.That(score.TotalScore, Is.EqualTo(400_000));
+            Assert.That(score.TotalScore, Is.EqualTo(380_000));
             Assert.That(score.UserID, Is.EqualTo((int)ServerFixture.PlayerUserId));
             Assert.That(score.EndedAt, Is.Not.EqualTo(default(DateTimeOffset)), "the date line renders from ended_at");
         }

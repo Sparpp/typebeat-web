@@ -258,7 +258,7 @@ public class CorrectionCreditParityTest
                 ["great"] = 7, ["ok"] = 1, [mistype_key] = 1
             }));
             Assert.That(fixedRun.GetProperty("accuracy").GetDouble(), Is.EqualTo((7 * 300 + 100) / 2400.0).Within(1e-12));
-            Assert.That(fixedRun.GetProperty("totalScore").GetInt64(), Is.EqualTo(781_947));
+            Assert.That(fixedRun.GetProperty("totalScore").GetInt64(), Is.EqualTo(728_059));
 
             // What the cap does NOT move, stated as equalities rather than as a claim.
             Assert.That(Int(fixedRun, "maxCombo"), Is.EqualTo(Int(clean, "maxCombo")));

@@ -132,9 +132,27 @@ namespace Typebeat.Web.Scoring;
 public static class ScoringContract
 {
     // ScoreProcessor.ComputeTotalScore split (ScoreProcessor.cs:429-431).
-    private const double combo_portion_max = 500_000;
-    private const double accuracy_portion_max = 500_000;
+    private const double combo_portion_max = 300_000;
+    private const double accuracy_portion_max = 700_000;
     private const double accuracy_exponent = 5; // Math.Pow(Accuracy.Value, 5), ScoreProcessor.cs:430
+
+    /// <summary>The combo half's weight (TypeBeatScoreProcessor.COMBO_PORTION_MAX). Public for the reweight backfill.</summary>
+    public const double ComboPortionMax = combo_portion_max;
+
+    /// <summary>The accuracy half's weight (TypeBeatScoreProcessor.ACCURACY_PORTION_MAX). Public for the reweight backfill.</summary>
+    public const double AccuracyPortionMax = accuracy_portion_max;
+
+    /// <summary>
+    /// The OLD second term (<c>500000 x acc^5 x accuracyProgress</c>, the pre-reweight weight), which
+    /// the score reweight backfill needs to re-base a stored total onto the new split. It is the term
+    /// the 2026-10-04 change grew, so a stored total's new value is <c>0.6 x old + 0.8 x this</c>.
+    /// </summary>
+    public static double OldAccuracyTerm(double accuracy, double accuracyProgress)
+    {
+        accuracy = double.IsFinite(accuracy) ? Math.Clamp(accuracy, 0, 1) : 0;
+        accuracyProgress = double.IsFinite(accuracyProgress) ? Math.Clamp(accuracyProgress, 0, 1) : 0;
+        return 500_000 * Math.Pow(accuracy, accuracy_exponent) * accuracyProgress;
+    }
 
     // Accuracy → rank cutoffs, mirroring TypeBeatScoreProcessor.ACCURACY_CUTOFF_* (and its
     // S_MISS_LIMIT): grades are awarded on timing accuracy with a missed-cell condition on SS and S.

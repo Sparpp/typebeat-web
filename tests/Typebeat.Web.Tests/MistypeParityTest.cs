@@ -180,7 +180,7 @@ public class MistypeParityTest
     /// <item>The denominator, <c>maximumComboPortion</c>, comes from the autoplay simulation: a
     /// Great on every one of the map's 15 cells, so combo 1..15, so
     /// <c>300 * Σ(i=1..15) √i = 300 * 40.469197 = 12140.758980</c>.</item>
-    /// <item><c>total_score = round(500000 * acc * comboProgress + 500000 * acc^5 *
+    /// <item><c>total_score = round(300000 * acc * comboProgress + 700000 * acc^5 *
     /// accuracyProgress)</c> with <c>acc</c> the judged-only accuracy and <c>accuracyProgress</c>
     /// the judged cells over the map's 15. Every typed cell here is judged at delta 0, i.e. Perfect,
     /// so <c>acc</c> is 1 wherever nothing was missed.</item>
@@ -197,20 +197,20 @@ public class MistypeParityTest
     /// <item><c>mistyped</c> (and <c>doubleMistyped</c>, whose second key on each cell breaks an
     /// already-broken combo): a break before each of cells 1..7 leaves each of them at combo 1,
     /// then cells 8..15 run 2..9. Portion 300*(7 + Σ(2..9)√i) = 300*25.306001 = 7591.800158,
-    /// comboProgress 0.625315120, total = round(500000*0.625315120 + 500000) = 812658.</item>
+    /// comboProgress 0.625315120, total = round(300000*0.625315120 + 700000) = 887595.</item>
     /// <item><c>lastCellMistyped</c>: 1..14, break, then the last cell at combo 1. Portion
     /// 300*(Σ(1..14)√i + 1) = 300*37.596213 = 11278.863976, comboProgress 0.929008145,
-    /// total = round(500000*0.929008145 + 500000) = 964504.</item>
+    /// total = round(300000*0.929008145 + 700000) = 978702.</item>
     /// <item><c>clusteredMistyped</c>: 1..7, then five wrong keys in a row (ONE break, five
     /// mistypes), then cells 8..15 at 1..8. Portion 300*(Σ(1..7)√i + Σ(1..8)√i) = 300*29.783574 =
-    /// 8935.072178, comboProgress 0.735956639, total = round(500000*0.735956639 + 500000) =
-    /// 867978.</item>
+    /// 8935.072178, comboProgress 0.735956639, total = round(300000*0.735956639 + 700000) =
+    /// 920787.</item>
     /// <item><c>mistypedAndMissed</c>: a break before each of cells 1..7, then cells 8..12 at 2..6,
     /// then three sealed misses contributing 0. Portion 300*(7 + Σ(2..6)√i) = 300*16.831822 =
     /// 5049.546627, comboProgress 0.415916883. Here acc = 12*300/(15*300) = 0.8 and
     /// accuracyProgress = 15/15 = 1 (a miss is still a judged cell), so
-    /// total = round(500000*0.8*0.415916883 + 500000*0.8^5) = round(166366.75 + 163840) =
-    /// 330207.</item>
+    /// total = round(300000*0.8*0.415916883 + 700000*0.8^5) = round(99820.05 + 229376) =
+    /// 329196.</item>
     /// </list>
     /// </summary>
     [Test]
@@ -222,11 +222,11 @@ public class MistypeParityTest
         [
             ("clean", 15, 1_000_000),
             ("firstCellMistyped", 15, 1_000_000),
-            ("mistyped", 9, 812_658),
-            ("doubleMistyped", 9, 812_658),
-            ("lastCellMistyped", 14, 964_504),
-            ("clusteredMistyped", 8, 867_978),
-            ("mistypedAndMissed", 6, 330_207),
+            ("mistyped", 9, 887_595),
+            ("doubleMistyped", 9, 887_595),
+            ("lastCellMistyped", 14, 978_702),
+            ("clusteredMistyped", 8, 920_787),
+            ("mistypedAndMissed", 6, 329_196),
         ];
 
         Assert.Multiple(() =>

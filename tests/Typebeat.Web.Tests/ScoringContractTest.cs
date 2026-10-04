@@ -36,7 +36,7 @@ public class ScoringContractTest
             Assert.That(r.Rank, Is.EqualTo("A"));
             Assert.That(r.TheoreticalMaxCombo, Is.EqualTo(10));
             // ceiling = round(500000·0.85 + 500000·0.85^5·1) = round(646852.65625) = 646853
-            Assert.That(r.TotalScoreCeiling, Is.EqualTo(646853L));
+            Assert.That(r.TotalScoreCeiling, Is.EqualTo(565594L));
         });
     }
 
@@ -136,7 +136,7 @@ public class ScoringContractTest
             // misses do not increase combo → theoretical max combo is still the note count (10).
             Assert.That(r.TheoreticalMaxCombo, Is.EqualTo(10));
             // ceiling = round(500000·0.5 + 500000·0.5^5·1) = 250000 + 15625 = 265625
-            Assert.That(r.TotalScoreCeiling, Is.EqualTo(265625L));
+            Assert.That(r.TotalScoreCeiling, Is.EqualTo(171875L));
         });
     }
 
@@ -308,7 +308,7 @@ public class ScoringContractTest
             Assert.That(r.Completion, Is.EqualTo(0.1).Within(1e-9));
             // ceiling = round(500000·1·1 + 500000·1^5·0.1) = 550000, computed from the JUDGED
             // accuracy. The whole-map value would have given ~50001 and rejected honest totals.
-            Assert.That(r.TotalScoreCeiling, Is.EqualTo(550_000L));
+            Assert.That(r.TotalScoreCeiling, Is.EqualTo(370_000L));
         });
     }
 
@@ -333,7 +333,7 @@ public class ScoringContractTest
         Assert.Multiple(() =>
         {
             Assert.That(r.JudgedAccuracy, Is.EqualTo(r.Accuracy).Within(1e-12));
-            Assert.That(r.TotalScoreCeiling, Is.EqualTo(646_853L));
+            Assert.That(r.TotalScoreCeiling, Is.EqualTo(565_594L));
         });
     }
 

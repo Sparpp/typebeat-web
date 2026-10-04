@@ -2238,6 +2238,14 @@
     // ScoreProcessor.COMBO_EXPONENT.
     const COMBO_EXPONENT = 0.5;
 
+    // type!beat's score weighting (owner, 2026-10-04): the base osu! 500000/500000 split moved onto
+    // the accuracy half. The first term is scaled by cumulative COMBO POSITION, the second by map
+    // PROGRESS (both multiplied by accuracy, the second to the fifth power). Mirrors
+    // TypeBeatScoreProcessor.COMBO_PORTION_MAX / ACCURACY_PORTION_MAX and the server's
+    // ScoringContract; a perfect play still totals exactly 1000000.
+    const COMBO_PORTION_MAX = 300000;
+    const ACCURACY_PORTION_MAX = 700000;
+
     class ScoreProcessorMirror {
         constructor() {
             this.combo = 0;              // ScoreProcessor.Combo
@@ -5211,7 +5219,7 @@
         // currentBaseScore / currentMaximumBaseScore, judged cells only); equals whole-map
         // accuracy for a completed play, differs only for a failed/incomplete (unranked) run.
         const accJudged = processor.maximumBaseScore > 0 ? processor.baseScore / processor.maximumBaseScore : 1;
-        const totalWithoutMods = Math.round(500000 * accJudged * comboProgress + 500000 * Math.pow(accJudged, 5) * accuracyProgress);
+        const totalWithoutMods = Math.round(COMBO_PORTION_MAX * accJudged * comboProgress + ACCURACY_PORTION_MAX * Math.pow(accJudged, 5) * accuracyProgress);
         const totalScore = totalWithoutMods; // scoreMultiplier = 1 (no mods)
 
         // TypeBeatScoreProcessor.CountsAsTyped: every HIT except an uncorrected typo. A cell typed
@@ -5314,6 +5322,7 @@
         isAuthoredValid, derivedSplits, splitsFor, cellCuts, segmentOf,
         TypingEngine, computeScore, rankFromAccuracy, rankFromStatistics,
         WINDOWS, FREESTYLE_WINDOWS, FREESTYLE_WINDOW_SCALE, windowsFor, classify, toHitResult,
+        COMBO_PORTION_MAX, ACCURACY_PORTION_MAX,
         freestyleTick, freestyleGlyph,
         constants: {
             CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, FREESTYLE_MARKER,

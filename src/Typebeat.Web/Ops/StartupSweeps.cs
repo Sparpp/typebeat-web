@@ -184,6 +184,13 @@ public sealed class StartupSweeps(Db db, IFileStore fileStore, StartupSweepGate 
             stage = nameof(PpBackfill);
             await PpBackfill.RunAsync(db, logger, stoppingToken);
 
+            // Re-base stored total_score onto the 300000/700000 split (046_score_reweight_marks.sql,
+            // owner 2026-10-04). Independent of everything above: pp prices from accuracy/misses/SR,
+            // not from total_score, and the transform reads only the stored row. LAST so the 0.95x
+            // Classic reprice above is already in the total this compounds.
+            stage = nameof(ScoreReweightBackfill);
+            await ScoreReweightBackfill.RunAsync(db, logger, eviction, stoppingToken);
+
             gate.Finish(failedStage: null);
             logger.LogInformation("Startup sweeps: done in {Seconds:0.0}s; package ingest and the rank button are open.",
                 clock.Elapsed.TotalSeconds);

@@ -1687,7 +1687,7 @@ function restatedTotal(engine, maxComboPortion) {
     const comboProgress = maxComboPortion > 0 ? p.comboPortion / maxComboPortion : 1;
     const accuracyProgress = total > 0 ? p.judgementCount / total : 1;
     const accJudged = p.maximumBaseScore > 0 ? p.baseScore / p.maximumBaseScore : 1;
-    return Math.round(500000 * accJudged * comboProgress + 500000 * Math.pow(accJudged, 5) * accuracyProgress);
+    return Math.round(TB.COMBO_PORTION_MAX * accJudged * comboProgress + TB.ACCURACY_PORTION_MAX * Math.pow(accJudged, 5) * accuracyProgress);
 }
 
 // THE HP BAR READS THE ACCOUNT (backlog 306). Two plays that never reject a key, so the rejection

@@ -412,7 +412,7 @@ public class ComboRestoreParityTest
     /// <para>What the fix does NOT buy back is the wrong keypress, still counted and still priced by
     /// pp's typo term, and since backlog 210 the TOP TIER on the cell it spoiled: the corrected cell
     /// is capped at Ok, so accuracy is (12·300 + 100)/3900 = 0.948718 and the total is
-    /// round(500000·0.948718·1 + 500000·0.948718^5) = 858646 against the clean run's 1000000. Until
+    /// round(300000·0.948718·1 + 700000·0.948718^5) = 822617 against the clean run's 1000000. Until
     /// the cap this line read the clean run's total exactly, and holding the two apart is what
     /// backlog 210 is for. The combo portion is UNTOUCHED by the cap (the restore is combo, the cap
     /// is the tier), which is what lets this test still measure the restore: <c>max_combo</c> is 13
@@ -439,7 +439,7 @@ public class ComboRestoreParityTest
             // clean run's. What separates the two totals is the CAP alone (backlog 210), which is
             // one cell's 300 coming down to 100 with the combo portion left exactly where it was.
             Assert.That(clean.GetProperty("totalScore").GetInt64(), Is.EqualTo(1_000_000));
-            Assert.That(fixedRun.GetProperty("totalScore").GetInt64(), Is.EqualTo(858_646));
+            Assert.That(fixedRun.GetProperty("totalScore").GetInt64(), Is.EqualTo(822_617));
             Assert.That(fixedRun.GetProperty("totalScore").GetInt64(),
                 Is.LessThan(clean.GetProperty("totalScore").GetInt64()));
 

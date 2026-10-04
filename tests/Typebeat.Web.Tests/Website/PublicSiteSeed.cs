@@ -717,6 +717,15 @@ public static class PublicSiteSeed
             FROM beatmaps b WHERE b.id = @beatmapId
             """,
             new { userId, beatmapId, buildId = await SeedBuildIdAsync(conn), scoreId });
+
+        // Same guard, for the reweight sweep (046_score_reweight_marks.sql): that sweep re-bases any
+        // row with no score_reweights record onto the 300000/700000 split, which would move these
+        // display fixtures and the exact totals the leaderboard and profile pages assert. Recording
+        // them as already-current keeps the anchors stable; the transform is a no-op on a row the
+        // audit table already names.
+        await conn.ExecuteAsync(
+            "INSERT INTO score_reweights (score_id, old_total, new_total) VALUES (@scoreId, @totalScore, @totalScore) ON CONFLICT (score_id) DO NOTHING",
+            new { scoreId, totalScore });
     }
 
     /// <summary>A stable build row for the seeded tokens; created once.</summary>

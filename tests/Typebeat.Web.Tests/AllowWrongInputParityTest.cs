@@ -280,7 +280,7 @@ public class AllowWrongInputParityTest
             // 708002 since backlog 213: the combo portion is untouched (comboProgress 0.758313370,
             // see TheSubmittedTotalsMatchTheHandDerivedCsharpModel), and the typo cell's accuracy
             // weight fell from 50 to 0, taking accuracy from 0.944444 to (14*300)/4500 = 0.933333.
-            Assert.That(run.GetProperty("totalScore").GetInt64(), Is.EqualTo(708_002));
+            Assert.That(run.GetProperty("totalScore").GetInt64(), Is.EqualTo(708_100));
             Assert.That(Dict(run, "statistics"),
                 Is.EquivalentTo(new Dictionary<string, int> { ["great"] = 14, ["good"] = 1, ["combo_break"] = 1 }));
         });
@@ -680,14 +680,14 @@ public class AllowWrongInputParityTest
         (string Run, int MaxCombo, long TotalScore, int Mistypes)[] expected =
         [
             ("clean", 15, 1_000_000, 0),
-            ("lastCellTypedWrong", 14, 776_129, 1),
-            ("lastCellSkipped", 14, 776_129, 0),
-            ("lastCellWrongThenErased", 14, 776_129, 1),
-            ("midCellTypedWrong", 9, 708_002, 1),
-            ("midCellWrongThenFixed", 15, 876_114, 1),
-            ("wordGapTypedWrong", 11, 737_517, 1),
-            ("wordGapWrongThenFixed", 15, 876_114, 1),
-            ("spaceKeyOnLetter", 15, 876_114, 1),
+            ("lastCellTypedWrong", 14, 748_975, 1),
+            ("lastCellSkipped", 14, 748_975, 0),
+            ("lastCellWrongThenErased", 14, 748_975, 1),
+            ("midCellTypedWrong", 9, 708_100, 1),
+            ("midCellWrongThenFixed", 15, 844_337, 1),
+            ("wordGapTypedWrong", 11, 725_808, 1),
+            ("wordGapWrongThenFixed", 15, 844_337, 1),
+            ("spaceKeyOnLetter", 15, 844_337, 1),
         ];
 
         Assert.Multiple(() =>

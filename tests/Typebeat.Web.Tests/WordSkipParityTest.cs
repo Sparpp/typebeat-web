@@ -476,7 +476,7 @@ public class WordSkipParityTest
             Assert.That(Int(run, "processorMisses"), Is.EqualTo(2));
             Assert.That(Int(submitted, "maxCombo"), Is.EqualTo(4),
                 "the run rebuilt after the skip: the seal's combo-neutral misses do not break it a second time");
-            Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(282336));
+            Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(243776));
             Assert.That(Double(submitted, "completion"), Is.EqualTo(5 / 7.0));
             Assert.That(submitted.GetProperty("rank").GetString(), Is.EqualTo("C"));
         });
@@ -537,7 +537,7 @@ public class WordSkipParityTest
 
             Assert.That(Strings(run, "statesLineOne"), Is.EqualTo(new[] { "correct", "correct" }));
             Assert.That(Int(submitted, "maxCombo"), Is.EqualTo(6), "4 held across the seal, plus the next line's two cells");
-            Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(380647));
+            Assert.That(submitted.GetProperty("totalScore").GetInt64(), Is.EqualTo(342240));
             Assert.That(submitted.GetProperty("rank").GetString(), Is.EqualTo("B"));
         });
     }
@@ -568,7 +568,7 @@ public class WordSkipParityTest
             Assert.That(reclaimed.GetProperty("statistics").TryGetProperty("miss", out _), Is.False,
                 "every cell was typed in the end");
 
-            Assert.That(reclaimed.GetProperty("totalScore").GetInt64(), Is.EqualTo(984633));
+            Assert.That(reclaimed.GetProperty("totalScore").GetInt64(), Is.EqualTo(990780));
         });
     }
 }
