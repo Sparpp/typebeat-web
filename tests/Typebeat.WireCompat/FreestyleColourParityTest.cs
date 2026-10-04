@@ -10,6 +10,7 @@ using typebeat.Game.Rulesets.TypeBeat.UI;
 using Typebeat.Web.Packages;
 using ClientLine = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricLine;
 using ClientUnit = typebeat.Game.Rulesets.TypeBeat.Beatmaps.TimedUnit;
+using GameSyncWindows = typebeat.Game.Rulesets.TypeBeat.Gameplay.SyncWindows;
 
 namespace Typebeat.WireCompat;
 
@@ -173,5 +174,36 @@ public class FreestyleColourParityTest
         }
 
         Assert.That(new TypeBeatRuleset().NativeEncodingsEquivalentForStatus(editorSave(teal), plain), Is.False);
+    }
+
+    /// <summary>
+    /// PR 16's freestyle JUDGEMENT ladder is a second cross-repo pin in the same file family: a
+    /// freestyle slot is graded on a ladder SCALED wider than an ordinary cell's (the game's
+    /// <c>SyncWindows.FREESTYLE_WINDOW_SCALE</c>, read through <c>TypingEngine.WindowsFor</c>), and
+    /// the browser must widen it by the same factor or a browser freestyle run is judged tighter
+    /// than a desktop one on the same map and submits different statistics. Pins the scale and every
+    /// bound of the browser's widened ladder against the game's own numbers.
+    /// </summary>
+    [Test]
+    public void TheBrowserWidensFreestyleJudgementByTheGamesScale()
+    {
+        var browser = NodeHarness.Run("CoreFreestyleHarness.cjs");
+
+        double scale = browser.GetProperty("freestyleWindowScale").GetDouble();
+        Assert.That(scale, Is.EqualTo(GameSyncWindows.FREESTYLE_WINDOW_SCALE),
+            "the browser's freestyle window scale must equal the game's");
+
+        var windows = browser.GetProperty("freestyleWindows");
+        var game = GameSyncWindows.Default;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(windows.GetProperty("ge").GetDouble(), Is.EqualTo(game.GreatEarly * scale).Within(1e-9), "great early");
+            Assert.That(windows.GetProperty("gl").GetDouble(), Is.EqualTo(game.GreatLate * scale).Within(1e-9), "great late");
+            Assert.That(windows.GetProperty("oe").GetDouble(), Is.EqualTo(game.OkEarly * scale).Within(1e-9), "ok early");
+            Assert.That(windows.GetProperty("ol").GetDouble(), Is.EqualTo(game.OkLate * scale).Within(1e-9), "ok late");
+            Assert.That(windows.GetProperty("me").GetDouble(), Is.EqualTo(game.MehEarly * scale).Within(1e-9), "meh early");
+            Assert.That(windows.GetProperty("ml").GetDouble(), Is.EqualTo(game.MehLate * scale).Within(1e-9), "meh late");
+        });
     }
 }

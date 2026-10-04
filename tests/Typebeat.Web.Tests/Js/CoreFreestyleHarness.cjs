@@ -359,7 +359,12 @@ const out = {
     legacyShape: cellShape(build(LEGACY_AMPERSAND_OSU)),
     flaggedShape: cellShape(build(FLAGGED_AMPERSAND_OSU)),
 
-    shimmer: shimmer()
+    shimmer: shimmer(),
+
+    // The freestyle judgement ladder (PR 16): a slot is graded on a WIDER ladder than an ordinary
+    // cell. Emitted so the C# side can pin the scale against SyncWindows.FREESTYLE_WINDOW_SCALE.
+    freestyleWindowScale: TB.FREESTYLE_WINDOW_SCALE,
+    freestyleWindows: TB.FREESTYLE_WINDOWS
 };
 
 process.stdout.write(JSON.stringify(out));

@@ -2030,6 +2030,22 @@
         me: MEH_WINDOW_MS, ml: MEH_WINDOW_MS
     };
 
+    // A FREESTYLE cell is graded on a WIDER ladder than a normal one (PR 16, mirrors
+    // SyncWindows.FREESTYLE_WINDOW_SCALE and TypingEngine.WindowsFor): every bound is doubled, so a
+    // slot that accepts any key also accepts it across twice the span. It is the same scale on both
+    // sides, so a wrong-key read is a 'Premature'/'Lagging' only past the doubled bound.
+    const FREESTYLE_WINDOW_SCALE = 2;
+
+    const FREESTYLE_WINDOWS = {
+        ge: GREAT_WINDOW_MS * FREESTYLE_WINDOW_SCALE, gl: GREAT_WINDOW_MS * FREESTYLE_WINDOW_SCALE,
+        oe: OK_WINDOW_MS * FREESTYLE_WINDOW_SCALE, ol: OK_WINDOW_MS * FREESTYLE_WINDOW_SCALE,
+        me: MEH_WINDOW_MS * FREESTYLE_WINDOW_SCALE, ml: MEH_WINDOW_MS * FREESTYLE_WINDOW_SCALE
+    };
+
+    // The ladder a cell is graded against: its own widened one for a freestyle slot, the common one
+    // otherwise. Mirrors TypingEngine.WindowsFor.
+    function windowsFor(cell) { return cell.freestyle ? FREESTYLE_WINDOWS : WINDOWS; }
+
     function classify(delta, w) {
         if (delta >= -w.ge && delta <= w.gl) return 'Great';
         if (delta >= -w.oe && delta <= w.ol) return 'Ok';
@@ -4571,7 +4587,7 @@
             // not to the cell's judgement.
             this.resumeStreakIfThisRedeemsTheBreak(this.caretIndex);
 
-            const w = WINDOWS;
+            const w = windowsFor(cell);
             const inertRetype = cell.firstCorrectDelta !== null;
             let type, points = 0;
 
@@ -5297,7 +5313,7 @@
         // for the same reason, so the game's own SyllableSegments can be held against it.
         isAuthoredValid, derivedSplits, splitsFor, cellCuts, segmentOf,
         TypingEngine, computeScore, rankFromAccuracy, rankFromStatistics,
-        WINDOWS, classify, toHitResult,
+        WINDOWS, FREESTYLE_WINDOWS, FREESTYLE_WINDOW_SCALE, windowsFor, classify, toHitResult,
         freestyleTick, freestyleGlyph,
         constants: {
             CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, FREESTYLE_MARKER,
