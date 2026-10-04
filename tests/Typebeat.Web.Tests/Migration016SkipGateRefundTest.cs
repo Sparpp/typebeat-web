@@ -112,6 +112,12 @@ public class Migration016SkipGateRefundTest
                 await conn.ExecuteAsync("INSERT INTO schema_migrations (name) VALUES (@migration)", new { migration });
             }
 
+            // Mark every LATER migration applied without running it, so MigrateAsync applies exactly
+            // its own target. 045 re-grades PASSED rows on accuracy, which would otherwise move ranks
+            // other fixtures assert untouched.
+            await conn.ExecuteAsync("INSERT INTO schema_migrations (name) VALUES (@migration)",
+                new { migration = "045_accuracy_rank_regrade.sql" });
+
             typistId = await conn.ExecuteScalarAsync<long>(
                 """
                 INSERT INTO users (username, email, password_hash, country_code)

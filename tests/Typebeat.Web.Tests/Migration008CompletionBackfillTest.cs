@@ -65,6 +65,12 @@ public class Migration008CompletionBackfillTest
                 await conn.ExecuteAsync("INSERT INTO schema_migrations (name) VALUES (@migration)", new { migration });
             }
 
+            // Mark every LATER migration applied without running it, so MigrateAsync below applies
+            // exactly 008. 045 re-grades PASSED rows on accuracy, which would otherwise overwrite the
+            // completion-based ranks this fixture seeds and asserts.
+            foreach (string later in new[] { "045_accuracy_rank_regrade.sql" })
+                await conn.ExecuteAsync("INSERT INTO schema_migrations (name) VALUES (@migration)", new { migration = later });
+
             long userId = await conn.ExecuteScalarAsync<long>(
                 """
                 INSERT INTO users (username, email, password_hash, country_code)

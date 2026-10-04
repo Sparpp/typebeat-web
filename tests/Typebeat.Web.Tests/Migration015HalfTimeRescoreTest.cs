@@ -93,6 +93,12 @@ public class Migration015HalfTimeRescoreTest
                 await conn.ExecuteAsync("INSERT INTO schema_migrations (name) VALUES (@migration)", new { migration });
             }
 
+            // Mark every LATER migration applied without running it, so MigrateAsync below applies
+            // exactly 015. 045 re-grades PASSED rows on accuracy, which would otherwise move the
+            // stored ranks this fixture asserts are untouched by the rescore.
+            await conn.ExecuteAsync("INSERT INTO schema_migrations (name) VALUES (@migration)",
+                new { migration = "045_accuracy_rank_regrade.sql" });
+
             typistId = await conn.ExecuteScalarAsync<long>(
                 """
                 INSERT INTO users (username, email, password_hash, country_code)

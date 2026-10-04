@@ -181,6 +181,7 @@ public class Migration004BackfillTest
             "042_replay_retention.sql",
             "043_classic_version_marks.sql",
             "044_played_duration.sql",
+            "045_accuracy_rank_regrade.sql",
         }));
     }
 
