@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
@@ -113,14 +114,15 @@ public sealed class StartupSweepGate
 /// then this runs every sweep in the original order, in the background, and opens
 /// <see cref="StartupSweepGate"/> when it is through. The order is load-bearing and unchanged:
 /// Pace, then Fingerprint, then Language (reads the lyric text Pace fills), SkipGate (reads Pace's
-/// skippable_s), RateGate, SetRank, and Pp LAST (reads sr_dt / sr_ht and the ranked flags the
-/// refunds may have just flipped). The whole chain is caught: a failing sweep is logged as an error
+/// skippable_s), RateGate, SetRank, SetRankClassicMark (backlog 398: the version rule pointed down,
+/// after the carry-up so the two cannot fight over a row), and Pp LAST (reads sr_dt / sr_ht and the
+/// ranked flags the refunds may have just flipped). The whole chain is caught: a failing sweep is logged as an error
 /// and recorded on the gate, and never takes the host down (it used to crash the boot, which on a
 /// deploy meant a crash loop re-running every sweep on each restart while the health check went red).
 /// A shutdown part way through cancels the current sweep; each one is idempotent and the next boot
 /// resumes it.
 /// </summary>
-public sealed class StartupSweeps(Db db, IFileStore fileStore, StartupSweepGate gate, ILogger<StartupSweeps> logger) : BackgroundService
+public sealed class StartupSweeps(Db db, IFileStore fileStore, StartupSweepGate gate, CacheEviction eviction, ILogger<StartupSweeps> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -166,6 +168,16 @@ public sealed class StartupSweeps(Db db, IFileStore fileStore, StartupSweepGate 
             // flips. The rank button runs the same pass scoped to its set; this is the safety net.
             stage = nameof(SetRankRefund);
             await SetRankRefund.RunAsync(db, fileStore, logger, stoppingToken);
+
+            // Standing sweep (backlog 398): the version rule pointed DOWNWARD. A score whose played
+            // version is not the current gameplay of its (re-ranked) map (its token is missing,
+            // names a hash no stored version produces, or names a version with different gameplay)
+            // gets the synthetic Classic mark: "CL" appended to scores.mods, ranked kept, total_score
+            // repriced to 0.95x, pp_version stamped to 0 so the PpBackfill below reprices it at
+            // 0.95x. AFTER the carry-up, so the two share the predicate: a stale pending-era play
+            // SetRankRefund carried is marked here in the same boot.
+            stage = nameof(SetRankClassicMark);
+            await SetRankClassicMark.RunAsync(db, fileStore, logger, eviction, stoppingToken);
 
             // Recompute stored per-score pp below PerformancePoints.VERSION (020_performance_points.sql).
             // LAST: reads sr_dt / sr_ht (Pace) and scores.ranked (the refunds above).

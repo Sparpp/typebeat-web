@@ -566,6 +566,9 @@ public class PerformancePointsParityTest
                          (new TypeBeatModHardRock(), 1.00, "Hard Rock, NEUTRAL: the arm prices it, and paying twice is the mistake"),
                          (new TypeBeatModFletcher(), 1.02, "Fletcher (FC), the pinned caret"),
                          (new TypeBeatModNoFail(), 0.90, "No Fail"),
+                         // The synthetic Classic mark (backlog 398): a score played on a version
+                         // that is not the ranked one, paid 5 percent less on both sides.
+                         (new TypeBeatModClassic(), 0.95, "Classic (CL), the version mark"),
                      })
             {
                 var clientStack = Stack(mod);

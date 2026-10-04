@@ -579,25 +579,41 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
     /// play submitted while the set was ranked does.
     ///
     /// <para>
+    /// THE OTHER DIRECTION RUNS TOO (backlog 398). Ranking a set after a re-upload must also MARK
+    /// the plays made on the version that used to be ranked, or the newly-ranked board shows an old
+    /// version's plays as if they were on the current map. <see cref="SetRankClassicMark.RunForSetAsync"/>
+    /// is the same predicate pointed down: it appends the synthetic Classic mark ("CL") to those
+    /// scores, reprices them to 0.95x, and stamps them for a reprice. It is NOT an unranking, so it
+    /// touches both the ranked rows this board is about to show and any unranked ones on the set.
+    /// The two passes do not fight: the carry-up takes UNRANKED rows and the mark rewrites mods and
+    /// total without changing `ranked`, so a score is moved at most once per transition whichever
+    /// order they ran in.
+    /// </para>
+    ///
+    /// <para>
     /// BEST-EFFORT, like the audit row above: the rank has already committed, and a failure here
-    /// must not 500 it. Each re-ranked row commits on its own, so a failure part way leaves some
-    /// rows carried and the rest for the next boot's sweep, which reconsiders every unranked row
-    /// on every ranked set and prices whatever it or this left stale. Run to completion even if the
-    /// reviewer's browser goes away, for the same reason.
+    /// must not 500 it. Each row commits on its own, so a failure part way leaves some rows marked
+    /// and the rest for the next boot's sweep, which reconsiders every row. Run to completion even
+    /// if the reviewer's browser goes away, for the same reason.
     /// </para>
     /// </summary>
     private async Task carryPendingPlaysAsync(long id)
     {
         try
         {
+            // Downward first: mark plays on a version that is no longer the ranked one, so the board
+            // this rank just reopened is honest about which plays were on a different map before the
+            // carry adds the pending-era ones. PpBackfill then prices both the marked rows and the
+            // carried ones at once.
+            await SetRankClassicMark.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);
+
             int carried = await SetRankRefund.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);
 
-            if (carried > 0)
-                await PpBackfill.RunAsync(db, logger, CancellationToken.None, setId: id);
+            await PpBackfill.RunAsync(db, logger, CancellationToken.None, setId: id);
         }
         catch (Exception e)
         {
-            logger.LogWarning(e, "Set {SetId} was ranked but carrying its pending-era plays failed; the next boot's sweep will retry.", id);
+            logger.LogWarning(e, "Set {SetId} was ranked but settling its version-fresh plays failed; the next boot's sweep will retry.", id);
         }
     }
 
