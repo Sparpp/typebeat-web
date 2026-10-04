@@ -114,7 +114,7 @@ public sealed class StartupSweepGate
 /// then this runs every sweep in the original order, in the background, and opens
 /// <see cref="StartupSweepGate"/> when it is through. The order is load-bearing and unchanged:
 /// Pace, then Fingerprint, then Language (reads the lyric text Pace fills), SkipGate (reads Pace's
-/// skippable_s), RateGate, SetRank, SetRankDemotion (backlog 398: the version rule pointed down,
+/// skippable_s), RateGate, SetRank, SetRankClassicMark (backlog 398: the version rule pointed down,
 /// after the carry-up so the two cannot fight over a row), and Pp LAST (reads sr_dt / sr_ht and the
 /// ranked flags the refunds may have just flipped). The whole chain is caught: a failing sweep is logged as an error
 /// and recorded on the gate, and never takes the host down (it used to crash the boot, which on a
@@ -169,16 +169,15 @@ public sealed class StartupSweeps(Db db, IFileStore fileStore, StartupSweepGate 
             stage = nameof(SetRankRefund);
             await SetRankRefund.RunAsync(db, fileStore, logger, stoppingToken);
 
-            // Standing sweep (backlog 398): the version rule pointed DOWNWARD. A currently-ranked
-            // score whose played version is not the ranked one (its token is missing, names a hash
-            // no stored version produces, or names a version with different gameplay) is demoted to
-            // unranked and priced to 0, so a board re-ranked after a re-upload stops mixing plays
-            // from every version. AFTER the carry-up, so the two share the predicate and a row is
-            // never carried up here only to be dropped there: a pending-era play this would drop was
-            // already declined by SetRankRefund's own version rule. Before PpBackfill, which skips
-            // unranked rows (they settle at 0), so nothing here needs a reprice.
-            stage = nameof(SetRankDemotion);
-            await SetRankDemotion.RunAsync(db, fileStore, logger, eviction, stoppingToken);
+            // Standing sweep (backlog 398): the version rule pointed DOWNWARD. A score whose played
+            // version is not the current gameplay of its (re-ranked) map (its token is missing,
+            // names a hash no stored version produces, or names a version with different gameplay)
+            // gets the synthetic Classic mark: "CL" appended to scores.mods, ranked kept, total_score
+            // repriced to 0.95x, pp_version stamped to 0 so the PpBackfill below reprices it at
+            // 0.95x. AFTER the carry-up, so the two share the predicate: a stale pending-era play
+            // SetRankRefund carried is marked here in the same boot.
+            stage = nameof(SetRankClassicMark);
+            await SetRankClassicMark.RunAsync(db, fileStore, logger, eviction, stoppingToken);
 
             // Recompute stored per-score pp below PerformancePoints.VERSION (020_performance_points.sql).
             // LAST: reads sr_dt / sr_ht (Pace) and scores.ranked (the refunds above).

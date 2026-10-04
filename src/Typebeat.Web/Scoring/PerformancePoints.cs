@@ -695,6 +695,16 @@ public static class PerformancePoints
 
     private const double fletcher_multiplier = 0.90;
     private const double no_fail_multiplier = 0.90;
+
+    /// <summary>
+    /// Classic (backlog 398): a SYNTHETIC SYSTEM MARK the server appends to a score whose played
+    /// version is not the current gameplay of its (re-ranked) map. The play was on a different map
+    /// from the one that got ranked (earlier timing, or a different recording), so it is marked and
+    /// paid 5 percent less. Flat, because the mark converts nothing the rating can see: the play's
+    /// own cells, target times and pace are whatever its version held, and there is no rating cell
+    /// for "a different version" to read. Mirrors the 0.95x SCORE term in <see cref="ModMultiplier"/>.
+    /// </summary>
+    private const double classic_multiplier = 0.95;
     private const double flashlight_offset = 0.02;
     private const double flashlight_weight = 0.06;
     private const double flashlight_floor = 1.0;
@@ -1090,6 +1100,9 @@ public static class PerformancePoints
                 "FC" => fletcher_strict_multiplier,
                 "FT" => fletcher_multiplier,
                 "NF" => no_fail_multiplier,
+                // The synthetic Classic mark (backlog 398, see classic_multiplier): the play was on
+                // a version of the map that is not the one that was ranked.
+                "CL" => classic_multiplier,
                 // SD / GK / MU are explicitly 1.0, matching their score multipliers. Anything else
                 // (including a mod a newer client ships before this table learns it) is neutral:
                 // an unknown mod must never silently inflate or deflate a ranking.

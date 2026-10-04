@@ -704,19 +704,19 @@ public static class PublicSiteSeed
             // whatever the caller seeds; these are display fixtures, not grading fixtures.)
             new { userId, beatmapId, totalScore, accuracy, completion = 107.0 / 110.0, maxCombo, rank, ranked });
 
-        // A RANKED fixture gets the token every real ranked score carries, naming the map's current
-        // .osu (backlog 398). Without it the standing version-demotion sweep at the test host's boot
-        // reads the row as "no token, nothing names its version" and demotes it, which the page
-        // assertions below would then see as an empty ranked board. The unranked fixture is not a
-        // sweep candidate at all, so it needs none.
-        if (ranked)
-            await conn.ExecuteAsync(
-                """
-                INSERT INTO score_tokens (user_id, beatmap_id, beatmap_hash, build_id, score_id)
-                SELECT @userId, b.id, b.checksum_md5, @buildId, @scoreId
-                FROM beatmaps b WHERE b.id = @beatmapId
-                """,
-                new { userId, beatmapId, buildId = await SeedBuildIdAsync(conn), scoreId });
+        // Every real score carries a token naming the map's current .osu when it was played, and
+        // the seam is load-bearing for the standing Classic sweep (backlog 398): that sweep examines
+        // EVERY score (ranked and unranked) and marks any whose token does not prove the current
+        // version, which without a token means all of them. A marked row's total_score is repriced
+        // to 0.95x, so the page assertions below (exact leaderboard totals) would see the wrong
+        // numbers. A token naming the current checksum is SameBytes, so nothing is marked.
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO score_tokens (user_id, beatmap_id, beatmap_hash, build_id, score_id)
+            SELECT @userId, b.id, b.checksum_md5, @buildId, @scoreId
+            FROM beatmaps b WHERE b.id = @beatmapId
+            """,
+            new { userId, beatmapId, buildId = await SeedBuildIdAsync(conn), scoreId });
     }
 
     /// <summary>A stable build row for the seeded tokens; created once.</summary>

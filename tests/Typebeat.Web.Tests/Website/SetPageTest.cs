@@ -857,15 +857,16 @@ public class SetPageTest
     }
 
     /// <summary>
-    /// THE RANK TRANSITION RUNS THE DOWNWARD RULE TOO (backlog 398). A set demoted to 'pending' by a
-    /// re-upload keeps its old ranked scores (030 leaves them); when a reviewer re-ranks it, the
-    /// plays that are not on the current version must come off the board in the same request, or the
-    /// board the reviewer lands on mixes every version. A play whose token names an .osu no stored
-    /// version produces is the strict arm's unprovable case: it drops. A play whose token names the
-    /// map's current .osu stays. Driven through the real POST, so the wiring is what is proven.
+    /// THE RANK TRANSITION RUNS THE DOWNWARD RULE TOO (backlog 398), as a Classic MARK. A set
+    /// demoted to 'pending' by a re-upload keeps its old ranked scores (030 leaves them); when a
+    /// reviewer re-ranks it, the plays that are not on the current version must be marked in the
+    /// same request, or the reviewer's board shows an old version's plays as if they were on the
+    /// current map. A play whose token names an .osu no stored version produces is the strict arm's
+    /// unprovable case: it is marked. A play whose token names the map's current .osu stays unmarked.
+    /// Driven through the real POST, so the wiring is what is proven.
     /// </summary>
     [Test]
-    public async Task Rank_DropsPlaysOnAStaleVersion_InTheSameRequest()
+    public async Task Rank_MarksPlaysOnAStaleVersion_InTheSameRequest()
     {
         var (setId, mapId) = await seedPendingCarrySetAsync("Stale Version Anthem");
 
@@ -873,22 +874,35 @@ public class SetPageTest
         // this set ever shipped, so the version rule cannot show it is the ranked one.
         long stale = await seedRankedPlayAsync(mapId, "stale version typist", 950_000, beatmapHash: "0123456789abcdef0123456789abcdef");
 
-        // A ranked play whose token names the map's current .osu: SameBytes, so it survives.
+        // A ranked play whose token names the map's current .osu: SameBytes, so it stays unmarked.
         long current = await seedRankedPlayAsync(mapId, "current version typist", 900_000, beatmapHash: null);
 
         var reviewer = await carryReviewerAsync();
 
         using var response = await postReviewAsync(reviewer, setId, "Rank");
-        var rows = await scoreRowsAsync(stale, current);
+
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        var staleMods = await conn.ExecuteScalarAsync<string>("SELECT mods::text FROM scores WHERE id = @stale", new { stale });
+        var currentMods = await conn.ExecuteScalarAsync<string>("SELECT mods::text FROM scores WHERE id = @current", new { current });
+        var staleRow = await scoreRowsAsync(stale);
+        var currentRow = await scoreRowsAsync(current);
 
         Assert.Multiple(() =>
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-            Assert.That(rows[stale].Ranked, Is.False, "played on a version that is not the ranked one");
-            Assert.That(rows[stale].Pp, Is.Zero, "and it drops off the pp surfaces at once");
-            Assert.That(rows[current].Ranked, Is.True, "played on the ranked version");
+            Assert.That(HasClassic(staleMods), Is.True, "played on a version that is not the ranked one");
+            Assert.That(staleRow[stale].Ranked, Is.True, "the mark is NOT an unranking");
+            Assert.That(staleRow[stale].PpVersion, Is.EqualTo(PerformancePoints.VERSION), "and was repriced in the request");
+            Assert.That(HasClassic(currentMods), Is.False, "played on the ranked version");
+            Assert.That(currentRow[current].Ranked, Is.True);
         });
     }
+
+    /// <summary>Whether a stored mods blob carries the synthetic Classic mark.</summary>
+    private static bool HasClassic(string? modsJson)
+        => Typebeat.Web.ScoreMods.Parse(modsJson).Any(m => m.Acronym == "CL");
 
     /// <summary>
     /// A RANKED play on a set already ranked, for the downward-rule transition test: the shape 030

@@ -199,6 +199,20 @@ public class ModInfoTest
     }
 
     [Test]
+    public void Classic_IsTheSyntheticSystemMark()
+    {
+        // The server-appended "CL" (backlog 398): "Classic", and the neutral badge, since it is a
+        // synthetic mark (not selectable) whose game base is ModType.Conversion, the bucket the four
+        // colours here do not have.
+        Assert.Multiple(() =>
+        {
+            Assert.That(ModInfo.Name("CL"), Is.EqualTo("Classic"));
+            Assert.That(ModInfo.Name("cl"), Is.EqualTo("Classic"));
+            Assert.That(ModInfo.CategoryClass("CL"), Is.EqualTo("other"));
+        });
+    }
+
+    [Test]
     public void UnknownAcronym_StillFallsBackGracefully()
     {
         Assert.That(ModInfo.CategoryClass("ZZ"), Is.EqualTo("other"));

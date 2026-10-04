@@ -93,7 +93,7 @@ public sealed class PlayedVersionRule(IFileStore fileStore, ILogger logger)
     /// <summary>
     /// The rule against a refund candidate. A thin adapter over the scalar overload below: the
     /// predicate itself lives there ONCE, so the carry-up sweep (<see cref="GateRefund"/>) and the
-    /// downward sweep (<see cref="SetRankDemotion"/>) can never disagree about a row.
+    /// downward sweep (<see cref="SetRankClassicMark"/>) can never disagree about a row.
     /// </summary>
     public Task<Verdict> JudgeAsync(NpgsqlConnection conn, GateRefund.CandidateRow row, CancellationToken ct = default)
         => JudgeAsync(conn, row.SetId, row.BeatmapId, row.CurrentChecksum, row.CurrentVersion, row.PlayedHash, ct);

@@ -186,6 +186,17 @@ public static class ModMultiplier
             // = 1.770615 x 1.02 = 1.80602730, still clear of 2.0.
             "FC" => 1.02,
             "FT" => 0.98,
+            // Classic (backlog 398): a SYNTHETIC SYSTEM MARK the server appends to a score whose
+            // played version is not the current gameplay of its (re-ranked) map, NOT a
+            // player-selectable mod. It carries the 0.95x SCORE penalty the owner chose, mirroring
+            // the pp side (PerformancePoints' ModMultiplier, also 0.95). Listing it here is
+            // load-bearing in the tightening direction, exactly as "HR" and "FC" are: unlisted it
+            // would fall to UNKNOWN_MOD_MULTIPLIER (2.0), so a stored Classic row's own submitted
+            // total (which the demotion pass rewrites to 0.95x the base) would be far under a 2.0x
+            // ceiling and the marker would be meaningless as a bound. It fits under STACK_CAP with
+            // room: the fattest reachable ranked stack is DT@2.00 (1.46) x FL x LT x HR x FC x
+            // RE = 1.932449211, and x 0.95 only shrinks it.
+            "CL" => 0.95,
             "MU" => 1.0,
             // Conductor (backlog 226), Dyslexia (backlog 231) and Puppeteer (backlog 256), all
             // priced at exactly the 1.0 their game-side multiplier is. Conductor is not a

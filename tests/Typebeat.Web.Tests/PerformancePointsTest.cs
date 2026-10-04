@@ -542,6 +542,28 @@ public class PerformancePointsTest
     }
 
     /// <summary>
+    /// The synthetic Classic mark (backlog 398) costs 5 percent of pp. Both the server's two tables
+    /// and the client's one carry 0.95, so a marked row reads the same in both places; WireCompat
+    /// pins the client against the server.
+    /// </summary>
+    [Test]
+    public void ModMultiplier_ClassicCostsFivePercent()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("CL", null)], 300), Is.EqualTo(0.95).Within(1e-12));
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("cl", null)], 300), Is.EqualTo(0.95).Within(1e-12));
+
+            // And it composes with the rest of the stack, like every other arm.
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("CL", null), new ScoreMod("NF", null)], 300),
+                Is.EqualTo(0.95 * 0.90).Within(1e-12));
+        });
+
+        // The score-side table carries the same 0.95 (Scoring/ModMultiplier.cs).
+        Assert.That(ModMultiplier.For("CL", null), Is.EqualTo(0.95).Within(1e-12));
+    }
+
+    /// <summary>
     /// LITERATE CONTRIBUTES NOTHING HERE (backlog 144), and that is the whole point rather than an
     /// omission: it is a CONVERSION mod, so it is priced through the rating of the map it converts
     /// (the matrix's literate stream, <see cref="PerformancePoints.StarsFor"/>) and a flat multiplier

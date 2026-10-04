@@ -63,15 +63,15 @@ public static class OpsEndpoints
     }
 
     /// <summary>
-    /// The DRY RUN for the backlog 398 backfill: how many currently-ranked scores the downward
-    /// version rule WOULD demote, broken down by reason (a missing token, a hash no stored version
-    /// produces, a version with different gameplay), and how many it would keep. It changes nothing:
-    /// it runs <see cref="SetRankDemotion.ReportAsync"/>, the same candidate query and predicate the
+    /// The DRY RUN for the backlog 398 backfill: how many scores the downward version rule WOULD
+    /// mark Classic, broken down by reason (a missing token, a hash no stored version produces, a
+    /// version with different gameplay), and how many it would leave alone. It changes nothing: it
+    /// runs <see cref="SetRankClassicMark.ReportAsync"/>, the same candidate query and predicate the
     /// real sweep uses, with every write skipped.
     ///
     /// <para>
     /// It exists so the owner can size the prod impact BEFORE the backfill runs (the deploy IS the
-    /// backfill, see <see cref="Ops.StartupSweeps"/>). Given the strict arm drops the unprovable
+    /// backfill, see <see cref="Ops.StartupSweeps"/>). Given the strict arm marks the unprovable
     /// too, the counts are the whole reason the endpoint is here rather than a log line nobody reads
     /// until after the fact. Guarded by the same ops key as the disk readout.
     /// </para>
@@ -91,14 +91,14 @@ public static class OpsEndpoints
         long? setId = long.TryParse(ctx.Request.Query["set_id"], System.Globalization.NumberStyles.Integer,
             System.Globalization.CultureInfo.InvariantCulture, out long parsed) && parsed > 0 ? parsed : null;
 
-        var logger = loggerFactory.CreateLogger("SetRankDemotion");
-        var report = await SetRankDemotion.ReportAsync(db, store, logger, setId, ctx.RequestAborted);
+        var logger = loggerFactory.CreateLogger("SetRankClassicMark");
+        var report = await SetRankClassicMark.ReportAsync(db, store, logger, setId, ctx.RequestAborted);
 
         return Results.Json(new
         {
             setId,
             examined = report.Examined,
-            dropped = report.Dropped,
+            marked = report.Marked,
             kept = report.Kept,
             reasons = new
             {

@@ -179,7 +179,7 @@ public class Migration004BackfillTest
             "040_search_trigram.sql",
             "041_set_versions_public_key.sql",
             "042_replay_retention.sql",
-            "043_rank_version_demotion.sql",
+            "043_classic_version_marks.sql",
         }));
     }
 

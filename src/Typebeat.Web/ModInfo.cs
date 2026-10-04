@@ -21,6 +21,10 @@ public static class ModInfo
         "DT" or "NC" or "FL" or "SD" or "LT" or "GK" or "RH" or "HR" or "RE" => "increase",
         "HT" or "DC" or "NF" or "EZ" => "reduction",
         "RX" => "automation",
+        // Classic ("CL", backlog 398) is a SYNTHETIC SYSTEM MARK the server appends, not a mod
+        // anyone selects, and the game types its base ModClassic as ModType.Conversion, which is
+        // the bucket the four colours here do not have (the Fletcher note below). So it takes the
+        // neutral badge, exactly as the Conversion "FT"/"DX" rows already do.
         _ => "other",
     };
 
@@ -62,6 +66,10 @@ public static class ModInfo
         // that row was played under rather than what the name means today).
         "PT" => "Conductor",
         "CT" => "Conductor (retired)",
+        // The synthetic Classic mark (backlog 398): the score was played on a version of the map
+        // that is not the one that was ranked. Mirrors the game's base ModClassic.Name ("Classic"),
+        // so a marked board row reads the same in both places.
+        "CL" => "Classic",
         _ => acronym ?? string.Empty,
     };
 }
