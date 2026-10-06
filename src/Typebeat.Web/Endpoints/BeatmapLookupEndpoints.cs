@@ -19,7 +19,7 @@ namespace Typebeat.Web.Endpoints;
 /// against in our schema, so they 404, which the client handles gracefully: a Failed request
 /// leaves onlineMetadata null and the map is simply treated as not-online (no logout, no crash).
 ///
-/// Published sets ('pending' or 'ranked') are visible, and the REAL status is reported:
+/// Published sets ('pending', 'unranked', 'ranked' or 'loved') are visible, and the REAL status is reported:
 /// "ranked" unlocks leaderboards client-side, "pending" keeps them locked until a map
 /// reviewer approves the set (migration 005). Authed: the client always runs lookups through
 /// the API, so RequireBearer.
@@ -105,7 +105,7 @@ public static class BeatmapLookupEndpoints
                 SubmittedDate = row.SubmittedAt,
                 // Schema has no dedicated ranked-date column; updated_at (when the set was last
                 // touched) is the closest anchor. Pending sets have no ranked date.
-                RankedDate = row.Status == "ranked" ? row.UpdatedAt : null,
+                RankedDate = row.Status is "ranked" or "loved" ? row.UpdatedAt : null,
                 LastUpdated = row.UpdatedAt,
                 Explicit = row.Explicit,
                 // Fills a local Unspecified language for maps whose .osu carries no Language: line.
@@ -117,7 +117,7 @@ public static class BeatmapLookupEndpoints
         });
     }
 
-    // Published sets only ('pending' or 'ranked'). The predicate is completed by the caller
+    // Published sets only ('pending', 'unranked', 'ranked' or 'loved'). The predicate is completed by the caller
     // with the identity clause. The status column rides along so the response reports the
     // real state: "pending" is what keeps un-reviewed maps' leaderboards locked client-side.
     private const string baseQuery =
@@ -144,7 +144,7 @@ public static class BeatmapLookupEndpoints
         FROM beatmaps b
         JOIN beatmapsets bs ON bs.id = b.set_id
         JOIN users u ON u.id = bs.owner_id
-        WHERE bs.status IN ('pending', 'unranked', 'ranked')
+        WHERE bs.status IN ('pending', 'unranked', 'ranked', 'loved')
 
         """;
 

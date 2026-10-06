@@ -32,7 +32,7 @@ public sealed class IndexModel(Db db, IAntiforgery antiforgery) : TypebeatPageMo
     /// rail on every other listing would disagree about what is playable.
     /// </summary>
     private const string playable_filter =
-        "card.status IN ('pending', 'unranked', 'ranked') AND card.haspackage AND card.hasplayablediff";
+        "card.status IN ('pending', 'unranked', 'ranked', 'loved') AND card.haspackage AND card.hasplayablediff";
 
     public IReadOnlyList<BeatmapsetCardModel> Maps { get; private set; } = [];
     public string CsrfToken { get; private set; } = string.Empty;

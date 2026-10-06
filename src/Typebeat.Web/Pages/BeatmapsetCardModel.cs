@@ -165,7 +165,7 @@ public sealed record BeatmapsetCardModel(
 
     /// <summary>
     /// Can this set be played in the browser right now? Every PUBLISHED set can
-    /// (<see cref="Endpoints.BeatmapsetEndpoints.IsPublished"/>: pending, unranked or ranked),
+    /// (<see cref="Endpoints.BeatmapsetEndpoints.IsPublished"/>: pending, unranked, ranked or loved),
     /// provided the two things /play/map/{id}/* need are present: an assembled package and a live
     /// .osu difficulty. These are exactly the conditions the /play picker filters on, so the card's
     /// play rail can never link a map the player would fail to load.
@@ -197,12 +197,14 @@ public sealed record CardDifficulty(long Id, string Name, double Stars, double? 
 /// <summary>Status wording shared by the card partial and the set page.</summary>
 public static class BeatmapsetDisplay
 {
-    /// <summary>DB status → user-facing word ("Ranked" = live leaderboards; "Pending" = published, awaiting review).</summary>
+    /// <summary>DB status → user-facing word ("Ranked" = live leaderboards; "Pending" = published, awaiting review).
+    /// The 'loved' status (osu!'s Loved) is shown to players as "Respected".</summary>
     public static string StatusLabel(string status) => status switch
     {
         "ranked" => "Ranked",
         "pending" => "Pending",
         "unranked" => "Unranked",
+        "loved" => "Respected",
         "hidden" => "Hidden",
         "removed" => "Removed",
         _ => status,
@@ -210,7 +212,7 @@ public static class BeatmapsetDisplay
 
     public static string PillClass(string status) => status switch
     {
-        "ranked" or "pending" or "unranked" or "hidden" or "removed" => $"pill--{status}",
+        "ranked" or "pending" or "unranked" or "loved" or "hidden" or "removed" => $"pill--{status}",
         _ => string.Empty,
     };
 }

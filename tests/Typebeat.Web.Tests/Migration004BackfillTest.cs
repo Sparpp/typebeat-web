@@ -183,6 +183,7 @@ public class Migration004BackfillTest
             "044_played_duration.sql",
             "045_accuracy_rank_regrade.sql",
             "046_score_reweight_marks.sql",
+            "047_loved_status.sql",
         }));
     }
 

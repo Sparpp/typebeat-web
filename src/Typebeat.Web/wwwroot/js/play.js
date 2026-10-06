@@ -94,12 +94,13 @@
     // every PUBLISHED map, so "map not ranked" is the ordinary case rather than an edge one, and the
     // card that launched the play already told us which it is (data-status). Only a run on a map
     // that IS ranked leaves the vaguer wording, where the reason really is one of the tamper/gate
-    // checks and the client cannot know which. A pending or unranked map HAS a board (the unranked
+    // checks and the client cannot know which. A LOVED map counts here too: it has a ranked-style
+    // board, so a refused play on it is a gate failure, not "does not count". A pending or unranked map HAS a board (the unranked
     // one the game client shows), so the reason says the play does not count, not that there is
     // nowhere for it to go.
     function notRankedReason(map, results) {
         if (!results.passed) return 'you failed this run';
-        if (map.status && map.status !== 'ranked') return 'this map is ' + map.status + ', so it does not count';
+        if (map.status && map.status !== 'ranked' && map.status !== 'loved') return 'this map is ' + map.status + ', so it does not count';
         return 'checks failed';
     }
 

@@ -276,7 +276,7 @@ public static class ProfileScoreEndpoints
         Covers = BeatmapCovers.FromCoverKey(urlBase, b.CoverKey),
         SubmittedDate = b.SubmittedAt,
         // No dedicated ranked-date column; updated_at is the anchor the lookup endpoint uses too.
-        RankedDate = b.Status == "ranked" ? b.UpdatedAt : null,
+        RankedDate = b.Status is "ranked" or "loved" ? b.UpdatedAt : null,
         LastUpdated = b.UpdatedAt,
         TitleUnicode = b.TitleUnicode,
         ArtistUnicode = b.ArtistUnicode,

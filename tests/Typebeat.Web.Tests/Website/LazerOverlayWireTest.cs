@@ -22,7 +22,7 @@ public class LazerOverlayWireTest
 
     // The profile under test: a mapper with one set of each status, followed and watched.
     private static long mapperId;
-    private static long rankedSetId, pendingSetId, unrankedSetId, hiddenSetId, explicitSetId;
+    private static long rankedSetId, pendingSetId, unrankedSetId, hiddenSetId, explicitSetId, lovedSetId;
     private static long rankedBeatmapId, pendingBeatmapId, hiddenBeatmapId;
 
     // The viewer: favourites the ranked set, follows + watches the mapper, plays the ranked map.
@@ -49,6 +49,7 @@ public class LazerOverlayWireTest
         (unrankedSetId, _) = await insertSetAsync(conn, "Unranked Song", "unranked", "english", explicitContent: false, stars: 3.0);
         (hiddenSetId, hiddenBeatmapId) = await insertSetAsync(conn, "Hidden Song", "hidden", "english", explicitContent: false, stars: 1.0);
         (explicitSetId, _) = await insertSetAsync(conn, "Explicit Song", "pending", "english", explicitContent: true, stars: 4.0);
+        (lovedSetId, _) = await insertSetAsync(conn, "Loved Song", "loved", "english", explicitContent: false, stars: 6.0);
 
         await conn.ExecuteAsync("INSERT INTO favourites (user_id, set_id) VALUES (@viewerId, @rankedSetId)", new { viewerId, rankedSetId });
 
@@ -102,6 +103,7 @@ public class LazerOverlayWireTest
             Assert.That((int)user["mapping_follower_count"]!, Is.EqualTo(1));
             Assert.That((int)user["ranked_beatmapset_count"]!, Is.EqualTo(1));
             Assert.That((int)user["pending_beatmapset_count"]!, Is.EqualTo(2), "the explicit set is pending too");
+            Assert.That((int)user["loved_beatmapset_count"]!, Is.EqualTo(1));
             Assert.That((int)user["graveyard_beatmapset_count"]!, Is.EqualTo(1), "unranked is the client's graveyard");
             Assert.That((int)user["favourite_beatmapset_count"]!, Is.EqualTo(0));
         });
@@ -153,6 +155,7 @@ public class LazerOverlayWireTest
 
     [TestCase("ranked", "Ranked Song")]
     [TestCase("graveyard", "Unranked Song")]
+    [TestCase("loved", "Loved Song")]
     public async Task UserBeatmapsets_ListTheOwnersSetsOfThatStatus(string type, string title)
     {
         var sets = await getArrayAsync($"/api/v2/users/{mapperId}/beatmapsets/{type}");
@@ -181,7 +184,6 @@ public class LazerOverlayWireTest
         });
     }
 
-    [TestCase("loved")]
     [TestCase("guest")]
     [TestCase("nominated")]
     public async Task UserBeatmapsets_TypesWithNoDataHere_404(string type)
@@ -491,8 +493,20 @@ public class LazerOverlayWireTest
         Assert.Multiple(() =>
         {
             Assert.That(favourites, Is.EqualTo(new[] { "Ranked Song" }));
-            Assert.That(mine, Is.EquivalentTo(new[] { "Ranked Song", "Pending Song", "Unranked Song", "Hidden Song", "Explicit Song" }),
+            Assert.That(mine, Is.EquivalentTo(new[] { "Ranked Song", "Pending Song", "Unranked Song", "Hidden Song", "Explicit Song", "Loved Song" }),
                 "the owner's own maps include the hidden one");
+        });
+    }
+
+    [Test]
+    public async Task Search_LovedSets_ListUnderLovedAndLeaderboardButNotRanked()
+    {
+        await Assert.MultipleAsync(async () =>
+        {
+            Assert.That(await searchTitlesAsync("s=loved"), Is.EqualTo(new[] { "Loved Song" }));
+            Assert.That(await searchTitlesAsync("s=leaderboard"), Is.EquivalentTo(new[] { "Ranked Song", "Loved Song" }));
+            Assert.That(await searchTitlesAsync("s=ranked"), Is.EqualTo(new[] { "Ranked Song" }));
+            Assert.That(await searchTitlesAsync("s=qualified"), Is.Empty);
         });
     }
 
@@ -501,7 +515,7 @@ public class LazerOverlayWireTest
     {
         await Assert.MultipleAsync(async () =>
         {
-            Assert.That(await searchTitlesAsync("c=follows"), Has.Count.EqualTo(4), "every published set by the watched mapper");
+            Assert.That(await searchTitlesAsync("c=follows"), Has.Count.EqualTo(5), "every published set by the watched mapper");
             Assert.That(await searchTitlesAsync("l=3"), Is.EqualTo(new[] { "Ranked Song" }), "3 is osu's Japanese");
             Assert.That(await searchTitlesAsync("e=video"), Is.Empty);
             Assert.That(await searchTitlesAsync("r=S"), Is.EqualTo(new[] { "Ranked Song" }));
@@ -512,8 +526,8 @@ public class LazerOverlayWireTest
         });
     }
 
-    [TestCase("title_asc", new[] { "Explicit Song", "Pending Song", "Ranked Song", "Unranked Song" })]
-    [TestCase("difficulty_desc", new[] { "Ranked Song", "Explicit Song", "Unranked Song", "Pending Song" })]
+    [TestCase("title_asc", new[] { "Explicit Song", "Loved Song", "Pending Song", "Ranked Song", "Unranked Song" })]
+    [TestCase("difficulty_desc", new[] { "Loved Song", "Ranked Song", "Explicit Song", "Unranked Song", "Pending Song" })]
     public async Task Search_SortsTheListingOffers(string sort, string[] expected)
     {
         Assert.That(await searchTitlesAsync($"sort={sort}"), Is.EqualTo(expected));

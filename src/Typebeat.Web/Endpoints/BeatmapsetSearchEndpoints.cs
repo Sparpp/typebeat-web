@@ -46,7 +46,7 @@ public static class BeatmapsetSearchEndpoints
     /// <summary>The grades a score can be stored with, as the client's <c>ScoreRank</c> names them.</summary>
     private static readonly HashSet<string> score_ranks = ["XH", "X", "SH", "S", "A", "B", "C", "D"];
 
-    private const string published = "s.status IN ('pending', 'unranked', 'ranked')";
+    private const string published = "s.status IN ('pending', 'unranked', 'ranked', 'loved')";
 
     public static void Map(IEndpointRouteBuilder app)
     {
@@ -64,14 +64,16 @@ public static class BeatmapsetSearchEndpoints
 
         string statusPredicate = category switch
         {
-            "leaderboard" or "ranked" => "s.status = 'ranked'",
+            "leaderboard" => "s.status IN ('ranked', 'loved')",
+            "ranked" => "s.status = 'ranked'",
+            "loved" => "s.status = 'loved'",
             "pending" or "wip" => "s.status = 'pending'",
             "graveyard" => "s.status = 'unranked'",
             "favourites" when signedIn => $"{published} AND EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId)",
             // The viewer's own maps, including the hidden ones only they can open.
             "mine" when signedIn => "s.owner_id = @viewerId AND s.status <> 'removed'",
-            // There is no qualification step and no loved status; nothing is either.
-            "qualified" or "loved" => "false",
+            // There is no qualification step; nothing is qualified.
+            "qualified" => "false",
             _ => published,
         };
 

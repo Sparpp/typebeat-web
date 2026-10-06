@@ -137,7 +137,7 @@ public static class ScoreEndpoints
                    b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
             FROM beatmaps b
             JOIN beatmapsets bs ON bs.id = b.set_id
-            WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked')
+            WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked', 'loved')
             """,
             new { beatmapId });
 
@@ -241,17 +241,23 @@ public static class ScoreEndpoints
         if (beatmap is null)
             return WireJson.Error(status_unprocessable, "invalid token");
 
-        // A score ranks only on a reviewer-approved set. Plays on pending maps are accepted
-        // and stored (they show in the player's own history) but never reach a leaderboard,
-        // and the status is re-read here, not trusted from token time, so a set removed or
-        // un-ranked mid-play resolves against its current state.
-        bool setRanked = await conn.ExecuteScalarAsync<bool>(
+        // A score ranks only on a reviewer-approved set (ranked or loved). Plays on pending maps
+        // are accepted and stored (they show in the player's own history) but never reach the
+        // ranked board, and the status is re-read here, not trusted from token time, so a set
+        // removed or un-ranked mid-play resolves against its current state.
+        string? setStatus = await conn.ExecuteScalarAsync<string?>(
             """
-            SELECT bs.status = 'ranked'
+            SELECT bs.status
             FROM beatmaps b JOIN beatmapsets bs ON bs.id = b.set_id
             WHERE b.id = @beatmapId
             """,
             new { beatmapId }, tx);
+
+        // A play is ranked (stored on the ranked board) on a 'ranked' or 'loved' set; only a 'ranked'
+        // set's plays are priced. Loved is osu!'s "leaderboard, no pp" status: the row is stored with
+        // pp 0 and the current pp_version, which every pp read already renders as no pp.
+        bool setHasRankedBoard = setStatus is "ranked" or "loved";
+        bool setAwardsPp = setStatus == "ranked";
 
         var statistics = submission.Statistics ?? new Dictionary<string, int>();
         var maximumStatistics = submission.MaximumStatistics ?? new Dictionary<string, int>();
@@ -307,11 +313,11 @@ public static class ScoreEndpoints
         // rate is paid on a continuous curve instead of being banned off the default.
         bool modsRanked = submission.Mods is null || submission.Mods.All(ModConfigRanked);
 
-        // Ranked only if the SET is ranked and it passed with every cell judged, every hard
-        // invariant held, the total is within its ceiling, the play took long enough, no unranked
-        // mod was used, and the build is not blocked. Anything else is stored unranked so it never
+        // Ranked only if the SET has a ranked board (ranked or loved) and it passed with every cell
+        // judged, every hard invariant held, the total is within its ceiling, the play took long
+        // enough, no unranked mod was used, and the build is not blocked. Anything else is stored unranked so it never
         // reaches a leaderboard, but the submission still "succeeds" from the client's view.
-        bool ranked = setRanked && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && modsRanked && !buildBlocked;
+        bool ranked = setHasRankedBoard && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && modsRanked && !buildBlocked;
 
         if (!modsRanked)
             logger.LogInformation("Score token {TokenId}: unranked mod used, storing unranked.", tokenId);
@@ -349,12 +355,14 @@ public static class ScoreEndpoints
         // DT/HT play on a map whose sr_dt/sr_ht is not stored yet CANNOT be priced, so it is written
         // at version 0 (pp 0 for now) and picked up by the backfill once the column is filled,
         // instead of freezing at zero. Eligibility itself is inherited from the ranked flag computed
-        // above, so fails, unranked mods and out-of-bounds submissions earn nothing for free.
+        // above, so fails, unranked mods and out-of-bounds submissions earn nothing for free, and is
+        // narrowed to a 'ranked' set, so a loved play (ranked, on the board) is refused a price too:
+        // it settles at 0 now and is priced only if its set is ranked later (the Set page's carry).
         // Reading the mods back out of the json just serialized (rather than off the normalized list)
         // is deliberate: it is byte-for-byte the input PpBackfill will later see for this row, so
         // the two paths cannot disagree about what a play was played with.
         var (pp, ppSettled) = PerformancePoints.ForScore(
-            ranked,
+            ranked && setAwardsPp,
             ScoreMods.Parse(modsJson),
             PerformancePoints.CountNotes(statistics),
             storedAccuracy,
@@ -500,8 +508,9 @@ public static class ScoreEndpoints
             //
             // So a null here is never "worth zero". It is one of:
             //   - REFUSED (unranked score, which covers an unranked map, an unranked mod, a fail and
-            //     every anti-cheat gate; or a custom rate). No number can describe it, and the game
-            //     shows a dash rather than a 0 that would read as an earned score of nothing.
+            //     every anti-cheat gate; a ranked play on a loved set; or a custom rate). No number
+            //     can describe it, and the game shows a dash rather than a 0 that would read as an
+            //     earned score of nothing.
             //   - NOT PRICED YET (a base-rate DT/HT run, or a Literate run, on a map whose matching
             //     sr_* column is not stored yet). The 0 in the column is a placeholder PpBackfill overwrites at the
             //     next boot, so asserting it would freeze the results screen on a number the
@@ -589,7 +598,7 @@ public static class ScoreEndpoints
         if (callerBest is not null)
         {
             int position = await PositionOf(conn, null, beatmapId, callerBest.TotalScore, callerBest.ScoreId, wantRanked);
-            userScore = new ScoreWithPositionWire { Position = position, Score = ToSoloScoreWire(ctx, callerBest, beatmapId, wantRanked) };
+            userScore = new ScoreWithPositionWire { Position = position, Score = ToSoloScoreWire(ctx, callerBest, beatmapId, wantRanked, slice.AwardsPp) };
         }
 
         return WireJson.Ok(new ScoresCollectionWire
@@ -603,9 +612,11 @@ public static class ScoreEndpoints
     /// <summary>
     /// The part of a leaderboard response every caller shares: which board the map serves (null
     /// for none), its top rows as wire objects (their URLs are this request's host, which is part
-    /// of the memo key), and the participant count.
+    /// of the memo key), and the participant count. <c>AwardsPp</c> is whether the set's plays
+    /// carry pp at all ('ranked' only; a loved set's board is ranked but unpriced), which the
+    /// caller's own row below needs as much as the shared rows do.
     /// </summary>
-    private sealed record BoardSlice(bool? WantRanked, List<SoloScoreWire> Scores, int ScoreCount);
+    private sealed record BoardSlice(bool? WantRanked, List<SoloScoreWire> Scores, int ScoreCount, bool AwardsPp);
 
     private static async Task<BoardSlice> readBoardSliceAsync(Npgsql.NpgsqlConnection conn, HttpContext ctx, long beatmapId, int limit)
     {
@@ -613,7 +624,12 @@ public static class ScoreEndpoints
         // trusted from the stored scores.ranked flags) so the reviewer's Rank/Unrank lever stays
         // authoritative in both directions:
         //
-        //  - 'ranked'               → the ranked board: passed plays with scores.ranked. Unchanged.
+        //  - 'ranked' / 'loved'     → the ranked board: passed plays with scores.ranked. A loved
+        //                             set is osu!'s "leaderboard, no pp": its plays store ranked
+        //                             (ScoreEndpoints.SubmitScore) and list here exactly as a
+        //                             ranked set's do, but no row on it is sent with pp, not even
+        //                             a ranked-era row that still stores some from before an
+        //                             Unrank and a Love (pp is the set's status, not the row's).
         //  - 'pending' / 'unranked' → the site's UNRANKED board: passed plays with ranked = false,
         //                             exactly the rows /beatmapsets/{id}?board=unranked lists (same
         //                             best-per-user DISTINCT ON, same total-score ordering). Every
@@ -624,7 +640,7 @@ public static class ScoreEndpoints
         //  - anything else          → no board (hidden, removed, or no such beatmap).
         //
         // A ranked map's board is therefore byte-identical to what it was before unranked boards
-        // existed: an unranked row can never cross onto it, in either direction.
+        // (or loved sets) existed: an unranked row can never cross onto it, in either direction.
         string? setStatus = await conn.ExecuteScalarAsync<string?>(
             """
             SELECT bs.status
@@ -635,13 +651,15 @@ public static class ScoreEndpoints
 
         bool? board = setStatus switch
         {
-            "ranked" => true,
+            "ranked" or "loved" => true,
             "pending" or "unranked" => false,
             _ => null,
         };
 
         if (board is not bool wantRanked)
-            return new BoardSlice(null, [], 0);
+            return new BoardSlice(null, [], 0, false);
+
+        bool awardsPp = setStatus == "ranked";
 
         // Best score per user (DISTINCT ON over ix_scores_leaderboard), passed plays on the selected
         // board only, then the global ordering by total score. Failed scores never appear. Both the
@@ -681,14 +699,14 @@ public static class ScoreEndpoints
             """,
             new { beatmapId, limit, wantRanked })).ToList();
 
-        var scores = rows.Select(r => ToSoloScoreWire(ctx, r, beatmapId, wantRanked)).ToList();
+        var scores = rows.Select(r => ToSoloScoreWire(ctx, r, beatmapId, wantRanked, awardsPp)).ToList();
 
         // Total distinct participants (osu-web's score_count reflects the full board, not the page).
         int scoreCount = await conn.ExecuteScalarAsync<int>(
             $"SELECT COUNT(DISTINCT user_id) FROM scores WHERE beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("scores")}",
             new { beatmapId, wantRanked });
 
-        return new BoardSlice(wantRanked, scores, scoreCount);
+        return new BoardSlice(wantRanked, scores, scoreCount, awardsPp);
     }
 
     // ---- helpers ----
@@ -736,8 +754,9 @@ public static class ScoreEndpoints
     /// <summary>
     /// One leaderboard row on the wire. <paramref name="ranked"/> is the board it came from, echoed
     /// into SoloScoreInfo.ranked so the client can tell a counting play from an unranked-board one.
+    /// <paramref name="awardsPp"/> is whether the set prices its plays ('ranked' only, not 'loved').
     /// </summary>
-    private static SoloScoreWire ToSoloScoreWire(HttpContext ctx, LeaderboardRow r, long beatmapId, bool ranked) => new()
+    private static SoloScoreWire ToSoloScoreWire(HttpContext ctx, LeaderboardRow r, long beatmapId, bool ranked, bool awardsPp) => new()
     {
         Id = r.ScoreId,
         BeatmapId = beatmapId,
@@ -754,8 +773,9 @@ public static class ScoreEndpoints
         MaximumStatistics = ParseCounts(r.MaximumStatisticsJson),
         // Drives the client's "watch replay" action; true once the owner has uploaded the .osr
         // through PUT /api/v2/scores/{id}/replay (ReplayEndpoints).
-        // Only a ranked board's play can carry pp; an unranked-board row has none by construction.
-        Pp = ranked && r.Pp > 0 ? r.Pp : null,
+        // Only a ranked board's play on a set that awards pp can carry pp; an unranked-board row
+        // has none by construction, and a loved board's rows have none by status.
+        Pp = ranked && awardsPp && r.Pp > 0 ? r.Pp : null,
         HasReplay = r.HasReplay,
         Ranked = ranked,
         User = BuildUser(ctx, r.UserId, r.Username, r.CountryCode, r.AvatarKey),

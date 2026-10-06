@@ -46,7 +46,7 @@ public static class UserRowSql
                (SELECT count(*)
                 FROM beatmapsets bs
                 WHERE bs.owner_id = u.id
-                  AND bs.status IN ('pending', 'unranked', 'ranked')) AS MapCount,
+                  AND bs.status IN ('pending', 'unranked', 'ranked', 'loved')) AS MapCount,
                u.country_code::text AS CountryCode
         FROM users u
         """;

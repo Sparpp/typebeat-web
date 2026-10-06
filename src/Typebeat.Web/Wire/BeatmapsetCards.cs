@@ -64,7 +64,7 @@ public static class BeatmapsetCards
                 User = UserWire.Compact(urlBase, set.OwnerId, set.Creator, set.CreatorCountryCode, set.CreatorAvatarKey),
                 Covers = BeatmapCovers.FromCoverKey(urlBase, set.CoverKey),
                 SubmittedDate = set.SubmittedAt,
-                RankedDate = set.Status == "ranked" ? set.UpdatedAt : null,
+                RankedDate = set.Status is "ranked" or "loved" ? set.UpdatedAt : null,
                 LastUpdated = set.UpdatedAt,
                 TitleUnicode = set.TitleUnicode,
                 ArtistUnicode = set.ArtistUnicode,

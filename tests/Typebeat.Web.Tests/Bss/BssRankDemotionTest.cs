@@ -100,6 +100,34 @@ public class BssRankDemotionTest
     }
 
     [Test]
+    public async Task ResubmittingALovedSet_KeepsItsIntendedStatus()
+    {
+        var (setId, diffId) = await CreateRankedSetAsync();
+
+        await using (var conn = await BssFixture.OpenDbAsync())
+            await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'loved', intended_status = 'unranked' WHERE id = @setId", new { setId });
+
+        using var response = await BssSubmissionFlowTest.SendAsync(HttpMethod.Put, "/bss/beatmapsets", bearer,
+            BssSubmissionFlowTest.JsonBody(new
+            {
+                beatmapset_id = setId,
+                beatmaps_to_create = 0,
+                beatmaps_to_keep = new[] { diffId },
+                target = "Pending",
+                notify_on_discussion_replies = false,
+            }));
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        await using var db = await BssFixture.OpenDbAsync();
+        var row = await db.QuerySingleAsync<(string Status, string Intended)>(
+            "SELECT status, intended_status FROM beatmapsets WHERE id = @setId", new { setId });
+
+        Assert.That(row.Status, Is.EqualTo("loved"));
+        Assert.That(row.Intended, Is.EqualTo("unranked"), "a loved set's ranking intent survives a re-submission with the wizard's Pending prefill");
+    }
+
+    [Test]
     public async Task ARemovedSetIsStillRefused_AndNeverReachesTheDemotionPath()
     {
         var (setId, diffId) = await CreateRankedSetAsync();

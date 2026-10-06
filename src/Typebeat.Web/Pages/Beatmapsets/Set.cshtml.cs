@@ -17,14 +17,15 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// <summary>
 /// Beatmapset page (/beatmapsets/{id}): cover header with scrim, stats box, plain-text
 /// description, tags, the global leaderboard (top 50 best-per-user, podium for #1),
-/// rendered only on 'ranked' sets; anything else shows a "unlocks when ranked" note instead;
-/// and, below the leaderboard, the selected difficulty's lyrics (beatmaps.lyrics, hidden
+/// rendered only on 'ranked' and 'loved' sets; anything else shows a "unlocks when ranked" note
+/// instead; and, below the leaderboard, the selected difficulty's lyrics (beatmaps.lyrics, hidden
 /// when empty).
 /// POST handlers: Favourite (toggle + denormalized counter bump), Report (reports table),
 /// Description (owner/reviewer edit of the set's plain-text description), Comment and
 /// DeleteComment (the comments section below the lyrics, backlog 295),
-/// and the reviewer-only Rank/Unrank pair (pending ⇄ ranked, nothing else; a Rank also carries
-/// the set's honest pending-era plays onto its board in the same request, backlog 352).
+/// and the reviewer-only Rank/Unrank pair (pending ⇄ ranked; a Rank also carries the set's honest
+/// pending-era plays onto its board and prices its loved-era ones in the same request, backlog 352)
+/// and Love/Unlove pair (pending|unranked → loved → intended_status).
 /// Hidden sets are visible to their owner only. Removed sets 404 for the public but stay
 /// viewable by their owner and by admins (the owner's profile deliberately lists them, and a
 /// DMCA'd mapper deserves to see the Removed pill instead of a dead link; the download
@@ -212,17 +213,17 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
         Diff = Diffs.FirstOrDefault(d => d.Id == diff) ?? Diffs.FirstOrDefault();
         requestedDiff = diff != 0 && Diff?.Id == diff ? diff : 0;
 
-        // Global leaderboard: best ranked+passed score per user across the set's difficulties
-        // (the same eligibility and ordering the game-facing endpoint in ScoreEndpoints reads,
-        // both built from BeatmapLeaderboard so they cannot drift). Only ranked
-        // sets have one; pending plays are stored unranked, and the page renders an "unlocks
-        // when ranked" note instead, so don't even run the query for non-ranked sets.
         // Per-difficulty leaderboard: best passed score per user on the SELECTED beatmap (each
-        // difficulty has its own board). @wantRanked picks the ranked board (default) or the
-        // Unranked board: passed plays stored ranked=false because they used an unranked mod or a
-        // non-default rate. Only ranked sets have boards; pending/unranked sets show a note instead.
+        // difficulty has its own board), with the same eligibility and ordering the game-facing
+        // endpoint in ScoreEndpoints reads, both built from BeatmapLeaderboard so they cannot
+        // drift. @wantRanked picks the ranked board (default) or the Unranked board: passed plays
+        // stored ranked=false because they used an unranked mod or a non-default rate.
+        // Only 'ranked' and 'loved' sets have boards here (a loved set's plays store ranked, so its
+        // board is the ranked one; this page shows no pp on a board row at all, so "loved earns no
+        // pp" needs nothing further here). Pending plays are stored unranked, and pending/unranked
+        // sets render a note instead, so don't even run the query for them.
         bool wantRanked = Board == "ranked";
-        if (Set.Status == "ranked" && Diff is not null)
+        if (Set.Status is "ranked" or "loved" && Diff is not null)
             Scores = (await conn.QueryAsync<ScoreRow>(
             $"""
             SELECT best.id           AS ScoreId,
@@ -446,18 +447,25 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
 
     // ---- reviewer controls (map_reviewer or admin only) ----
 
-    public Task<IActionResult> OnPostRankAsync(long id) => transitionAsync(id, from: "pending", to: "ranked");
+    public Task<IActionResult> OnPostRankAsync(long id) => transitionAsync(id, from: ["pending"], to: "ranked", action: "rank");
 
-    public Task<IActionResult> OnPostUnrankAsync(long id) => transitionAsync(id, from: "ranked", to: "pending");
+    public Task<IActionResult> OnPostUnrankAsync(long id) => transitionAsync(id, from: ["ranked"], to: "pending", action: "unrank");
+
+    public Task<IActionResult> OnPostLoveAsync(long id) => transitionAsync(id, from: ["pending", "unranked"], to: "loved", action: "love");
+
+    // Unlove returns the set to its own intended_status (pending or unranked), so a loved set
+    // goes back to whichever of the two it was before it was loved.
+    public Task<IActionResult> OnPostUnloveAsync(long id) => transitionAsync(id, from: ["loved"], to: null, action: "unlove");
 
     /// <summary>
-    /// The only two review transitions are pending → ranked and ranked → pending; hidden and
-    /// removed sets are untouchable from here (takedowns stay an admin-SQL lever). 404 for
+    /// The review transitions are pending → ranked, ranked → pending, pending|unranked → loved and
+    /// loved → the set's intended_status (<paramref name="to"/> null); there is no direct
+    /// ranked ↔ loved. Hidden and removed sets are untouchable from here (takedowns stay an admin-SQL lever). 404 for
     /// non-reviewers, and for a reviewer acting on their OWN set; the same nothing-to-see answer
     /// the buttons' absence gives them (the site's custom cookie auth has no ASP.NET
     /// authentication scheme for Forbid()).
     /// </summary>
-    private async Task<IActionResult> transitionAsync(long id, string from, string to)
+    private async Task<IActionResult> transitionAsync(long id, string[] from, string? to, string action)
     {
         if (CurrentUser?.CanReviewMaps != true)
             return NotFound();
@@ -469,11 +477,14 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
         // reach every other moderation lever) may still flip their own set.
         // This lookup doubles as the existence check the changed == 0 branch below used to run
         // as a second query: owner_id is NOT NULL, so a null here means there is no such set.
-        long? ownerId = await conn.ExecuteScalarAsync<long?>(
-            "SELECT owner_id FROM beatmapsets WHERE id = @id", new { id });
+        var owner = await conn.QuerySingleOrDefaultAsync<(long OwnerId, string Status)?>(
+            "SELECT owner_id, status FROM beatmapsets WHERE id = @id", new { id });
 
-        if (ownerId is null || (ownerId == CurrentUser.Id && !CurrentUser.IsAdmin))
+        if (owner is null || (owner.Value.OwnerId == CurrentUser.Id && !CurrentUser.IsAdmin))
             return NotFound();
+
+        long ownerId = owner.Value.OwnerId;
+        string oldStatus = owner.Value.Status;
 
         // Startup sweep gate (backlog 368): a rank carries the set's pending plays with the same
         // SetRankRefund and PpBackfill passes the boot chain may still be running, so until the chain
@@ -490,11 +501,17 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
             };
         }
 
-        int changed = await conn.ExecuteAsync(
-            "UPDATE beatmapsets SET status = @to, updated_at = now() WHERE id = @id AND status = @from",
+        // RETURNING the new status serves the audit note and, for Unlove (to == null), tells us
+        // which intended_status the set went back to; null means the status guard matched nothing.
+        string? newStatus = await conn.QuerySingleOrDefaultAsync<string?>(
+            """
+            UPDATE beatmapsets SET status = COALESCE(@to, intended_status), updated_at = now()
+            WHERE id = @id AND status = ANY(@from)
+            RETURNING status
+            """,
             new { id, from, to });
 
-        if (changed == 1)
+        if (newStatus is not null)
         {
             // Record the review in the audit table. Until now nothing wrote here, so there was no
             // way to ask "which sets were ranked since X": beatmapsets carries only updated_at,
@@ -509,11 +526,11 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
                     INSERT INTO moderation_actions (actor_id, set_id, action, note)
                     VALUES (@actorId, @id, @action, @note)
                     """,
-                    new { actorId = CurrentUser.Id, id, action = to == "ranked" ? "rank" : "unrank", note = $"{from} -> {to}" });
+                    new { actorId = CurrentUser.Id, id, action, note = $"{oldStatus} -> {newStatus}" });
             }
             catch (Exception e)
             {
-                logger.LogWarning(e, "Set {SetId} transitioned {From}->{To} but the audit row failed.", id, from, to);
+                logger.LogWarning(e, "Set {SetId} transitioned {From}->{To} but the audit row failed.", id, oldStatus, newStatus);
             }
 
             if (to == "ranked")
@@ -539,6 +556,13 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
     /// play submitted while the set was ranked does.
     ///
     /// <para>
+    /// IT ALSO PRICES LOVED-ERA PLAYS. A set reaches Rank from loved by way of Unlove (there is no
+    /// direct loved → ranked), and the plays made while it was loved are already stored ranked, so
+    /// the carry has nothing to flip on them; they were settled at 0 pp because loved earns none.
+    /// Stamping the set's ranked rows stale before the pricing pass is what prices them now.
+    /// </para>
+    ///
+    /// <para>
     /// THE OTHER DIRECTION RUNS TOO (backlog 398). Ranking a set after a re-upload must also MARK
     /// the plays made on the version that used to be ranked, or the newly-ranked board shows an old
     /// version's plays as if they were on the current map. <see cref="SetRankClassicMark.RunForSetAsync"/>
@@ -559,12 +583,37 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
     /// </summary>
     private async Task carryPendingPlaysAsync(long id)
     {
+        // FIRST, and on its own: loved-era plays are stored ranked but settled at 0 pp (backlog:
+        // loved status). The set is ranked now, so stamp its ranked rows stale for the one pricing
+        // path. It runs before the mark and the carry so a throw in either cannot skip it: once
+        // this commits, the PpBackfill below prices the rows, and if that never runs the next
+        // boot's sweep does (the set is ranked by then, so nothing holds them back). Rows from an
+        // earlier ranked spell are repriced to the price they already hold, which costs one formula
+        // run per row and nothing else; the mark and the carry leave their own rows stale anyway.
+        try
+        {
+            await using var conn = await db.OpenAsync(CancellationToken.None);
+            await conn.ExecuteAsync(
+                """
+                UPDATE scores SET pp_version = 0
+                WHERE ranked AND beatmap_id IN (SELECT id FROM beatmaps WHERE set_id = @id)
+                """,
+                new { id });
+        }
+        catch (Exception e)
+        {
+            // Nothing re-stamps these rows later: no sweep revisits a settled row on a set it has
+            // no reason to suspect, so the set's loved-era plays stay unpriced until the next pp
+            // version bump or a re-rank. Say so, rather than promise a retry.
+            logger.LogWarning(e, "Set {SetId} was ranked but stamping its loved-era plays for pricing failed; they stay unpriced until the next pp version bump or a re-rank.", id);
+        }
+
         try
         {
             // Downward first: mark plays on a version that is no longer the ranked one, so the board
             // this rank just reopened is honest about which plays were on a different map before the
-            // carry adds the pending-era ones. PpBackfill then prices both the marked rows and the
-            // carried ones at once.
+            // carry adds the pending-era ones. PpBackfill then prices the marked rows, the carried
+            // ones and the loved-era ones stamped above at once.
             await SetRankClassicMark.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);
 
             int carried = await SetRankRefund.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);

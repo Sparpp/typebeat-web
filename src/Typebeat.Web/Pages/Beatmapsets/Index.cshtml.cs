@@ -45,17 +45,18 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
     {
         Query = (q ?? string.Empty).Trim();
         Sort = s is "plays" or "favs" ? s : "newest";
-        StatusFilter = status is "ranked" or "pending" or "unranked" ? status : "any";
+        StatusFilter = status is "ranked" or "pending" or "unranked" or "loved" ? status : "any";
         Unplayed = unplayed == true && CurrentUser is not null;
 
-        // Any = every publicly browsable status ('pending', 'unranked' and 'ranked' all are; hidden
-        // and removed never list). The Ranked/Pending/Unranked pills narrow to one.
+        // Any = every publicly browsable status ('pending', 'unranked', 'ranked' and 'loved' all are;
+        // hidden and removed never list). The Ranked/Pending/Unranked/Loved pills narrow to one.
         string statusPredicate = StatusFilter switch
         {
             "ranked" => "s.status = 'ranked'",
             "pending" => "s.status = 'pending'",
             "unranked" => "s.status = 'unranked'",
-            _ => "s.status IN ('pending', 'unranked', 'ranked')",
+            "loved" => "s.status = 'loved'",
+            _ => "s.status IN ('pending', 'unranked', 'ranked', 'loved')",
         };
 
         // Restricted mappers' sets are delisted site-wide (their profiles 404, so every

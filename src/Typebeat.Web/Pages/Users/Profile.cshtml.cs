@@ -268,6 +268,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             """,
             new { id });
 
+        // Deliberately no status filter: loved plays count toward grades and accuracy (as on osu!'s profile).
         // Grade counts + accuracy from the SAME per-map-best fold (see class doc).
         var gradeRows = (await conn.QueryAsync<(string Rank, long Count, double AccuracySum)>(
             $"""
@@ -493,7 +494,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
                      ) best
                      JOIN beatmaps b ON b.id = best.beatmap_id
                      JOIN beatmapsets s ON s.id = b.set_id
-                     WHERE s.status IN ('pending', 'unranked', 'ranked')
+                     WHERE s.status IN ('pending', 'unranked', 'ranked', 'loved')
                      """,
                     new { ids })).ToDictionary(r => r.ScoreId);
 
@@ -582,7 +583,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         var maps = (await conn.QueryAsync<BeatmapsetCardModel>(
             $"""
              {BeatmapsetCardSql.Select}
-             WHERE s.owner_id = @id AND (s.status IN ('pending', 'unranked', 'ranked') OR @ownProfile)
+             WHERE s.owner_id = @id AND (s.status IN ('pending', 'unranked', 'ranked', 'loved') OR @ownProfile)
                AND (s.status <> 'hidden' OR EXISTS (SELECT 1 FROM beatmaps lb WHERE lb.set_id = s.id AND lb.filename IS NOT NULL))
              ORDER BY s.submitted_at DESC, s.id DESC
              LIMIT {card_section_size + 1}
@@ -600,7 +601,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             $"""
              {BeatmapsetCardSql.Select}
              JOIN favourites fav ON fav.set_id = s.id AND fav.user_id = @id
-             WHERE s.status IN ('pending', 'unranked', 'ranked') AND (NOT u.restricted OR s.owner_id = @viewerId)
+             WHERE s.status IN ('pending', 'unranked', 'ranked', 'loved') AND (NOT u.restricted OR s.owner_id = @viewerId)
              ORDER BY fav.created_at DESC, s.id DESC
              LIMIT {card_section_size + 1}
              """,

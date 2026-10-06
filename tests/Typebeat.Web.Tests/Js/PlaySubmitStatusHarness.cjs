@@ -24,6 +24,7 @@ const PAGE = global.window.TypeBeatPlayPage;
 const ranked = { status: 'ranked' };
 const pending = { status: 'pending' };
 const unranked = { status: 'unranked' };
+const loved = { status: 'loved' };
 const cleared = { passed: true };
 const failed = { passed: false };
 
@@ -42,6 +43,8 @@ const out = {
         { ranked: false, pp: null, pp_pending: false, board: 'unranked', position: 4, personal_best: false }, unranked, cleared),
     failedRun: PAGE.submitStatus(
         { ranked: false, pp: null, pp_pending: false, board: null, position: null, personal_best: false }, ranked, failed),
+    lovedChecksFailed: PAGE.submitStatus(
+        { ranked: false, pp: null, pp_pending: false, board: null, position: null, personal_best: false }, loved, cleared),
     checksFailed: PAGE.submitStatus(
         { ranked: false, pp: null, pp_pending: false, board: null, position: null, personal_best: false }, ranked, cleared)
 };
