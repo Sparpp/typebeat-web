@@ -10,11 +10,11 @@ namespace Typebeat.Web.Scoring;
 /// <see cref="ProfileScores"/> rule: a heading that disagrees with the list under it is a wrong number.
 ///
 /// <para>
-/// Four of the client's seven subsections have data here: favourites (the favourites table) and the
-/// owner's own sets by status. The client's "Graveyarded" subsection is this server's 'unranked'
-/// status, the same mapping the listing search's graveyard category uses. Loved, guest and
-/// nominated have nothing behind them (no loved status, one owner per set, no nomination step), so
-/// they are not served and their counts stay absent (0).
+/// Five of the client's seven subsections have data here: favourites (the favourites table) and the
+/// owner's own sets by status (ranked, loved, pending, graveyard). The client's "Graveyarded"
+/// subsection is this server's 'unranked' status, the same mapping the listing search's graveyard
+/// category uses. Guest and nominated have nothing behind them (one owner per set, no nomination
+/// step), so they are not served and their counts stay absent (0).
 /// </para>
 ///
 /// <para>
@@ -26,7 +26,7 @@ public static class ProfileBeatmapsets
 {
     private const string favourite_where =
         "EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @id)"
-        + " AND s.status IN ('pending', 'unranked', 'ranked') AND NOT u.restricted";
+        + " AND s.status IN ('pending', 'unranked', 'ranked', 'loved') AND NOT u.restricted";
 
     private static string ownedWhere(string status) => $"s.owner_id = @id AND s.status = '{status}'";
 
@@ -35,6 +35,7 @@ public static class ProfileBeatmapsets
     {
         "favourite" => favourite_where,
         "ranked" => ownedWhere("ranked"),
+        "loved" => ownedWhere("loved"),
         "pending" => ownedWhere("pending"),
         "graveyard" => ownedWhere("unranked"),
         _ => null,
@@ -54,10 +55,11 @@ public static class ProfileBeatmapsets
              SELECT
                  (SELECT count(*) FROM beatmapsets s JOIN users u ON u.id = s.owner_id WHERE {favourite_where})::int AS Favourite,
                  (SELECT count(*) FROM beatmapsets s WHERE {ownedWhere("ranked")})::int AS Ranked,
+                 (SELECT count(*) FROM beatmapsets s WHERE {ownedWhere("loved")})::int AS Loved,
                  (SELECT count(*) FROM beatmapsets s WHERE {ownedWhere("pending")})::int AS Pending,
                  (SELECT count(*) FROM beatmapsets s WHERE {ownedWhere("unranked")})::int AS Graveyard
              """,
             new { id = userId }, cancellationToken: ct));
 
-    public sealed record BeatmapsetCounts(int Favourite, int Ranked, int Pending, int Graveyard);
+    public sealed record BeatmapsetCounts(int Favourite, int Ranked, int Loved, int Pending, int Graveyard);
 }

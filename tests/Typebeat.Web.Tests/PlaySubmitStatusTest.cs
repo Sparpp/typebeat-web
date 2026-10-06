@@ -50,6 +50,12 @@ public class PlaySubmitStatusTest
     }
 
     [Test]
+    public void ARefusedPlayOnALovedMap_SaysChecksFailed_NotThatTheMapDoesNotCount()
+    {
+        Assert.That(status("lovedChecksFailed").Html, Is.EqualTo("recorded, not ranked (checks failed) · - pp"));
+    }
+
+    [Test]
     public void APendingOrUnrankedMap_PlacesThePlayOnTheUnrankedBoard_AsNotCounting()
     {
         Assert.Multiple(() =>

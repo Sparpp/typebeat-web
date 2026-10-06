@@ -49,14 +49,14 @@ public sealed class IndexModel(Db db, GameInstallers installers, IConfiguration 
                    (SELECT count(*)
                     FROM beatmapsets s
                     JOIN users u ON u.id = s.owner_id
-                    WHERE s.status IN ('pending', 'unranked', 'ranked') AND NOT u.restricted)        AS maps
+                    WHERE s.status IN ('pending', 'unranked', 'ranked', 'loved') AND NOT u.restricted)        AS maps
             """);
 
         NewestSets = (await conn.QueryAsync<BeatmapsetCardModel>(
             BeatmapsetCardSql.Select +
             """
 
-            WHERE s.status IN ('unranked', 'ranked') AND (NOT u.restricted OR s.owner_id = @viewerId)
+            WHERE s.status IN ('unranked', 'ranked', 'loved') AND (NOT u.restricted OR s.owner_id = @viewerId)
             ORDER BY s.submitted_at DESC, s.id DESC
             LIMIT 8
             """,

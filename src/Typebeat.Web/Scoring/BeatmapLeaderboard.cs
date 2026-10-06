@@ -14,9 +14,12 @@ namespace Typebeat.Web.Scoring;
 /// every map serves a ranked board and an unranked one (the latter is where non-default rates and
 /// unranked mods land), and a row never crosses between them (<see cref="OnBoard"/>).</item>
 /// <item>WHICH board a map serves is decided by its set's CURRENT status, re-read per request, never
-/// trusted from the stored flags: 'ranked' sets serve the ranked board, 'pending' and 'unranked'
-/// sets serve the unranked one, and anything else (hidden, removed) serves no board at all. That
-/// switch lives at each call site because it also decides what the page renders instead.</item>
+/// trusted from the stored flags: 'ranked' and 'loved' sets serve the ranked board, 'pending' and
+/// 'unranked' sets serve the unranked one, and anything else (hidden, removed) serves no board at
+/// all. That switch lives at each call site because it also decides what the page renders instead.
+/// A loved set's board is ranked but earns no pp: its plays store ranked with pp 0, and the game's
+/// board sends no pp for any of its rows. First places stay confined to 'ranked' sets
+/// (<see cref="FirstPlacesOfUserSql"/>), as do the pp and ranked-score rankings.</item>
 /// <item>A player is represented by their BEST play on the board, one row each
 /// (<c>DISTINCT ON (user_id)</c> in <see cref="Order"/>).</item>
 /// <item>The board sorts by total score descending, and a tie is broken by the EARLIER submission

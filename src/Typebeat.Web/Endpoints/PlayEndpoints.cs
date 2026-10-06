@@ -341,7 +341,7 @@ public static class PlayEndpoints
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.id = @beatmapId
                   AND (@setId <= 0 OR b.set_id = @setId)
-                  AND bs.status IN ('pending', 'unranked', 'ranked')
+                  AND bs.status IN ('pending', 'unranked', 'ranked', 'loved')
                   AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
                 """,
                 new { beatmapId = request.BeatmapId, setId = request.SetId })
@@ -351,7 +351,7 @@ public static class PlayEndpoints
                        b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
-                WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked')
+                WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked', 'loved')
                   AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
                 ORDER BY b.id
                 LIMIT 1
@@ -473,7 +473,12 @@ public static class PlayEndpoints
             WHERE b.id = @beatmapId
             """,
             new { beatmapId }, tx);
-        bool setRanked = setStatus == "ranked";
+
+        // A play is ranked (stored on the ranked board) on a 'ranked' or 'loved' set; only a 'ranked'
+        // set's plays are priced. Loved is osu!'s "leaderboard, no pp" status: the row is stored with
+        // pp 0 and the current pp_version, which every pp read already renders as no pp.
+        bool setHasRankedBoard = setStatus is "ranked" or "loved";
+        bool setAwardsPp = setStatus == "ranked";
 
         var statistics = submission.Statistics ?? new Dictionary<string, int>();
         var maximumStatistics = submission.MaximumStatistics ?? new Dictionary<string, int>();
@@ -500,7 +505,7 @@ public static class PlayEndpoints
         bool passed = submission.Passed;
         bool fullyJudged = recomputed.AccuracyProgress >= 1;
 
-        bool ranked = setRanked && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && !buildBlocked;
+        bool ranked = setHasRankedBoard && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && !buildBlocked;
 
         double storedAccuracy = passed && fullyJudged ? recomputed.Accuracy : recomputed.JudgedAccuracy;
 
@@ -530,7 +535,8 @@ public static class PlayEndpoints
         // still passed rather than assumed, so if /play ever gains mods this call already reads the
         // cell they select.
         var (pp, ppSettled) = PerformancePoints.ForScore(
-            ranked,
+            // A loved play is ranked but never priced (see setAwardsPp above).
+            ranked && setAwardsPp,
             mods: [],
             PerformancePoints.CountNotes(statistics),
             storedAccuracy,
@@ -623,14 +629,14 @@ public static class PlayEndpoints
             new { scoreId, tokenId = token.Id }, tx);
 
         // WHICH BOARD this play sits on, by the set's CURRENT status, the same switch the game
-        // client's leaderboard makes (ScoreEndpoints.Leaderboard): a ranked set serves the ranked
-        // board, a pending or unranked set serves the unranked one. A play is only ON a board when
+        // client's leaderboard makes (ScoreEndpoints.Leaderboard): a ranked or loved set serves the
+        // ranked board, a pending or unranked set serves the unranked one. A play is only ON a board when
         // it passed and its stored flag matches (BeatmapLeaderboard.OnBoard), so a fail, and a
         // gate-refused play on a ranked set (stored unranked, but its map serves the RANKED board),
         // sit on none and are told no position.
         bool? board = setStatus switch
         {
-            "ranked" => true,
+            "ranked" or "loved" => true,
             "pending" or "unranked" => false,
             _ => null,
         };
@@ -662,7 +668,7 @@ public static class PlayEndpoints
             // ran and this is the price, and null is never "worth zero". pp_pending tells the two
             // nulls apart: true is a ranked play on a map whose rating cell is not stored yet
             // (docs/pp.md, "NULL IS THE UNFILLED STATE"), priced by PpBackfill on a later boot;
-            // false with a null pp is a refused (unranked) play, which has no price at all.
+            // false with a null pp is a refused (unranked, or loved) play, which has no price at all.
             pp,
             pp_pending = pp is null && !ppSettled,
             // "ranked" or "unranked" (the board this play is listed on), or null for none.

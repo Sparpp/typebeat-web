@@ -62,7 +62,7 @@ public static class SeoEndpoints
 
         await using var conn = await db.OpenAsync(ct);
 
-        // Published is pending, unranked or ranked (BeatmapsetEndpoints.IsPublished); a
+        // Published is pending, unranked, ranked or loved (BeatmapsetEndpoints.IsPublished); a
         // restricted owner's sets are delisted everywhere else, so they are left out here too.
         // lastmod is the latest uploaded version, falling back to the submit time for a set that
         // predates set_versions.
@@ -72,7 +72,7 @@ public static class SeoEndpoints
               FROM beatmapsets s
               JOIN users u ON u.id = s.owner_id
               LEFT JOIN set_versions v ON v.set_id = s.id
-             WHERE s.status IN ('pending', 'unranked', 'ranked') AND NOT u.restricted
+             WHERE s.status IN ('pending', 'unranked', 'ranked', 'loved') AND NOT u.restricted
              GROUP BY s.id
              ORDER BY s.id
             """, cancellationToken: ct));

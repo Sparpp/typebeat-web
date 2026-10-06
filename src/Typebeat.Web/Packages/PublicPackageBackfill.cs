@@ -73,7 +73,7 @@ public sealed class PublicPackageBackfill(
                 JOIN beatmapsets s ON s.id = v.set_id
                 WHERE v.public_key IS NULL
                   AND v.package_key IS NOT NULL
-                  AND s.status IN ('pending', 'unranked', 'ranked')
+                  AND s.status IN ('pending', 'unranked', 'ranked', 'loved')
                   AND v.version_no = (SELECT MAX(version_no) FROM set_versions WHERE set_id = v.set_id)
                 ORDER BY v.id
                 """)).ToList();

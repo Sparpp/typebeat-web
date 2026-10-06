@@ -462,6 +462,11 @@ img { max-width: 100%; }
     color: var(--text-muted);
 }
 
+.pill--loved {
+    background: rgba(255, 102, 170, 0.14);
+    color: #ff66aa;
+}
+
 .pill--ranked {
     background: rgba(74, 222, 128, 0.14);
     color: var(--good);

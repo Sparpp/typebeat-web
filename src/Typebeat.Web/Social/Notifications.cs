@@ -70,7 +70,7 @@ public static class Notifications
     /// </summary>
     private const string visible_predicate =
         """
-        (n.set_id IS NULL OR s.status IN ('pending', 'unranked', 'ranked'))
+        (n.set_id IS NULL OR s.status IN ('pending', 'unranked', 'ranked', 'loved'))
         AND (n.actor_id IS NULL OR NOT a.restricted)
         """;
 

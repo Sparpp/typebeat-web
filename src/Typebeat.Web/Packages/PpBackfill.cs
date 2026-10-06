@@ -45,6 +45,23 @@ namespace Typebeat.Web.Packages;
 /// that: <see cref="PpRanking"/> re-checks ranked/passed/set-status at read time anyway, and the
 /// only thing a stored 0 asserts is "this play, as played, is worth nothing".
 /// </para>
+///
+/// <para>
+/// A LOVED ROW SETTLES AT 0 LIKE AN UNRANKED ONE. A play on a 'loved' set is stored ranked (it sits
+/// on the set's ranked board) but loved is "leaderboard, no pp", so pricing reads the set's CURRENT
+/// status as well as the row's flag, and a version bump never prices a play while its set is
+/// loved. It is priced once its set is ranked, by the Set page's rank carry, which stamps the set's
+/// ranked rows stale and runs this pass narrowed to the set.
+/// </para>
+///
+/// <para>
+/// THE EXCLUSION IS 'loved' AND NOTHING ELSE, deliberately not "only 'ranked' sets price": every
+/// other row prices exactly as it did before loved existed, including a ranked-era row whose set
+/// has since gone back to pending (unranked by a reviewer, or demoted by a gameplay-changing
+/// upload). Those rows are read by nothing that counts ('ranked'-only rankings), but narrowing the
+/// gate to 'ranked' would have quietly zeroed them on the next version bump, a change to existing
+/// data that loved did not need.
+/// </para>
 /// </summary>
 public static class PpBackfill
 {
@@ -73,9 +90,11 @@ public static class PpBackfill
                        b.sr_literate_dt     AS SrLiterateDt,
                        b.sr_literate_ht     AS SrLiterateHt,
                        b.ratings::text      AS Ratings,
-                       b.played_duration_s  AS PlayedDurationS
+                       b.played_duration_s  AS PlayedDurationS,
+                       bs.status            AS SetStatus
                 FROM scores s
                 JOIN beatmaps b ON b.id = s.beatmap_id
+                JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE s.pp_version < @version
                   AND (@setId::bigint IS NULL OR b.set_id = @setId)
                 """,
@@ -92,7 +111,8 @@ public static class PpBackfill
             try
             {
                 var (pp, settled) = PerformancePoints.ForScore(
-                    row.Ranked,
+                    // A loved row is ranked but unpriced; every other row prices as it always has.
+                    row.Ranked && row.SetStatus != "loved",
                     ScoreMods.Parse(row.ModsJson),
                     PerformancePoints.CountNotes(row.StatisticsJson),
                     row.Accuracy,
@@ -120,7 +140,7 @@ public static class PpBackfill
                 await conn.ExecuteAsync(
                     "UPDATE scores SET pp = @pp, pp_version = @version WHERE id = @id",
                     // The column is NOT NULL. A settled null is a play the formula refused to run
-                    // for (unranked, or a custom rate), which stores 0 and stamps the current
+                    // for (unranked, loved, or a custom rate), which stores 0 and stamps the current
                     // version so it drops out of the stale set for good.
                     new { id = row.ScoreId, pp = pp ?? 0, version = PerformancePoints.VERSION });
 
@@ -152,5 +172,7 @@ public static class PpBackfill
         double? SrLiterateDt,
         double? SrLiterateHt,
         string? Ratings,
-        double? PlayedDurationS);
+        double? PlayedDurationS,
+        // Appended last: Dapper maps this positional record by column order.
+        string SetStatus);
 }

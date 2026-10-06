@@ -104,7 +104,7 @@ public sealed class WatchingModel(Db db) : TypebeatPageModel
         var sets = (await conn.QueryAsync<BeatmapsetCardModel>(
             $"""
              {BeatmapsetCardSql.Select}
-             WHERE s.status IN ('pending', 'unranked', 'ranked')
+             WHERE s.status IN ('pending', 'unranked', 'ranked', 'loved')
                AND NOT u.restricted
                AND EXISTS (SELECT 1 FROM user_follows f
                            WHERE f.follower_id = @viewerId AND f.followee_id = s.owner_id

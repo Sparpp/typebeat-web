@@ -170,8 +170,9 @@ public static class BuddyEndpoints
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
         // Only PASSED plays on a published set, and only rows that sit on their set's applicable
-        // board: a ranked set's board is its ranked rows, a pending/unranked set's board is its
-        // unranked rows (every play on a non-ranked set is stored unranked by construction). This
+        // board: a ranked or loved set's board is its ranked rows, a pending/unranked set's board is
+        // its unranked rows (every play on such a set is stored unranked by construction). A loved
+        // play's pp is 0 (loved earns none), which the bot already reads as "nothing to show". This
         // mirrors ScoreEndpoints.Leaderboard so a position reported here matches the site exactly.
         // Hidden sets are excluded outright.
         var rows = await conn.QueryAsync<RecentScoreRow>(
@@ -215,7 +216,7 @@ public static class BuddyEndpoints
                               JOIN beatmapsets obs ON obs.id = ob.set_id
                              WHERE o.beatmap_id = s.beatmap_id
                                AND o.passed
-                               AND o.ranked = (obs.status = 'ranked')
+                               AND o.ranked = (obs.status IN ('ranked', 'loved'))
                                AND o.user_id <> s.user_id
                              GROUP BY o.user_id) peers
                      WHERE peers.best > s.total_score)              AS Position,
@@ -233,8 +234,8 @@ public static class BuddyEndpoints
             JOIN beatmapsets bs ON bs.id = b.set_id
             WHERE s.id > @afterId
               AND s.passed
-              AND bs.status IN ('ranked', 'pending', 'unranked')
-              AND s.ranked = (bs.status = 'ranked')
+              AND bs.status IN ('ranked', 'pending', 'unranked', 'loved')
+              AND s.ranked = (bs.status IN ('ranked', 'loved'))
               -- Never announce a restricted or deleted account's play.
               AND NOT u.restricted
               AND u.deleted_at IS NULL

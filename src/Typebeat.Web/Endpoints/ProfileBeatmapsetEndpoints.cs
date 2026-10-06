@@ -8,7 +8,7 @@ using Typebeat.Web.Wire;
 namespace Typebeat.Web.Endpoints;
 
 /// <summary>
-/// <c>GET /api/v2/users/{id}/beatmapsets/{favourite|ranked|pending|graveyard}</c>: the game
+/// <c>GET /api/v2/users/{id}/beatmapsets/{favourite|ranked|loved|pending|graveyard}</c>: the game
 /// profile's BEATMAPS section (GetUserBeatmapsRequest), answering a JSON array of set cards. Which
 /// sets each type is comes from <see cref="ProfileBeatmapsets"/>, which also computes the heading
 /// counts on the user payload. <c>most_played</c> is a literal route in

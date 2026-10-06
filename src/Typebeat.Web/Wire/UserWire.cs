@@ -105,9 +105,10 @@ public static class UserWire
         replays_watched_counts = p.ReplaysWatchedCounts,
 
         // The Beatmaps section's headings (Scoring.ProfileBeatmapsets, the same predicates its list
-        // endpoint pages over). loved/guest/nominated have no data here and stay absent (0).
+        // endpoint pages over). guest/nominated have no data here and stay absent (0).
         favourite_beatmapset_count = p.Beatmapsets.Favourite,
         ranked_beatmapset_count = p.Beatmapsets.Ranked,
+        loved_beatmapset_count = p.Beatmapsets.Loved,
         pending_beatmapset_count = p.Beatmapsets.Pending,
         graveyard_beatmapset_count = p.Beatmapsets.Graveyard,
 

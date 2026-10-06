@@ -985,9 +985,11 @@ public class PackageIngestDbTest
     /// <summary>
     /// Creates a set with two allocated difficulty rows, ingests a first version carrying only
     /// difficulty A (on <paramref name="lyrics"/> when given, the fixture lyric otherwise), and
-    /// forces it to 'ranked' exactly as a reviewer would.
+    /// forces it to 'ranked' (or <paramref name="status"/>, with <paramref name="intended"/> as its
+    /// intended_status, for the loved twin) exactly as a reviewer would.
     /// </summary>
-    private async Task<(long SetId, long DiffA, long DiffB)> newRankedSetAsync(string? lyrics = null)
+    private async Task<(long SetId, long DiffA, long DiffB)> newRankedSetAsync(
+        string? lyrics = null, string status = "ranked", string intended = "pending")
     {
         await using var conn = await db.OpenAsync();
 
@@ -1011,7 +1013,9 @@ public class PackageIngestDbTest
             ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
             ("bg.jpg", SyntheticPackage.TinyPng()));
 
-        await conn.ExecuteAsync("UPDATE beatmapsets SET status = 'ranked' WHERE id = @id", new { id });
+        await conn.ExecuteAsync(
+            "UPDATE beatmapsets SET status = @status, intended_status = @intended WHERE id = @id",
+            new { id, status, intended });
 
         return (id, a, b);
     }
@@ -1167,6 +1171,34 @@ public class PackageIngestDbTest
             Assert.That(audit[0].Action, Is.EqualTo("auto_unrank"), "distinct from the reviewer's manual 'unrank'");
             Assert.That(audit[0].ActorId, Is.EqualTo(uploaderId), "actor_id is NOT NULL, so the uploading mapper owns the row");
             Assert.That(audit[0].Note, Does.Contain("1 changed"));
+        });
+    }
+
+    /// <summary>
+    /// The loved twin: a loved set has a live board too, so a gameplay change demotes it the same
+    /// way and under the same audit action, but to its own intended_status (what Unlove would
+    /// return it to), not to 'pending'. An unranked-intended set is the case that tells them apart.
+    /// </summary>
+    [Test]
+    [Order(14)]
+    public async Task GameplayChange_DemotesALovedSet_ToItsIntendedStatus_AndAuditsItAsAutoUnrank()
+    {
+        var (id, a, _) = await newRankedSetAsync(status: "loved", intended: "unranked");
+
+        await ingestRankedAsync(
+            ("a.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(beatmapId: a, beatmapSetId: id, lyrics: retimed_lyrics))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+            ("bg.jpg", SyntheticPackage.TinyPng()));
+
+        string? status = await statusOfAsync(id);
+        var audit = await auditOfAsync(id);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo("unranked"), "a retimed loved map returns to its intended status");
+            Assert.That(audit, Has.Count.EqualTo(1));
+            Assert.That(audit[0].Action, Is.EqualTo("auto_unrank"));
+            Assert.That(audit[0].Note, Does.StartWith("loved -> unranked"));
         });
     }
 

@@ -70,7 +70,7 @@
                             aria-label="Play preview"></button>
                 }
             </div>
-            @if (canReview && Model.Set.Status is "pending" or "ranked")
+            @if (canReview && Model.Set.Status is "pending" or "unranked" or "ranked" or "loved")
             {
                 @* Reviewer-only strip, deliberately set apart from the player actions above. *@
                 <div class="review-controls">
@@ -81,10 +81,22 @@
                             <button type="submit" class="btn btn-ghost btn-small">Rank this map</button>
                         </form>
                     }
-                    else
+                    @if (Model.Set.Status is "pending" or "unranked")
+                    {
+                        <form method="post" asp-page-handler="Love" asp-route-id="@Model.Set.Id">
+                            <button type="submit" class="btn btn-ghost btn-small">Mark as Respected</button>
+                        </form>
+                    }
+                    @if (Model.Set.Status == "ranked")
                     {
                         <form method="post" asp-page-handler="Unrank" asp-route-id="@Model.Set.Id">
                             <button type="submit" class="btn btn-danger btn-small">Unrank</button>
+                        </form>
+                    }
+                    @if (Model.Set.Status == "loved")
+                    {
+                        <form method="post" asp-page-handler="Unlove" asp-route-id="@Model.Set.Id">
+                            <button type="submit" class="btn btn-danger btn-small">Remove Respected</button>
                         </form>
                     }
                 </div>
@@ -318,7 +330,7 @@
 <section class="set-leaderboard">
     <div class="set-leaderboard__head">
         <h2>Leaderboard@(Model.Diffs.Count > 1 && Model.Diff is not null ? $": {Model.Diff.Name}" : "")</h2>
-        @if (Model.Set.Status == "ranked" && Model.Diff is not null)
+        @if (Model.Set.Status is "ranked" or "loved" && Model.Diff is not null)
         {
             <div class="lb-tabs" role="tablist">
                 <a class="lb-tab @(Model.Board == "ranked" ? "is-active" : "")" href="/beatmapsets/@Model.Set.Id?diff=@Model.Diff.Id&board=ranked">Ranked</a>
@@ -334,9 +346,10 @@
             <p>The creator marked this map as not intended for ranking, so it has no leaderboard.</p>
         </div>
     }
-    else if (Model.Set.Status != "ranked")
+    else if (Model.Set.Status is not ("ranked" or "loved"))
     {
-        @* Pending (and owner-viewed hidden/removed) sets take plays but rank nothing. *@
+        @* Pending (and owner-viewed hidden/removed) sets take plays but rank nothing. A loved set
+           has a board (its plays store ranked; they just earn no pp), so it falls through. *@
         <div class="empty-state">
             <h3>Not ranked yet</h3>
         </div>

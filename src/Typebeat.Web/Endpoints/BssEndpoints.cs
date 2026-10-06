@@ -221,11 +221,13 @@ public static class BssEndpoints
 
                 // Apply the ranking-intent choice: always record it (so a still-hidden set publishes
                 // to the right status), and for an already-published, non-ranked set switch it now.
+                // A 'loved' set keeps its recorded intent too: the wizard prefills Pending for it, and
+                // overwriting would put a creator-opted-out ('unranked') map in the review queue on Unlove.
                 // A 'ranked' set is never self-demoted here (reviewer-only); 'removed' is unreachable.
                 await conn.ExecuteAsync(
                     """
                     UPDATE beatmapsets
-                    SET intended_status = @intendedStatus,
+                    SET intended_status = CASE WHEN status = 'loved' THEN intended_status ELSE @intendedStatus END,
                         status = CASE WHEN status IN ('pending', 'unranked') THEN @intendedStatus ELSE status END,
                         explicit = @isExplicit,
                         updated_at = now()

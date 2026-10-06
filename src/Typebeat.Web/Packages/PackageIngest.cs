@@ -736,7 +736,7 @@ public sealed class PackageIngest(
 
     /// <summary>
     /// BACKLOG 173: a mapper who re-uploads a ranked map with GAMEPLAY-AFFECTING changes sends it
-    /// back to 'pending' for re-review. Anything else, a background swap, a tag fix, a metadata
+    /// back to 'pending' for re-review (a loved map goes back to its intended_status instead). Anything else, a background swap, a tag fix, a metadata
     /// edit, a preview-time change, a beatdrop tweak, keeps the rank, because none of those change
     /// what the player types against. That line is drawn by
     /// <see cref="GameplayFingerprint"/>, and it is the same line the game already draws locally:
@@ -777,10 +777,15 @@ public sealed class PackageIngest(
         IReadOnlyDictionary<long, string> previous,
         IReadOnlyDictionary<long, string> incoming)
     {
-        // Only a RANKED set can be demoted. 'pending' and 'unranked' have nothing to lose,
-        // 'hidden' is a set that has never published (the publish latch below is what handles it),
-        // and 'removed' is a takedown, which is final and never re-enters circulation.
-        if (status != "ranked")
+        // Only a RANKED or LOVED set can be demoted: both carry a reviewer's judgement of what the
+        // map is and a live ranked board, which a gameplay change makes stale in the same way.
+        // 'pending' and 'unranked' have nothing to lose, 'hidden' is a set that has never published
+        // (the publish latch below is what handles it), and 'removed' is a takedown, which is final
+        // and never re-enters circulation. A demoted ranked set goes to 'pending' (back for review);
+        // a demoted loved set goes to its own intended_status, exactly where the reviewer's Unlove
+        // would put it (so an unranked-intended loved map does not land in the review queue), and
+        // the audit note records both the status it left and the one it went to.
+        if (status is not ("ranked" or "loved"))
             return;
 
         int added = incoming.Keys.Count(id => !previous.ContainsKey(id));
@@ -790,9 +795,14 @@ public sealed class PackageIngest(
         if (added + removed + changed == 0)
             return;
 
-        await conn.ExecuteAsync(
-            "UPDATE beatmapsets SET status = 'pending', updated_at = now() WHERE id = @setId AND status = 'ranked'",
-            new { setId });
+        string demotedTo = await conn.ExecuteScalarAsync<string?>(
+            """
+            UPDATE beatmapsets
+            SET status = CASE WHEN status = 'loved' THEN intended_status ELSE 'pending' END, updated_at = now()
+            WHERE id = @setId AND status IN ('ranked', 'loved')
+            RETURNING status
+            """,
+            new { setId }) ?? "pending";
 
         // Audited, and NOT best-effort. The set-page reviewer flip swallows a failed audit insert
         // because its status change had already committed and a 500 there would lie about a rank
@@ -810,7 +820,9 @@ public sealed class PackageIngest(
                 actorId = uploaderId,
                 setId,
                 action = AutoUnrankAction,
-                note = $"ranked -> pending (gameplay change in v{versionNo}: {changed} changed, {added} added, {removed} removed)",
+                // The status it left ('ranked' or 'loved') and the one it went to: one audit action
+                // covers both.
+                note = $"{status} -> {demotedTo} (gameplay change in v{versionNo}: {changed} changed, {added} added, {removed} removed)",
             });
     }
 
@@ -826,9 +838,9 @@ public sealed class PackageIngest(
     /// guarded by <c>status = 'hidden'</c>, the pre-publish shell a set is created in
     /// (BssEndpoints' INSERT), and NO code path anywhere puts a set back into it: the only other
     /// status writes in the repo are the BSS PUT's pending/unranked intent switch (which cannot
-    /// produce 'hidden'), the reviewer's pending &lt;-&gt; ranked transitions, the automatic
-    /// ranked -&gt; pending demotion above (<see cref="demoteIfGameplayChangedAsync"/>, which
-    /// likewise only ever writes 'pending'), and takedowns to 'removed', which are an admin-SQL
+    /// produce 'hidden'), the reviewer's pending &lt;-&gt; ranked and Love/Unlove transitions, the
+    /// automatic ranked/loved demotion above (<see cref="demoteIfGameplayChangedAsync"/>, which
+    /// likewise only ever writes 'pending' or a loved set's intended_status, never 'hidden'), and takedowns to 'removed', which are an admin-SQL
     /// lever and deliberately final. So this statement's row
     /// count is exactly "this set became publicly visible for the first time", once per set for
     /// the life of the set, and it is therefore the honest trigger for "a mapper you watch

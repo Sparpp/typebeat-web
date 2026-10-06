@@ -18,6 +18,8 @@ namespace Typebeat.Web.Endpoints;
 ///    { beatmapset_ids: [...] }, read from the favourites table (was an empty stub in M1).
 ///
 /// Status strings bind to the client's BeatmapOnlineStatus by member NAME (see BeatmapWire):
+/// 'loved' → "loved" (reviewer-marked, as on osu!: browsable, downloadable and playable, with a
+/// leaderboard like ranked but no pp),
 /// 'ranked' → "ranked" (reviewer-approved: leaderboards live, MatchesOnlineVersion satisfied),
 /// 'pending' → "pending" (published upload awaiting review; browsable, no leaderboards,
 /// the client's LeaderboardManager blocks non-ranked-family statuses natively),
@@ -177,7 +179,7 @@ public static class BeatmapsetEndpoints
             Covers = BeatmapCovers.FromCoverKey(urlBase, set.CoverKey),
             SubmittedDate = set.SubmittedAt,
             // No dedicated ranked-date column; updated_at is the same anchor the lookup uses.
-            RankedDate = set.Status == "ranked" ? set.UpdatedAt : null,
+            RankedDate = set.Status is "ranked" or "loved" ? set.UpdatedAt : null,
             LastUpdated = set.UpdatedAt,
             TitleUnicode = set.TitleUnicode,
             ArtistUnicode = set.ArtistUnicode,
@@ -239,11 +241,12 @@ public static class BeatmapsetEndpoints
     }
 
     /// <summary>
-    /// True for the three PUBLISHED beatmapset statuses: 'pending' (awaiting review), 'unranked'
-    /// (creator opted out of ranking) and 'ranked'. Those are world-readable: browsable, and their
-    /// package, covers and preview stream to anyone, signed in or not.
+    /// True for the four PUBLISHED beatmapset statuses: 'pending' (awaiting review), 'unranked'
+    /// (creator opted out of ranking), 'ranked' and 'loved' (reviewer-marked, leaderboard but no pp).
+    /// Those are world-readable: browsable, and their package, covers and preview stream to
+    /// anyone, signed in or not.
     ///
-    /// This is a SECURITY BOUNDARY, so it is an explicit allow-list of three and never a "not
+    /// This is a SECURITY BOUNDARY, so it is an explicit allow-list of four and never a "not
     /// hidden" test. 'hidden' is an unpublished shell (nobody's business but the owner's) and
     /// 'removed' is a takedown, whose bytes must keep 404ing for everyone but the owner: the
     /// runbook in deploy/README.md and the bounded one-day cover TTL both depend on it. A new
@@ -253,12 +256,13 @@ public static class BeatmapsetEndpoints
     /// 'unranked' reached only two of them, which owner-locked every unranked set's download,
     /// cover and preview.
     /// </summary>
-    public static bool IsPublished(string dbStatus) => dbStatus is "pending" or "unranked" or "ranked";
+    public static bool IsPublished(string dbStatus) => dbStatus is "pending" or "unranked" or "ranked" or "loved";
 
     /// <summary>DB status → the wire string the client's BeatmapOnlineStatus binds by name.</summary>
     public static string StatusString(string dbStatus) => dbStatus switch
     {
         "ranked" => "ranked",
+        "loved" => "loved",
         "pending" => "pending",
         "unranked" => "unranked",
         "hidden" => "wip",

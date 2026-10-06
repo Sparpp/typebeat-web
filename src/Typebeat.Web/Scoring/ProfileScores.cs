@@ -47,7 +47,7 @@ public static class ProfileScores
     /// 'pending' sets are browsable, so plays on them legitimately appear.
     /// </summary>
     public static string OnVisibleSet(string set)
-        => $"{set}.status IN ('pending', 'unranked', 'ranked')";
+        => $"{set}.status IN ('pending', 'unranked', 'ranked', 'loved')";
 
     /// <summary>
     /// PINNED: the user's own curation (022_score_pins.sql), gated by exactly the filters the other
@@ -86,8 +86,16 @@ public static class ProfileScores
     /// </para>
     ///
     /// <para>
-    /// The join to <c>beatmaps</c> is here only to reach <c>set_id</c>, and is aliased <c>bm</c>
-    /// rather than <c>b</c> because every caller joins its own <c>beatmaps b</c> outside this
+    /// LOVED SETS ARE THE ONE EXCLUSION, as on osu!. A loved play sits on its map's ranked board
+    /// (so it passes the eligibility above) but loved is "leaderboard, no pp": it is not a play the
+    /// pp board counts, not even as a 0pp tail entry, so it has no place in a section that reads as
+    /// the pp board's view of the player. It stays visible on the map's board and in Recent.
+    /// </para>
+    ///
+    /// <para>
+    /// The join to <c>beatmaps</c> is here only to reach <c>set_id</c> (and, through it, the set's
+    /// status for the loved exclusion), and is aliased <c>bm</c>/<c>bms</c> rather than
+    /// <c>b</c>/<c>s</c> because every caller joins its own <c>beatmaps b</c> outside this
     /// subquery for display columns. The tie-break is unchanged (<c>pp DESC</c> then
     /// <see cref="BeatmapLeaderboard.Order"/>), so a song whose difficulties are all 0pp still
     /// resolves deterministically to its best-SCORING row rather than an arbitrary one.
@@ -105,7 +113,9 @@ public static class ProfileScores
          SELECT DISTINCT ON (bm.set_id) {columns}
          FROM scores sc
          JOIN beatmaps bm ON bm.id = sc.beatmap_id
+         JOIN beatmapsets bms ON bms.id = bm.set_id
          WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
+           AND bms.status <> 'loved'
          ORDER BY bm.set_id, sc.pp DESC, {BeatmapLeaderboard.Order("sc")}
          """;
 
