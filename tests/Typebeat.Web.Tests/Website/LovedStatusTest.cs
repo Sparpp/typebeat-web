@@ -502,6 +502,42 @@ public class LovedStatusTest
         return end < 0 ? html[start..] : html[start..end];
     }
 
+    [Test]
+    public async Task Reviewer_ReLoveAfterChangedGameplayMarksTheOldScoreClassic()
+    {
+        long setId, beatmapId;
+        string checksum;
+        await using (var source = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString))
+        await using (var conn = await source.OpenConnectionAsync())
+        {
+            setId = await seedSetAsync(conn, "Loved Version Change", "loved", null, withRatings: true);
+            (beatmapId, checksum) = await conn.QuerySingleAsync<(long, string)>(
+                "SELECT id, checksum_md5 FROM beatmaps WHERE set_id = @setId", new { setId });
+        }
+
+        var submitted = await submitScoreAsync(beatmapId, checksum, totalScore: 1_000_000);
+        long scoreId = (long)submitted["id"]!;
+
+        // The persisted outcome of a gameplay-changing upload: the same difficulty gets new
+        // bytes and the reviewed set returns to pending.
+        await executeAsync("UPDATE beatmaps SET checksum_md5 = @checksum WHERE id = @beatmapId",
+            new { beatmapId, checksum = Guid.NewGuid().ToString("N") });
+        await executeAsync("UPDATE beatmapsets SET status = 'pending', current_version = 2 WHERE id = @setId",
+            new { setId });
+        using (var client = await signedInReviewerAsync())
+        using (await postHandlerAsync(client, "Love", setId)) { }
+
+        var leaderboard = await getLeaderboardAsync(beatmapId);
+        var score = leaderboard["scores"]!.Single(s => (long)s["id"]! == scoreId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(score["mods"]!.Select(m => (string?)m["acronym"]), Does.Contain("CL"),
+                "an old-version play must be identified before the board reopens");
+            Assert.That((long)score["total_score"]!, Is.EqualTo(950_000),
+                "the existing Classic policy applies the 0.95 score penalty");
+        });
+    }
+
     private static async Task executeAsync(string sql, object param)
     {
         await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);

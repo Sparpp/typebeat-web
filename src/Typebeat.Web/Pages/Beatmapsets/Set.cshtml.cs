@@ -533,6 +533,20 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
                 logger.LogWarning(e, "Set {SetId} transitioned {From}->{To} but the audit row failed.", id, oldStatus, newStatus);
             }
 
+            if (to == "loved")
+            {
+                try
+                {
+                    // Reopening the board must apply the same version policy as ranking, without
+                    // carrying pending plays or awarding pp to Respected maps.
+                    await SetRankClassicMark.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);
+                }
+                catch (Exception e)
+                {
+                    logger.LogWarning(e, "Set {SetId} was respected but marking its old-version plays failed; the next boot's sweep will retry.", id);
+                }
+            }
+
             if (to == "ranked")
                 await carryPendingPlaysAsync(id);
 
