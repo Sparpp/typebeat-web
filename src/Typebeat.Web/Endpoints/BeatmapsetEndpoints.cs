@@ -1,3 +1,4 @@
+using System.Globalization;
 using Dapper;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Caching;
@@ -14,6 +15,12 @@ namespace Typebeat.Web.Endpoints;
 ///    submission wizard's status preselect on update and the post-submit result card. Shape is
 ///    APIBeatmapSet with nested beatmaps[] (Wire/BeatmapWire.cs). Optional auth: public sets
 ///    are visible to everyone; 'hidden'/'removed' sets 404 for everyone but the owner.
+///  - GET /api/v2/beatmapsets/lookup?beatmap_id={id}: GetBeatmapSetRequest with
+///    BeatmapSetLookupType.BeatmapId, osu-web's set lookup by one of its difficulties. The client
+///    calls it from a listing card's difficulty link (OsuGame.ShowBeatmap → BeatmapSetOverlay
+///    .FetchAndShowBeatmap) and then selects that difficulty in the overlay's picker. Same payload
+///    and visibility as the set GET; only a LIVE difficulty resolves, since a dropped one is not
+///    in beatmaps[] for the picker to select.
 ///  - GET /api/v2/me/beatmapset-favourites: GetMyFavouriteBeatmapSetsResponse
 ///    { beatmapset_ids: [...] }, read from the favourites table (was an empty stub in M1).
 ///
@@ -33,6 +40,10 @@ public static class BeatmapsetEndpoints
         // Output-cached for anonymous callers only (backlog 366): an authed one gets has_favourited
         // and their own hidden sets, so the policy refuses any bearer or session request outright.
         app.MapGet("/api/v2/beatmapsets/{setId:long}", GetBeatmapSetAsync).CacheOutput(CachePolicies.SetApi);
+
+        // Not output-cached: the set GET's entries are evicted per set, and this route is keyed by a
+        // beatmap id. It is one indexed id lookup in front of the set GET's own work.
+        app.MapGet("/api/v2/beatmapsets/lookup", LookupAsync);
 
         // Fetched at login by the client. The literal "me/beatmapset-favourites" route
         // out-specifies MeEndpoints' "me/{ruleset}" template, so both can coexist.
@@ -80,6 +91,24 @@ public static class BeatmapsetEndpoints
         return WireJson.Ok(new { favourite_count = count });
     }
 
+    private static async Task<IResult> LookupAsync(HttpContext ctx, Db db)
+    {
+        if (!long.TryParse(ctx.Request.Query["beatmap_id"], NumberStyles.Integer, CultureInfo.InvariantCulture, out long beatmapId))
+            return WireJson.Error(StatusCodes.Status404NotFound, "not found");
+
+        long? setId;
+        await using (var conn = await db.OpenAsync(ctx.RequestAborted))
+        {
+            setId = await conn.ExecuteScalarAsync<long?>(
+                "SELECT set_id FROM beatmaps WHERE id = @beatmapId AND filename IS NOT NULL", new { beatmapId });
+        }
+
+        // The set GET applies the visibility rule (hidden/removed sets 404 for all but the owner).
+        return setId is { } id
+            ? await GetBeatmapSetAsync(id, ctx, db)
+            : WireJson.Error(StatusCodes.Status404NotFound, "not found");
+    }
+
     private static async Task<IResult> GetBeatmapSetAsync(long setId, HttpContext ctx, Db db)
     {
         // Optional auth (bearer for the game, session cookie for the website): only needed to
@@ -112,7 +141,9 @@ public static class BeatmapsetEndpoints
                    s.language        AS language,
                    s.description     AS description,
                    s.download_count  AS downloadCount,
-                   EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS hasPackage
+                   EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS hasPackage,
+                   u.country_code::text AS creatorCountryCode,
+                   u.avatar_key      AS creatorAvatarKey
             FROM beatmapsets s
             JOIN users u ON u.id = s.owner_id
             WHERE s.id = @setId
@@ -174,6 +205,7 @@ public static class BeatmapsetEndpoints
             Status = status,
             Creator = set.Creator,
             UserId = (int)set.OwnerId,
+            User = UserWire.Compact(urlBase, set.OwnerId, set.Creator, set.CreatorCountryCode, set.CreatorAvatarKey),
             Covers = BeatmapCovers.FromCoverKey(urlBase, set.CoverKey),
             SubmittedDate = set.SubmittedAt,
             // No dedicated ranked-date column; updated_at is the same anchor the lookup uses.
@@ -290,7 +322,9 @@ public static class BeatmapsetEndpoints
         string Language,
         string Description,
         int DownloadCount,
-        bool HasPackage);
+        bool HasPackage,
+        string CreatorCountryCode,
+        string? CreatorAvatarKey);
 
     private sealed record BeatmapRow(
         long Id,

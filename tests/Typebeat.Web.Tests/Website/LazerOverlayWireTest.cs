@@ -23,7 +23,7 @@ public class LazerOverlayWireTest
     // The profile under test: a mapper with one set of each status, followed and watched.
     private static long mapperId;
     private static long rankedSetId, pendingSetId, unrankedSetId, hiddenSetId, explicitSetId;
-    private static long rankedBeatmapId;
+    private static long rankedBeatmapId, pendingBeatmapId, hiddenBeatmapId;
 
     // The viewer: favourites the ranked set, follows + watches the mapper, plays the ranked map.
     private static long viewerId;
@@ -45,9 +45,9 @@ public class LazerOverlayWireTest
         viewerBearer = (await new TokenService(new Db(dataSource)).IssueAsync(viewerId)).AccessToken;
 
         (rankedSetId, rankedBeatmapId) = await insertSetAsync(conn, "Ranked Song", "ranked", "japanese", explicitContent: false, stars: 5.0);
-        (pendingSetId, _) = await insertSetAsync(conn, "Pending Song", "pending", "english", explicitContent: false, stars: 2.0);
+        (pendingSetId, pendingBeatmapId) = await insertSetAsync(conn, "Pending Song", "pending", "english", explicitContent: false, stars: 2.0);
         (unrankedSetId, _) = await insertSetAsync(conn, "Unranked Song", "unranked", "english", explicitContent: false, stars: 3.0);
-        (hiddenSetId, _) = await insertSetAsync(conn, "Hidden Song", "hidden", "english", explicitContent: false, stars: 1.0);
+        (hiddenSetId, hiddenBeatmapId) = await insertSetAsync(conn, "Hidden Song", "hidden", "english", explicitContent: false, stars: 1.0);
         (explicitSetId, _) = await insertSetAsync(conn, "Explicit Song", "pending", "english", explicitContent: true, stars: 4.0);
 
         await conn.ExecuteAsync("INSERT INTO favourites (user_id, set_id) VALUES (@viewerId, @rankedSetId)", new { viewerId, rankedSetId });
@@ -221,6 +221,100 @@ public class LazerOverlayWireTest
             Assert.That((int)set["beatmaps"]![0]!["passcount"]!, Is.EqualTo(1));
             // The fixture's sets have no uploaded package, so a download would 404.
             Assert.That((bool)set["availability"]!["download_disabled"]!, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task SetGet_CarriesTheCreatorWithAnAvatar()
+    {
+        var set = await getObjectAsync($"/api/v2/beatmapsets/{rankedSetId}");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((long)set["user"]!["id"]!, Is.EqualTo(mapperId));
+            Assert.That((string?)set["user"]!["username"], Is.EqualTo("lazer overlay mapper"));
+            Assert.That((string?)set["user"]!["avatar_url"], Does.StartWith("https://localhost/").And.EndWith("/img/default-avatar.png"),
+                "absolute, on this host: the client never builds an avatar URL of its own");
+        });
+    }
+
+    [Test]
+    public async Task Search_CardsCarryTheCreatorWithAnAvatar()
+    {
+        var result = await getObjectAsync($"/api/v2/beatmapsets/search?q=title%3D{tag}&sort=title_asc");
+        var card = result["beatmapsets"]![0]!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((long)card["user"]!["id"]!, Is.EqualTo(mapperId));
+            Assert.That((string?)card["user"]!["avatar_url"], Does.EndWith("/img/default-avatar.png"));
+        });
+    }
+
+    [Test]
+    public async Task Lookup_ByBeatmapId_AnswersTheWholeSet()
+    {
+        // GetBeatmapSetRequest(id, BeatmapSetLookupType.BeatmapId): a card's difficulty link opens the overlay on that diff.
+        var set = await getObjectAsync($"/api/v2/beatmapsets/lookup?beatmap_id={pendingBeatmapId}");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((long)set["id"]!, Is.EqualTo(pendingSetId));
+            Assert.That(set["beatmaps"]!.Select(b => (long)b["id"]!), Does.Contain(pendingBeatmapId));
+            Assert.That((long)set["user"]!["id"]!, Is.EqualTo(mapperId));
+        });
+    }
+
+    [Test]
+    public async Task Lookup_OfAHiddenUnknownOrMissingBeatmap_404s()
+    {
+        using var hidden = await sendAsync($"/api/v2/beatmapsets/lookup?beatmap_id={hiddenBeatmapId}");
+        using var unknown = await sendAsync("/api/v2/beatmapsets/lookup?beatmap_id=999999999");
+        using var missing = await sendAsync("/api/v2/beatmapsets/lookup");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hidden.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), "a hidden set is the owner's alone");
+            Assert.That(unknown.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        });
+    }
+
+    [Test]
+    public async Task Lookup_OfOnesOwnHiddenSet_AnswersTheOwner()
+    {
+        var set = await getObjectAsync($"/api/v2/beatmapsets/lookup?beatmap_id={hiddenBeatmapId}", bearer: mapperBearerAsync());
+        Assert.That((long)set["id"]!, Is.EqualTo(hiddenSetId));
+    }
+
+    [Test]
+    public async Task Leaderboard_OfAPendingMap_ServesTheUnrankedBoard()
+    {
+        // The set overlay shows pending/unranked maps' boards too (as song select does), so the route must answer one.
+        // A player of its own: a viewer play here would leak into the listing's played / rank filters.
+        long rivalId;
+        await using (var conn = await dataSource.OpenConnectionAsync())
+        {
+            rivalId = await insertUserAsync(conn, "lazer overlay rival", "US", coverKey: null);
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO scores
+                    (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked, pp,
+                     mods, statistics, maximum_statistics, ended_at)
+                VALUES
+                    (@rivalId, @pendingBeatmapId, 500000, 0.9, 1.0, 40, 'A', true, false, 0,
+                     '[]'::jsonb, '{"great":90}'::jsonb, '{"great":100}'::jsonb, now())
+                """,
+                new { rivalId, pendingBeatmapId });
+        }
+
+        var board = await getObjectAsync($"/api/v2/beatmaps/{pendingBeatmapId}/scores");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(board["scores"]!.Count(), Is.EqualTo(1));
+            Assert.That((long)board["scores"]![0]!["user"]!["id"]!, Is.EqualTo(rivalId));
+            Assert.That((string?)board["scores"]![0]!["user"]!["avatar_url"], Does.EndWith("/img/default-avatar.png"));
         });
     }
 

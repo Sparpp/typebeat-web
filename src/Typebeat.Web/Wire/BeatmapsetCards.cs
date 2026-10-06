@@ -32,7 +32,8 @@ public static class BeatmapsetCards
                     s.favourite_count AS favouriteCount, s.submitted_at AS submittedAt, s.updated_at AS updatedAt,
                     u.username::text AS creator, s.language AS language,
                     EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId) AS hasFavourited,
-                    EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS hasPackage
+                    EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS hasPackage,
+                    u.country_code::text AS creatorCountryCode, u.avatar_key AS creatorAvatarKey
              {fromWhereOrder}
              """, param, cancellationToken: ct))).ToList();
 
@@ -60,6 +61,7 @@ public static class BeatmapsetCards
                 Status = status,
                 Creator = set.Creator,
                 UserId = (int)set.OwnerId,
+                User = UserWire.Compact(urlBase, set.OwnerId, set.Creator, set.CreatorCountryCode, set.CreatorAvatarKey),
                 Covers = BeatmapCovers.FromCoverKey(urlBase, set.CoverKey),
                 SubmittedDate = set.SubmittedAt,
                 RankedDate = set.Status == "ranked" ? set.UpdatedAt : null,
@@ -118,7 +120,9 @@ public static class BeatmapsetCards
         string Creator,
         string Language,
         bool HasFavourited,
-        bool HasPackage);
+        bool HasPackage,
+        string CreatorCountryCode,
+        string? CreatorAvatarKey);
 
     private sealed record BeatmapRow(
         long SetId,

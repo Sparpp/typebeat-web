@@ -138,6 +138,16 @@ public sealed class APIBeatmapSetResponse
     [JsonProperty("user_id")]
     public required int UserId { get; init; }
 
+    /// <summary>
+    /// The creator as a compact user (id, username, country, avatar_url), which the client's
+    /// APIBeatmapSet reads into <c>Author</c> over the bare creator/user_id pair. Without it the set
+    /// overlay's "mapped by" avatar has no avatar_url, and the client never builds one of its own
+    /// (it refuses ppy's CDN), so it falls back to the guest picture. Omitted, key and all, on the
+    /// routes that do not load it (the beatmap lookup's nested set, profile score rows).
+    /// </summary>
+    [JsonProperty("user", NullValueHandling = NullValueHandling.Ignore)]
+    public ScoreUserWire? User { get; init; }
+
     [JsonProperty("covers")]
     public required BeatmapCovers Covers { get; init; }
 

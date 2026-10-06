@@ -197,13 +197,29 @@ public static class UserWire
     };
 
     /// <summary>
+    /// The compact user (id, username, country, absolute avatar_url) that rides inside another
+    /// payload: a beatmapset's creator. The same shape as a leaderboard row's user.
+    /// </summary>
+    /// <param name="urlBase">This host's <c>{scheme}://{host}</c>, as the set payloads already carry it.</param>
+    public static ScoreUserWire Compact(string urlBase, long id, string username, string countryCode, string? avatarKey) => new()
+    {
+        Id = id,
+        Username = username,
+        CountryCode = countryCode,
+        AvatarUrl = avatarUrlOn(urlBase, avatarKey),
+    };
+
+    /// <summary>
     /// Absolute avatar URL: the user's uploaded avatar (<paramref name="avatarKey"/>, a served
     /// store key) when set, else the self-hosted default served by StubEndpoints. Never null and
     /// always absolute; the client's APIUser falls back to a ppy CDN URL for a null/relative
     /// avatar_url, so every payload emits a full URL on THIS host.
     /// </summary>
     public static string AvatarUrl(string scheme, string host, string? avatarKey = null)
+        => avatarUrlOn($"{scheme}://{host}", avatarKey);
+
+    private static string avatarUrlOn(string urlBase, string? avatarKey)
         => avatarKey is null
-            ? $"{scheme}://{host}/img/default-avatar.png"
-            : $"{scheme}://{host}/{avatarKey}";
+            ? $"{urlBase}/img/default-avatar.png"
+            : $"{urlBase}/{avatarKey}";
 }
