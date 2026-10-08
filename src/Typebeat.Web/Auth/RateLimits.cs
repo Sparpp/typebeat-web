@@ -75,10 +75,13 @@ public static class RateLimits
     /// <summary>
     /// Paths the anonymous read cap never counts: the immutable media the CDN serves anyway, the
     /// uptime probe, and the error page a website 429 re-executes into (counting that would turn
-    /// the styled page into a second, empty 429).
+    /// the styled page into a second, empty 429). The beatmap lookup too (backlog 406): a guest's
+    /// pack import fires one per difficulty, hundreds at once, and the route's own
+    /// <see cref="Lookup"/> bucket (per IP for a guest) is the brake built for exactly that burst.
     /// </summary>
     private static readonly string[] anonymous_read_exempt =
-        ["/covers", "/previews", "/avatars", "/user-covers", "/img", "/releases", "/health", "/error"];
+        ["/covers", "/previews", "/avatars", "/user-covers", "/img", "/releases", "/health", "/error",
+         Endpoints.BeatmapLookupEndpoints.Path];
 
     public static IServiceCollection AddTypebeatRateLimiter(this IServiceCollection services)
     {

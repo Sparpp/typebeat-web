@@ -52,8 +52,9 @@ public static class ProfileScoreEndpoints
 
     public static void Map(IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v2/users/{userId:long}/scores/{type}", Scores).RequireBearer();
-        app.MapGet("/api/v2/users/{userId:long}/beatmapsets/most_played", MostPlayed).RequireBearer();
+        // Anonymous since backlog 406: public profile sections, read by no viewer.
+        app.MapGet("/api/v2/users/{userId:long}/scores/{type}", Scores);
+        app.MapGet("/api/v2/users/{userId:long}/beatmapsets/most_played", MostPlayed);
     }
 
     // ---------------------------------------------------------------------------------------------

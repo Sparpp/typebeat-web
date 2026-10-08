@@ -34,8 +34,10 @@ public static class UserEndpoints
 {
     public static void Map(IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v2/users/{lookup}", Handle).RequireBearer();
-        app.MapGet("/api/v2/users/{lookup}/{ruleset}", HandleWithRuleset).RequireBearer();
+        // Anonymous since backlog 406: the payload reads no viewer and is the public profile page's
+        // data, so a guest client's profile overlay can open it too.
+        app.MapGet("/api/v2/users/{lookup}", Handle);
+        app.MapGet("/api/v2/users/{lookup}/{ruleset}", HandleWithRuleset);
     }
 
     /// <summary>
