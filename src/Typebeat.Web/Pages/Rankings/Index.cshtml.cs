@@ -41,7 +41,16 @@ namespace Typebeat.Web.Pages.Rankings;
 /// URL is linked-to and shareable, and a stale query string must still render something.
 /// </para>
 ///
-/// <para>Output-cached for anonymous visitors for 60 s, varying by board and page (backlog 366).</para>
+/// <para>
+/// SEARCHABLE BY PLAYER NAME (<c>?q=</c>, backlog 407): a case-insensitive substring match on the
+/// username, with LIKE's wildcards taken literally. The filter runs AFTER the board is ranked, so a
+/// matched row keeps its TRUE global rank (<c>BoardRank</c>, a <c>ROW_NUMBER()</c> over the whole
+/// board's own order) rather than being renumbered from 1, and the pager counts the searched
+/// population through the same fragment with the same predicate.
+/// </para>
+///
+/// <para>Output-cached for anonymous visitors for 60 s, varying by board, page and q (backlogs 366
+/// and 407).</para>
 /// </summary>
 [OutputCache(PolicyName = CachePolicies.Rankings)]
 public sealed class IndexModel(Db db) : TypebeatPageModel
@@ -71,6 +80,54 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
     /// <inheritdoc cref="PerformanceCountSql"/>
     public static readonly string PlaysCountSql = $"SELECT count(*) FROM ({PpRanking.BestPerSetSql}) plays";
 
+    /// <summary>
+    /// The longest search the page honours, in characters. Comfortably past the 15-character
+    /// username cap (<c>AccountValidation</c>), so it never cuts a real name short; anything longer
+    /// is clamped rather than rejected.
+    /// </summary>
+    public const int MaxQueryLength = 32;
+
+    /// <summary>The username predicate every searched query shares, against <c>@pattern</c>
+    /// (built by <see cref="LikePattern"/>, whose backslash escapes are what ESCAPE names).</summary>
+    private static string usernameMatches(string users) => $@"{users}.username ILIKE @pattern ESCAPE '\'";
+
+    /// <summary>
+    /// <see cref="PerformanceCountSql"/> narrowed to the players whose name matches the search:
+    /// the same fragment, so a searched pager and its rows still cannot disagree.
+    /// </summary>
+    public static readonly string PerformanceSearchCountSql =
+        $"SELECT count(*) FROM ({PpRanking.PerUserTotalSql}) totals JOIN users u ON u.id = totals.user_id WHERE {usernameMatches("u")}";
+
+    /// <inheritdoc cref="PerformanceSearchCountSql"/>
+    public static readonly string ScoreSearchCountSql =
+        $"SELECT count(*) FROM ({GlobalRanking.PerUserCumulativeSql}) totals JOIN users u ON u.id = totals.user_id WHERE {usernameMatches("u")}";
+
+    /// <summary><see cref="PlaysCountSql"/> narrowed to the plays whose PLAYER's name matches the search.</summary>
+    public static readonly string PlaysSearchCountSql =
+        $"SELECT count(*) FROM ({PpRanking.BestPerSetSql}) plays JOIN users u ON u.id = plays.user_id WHERE {usernameMatches("u")}";
+
+    /// <summary>
+    /// The search as the page uses it: trimmed, clamped to <see cref="MaxQueryLength"/>, and null
+    /// when nothing is left, so <c>?q=</c> and <c>?q=%20</c> are the unsearched board.
+    /// </summary>
+    public static string? NormaliseQuery(string? q)
+    {
+        string trimmed = (q ?? string.Empty).Trim();
+
+        if (trimmed.Length > MaxQueryLength)
+            trimmed = trimmed[..MaxQueryLength].TrimEnd();
+
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    /// <summary>
+    /// The ILIKE pattern for a substring search: the query wrapped in <c>%</c>, with the three
+    /// characters LIKE treats specially (backslash, <c>%</c>, <c>_</c>) backslash-escaped, so a
+    /// player searching "50%" or "a_b" matches exactly those characters and nothing broader.
+    /// </summary>
+    public static string LikePattern(string query)
+        => "%" + query.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_") + "%";
+
     public sealed record PerformanceRow(
         long UserId,
         string Username,
@@ -78,7 +135,8 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         string CountryCode,
         double TotalPp,
         long PpPlayCount,
-        long CumulativeScore);
+        long CumulativeScore,
+        long BoardRank);
 
     public sealed record ScoreRow(
         long UserId,
@@ -87,7 +145,8 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         string CountryCode,
         long CumulativeScore,
         long TotalCumulativeScore,
-        long RankedScoreCount);
+        long RankedScoreCount,
+        long BoardRank);
 
     /// <summary>
     /// One row of the top-plays board: a single score, with the player and the map it was set on.
@@ -122,7 +181,8 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
         string StatisticsJson,
         bool HasReplay,
         string? Ratings,
-        string CountryCode)
+        string CountryCode,
+        long BoardRank)
     {
         /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
         public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);
@@ -224,7 +284,15 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
     public IReadOnlyList<ScoreRow> ScoreRows { get; private set; } = [];
     public IReadOnlyList<PlayRow> PlayRows { get; private set; } = [];
 
-    /// <summary>Whether the showing board has any rows at all (drives the empty state).</summary>
+    /// <summary>The player-name search, already normalised (<see cref="NormaliseQuery"/>), or null
+    /// for the whole board.</summary>
+    public string? Query { get; private set; }
+
+    /// <summary>Whether a search is narrowing the board.</summary>
+    public bool IsSearch => Query is not null;
+
+    /// <summary>Whether the showing board has any rows at all (drives the empty state, which reads
+    /// "no player matches" instead when <see cref="IsSearch"/>).</summary>
     public bool IsEmpty => Board switch
     {
         ScoreBoard => ScoreRows.Count == 0,
@@ -239,9 +307,10 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
     public int LastPage { get; private set; } = 1;
 
     /// <summary>
-    /// What rank the page's first row holds. Ranks CONTINUE across pages (row i of page p is rank
-    /// <c>(p - 1) * PageSize + i + 1</c>): the rank cell is the row's position in the board's total
-    /// order, not its position on the screen.
+    /// How many rows of the (possibly searched) population the page skips. NOT what the rank cells
+    /// print: every row carries its own <c>BoardRank</c>, its position in the WHOLE board's total
+    /// order, so ranks continue across pages and a searched row shows the rank it truly holds. On
+    /// an unsearched board the two agree (row i of page p is rank <c>RankOffset + i + 1</c>).
     /// </summary>
     public int RankOffset => (PageNumber - 1) * PageSize;
 
@@ -249,18 +318,37 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
     public bool ShowPager => LastPage > 1;
 
     /// <summary>
-    /// A page link that keeps the board selector: the bare canonical URL for the main board's
-    /// first page, and no redundant <c>page=1</c> anywhere, so a pager link to a board's first
-    /// page is byte-identical to its tab link.
+    /// A page link that keeps the board selector and the search: the bare canonical URL for the
+    /// main board's first page, and no redundant <c>page=1</c> anywhere, so a pager link to a
+    /// board's first page is byte-identical to its tab link.
     /// </summary>
-    public string PageUrl(int page)
+    public string PageUrl(int page) => RankingsUrl(Board, page, Query);
+
+    /// <summary>A tab link: that board's first page, keeping the search so switching boards does
+    /// not drop it.</summary>
+    public string TabUrl(string board) => RankingsUrl(board, 1, Query);
+
+    /// <summary>The showing board's first page with the search dropped (the no-match way out).</summary>
+    public string ClearSearchUrl => RankingsUrl(Board, 1, null);
+
+    /// <summary>
+    /// Every rankings link, in one fixed parameter order (board, page, q), each omitted at its
+    /// default: the main board, page 1, no search.
+    /// </summary>
+    public static string RankingsUrl(string board, int page, string? query)
     {
-        string baseUrl = Board == PerformanceBoard ? "/rankings" : $"/rankings?board={Board}";
+        var parts = new List<string>(3);
 
-        if (page <= 1)
-            return baseUrl;
+        if (board != PerformanceBoard)
+            parts.Add($"board={board}");
 
-        return Board == PerformanceBoard ? $"/rankings?page={page}" : $"{baseUrl}&page={page}";
+        if (page > 1)
+            parts.Add($"page={page}");
+
+        if (query is not null)
+            parts.Add($"q={Uri.EscapeDataString(query)}");
+
+        return parts.Count == 0 ? "/rankings" : "/rankings?" + string.Join("&", parts);
     }
 
     /// <summary>
@@ -291,8 +379,10 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
     // [FromQuery] is LOAD-BEARING on the page parameter: "page" is Razor Pages' reserved route
     // value (it holds the page path, "/Rankings/Index"), so an unattributed int? named page reads
     // the route value first, fails to parse it, and arrives null on every request.
-    public async Task OnGetAsync(string? board, [FromQuery(Name = "page")] int? page)
+    public async Task OnGetAsync(string? board, [FromQuery(Name = "page")] int? page, [FromQuery(Name = "q")] string? q)
     {
+        Query = NormaliseQuery(q);
+
         // Anything unrecognised falls back to the main board rather than 404ing: /rankings is a
         // linked-to, shareable URL and a stale query string must still render something.
         Board = board switch
@@ -304,16 +394,23 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
+        // Null when unsearched: the filter clauses below are only emitted alongside it, so an
+        // unsearched query carries no predicate at all.
+        string? pattern = Query is null ? null : LikePattern(Query);
+
         // The pager's population, counted over the very fragment the rows below are read from.
         // Counted FIRST because the page number clamps against it: ?page=0, ?page=garbage (which
         // fails binding and arrives null) and ?page=999999 all land on a real page, the same
         // never-404 stance the board fallback above takes.
-        long total = await conn.ExecuteScalarAsync<long>(Board switch
+        long total = await conn.ExecuteScalarAsync<long>((Board, pattern is null) switch
         {
-            ScoreBoard => ScoreCountSql,
-            PlaysBoard => PlaysCountSql,
-            _ => PerformanceCountSql,
-        });
+            (ScoreBoard, true) => ScoreCountSql,
+            (ScoreBoard, false) => ScoreSearchCountSql,
+            (PlaysBoard, true) => PlaysCountSql,
+            (PlaysBoard, false) => PlaysSearchCountSql,
+            (_, true) => PerformanceCountSql,
+            _ => PerformanceSearchCountSql,
+        }, new { pattern });
 
         LastPage = (int)Math.Max(1, (total + PageSize - 1) / PageSize);
         PageNumber = Math.Clamp(page ?? 1, 1, LastPage);
@@ -323,22 +420,30 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
             // Cumulative score rides along as a secondary column so the two boards can be compared
             // at a glance; it is a LEFT JOIN because a pp-earning player always has a cumulative
             // total, but the reverse framing keeps the query honest if that ever stops holding.
+            //
+            // BoardRank is numbered over the WHOLE board inside the subquery, and the search
+            // filters the numbered rows afterwards, so a matched player keeps the rank they hold.
             PerformanceRows = (await conn.QueryAsync<PerformanceRow>(
                     $"""
-                     SELECT u.id AS UserId,
-                            u.username AS Username,
-                            u.avatar_key AS AvatarKey,
-                            u.country_code AS CountryCode,
-                            p.total_pp AS TotalPp,
-                            p.pp_play_count AS PpPlayCount,
-                            COALESCE(t.ranked_score, 0) AS CumulativeScore
-                     FROM ({PpRanking.PerUserTotalSql}) p
-                     JOIN users u ON u.id = p.user_id
-                     LEFT JOIN ({GlobalRanking.PerUserCumulativeSql}) t ON t.user_id = p.user_id
-                     ORDER BY p.total_pp DESC, u.id ASC
+                     SELECT ranked.*
+                     FROM (
+                         SELECT u.id AS UserId,
+                                u.username AS Username,
+                                u.avatar_key AS AvatarKey,
+                                u.country_code AS CountryCode,
+                                p.total_pp AS TotalPp,
+                                p.pp_play_count AS PpPlayCount,
+                                COALESCE(t.ranked_score, 0) AS CumulativeScore,
+                                ROW_NUMBER() OVER (ORDER BY p.total_pp DESC, u.id ASC) AS BoardRank
+                         FROM ({PpRanking.PerUserTotalSql}) p
+                         JOIN users u ON u.id = p.user_id
+                         LEFT JOIN ({GlobalRanking.PerUserCumulativeSql}) t ON t.user_id = p.user_id
+                     ) ranked
+                     {(pattern is null ? "" : "WHERE " + usernameMatches("ranked"))}
+                     ORDER BY ranked.BoardRank
                      LIMIT @limit OFFSET @offset
                      """,
-                    new { limit = PageSize, offset = RankOffset }))
+                    new { limit = PageSize, offset = RankOffset, pattern }))
                 .ToList();
 
             return;
@@ -355,6 +460,9 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
             // the plays that actually count, and twenty near-identical retries of one map by one
             // player (or one clear each of a song's Easy, Normal and Insane) collapse to the single
             // best of them instead of filling the page.
+            //
+            // The rank is numbered over every eligible play and the search (by the PLAY's player)
+            // filters the numbered rows, so a searched play keeps its true position on the board.
             //
             // The LIMIT and OFFSET land BEFORE the display joins: the inner select reads only four
             // of the five columns the pp fragments carry (id / user_id / beatmap_id / pp; set_id
@@ -393,20 +501,26 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
                             sc.statistics::text AS StatisticsJson,
                             sc.replay_key IS NOT NULL AS HasReplay,
                             b.ratings::text AS Ratings,
-                            u.country_code::text AS CountryCode
+                            u.country_code::text AS CountryCode,
+                            top.board_rank AS BoardRank
                      FROM (
-                         SELECT best.id, best.user_id, best.beatmap_id, best.pp
-                         FROM ({PpRanking.BestPerSetSql}) best
-                         ORDER BY {PpRanking.TopPlaysOrder("best")}
+                         SELECT ranked.id, ranked.user_id, ranked.beatmap_id, ranked.pp, ranked.board_rank
+                         FROM (
+                             SELECT best.id, best.user_id, best.beatmap_id, best.pp,
+                                    ROW_NUMBER() OVER (ORDER BY {PpRanking.TopPlaysOrder("best")}) AS board_rank
+                             FROM ({PpRanking.BestPerSetSql}) best
+                         ) ranked
+                         {(pattern is null ? "" : "JOIN users fu ON fu.id = ranked.user_id WHERE " + usernameMatches("fu"))}
+                         ORDER BY ranked.board_rank
                          LIMIT @limit OFFSET @offset
                      ) top
                      JOIN scores sc ON sc.id = top.id
                      JOIN users u ON u.id = top.user_id
                      JOIN beatmaps b ON b.id = top.beatmap_id
                      JOIN beatmapsets bs ON bs.id = b.set_id
-                     ORDER BY {PpRanking.TopPlaysOrder("top")}
+                     ORDER BY top.board_rank
                      """,
-                    new { limit = PageSize, offset = RankOffset }))
+                    new { limit = PageSize, offset = RankOffset, pattern }))
                 .ToList();
 
             return;
@@ -414,22 +528,28 @@ public sealed class IndexModel(Db db) : TypebeatPageModel
 
         // Same cumulative-ranked-score metric as the profile stats card and the client user
         // endpoint (GlobalRanking); one definition so every score-ranking surface agrees.
+        // Ranked over the whole board first and searched afterwards, as the performance board is.
         ScoreRows = (await conn.QueryAsync<ScoreRow>(
                 $"""
-                 SELECT u.id AS UserId,
-                        u.username AS Username,
-                        u.avatar_key AS AvatarKey,
-                        u.country_code AS CountryCode,
-                        t.ranked_score AS CumulativeScore,
-                        COALESCE(us.total_score, 0) AS TotalCumulativeScore,
-                        t.ranked_map_count AS RankedScoreCount
-                 FROM ({GlobalRanking.PerUserCumulativeSql}) t
-                 JOIN users u ON u.id = t.user_id
-                 LEFT JOIN user_stats us ON us.user_id = u.id
-                 ORDER BY t.ranked_score DESC, u.id ASC
+                 SELECT ranked.*
+                 FROM (
+                     SELECT u.id AS UserId,
+                            u.username AS Username,
+                            u.avatar_key AS AvatarKey,
+                            u.country_code AS CountryCode,
+                            t.ranked_score AS CumulativeScore,
+                            COALESCE(us.total_score, 0) AS TotalCumulativeScore,
+                            t.ranked_map_count AS RankedScoreCount,
+                            ROW_NUMBER() OVER (ORDER BY t.ranked_score DESC, u.id ASC) AS BoardRank
+                     FROM ({GlobalRanking.PerUserCumulativeSql}) t
+                     JOIN users u ON u.id = t.user_id
+                     LEFT JOIN user_stats us ON us.user_id = u.id
+                 ) ranked
+                 {(pattern is null ? "" : "WHERE " + usernameMatches("ranked"))}
+                 ORDER BY ranked.BoardRank
                  LIMIT @limit OFFSET @offset
                  """,
-                new { limit = PageSize, offset = RankOffset }))
+                new { limit = PageSize, offset = RankOffset, pattern }))
             .ToList();
     }
 }
