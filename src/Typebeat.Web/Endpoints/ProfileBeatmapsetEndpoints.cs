@@ -23,7 +23,9 @@ public static class ProfileBeatmapsetEndpoints
 
     public static void Map(IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v2/users/{userId:long}/beatmapsets/{type}", BeatmapsetsAsync).RequireBearer();
+        // Anonymous since backlog 406. The viewer only decides each card's own favourite heart;
+        // a guest is viewer 0, which favourites nothing (the website's signed-out convention).
+        app.MapGet("/api/v2/users/{userId:long}/beatmapsets/{type}", BeatmapsetsAsync);
     }
 
     private static async Task<IResult> BeatmapsetsAsync(long userId, string type, HttpContext ctx, Db db)
@@ -42,6 +44,8 @@ public static class ProfileBeatmapsetEndpoints
         if (!visible)
             return WireJson.Error(StatusCodes.Status404NotFound, "user not found");
 
+        long viewerId = (await ctx.ResolveBearerAsync())?.Id ?? 0;
+
         var q = ctx.Request.Query;
         int offset = int.TryParse(q["offset"], NumberStyles.Integer, CultureInfo.InvariantCulture, out int o) ? Math.Max(0, o) : 0;
         int limit = int.TryParse(q["limit"], NumberStyles.Integer, CultureInfo.InvariantCulture, out int l) ? Math.Clamp(l, 1, max_limit) : default_limit;
@@ -53,7 +57,7 @@ public static class ProfileBeatmapsetEndpoints
              {ProfileBeatmapsets.OrderFor(type)}
              LIMIT @limit OFFSET @offset
              """,
-            new { id = userId, viewerId = ctx.AuthedUser().Id, limit, offset },
+            new { id = userId, viewerId, limit, offset },
             $"{ctx.Request.Scheme}://{ctx.Request.Host}", ctx.RequestAborted);
 
         return WireJson.Ok(sets);
