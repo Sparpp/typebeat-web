@@ -25,13 +25,35 @@
 <section class="rankings">
     <h1>Rankings</h1>
 
-    <div class="lb-tabs" role="tablist">
-        <a class="lb-tab @(performance ? "is-active" : "")" href="/rankings">Performance</a>
-        <a class="lb-tab @(score ? "is-active" : "")" href="/rankings?board=@IndexModel.ScoreBoard">Score</a>
-        <a class="lb-tab @(plays ? "is-active" : "")" href="/rankings?board=@IndexModel.PlaysBoard">Top plays</a>
+    @* Tabs left, player search right, on one row; the search wraps under the tabs at phone width.
+       A plain GET form, no JS: the board rides along as a hidden field (omitted on the main
+       board, like every other rankings link), and the tabs keep the search when switching. *@
+    <div class="rankings-bar">
+        <div class="lb-tabs" role="tablist">
+            <a class="lb-tab @(performance ? "is-active" : "")" href="@Model.TabUrl(IndexModel.PerformanceBoard)">Performance</a>
+            <a class="lb-tab @(score ? "is-active" : "")" href="@Model.TabUrl(IndexModel.ScoreBoard)">Score</a>
+            <a class="lb-tab @(plays ? "is-active" : "")" href="@Model.TabUrl(IndexModel.PlaysBoard)">Top plays</a>
+        </div>
+
+        <form method="get" action="/rankings" class="rankings-search" role="search">
+            @if (!performance)
+            {
+                <input type="hidden" name="board" value="@Model.Board" />
+            }
+            <input class="input" type="search" name="q" value="@Model.Query" maxlength="@IndexModel.MaxQueryLength"
+                   placeholder="Search players" aria-label="Search players by name" />
+        </form>
     </div>
 
-    @if (Model.IsEmpty && plays)
+    @if (Model.IsEmpty && Model.IsSearch)
+    {
+        <div class="empty-state">
+            <h3>No player matches &ldquo;@Model.Query&rdquo;</h3>
+            <p>@(plays ? "No play on this board was set by a player with that name." : "Nobody on this board has that in their name.")
+                <a href="@Model.ClearSearchUrl">Clear the search</a></p>
+        </div>
+    }
+    else if (Model.IsEmpty && plays)
     {
         <div class="empty-state">
             <h3>No plays yet</h3>
@@ -63,7 +85,7 @@
                 {
                     var row = Model.PerformanceRows[i];
                     <tr>
-                        <td class="num">#@(Model.RankOffset + i + 1)</td>
+                        <td class="num">#@row.BoardRank</td>
                         <td class="player-cell"><span class="player-cell__who"><partial name="_Flag" model="row.CountryCode" /><a href="/users/@row.UserId">@row.Username</a></span></td>
                         <td class="num">@row.TotalPp.ToString("N0", CultureInfo.InvariantCulture)pp</td>
                         <td class="num">@row.PpPlayCount.ToString("N0", CultureInfo.InvariantCulture)</td>
@@ -113,7 +135,7 @@
                     string displayTitle = row.DisplayTitle(preferOriginal);
                     string displayArtist = row.DisplayArtist(preferOriginal);
                     <tr>
-                        <td class="num">#@(Model.RankOffset + i + 1)</td>
+                        <td class="num">#@row.BoardRank</td>
                         <td class="player-cell"><span class="player-cell__who"><partial name="_Flag" model="row.CountryCode" /><a href="/users/@row.UserId">@row.Username</a></span></td>
                         <td>
                             <a href="/beatmapsets/@row.SetId" title="@displayTitle [@displayArtist]">@displayTitle</a>
@@ -177,7 +199,7 @@
                 {
                     var row = Model.ScoreRows[i];
                     <tr>
-                        <td class="num">#@(Model.RankOffset + i + 1)</td>
+                        <td class="num">#@row.BoardRank</td>
                         <td class="player-cell"><span class="player-cell__who"><partial name="_Flag" model="row.CountryCode" /><a href="/users/@row.UserId">@row.Username</a></span></td>
                         <td class="num">@row.CumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
                         <td class="num">@row.TotalCumulativeScore.ToString("N0", CultureInfo.InvariantCulture)</td>
@@ -190,8 +212,9 @@
     }
 
     @* One pager for all three boards, plain links, no JS: numbered random access is the point.
-       Hidden outright on a one-page board. The rank cells above continue across pages because
-       they add Model.RankOffset, so page 2's first row is #51, not a second #1. *@
+       Hidden outright on a one-page board. The rank cells above print each row's BoardRank, its
+       position on the WHOLE board, so page 2's first row is #51, not a second #1, and a searched
+       row shows the rank it truly holds. *@
     @if (!Model.IsEmpty && Model.ShowPager)
     {
         <nav class="pager" aria-label="Pages">
