@@ -16,3 +16,6 @@ supersede*.json
 # The Caddy maintenance switch (deploy/maintenance.caddy): the flag's presence on the box IS the
 # state, so it must never be tracked (the deploy tar would then create or overwrite it).
 deploy/maintenance.on
+# The aligner worker's script is the game pin's lyriclab/, staged here by the CI deploy job (see
+# deploy/aligner/Dockerfile); a copy committed here would be the third copy backlog 413 forbids.
+deploy/aligner/lyriclab/

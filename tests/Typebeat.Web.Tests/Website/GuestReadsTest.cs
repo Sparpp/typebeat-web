@@ -21,7 +21,7 @@ public class GuestReadsTest
     /// </summary>
     private static readonly Dictionary<string, string> unbearered_writes = new()
     {
-        ["POST /api/v2/typebeat/align"] = "retired, answers 410 to everyone (backlog 287)",
+        ["POST /api/v2/typebeat/align"] = "the pre-287 aligner route, answers 410 to everyone (the server aligner moved to /server-align, backlog 413)",
         ["POST /oauth/token"] = "the sign-in itself",
         ["POST /users"] = "registration",
         ["POST /play/token"] = "browser play: website session cookie, checked in the handler",
@@ -41,6 +41,7 @@ public class GuestReadsTest
         "GET /api/v2/chat/channels",
         "GET /api/v2/blocks",
         "GET /bss/upload-sessions/{sessionId}",
+        "GET /api/v2/typebeat/server-align/{id}",
     ];
 
     /// <summary>The reads backlog 406 opened to guests: none may carry the bearer filter again.</summary>
@@ -79,6 +80,10 @@ public class GuestReadsTest
 
             foreach (string read in guest_reads)
                 Assert.That(unbearered, Does.Contain(read), $"{read} is a guest read (backlog 406)");
+
+            // The server aligner's writes (backlog 413) are the caller's own jobs.
+            Assert.That(bearered, Does.Contain("POST /api/v2/typebeat/server-align"));
+            Assert.That(bearered, Does.Contain("DELETE /api/v2/typebeat/server-align/{id}"));
 
             // Sanity: the sweep saw the score submit, so it is reading the real table.
             Assert.That(bearered, Does.Contain("PUT /api/v2/beatmaps/{beatmapId:long}/solo/scores/{tokenId:long}"));

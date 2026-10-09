@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Dapper;
 using Npgsql;
 using Typebeat.Web;
+using Typebeat.Web.Align;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
@@ -115,6 +116,10 @@ builder.Services.AddSingleton<PackageIngest>();
 // Chunked BSS uploads: session directories under {TYPEBEAT_FILE_ROOT}/upload-sessions, so a
 // half-sent payload survives a restart and the client resumes instead of starting over.
 builder.Services.AddSingleton<UploadSessionStore>();
+
+// The server-hosted auto-aligner (backlog 413): file-based job exchange with the aligner worker
+// container over the shared /data volume (Align/AlignJobStore.cs, deploy/aligner/worker.py).
+builder.Services.AddSingleton<AlignJobStore>();
 
 // The website (M3): server-rendered Razor Pages under Pages/, HTML only; every APIv2/BSS JSON
 // response keeps going through WireJson (Newtonsoft), untouched by this. AddRazorPages also
@@ -338,9 +343,11 @@ ReplayEndpoints.Map(app);
 BssEndpoints.Map(app);
 MediaEndpoints.Map(app);
 
-// Retired server-side aligner (backlog 287): one 410 tombstone, kept because installed clients
-// still POST to it. Nothing else is left of the feature.
+// The first server aligner route (backlog 287): one 410 tombstone, kept because pre-287 clients
+// still POST to it with the old protocol. The server aligner itself came back on a NEW route
+// (backlog 413), opt-in from the game's import screen.
 AlignEndpoints.Map(app);
+ServerAlignEndpoints.Map(app);
 
 // Private score feed for the Discord bot (discord-buddybot). Self-disables (404s) unless
 // TYPEBEAT_BUDDY_KEY is configured, so a deploy that has not opted in exposes nothing.

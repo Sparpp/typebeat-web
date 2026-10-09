@@ -262,7 +262,10 @@ case "$MODE" in
     PARTIAL="$DIR/appdata_$TS.tar.gz.partial"
     trap 'rm -f "$PARTIAL"' EXIT
 
-    docker exec typebeat-web-app-1 tar czf - -C / data > "$PARTIAL"
+    # The server aligner's two directories (backlog 413) stay out: align-jobs is transient scratch
+    # the worker appends to mid-tar (a "file changed as we read it" exits tar 1 and fails the whole
+    # backup), and align-cache is model weights that re-download by themselves.
+    docker exec typebeat-web-app-1 tar czf - -C / --exclude=data/align-jobs --exclude=data/align-cache data > "$PARTIAL"
     gzip -t "$PARTIAL" || { echo "backup FAILED: appdata archive is corrupt, discarding" >&2; exit 1; }
     mv "$PARTIAL" "$DIR/appdata_$TS.tar.gz"
     trap - EXIT

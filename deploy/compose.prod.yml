@@ -143,6 +143,33 @@ services:
     expose:
       - "8080"
 
+  # Server-side lyric alignment (backlog 413; retired by 287, back as an opt-in on the game's import
+  # screen): torch/demucs plus the fused-evidence pair, CPU. File-based job exchange with the app
+  # over the shared appdata volume (/data/align-jobs, see src/Typebeat.Web/Align/AlignJobStore.cs
+  # and deploy/aligner/worker.py), and its model caches under /data/align-cache (TORCH_HOME). The
+  # image carries the game pin's lyriclab/, which the CI deploy job stages into the build context
+  # (deploy/aligner/Dockerfile says why). One job at a time by design; the memory cap keeps a
+  # demucs peak from starving postgres/app, and the CPU cap leaves the app its share.
+  aligner:
+    build:
+      context: .
+      dockerfile: deploy/aligner/Dockerfile
+    restart: unless-stopped
+    # A deploy that rebuilds this image recreates the container; the job it was running is failed
+    # by the new worker (a stale claim), so there is nothing to drain and no grace to wait for.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # torch threads per job, matched to the cpus cap below.
+      ALIGN_THREADS: "3"
+    volumes:
+      - appdata:/data
+    mem_limit: 5g
+    cpus: 3
+
   postgres:
     image: postgres:16
     restart: unless-stopped
