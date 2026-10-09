@@ -58,6 +58,7 @@ public static class RateLimits
     public const string Leaderboard = "leaderboard";
     public const string Lookup = "lookup";
     public const string Report = "report";
+    public const string ServerAlignSubmit = "server-align-submit";
 
     public const int ScoreTokenPerMinute = 30;
     public const int ScoreSubmitPerMinute = 30;
@@ -68,6 +69,15 @@ public static class RateLimits
     public const int ReportsPerWindow = 5;
     public static readonly TimeSpan ReportWindow = TimeSpan.FromMinutes(10);
     public const int AnonymousReadsPerMinute = 300;
+
+    /// <summary>
+    /// Server aligner submissions (backlog 413), a speed bump per token in front of a 64 MB upload:
+    /// an honest player submits one job and maybe retries after a refusal. The real budget is
+    /// <see cref="Align.AlignJobStore.JobsPerDay"/>, counted from the job store (cancelled jobs
+    /// included), which answers its own 429 naming the reset time. Polling the job (GET, every
+    /// 2 s from the game) has no policy.
+    /// </summary>
+    public const int ServerAlignSubmitsPerMinute = 6;
 
     /// <summary>The message a limited wire caller (and so the player) reads.</summary>
     public const string RejectionMessage = "Too many requests. Please wait a minute and try again.";
@@ -94,6 +104,7 @@ public static class RateLimits
             o.AddPolicy(ScoreSubmit, ctx => perMinute(ctx, ScoreSubmitPerMinute));
             o.AddPolicy(ReplayUpload, ctx => perMinute(ctx, ReplayUploadPerMinute));
             o.AddPolicy(Leaderboard, ctx => perMinute(ctx, LeaderboardPerMinute));
+            o.AddPolicy(ServerAlignSubmit, ctx => perMinute(ctx, ServerAlignSubmitsPerMinute));
 
             // Import of a beatmap pack fires one lookup per difficulty, hundreds at once: a deep
             // bucket that refills fast, rather than a window that would cut the burst off.
