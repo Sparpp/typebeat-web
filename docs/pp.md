@@ -1467,3 +1467,26 @@ arm.
 Everything. The scale, the rating exponent, the cleanliness shape, the accuracy shape and the combo
 placement all moved, so no stored row is left at its old value, and the star ratings the prices are
 read from moved underneath them as well. Both sweeps run at the next boot.
+
+## Amendment (2026-10-15): punctuation-derived spaces reach the rating (PR 35, v26)
+
+THE FORMULA DOES NOT MOVE. Every constant, factor and shape above is unchanged; `PerformancePoints.VERSION`
+bumps 25 to 26 only so the score table is repriced against ratings that did move underneath it.
+
+PR 35 changes what the star rating counts as a cell on the default (no Literate) stream. The rating
+used to give each authored word ONE trailing space when another word followed it on the same line.
+It now projects the whole line exactly as play does and charges every space that survives the
+projection to the authored word it sits in: a hyphen break is a real keypress, so `W-O-R-D`, which
+plays as `w o r d`, carries three spaces of demand where it carried none, and a run of authored
+spaces or a punctuation-only token counts the gaps play actually asks for. Literate keeps the
+authored-gap rule. The game's difficulty calculator moves to version 7 and the server's
+`LyricPace.VERSION` to 26 in the same change, which re-rates the catalogue (all six star columns,
+every cell of `beatmaps.ratings`, and the difficult-character counts the cleanliness term reads), and
+the WPM curve lays each surviving hyphen down as a space cell too.
+
+A map with no hyphen, no doubled authored space and no punctuation-only token rates byte-identically,
+so its rows reprice to the values they already hold. Both sweeps run at the next boot, in either
+order, as at v24.
+
+v25 (the played-duration penalty, PR 17) has no amendment of its own here; its rule is documented on
+`PerformancePoints.VERSION` in both mirrors.
