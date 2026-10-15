@@ -3323,11 +3323,20 @@
             get paused() { return paused; },
             get running() { return running; },
             get playbackValidity() { return { valid: validity.valid, discrepancies: validity.discrepancies }; },
-            setSubmitStatus(html, cls) {
-                if (publicApi._status) {
-                    publicApi._status.innerHTML = html;
-                    publicApi._status.className = 'tb-submit-status' + (cls ? ' ' + cls : '');
+            // status: { text, cls }, plus an optional link { linkText, linkHref } with textAfter
+            // following it. Every string is set as text, so a server message is never markup.
+            setSubmitStatus(status) {
+                const box = publicApi._status;
+                if (!box) return;
+                box.textContent = status.text || '';
+                if (status.linkText) {
+                    const a = document.createElement('a');
+                    a.href = status.linkHref || '';
+                    a.textContent = status.linkText;
+                    box.appendChild(a);
+                    if (status.textAfter) box.appendChild(document.createTextNode(status.textAfter));
                 }
+                box.className = 'tb-submit-status' + (status.cls ? ' ' + status.cls : '');
             }
         };
 

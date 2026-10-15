@@ -16,11 +16,16 @@ public class PlaySubmitStatusTest
     [OneTimeSetUp]
     public void RunHarness() => root = JsHarness.Run("PlaySubmitStatusHarness.cjs");
 
-    private static (string Html, string Cls) status(string name)
+    // The status as the player reads it: setSubmitStatus sets text, then the link's text, then
+    // textAfter, all as text nodes.
+    private static (string Text, string Cls) status(string name)
     {
         var e = root.GetProperty(name);
-        return (e.GetProperty("html").GetString()!, e.GetProperty("cls").GetString()!);
+        return (e.GetProperty("text").GetString() + optional(e, "linkText") + optional(e, "textAfter"), e.GetProperty("cls").GetString()!);
     }
+
+    private static string optional(JsonElement e, string property) =>
+        e.TryGetProperty(property, out var value) ? value.GetString()! : "";
 
     [Test]
     public void ARankedPlay_PrintsItsPp_AndSaysWhetherItIsTheNewBest()
@@ -29,9 +34,9 @@ public class PlaySubmitStatusTest
         {
             Assert.That(status("rankedNewBest"), Is.EqualTo(("submitted ✓ ranked · 1,235pp · new best, #3", "tb-status-good")));
             // The position is the BEST row's, so a run that did not beat it must not claim it.
-            Assert.That(status("rankedNotBest").Html, Is.EqualTo("submitted ✓ ranked · 88pp · your best is #3"));
+            Assert.That(status("rankedNotBest").Text, Is.EqualTo("submitted ✓ ranked · 88pp · your best is #3"));
             // A priced 0 is a real price and prints as one.
-            Assert.That(status("rankedPricedZero").Html, Is.EqualTo("submitted ✓ ranked · 0pp · new best, #9"));
+            Assert.That(status("rankedPricedZero").Text, Is.EqualTo("submitted ✓ ranked · 0pp · new best, #9"));
         });
     }
 
@@ -40,19 +45,19 @@ public class PlaySubmitStatusTest
     {
         Assert.Multiple(() =>
         {
-            Assert.That(status("rankedPending").Html, Is.EqualTo("submitted ✓ ranked · pp pending · new best, #1"));
+            Assert.That(status("rankedPending").Text, Is.EqualTo("submitted ✓ ranked · pp pending · new best, #1"));
             Assert.That(status("failedRun"), Is.EqualTo(("recorded, not ranked (you failed this run) · - pp", "tb-status-muted")));
-            Assert.That(status("checksFailed").Html, Is.EqualTo("recorded, not ranked (checks failed) · - pp"));
+            Assert.That(status("checksFailed").Text, Is.EqualTo("recorded, not ranked (checks failed) · - pp"));
 
             foreach (string name in new[] { "rankedPending", "failedRun", "checksFailed", "pendingMap", "unrankedMapNotBest" })
-                Assert.That(status(name).Html, Does.Not.Contain("0pp"), name);
+                Assert.That(status(name).Text, Does.Not.Contain("0pp"), name);
         });
     }
 
     [Test]
     public void ARefusedPlayOnALovedMap_SaysChecksFailed_NotThatTheMapDoesNotCount()
     {
-        Assert.That(status("lovedChecksFailed").Html, Is.EqualTo("recorded, not ranked (checks failed) · - pp"));
+        Assert.That(status("lovedChecksFailed").Text, Is.EqualTo("recorded, not ranked (checks failed) · - pp"));
     }
 
     [Test]
@@ -60,11 +65,11 @@ public class PlaySubmitStatusTest
     {
         Assert.Multiple(() =>
         {
-            Assert.That(status("pendingMap").Html,
+            Assert.That(status("pendingMap").Text,
                 Is.EqualTo("recorded, not ranked (this map is pending, so it does not count) · - pp · new best, #2 on the unranked board, not counted"));
-            Assert.That(status("unrankedMapNotBest").Html,
+            Assert.That(status("unrankedMapNotBest").Text,
                 Is.EqualTo("recorded, not ranked (this map is unranked, so it does not count) · - pp · your best is #4 on the unranked board, not counted"));
-            Assert.That(status("pendingMap").Html, Does.Not.Contain("no leaderboard"));
+            Assert.That(status("pendingMap").Text, Does.Not.Contain("no leaderboard"));
         });
     }
 
@@ -96,10 +101,16 @@ public class PlaySubmitStatusTest
     {
         Assert.Multiple(() =>
         {
-            Assert.That(status("refusedOutdated").Html, Does.Contain("out of date").And.Contain("reload"));
-            Assert.That(status("refusedStaleMap").Html, Does.Contain("map was updated").And.Contain("reload"));
+            Assert.That(status("refusedOutdated").Text, Does.Contain("out of date").And.Contain("reload"));
+            Assert.That(status("refusedStaleMap").Text, Does.Contain("map was updated").And.Contain("reload"));
+            // The reload is a link back to this same page.
+            foreach (string name in new[] { "refusedOutdated", "refusedStaleMap" })
+            {
+                Assert.That(root.GetProperty(name).GetProperty("linkText").GetString(), Is.EqualTo("reload"), name);
+                Assert.That(root.GetProperty(name).GetProperty("linkHref").GetString(), Is.EqualTo(""), name);
+            }
             Assert.That(status("refusedOther"), Is.EqualTo(("score not submitted (could not open a play session).", "tb-status-bad")));
-            Assert.That(status("playbackInvalid").Html, Does.StartWith("score not submitted: audio playback"));
+            Assert.That(status("playbackInvalid").Text, Does.StartWith("score not submitted: audio playback"));
         });
     }
 }
