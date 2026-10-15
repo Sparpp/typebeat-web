@@ -28,12 +28,12 @@ jobs:
       # SUBMODULE_TOKEN: fine-grained PAT with read-only Contents on Sparpp/typebeat-web and
       # Sparpp/type-beat-assets (private). The game submodule Sparpp/typebeat is now public, so
       # it needs no explicit grant. checkout uses this token for the main repo and both submodules.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULE_TOKEN }}
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: |
             8.0.x
@@ -86,7 +86,7 @@ jobs:
     concurrency: production-deploy
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         # no submodules here: the app image builds only src/Typebeat.Web; deploy ships the repo
         # tree minus external/ (see tar below), and deploy/.env on the box is never overwritten
         # because it is git-ignored and therefore absent from the checkout. The one thing the box
