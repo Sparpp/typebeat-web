@@ -292,8 +292,9 @@ public static class BeatmapsetEndpoints
 
     /// <summary>
     /// <see cref="IsPublished"/> as a SQL list, for <c>status IN {PublishedSql}</c> filters. The two
-    /// must name the same four statuses; a page or endpoint that filters on published sets in SQL
-    /// uses this rather than its own copy of the list.
+    /// must name the same four statuses. The listing, landing, /play, search and score-token filters
+    /// use it; older hand-typed copies remain elsewhere (profiles, SEO, lookup) and should move to it
+    /// when touched.
     /// </summary>
     public const string PublishedSql = "('pending', 'unranked', 'ranked', 'loved')";
 

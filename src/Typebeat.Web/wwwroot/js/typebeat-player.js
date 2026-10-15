@@ -33,12 +33,13 @@
  *
  * The FILE is not display only, though. It also owns four pieces that decide what the engine is
  * fed, when a seek is allowed, or whether a run is submitted at all. Each mirrors desktop code,
- * each affects scores, and each is pinned by a parity test:
+ * each affects scores, and each is covered by a parity test:
  *   - what a keypress types: keyToChars and the foldTyped fold under it (the game's
  *     TextInputFold.Fold), held against the game by WireCompat's KeyToCharParityTest;
  *   - the keystroke protocol: routeKeyDown, the whole keydown listener (a press is quantised to a
  *     whole millisecond and the engine advanced to it before any gate or judgement, as
- *     TypeBeatPlayfield's key handler does), held by WireCompat's KeyHandlerOrderLiveParityTest;
+ *     TypeBeatPlayfield's key handler does), held by WireCompat's KeyHandlerOrderLiveParityTest,
+ *     whose C# side is a hand copy of the playfield's gates rather than the playfield itself;
  *   - the instrumental-skip rule: computeGaps, skipAllowed and the skip targets, a third copy of
  *     InstrumentalGaps (game and server) and also the WPM-clock guard, held against the server's
  *     InstrumentalGaps.Compute by WebplayDisplayTest;
