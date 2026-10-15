@@ -296,6 +296,50 @@ public class ScoringContractTest
         Assert.That(filtered, Is.EqualTo(raw));
     }
 
+    [Test]
+    public void BonusWithinMaximum_HoldsABonusCountToTheMapsOwnMaximum()
+    {
+        // A perfect 10/10 run claiming 20,000 large_bonus: unbounded, each is worth 50 on top of the
+        // ceiling (and each small_bonus 10), so the claim would justify 2,000,050 instead of 1,000,000.
+        var claimed = Dict(("great", 10), ("large_bonus", 20_000), ("small_bonus", 5));
+        var maximums = Dict(("great", 10));
+
+        var unbounded = ScoringContract.Recompute(claimed, maximums, maxCombo: 10);
+        var bounded = ScoringContract.BonusWithinMaximum(claimed, maximums);
+        var recomputed = ScoringContract.Recompute(bounded, maximums, maxCombo: 10);
+
+        // A maximum that does list a bonus key bounds the claim at that count, not at zero.
+        var withBonusMaximum = ScoringContract.BonusWithinMaximum(claimed, Dict(("great", 10), ("large_bonus", 2)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(unbounded.TotalScoreCeiling, Is.EqualTo(2_000_050L), "the hole this closes");
+            Assert.That(bounded["large_bonus"], Is.Zero, "absent from the maximum reads as 0");
+            Assert.That(bounded["small_bonus"], Is.Zero);
+            Assert.That(bounded["great"], Is.EqualTo(10), "a non-bonus key is passed through");
+            Assert.That(recomputed.TotalScoreCeiling, Is.EqualTo(1_000_000L));
+            Assert.That(recomputed.StatisticsValid, Is.True);
+            Assert.That(withBonusMaximum["large_bonus"], Is.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public void BonusWithinMaximum_LeavesAnHonestPlayUntouched()
+    {
+        // What the ruleset actually submits: no bonus key on either side.
+        var statistics = Dict(("great", 150), ("ok", 20), ("meh", 10), ("good", 5), ("miss", 15), ("combo_break", 9), ("ignore_hit", 4));
+        var maximums = Dict(("great", 200), ("ignore_hit", 4));
+
+        var bounded = ScoringContract.BonusWithinMaximum(statistics, maximums);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(bounded, Is.EqualTo(statistics));
+            Assert.That(bounded.Keys, Is.EqualTo(statistics.Keys), "in the submitted order");
+            Assert.That(ScoringContract.Recompute(bounded, maximums, maxCombo: 60), Is.EqualTo(ScoringContract.Recompute(statistics, maximums, maxCombo: 60)));
+        });
+    }
+
     // ---- grade ladder (TypeBeatScoreProcessor.RankFromAccuracy, keep in sync) ----
     // Grades are awarded on accuracy with a missed-cell condition on SS (no cell missed) and S
     // (under 3% missed). The missedFraction here is 0 except where the condition is the point.

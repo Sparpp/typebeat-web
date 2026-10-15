@@ -393,6 +393,29 @@ public static class ScoringContract
     }
 
     /// <summary>
+    /// <paramref name="statistics"/> with every BONUS key's count held at the same key's count in
+    /// <paramref name="maximumStatistics"/>, an absent key reading as 0; every other key is passed
+    /// through as it is, in its original order.
+    ///
+    /// <para>A bonus hit is outside the accuracy invariants, so <see cref="Recompute"/> adds its
+    /// base score to the ceiling with nothing to bound it: a perfect run claiming twenty thousand
+    /// <c>large_bonus</c> would justify a total near twice what the play earned. A type!beat map has
+    /// no bonus judgement at all (every judgement is a Great-max cell or the scoring-inert line), so
+    /// an honest submission carries no bonus key on either side and this changes nothing for it.
+    /// Both submit routes apply it (through <c>ScoreSubmission.KnownStatistics</c>) before anything
+    /// reads the counts; a stored row is not re-bounded here.</para>
+    /// </summary>
+    public static Dictionary<string, int> BonusWithinMaximum(IReadOnlyDictionary<string, int> statistics, IReadOnlyDictionary<string, int> maximumStatistics)
+    {
+        var bounded = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var (key, count) in statistics)
+            bounded[key] = IsBonus(key) ? Math.Min(count, maximumStatistics.GetValueOrDefault(key)) : count;
+
+        return bounded;
+    }
+
+    /// <summary>
     /// Accuracy + missed fraction → rank string, mirroring TypeBeatScoreProcessor.RankFromAccuracy.
     /// Grades are awarded on timing accuracy, with an extra missed-cell condition on SS (no cell
     /// missed at all) and S (under S_MISS_LIMIT of the map's cells missed). There are no mods, so

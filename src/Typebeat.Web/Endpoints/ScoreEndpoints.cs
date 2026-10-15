@@ -258,13 +258,10 @@ public static class ScoreEndpoints
         bool setHasRankedBoard = setStatus is "ranked" or "loved";
         bool setAwardsPp = setStatus == "ranked";
 
-        // Only HitResult names survive (ScoringContract.KnownKeysOnly): an unknown key prices
-        // nothing, and stored or echoed it would break the game's board for that map.
-        var statistics = ScoringContract.KnownKeysOnly(submission.Statistics);
-        var maximumStatistics = ScoringContract.KnownKeysOnly(submission.MaximumStatistics);
-
-        int droppedKeys = (submission.Statistics?.Count ?? 0) - statistics.Count
-                          + (submission.MaximumStatistics?.Count ?? 0) - maximumStatistics.Count;
+        // Only HitResult names survive, and a bonus count is held to the map's own maximum
+        // (ScoreSubmission.KnownStatistics): an unknown key prices nothing, and stored or echoed it
+        // would break the game's board for that map.
+        var (statistics, maximumStatistics, droppedKeys) = ScoreSubmission.KnownStatistics(submission.Statistics, submission.MaximumStatistics);
 
         if (droppedKeys > 0)
             logger.LogInformation("Score token {TokenId}: dropped {Count} unknown statistics key(s).", tokenId, droppedKeys);

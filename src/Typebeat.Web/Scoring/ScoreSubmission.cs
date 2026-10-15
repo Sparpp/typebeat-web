@@ -18,7 +18,8 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <para>
 /// The statistics allowlist itself is <see cref="ScoringContract.KnownKeysOnly"/>, next to the
-/// classifiers it mirrors; both routes call it before they read either dictionary.
+/// classifiers it mirrors; both routes reach it through <see cref="KnownStatistics"/> before they
+/// read either dictionary.
 /// </para>
 /// </summary>
 public static class ScoreSubmission
@@ -51,6 +52,24 @@ public static class ScoreSubmission
 
     /// <summary>Whether every member of this stack lets its play rank (<see cref="ModRanked"/>).</summary>
     public static bool StackRanked(IEnumerable<string?> acronyms) => acronyms.All(ModRanked);
+
+    /// <summary>
+    /// The client's two dictionaries as both routes read, store and echo them: only
+    /// <c>HitResult</c> names survive (<see cref="ScoringContract.KnownKeysOnly"/>), and a bonus count
+    /// is held to the same key's count in the surviving maximum
+    /// (<see cref="ScoringContract.BonusWithinMaximum"/>). <c>DroppedKeys</c> is how many keys the
+    /// two lost between them, for the caller's log line.
+    /// </summary>
+    public static (Dictionary<string, int> Statistics, Dictionary<string, int> MaximumStatistics, int DroppedKeys) KnownStatistics(
+        IReadOnlyDictionary<string, int>? statistics, IReadOnlyDictionary<string, int>? maximumStatistics)
+    {
+        var maximum = ScoringContract.KnownKeysOnly(maximumStatistics);
+        var known = ScoringContract.BonusWithinMaximum(ScoringContract.KnownKeysOnly(statistics), maximum);
+
+        int dropped = (statistics?.Count ?? 0) - known.Count + (maximumStatistics?.Count ?? 0) - maximum.Count;
+
+        return (known, maximum, dropped);
+    }
 
     /// <summary>
     /// Sums the per-key hit counts of <paramref name="add"/> into the stored <c>hit_counts</c> JSON.

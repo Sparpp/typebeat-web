@@ -40,6 +40,23 @@ public class ScoreSubmissionTest
     }
 
     [Test]
+    public void KnownStatistics_DropsUnknownKeys_AndBoundsBonusByTheMaximum()
+    {
+        var (statistics, maximum, dropped) = ScoreSubmission.KnownStatistics(
+            new Dictionary<string, int> { ["great"] = 10, ["large_bonus"] = 20_000, ["zz"] = 7 },
+            new Dictionary<string, int> { ["great"] = 10, ["Great"] = 3 });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(statistics.Keys, Is.EquivalentTo(new[] { "great", "large_bonus" }));
+            Assert.That(statistics["large_bonus"], Is.Zero, "no bonus in the map's maximum, so none may be claimed");
+            Assert.That(maximum.Keys, Is.EquivalentTo(new[] { "great" }));
+            Assert.That(dropped, Is.EqualTo(2), "zz from the statistics, Great from the maximum");
+            Assert.That(ScoreSubmission.KnownStatistics(null, null).DroppedKeys, Is.Zero);
+        });
+    }
+
+    [Test]
     public void MergeHitCounts_SumsKnownKeys_AndIgnoresTheRest()
     {
         string merged = ScoreSubmission.MergeHitCounts(

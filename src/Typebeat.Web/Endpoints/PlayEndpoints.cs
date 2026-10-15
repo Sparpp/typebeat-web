@@ -480,12 +480,9 @@ public static class PlayEndpoints
         bool setHasRankedBoard = setStatus is "ranked" or "loved";
         bool setAwardsPp = setStatus == "ranked";
 
-        // Only HitResult names survive, exactly as on the game's route (ScoringContract.KnownKeysOnly).
-        var statistics = ScoringContract.KnownKeysOnly(submission.Statistics);
-        var maximumStatistics = ScoringContract.KnownKeysOnly(submission.MaximumStatistics);
-
-        int droppedKeys = (submission.Statistics?.Count ?? 0) - statistics.Count
-                          + (submission.MaximumStatistics?.Count ?? 0) - maximumStatistics.Count;
+        // Only HitResult names survive, and a bonus count is held to the map's own maximum, exactly
+        // as on the game's route (ScoreSubmission.KnownStatistics).
+        var (statistics, maximumStatistics, droppedKeys) = ScoreSubmission.KnownStatistics(submission.Statistics, submission.MaximumStatistics);
 
         if (droppedKeys > 0)
             logger.LogInformation("Play token {TokenId}: dropped {Count} unknown statistics key(s).", token.Id, droppedKeys);
