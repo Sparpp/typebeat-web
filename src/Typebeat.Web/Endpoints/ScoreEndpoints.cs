@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Dapper;
 using Newtonsoft.Json;
 using Microsoft.Extensions.Caching.Memory;
@@ -26,6 +27,15 @@ namespace Typebeat.Web.Endpoints;
 public static class ScoreEndpoints
 {
     private const int status_unprocessable = StatusCodes.Status422UnprocessableEntity;
+
+    /// <summary>
+    /// What a desktop <c>version_hash</c> must look like to be registered: 32 hex digits, the MD5
+    /// every game build sends (<c>OsuGameBase.VersionHash</c>, the hash of the game assembly, or of
+    /// its version and OS where the assembly cannot be read). Anything else is refused rather than
+    /// written into <c>builds</c>, so the table cannot be filled with arbitrary text, and a value
+    /// past the btree row limit is a 422 instead of a 500.
+    /// </summary>
+    private static readonly Regex version_hash_shape = new("^[0-9a-fA-F]{32}$", RegexOptions.CultureInvariant);
 
     // THE ALWAYS-UNRANKED LIST LIVES IN Scoring/UnrankedMods.cs, exactly once (backlog 270). It
     // used to be declared here and again in GateRefund, whose copy claimed to mirror this one and
@@ -105,6 +115,9 @@ public static class ScoreEndpoints
         if (!int.TryParse(form["ruleset_id"].ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int rulesetId)
             || rulesetId != 0)
             return WireJson.Error(status_unprocessable, "invalid ruleset");
+
+        if (!version_hash_shape.IsMatch(versionHash))
+            return WireJson.Error(status_unprocessable, "invalid version_hash");
 
         // A local-only mod (Polyglot, backlog 332) never asks for a token: the stock client keeps
         // the play on the device and sends no mods here at all. A modified client that names one

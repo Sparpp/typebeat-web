@@ -346,7 +346,7 @@ public class PolyglotSiteTest
     {
         var form = new Dictionary<string, string>
         {
-            ["version_hash"] = "polyglot-test-build",
+            ["version_hash"] = "7e570000000000000000000000000005",
             ["beatmap_hash"] = polyglotChecksum,
             ["ruleset_id"] = "0",
         };

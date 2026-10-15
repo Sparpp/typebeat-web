@@ -627,7 +627,7 @@ public class PlayHistoryTest
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
             request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["version_hash"] = "play-history-test-build",
+                ["version_hash"] = "7e570000000000000000000000000007",
                 ["beatmap_hash"] = checksum,
                 ["ruleset_id"] = "0",
             });

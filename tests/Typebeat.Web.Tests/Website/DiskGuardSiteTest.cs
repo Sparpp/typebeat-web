@@ -323,7 +323,7 @@ public class DiskGuardSiteTest
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
         request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["version_hash"] = "disk-guard-test-build",
+            ["version_hash"] = "7e570000000000000000000000000006",
             ["beatmap_hash"] = checksum,
             ["ruleset_id"] = "0",
         });

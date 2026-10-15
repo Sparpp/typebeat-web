@@ -583,7 +583,7 @@ public class LovedStatusTest
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
             request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["version_hash"] = "loved-test-build",
+                ["version_hash"] = "7e570000000000000000000000000001",
                 ["beatmap_hash"] = checksum,
                 ["ruleset_id"] = "0",
             });

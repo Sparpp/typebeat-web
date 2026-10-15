@@ -139,7 +139,7 @@ public class SkipGateTest
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
             request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["version_hash"] = "skip-gate-test-build",
+                ["version_hash"] = "7e570000000000000000000000000003",
                 ["beatmap_hash"] = checksum,
                 ["ruleset_id"] = "0",
             });
