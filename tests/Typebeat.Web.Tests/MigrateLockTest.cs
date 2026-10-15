@@ -16,25 +16,22 @@ namespace Typebeat.Web.Tests;
 public class MigrateLockTest
 {
     // NOTE: distinct from every other fixture's database; each fixture force-drops its own.
-    private const string database_name = "typebeat_migratelocktests";
+    private static readonly string database_name = TestDatabase.NameFor("typebeat_migratelocktests");
 
-    private const string connection_string =
-        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private static readonly string connection_string = TestDatabase.ConnectionStringFor(database_name);
 
     [SetUp]
     public async Task SetUp()
     {
-        await using (var conn = new NpgsqlConnection(admin_connection_string))
-        {
-            await conn.OpenAsync();
-            await conn.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
-            await conn.ExecuteAsync($"CREATE DATABASE {database_name}");
-        }
+        await TestDatabase.RecreateAsync(database_name);
 
         await Db.EnsureExtensionsAsync(connection_string);
+    }
+
+    [OneTimeTearDown]
+    public async Task OneTimeTearDown()
+    {
+        await TestDatabase.DropAsync(database_name);
     }
 
     [Test]

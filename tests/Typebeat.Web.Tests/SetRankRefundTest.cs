@@ -32,13 +32,9 @@ namespace Typebeat.Web.Tests;
 [NonParallelizable]
 public class SetRankRefundTest
 {
-    private const string database_name = "typebeat_setrankrefundtests";
+    private static readonly string database_name = TestDatabase.NameFor("typebeat_setrankrefundtests");
 
-    private const string connection_string =
-        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private static readonly string connection_string = TestDatabase.ConnectionStringFor(database_name);
 
     private const double drain_s = 100;
 
@@ -79,12 +75,7 @@ public class SetRankRefundTest
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
-        await using (var admin = new NpgsqlConnection(admin_connection_string))
-        {
-            await admin.OpenAsync();
-            await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
-            await admin.ExecuteAsync($"CREATE DATABASE {database_name}");
-        }
+        await TestDatabase.RecreateAsync(database_name);
 
         await Db.EnsureExtensionsAsync(connection_string);
 
@@ -153,6 +144,8 @@ public class SetRankRefundTest
 
         if (fileRoot != null && Directory.Exists(fileRoot))
             Directory.Delete(fileRoot, recursive: true);
+
+        await TestDatabase.DropAsync(database_name);
     }
 
     [Test]
@@ -378,13 +371,9 @@ public class SetRankRefundTest
 [NonParallelizable]
 public class SetRankRefundVersionTest
 {
-    private const string database_name = "typebeat_setrankversiontests";
+    private static readonly string database_name = TestDatabase.NameFor("typebeat_setrankversiontests");
 
-    private const string connection_string =
-        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private static readonly string connection_string = TestDatabase.ConnectionStringFor(database_name);
 
     /// <summary>The rated fixture lyric, retimed: same words, every time moved. A gameplay change.</summary>
     private const string retimed_lyrics =
@@ -406,12 +395,7 @@ public class SetRankRefundVersionTest
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
-        await using (var admin = new NpgsqlConnection(admin_connection_string))
-        {
-            await admin.OpenAsync();
-            await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
-            await admin.ExecuteAsync($"CREATE DATABASE {database_name}");
-        }
+        await TestDatabase.RecreateAsync(database_name);
 
         await Db.EnsureExtensionsAsync(connection_string);
 
@@ -441,6 +425,8 @@ public class SetRankRefundVersionTest
 
         if (fileRoot != null && Directory.Exists(fileRoot))
             Directory.Delete(fileRoot, recursive: true);
+
+        await TestDatabase.DropAsync(database_name);
     }
 
     [Test]

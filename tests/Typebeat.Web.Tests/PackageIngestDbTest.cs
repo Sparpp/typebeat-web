@@ -25,13 +25,9 @@ public class PackageIngestDbTest
 {
     // NOTE: "typebeat_pkgtests"; must stay distinct from the website tests' "typebeat_webtests"
     // and WireCompat's "typebeat_wirecompat"; each fixture force-drops its own database.
-    private const string database_name = "typebeat_pkgtests";
+    private static readonly string database_name = TestDatabase.NameFor("typebeat_pkgtests");
 
-    private const string connection_string =
-        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private static readonly string connection_string = TestDatabase.ConnectionStringFor(database_name);
 
     private NpgsqlDataSource dataSource = null!;
     private Db db = null!;
@@ -45,12 +41,7 @@ public class PackageIngestDbTest
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
-        await using (var conn = new NpgsqlConnection(admin_connection_string))
-        {
-            await conn.OpenAsync();
-            await conn.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
-            await conn.ExecuteAsync($"CREATE DATABASE {database_name}");
-        }
+        await TestDatabase.RecreateAsync(database_name);
 
         await Db.EnsureExtensionsAsync(connection_string);
 
@@ -98,6 +89,8 @@ public class PackageIngestDbTest
 
         if (fileRoot != null && Directory.Exists(fileRoot))
             Directory.Delete(fileRoot, recursive: true);
+
+        await TestDatabase.DropAsync(database_name);
     }
 
     [Test]

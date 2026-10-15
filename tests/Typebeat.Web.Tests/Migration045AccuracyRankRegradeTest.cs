@@ -17,13 +17,9 @@ namespace Typebeat.Web.Tests;
 [NonParallelizable]
 public class Migration045AccuracyRankRegradeTest
 {
-    private const string database_name = "typebeat_migr045tests";
+    private static readonly string database_name = TestDatabase.NameFor("typebeat_migr045tests");
 
-    private const string connection_string =
-        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private static readonly string connection_string = TestDatabase.ConnectionStringFor(database_name);
 
     private NpgsqlDataSource dataSource = null!;
 
@@ -36,12 +32,7 @@ public class Migration045AccuracyRankRegradeTest
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
-        await using (var conn = new NpgsqlConnection(admin_connection_string))
-        {
-            await conn.OpenAsync();
-            await conn.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
-            await conn.ExecuteAsync($"CREATE DATABASE {database_name}");
-        }
+        await TestDatabase.RecreateAsync(database_name);
 
         await Db.EnsureExtensionsAsync(connection_string);
 
@@ -118,6 +109,8 @@ public class Migration045AccuracyRankRegradeTest
     {
         if (dataSource != null)
             await dataSource.DisposeAsync();
+
+        await TestDatabase.DropAsync(database_name);
     }
 
     [Test]
