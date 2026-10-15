@@ -21,11 +21,14 @@ namespace Typebeat.Web.Scoring;
 ///    Both dictionaries are transmitted, so accuracy is exact; we OVERRIDE the submitted value.
 ///  - <b>completion</b> and <b>rank</b>. Completion = typed cells (accuracy-affecting judgements
 ///    in <c>statistics</c> that <see cref="CountsAsTyped"/>) over TOTAL map cells
-///    (accuracy-affecting counts in <c>maximum_statistics</c>). Rank is graded on completion, NOT
-///    accuracy: typing every character RIGHT is an SS regardless of timing quality; what costs the
-///    grade is a cell the play did not type right, i.e. one that scrolled past untyped (a miss) or
-///    one left holding a wrong character (an uncorrected typo). Mirrors the client's
-///    <c>TypeBeatScoreProcessor</c>; keep the cutoffs in the two files in sync.
+///    (accuracy-affecting counts in <c>maximum_statistics</c>); stored and shown, but it no longer
+///    decides the rank. Rank is graded on ACCURACY plus a missed-cell limit
+///    (<see cref="RankFromAccuracy"/>): the <c>ACCURACY_CUTOFF_*</c> bands, with SS needing no
+///    missed cell and S a missed fraction under <c>S_MISS_LIMIT</c>, where a missed cell is one
+///    that scrolled past untyped (a miss) or one left holding a wrong character (an uncorrected
+///    typo). Mirrors the client's <c>TypeBeatScoreProcessor</c> and <c>typebeat-core.js</c>;
+///    migration 045 re-graded the stored rows under it and <c>RankParityTest</c> pins the copies,
+///    so keep the cutoffs in sync.
 ///  - <b>theoretical max combo</b>. Every combo-increasing judgement in <c>maximum_statistics</c>
 ///    (HitResult.IncreasesCombo = AffectsCombo &amp;&amp; IsHit, HitResult.cs:171-203). For a typing
 ///    map that is the note count. Submitted <c>max_combo</c> may not exceed it.
@@ -183,7 +186,8 @@ public static class ScoringContract
     /// falsely flag honest submissions as out of bounds.
     ///
     /// <see cref="Completion"/> is whole-map: typed cells over the map's total cell count, so a
-    /// failed run reads as "typed 43% of the map". <see cref="Rank"/> is graded on it.
+    /// failed run reads as "typed 43% of the map". <see cref="Rank"/> is NOT graded on it: rank
+    /// reads accuracy and the missed fraction (<see cref="RankFromStatistics"/>).
     /// </summary>
     public readonly record struct Recomputed(
         double Accuracy,

@@ -1179,7 +1179,12 @@ so the shown columns sum to the judged cell count again.
 COMPLETION and therefore RANK are deliberately untouched, and the fold found that half already
 done: backlog 126 took an uncorrected typo out of completion's numerator, so it has cost the grade
 exactly as a miss does ever since. That is why accuracy could be re-weighted without touching
-`ScoringContract.CountsAsTyped` or `RankFromCompletion`.
+`ScoringContract.CountsAsTyped` or `RankFromCompletion`. (Superseded since: rank is no longer graded
+on completion and `RankFromCompletion` is gone. Ranks are graded on accuracy, the
+`ACCURACY_CUTOFF_*` bands, plus a missed-cell limit, none missed for X and under `S_MISS_LIMIT` for
+S, in `TypeBeatScoreProcessor`, `ScoringContract.RankFromAccuracy` and `typebeat-core.js`;
+migration 045 re-graded the stored rows, and the two `RankParityTest` fixtures (WireCompat and
+Web.Tests) pin the three.)
 
 **`VERSION` bumps to 18.** Every stored row carrying a `good` key is repriced, downwards, by
 `PpBackfill`'s sweep at the next boot; no migration is needed, since the sweep reads only columns
