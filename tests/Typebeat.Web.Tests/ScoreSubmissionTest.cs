@@ -57,6 +57,21 @@ public class ScoreSubmissionTest
     }
 
     [Test]
+    public void KnownStatistics_IgnoresABonusTheClientAlsoClaimsAsMaximum()
+    {
+        var (statistics, maximum, dropped) = ScoreSubmission.KnownStatistics(
+            new Dictionary<string, int> { ["great"] = 10, ["large_bonus"] = 20_000 },
+            new Dictionary<string, int> { ["great"] = 10, ["large_bonus"] = 20_000 });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(statistics["large_bonus"], Is.Zero, "a type!beat map has no bonus judgement");
+            Assert.That(maximum.Keys, Is.EquivalentTo(new[] { "great" }));
+            Assert.That(dropped, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
     public void MergeHitCounts_SumsKnownKeys_AndIgnoresTheRest()
     {
         string merged = ScoreSubmission.MergeHitCounts(

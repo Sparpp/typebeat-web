@@ -57,13 +57,17 @@ public static class ScoreSubmission
     /// The client's two dictionaries as both routes read, store and echo them: only
     /// <c>HitResult</c> names survive (<see cref="ScoringContract.KnownKeysOnly"/>), and a bonus count
     /// is held to the same key's count in the surviving maximum
-    /// (<see cref="ScoringContract.BonusWithinMaximum"/>). <c>DroppedKeys</c> is how many keys the
-    /// two lost between them, for the caller's log line.
+    /// (<see cref="ScoringContract.BonusWithinMaximum"/>). A type!beat map has no bonus judgement, and
+    /// the maximum is the client's own claim, so a bonus key in the maximum is dropped too: otherwise a
+    /// client could lift both sides together. <c>DroppedKeys</c> is how many keys the two lost between
+    /// them, for the caller's log line.
     /// </summary>
     public static (Dictionary<string, int> Statistics, Dictionary<string, int> MaximumStatistics, int DroppedKeys) KnownStatistics(
         IReadOnlyDictionary<string, int>? statistics, IReadOnlyDictionary<string, int>? maximumStatistics)
     {
-        var maximum = ScoringContract.KnownKeysOnly(maximumStatistics);
+        var maximum = ScoringContract.KnownKeysOnly(maximumStatistics)
+                                     .Where(kv => !ScoringContract.IsBonus(kv.Key))
+                                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
         var known = ScoringContract.BonusWithinMaximum(ScoringContract.KnownKeysOnly(statistics), maximum);
 
         int dropped = (statistics?.Count ?? 0) - known.Count + (maximumStatistics?.Count ?? 0) - maximum.Count;

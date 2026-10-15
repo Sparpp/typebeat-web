@@ -622,7 +622,7 @@ public static class ScoringContract
     };
 
     // HitResult.IsBonus (HitResult.cs:267-278).
-    private static bool IsBonus(string key) => key is "small_bonus" or "large_bonus";
+    internal static bool IsBonus(string key) => key is "small_bonus" or "large_bonus";
 
     /// <summary>
     /// The statistics key an UNCORRECTED TYPO is stored under (the client's
