@@ -150,6 +150,48 @@ public class ScoreSubmitIntegrityTest
         });
     }
 
+    /// <summary>
+    /// The game's token route registers only a version_hash shaped like the MD5 every game build
+    /// sends: anything else is a 422 with its own error, and no builds row is written for it. A
+    /// trailing newline is refused too (a plain <c>$</c> anchor would have let it through), and a
+    /// value far past the btree row limit is refused before it can reach the index.
+    /// </summary>
+    [Test]
+    public async Task GameRoute_AVersionHashThatIsNotAnMd5_IsRefused_AndNotRegistered()
+    {
+        var (beatmapId, checksum) = await seedLovedMapAsync("Integrity Version Hash Song");
+
+        string[] refused =
+        [
+            "",
+            "0123456789abcdef0123456789abcde",
+            "0123456789abcdef0123456789abcdef0",
+            "0123456789abcdef0123456789abcdeg",
+            "0123456789abcdef0123456789abcdef\n",
+            new string('a', 3000),
+        ];
+
+        foreach (string versionHash in refused)
+        {
+            using var response = await requestTokenAsync(beatmapId, checksum, versionHash);
+            string body = await response.Content.ReadAsStringAsync();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.UnprocessableEntity), $"{versionHash.Length} chars: {body}");
+                Assert.That((string?)JObject.Parse(body)["error"], Is.EqualTo("invalid version_hash"));
+            });
+
+            Assert.That(await buildRowsAsync(versionHash), Is.Zero, $"no builds row for the refused {versionHash.Length}-char value");
+        }
+
+        // The control: a well-formed hash is issued a token and registered, upper case included.
+        using (var accepted = await requestTokenAsync(beatmapId, checksum, "7E570000000000000000000000000009"))
+            Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        Assert.That(await buildRowsAsync("7E570000000000000000000000000009"), Is.EqualTo(1));
+    }
+
     /// <summary>The browser route drops an unknown statistics key exactly as the game route does.</summary>
     [Test]
     public async Task BrowserRoute_UnknownStatisticsKey_IsDropped_AndThePlayStillRanks()
@@ -291,6 +333,27 @@ public class ScoreSubmitIntegrityTest
 
             return JObject.Parse(await response.Content.ReadAsStringAsync());
         }
+    }
+
+    private static async Task<HttpResponseMessage> requestTokenAsync(long beatmapId, string checksum, string versionHash)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v2/beatmaps/{beatmapId}/solo/scores");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["version_hash"] = versionHash,
+            ["beatmap_hash"] = checksum,
+            ["ruleset_id"] = "0",
+        });
+
+        return await WebsiteFixture.Client.SendAsync(request);
+    }
+
+    private static async Task<long> buildRowsAsync(string versionHash)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<long>("SELECT count(*) FROM builds WHERE version_hash = @versionHash", new { versionHash });
     }
 
     private static async Task<JObject> getLeaderboardAsync(long beatmapId)

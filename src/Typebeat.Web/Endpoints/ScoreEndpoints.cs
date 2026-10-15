@@ -33,9 +33,10 @@ public static class ScoreEndpoints
     /// every game build sends (<c>OsuGameBase.VersionHash</c>, the hash of the game assembly, or of
     /// its version and OS where the assembly cannot be read). Anything else is refused rather than
     /// written into <c>builds</c>, so the table cannot be filled with arbitrary text, and a value
-    /// past the btree row limit is a 422 instead of a 500.
+    /// past the btree row limit is a 422 instead of a 500. Anchored with <c>\A</c> and <c>\z</c>,
+    /// because <c>$</c> would also match before a trailing newline.
     /// </summary>
-    private static readonly Regex version_hash_shape = new("^[0-9a-fA-F]{32}$", RegexOptions.CultureInvariant);
+    private static readonly Regex version_hash_shape = new(@"\A[0-9a-fA-F]{32}\z", RegexOptions.CultureInvariant);
 
     // THE ALWAYS-UNRANKED LIST LIVES IN Scoring/UnrankedMods.cs, exactly once (backlog 270). It
     // used to be declared here and again in GateRefund, whose copy claimed to mirror this one and
@@ -327,8 +328,11 @@ public static class ScoreEndpoints
         bool ranked = setHasRankedBoard && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && modsRanked && !buildBlocked;
 
         if (!modsRanked)
-            logger.LogInformation("Score token {TokenId}: unranked or unknown mod used ({Mods}), storing unranked.",
-                tokenId, string.Join(",", mods.Select(m => m.Acronym)));
+        {
+            var refused = mods.Select(m => m.Acronym).Where(a => !ScoreSubmission.ModRanked(a)).ToList();
+            logger.LogInformation("Score token {TokenId}: {Count} unranked or unknown mod(s) used ({Sample}), storing unranked.",
+                tokenId, refused.Count, LogSample(refused));
+        }
 
         // What the player saw: final whole-map accuracy for completed plays, the running
         // (judged-only) accuracy at the moment of failure otherwise. Equal when fully judged.
@@ -804,6 +808,15 @@ public static class ScoreEndpoints
         CountryCode = countryCode,
         AvatarUrl = UserWire.AvatarUrl(ctx.Request.Scheme, ctx.Request.Host.Value ?? string.Empty, avatarKey),
     };
+
+    /// <summary>
+    /// At most the first three of some client-sent strings, each stripped of control characters and
+    /// cut to eight, for a log line: the acronyms are whatever the body said, so neither their
+    /// number nor their content may shape what is written.
+    /// </summary>
+    private static string LogSample(IReadOnlyList<string> values)
+        => string.Join(",", values.Take(3).Select(v => new string(v.Where(c => !char.IsControl(c)).Take(8).ToArray())))
+           + (values.Count > 3 ? ",..." : "");
 
     /// <summary>
     /// The stored statistics jsonb as the client's HitResult-keyed counts. Internal because the
