@@ -63,13 +63,17 @@ public sealed class CoverGenerator
     {
         // Identify and decode both read from the start, so a stream that cannot rewind is
         // buffered once (every current caller passes a seekable one).
+        MemoryStream? copy = null;
+
         if (!source.CanSeek)
         {
-            var copy = new MemoryStream();
+            copy = new MemoryStream();
             await source.CopyToAsync(copy, ct);
             copy.Position = 0;
             source = copy;
         }
+
+        await using var ownedCopy = copy;
 
         long start = source.Position;
         var info = await Image.IdentifyAsync(source, ct);

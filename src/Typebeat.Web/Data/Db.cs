@@ -52,7 +52,9 @@ public sealed class Db(NpgsqlDataSource dataSource)
     {
         await using var conn = await OpenAsync(ct);
 
-        await conn.ExecuteAsync("SELECT pg_advisory_lock(@key)", new { key = MigrationLockKey });
+        // No command timeout: a process booting behind a long migration pass waits for it rather
+        // than failing its startup after the default 30 s.
+        await conn.ExecuteAsync("SELECT pg_advisory_lock(@key)", new { key = MigrationLockKey }, commandTimeout: 0);
 
         try
         {
@@ -99,7 +101,16 @@ public sealed class Db(NpgsqlDataSource dataSource)
         }
         finally
         {
-            await conn.ExecuteAsync("SELECT pg_advisory_unlock(@key)", new { key = MigrationLockKey });
+            try
+            {
+                await conn.ExecuteAsync("SELECT pg_advisory_unlock(@key)", new { key = MigrationLockKey });
+            }
+            catch (Exception e)
+            {
+                // Never mask the migration's own failure; returning the connection to the pool
+                // releases a session lock anyway.
+                logger.LogWarning(e, "Could not release the migration lock.");
+            }
         }
     }
 }
