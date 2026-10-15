@@ -24,6 +24,10 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
 {
     public const int PageSize = 50;
 
+    // The cursor's unix-microsecond range that still converts to a DateTime (ticks are 10 per microsecond).
+    private static readonly long min_cursor_micros = (DateTime.MinValue.Ticks - DateTime.UnixEpoch.Ticks) / 10;
+    private static readonly long max_cursor_micros = (DateTime.MaxValue.Ticks - DateTime.UnixEpoch.Ticks) / 10;
+
     public string Query { get; private set; } = string.Empty;
     public string Sort { get; private set; } = "newest";
     public string StatusFilter { get; private set; } = "any";
@@ -125,6 +129,11 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
         string orderBy;
         string? cursor = null;
 
+        // A timestamp cursor outside the DateTime range is ignored (the first page), not a 500.
+        DateTime? afterTime = after is long micros && micros >= min_cursor_micros && micros <= max_cursor_micros
+            ? DateTime.UnixEpoch.AddTicks(micros * 10)
+            : null;
+
         // Match tier ranks only the default sort: "most played" and "most favourited" are the
         // visitor asking for that order, so they keep it exactly as before.
 
@@ -153,22 +162,22 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
                 // cursor leads with the tier (ascending) ahead of the (submitted_at, id) pair
                 // (descending), so it cannot be one row comparison.
                 orderBy = $"ORDER BY {tier}, s.submitted_at DESC, s.id DESC";
-                if (after is not null && afterId is not null)
+                if (afterTime is not null && afterId is not null)
                 {
                     cursor = $"AND ({tier} > @afterTier OR ({tier} = @afterTier AND (s.submitted_at, s.id) < (@afterTs, @afterId)))";
-                    param.Add("afterTs", DateTime.UnixEpoch.AddTicks(after.Value * 10));
+                    param.Add("afterTs", afterTime.Value);
                     param.Add("afterTier", Math.Clamp(afterTier ?? FreeTextSearch.TierExact, FreeTextSearch.TierExact, FreeTextSearch.TierSubstring));
                 }
                 break;
 
             default:
                 orderBy = "ORDER BY s.submitted_at DESC, s.id DESC";
-                if (after is not null && afterId is not null)
+                if (afterTime is not null && afterId is not null)
                 {
                     // Cursor carries unix MICROseconds; timestamptz is microsecond-precise, so
                     // millisecond truncation could skip rows sharing the boundary instant.
                     cursor = "AND (s.submitted_at, s.id) < (@afterTs, @afterId)";
-                    param.Add("afterTs", DateTime.UnixEpoch.AddTicks(after.Value * 10));
+                    param.Add("afterTs", afterTime.Value);
                 }
                 break;
         }
