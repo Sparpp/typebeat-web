@@ -155,8 +155,6 @@ body {
     animation: tbCaret 1.1s step-end infinite;
 }
 
-.caret--tall { height: 1.05em; vertical-align: -0.16em; }
-
 h1, h2, h3, h4 {
     font-family: var(--font-display);
     font-weight: 700;
@@ -745,7 +743,6 @@ img { max-width: 100%; }
 
 .muted { color: var(--text-muted); }
 .faint { color: var(--text-faint); }
-.text-center { text-align: center; }
 
 /* readable-width column for long-form text pages (DMCA, terms, ...) */
 .prose { max-width: 68ch; }
@@ -1763,11 +1760,6 @@ a.pager-item:hover {
     display: flex;
     justify-content: space-between;
     margin: var(--space-1) 0 var(--space-3);
-    font-size: var(--text-xs);
-}
-
-.wpm-graph__caption {
-    margin-top: var(--space-2);
     font-size: var(--text-xs);
 }
 
@@ -2808,45 +2800,6 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     border: 1px dashed var(--line-bright);
     border-radius: var(--radius-lg);
 }
-
-.play-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: var(--space-4);
-    margin-bottom: var(--space-8);
-}
-
-.tb-map {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3);
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
-    color: inherit;
-    font-family: inherit;
-    text-align: left;
-    cursor: pointer;
-    transition: border-color .12s ease, transform .12s ease, box-shadow .12s ease;
-}
-.tb-map:hover { border-color: var(--violet); transform: translateY(-2px); box-shadow: var(--glow-violet); }
-.tb-map:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
-
-.tb-map-cover {
-    flex: 0 0 auto;
-    width: 56px; height: 56px;
-    border-radius: var(--radius-md);
-    overflow: hidden;
-    background: var(--grad-primary);
-    display: block;
-}
-.tb-map-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-
-.tb-map-info { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
-.tb-map-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tb-map-artist { color: var(--text-muted); font-size: var(--text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tb-map-stats { color: var(--violet); font-size: var(--text-xs); margin-top: 2px; }
 
 /* ---- stage ---- */
 .play-stage-wrap { position: relative; margin: var(--space-4) 0 var(--space-8); }
