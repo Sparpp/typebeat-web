@@ -27,10 +27,27 @@
  * per-cell tint: the desktop metric they mirrored is off by default too, and the browser has no
  * settings UI to gate it behind, so it mirrors the default by dropping it entirely.
  *
- * It is DISPLAY ONLY. typebeat-core.js (the hand-written mirror of the C# TypingEngine and
- * scorer) is not touched by any of it: nothing here calls back into judgement, and every
- * derived value is computed here from state core already exposes. Browser scores land on the
- * same leaderboards as desktop, so the engine must stay byte-compatible.
+ * The presentation is display only: typebeat-core.js (the hand-written mirror of the C#
+ * TypingEngine and scorer) is not touched by any of it, nothing in it calls back into judgement,
+ * and every derived value is computed here from state core already exposes.
+ *
+ * The FILE is not display only, though. It also owns four pieces that decide what the engine is
+ * fed, when a seek is allowed, or whether a run is submitted at all. Each mirrors desktop code,
+ * each affects scores, and each is pinned by a parity test:
+ *   - what a keypress types: keyToChars and the foldTyped fold under it (the game's
+ *     TextInputFold.Fold), held against the game by WireCompat's KeyToCharParityTest;
+ *   - the keystroke protocol: routeKeyDown, the whole keydown listener (a press is quantised to a
+ *     whole millisecond and the engine advanced to it before any gate or judgement, as
+ *     TypeBeatPlayfield's key handler does), held by WireCompat's KeyHandlerOrderLiveParityTest;
+ *   - the instrumental-skip rule: computeGaps, skipAllowed and the skip targets, a third copy of
+ *     InstrumentalGaps (game and server) and also the WPM-clock guard, held against the server's
+ *     InstrumentalGaps.Compute by WebplayDisplayTest;
+ *   - the playback-validity veto: makePlaybackValidity, the desktop's check on an audio clock that
+ *     drifts from wall time (a flagged run is never submitted), pinned by PlaybackValidityHarness
+ *     through PlaybackValidityTest.
+ * A change to any of them is a scoring change: it lands with the matching desktop change and its
+ * parity test, or not at all. Browser scores land on the same leaderboards as desktop, so the
+ * engine must stay byte-compatible.
  *
  * Everything animated is clocked off the SAME audio clock the engine judges against
  * (nowMs()), never wall time, so the visuals can never drift from judgement. The only
