@@ -984,11 +984,13 @@
 
     // InstrumentalGaps.LastTypeableTarget: the target of the line's last typeable cell, or null.
     //
-    // The C# reconstructs this from the raw token/unit layout because the server does not decode
-    // words[].syllables; here the decoded cells are to hand, so it is a scan. The two agree wherever
-    // the value can matter: it is only ever consulted through max(singEndTime, ...), so it moves the
-    // answer at all only on weird data where a word overruns the line's reported sing end, and a
-    // subdivided word's last char still sits inside the same [unitStart, unitEnd] the flat ramp does.
+    // Here the decoded cells are to hand, so it is a scan of the real targets, as in the game. The
+    // server's C# instead puts a flat ramp over each word's unit, kept on purpose for the reason
+    // given above FirstTypeableTarget in Packages/Lyrics/InstrumentalGaps.cs. The two agree
+    // wherever the value can matter: it is only ever consulted through max(singEndTime, ...), so it
+    // moves the answer at all only on weird data where a word overruns the line's reported sing
+    // end, and then by part of one unit, since a subdivided word's last char still sits inside the
+    // same [unitStart, unitEnd] the flat ramp does.
     function lastTypeableTarget(line) {
         for (let i = line.cells.length - 1; i >= 0; i--) {
             if (line.cells[i].typeable) return line.cells[i].target;
