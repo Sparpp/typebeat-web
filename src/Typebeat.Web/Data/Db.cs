@@ -23,8 +23,13 @@ public sealed class Db(NpgsqlDataSource dataSource)
     public async Task<NpgsqlConnection> OpenAsync(CancellationToken ct = default)
         => await DataSource.OpenConnectionAsync(ct);
 
+    /// <summary>
+    /// TYPEBEAT_DB, else ConnectionStrings:typebeat, else the local dev default. TYPEBEAT_DB is read
+    /// through configuration: the host's environment provider is where the deploy's variable lands,
+    /// so it still outranks appsettings.json, and a caller can hand it in without the process env.
+    /// </summary>
     public static string ResolveConnectionString(IConfiguration config)
-        => Environment.GetEnvironmentVariable("TYPEBEAT_DB")
+        => config["TYPEBEAT_DB"]
            ?? config.GetConnectionString("typebeat")
            ?? "Host=localhost;Port=5432;Database=typebeat;Username=typebeat;Password=typebeat";
 
