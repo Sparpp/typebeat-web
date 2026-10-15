@@ -539,8 +539,10 @@ public class LyricPaceParityTest
             // Both moved in PR 17: the SR model drops its minimum-character window, so every star
             // column and the ratings matrix re-derive (pace 25), and pp gains the short-map factor
             // (pp 25). They move together here because the matrix is what pp's rating arm reads.
+            // Both moved again in PR 35: the rating counts the spaces punctuation produces (pace 26),
+            // and pp bumps with it so every stored row reprices on the new ratings (pp 26).
             Assert.That(ServerPace.VERSION, Is.EqualTo(26));
-            Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(25)); // pp:version
+            Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(26)); // pp:version
         });
     }
 

@@ -449,8 +449,15 @@ public static class PerformancePoints
     /// priced with a zeroed cleanliness term, exactly as an unfilled <c>sr_dt</c> already does, so
     /// the two sweeps compose in either order and the second one settles what the first could
     /// not.</para>
+    ///
+    /// <para>v25 adds the played-duration penalty: 15% at 30 seconds, up to 60% near zero.</para>
+    ///
+    /// <para>v26 leaves the formula alone: PR 35 counts the spaces punctuation produces (hyphen
+    /// breaks included) in the star rating's cells (<c>LyricPace.VERSION</c> 26), so the ratings and
+    /// difficult-character counts a price reads can move, and the bump reprices every stored row
+    /// against them.</para>
     /// </summary>
-    public const int VERSION = 25;
+    public const int VERSION = 26;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
