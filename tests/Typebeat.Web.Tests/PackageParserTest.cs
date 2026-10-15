@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using Typebeat.Web.Packages;
 
@@ -452,5 +453,50 @@ public class PackageParserTest
         using var zip = SyntheticPackage.Zip((name, SyntheticPackage.Utf8("x")));
 
         Assert.Throws<PackageValidationException>(() => BeatmapPackageParser.Parse(zip));
+    }
+
+    [Test]
+    public void Parse_EntryHeaderOverstatesLength_AllocatesOnlyWhatItReads()
+    {
+        // A 3-byte entry whose local and central headers both claim 900 MiB: under the 1 GiB
+        // declared-length guard, so only the bounded read stands between it and a 900 MiB buffer.
+        using var honest = SyntheticPackage.Zip(("audio.mp3", new byte[] { 1, 2, 3 }));
+        using var zip = new MemoryStream(withDeclaredLength(honest.ToArray(), 900u << 20));
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        var package = BeatmapPackageParser.Parse(zip);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(package.Files.Single().Size, Is.EqualTo(3));
+            Assert.That(allocated, Is.LessThan(64L << 20), "nothing may be preallocated from the declared length");
+        });
+    }
+
+    [Test]
+    public void ReadBounded_PastTheLimit_Throws422able()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(BeatmapPackageParser.ReadBounded(new MemoryStream(new byte[100]), limit: 100), Has.Length.EqualTo(100));
+            Assert.Throws<PackageValidationException>(() => BeatmapPackageParser.ReadBounded(new MemoryStream(new byte[100]), limit: 99));
+        });
+    }
+
+    /// <summary>Rewrites every entry's uncompressed size in both the local and the central headers.</summary>
+    private static byte[] withDeclaredLength(byte[] zip, uint declared)
+    {
+        for (int i = 0; i + 4 <= zip.Length; i++)
+        {
+            uint signature = BinaryPrimitives.ReadUInt32LittleEndian(zip.AsSpan(i));
+
+            if (signature == 0x04034b50) // local file header: uncompressed size at +22
+                BinaryPrimitives.WriteUInt32LittleEndian(zip.AsSpan(i + 22), declared);
+            else if (signature == 0x02014b50) // central directory header: uncompressed size at +24
+                BinaryPrimitives.WriteUInt32LittleEndian(zip.AsSpan(i + 24), declared);
+        }
+
+        return zip;
     }
 }
