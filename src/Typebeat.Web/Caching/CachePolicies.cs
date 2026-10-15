@@ -67,14 +67,15 @@ public static class CachePolicies
 
     /// <summary>
     /// Adds <c>Cache-Control: private, no-store</c> to every response for a signed-in visitor or
-    /// a bearer caller that has not chosen a Cache-Control of its own, so neither a browser cache
-    /// nor the Cloudflare edge ever keeps a personal page. Responses that already set one (the
-    /// media routes' public covers and avatars) keep it: those bodies are the same for everyone.
+    /// a resolved bearer caller that has not chosen a Cache-Control of its own, so neither a
+    /// browser cache nor the Cloudflare edge ever keeps a personal page. Responses that already set
+    /// one (the media routes' public covers and avatars) keep it: those bodies are the same for
+    /// everyone. A bearer that resolves to nobody gets the guest's answer and the guest's headers.
     /// </summary>
     public static IApplicationBuilder UsePrivateNoStore(this IApplicationBuilder app)
         => app.Use((ctx, next) =>
         {
-            if (ctx.SessionUser() is not null || ctx.Request.Headers.ContainsKey("Authorization"))
+            if (ctx.SessionUser() is not null || ctx.ResolvedBearer() is not null)
             {
                 ctx.Response.OnStarting(() =>
                 {

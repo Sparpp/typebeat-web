@@ -10,9 +10,11 @@ namespace Typebeat.Web.Auth;
 
 /// <summary>
 /// Who a rate-limit budget belongs to. A signed-in website visitor is their user id; a bearer
-/// caller is a hash of the token (bearer auth is an endpoint filter that runs AFTER the limiter,
-/// so the user is not known yet, and a token is one game install); anyone else is their client
-/// IP (<see cref="AuthExtensions.GetClientIp"/>, which the proxy makes unforgeable).
+/// caller whose token resolved to a user (<see cref="AuthExtensions.UseBearerResolution"/>, which
+/// runs before the limiter) is a hash of the token, since a token is one game install; anyone
+/// else, including a bearer that resolves to nobody, is their client IP
+/// (<see cref="AuthExtensions.GetClientIp"/>, which the proxy makes unforgeable), so made-up
+/// tokens cannot buy a fresh bucket each.
 /// </summary>
 public static class RateLimitKeys
 {
@@ -22,7 +24,7 @@ public static class RateLimitKeys
             return "u:" + user.Id.ToString(CultureInfo.InvariantCulture);
 
         string? header = ctx.Request.Headers.Authorization.FirstOrDefault();
-        if (header is not null && header.StartsWith("Bearer ", StringComparison.Ordinal))
+        if (ctx.ResolvedBearer() is not null && header is not null && header.StartsWith("Bearer ", StringComparison.Ordinal))
         {
             byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(header["Bearer ".Length..].Trim()));
             return "t:" + Convert.ToHexString(digest)[..16].ToLowerInvariant();
@@ -131,7 +133,8 @@ public static class RateLimits
 
     /// <summary>
     /// The global cap on unauthenticated reads: 300 a minute per client IP for a GET/HEAD with no
-    /// session user and no Authorization header. Requests a cached response answers still count,
+    /// session user and no resolved bearer (an Authorization header that resolves to nobody is
+    /// counted like none at all). Requests a cached response answers still count,
     /// which is why it is generous. A request with no address at all ("unknown", which only an
     /// in-process test host produces) is not capped, so a whole test suite never shares one bucket.
     /// </summary>
@@ -141,7 +144,7 @@ public static class RateLimits
 
         if (!(HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method))
             || ctx.SessionUser() is not null
-            || request.Headers.ContainsKey("Authorization"))
+            || ctx.ResolvedBearer() is not null)
             return RateLimitPartition.GetNoLimiter(string.Empty);
 
         foreach (string prefix in anonymous_read_exempt)

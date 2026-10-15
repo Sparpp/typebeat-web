@@ -34,9 +34,10 @@ public static class BeatmapLookupEndpoints
     public static void Map(IEndpointRouteBuilder app)
     {
         // A pack import fires one lookup per difficulty, so this gets a deep token bucket rather
-        // than a window (backlog 366, Auth/RateLimits.cs). The bucket is per client IP for a guest,
-        // and this path is exempt from the anonymous read cap so a guest's import gets the same
-        // burst a signed-in one does (backlog 406, RateLimits.anonymous_read_exempt).
+        // than a window (backlog 366, Auth/RateLimits.cs). The bucket is per client IP for a guest
+        // (a bearer that resolves to nobody included, see RateLimitKeys), and this path is exempt
+        // from the anonymous read cap so a guest's import gets the same burst a signed-in one does
+        // (backlog 406, RateLimits.anonymous_read_exempt).
         app.MapGet(Path, HandleAsync).RequireRateLimiting(RateLimits.Lookup);
     }
 

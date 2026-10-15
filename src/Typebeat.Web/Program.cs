@@ -276,10 +276,14 @@ app.UseRouting();
 // HttpContext.Items. Bearer-API and anonymous requests pass straight through.
 app.UseSessionCookieAuth();
 
-// Backlog 366. AFTER the session middleware, because both read ctx.SessionUser(): the limiter to
-// key a signed-in visitor by id, the cache to refuse them. Limiter first, so a request the cache
-// would answer still spends its anonymous-read budget. Then Cache-Control: private, no-store on
-// every personal response that chose no header of its own.
+// Game bearers, resolved once here so the limiter and the cache below see the user (or nobody)
+// rather than the bare header; handlers reuse the answer (AuthExtensions.ResolveBearerAsync).
+app.UseBearerResolution();
+
+// Backlog 366. AFTER the session and bearer middleware, because both read ctx.SessionUser() and
+// ctx.ResolvedBearer(): the limiter to key a signed-in caller, the cache to refuse them. Limiter
+// first, so a request the cache would answer still spends its anonymous-read budget. Then
+// Cache-Control: private, no-store on every personal response that chose no header of its own.
 app.UseRateLimiter();
 app.UseOutputCache();
 app.UsePrivateNoStore();
