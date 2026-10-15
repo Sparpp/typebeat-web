@@ -25,7 +25,7 @@
         if (current) {
             current.classList.remove('is-playing');
             current.style.removeProperty('--progress');
-            current.setAttribute('aria-label', 'Play preview');
+            current.setAttribute('aria-label', current.dataset.playLabel || 'Play preview');
             current = null;
         }
     }
@@ -66,6 +66,9 @@
         clip.addEventListener('error', stopIfCurrent);
 
         btn.classList.add('is-playing');
+        // The card names its button by title; keep that name to restore when the preview stops.
+        if (!btn.dataset.playLabel)
+            btn.dataset.playLabel = btn.getAttribute('aria-label') || 'Play preview';
         btn.setAttribute('aria-label', 'Stop preview');
         clip.play().catch(stopIfCurrent);
     });
