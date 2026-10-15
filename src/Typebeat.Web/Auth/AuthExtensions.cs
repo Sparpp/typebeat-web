@@ -88,7 +88,18 @@ public static class AuthExtensions
         => app.Use(async (ctx, next) =>
         {
             if (ctx.SessionUser() is null && ctx.Request.Headers.ContainsKey("Authorization"))
-                await ctx.ResolveBearerAsync();
+            {
+                try
+                {
+                    await ctx.ResolveBearerAsync();
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    // Resolution failing (the database unreachable) must not take down routes that never
+                    // needed the bearer. Nothing is cached, so the request is limited and cached as a
+                    // guest, and a route that does need the bearer resolves it again and fails as before.
+                }
+            }
 
             await next(ctx);
         });

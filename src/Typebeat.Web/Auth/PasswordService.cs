@@ -14,7 +14,7 @@ public sealed class PasswordService
 
     // A hash nobody's password matches, verified in place of a missing one so that an unknown login
     // or a passwordless account takes as long to refuse as a wrong password does.
-    private static readonly Lazy<string> no_password_hash = new(() => new PasswordHasher<object>().HashPassword(dummy_user, Guid.NewGuid().ToString("N")));
+    private static readonly string no_password_hash = new PasswordHasher<object>().HashPassword(dummy_user, Guid.NewGuid().ToString("N"));
 
     public string Hash(string password) => hasher.HashPassword(dummy_user, password);
 
@@ -34,7 +34,7 @@ public sealed class PasswordService
 
         if (string.IsNullOrEmpty(hash))
         {
-            hasher.VerifyHashedPassword(dummy_user, no_password_hash.Value, password);
+            hasher.VerifyHashedPassword(dummy_user, no_password_hash, password);
             return false;
         }
 
