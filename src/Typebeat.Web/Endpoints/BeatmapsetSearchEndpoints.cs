@@ -52,7 +52,7 @@ public static class BeatmapsetSearchEndpoints
     /// <summary>The grades a score can be stored with, as the client's <c>ScoreRank</c> names them.</summary>
     private static readonly HashSet<string> score_ranks = ["XH", "X", "SH", "S", "A", "B", "C", "D"];
 
-    private const string published = "s.status IN ('pending', 'unranked', 'ranked', 'loved')";
+    private const string published = $"s.status IN {BeatmapsetEndpoints.PublishedSql}";
 
     public static void Map(IEndpointRouteBuilder app)
     {

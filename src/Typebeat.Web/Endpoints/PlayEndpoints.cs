@@ -334,24 +334,24 @@ public static class PlayEndpoints
         // leaderboard row would all follow the named one.
         var beatmap = request.BeatmapId > 0
             ? await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-                """
+                $"""
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                        b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.id = @beatmapId
                   AND (@setId <= 0 OR b.set_id = @setId)
-                  AND bs.status IN ('pending', 'unranked', 'ranked', 'loved')
+                  AND bs.status IN {BeatmapsetEndpoints.PublishedSql}
                   AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
                 """,
                 new { beatmapId = request.BeatmapId, setId = request.SetId })
             : await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-                """
+                $"""
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                        b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
-                WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked', 'loved')
+                WHERE b.set_id = @setId AND bs.status IN {BeatmapsetEndpoints.PublishedSql}
                   AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
                 ORDER BY b.id
                 LIMIT 1

@@ -290,6 +290,13 @@ public static class BeatmapsetEndpoints
     /// </summary>
     public static bool IsPublished(string dbStatus) => dbStatus is "pending" or "unranked" or "ranked" or "loved";
 
+    /// <summary>
+    /// <see cref="IsPublished"/> as a SQL list, for <c>status IN {PublishedSql}</c> filters. The two
+    /// must name the same four statuses; a page or endpoint that filters on published sets in SQL
+    /// uses this rather than its own copy of the list.
+    /// </summary>
+    public const string PublishedSql = "('pending', 'unranked', 'ranked', 'loved')";
+
     /// <summary>DB status → the wire string the client's BeatmapOnlineStatus binds by name.</summary>
     public static string StatusString(string dbStatus) => dbStatus switch
     {

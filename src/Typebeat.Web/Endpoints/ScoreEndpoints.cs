@@ -132,14 +132,14 @@ public static class ScoreEndpoints
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-            """
+            $"""
             SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                    b.difficulty_rating AS baseStars, b.sr_dt AS srDt, b.sr_ht AS srHt,
                    b.sr_literate AS srLiterate, b.sr_literate_dt AS srLiterateDt, b.sr_literate_ht AS srLiterateHt,
                    b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
             FROM beatmaps b
             JOIN beatmapsets bs ON bs.id = b.set_id
-            WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked', 'loved')
+            WHERE b.id = @beatmapId AND bs.status IN {BeatmapsetEndpoints.PublishedSql}
             """,
             new { beatmapId });
 

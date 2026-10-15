@@ -279,6 +279,23 @@ public class LovedStatusTest
         });
     }
 
+    /// <summary>PublishedSql is <see cref="BeatmapsetEndpoints.IsPublished"/> as a SQL list: it names
+    /// every published status, and the unpublished ones are neither listed nor published.</summary>
+    [Test]
+    public void PublishedSql_ListsExactlyThePublishedStatuses()
+    {
+        var listed = Regex.Matches(BeatmapsetEndpoints.PublishedSql, "'([a-z]+)'").Select(m => m.Groups[1].Value).ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(listed, Is.EquivalentTo(new[] { "pending", "unranked", "ranked", "loved" }));
+            foreach (string status in listed)
+                Assert.That(BeatmapsetEndpoints.IsPublished(status), Is.True, status);
+            foreach (string status in new[] { "hidden", "removed" })
+                Assert.That(BeatmapsetEndpoints.IsPublished(status), Is.False, status);
+        });
+    }
+
     [Test]
     public async Task LovedSet_IsPublic_OnTheGameApi()
     {

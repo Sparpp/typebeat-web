@@ -27,12 +27,12 @@ public sealed class IndexModel(Db db, IAntiforgery antiforgery) : TypebeatPageMo
 {
     /// <summary>
     /// Only sets satisfying this are playable: exactly what the /play/map endpoints need. The
-    /// status list is <see cref="Typebeat.Web.Endpoints.BeatmapsetEndpoints.IsPublished"/> in SQL,
+    /// status list is <see cref="Typebeat.Web.Endpoints.BeatmapsetEndpoints.PublishedSql"/>,
     /// and it must stay equal to <see cref="BeatmapsetCardModel.CanWebplay"/>, or the picker and the
     /// rail on every other listing would disagree about what is playable.
     /// </summary>
     private const string playable_filter =
-        "card.status IN ('pending', 'unranked', 'ranked', 'loved') AND card.haspackage AND card.hasplayablediff";
+        $"card.status IN {Endpoints.BeatmapsetEndpoints.PublishedSql} AND card.haspackage AND card.hasplayablediff";
 
     public IReadOnlyList<BeatmapsetCardModel> Maps { get; private set; } = [];
     public string CsrfToken { get; private set; } = string.Empty;

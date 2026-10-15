@@ -56,7 +56,7 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
             "pending" => "s.status = 'pending'",
             "unranked" => "s.status = 'unranked'",
             "loved" => "s.status = 'loved'",
-            _ => "s.status IN ('pending', 'unranked', 'ranked', 'loved')",
+            _ => $"s.status IN {Endpoints.BeatmapsetEndpoints.PublishedSql}",
         };
 
         // Restricted mappers' sets are delisted site-wide (their profiles 404, so every
