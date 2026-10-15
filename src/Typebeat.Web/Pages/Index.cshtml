@@ -6,7 +6,8 @@
     // shares (backlog 417).
     ViewData["FullTitle"] = Seo.LANDING_TITLE;
     ViewData["MetaDescription"] = Seo.GAME_DESCRIPTION;
-    ViewData["JsonLd"] = Seo.GameJsonLd();
+    // The site-name node is the landing's alone (backlog 418).
+    ViewData["JsonLd"] = Seo.GameJsonLd(withWebSite: true);
     ViewData["PreloadImage"] = "/media/widedemo-poster.jpg";
 }
 

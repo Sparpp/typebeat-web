@@ -75,6 +75,7 @@ public class SeoTest
         var game = node(root, "VideoGame");
         var org = node(root, "Organization");
         var source = node(root, "SoftwareSourceCode");
+        var site = node(root, "WebSite");
 
         Assert.Multiple(() =>
         {
@@ -103,9 +104,9 @@ public class SeoTest
             Assert.That(metaOf(html, "property", "og:image:height"), Is.EqualTo("630"));
             Assert.That(description, Is.EqualTo(Seo.GAME_DESCRIPTION));
 
-            // One @graph under one @context (backlog 417).
+            // One @graph under one @context (backlog 417), plus the WebSite node (backlog 418).
             Assert.That(root.GetProperty("@context").GetString(), Is.EqualTo("https://schema.org"));
-            Assert.That(root.GetProperty("@graph").GetArrayLength(), Is.EqualTo(3));
+            Assert.That(root.GetProperty("@graph").GetArrayLength(), Is.EqualTo(4));
             Assert.That(typesOf(game), Is.EqualTo(new[] { "VideoGame", "WebApplication" }));
 
             // Absolute ids, so /download names the same three entities rather than its own.
@@ -148,9 +149,15 @@ public class SeoTest
             Assert.That(stringsOf(org.GetProperty("sameAs")),
                 Is.EqualTo(new[] { SiteLinks.SOURCE_REPOSITORY, SiteLinks.DISCORD_INVITE, SiteLinks.YOUTUBE_CHANNEL }));
 
-            // Out of scope until signed off: the site-name WebSite node and the Organization logo.
+            // Out of scope until signed off: the Organization logo.
             Assert.That(org.TryGetProperty("logo", out _), Is.False, "no logo");
-            Assert.That(root.GetProperty("@graph").EnumerateArray().Any(n => typesOf(n).Contains("WebSite")), Is.False, "no WebSite node");
+
+            // Backlog 418: the site name search results show, with its fallbacks, and no SearchAction.
+            Assert.That(site.GetProperty("@id").GetString(), Is.EqualTo("https://typebeat.sh/#website"));
+            Assert.That(site.GetProperty("name").GetString(), Is.EqualTo("type!beat"));
+            Assert.That(stringsOf(site.GetProperty("alternateName")), Is.EqualTo(new[] { "typebeat.sh", "typebeat" }));
+            Assert.That(site.GetProperty("url").GetString(), Is.EqualTo("https://typebeat.sh/"));
+            Assert.That(site.TryGetProperty("potentialAction", out _), Is.False, "no SearchAction");
         });
     }
 
@@ -172,6 +179,9 @@ public class SeoTest
             Assert.That(game.GetProperty("@id").GetString(), Is.EqualTo("https://typebeat.sh/#game"));
             Assert.That(node(root, "Organization").GetProperty("@id").GetString(), Is.EqualTo("https://typebeat.sh/#org"));
 
+            // The WebSite node is the landing's alone (backlog 418).
+            Assert.That(root.GetProperty("@graph").EnumerateArray().Any(n => typesOf(n).Contains("WebSite")), Is.False, "no WebSite node");
+
             // The JSON-LD carries the game's description; the page's own meta description stays.
             Assert.That(game.GetProperty("description").GetString(), Is.EqualTo(Seo.GAME_DESCRIPTION));
             Assert.That(metaOf(html, "name", "description"), Does.StartWith("Get type!beat for Windows, macOS or Linux"));
@@ -191,6 +201,13 @@ public class SeoTest
             Assert.That(canonicalOf(html), Is.EqualTo($"https://typebeat.sh/beatmapsets/{id}"));
             Assert.That(metaOf(html, "property", "og:url"), Is.EqualTo($"https://typebeat.sh/beatmapsets/{id}"));
             Assert.That(titleOf(html), Does.EndWith(" · type!beat"));
+
+            // Backlog 418: the selected difficulty's stars, length and target, and a browser play.
+            Assert.That(titleOf(html), Is.EqualTo("Leaderboard Anthem typing game: The Score Settlers · type!beat"));
+            Assert.That(metaOf(html, "name", "description"), Is.EqualTo(
+                "Type the lyrics of Leaderboard Anthem by The Score Settlers in time with the song. "
+                + "3.2★ map by neon mapper, 1:35 long, about 118 WPM target. Play free in your browser or in the desktop client."));
+
             Assert.That(recording.GetProperty("@type").GetString(), Is.EqualTo("MusicRecording"));
             Assert.That(recording.GetProperty("url").GetString(), Is.EqualTo($"https://typebeat.sh/beatmapsets/{id}"));
             Assert.That(recording.GetProperty("byArtist").GetProperty("@type").GetString(), Is.EqualTo("MusicGroup"));
@@ -240,6 +257,39 @@ public class SeoTest
     }
 
     [Test]
+    public async Task SetPage_NotPlayableInTheBrowser_PointsAtTheDesktopClient()
+    {
+        // No package, so no browser play; no target WPM either, so that clause drops (backlog 418).
+        string html = await getHtmlAsync($"/beatmapsets/{PublicSiteSeed.PackagelessId}");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(titleOf(html), Is.EqualTo("Editor Era Classic typing game: The Backfilled · type!beat"));
+            Assert.That(metaOf(html, "name", "description"), Is.EqualTo(
+                "Type the lyrics of Editor Era Classic by The Backfilled in time with the song. "
+                + "2.5★ map by neon mapper, 1:40 long. Play free in the desktop client."));
+        });
+    }
+
+    [TestCase("Friday Pilots Club", "Friday Pilots Club")]
+    [TestCase("Tyler, The Creator", "Tyler, The Creator")]
+    [TestCase("Earth, Wind & Fire", "Earth, Wind & Fire")]
+    [TestCase("NicoisNXXT, churgney gurgney, KennyTheLyr1c1st, ChaseD_Ih", "NicoisNXXT")]
+    [TestCase("Some Fairly Long Artist Name & Another One", "Some Fairly Long Artist Name")]
+    [TestCase("A Rather Long Headliner Name feat. Guest Vocalist", "A Rather Long Headliner Name")]
+    [TestCase("The Producer Collective Prime x Vocal Guest", "The Producer Collective Prime")]
+    [TestCase("The Extraordinarily Long Named Orchestra of Somewhere", "The Extraordinarily Long Named…")]
+    [TestCase("A Very Long Primary Artist Name Here ft. Someone", "A Very Long Primary Artist…")]
+    [TestCase("Supercalifragilisticexpialidocious Orchestra", "Supercalifragilisticexpialidoc…")]
+    public void ShortArtist_KeepsShortCreditsWhole_AndCutsLongOnes(string artist, string expected)
+        => Assert.That(Seo.ShortArtist(artist), Is.EqualTo(expected));
+
+    [Test]
+    public void SetDescription_DropsEveryMissingClause()
+        => Assert.That(Seo.SetDescription("Song", "", "mapper", stars: null, lengthSeconds: null, targetWpm: null, playableInBrowser: false),
+            Is.EqualTo("Type the lyrics of Song in time with the song. Map by mapper. Play free in the desktop client."));
+
+    [Test]
     public void MusicRecording_CarriesLanguageAndLength_AndKeepsACommaArtistWhole()
     {
         var recording = JsonDocument.Parse(Seo.MusicRecordingJsonLd(
@@ -273,15 +323,40 @@ public class SeoTest
     [Test]
     public async Task Profile_ReachedByName_CanonicalisesToId()
     {
-        string html = await getHtmlAsync("/users/" + Uri.EscapeDataString(WebsiteFixture.SeededUsername));
-        Assert.That(canonicalOf(html), Is.EqualTo($"https://typebeat.sh/users/{WebsiteFixture.SeededUserId}"));
+        // The mapper, whose published sets keep the profile indexed and so canonical (backlog 418).
+        string html = await getHtmlAsync("/users/" + Uri.EscapeDataString("neon mapper"));
+        Assert.That(canonicalOf(html), Is.EqualTo($"https://typebeat.sh/users/{PublicSiteSeed.MapperId}"));
     }
+
+    [Test]
+    public async Task Profile_BelowTheThreshold_IsNoIndex_AndAMappersIsNot()
+    {
+        // Typist one has a handful of ranked plays and no sets (backlog 418).
+        string thin = await getHtmlAsync($"/users/{PublicSiteSeed.TypistOneId}");
+        string mapper = await getHtmlAsync($"/users/{PublicSiteSeed.MapperId}");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(metaOf(thin, "name", "robots"), Is.EqualTo("noindex"));
+            Assert.That(canonicalOf(thin), Is.Null, "a noindex page names no canonical");
+
+            Assert.That(metaOf(mapper, "name", "robots"), Is.Null);
+            Assert.That(canonicalOf(mapper), Is.EqualTo($"https://typebeat.sh/users/{PublicSiteSeed.MapperId}"));
+        });
+    }
+
+    [TestCase(0, 0, false)]
+    [TestCase(4, 0, false)]
+    [TestCase(5, 0, true)]
+    [TestCase(0, 1, true)]
+    [TestCase(120, 3, true)]
+    public void ProfileIndexable_FiveRankedPlaysOrOnePublishedSet(long rankedPlays, long publishedSets, bool expected)
+        => Assert.That(Seo.ProfileIndexable(rankedPlays, publishedSets), Is.EqualTo(expected));
 
     [TestCase("/login")]
     [TestCase("/register")]
     [TestCase("/forgot-password")]
-    [TestCase("/play")]
-    public async Task AccountAndPlayPages_AreNoIndex(string url)
+    public async Task AccountPages_AreNoIndex(string url)
     {
         string html = await getHtmlAsync(url);
 
@@ -290,6 +365,58 @@ public class SeoTest
             Assert.That(metaOf(html, "name", "robots"), Is.EqualTo("noindex"));
             Assert.That(canonicalOf(html), Is.Null, "a noindex page names no canonical");
         });
+    }
+
+    [Test]
+    public async Task Play_IsIndexed_WithItsOwnTitleDescriptionAndIntro()
+    {
+        string html = await getHtmlAsync("/play");
+
+        Assert.Multiple(() =>
+        {
+            // Backlog 418.
+            Assert.That(metaOf(html, "name", "robots"), Is.Null);
+            Assert.That(canonicalOf(html), Is.EqualTo("https://typebeat.sh/play"));
+            Assert.That(titleOf(html), Is.EqualTo("Play online free, no download: typing to music · type!beat"));
+            Assert.That(metaOf(html, "name", "description"), Is.EqualTo(
+                "Play type!beat free in your browser: pick a song and type the lyrics in time with the music. "
+                + "No download, no account needed. Sign in to save your scores and earn pp."));
+            Assert.That(html, Does.Contain(
+                "<a href=\"/login\">sign in</a> to save your scores to the leaderboard and earn pp on ranked maps.</p>"));
+        });
+
+        // The intro sits inside the picker, above the card grid, so it hides with the picker when
+        // a run starts (play.js showStage).
+        int picker = html.IndexOf("<div id=\"tb-picker\"", StringComparison.Ordinal);
+        int stage = html.IndexOf("<div id=\"tb-stage\"", StringComparison.Ordinal);
+        Assert.That(picker, Is.GreaterThan(0));
+        Assert.That(stage, Is.GreaterThan(picker));
+        string pickerHtml = html[picker..stage];
+
+        Assert.Multiple(() =>
+        {
+            foreach (string line in new[]
+                     {
+                         "<p>Pick a map below and type the lyrics as they're sung. No download, no account.</p>",
+                         "<p>Only letters, numbers and spaces count, so don't worry about capitals or punctuation. A hyphen counts as a space. "
+                         + "You can pause (Esc), retry or quit a run, and skip long instrumental breaks. Every run ends with your score, "
+                         + "accuracy, WPM, best combo, typos and your count of Greats, Oks, Mehs and misses.</p>",
+                         "<p>Mods, rate changes and the map editor live in the desktop client.</p>",
+                         "<p>type!beat is played on a physical keyboard.</p>",
+                     })
+            {
+                Assert.That(pickerHtml, Does.Contain(line));
+                Assert.That(pickerHtml.IndexOf(line, StringComparison.Ordinal),
+                    Is.LessThan(pickerHtml.IndexOf("class=\"card-grid\"", StringComparison.Ordinal)), "above the card grid");
+            }
+        });
+    }
+
+    [Test]
+    public async Task PlayDeepLink_CanonicalisesToPlay()
+    {
+        string html = await getHtmlAsync($"/play?set={PublicSiteSeed.MultiDiffSetId}&diff={PublicSiteSeed.MultiDiffEasyId}");
+        Assert.That(canonicalOf(html), Is.EqualTo("https://typebeat.sh/play"));
     }
 
     [Test]
@@ -425,6 +552,7 @@ public class SeoTest
 
         string published = $"https://typebeat.sh/beatmapsets/{PublicSiteSeed.LeaderboardSetId}";
         string typist = $"https://typebeat.sh/users/{PublicSiteSeed.TypistOneId}";
+        string mapper = $"https://typebeat.sh/users/{PublicSiteSeed.MapperId}";
 
         Assert.Multiple(() =>
         {
@@ -433,6 +561,7 @@ public class SeoTest
             Assert.That(urls.Keys, Does.Contain("https://typebeat.sh/beatmapsets"));
             Assert.That(urls.Keys, Does.Contain("https://typebeat.sh/rankings"));
             Assert.That(urls.Keys, Does.Contain("https://typebeat.sh/legal/privacy"));
+            Assert.That(urls.Keys, Does.Contain("https://typebeat.sh/play"));
 
             Assert.That(urls.Keys, Does.Contain(published));
             Assert.That(urls.GetValueOrDefault(published), Does.Match(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"));
@@ -441,9 +570,11 @@ public class SeoTest
             Assert.That(urls.Keys, Does.Not.Contain($"https://typebeat.sh/beatmapsets/{PublicSiteSeed.HiddenId}"));
             Assert.That(urls.Keys, Does.Not.Contain($"https://typebeat.sh/beatmapsets/{PublicSiteSeed.RemovedId}"));
 
-            // A profile with a score is listed, its latest score as lastmod.
-            Assert.That(urls.Keys, Does.Contain(typist));
-            Assert.That(urls.GetValueOrDefault(typist), Is.Not.Null);
+            // Backlog 418: only profiles Seo.ProfileIndexable keeps. The mapper owns every seeded
+            // set, so is listed with a lastmod; typist one has fewer than five ranked plays and no set.
+            Assert.That(urls.Keys, Does.Contain(mapper));
+            Assert.That(urls.GetValueOrDefault(mapper), Does.Match(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"));
+            Assert.That(urls.Keys, Does.Not.Contain(typist));
         });
     }
 
@@ -490,13 +621,14 @@ public class SeoTest
     [TestCase("/rankings", "?page=1", "https://typebeat.sh/rankings")]
     [TestCase("/rankings", "?board=performance&page=abc", "https://typebeat.sh/rankings")]
     [TestCase("/beatmapsets/12", "?q=x&after=3", "https://typebeat.sh/beatmapsets/12")]
+    [TestCase("/play", "?set=12&diff=34", "https://typebeat.sh/play")]
     public void CanonicalUrl_KeepsOnlyThePathsMeaningfulQuery(string path, string query, string expected)
         => Assert.That(Seo.CanonicalUrl(path, new QueryCollection(QueryHelpers.ParseQuery(query))), Is.EqualTo(expected));
 
     [TestCase("/login", true)]
     [TestCase("/settings/avatar", true)]
     [TestCase("/error/404", true)]
-    [TestCase("/play", true)]
+    [TestCase("/play", false)]
     [TestCase("/auth/google/username", true)]
     [TestCase("/playlist", false)]
     [TestCase("/beatmapsets", false)]

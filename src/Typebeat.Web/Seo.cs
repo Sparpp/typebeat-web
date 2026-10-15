@@ -37,13 +37,14 @@ public static class Seo
 
     /// <summary>
     /// Path prefixes (whole segments) whose pages carry <c>noindex</c>: sign-in and account
-    /// flows, per-user pages, error pages, and /play (a per-request antiforgery token and no
-    /// indexable content). /auth covers the Google sign-in steps.
+    /// flows, per-user pages and error pages. /auth covers the Google sign-in steps. /play is
+    /// indexed since backlog 418, which gave the picker its own copy; its query never reaches
+    /// the canonical.
     /// </summary>
     private static readonly string[] noindex_prefixes =
     [
         "/login", "/register", "/forgot-password", "/reset-password", "/verify", "/settings",
-        "/logout", "/watching", "/error", "/play", "/auth",
+        "/logout", "/watching", "/error", "/auth",
     ];
 
     /// <summary>
@@ -153,15 +154,18 @@ public static class Seo
 
     public const string SOURCE_NODE_ID = CANONICAL_ORIGIN + "/#source";
 
+    public const string WEBSITE_NODE_ID = CANONICAL_ORIGIN + "/#website";
+
     /// <summary>
     /// The schema.org graph for the landing and download pages (backlog 417): the game, the
     /// organisation that publishes it and the source code it is built from, as one <c>@graph</c>
     /// under one <c>@context</c>. The MIT licence sits on the source node only, never on the game,
     /// whose bundled resources are CC BY-NC. Serialised with the default encoder, which escapes
     /// <c>&lt;</c>, <c>&gt;</c> and <c>&amp;</c>, so the result is safe to emit raw inside a
-    /// script element.
+    /// script element. <paramref name="withWebSite"/> adds the WebSite node that names the site
+    /// in search results (backlog 418), on the landing only.
     /// </summary>
-    public static string GameJsonLd()
+    public static string GameJsonLd(bool withWebSite = false)
         => JsonSerializer.Serialize(new Dictionary<string, object>
         {
             ["@context"] = "https://schema.org",
@@ -210,8 +214,22 @@ public static class Seo
                     ["license"] = "https://opensource.org/licenses/MIT",
                     ["programmingLanguage"] = "C#",
                 },
-            },
+            }.Concat(withWebSite ? new object[] { webSiteNode() } : []).ToArray(),
         });
+
+    /// <summary>
+    /// The WebSite node (backlog 418): the name search results show for the site, with its
+    /// fallbacks. No SearchAction, since Google retired the sitelinks search box.
+    /// </summary>
+    private static Dictionary<string, object> webSiteNode()
+        => new()
+        {
+            ["@type"] = "WebSite",
+            ["@id"] = WEBSITE_NODE_ID,
+            ["name"] = "type!beat",
+            ["alternateName"] = new[] { "typebeat.sh", "typebeat" },
+            ["url"] = CanonicalUrl("/"),
+        };
 
     /// <summary>
     /// The schema.org MusicRecording block for a beatmap set page. Since backlog 417 it also
@@ -256,6 +274,71 @@ public static class Seo
         return JsonSerializer.Serialize(block);
     }
 
+    /// <summary>The longest artist credit a set page's title carries whole (backlog 418).</summary>
+    public const int SHORT_ARTIST_MAX_LENGTH = 30;
+
+    /// <summary>Where a long credit is cut, at whichever comes first (backlog 418).</summary>
+    private static readonly string[] artist_separators = [", ", " & ", " feat", " ft.", " x "];
+
+    /// <summary>
+    /// The artist as a set page's title shows it (backlog 418). A credit of up to
+    /// <see cref="SHORT_ARTIST_MAX_LENGTH"/> characters stays whole, which keeps names like
+    /// "Tyler, The Creator" and "Earth, Wind &amp; Fire" intact. A longer one is cut at its first
+    /// separator, and if that is still too long, at the last word boundary within the limit, with
+    /// an ellipsis. The full credit stays in the page body and the MusicGroup.
+    /// </summary>
+    public static string ShortArtist(string artist)
+    {
+        if (artist.Length <= SHORT_ARTIST_MAX_LENGTH)
+            return artist;
+
+        int cut = artist_separators.Select(separator => artist.IndexOf(separator, StringComparison.Ordinal))
+                                   .Where(index => index > 0)
+                                   .DefaultIfEmpty(artist.Length)
+                                   .Min();
+
+        string first = artist[..cut];
+        if (first.Length <= SHORT_ARTIST_MAX_LENGTH)
+            return first;
+
+        int space = first.LastIndexOf(' ', SHORT_ARTIST_MAX_LENGTH);
+        return first[..(space > 0 ? space : SHORT_ARTIST_MAX_LENGTH)].TrimEnd() + "…";
+    }
+
+    /// <summary>
+    /// A set page's meta description (backlog 418), from the selected difficulty's stars, length
+    /// and target WPM. A clause whose value is missing is dropped, and a set the browser cannot
+    /// play points at the desktop client alone.
+    /// </summary>
+    public static string SetDescription(
+        string title, string artist, string creator,
+        double? stars, double? lengthSeconds, double? targetWpm, bool playableInBrowser)
+    {
+        var text = new StringBuilder("Type the lyrics");
+        if (title.Length > 0)
+            text.Append(" of ").Append(title);
+        if (artist.Length > 0)
+            text.Append(" by ").Append(artist);
+        text.Append(" in time with the song. ");
+
+        if (stars is > 0)
+            text.Append(stars.Value.ToString("0.0#", CultureInfo.InvariantCulture)).Append("★ map by ");
+        else
+            text.Append("Map by ");
+        text.Append(creator);
+        if (lengthSeconds is > 0)
+            text.Append(", ").Append(Pages.Beatmapsets.SetModel.FormatLength(lengthSeconds.Value)).Append(" long");
+        if (targetWpm is double wpm)
+            text.Append(", about ").Append(wpm.ToString("0", CultureInfo.InvariantCulture)).Append(" WPM target");
+        text.Append(". ");
+
+        text.Append(playableInBrowser
+            ? "Play free in your browser or in the desktop client."
+            : "Play free in the desktop client.");
+
+        return text.ToString();
+    }
+
     /// <summary>
     /// An ISO 8601 duration in whole minutes and seconds (<c>PT3M25S</c>), truncated the way the
     /// set page's Length row (<c>SetModel.FormatLength</c>) truncates, so the two agree.
@@ -265,6 +348,20 @@ public static class Seo
         var t = TimeSpan.FromSeconds(Math.Max(0, seconds));
         return string.Create(CultureInfo.InvariantCulture, $"PT{(int)t.TotalMinutes}M{t.Seconds}S");
     }
+
+    /// <summary>The fewest ranked plays that keep a profile indexed (backlog 418).</summary>
+    public const int PROFILE_MIN_RANKED_PLAYS = 5;
+
+    /// <summary>The fewest published sets that keep a profile indexed (backlog 418).</summary>
+    public const int PROFILE_MIN_PUBLISHED_SETS = 1;
+
+    /// <summary>
+    /// Whether a profile is worth indexing (backlog 418): enough ranked plays, or at least one
+    /// published set. Below both it gets noindex and leaves the sitemap, whose profile query
+    /// applies the same two constants in SQL.
+    /// </summary>
+    public static bool ProfileIndexable(long rankedPlays, long publishedSets)
+        => rankedPlays >= PROFILE_MIN_RANKED_PLAYS || publishedSets >= PROFILE_MIN_PUBLISHED_SETS;
 
     /// <summary>
     /// Whether a /beatmapsets search (<paramref name="query"/>, already trimmed) may be indexed

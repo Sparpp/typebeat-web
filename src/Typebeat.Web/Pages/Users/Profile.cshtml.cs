@@ -617,6 +617,17 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         ViewData["CanonicalPath"] = $"/users/{ProfileUser.Id}";
         ViewData["MetaDescription"] = $"{ProfileUser.Username}'s type!beat profile: scores, maps and favourites.";
 
+        // Backlog 418: a thin profile is noindex, on the counts the sitemap's profile query reads.
+        var (rankedPlays, publishedSets) = await conn.QuerySingleAsync<(long, long)>(
+            """
+            SELECT (SELECT count(*) FROM scores WHERE user_id = @id AND ranked),
+                   (SELECT count(*) FROM beatmapsets WHERE owner_id = @id AND status IN ('pending', 'unranked', 'ranked', 'loved'))
+            """,
+            new { id });
+
+        if (!Seo.ProfileIndexable(rankedPlays, publishedSets))
+            ViewData["NoIndex"] = true;
+
         return Page();
     }
 

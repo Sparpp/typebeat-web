@@ -18,7 +18,7 @@ public static class SeoEndpoints
     public static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(10);
 
     /// <summary>Public pages with no row behind them, listed first and without a lastmod.</summary>
-    public static readonly string[] StaticPaths = ["/", "/download", "/beatmapsets", "/rankings", "/legal/dmca", "/legal/privacy"];
+    public static readonly string[] StaticPaths = ["/", "/download", "/play", "/beatmapsets", "/rankings", "/legal/dmca", "/legal/privacy"];
 
     public sealed record SitemapUrl(string Location, DateTime? LastModified);
 
@@ -77,14 +77,25 @@ public static class SeoEndpoints
              ORDER BY s.id
             """, cancellationToken: ct));
 
-        // Every unrestricted profile with at least one score, lastmod its latest score.
-        var users = await conn.QueryAsync<(long Id, DateTime LastModified)>(new CommandDefinition(
-            """
-            SELECT u.id, MAX(sc.ended_at)
+        // Backlog 418: every unrestricted profile Seo.ProfileIndexable keeps, on the same two
+        // counts the profile page reads (ranked plays, published sets), so a mapper with sets and
+        // no scores is listed. lastmod is the later of their latest ranked play and their latest
+        // published set update.
+        var users = await conn.QueryAsync<(long Id, DateTime? LastModified)>(new CommandDefinition(
+            $"""
+            SELECT u.id, GREATEST(sc.last_played, s.last_updated)
               FROM users u
-              JOIN scores sc ON sc.user_id = u.id
+              LEFT JOIN (SELECT user_id, MAX(ended_at) AS last_played, COUNT(*) AS plays
+                           FROM scores
+                          WHERE ranked
+                          GROUP BY user_id) sc ON sc.user_id = u.id
+              LEFT JOIN (SELECT owner_id, MAX(updated_at) AS last_updated, COUNT(*) AS sets
+                           FROM beatmapsets
+                          WHERE status IN ('pending', 'unranked', 'ranked', 'loved')
+                          GROUP BY owner_id) s ON s.owner_id = u.id
              WHERE NOT u.restricted
-             GROUP BY u.id
+               AND (COALESCE(sc.plays, 0) >= {Seo.PROFILE_MIN_RANKED_PLAYS}
+                    OR COALESCE(s.sets, 0) >= {Seo.PROFILE_MIN_PUBLISHED_SETS})
              ORDER BY u.id
             """, cancellationToken: ct));
 
