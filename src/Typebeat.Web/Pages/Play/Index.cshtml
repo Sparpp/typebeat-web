@@ -1,8 +1,9 @@
 @page "/play"
 @model Typebeat.Web.Pages.Play.IndexModel
 @{
-    ViewData["Title"] = "play";
-    ViewData["MetaDescription"] = "Play type!beat in your browser, type the lyrics as they drop, in time with the music.";
+    // Backlog 418: indexed, so it carries its own title and description.
+    ViewData["FullTitle"] = "Play online free, no download: typing to music · type!beat";
+    ViewData["MetaDescription"] = "Play type!beat free in your browser: pick a song and type the lyrics in time with the music. No download, no account needed. Sign in to save your scores and earn pp.";
     ViewData["CardPlayMode"] = true; // the shared card renders a play button instead of download
     var user = Model.CurrentUser;
     var auto = Model.AutoPlay;
@@ -15,7 +16,7 @@
        paragraph goes with it: a signed-in visitor would otherwise get an empty one. *@
     @if (user is null)
     {
-        <p class="play-sub"><a href="/login">sign in</a> to save your scores to the leaderboard.</p>
+        <p class="play-sub"><a href="/login">sign in</a> to save your scores to the leaderboard and earn pp on ranked maps.</p>
     }
 </section>
 
@@ -26,6 +27,13 @@
     }
     else
     {
+        @* Inside the picker so it hides with it when a run starts (backlog 418). *@
+        <div class="play-intro">
+            <p>Pick a map below and type the lyrics as they're sung. No download, no account.</p>
+            <p>Only letters, numbers and spaces count, so don't worry about capitals or punctuation. A hyphen counts as a space. You can pause (Esc), retry or quit a run, and skip long instrumental breaks. Every run ends with your score, accuracy, WPM, best combo, typos and your count of Greats, Oks, Mehs and misses.</p>
+            <p>Mods, rate changes and the map editor live in the desktop client.</p>
+            <p>type!beat is played on a physical keyboard.</p>
+        </div>
         <div class="card-grid">
             @foreach (var set in Model.Maps)
             {

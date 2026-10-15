@@ -2798,6 +2798,8 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .play-head h1 { margin: 0 0 var(--space-2); }
 .play-sub { color: var(--text-muted); margin: 0; }
 .play-sub a { color: var(--violet); }
+.play-intro { color: var(--text-muted); margin: 0 0 var(--space-5); max-width: 68ch; }
+.play-intro p { margin: 0 0 var(--space-2); }
 
 .play-empty {
     padding: var(--space-7) var(--space-4);
