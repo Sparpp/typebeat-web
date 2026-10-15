@@ -39,10 +39,12 @@ Factor by factor, in descending priority:
   rates is eighteen readings, `beatmaps.ratings` (034_ratings_matrix.sql). The client recomputes the
   one it needs from the beatmap it has loaded.
 * **`difficult`**: the map's DIFFICULT CHARACTERS at that same (arm, stream, rate), i.e.
-  `LyricDifficulty.ModelResult.DifficultCharacters`, every cell weighted by how close its own bin
-  sits to the map's peak. It is a property of the MAP, not of the play, and it travels in the same
-  stored cell as the rating because a price needs both. A play whose cell is not stored yet is
-  PENDING, exactly as an unfilled `sr_dt` has been since backlog 90.
+  `LyricDifficulty.ModelResult.DifficultCharacters`, which on the shipped axis
+  (`LyricDifficulty.Live`, `EnduranceAxis.Chunked`) is the chunked axis's `LengthCharacters`: every
+  chunk's weighted characters, counted in full where the chunk's strain is at or above the map's own
+  score and with falling credit below it. It is a property of the MAP, not of the play, and it
+  travels in the same stored cell as the rating because a price needs both. A play whose cell is not
+  stored yet is PENDING, exactly as an unfilled `sr_dt` has been since backlog 90.
 * **cleanliness^13.5134**: cells the play did not type right. Since the backlog-213 amendment that
   is `miss + good`, i.e. a cell nobody finished PLUS one finished with the wrong character and never
   corrected; before it, `miss` alone. Since the v22 amendment the count is measured as a FRACTION of
