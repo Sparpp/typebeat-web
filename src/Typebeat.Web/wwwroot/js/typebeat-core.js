@@ -2245,6 +2245,9 @@
     // ScoringContract; a perfect play still totals exactly 1000000.
     const COMBO_PORTION_MAX = 300000;
     const ACCURACY_PORTION_MAX = 700000;
+    // The accuracy term's exponent: TypeBeatScoreProcessor.ACCURACY_PORTION_EXPONENT, the server's
+    // ScoringContract.AccuracyExponent.
+    const ACCURACY_PORTION_EXPONENT = 5;
 
     class ScoreProcessorMirror {
         constructor() {
@@ -5219,7 +5222,7 @@
         // currentBaseScore / currentMaximumBaseScore, judged cells only); equals whole-map
         // accuracy for a completed play, differs only for a failed/incomplete (unranked) run.
         const accJudged = processor.maximumBaseScore > 0 ? processor.baseScore / processor.maximumBaseScore : 1;
-        const totalWithoutMods = Math.round(COMBO_PORTION_MAX * accJudged * comboProgress + ACCURACY_PORTION_MAX * Math.pow(accJudged, 5) * accuracyProgress);
+        const totalWithoutMods = Math.round(COMBO_PORTION_MAX * accJudged * comboProgress + ACCURACY_PORTION_MAX * Math.pow(accJudged, ACCURACY_PORTION_EXPONENT) * accuracyProgress);
         const totalScore = totalWithoutMods; // scoreMultiplier = 1 (no mods)
 
         // TypeBeatScoreProcessor.CountsAsTyped: every HIT except an uncorrected typo. A cell typed
@@ -5322,7 +5325,7 @@
         isAuthoredValid, derivedSplits, splitsFor, cellCuts, segmentOf,
         TypingEngine, computeScore, rankFromAccuracy, rankFromStatistics,
         WINDOWS, FREESTYLE_WINDOWS, FREESTYLE_WINDOW_SCALE, windowsFor, classify, toHitResult,
-        COMBO_PORTION_MAX, ACCURACY_PORTION_MAX,
+        COMBO_PORTION_MAX, ACCURACY_PORTION_MAX, ACCURACY_PORTION_EXPONENT,
         freestyleTick, freestyleGlyph,
         constants: {
             CUE_LEAD_MS, WRONG_KEY_FAIL_STREAK, FREESTYLE_MARKER,

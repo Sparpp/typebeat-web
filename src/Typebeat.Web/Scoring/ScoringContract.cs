@@ -145,6 +145,9 @@ public static class ScoringContract
     /// <summary>The accuracy half's weight (TypeBeatScoreProcessor.ACCURACY_PORTION_MAX). Public for the reweight backfill.</summary>
     public const double AccuracyPortionMax = accuracy_portion_max;
 
+    /// <summary>The accuracy term's exponent (TypeBeatScoreProcessor.ACCURACY_PORTION_EXPONENT). Public so the parity tests can pin it.</summary>
+    public const double AccuracyExponent = accuracy_exponent;
+
     /// <summary>
     /// The OLD second term (<c>500000 x acc^5 x accuracyProgress</c>, the pre-reweight weight), which
     /// the score reweight backfill needs to re-base a stored total onto the new split. It is the term

@@ -49,4 +49,4 @@ const STATS = [
 const pairs = PAIRS.map(([accuracy, missed]) => ({ accuracy, missed, rank: TB.rankFromAccuracy(accuracy, missed) }));
 const stats = STATS.map(s => ({ accuracy: s.accuracy, counts: s.counts, rank: TB.rankFromStatistics(s.accuracy, s.counts) }));
 
-process.stdout.write(JSON.stringify({ pairs, stats }));
+process.stdout.write(JSON.stringify({ pairs, stats, accuracyPortionExponent: TB.ACCURACY_PORTION_EXPONENT }));
