@@ -18,4 +18,10 @@ public static class SiteLinks
     /// the landing and download pages' VideoGame JSON-LD <c>sameAs</c>.
     /// </summary>
     public const string SOURCE_REPOSITORY = "https://github.com/Sparpp/typebeat";
+
+    /// <summary>
+    /// The game's YouTube channel (the one the game repository's README links). Named only in the
+    /// landing and download pages' JSON-LD <c>sameAs</c> (backlog 417); nothing visible links it.
+    /// </summary>
+    public const string YOUTUBE_CHANNEL = "https://www.youtube.com/@typebeatgame";
 }

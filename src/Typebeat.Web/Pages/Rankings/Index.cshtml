@@ -20,6 +20,9 @@
         IndexModel.PlaysBoard => "type!beat global rankings: the biggest performance-point plays ever set.",
         _ => "type!beat global rankings: performance points across every ranked map.",
     };
+    // A player search is internal results, like a /beatmapsets search (backlog 417).
+    if (Model.IsSearch)
+        ViewData["NoIndex"] = true;
 }
 
 <section class="rankings">
