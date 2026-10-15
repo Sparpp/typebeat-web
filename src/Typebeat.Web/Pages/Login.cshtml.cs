@@ -71,10 +71,11 @@ public sealed class LoginModel(
                 new { login });
         }
 
-        if (user is null || !passwords.Verify(user.PasswordHash, Password) || user.Restricted)
+        if (!passwords.Verify(user?.PasswordHash, Password) || user is null || user.Restricted)
         {
             // No code is issued on a failed credential; nothing distinguishes this from an
-            // unknown user, so the form cannot be used to probe which accounts exist.
+            // unknown user, so the form cannot be used to probe which accounts exist (Verify runs
+            // the hasher for an unknown login too, so neither does the response time).
             Error = bad_credentials;
             return Page();
         }

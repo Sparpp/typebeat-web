@@ -87,7 +87,8 @@ public static class OAuthEndpoints
                 new { login });
         }
 
-        if (user is null || !passwords.Verify(user.PasswordHash, password))
+        // Verify runs the hasher even for an unknown login (a null hash), so timing says nothing either.
+        if (!passwords.Verify(user?.PasswordHash, password) || user is null)
             return OAuthError("invalid_grant", bad_credentials);
 
         // Restricted accounts cannot obtain a token; surfaced as a generic credential failure.
