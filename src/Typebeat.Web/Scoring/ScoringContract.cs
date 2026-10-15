@@ -349,6 +349,50 @@ public static class ScoringContract
     }
 
     /// <summary>
+    /// Every statistics key the client's <c>HitResult</c> enum can put on the wire: its
+    /// <c>EnumMember</c> values (HitResult.cs), all eighteen, and nothing else. Ordinal, because
+    /// the classifiers below are; a key spelled any other way prices nothing here either.
+    /// </summary>
+    private static readonly IReadOnlySet<string> hit_result_keys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "none", "miss", "meh", "ok", "good", "great", "perfect",
+        "small_tick_miss", "small_tick_hit", "large_tick_miss", "large_tick_hit",
+        "small_bonus", "large_bonus", "ignore_miss", "ignore_hit",
+        "combo_break", "slider_tail_hit", "legacy_combo_increase",
+    };
+
+    /// <summary>Whether <paramref name="key"/> names a <c>HitResult</c> member on the wire.</summary>
+    public static bool IsHitResultKey(string? key) => key is not null && hit_result_keys.Contains(key);
+
+    /// <summary>
+    /// <paramref name="counts"/> with every key that is not a <c>HitResult</c> name dropped, in the
+    /// original order (S1-039). Both submit routes run the client's two dictionaries through this
+    /// BEFORE anything reads them, and the board and profile wire through it again on the way out
+    /// (<c>ScoreEndpoints.ParseCounts</c>).
+    ///
+    /// <para>An unknown key never priced anything here (every classifier answers false for it), so
+    /// dropping one cannot move an honest score. What it could do was ride along: stored verbatim,
+    /// summed into <c>user_stats.hit_counts</c>, and echoed on every board fetch, where the game
+    /// reads the row as <c>Dictionary&lt;HitResult, int&gt;</c> and one name its enum does not have
+    /// fails the whole leaderboard response for everyone viewing that map.</para>
+    /// </summary>
+    public static Dictionary<string, int> KnownKeysOnly(IReadOnlyDictionary<string, int>? counts)
+    {
+        var known = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        if (counts is null)
+            return known;
+
+        foreach (var (key, count) in counts)
+        {
+            if (IsHitResultKey(key))
+                known[key] = count;
+        }
+
+        return known;
+    }
+
+    /// <summary>
     /// Accuracy + missed fraction → rank string, mirroring TypeBeatScoreProcessor.RankFromAccuracy.
     /// Grades are awarded on timing accuracy, with an extra missed-cell condition on SS (no cell
     /// missed at all) and S (under S_MISS_LIMIT of the map's cells missed). There are no mods, so

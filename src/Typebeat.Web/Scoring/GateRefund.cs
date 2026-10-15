@@ -320,8 +320,10 @@ public static class GateRefund
 
         // Read from the ONE list (backlog 270). This used to be a private copy that claimed to
         // mirror ScoreEndpoints' and was three acronyms behind it, so a Conductor, Dyslexia or
-        // Puppeteer play the submit path refused could be re-ranked here.
-        if (UnrankedMods.StackIsUnranked(row.Mods.Select(m => m.Acronym)))
+        // Puppeteer play the submit path refused could be re-ranked here. The submit routes' own
+        // predicate, so an acronym the server does not know, which they store unranked, is never
+        // re-ranked here either.
+        if (!ScoreSubmission.StackRanked(row.Mods.Select(m => m.Acronym)))
             return false;
 
         var statistics = ParseCounts(row.StatisticsJson);

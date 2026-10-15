@@ -43,7 +43,9 @@ namespace Typebeat.Web.Scoring;
 /// <list type="bullet">
 /// <item>An acronym this table does not know is priced at <see cref="UNKNOWN_MOD_MULTIPLIER"/>, the
 /// same flat allowance the endpoint used before this existed, so a mod shipped by a newer client
-/// than the server still submits honestly instead of being clamped.</item>
+/// than the server still submits honestly instead of being clamped. It does not RANK, though: only
+/// an acronym <see cref="IsKnown"/> answers for can (see there), so the allowance buys a stored row
+/// and nothing on a board.</item>
 /// <item>Wind Up / Wind Down are paid on a rate RAMP whose endpoints the server does not persist,
 /// so they are priced at the most any ramp could pay, <c>For(2.00)</c>. They are unranked at every
 /// configuration regardless.</item>
@@ -77,7 +79,8 @@ public static class ModMultiplier
     /// <summary>
     /// What an acronym the server does not know is allowed to multiply by. This is the flat
     /// pre-task-27 allowance kept as a forward-compatibility escape hatch: a client that ships a new
-    /// mod before the server learns its multiplier still gets its scores through.
+    /// mod before the server learns its multiplier still gets its scores through, stored UNRANKED
+    /// (<see cref="IsKnown"/>) until this table lists it.
     /// </summary>
     public const double UNKNOWN_MOD_MULTIPLIER = 2.0;
 
@@ -104,6 +107,21 @@ public static class ModMultiplier
     /// client omitted the key at).
     /// </summary>
     public static double For(string? acronym, double? speedChange)
+        => priceOf(acronym, speedChange) ?? UNKNOWN_MOD_MULTIPLIER;
+
+    /// <summary>
+    /// Whether this table prices <paramref name="acronym"/> itself, rather than letting it fall to
+    /// <see cref="UNKNOWN_MOD_MULTIPLIER"/>. THIS IS THE RANKED ALLOWLIST (S1-011): an acronym it
+    /// does not know is stored UNRANKED on every path, because the 2.0x allowance above sits over
+    /// every honest stack the client can assemble, so a perfect run plus one invented acronym
+    /// would otherwise board at twice its worth. Every acronym the ruleset can submit is listed
+    /// below, the retired "RH" and "FT" and the server-appended "CL" included, and WireCompat's
+    /// ScoreMultiplierParityTest holds that against the game's mod list.
+    /// </summary>
+    public static bool IsKnown(string? acronym) => priceOf(acronym, null) is not null;
+
+    /// <summary>The per-mod table behind <see cref="For"/>; null for an acronym it does not list.</summary>
+    private static double? priceOf(string? acronym, double? speedChange)
     {
         string key = (acronym ?? string.Empty).Trim().ToUpperInvariant();
 
@@ -151,9 +169,9 @@ public static class ModMultiplier
             // relative to a mod it can no longer be stacked against. Listing it TIGHTENS the ceiling
             // exactly as "HR" and "FC" do: unlisted it would be allowed UNKNOWN_MOD_MULTIPLIER (2.0x)
             // on a play whose honest total is 1.07x its base, a laundering slot nearly twice as wide
-            // as the mod can justify. Recite is a RANKED mod, so the ranked gate needs nothing for it
-            // (that gate is the deny list in ScoreEndpoints, and an acronym absent from it ranks);
-            // this is only the price.
+            // as the mod can justify. Recite is a RANKED mod, so the deny list (UnrankedMods) needs
+            // nothing for it; this arm is its price, and since S1-011 also what makes it a known,
+            // and therefore rankable, acronym (IsKnown).
             "RE" => 1.07,
             // Rhythmic (backlog 135): the millisecond judgement ladder, which was the tighter one
             // on any map slower than 10 characters per second.
@@ -177,9 +195,9 @@ public static class ModMultiplier
             // the ceiling UNKNOWN_MOD_MULTIPLIER would then not even be consulted for, exactly the
             // failure mode "RH" above records.
             //
-            // FC is a ranked CONVERSION mod, so it needs no entry in the ranked gate: that gate is
-            // a deny list (ScoreEndpoints' always-unranked "RX"/"WU"/"WD"), and an acronym absent
-            // from it ranks. Listing it here is about the CEILING: unlisted it would be allowed
+            // FC is a ranked CONVERSION mod, so it needs no entry in the deny list (UnrankedMods);
+            // listing it here is what makes it a known, rankable acronym (IsKnown, S1-011), and
+            // beyond that it is about the CEILING: unlisted it would be allowed
             // UNKNOWN_MOD_MULTIPLIER (2.0x) on a play whose honest total is 1.02x its base, which
             // is a laundering slot nearly twice as wide as the mod can justify (the same argument
             // "HR" carries above). It also has to fit under STACK_CAP: DT@2.00 x FL x LT x HR x FC
@@ -218,7 +236,7 @@ public static class ModMultiplier
             // Rate ramps: the endpoints are not persisted, so price them at the most any ramp could
             // pay. 0.8·For(min) + 0.2·For(max) <= For(max) <= For(2.00), the curve being monotonic.
             "WU" or "WD" => RateMultiplier.For(2.00),
-            _ => UNKNOWN_MOD_MULTIPLIER,
+            _ => (double?)null,
         };
     }
 

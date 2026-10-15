@@ -261,6 +261,41 @@ public class ScoringContractTest
         });
     }
 
+    [Test]
+    public void KnownKeysOnly_DropsEveryKeyThatIsNotAHitResultName()
+    {
+        // What both submit routes store and merge, and what the board and profile wire send: a
+        // HitResult name survives with its count (zero and negative included, the recompute judges
+        // those), anything else is gone, however it is spelled.
+        var kept = ScoringContract.KnownKeysOnly(Dict(
+            ("great", 7), ("ok", 1), ("meh", 1), ("good", 1), ("miss", 0), ("combo_break", -2), ("ignore_hit", 3),
+            ("super_ultra_bonus", 9999), ("Great", 5), ("zz", 1), ("5", 1), ("", 1)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(kept.Keys, Is.EqualTo(new[] { "great", "ok", "meh", "good", "miss", "combo_break", "ignore_hit" }),
+                "unknown keys dropped, the known ones kept in their submitted order");
+            Assert.That(kept["great"], Is.EqualTo(7));
+            Assert.That(kept["combo_break"], Is.EqualTo(-2));
+            Assert.That(ScoringContract.KnownKeysOnly(null), Is.Empty);
+            Assert.That(ScoringContract.IsHitResultKey("legacy_combo_increase"), Is.True);
+            Assert.That(ScoringContract.IsHitResultKey("perfect"), Is.True, "a four-tier row's maximum");
+            Assert.That(ScoringContract.IsHitResultKey(null), Is.False);
+        });
+    }
+
+    [Test]
+    public void KnownKeysOnly_LeavesAnHonestPlaysRecomputeUntouched()
+    {
+        var statistics = Dict(("great", 150), ("ok", 20), ("meh", 10), ("good", 5), ("miss", 15), ("combo_break", 9));
+        var maximums = Dict(("great", 200));
+
+        var raw = ScoringContract.Recompute(statistics, maximums, maxCombo: 60);
+        var filtered = ScoringContract.Recompute(ScoringContract.KnownKeysOnly(statistics), ScoringContract.KnownKeysOnly(maximums), maxCombo: 60);
+
+        Assert.That(filtered, Is.EqualTo(raw));
+    }
+
     // ---- grade ladder (TypeBeatScoreProcessor.RankFromAccuracy, keep in sync) ----
     // Grades are awarded on accuracy with a missed-cell condition on SS (no cell missed) and S
     // (under 3% missed). The missedFraction here is 0 except where the condition is the point.

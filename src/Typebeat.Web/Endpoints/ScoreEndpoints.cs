@@ -30,25 +30,8 @@ public static class ScoreEndpoints
     // THE ALWAYS-UNRANKED LIST LIVES IN Scoring/UnrankedMods.cs, exactly once (backlog 270). It
     // used to be declared here and again in GateRefund, whose copy claimed to mirror this one and
     // was three acronyms behind it, so a refund pass would re-rank a play this path had refused.
-
-    /// <summary>
-    /// Whether a single submitted mod is ranked at its submitted configuration; the server-side
-    /// mirror of the client's per-mod <c>Ranked</c>. Unknown/null acronyms are treated as ranked
-    /// (forward-compatible); the caller ANDs this across all mods.
-    ///
-    /// <para>
-    /// The rate mods (DT/NC/HT/DC) are ranked at EVERY speed, not just their default: the client pays
-    /// them on a continuous curve (<see cref="RateMultiplier"/>), so an odd rate is priced, not
-    /// banned. Only the always-unranked set above disqualifies a play.
-    /// </para>
-    /// </summary>
-    private static bool ModConfigRanked(SubmittedMod mod)
-    {
-        if (string.IsNullOrWhiteSpace(mod.Acronym))
-            return true;
-
-        return !UnrankedMods.IsAlwaysUnranked(mod.Acronym);
-    }
+    // Whether a submitted acronym ranks is ScoreSubmission.ModRanked, which reads that list and
+    // also refuses an acronym ModMultiplier does not know.
 
     /// <summary>
     /// The mods as they will be STORED: uppercased acronym plus, for a rate mod, the submitted
@@ -261,8 +244,16 @@ public static class ScoreEndpoints
         bool setHasRankedBoard = setStatus is "ranked" or "loved";
         bool setAwardsPp = setStatus == "ranked";
 
-        var statistics = submission.Statistics ?? new Dictionary<string, int>();
-        var maximumStatistics = submission.MaximumStatistics ?? new Dictionary<string, int>();
+        // Only HitResult names survive (ScoringContract.KnownKeysOnly): an unknown key prices
+        // nothing, and stored or echoed it would break the game's board for that map.
+        var statistics = ScoringContract.KnownKeysOnly(submission.Statistics);
+        var maximumStatistics = ScoringContract.KnownKeysOnly(submission.MaximumStatistics);
+
+        int droppedKeys = (submission.Statistics?.Count ?? 0) - statistics.Count
+                          + (submission.MaximumStatistics?.Count ?? 0) - maximumStatistics.Count;
+
+        if (droppedKeys > 0)
+            logger.LogInformation("Score token {TokenId}: dropped {Count} unknown statistics key(s).", tokenId, droppedKeys);
 
         // The mods as they will be stored and priced: acronym + clamped rate, everything else dropped.
         var mods = NormalizeMods(submission.Mods);
@@ -311,9 +302,10 @@ public static class ScoreEndpoints
 
         // Mirror the client's per-mod Ranked flag: a score is ranked only if every mod is ranked at
         // its submitted configuration. Always-unranked mods (Mashing/Relax "RX"; the time-ramp Wind
-        // Up/Down "WU"/"WD") disqualify it. The rate mods (DT/NC/HT/DC) no longer do at ANY speed: the
-        // rate is paid on a continuous curve instead of being banned off the default.
-        bool modsRanked = submission.Mods is null || submission.Mods.All(ModConfigRanked);
+        // Up/Down "WU"/"WD") disqualify it, and so does an acronym the server does not know. The rate
+        // mods (DT/NC/HT/DC) no longer do at ANY speed: the rate is paid on a continuous curve
+        // instead of being banned off the default.
+        bool modsRanked = submission.Mods is null || ScoreSubmission.StackRanked(submission.Mods.Select(m => m.Acronym));
 
         // Ranked only if the SET has a ranked board (ranked or loved) and it passed with every cell
         // judged, every hard invariant held, the total is within its ceiling, the play took long
@@ -322,7 +314,8 @@ public static class ScoreEndpoints
         bool ranked = setHasRankedBoard && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && modsRanked && !buildBlocked;
 
         if (!modsRanked)
-            logger.LogInformation("Score token {TokenId}: unranked mod used, storing unranked.", tokenId);
+            logger.LogInformation("Score token {TokenId}: unranked or unknown mod used ({Mods}), storing unranked.",
+                tokenId, string.Join(",", mods.Select(m => m.Acronym)));
 
         // What the player saw: final whole-map accuracy for completed plays, the running
         // (judged-only) accuracy at the moment of failure otherwise. Equal when fully judged.
@@ -464,7 +457,7 @@ public static class ScoreEndpoints
                     // A failed play didn't run the whole map; credit actual elapsed time, capped
                     // at the drain length (elapsed can exceed it via pauses).
                     playTime = (long)Math.Round(Math.Min(elapsedSeconds, beatmap.DrainLengthS), MidpointRounding.AwayFromZero),
-                    hitCounts = MergeHitCounts(existingHitCounts, statistics)
+                    hitCounts = ScoreSubmission.MergeHitCounts(existingHitCounts, statistics)
                 }, tx);
 
             // Play history (024_play_history.sql): the same play, credited to its UTC month for
@@ -479,7 +472,7 @@ public static class ScoreEndpoints
 
         // Position = rank of the caller's best ranked+passed score among distinct users. Null when
         // this submission is unranked and the caller has no other ranked score on the map.
-        int? position = ranked ? await ComputeUserPosition(conn, tx, beatmapId, user.Id) : null;
+        int? position = ranked ? (await ScoreSubmission.UserStandingAsync(conn, tx, beatmapId, user.Id, wantRanked: true))?.Position : null;
 
         await tx.CommitAsync(ctx.RequestAborted);
 
@@ -734,25 +727,6 @@ public static class ScoreEndpoints
     private static bool IsGlobalScope(string? type)
         => string.IsNullOrEmpty(type) || string.Equals(type, "global", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Position of the caller's best ranked+passed score, or null if they have none.</summary>
-    private static async Task<int?> ComputeUserPosition(System.Data.Common.DbConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long userId)
-    {
-        var best = await conn.QuerySingleOrDefaultAsync<BestScoreRow>(
-            $"""
-            SELECT s.id AS id, s.total_score AS totalScore
-            FROM scores s
-            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND {BeatmapLeaderboard.OnBoard("s", "true")}
-            ORDER BY {BeatmapLeaderboard.Order("s")}
-            LIMIT 1
-            """,
-            new { beatmapId, userId }, tx);
-
-        if (best is null)
-            return null;
-
-        return await PositionOf(conn, tx, beatmapId, best.TotalScore, best.Id, wantRanked: true);
-    }
-
     /// <summary>
     /// 1-based rank of a (total_score, scoreId) among distinct users' best scores on one board:
     /// the ranked board when <paramref name="wantRanked"/>, the unranked board otherwise. The two
@@ -822,9 +796,13 @@ public static class ScoreEndpoints
     /// The stored statistics jsonb as the client's HitResult-keyed counts. Internal because the
     /// profile score rows (<see cref="ProfileScoreEndpoints"/>) carry the same two blobs and must
     /// decode them identically; a second copy is a second thing to keep in step.
+    ///
+    /// <para>Filtered to HitResult names on the way out (<see cref="ScoringContract.KnownKeysOnly"/>),
+    /// because the game reads these as <c>Dictionary&lt;HitResult, int&gt;</c> and a row stored
+    /// before submissions were filtered may still carry a key its enum does not have.</para>
     /// </summary>
     internal static Dictionary<string, int> ParseCounts(string? json)
-        => JsonConvert.DeserializeObject<Dictionary<string, int>>(json ?? "{}") ?? new Dictionary<string, int>();
+        => ScoringContract.KnownKeysOnly(JsonConvert.DeserializeObject<Dictionary<string, int>>(json ?? "{}"));
 
     /// <summary>
     /// The stored mods jsonb (<c>[{"acronym":"DT","settings":{"speed_change":1.5}}]</c>) passed
@@ -836,22 +814,6 @@ public static class ScoreEndpoints
         => string.IsNullOrWhiteSpace(json)
             ? Array.Empty<object>()
             : JsonConvert.DeserializeObject<object[]>(json) ?? Array.Empty<object>();
-
-    /// <summary>Sums per-key hit counts of <paramref name="add"/> into the stored hit_counts JSON.</summary>
-    private static string MergeHitCounts(string existingJson, IReadOnlyDictionary<string, int> add)
-    {
-        var merged = JsonConvert.DeserializeObject<Dictionary<string, int>>(existingJson) ?? new Dictionary<string, int>();
-
-        foreach (var (key, count) in add)
-        {
-            if (count <= 0)
-                continue; // ignore zero/negative (tamper) counts
-
-            merged[key] = merged.GetValueOrDefault(key) + count;
-        }
-
-        return JsonConvert.SerializeObject(merged);
-    }
 
     // ---- Dapper row shapes ----
 
@@ -865,8 +827,6 @@ public static class ScoreEndpoints
         double BaseStars, double? SrDt, double? SrHt,
         double? SrLiterate, double? SrLiterateDt, double? SrLiterateHt,
         string? Ratings, double? PlayedDurationS);
-
-    private sealed record BestScoreRow(long Id, long TotalScore);
 
     private sealed record BuildRow(long Id, bool Blocked);
 

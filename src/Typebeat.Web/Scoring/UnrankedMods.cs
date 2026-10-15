@@ -15,9 +15,11 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
-/// NEW MEMBERS HAVE TO BE LISTED, because this is a DENY LIST and every consumer treats an
-/// acronym it does not know as RANKED: a mod the client ships and the server has never heard of
-/// would otherwise store ranked and land on the shared boards. Why each of the six is here:
+/// NEW MEMBERS HAVE TO BE LISTED, because this is a DENY LIST: an acronym it does not name is not
+/// unranked BY THIS LIST. Since S1-011 an acronym <see cref="ModMultiplier"/> does not price is
+/// unranked anyway (<see cref="ScoreSubmission.ModRanked"/>), but a new unranked mod that is given
+/// a price there and forgotten here would store ranked and land on the shared boards. Why each of
+/// the six is here:
 /// </para>
 ///
 /// <list type="bullet">
@@ -54,8 +56,9 @@ public static class UnrankedMods
 
     /// <summary>
     /// Whether this acronym is unranked at every configuration. A null, blank or unknown acronym
-    /// is RANKED, which is the deny-list reading and the reason the summary above insists a new
-    /// mod be added here rather than assumed.
+    /// is not, which is the deny-list reading and the reason the summary above insists a new mod
+    /// be added here rather than assumed. Whether a submitted acronym RANKS is
+    /// <see cref="ScoreSubmission.ModRanked"/>, which also refuses one the server does not know.
     /// </summary>
     public static bool IsAlwaysUnranked(string? acronym)
         => !string.IsNullOrWhiteSpace(acronym) && ACRONYMS.Contains(acronym.Trim());

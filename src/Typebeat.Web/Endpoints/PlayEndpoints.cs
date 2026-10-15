@@ -480,8 +480,15 @@ public static class PlayEndpoints
         bool setHasRankedBoard = setStatus is "ranked" or "loved";
         bool setAwardsPp = setStatus == "ranked";
 
-        var statistics = submission.Statistics ?? new Dictionary<string, int>();
-        var maximumStatistics = submission.MaximumStatistics ?? new Dictionary<string, int>();
+        // Only HitResult names survive, exactly as on the game's route (ScoringContract.KnownKeysOnly).
+        var statistics = ScoringContract.KnownKeysOnly(submission.Statistics);
+        var maximumStatistics = ScoringContract.KnownKeysOnly(submission.MaximumStatistics);
+
+        int droppedKeys = (submission.Statistics?.Count ?? 0) - statistics.Count
+                          + (submission.MaximumStatistics?.Count ?? 0) - maximumStatistics.Count;
+
+        if (droppedKeys > 0)
+            logger.LogInformation("Play token {TokenId}: dropped {Count} unknown statistics key(s).", token.Id, droppedKeys);
 
         var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, submission.MaxCombo);
         bool withinBounds = ScoringContract.TotalScoreWithinBounds(submission.TotalScore, recomputed);
@@ -616,7 +623,7 @@ public static class PlayEndpoints
                     userId = user.Id,
                     totalScore = storedTotal,
                     playTime = (long)Math.Round(Math.Min(elapsedSeconds, beatmap.DrainLengthS), MidpointRounding.AwayFromZero),
-                    hitCounts = MergeHitCounts(existingHitCounts, statistics)
+                    hitCounts = ScoreSubmission.MergeHitCounts(existingHitCounts, statistics)
                 }, tx);
 
             // Play history (024_play_history.sql), same rule as the game client's path: browser
@@ -648,7 +655,7 @@ public static class PlayEndpoints
         // lists), and personal_best says whether that best is THIS play, so a run that did not
         // beat it is never told its best's rank as though it had earned it.
         var standing = onBoard is bool boardRanked
-            ? await ComputeUserPosition(conn, tx, beatmapId, user.Id, boardRanked)
+            ? await ScoreSubmission.UserStandingAsync(conn, tx, beatmapId, user.Id, boardRanked)
             : null;
 
         await tx.CommitAsync(ctx.RequestAborted);
@@ -872,61 +879,8 @@ public static class PlayEndpoints
         _ => "application/octet-stream",
     };
 
-    // ---- scoring helpers (the board rules come from BeatmapLeaderboard, as ScoreEndpoints' do) ----
-
-    /// <summary>
-    /// The user's best row on one board of a map (the ranked board when <paramref name="wantRanked"/>,
-    /// the unranked one otherwise) and its 1-based position among every player's best there, or
-    /// null when they have no row on it. Built entirely from the <see cref="BeatmapLeaderboard"/>
-    /// fragments, so eligibility, the per-player fold and the tie-break are the board's own rules
-    /// rather than a copy of them.
-    /// </summary>
-    private static async Task<(long BestScoreId, int Position)?> ComputeUserPosition(
-        NpgsqlConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long userId, bool wantRanked)
-    {
-        var best = await conn.QuerySingleOrDefaultAsync<BestScoreRow>(
-            $"""
-            SELECT s.id AS id, s.total_score AS totalScore
-            FROM scores s
-            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND {BeatmapLeaderboard.OnBoard("s")}
-            ORDER BY {BeatmapLeaderboard.Order("s")}
-            LIMIT 1
-            """,
-            new { beatmapId, userId, wantRanked }, tx);
-
-        if (best is null)
-            return null;
-
-        int position = await conn.ExecuteScalarAsync<int>(
-            $"""
-            SELECT 1 + COUNT(*)
-            FROM (
-                SELECT DISTINCT ON (s.user_id) s.user_id, s.total_score, s.id
-                FROM scores s
-                WHERE s.beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("s")}
-                ORDER BY s.user_id, {BeatmapLeaderboard.Order("s")}
-            ) b
-            WHERE {BeatmapLeaderboard.Outranks("b")}
-            """,
-            new { beatmapId, totalScore = best.TotalScore, scoreId = best.Id, wantRanked }, tx);
-
-        return (best.Id, position);
-    }
-
-    private static string MergeHitCounts(string existingJson, IReadOnlyDictionary<string, int> add)
-    {
-        var merged = JsonConvert.DeserializeObject<Dictionary<string, int>>(existingJson) ?? new Dictionary<string, int>();
-
-        foreach (var (key, count) in add)
-        {
-            if (count <= 0)
-                continue;
-
-            merged[key] = merged.GetValueOrDefault(key) + count;
-        }
-
-        return JsonConvert.SerializeObject(merged);
-    }
+    // The caller's standing on a board and the hit_counts merge are ScoreSubmission's, shared with
+    // ScoreEndpoints; the board rules themselves come from BeatmapLeaderboard.
 
     // ---- Dapper row shapes ----
 
@@ -943,8 +897,6 @@ public static class PlayEndpoints
 
     /// <summary>One live difficulty, as the picker's difficulty step renders it.</summary>
     private sealed record DiffRow(long Id, string VersionName, double Stars, double? Wpm, double? AvgWpm);
-
-    private sealed record BestScoreRow(long Id, long TotalScore);
 
     // timestamptz arrives from Npgsql as UTC DateTime; DateTimeOffset ctor params break Dapper's
     // constructor matching at runtime.
