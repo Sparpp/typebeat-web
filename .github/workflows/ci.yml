@@ -44,7 +44,7 @@ jobs:
       # demands, into the local feed declared in nuget.config.
       - name: Pack typebeat.Game.Resources into local feed
         run: |
-          # sed, not grep -P: portable across locales, and guard against an empty match —
+          # sed, not grep -P: portable across locales, and guard against an empty match:
           # an empty -p:Version fails the pack with an opaque MSB4044.
           VER=$(sed -n 's/.*Include="typebeat.Game.Resources" Version="\([^"]*\)".*/\1/p' external/typebeat-osu/typebeat.Game/typebeat.Game.csproj)
           if [ -z "$VER" ]; then echo "::error::could not extract typebeat.Game.Resources version from the game csproj"; exit 1; fi
@@ -57,7 +57,7 @@ jobs:
       # relative path (..\type-beat-assets\artifacts) that doesn't resolve on the Linux CI layout
       # and hard-fails restore with NU1301. The web build vendors typebeat.Game.Resources through
       # this repo's own feed (external/packages, packed above), so drop the submodule's config and
-      # restore purely from the root nuget.config — the same state CI had before the game repo
+      # restore purely from the root nuget.config, the same state CI had before the game repo
       # started tracking that file.
       - name: Drop game submodule's dev-local nuget.config
         run: rm -f external/typebeat-osu/nuget.config
