@@ -1947,6 +1947,10 @@
         const meta = el('div', 'tb-meta', `<span class="tb-meta-title">${escapeHtml(title)}</span>${artist ? ' <span class="tb-meta-artist">' + escapeHtml(artist) + '</span>' : ''}`);
 
         const overlay = el('div', 'tb-overlay');
+        // The cards shown here (start gate, pause, results, load errors) are announced to screen
+        // readers as they replace each other; the overlay is empty while a run plays unpaused.
+        overlay.setAttribute('role', 'status');
+        overlay.setAttribute('aria-live', 'polite');
         root.append(hud, health, stage, progress, progressTime, meta, overlay);
         // The hold-` / hold-Ctrl+` fill (backlog 311), empty and hidden until a hold begins.
         const holdBox = el('div', 'tb-hold');
@@ -3236,6 +3240,8 @@
             const nudgeUrl = nudgeUrlFor(opts.discordNudge, results);
             if (nudgeUrl) card.appendChild(el('div', 'tb-result-nudge', nudgeHtml(nudgeUrl)));
             const status = el('div', 'tb-submit-status', '');
+            status.setAttribute('role', 'status');
+            status.setAttribute('aria-live', 'polite');
             card.appendChild(status);
             const actions = el('div', 'tb-result-actions');
             const again = el('button', 'tb-btn tb-btn-primary tb-result-again', 'play again');

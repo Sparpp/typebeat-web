@@ -380,7 +380,7 @@
     }
 
     function loadError() {
-        stageMount.innerHTML = '<div class="tb-loading">could not load this map. <a href="#" id="tb-back">back</a></div>';
+        stageMount.innerHTML = '<div class="tb-loading" role="alert">could not load this map. <a href="#" id="tb-back">back</a></div>';
         const back = document.getElementById('tb-back');
         if (back) back.addEventListener('click', (ev) => { ev.preventDefault(); showPicker(); });
     }
