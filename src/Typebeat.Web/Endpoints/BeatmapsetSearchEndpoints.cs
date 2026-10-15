@@ -32,6 +32,12 @@ public static class BeatmapsetSearchEndpoints
     public const int PageSize = 50;
 
     /// <summary>
+    /// The deepest offset served (200 pages): the overlay only pages forward a few screens, and a
+    /// cursor past this would only make the database skip rows. No cursor is handed out beyond it.
+    /// </summary>
+    public const int MaxOffset = 10_000;
+
+    /// <summary>
     /// The client's <c>SearchLanguage</c> ids (osu-web's language ids, its declaration order) to the
     /// stored canonical names (<see cref="Packages.BeatmapLanguages"/>). 1 is osu's "Unspecified",
     /// which is the stored empty string.
@@ -174,7 +180,7 @@ public static class BeatmapsetSearchEndpoints
             _ => $"ORDER BY s.submitted_at {dir}, s.id DESC",
         };
 
-        int offset = int.TryParse(q["cursor[offset]"], out int parsed) && parsed > 0 ? parsed : 0;
+        int offset = int.TryParse(q["cursor[offset]"], out int parsed) && parsed > 0 ? Math.Min(parsed, MaxOffset) : 0;
         param.Add("offset", offset);
 
         int total = await conn.ExecuteScalarAsync<int>(
@@ -194,8 +200,9 @@ public static class BeatmapsetSearchEndpoints
         return WireJson.Ok(new
         {
             beatmapsets = sets,
-            // osu-web shape: a cursor object while more pages exist, null on the last page.
-            cursor = next < total ? new Dictionary<string, object> { ["offset"] = next } : null,
+            // osu-web shape: a cursor object while more pages exist, null on the last page (and
+            // once MaxOffset is reached).
+            cursor = next < total && next <= MaxOffset ? new Dictionary<string, object> { ["offset"] = next } : null,
             total,
         });
     }

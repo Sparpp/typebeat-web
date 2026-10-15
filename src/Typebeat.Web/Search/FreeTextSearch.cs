@@ -55,6 +55,11 @@ public static class FreeTextSearch
     /// "Fresh Drop" is exactly 0.4, and is refused).</summary>
     public const double TrigramThreshold = 0.4;
 
+    /// <summary>The typo layer probes at most this many words (the first ones typed): each is a
+    /// <c>word_similarity</c> pass over every candidate row, and a search that long has long since
+    /// been narrowed by the words already probed.</summary>
+    public const int MaxTypoWords = 12;
+
     public const int TierExact = 0;
     public const int TierPrefix = 1;
     public const int TierSubstring = 2;
@@ -175,7 +180,8 @@ public static class FreeTextSearch
         => raw.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_");
 
     /// <summary>
-    /// Every word long enough to carry trigrams must resemble a title or artist word. The threshold
+    /// Every word long enough to carry trigrams (up to <see cref="MaxTypoWords"/> of them) must
+    /// resemble a title or artist word. The threshold
     /// is compared as <c>real</c>, the type <c>word_similarity</c> returns: against a numeric literal
     /// a real 0.4 reads as 0.40000000596 and slips over its own threshold.
     /// </summary>
@@ -184,6 +190,7 @@ public static class FreeTextSearch
         var typoWords = words.Concat(phrases.SelectMany(ph => ph.Split(' ')))
             .Where(w => w.Length >= MinFuzzyLength)
             .Distinct()
+            .Take(MaxTypoWords)
             .ToList();
 
         if (typoWords.Count == 0)

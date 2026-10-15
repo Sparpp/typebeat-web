@@ -34,6 +34,42 @@ public class BeatmapSearchQueryTest
         });
     }
 
+    [Test]
+    public void OverlongQuery_IsReadUpToMaxQueryLength_AndNoFurther()
+    {
+        string words = string.Join(' ', Enumerable.Repeat("neon", 60));
+        var q = BeatmapSearchQuery.Parse(words + " star:>4");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(words.Length, Is.GreaterThan(BeatmapSearchQuery.MaxQueryLength));
+            Assert.That(q.FreeText, Is.EqualTo(words[..BeatmapSearchQuery.MaxQueryLength]));
+            Assert.That(q.HasOperators, Is.False, "an operator past the cut is never read");
+        });
+    }
+
+    [Test]
+    public void QueryOfExactlyMaxQueryLength_IsReadWhole()
+    {
+        string free = new('a', BeatmapSearchQuery.MaxQueryLength - " star:>4".Length);
+        var q = BeatmapSearchQuery.Parse(free + " star:>4");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(q.FreeText, Is.EqualTo(free));
+            Assert.That(q.NumericFilters, Has.Count.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void TheCut_NeverSplitsASurrogatePair()
+    {
+        string free = new('a', BeatmapSearchQuery.MaxQueryLength - 1);
+        var q = BeatmapSearchQuery.Parse(free + "\U0001F600");
+
+        Assert.That(q.FreeText, Is.EqualTo(free));
+    }
+
     // ---- text operators ----
 
     [Test]
