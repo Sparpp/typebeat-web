@@ -166,8 +166,10 @@ public static class Seo
     {
         private JsonLd(string json) => Json = json;
 
+        /// <summary>The serialised block, without the script element around it.</summary>
         public string Json { get; }
 
+        /// <summary>Serialises <paramref name="node"/> with the default encoder.</summary>
         public static JsonLd Of(object node) => new(JsonSerializer.Serialize(node));
     }
 
