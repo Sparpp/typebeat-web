@@ -14,8 +14,11 @@
 
     function stop() {
         if (audio) {
+            // Dropping the source this way, rather than assigning src = '', does not fire an
+            // error event on the element being let go.
             audio.pause();
-            audio.src = '';
+            audio.removeAttribute('src');
+            audio.load();
             audio = null;
         }
 
@@ -41,21 +44,29 @@
 
         stop();
 
+        var clip = new Audio(btn.dataset.preview);
         current = btn;
-        audio = new Audio(btn.dataset.preview);
+        audio = clip;
         audio.volume = PREVIEW_VOLUME;
 
-        audio.addEventListener('timeupdate', function () {
-            if (audio && isFinite(audio.duration) && audio.duration > 0)
-                btn.style.setProperty('--progress', ((audio.currentTime / audio.duration) * 100).toFixed(1) + '%');
+        // Every handler is bound to its own element and button and does nothing once another
+        // preview has replaced it, so a late event from an old clip never stops the new one.
+        function stopIfCurrent() {
+            if (audio === clip)
+                stop();
+        }
+
+        clip.addEventListener('timeupdate', function () {
+            if (audio === clip && isFinite(clip.duration) && clip.duration > 0)
+                btn.style.setProperty('--progress', ((clip.currentTime / clip.duration) * 100).toFixed(1) + '%');
         });
 
         // The preview object is already a 30 s clip, so natural end == clip end.
-        audio.addEventListener('ended', stop);
-        audio.addEventListener('error', stop);
+        clip.addEventListener('ended', stopIfCurrent);
+        clip.addEventListener('error', stopIfCurrent);
 
         btn.classList.add('is-playing');
         btn.setAttribute('aria-label', 'Stop preview');
-        audio.play().catch(stop);
+        clip.play().catch(stopIfCurrent);
     });
 })();
