@@ -263,8 +263,12 @@ app.UseWhen(
 
 app.UseWebSockets();
 
-// Website assets (css/fonts/favicon) from wwwroot.
-app.UseStaticFiles();
+// Website assets (css/fonts/favicon) from wwwroot, with browser caching (backlog 417):
+// StaticAssetCaching.Apply says which files may be kept, and for how long.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx => StaticAssetCaching.Apply(ctx.Context),
+});
 
 app.UseRouting();
 

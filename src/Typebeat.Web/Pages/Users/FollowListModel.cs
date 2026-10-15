@@ -79,6 +79,8 @@ public abstract class FollowListModel(Db db) : TypebeatPageModel
         ViewData["MetaDescription"] = Incoming
             ? $"People following {Owner.Username} on type!beat."
             : $"People {Owner.Username} follows on type!beat.";
+        // A list of other profiles, each indexed on its own: nothing here to index (backlog 417).
+        ViewData["NoIndex"] = true;
 
         return Page();
     }

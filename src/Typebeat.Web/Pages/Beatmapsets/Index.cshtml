@@ -4,6 +4,9 @@
     ViewData["Title"] = "Beatmaps";
     ViewData["MetaDescription"] = "Browse and download lyric-typing beatmaps for type!beat, "
         + "search by title, artist, mapper or tags.";
+    // Search results are not indexed (backlog 417); sort, status and paging pages still are.
+    if (!Seo.ListingSearchIndexable(Model.Query))
+        ViewData["NoIndex"] = true;
 }
 
 <h1>Beatmaps</h1>

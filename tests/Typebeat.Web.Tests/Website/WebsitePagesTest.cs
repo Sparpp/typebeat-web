@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text.RegularExpressions;
+using Typebeat.Web.Caching;
 
 namespace Typebeat.Web.Tests.Website;
 
@@ -48,6 +50,36 @@ public class WebsitePagesTest
             Assert.That(response.Content.Headers.ContentType?.MediaType, Is.EqualTo("text/css"));
             Assert.That(css, Does.Contain("--grad-primary"));
         });
+    }
+
+    // Backlog 417: a versioned asset is kept for a year, fonts and flags for a day, and every
+    // other wwwroot file keeps today's header (none), so replacing one in place needs no purge.
+    [TestCase("/css/site.css?v=x", StaticAssetCaching.VERSIONED)]
+    [TestCase("/fonts/jetbrainsmono-latin-wght.woff2", StaticAssetCaching.STABLE)]
+    [TestCase("/flags/US.png", StaticAssetCaching.STABLE)]
+    [TestCase("/media/og-default.png", null)]
+    [TestCase("/css/site.css", null)]
+    [TestCase("/favicon.svg", null)]
+    public async Task StaticAssets_CarryTheirCacheControl(string url, string? expected)
+    {
+        using var response = await WebsiteFixture.Client.GetAsync(url);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), url);
+            Assert.That(response.Headers.CacheControl?.ToString(), Is.EqualTo(expected), url);
+        });
+    }
+
+    [Test]
+    public async Task Layout_AppendVersionedAssets_GetTheYearLongHeader()
+    {
+        string html = await WebsiteFixture.Client.GetStringAsync("/");
+        var link = Regex.Match(html, "href=\"(/css/site\\.css\\?v=[^\"]+)\"");
+        Assert.That(link.Success, Is.True, "the stylesheet link carries asp-append-version's v");
+
+        using var response = await WebsiteFixture.Client.GetAsync(WebUtility.HtmlDecode(link.Groups[1].Value));
+        Assert.That(response.Headers.CacheControl?.ToString(), Is.EqualTo(StaticAssetCaching.VERSIONED));
     }
 
     [Test]

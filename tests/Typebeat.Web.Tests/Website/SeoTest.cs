@@ -5,6 +5,7 @@ using System.Xml.Linq;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
 using Typebeat.Web.Endpoints;
+using Typebeat.Web.Packages;
 
 namespace Typebeat.Web.Tests.Website;
 
@@ -50,11 +51,30 @@ public class SeoTest
         return JsonDocument.Parse(match.Groups[1].Value).RootElement.Clone();
     }
 
+    private static IEnumerable<string?> typesOf(JsonElement node)
+    {
+        var type = node.GetProperty("@type");
+        return type.ValueKind == JsonValueKind.Array ? type.EnumerateArray().Select(e => e.GetString()) : [type.GetString()];
+    }
+
+    /// <summary>The one node of an <c>@graph</c> root whose <c>@type</c> names <paramref name="type"/>.</summary>
+    private static JsonElement node(JsonElement root, string type)
+    {
+        var matches = root.GetProperty("@graph").EnumerateArray().Where(n => typesOf(n).Contains(type)).ToList();
+        Assert.That(matches, Has.Count.EqualTo(1), $"one {type} node in the graph");
+        return matches[0];
+    }
+
+    private static string[] stringsOf(JsonElement array) => array.EnumerateArray().Select(e => e.GetString()!).ToArray();
+
     [Test]
     public async Task Landing_CarriesTitleCanonicalShareTagsAndVideoGameJsonLd()
     {
         string html = await getHtmlAsync("/");
-        var game = jsonLdOf(html);
+        var root = jsonLdOf(html);
+        var game = node(root, "VideoGame");
+        var org = node(root, "Organization");
+        var source = node(root, "SoftwareSourceCode");
 
         Assert.Multiple(() =>
         {
@@ -77,17 +97,60 @@ public class SeoTest
             Assert.That(description, Does.Contain("type to the beat"));
             Assert.That(description, Does.Contain("typing game with music"));
 
-            Assert.That(game.GetProperty("@context").GetString(), Is.EqualTo("https://schema.org"));
-            Assert.That(game.GetProperty("@type").GetString(), Is.EqualTo("VideoGame"));
+            // Backlog 417: the default share image declares its size; the description is the
+            // constant the JSON-LD shares, unchanged.
+            Assert.That(metaOf(html, "property", "og:image:width"), Is.EqualTo("1200"));
+            Assert.That(metaOf(html, "property", "og:image:height"), Is.EqualTo("630"));
+            Assert.That(description, Is.EqualTo(Seo.GAME_DESCRIPTION));
+
+            // One @graph under one @context (backlog 417).
+            Assert.That(root.GetProperty("@context").GetString(), Is.EqualTo("https://schema.org"));
+            Assert.That(root.GetProperty("@graph").GetArrayLength(), Is.EqualTo(3));
+            Assert.That(typesOf(game), Is.EqualTo(new[] { "VideoGame", "WebApplication" }));
+
+            // Absolute ids, so /download names the same three entities rather than its own.
+            Assert.That(game.GetProperty("@id").GetString(), Is.EqualTo("https://typebeat.sh/#game"));
+            Assert.That(org.GetProperty("@id").GetString(), Is.EqualTo("https://typebeat.sh/#org"));
+            Assert.That(source.GetProperty("@id").GetString(), Is.EqualTo("https://typebeat.sh/#source"));
+            Assert.That(game.GetProperty("publisher").GetProperty("@id").GetString(), Is.EqualTo("https://typebeat.sh/#org"));
+            Assert.That(game.GetProperty("isBasedOn").GetProperty("@id").GetString(), Is.EqualTo("https://typebeat.sh/#source"));
+
             Assert.That(game.GetProperty("name").GetString(), Is.EqualTo("type!beat"));
             Assert.That(game.GetProperty("alternateName").GetString(), Is.EqualTo("typebeat"));
             Assert.That(game.GetProperty("url").GetString(), Is.EqualTo("https://typebeat.sh/"));
-            Assert.That(game.GetProperty("genre").EnumerateArray().Select(e => e.GetString()), Is.EqualTo(new[] { "Rhythm", "Typing" }));
-            Assert.That(game.GetProperty("gamePlatform").EnumerateArray().Select(e => e.GetString()),
-                Is.EqualTo(new[] { "Windows", "macOS", "Linux", "Web browser" }));
+            Assert.That(game.GetProperty("description").GetString(), Is.EqualTo(Seo.GAME_DESCRIPTION));
+            Assert.That(stringsOf(game.GetProperty("genre")), Is.EqualTo(new[] { "Rhythm game", "Typing game", "Music game" }));
+            Assert.That(stringsOf(game.GetProperty("gamePlatform")), Is.EqualTo(new[] { "Windows", "macOS", "Linux", "Web browser" }));
+            Assert.That(game.GetProperty("applicationCategory").GetString(), Is.EqualTo("GameApplication"));
+            Assert.That(game.GetProperty("operatingSystem").GetString(), Is.EqualTo("Windows, macOS, Linux, Web browser"));
+            Assert.That(game.GetProperty("playMode").GetString(), Is.EqualTo("SinglePlayer"));
+            Assert.That(game.GetProperty("isAccessibleForFree").GetBoolean(), Is.True);
+            Assert.That(game.GetProperty("downloadUrl").GetString(), Is.EqualTo("https://typebeat.sh/download"));
+            Assert.That(game.GetProperty("screenshot").GetString(), Is.EqualTo("https://typebeat.sh/media/widedemo-poster.jpg"));
             Assert.That(game.GetProperty("offers").GetProperty("price").GetString(), Is.EqualTo("0"));
-            Assert.That(game.GetProperty("sameAs").EnumerateArray().Select(e => e.GetString()),
-                Does.Contain(SiteLinks.DISCORD_INVITE).And.Contain(SiteLinks.SOURCE_REPOSITORY));
+            Assert.That(stringsOf(game.GetProperty("sameAs")),
+                Is.EqualTo(new[] { SiteLinks.SOURCE_REPOSITORY, SiteLinks.DISCORD_INVITE, SiteLinks.YOUTUBE_CHANNEL }));
+
+            // The game ships CC BY-NC resources, so the MIT licence is the source code's alone, and
+            // no rating or review is ever claimed.
+            Assert.That(game.TryGetProperty("license", out _), Is.False, "no licence on the game");
+            Assert.That(source.GetProperty("license").GetString(), Is.EqualTo("https://opensource.org/licenses/MIT"));
+            Assert.That(source.GetProperty("codeRepository").GetString(), Is.EqualTo(SiteLinks.SOURCE_REPOSITORY));
+            Assert.That(source.GetProperty("programmingLanguage").GetString(), Is.EqualTo("C#"));
+            foreach (var n in root.GetProperty("@graph").EnumerateArray())
+            {
+                Assert.That(n.TryGetProperty("aggregateRating", out _), Is.False, "no aggregateRating");
+                Assert.That(n.TryGetProperty("review", out _), Is.False, "no review");
+            }
+
+            Assert.That(org.GetProperty("name").GetString(), Is.EqualTo("type!beat"));
+            Assert.That(org.GetProperty("url").GetString(), Is.EqualTo("https://typebeat.sh/"));
+            Assert.That(stringsOf(org.GetProperty("sameAs")),
+                Is.EqualTo(new[] { SiteLinks.SOURCE_REPOSITORY, SiteLinks.DISCORD_INVITE, SiteLinks.YOUTUBE_CHANNEL }));
+
+            // Out of scope until signed off: the site-name WebSite node and the Organization logo.
+            Assert.That(org.TryGetProperty("logo", out _), Is.False, "no logo");
+            Assert.That(root.GetProperty("@graph").EnumerateArray().Any(n => typesOf(n).Contains("WebSite")), Is.False, "no WebSite node");
         });
     }
 
@@ -95,12 +158,23 @@ public class SeoTest
     public async Task Download_HasSuffixedTitleAndVideoGameJsonLd()
     {
         string html = await getHtmlAsync("/download");
+        var root = jsonLdOf(html);
+        var game = node(root, "VideoGame");
 
         Assert.Multiple(() =>
         {
             Assert.That(titleOf(html), Is.EqualTo("Download · type!beat"));
             Assert.That(canonicalOf(html), Is.EqualTo("https://typebeat.sh/download"));
-            Assert.That(jsonLdOf(html).GetProperty("@type").GetString(), Is.EqualTo("VideoGame"));
+            Assert.That(root.GetProperty("@context").GetString(), Is.EqualTo("https://schema.org"));
+            Assert.That(typesOf(game), Does.Contain("VideoGame"));
+
+            // The landing's ids (backlog 417), not fragments of /download.
+            Assert.That(game.GetProperty("@id").GetString(), Is.EqualTo("https://typebeat.sh/#game"));
+            Assert.That(node(root, "Organization").GetProperty("@id").GetString(), Is.EqualTo("https://typebeat.sh/#org"));
+
+            // The JSON-LD carries the game's description; the page's own meta description stays.
+            Assert.That(game.GetProperty("description").GetString(), Is.EqualTo(Seo.GAME_DESCRIPTION));
+            Assert.That(metaOf(html, "name", "description"), Does.StartWith("Get type!beat for Windows, macOS or Linux"));
         });
     }
 
@@ -110,6 +184,7 @@ public class SeoTest
         long id = PublicSiteSeed.LeaderboardSetId;
         string html = await getHtmlAsync($"/beatmapsets/{id}?comments_after=5&after=123&utm_source=x");
         var recording = jsonLdOf(html);
+        var chip = Regex.Match(html, "<a class=\"chip\" href=\"/beatmapsets\\?q=language%3A([a-z]+)\"");
 
         Assert.Multiple(() =>
         {
@@ -120,6 +195,78 @@ public class SeoTest
             Assert.That(recording.GetProperty("url").GetString(), Is.EqualTo($"https://typebeat.sh/beatmapsets/{id}"));
             Assert.That(recording.GetProperty("byArtist").GetProperty("@type").GetString(), Is.EqualTo("MusicGroup"));
             Assert.That(recording.GetProperty("name").GetString(), Is.Not.Empty);
+
+            // Backlog 417: the selected (only) difficulty's 95.5 s, truncated as the Length row
+            // shows it (1:35), and the mapper linked by id as the "mapped by" line links them.
+            Assert.That(recording.GetProperty("duration").GetString(), Is.EqualTo("PT1M35S"));
+            Assert.That(html, Does.Contain(">1:35<"));
+            Assert.That(recording.GetProperty("creator").GetProperty("@type").GetString(), Is.EqualTo("Person"));
+            Assert.That(recording.GetProperty("creator").GetProperty("name").GetString(), Is.EqualTo("neon mapper"));
+            Assert.That(recording.GetProperty("creator").GetProperty("url").GetString(),
+                Is.EqualTo($"https://typebeat.sh/users/{PublicSiteSeed.MapperId}"));
+            // The shared set's language is not fixed across the run, so the expectation is read off
+            // the page's own language chip: its tag when there is one, otherwise no inLanguage.
+            string? expectedLang = chip.Success ? BeatmapLanguages.LangTag(chip.Groups[1].Value) : null;
+            if (expectedLang is null)
+                Assert.That(recording.TryGetProperty("inLanguage", out _), Is.False, "no language tag, no inLanguage");
+            else
+                Assert.That(recording.GetProperty("inLanguage").GetString(), Is.EqualTo(expectedLang));
+
+            // No cover of its own: the default share image, which declares its size.
+            Assert.That(metaOf(html, "property", "og:image"), Is.EqualTo(Seo.DEFAULT_OG_IMAGE));
+            Assert.That(metaOf(html, "property", "og:image:width"), Is.EqualTo("1200"));
+        });
+    }
+
+    [Test]
+    public async Task SetPage_CoverShareImage_NamesTheCanonicalHost_AndDeclaresNoSize()
+    {
+        long id = PublicSiteSeed.CoveredSetId;
+        string html = await getHtmlAsync($"/beatmapsets/{id}");
+        string? image = metaOf(html, "property", "og:image");
+
+        Assert.Multiple(() =>
+        {
+            // The fixture serves https://localhost; the share image is on typebeat.sh regardless (backlog 417).
+            Assert.That(image, Is.EqualTo($"https://typebeat.sh/covers/{id}/1/cover.jpg"));
+            Assert.That(new Uri(image!).Host, Is.EqualTo("typebeat.sh"));
+            Assert.That(metaOf(html, "name", "twitter:image"), Is.EqualTo(image));
+            Assert.That(jsonLdOf(html).GetProperty("image").GetString(), Is.EqualTo(image));
+
+            // A cover's size is not known, so none is claimed.
+            Assert.That(metaOf(html, "property", "og:image:width"), Is.Null);
+            Assert.That(metaOf(html, "property", "og:image:height"), Is.Null);
+        });
+    }
+
+    [Test]
+    public void MusicRecording_CarriesLanguageAndLength_AndKeepsACommaArtistWhole()
+    {
+        var recording = JsonDocument.Parse(Seo.MusicRecordingJsonLd(
+            "https://typebeat.sh/beatmapsets/7", "See You Again", "Tyler, The Creator", null,
+            lengthSeconds: 3725.9, langTag: "ja", creator: "neon mapper", creatorId: 42)).RootElement;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(recording.GetProperty("inLanguage").GetString(), Is.EqualTo("ja"));
+            Assert.That(recording.GetProperty("duration").GetString(), Is.EqualTo("PT62M5S"));
+            Assert.That(recording.GetProperty("byArtist").GetProperty("@type").GetString(), Is.EqualTo("MusicGroup"));
+            Assert.That(recording.GetProperty("byArtist").GetProperty("name").GetString(), Is.EqualTo("Tyler, The Creator"));
+            Assert.That(recording.GetProperty("creator").GetProperty("url").GetString(), Is.EqualTo("https://typebeat.sh/users/42"));
+            Assert.That(recording.TryGetProperty("image", out _), Is.False);
+        });
+    }
+
+    [Test]
+    public void MusicRecording_OmitsAnUnknownLength()
+    {
+        var recording = JsonDocument.Parse(Seo.MusicRecordingJsonLd(
+            "https://typebeat.sh/beatmapsets/7", "t", "a", null, lengthSeconds: null, langTag: null, creator: "m", creatorId: 1)).RootElement;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(recording.TryGetProperty("duration", out _), Is.False);
+            Assert.That(recording.TryGetProperty("inLanguage", out _), Is.False);
         });
     }
 
@@ -165,10 +312,96 @@ public class SeoTest
             Assert.That(body, Does.Contain("User-agent: *"));
             Assert.That(body, Does.Contain("Sitemap: https://typebeat.sh/sitemap.xml"));
 
-            foreach (string path in new[] { "/api/", "/bss/", "/oauth/", "/play/token", "/play/submit", "/settings", "/watching", "/logout", "/verify", "/error/" })
+            foreach (string path in new[]
+                     {
+                         "/api/", "/bss/", "/oauth/", "/play/token", "/play/submit", "/settings", "/watching", "/logout", "/verify", "/error/",
+                         "/beatmapsets/*/download", "/download/game", "/play/map/",
+                     })
                 Assert.That(body, Does.Contain($"Disallow: {path}\n"), path);
 
             Assert.That(body, Does.Not.Contain("Disallow: /\n"), "the site as a whole stays crawlable");
+            Assert.That(body, Does.Not.Contain("Disallow: /download\n"), "the /download page itself stays crawlable");
+
+            // Noindexed pages stay crawlable, or a crawler could never read their noindex.
+            foreach (string path in new[] { "/beatmapsets\n", "/beatmapsets/\n", "/rankings", "/users" })
+                Assert.That(body, Does.Not.Contain($"Disallow: {path}"), path);
+        });
+    }
+
+    [Test]
+    public async Task ListingSearch_IsNoIndex_WithNoCanonical()
+    {
+        string html = await getHtmlAsync("/beatmapsets?q=love");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(metaOf(html, "name", "robots"), Is.EqualTo("noindex"));
+            Assert.That(canonicalOf(html), Is.Null, "a noindex page names no canonical");
+        });
+    }
+
+    [TestCase("/beatmapsets?q=language:japanese", "https://typebeat.sh/beatmapsets?q=language%3Ajapanese")]
+    [TestCase("/beatmapsets?s=plays&status=ranked", "https://typebeat.sh/beatmapsets?s=plays&status=ranked")]
+    [TestCase("/beatmapsets", "https://typebeat.sh/beatmapsets")]
+    public async Task ListingWithoutAFreeSearch_StaysIndexed(string url, string canonical)
+    {
+        string html = await getHtmlAsync(url);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(metaOf(html, "name", "robots"), Is.Null);
+            Assert.That(canonicalOf(html), Is.EqualTo(canonical));
+        });
+    }
+
+    [TestCase(null, true)]
+    [TestCase("", true)]
+    [TestCase("language:japanese", true)]
+    [TestCase("language:english", true)]
+    [TestCase("love", false)]
+    [TestCase("language:japanese love", false)]
+    [TestCase("language:japanese star:>4", false)]
+    [TestCase("lang:japanese", false)]
+    [TestCase("language:jp", false)]
+    [TestCase("language:Japanese", false)]
+    [TestCase("language:klingon", false)]
+    [TestCase("language:", false)]
+    [TestCase("star:>4", false)]
+    public void ListingSearchIndexable_OnlyTheUnsearchedListingAndOneCanonicalLanguageFilter(string? query, bool expected)
+        => Assert.That(Seo.ListingSearchIndexable(query), Is.EqualTo(expected));
+
+    [Test]
+    public async Task FollowLists_AreNoIndex()
+    {
+        foreach (string list in new[] { "followers", "following" })
+        {
+            string html = await getHtmlAsync($"/users/{PublicSiteSeed.MapperId}/{list}");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(metaOf(html, "name", "robots"), Is.EqualTo("noindex"), list);
+                Assert.That(canonicalOf(html), Is.Null, list);
+            });
+        }
+
+        // The profile they hang off is still indexed.
+        string profile = await getHtmlAsync($"/users/{PublicSiteSeed.MapperId}");
+        Assert.That(metaOf(profile, "name", "robots"), Is.Null);
+    }
+
+    [Test]
+    public async Task RankingsPlayerSearch_IsNoIndex_AndTheBoardsAreNot()
+    {
+        string search = await getHtmlAsync("/rankings?q=x");
+        string board = await getHtmlAsync("/rankings?board=score");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(metaOf(search, "name", "robots"), Is.EqualTo("noindex"));
+            Assert.That(canonicalOf(search), Is.Null);
+
+            Assert.That(metaOf(board, "name", "robots"), Is.Null);
+            Assert.That(canonicalOf(board), Is.EqualTo("https://typebeat.sh/rankings?board=score"));
         });
     }
 

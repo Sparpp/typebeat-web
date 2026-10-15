@@ -271,10 +271,14 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
         ViewData["Title"] = $"{Set.Artist} - {Set.Title}";
         ViewData["MetaDescription"] =
             $"{Set.Artist}: {Set.Title}, mapped by {Set.Creator}. Type it in type!beat.";
+        // On the canonical origin, like the canonical itself, rather than whatever host served
+        // the request (backlog 417).
         if (Set.CoverKey is not null)
-            ViewData["OgImage"] = $"{Request.Scheme}://{Request.Host}/{Set.CoverKey}/cover.jpg";
+            ViewData["OgImage"] = $"{Seo.CANONICAL_ORIGIN}/{Set.CoverKey}/cover.jpg";
+        // The length is the selected difficulty's, the one the stats box shows.
         ViewData["JsonLd"] = Seo.MusicRecordingJsonLd(
-            Seo.CanonicalUrl($"/beatmapsets/{id}"), Set.Title, Set.Artist, ViewData["OgImage"] as string);
+            Seo.CanonicalUrl($"/beatmapsets/{id}"), Set.Title, Set.Artist, ViewData["OgImage"] as string,
+            Diff?.TotalLengthS, Set.LangTag, Set.Creator, Set.OwnerId);
 
         return Page();
     }
