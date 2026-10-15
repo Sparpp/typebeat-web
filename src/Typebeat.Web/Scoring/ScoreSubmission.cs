@@ -9,7 +9,7 @@ namespace Typebeat.Web.Scoring;
 /// <c>ScoreEndpoints.SubmitScore</c> and the browser's <c>PlayEndpoints.SubmitScoreAsync</c>.
 ///
 /// <para>
-/// THE PIPELINE STILL EXISTS TWICE (S1-004, S1-025). Each route keeps its own token lock, recompute,
+/// THE PIPELINE STILL EXISTS TWICE. Each route keeps its own token lock, recompute,
 /// gate, pp call, INSERT and stats upsert. What lives here is every piece that was a private copy
 /// in both, or that an integrity check needs to be the same on both: the ranked verdict of a
 /// submitted acronym, the <c>user_stats.hit_counts</c> merge, and the caller's standing on the
@@ -29,7 +29,7 @@ public static class ScoreSubmission
     ///
     /// <list type="bullet">
     /// <item>A null or blank acronym is ranked: it names no mod, and the stored stack drops it.</item>
-    /// <item>An acronym <see cref="ModMultiplier"/> does not price is UNRANKED (S1-011). It used to
+    /// <item>An acronym <see cref="ModMultiplier"/> does not price is UNRANKED. It used to
     /// rank at the 2.0x <see cref="ModMultiplier.UNKNOWN_MOD_MULTIPLIER"/>, which is above every
     /// honest stack, so one invented acronym on a perfect run boarded at 2,000,000.</item>
     /// <item>An always-unranked mod (<see cref="UnrankedMods"/>) is unranked.</item>
@@ -55,7 +55,7 @@ public static class ScoreSubmission
     /// <summary>
     /// Sums the per-key hit counts of <paramref name="add"/> into the stored <c>hit_counts</c> JSON.
     /// Zero and negative (tamper) counts are ignored, and so is any key that is not a
-    /// <c>HitResult</c> name (S1-039; the callers have already dropped those, this keeps the merge
+    /// <c>HitResult</c> name (the callers have already dropped those; this keeps the merge
     /// safe on its own). The sum is taken in <c>long</c> and held at <see cref="int.MaxValue"/>, where
     /// it used to wrap negative, so the column stays readable as the <c>int</c> map it has always been.
     /// </summary>

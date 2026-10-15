@@ -166,7 +166,7 @@ public class RateMultiplierTest
     }
 
     /// <summary>
-    /// IsKnown is the ranked allowlist (S1-011): every acronym this table prices is known, the
+    /// IsKnown is the ranked allowlist: every acronym this table prices is known, the
     /// retired "RH" and "FT" and the server-appended "CL" included, so no stored or honest row
     /// changes standing, and an acronym it does not price is not, so it can no longer rank at the
     /// 2.0x allowance. The allowance itself is untouched: an unknown acronym is still PRICED at it.

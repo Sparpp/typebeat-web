@@ -366,7 +366,7 @@ public static class ScoringContract
 
     /// <summary>
     /// <paramref name="counts"/> with every key that is not a <c>HitResult</c> name dropped, in the
-    /// original order (S1-039). Both submit routes run the client's two dictionaries through this
+    /// original order. Both submit routes run the client's two dictionaries through this
     /// BEFORE anything reads them, and the board and profile wire through it again on the way out
     /// (<c>ScoreEndpoints.ParseCounts</c>).
     ///

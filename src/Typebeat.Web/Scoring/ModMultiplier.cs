@@ -43,9 +43,9 @@ namespace Typebeat.Web.Scoring;
 /// <list type="bullet">
 /// <item>An acronym this table does not know is priced at <see cref="UNKNOWN_MOD_MULTIPLIER"/>, the
 /// same flat allowance the endpoint used before this existed, so a mod shipped by a newer client
-/// than the server still submits honestly instead of being clamped. It does not RANK, though: only
-/// an acronym <see cref="IsKnown"/> answers for can (see there), so the allowance buys a stored row
-/// and nothing on a board.</item>
+/// than the server still submits honestly instead of being clamped. It does not RANK, though: a
+/// play ranks only when every acronym on it is one this table lists (<see cref="IsKnown"/>), so
+/// the allowance buys a stored row and nothing on a board.</item>
 /// <item>Wind Up / Wind Down are paid on a rate RAMP whose endpoints the server does not persist,
 /// so they are priced at the most any ramp could pay, <c>For(2.00)</c>. They are unranked at every
 /// configuration regardless.</item>
@@ -111,7 +111,7 @@ public static class ModMultiplier
 
     /// <summary>
     /// Whether this table prices <paramref name="acronym"/> itself, rather than letting it fall to
-    /// <see cref="UNKNOWN_MOD_MULTIPLIER"/>. THIS IS THE RANKED ALLOWLIST (S1-011): an acronym it
+    /// <see cref="UNKNOWN_MOD_MULTIPLIER"/>. THIS IS THE RANKED ALLOWLIST: an acronym it
     /// does not know is stored UNRANKED on every path, because the 2.0x allowance above sits over
     /// every honest stack the client can assemble, so a perfect run plus one invented acronym
     /// would otherwise board at twice its worth. Every acronym the ruleset can submit is listed
@@ -170,8 +170,8 @@ public static class ModMultiplier
             // exactly as "HR" and "FC" do: unlisted it would be allowed UNKNOWN_MOD_MULTIPLIER (2.0x)
             // on a play whose honest total is 1.07x its base, a laundering slot nearly twice as wide
             // as the mod can justify. Recite is a RANKED mod, so the deny list (UnrankedMods) needs
-            // nothing for it; this arm is its price, and since S1-011 also what makes it a known,
-            // and therefore rankable, acronym (IsKnown).
+            // nothing for it; this arm is its price, and also what makes it a known, and therefore
+            // rankable, acronym (IsKnown).
             "RE" => 1.07,
             // Rhythmic (backlog 135): the millisecond judgement ladder, which was the tighter one
             // on any map slower than 10 characters per second.
@@ -196,7 +196,7 @@ public static class ModMultiplier
             // failure mode "RH" above records.
             //
             // FC is a ranked CONVERSION mod, so it needs no entry in the deny list (UnrankedMods);
-            // listing it here is what makes it a known, rankable acronym (IsKnown, S1-011), and
+            // listing it here is what makes it a known, rankable acronym (IsKnown), and
             // beyond that it is about the CEILING: unlisted it would be allowed
             // UNKNOWN_MOD_MULTIPLIER (2.0x) on a play whose honest total is 1.02x its base, which
             // is a laundering slot nearly twice as wide as the mod can justify (the same argument

@@ -16,7 +16,7 @@ using ServerUnranked = Typebeat.Web.Scoring.UnrankedMods;
 namespace Typebeat.WireCompat;
 
 /// <summary>
-/// Cross-repo pin for the SCORE-SIDE mod multiplier and the ranked verdicts (S1-012, S1-011).
+/// Cross-repo pin for the SCORE-SIDE mod multiplier, the ranked verdicts and the statistics allowlist.
 ///
 /// <para>
 /// The server's <see cref="ServerMultiplier"/> is a hand transcription of the game's
@@ -175,7 +175,7 @@ public class ScoreMultiplierParityTest
     }
 
     /// <summary>
-    /// The statistics allowlist (S1-039) is the game's <see cref="HitResult"/> vocabulary exactly as
+    /// The statistics allowlist is the game's <see cref="HitResult"/> vocabulary exactly as
     /// a submitted score spells it: every member, serialised as the client serialises its
     /// statistics dictionary, is a key the server keeps, and nothing outside it is.
     /// </summary>

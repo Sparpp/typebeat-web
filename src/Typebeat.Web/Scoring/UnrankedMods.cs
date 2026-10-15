@@ -16,7 +16,7 @@ namespace Typebeat.Web.Scoring;
 ///
 /// <para>
 /// NEW MEMBERS HAVE TO BE LISTED, because this is a DENY LIST: an acronym it does not name is not
-/// unranked BY THIS LIST. Since S1-011 an acronym <see cref="ModMultiplier"/> does not price is
+/// unranked BY THIS LIST. An acronym <see cref="ModMultiplier"/> does not price is
 /// unranked anyway (<see cref="ScoreSubmission.ModRanked"/>), but a new unranked mod that is given
 /// a price there and forgotten here would store ranked and land on the shared boards. Why each of
 /// the six is here:
@@ -62,7 +62,4 @@ public static class UnrankedMods
     /// </summary>
     public static bool IsAlwaysUnranked(string? acronym)
         => !string.IsNullOrWhiteSpace(acronym) && ACRONYMS.Contains(acronym.Trim());
-
-    /// <summary>Whether any member of this stack is unranked at every configuration.</summary>
-    public static bool StackIsUnranked(IEnumerable<string?> acronyms) => acronyms.Any(IsAlwaysUnranked);
 }
