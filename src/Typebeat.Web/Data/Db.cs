@@ -12,6 +12,12 @@ namespace Typebeat.Web.Data;
 /// </summary>
 public sealed class Db(NpgsqlDataSource dataSource)
 {
+    /// <summary>
+    /// Session advisory lock key <see cref="MigrateAsync"/> holds, a constant so every process
+    /// booting against the same database contends on the same one.
+    /// </summary>
+    public const long MigrationLockKey = 0x7479_7065_6D67;
+
     public NpgsqlDataSource DataSource { get; } = dataSource;
 
     public async Task<NpgsqlConnection> OpenAsync(CancellationToken ct = default)
@@ -37,49 +43,63 @@ public sealed class Db(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Applies embedded Data/Migrations/*.sql in filename order, recording each in
-    /// schema_migrations. Each migration runs in its own transaction.
+    /// schema_migrations. Each migration runs in its own transaction. The whole pass holds a
+    /// session advisory lock (<see cref="MigrationLockKey"/>), so two processes booting together
+    /// (a rollback overlapping a deploy, parallel test hosts) run it one after the other: the
+    /// second waits, then reads schema_migrations afresh and finds nothing left to apply.
     /// </summary>
     public async Task MigrateAsync(ILogger logger, CancellationToken ct = default)
     {
         await using var conn = await OpenAsync(ct);
 
-        await conn.ExecuteAsync(
-            """
-            CREATE TABLE IF NOT EXISTS schema_migrations
-            (
-                name       text PRIMARY KEY,
-                applied_at timestamptz NOT NULL DEFAULT now()
-            )
-            """);
+        await conn.ExecuteAsync("SELECT pg_advisory_lock(@key)", new { key = MigrationLockKey });
 
-        var applied = (await conn.QueryAsync<string>("SELECT name FROM schema_migrations")).ToHashSet();
-
-        var assembly = Assembly.GetExecutingAssembly();
-
-        var migrations = assembly.GetManifestResourceNames()
-                                 .Where(n => n.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
-                                 .OrderBy(n => n, StringComparer.Ordinal);
-
-        foreach (string resource in migrations)
+        try
         {
-            // "Typebeat.Web.Data.Migrations.001_init.sql" -> "001_init.sql"
-            string name = resource.Split(".Migrations.").Last();
+            await conn.ExecuteAsync(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations
+                (
+                    name       text PRIMARY KEY,
+                    applied_at timestamptz NOT NULL DEFAULT now()
+                )
+                """);
 
-            if (applied.Contains(name))
-                continue;
+            var applied = (await conn.QueryAsync<string>("SELECT name FROM schema_migrations")).ToHashSet();
 
-            logger.LogInformation("Applying migration {Name}...", name);
+            var assembly = Assembly.GetExecutingAssembly();
 
-            await using var stream = assembly.GetManifestResourceStream(resource)!;
-            using var reader = new StreamReader(stream, Encoding.UTF8);
-            string sql = await reader.ReadToEndAsync(ct);
+            // Only Data/Migrations: any other .sql a later change embeds is not a migration.
+            var migrations = assembly.GetManifestResourceNames()
+                                     .Where(n => n.Contains(".Data.Migrations.", StringComparison.Ordinal)
+                                                 && n.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
+                                     .OrderBy(n => n, StringComparer.Ordinal);
 
-            await using var tx = await conn.BeginTransactionAsync(ct);
-            await conn.ExecuteAsync(sql, transaction: tx);
-            await conn.ExecuteAsync("INSERT INTO schema_migrations (name) VALUES (@name)", new { name }, tx);
-            await tx.CommitAsync(ct);
+            foreach (string resource in migrations)
+            {
+                // "Typebeat.Web.Data.Migrations.001_init.sql" -> "001_init.sql"
+                string name = resource.Split(".Migrations.").Last();
 
-            logger.LogInformation("Migration {Name} applied.", name);
+                if (applied.Contains(name))
+                    continue;
+
+                logger.LogInformation("Applying migration {Name}...", name);
+
+                await using var stream = assembly.GetManifestResourceStream(resource)!;
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                string sql = await reader.ReadToEndAsync(ct);
+
+                await using var tx = await conn.BeginTransactionAsync(ct);
+                await conn.ExecuteAsync(sql, transaction: tx);
+                await conn.ExecuteAsync("INSERT INTO schema_migrations (name) VALUES (@name)", new { name }, tx);
+                await tx.CommitAsync(ct);
+
+                logger.LogInformation("Migration {Name} applied.", name);
+            }
+        }
+        finally
+        {
+            await conn.ExecuteAsync("SELECT pg_advisory_unlock(@key)", new { key = MigrationLockKey });
         }
     }
 }
