@@ -66,7 +66,8 @@
     // ---------------------------------------------------------------------------
     // LyricStage.approach_lead_ms is TypingEngine.CUE_LEAD_MS; core exposes the same value, so
     // the cue bar can never disagree with the window the engine actually activates a line in.
-    const CUE_LEAD_MS = (Core.constants && Core.constants.CUE_LEAD_MS) || 1500;
+    if (!Core.constants || !Core.constants.CUE_LEAD_MS) throw new Error('typebeat-core.js does not export constants.CUE_LEAD_MS');
+    const CUE_LEAD_MS = Core.constants.CUE_LEAD_MS;
     const CUE_BAR_MAX_PX = 140;             // LyricStage.approach_bar_max_width
     const PUSH_FADE_IN_MS = 400;            // LyricStage.push_fade_in_ms: the push warning's entrance
     const CARET_DAMP_HALF_TIME = 35;        // TypeBeatStyle.CARET_DAMP_HALF_TIME (ms)
