@@ -294,7 +294,7 @@ public class SeoTest
     {
         var recording = JsonDocument.Parse(Seo.MusicRecordingJsonLd(
             "https://typebeat.sh/beatmapsets/7", "See You Again", "Tyler, The Creator", null,
-            lengthSeconds: 3725.9, langTag: "ja", creator: "neon mapper", creatorId: 42)).RootElement;
+            lengthSeconds: 3725.9, langTag: "ja", creator: "neon mapper", creatorId: 42).Json).RootElement;
 
         Assert.Multiple(() =>
         {
@@ -311,7 +311,7 @@ public class SeoTest
     public void MusicRecording_OmitsAnUnknownLength()
     {
         var recording = JsonDocument.Parse(Seo.MusicRecordingJsonLd(
-            "https://typebeat.sh/beatmapsets/7", "t", "a", null, lengthSeconds: null, langTag: null, creator: "m", creatorId: 1)).RootElement;
+            "https://typebeat.sh/beatmapsets/7", "t", "a", null, lengthSeconds: null, langTag: null, creator: "m", creatorId: 1).Json).RootElement;
 
         Assert.Multiple(() =>
         {
