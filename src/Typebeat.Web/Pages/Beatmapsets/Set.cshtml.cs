@@ -422,8 +422,8 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
     /// WHERE clause (author, set owner, or reviewer); no row means NotFound, whether the comment
     /// never existed, is already gone, or is simply not the caller's to remove
     /// (indistinguishable on purpose, the pin handlers' rule). A REVIEWER removing somebody
-    /// else's comment on somebody else's set is moderation and writes the audit row, best-effort
-    /// like the rank/unrank audit; deleting your own comment, or tidying your own set's thread,
+    /// else's comment on somebody else's set is moderation and writes the audit row in the same
+    /// transaction as the removal; deleting your own comment, or tidying your own set's thread,
     /// is not.
     /// </summary>
     public async Task<IActionResult> OnPostDeleteCommentAsync(long id, long commentId)
@@ -432,24 +432,18 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
             return Redirect("/login");
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+        await using var tx = await conn.BeginTransactionAsync(HttpContext.RequestAborted);
 
         var deleted = await BeatmapsetComments.SoftDeleteAsync(
-            conn, id, commentId, CurrentUser.Id, CurrentUser.CanReviewMaps, HttpContext.RequestAborted);
+            conn, id, commentId, CurrentUser.Id, CurrentUser.CanReviewMaps, HttpContext.RequestAborted, tx);
 
         if (deleted is null)
             return NotFound();
 
         if (CommentModeration.IsModeration(deleted, CurrentUser.Id, CurrentUser.CanReviewMaps))
-        {
-            try
-            {
-                await CommentModeration.RecordAsync(conn, CurrentUser.Id, id, commentId);
-            }
-            catch (Exception e)
-            {
-                logger.LogWarning(e, "Comment {CommentId} on set {SetId} was removed but the audit row failed.", commentId, id);
-            }
-        }
+            await CommentModeration.RecordAsync(conn, CurrentUser.Id, id, commentId, tx);
+
+        await tx.CommitAsync(HttpContext.RequestAborted);
 
         return Redirect($"/beatmapsets/{id}#comments");
     }
