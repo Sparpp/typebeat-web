@@ -638,12 +638,7 @@ public static class PlayEndpoints
         // it passed and its stored flag matches (BeatmapLeaderboard.OnBoard), so a fail, and a
         // gate-refused play on a ranked set (stored unranked, but its map serves the RANKED board),
         // sit on none and are told no position.
-        bool? board = setStatus switch
-        {
-            "ranked" or "loved" => true,
-            "pending" or "unranked" => false,
-            _ => null,
-        };
+        bool? board = BeatmapLeaderboard.BoardFor(setStatus);
         bool? onBoard = board is bool wantRanked && passed && ranked == wantRanked ? wantRanked : null;
         long? scoreSetId = await conn.ExecuteScalarAsync<long?>(
             "SELECT set_id FROM beatmaps WHERE id = @beatmapId", new { beatmapId }, tx);

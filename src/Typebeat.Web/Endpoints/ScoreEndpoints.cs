@@ -670,12 +670,7 @@ public static class ScoreEndpoints
             """,
             new { beatmapId });
 
-        bool? board = setStatus switch
-        {
-            "ranked" or "loved" => true,
-            "pending" or "unranked" => false,
-            _ => null,
-        };
+        bool? board = BeatmapLeaderboard.BoardFor(setStatus);
 
         if (board is not bool wantRanked)
             return new BoardSlice(null, [], 0, false);
