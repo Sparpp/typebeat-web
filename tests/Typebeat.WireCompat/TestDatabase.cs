@@ -32,7 +32,10 @@ public static class TestDatabase
 
     /// <summary>
     /// Eight lowercase hex characters, fixed for the life of the test process. Postgres truncates
-    /// identifiers past 63 bytes, so keep prefixes short and lowercase.
+    /// identifiers past 63 bytes, so keep prefixes short and lowercase. A run that is killed before
+    /// its teardown leaves its databases behind under names no later run reuses; list them with
+    /// <c>SELECT format('DROP DATABASE %I WITH (FORCE);', datname) FROM pg_database WHERE datname ~ '^typebeat_.*_[0-9a-f]{8}$'</c>
+    /// and run the output. Setup never sweeps them, since that would kill a concurrent run's databases.
     /// </summary>
     public static string RunId { get; } = Guid.NewGuid().ToString("N")[..8];
 
