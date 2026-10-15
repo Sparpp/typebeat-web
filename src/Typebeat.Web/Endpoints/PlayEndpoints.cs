@@ -633,7 +633,7 @@ public static class PlayEndpoints
             new { scoreId, tokenId = token.Id }, tx);
 
         // WHICH BOARD this play sits on, by the set's CURRENT status, the same switch the game
-        // client's leaderboard makes (ScoreEndpoints.Leaderboard): a ranked or loved set serves the
+        // client's leaderboard makes (BeatmapLeaderboard.BoardFor, which ScoreEndpoints.Leaderboard also reads): a ranked or loved set serves the
         // ranked board, a pending or unranked set serves the unranked one. A play is only ON a board when
         // it passed and its stored flag matches (BeatmapLeaderboard.OnBoard), so a fail, and a
         // gate-refused play on a ranked set (stored unranked, but its map serves the RANKED board),
