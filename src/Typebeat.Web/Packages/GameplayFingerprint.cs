@@ -24,7 +24,7 @@ namespace Typebeat.Web.Packages;
 /// </para>
 /// <list type="bullet">
 ///   <item><description>
-///     <b>The whole <c>[Lyrics]</c> section</b>, verbatim, minus <c>beatdrop_ms</c>. That section
+///     <b>The whole <c>[Lyrics]</c> section</b>, verbatim, minus <c>beatdrop_ms</c> and <c>end_time_ms</c>. That section
 ///     IS the timing schema: per-line start/end, per-word units and their syllable arrays, the
 ///     freestyle flag, the header's <c>song_end_ms</c> (which caps the last line's seal deadline)
 ///     and <c>granularity</c>. Taking it raw rather than through the parsed
@@ -60,7 +60,8 @@ namespace Typebeat.Web.Packages;
 /// normalises <c>beatdrop_ms</c> out precisely so a beatdrop-only editor save cannot demote a
 /// ranked map locally, on the grounds that the beatdrop only soundtracks the main-menu intro and
 /// has no bearing on gameplay or scoring. The regex below is a mirror of that ruleset's
-/// <c>LyricOsuFormat.StripBeatdrop</c>.
+/// <c>LyricOsuFormat.StripPresentationTiming</c>, also excluding <c>end_time_ms</c> because it
+/// only changes when results open.
 /// </para>
 ///
 /// <para>
@@ -102,11 +103,10 @@ public static class GameplayFingerprint
     /// </summary>
     public static string CurrentVersionLikePattern => version_prefix + "%";
 
-    // Mirror of LyricOsuFormat.StripBeatdrop (typebeat-osu
-    // typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricOsuFormat.cs): the encoder always writes the
-    // field after another header key, so the leading comma is what is stripped.
-    private static readonly Regex beatdrop_field =
-        new Regex(",?\"beatdrop_ms\":[-0-9.eE+]+", RegexOptions.Compiled);
+    // Mirrors LyricOsuFormat.StripPresentationTiming, including each field's leading comma.
+    // end_time_ms is new, so excluding it leaves existing fingerprints and VERSION unchanged.
+    private static readonly Regex presentation_timing_fields =
+        new Regex(",?\"(?:beatdrop_ms|end_time_ms)\":[-0-9.eE+]+", RegexOptions.Compiled);
 
     // Mirror of LyricOsuFormat.StripOriginals (backlog 330): every writer puts "original" straight
     // after "text", so the leading comma is what is stripped, and a JSON string cannot hide an
@@ -115,11 +115,11 @@ public static class GameplayFingerprint
         new Regex(@",""original"":""(?:[^""\\]|\\.)*""", RegexOptions.Compiled);
 
     /// <summary>
-    /// One [Lyrics] line as the fingerprint hashes it: the beatdrop and every original removed. A
-    /// line that carries neither comes back as the very same string.
+    /// One [Lyrics] line as the fingerprint hashes it: the beatdrop, the end time and every original
+    /// removed. A line that carries none of them comes back as the very same string.
     /// </summary>
     public static string CanonicalLyricLine(string line)
-        => original_field.Replace(beatdrop_field.Replace(line, string.Empty), string.Empty);
+        => original_field.Replace(presentation_timing_fields.Replace(line, string.Empty), string.Empty);
 
     /// <summary>
     /// The stored fingerprint for one difficulty: <c>"v2:"</c> + lowercase SHA256 hex over the
