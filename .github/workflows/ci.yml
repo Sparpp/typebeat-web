@@ -71,6 +71,16 @@ jobs:
       - name: Build
         run: dotnet build typebeat-web.slnx -c Release
 
+      # Fail on any NuGet advisory against the deployed server's packages, direct or transitive:
+      # it decodes uploaded images and zips, so a flagged decoder is a live exposure. Reads the
+      # assets file the build just restored. `dotnet list package --vulnerable` exits 0 even when
+      # it reports something, so the step fails on the report's own heading instead.
+      - name: Vulnerable package check
+        run: |
+          set -o pipefail
+          dotnet list src/Typebeat.Web/Typebeat.Web.csproj package --vulnerable --include-transitive 2>&1 | tee vulnerable-packages.txt
+          if grep -q "has the following vulnerable packages" vulnerable-packages.txt; then echo "::error::the server references packages with known vulnerabilities (listed above)"; exit 1; fi
+
       - name: Unit tests
         run: dotnet test tests/Typebeat.Web.Tests -c Release --no-build
 

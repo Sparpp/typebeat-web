@@ -14,6 +14,15 @@ public sealed class CoverGenerator
 {
     public const int JpegQuality = 80;
 
+    /// <summary>
+    /// Largest source image, in pixels (width x height), that is decoded at all, here and in
+    /// <see cref="ProfileMedia"/>. Real backgrounds top out around 8K UHD (7680x4320, about 33 MP)
+    /// and the largest output is the 3840x720 slimcover@2x, so this sits well above any honest
+    /// upload; what it stops is a small file whose header declares dimensions that would decode
+    /// into gigabytes.
+    /// </summary>
+    public const long MaxSourcePixels = 8192L * 8192;
+
     /// <summary>The @1x bucket sizes; @2x doubles both dimensions.</summary>
     public static readonly IReadOnlyList<(string Name, int Width, int Height)> Sizes =
     [
@@ -30,7 +39,7 @@ public sealed class CoverGenerator
     /// <exception cref="UnknownImageFormatException">The background is not a decodable image.</exception>
     public async Task<string> GenerateAsync(Stream backgroundImage, long setId, int versionNo, IFileStore store, CancellationToken ct = default)
     {
-        using var source = await Image.LoadAsync(backgroundImage, ct);
+        using var source = await LoadWithinBudgetAsync(backgroundImage, MaxSourcePixels, ct);
 
         var encoder = new JpegEncoder { Quality = JpegQuality };
 
@@ -41,6 +50,35 @@ public sealed class CoverGenerator
         }
 
         return StoreKeys.CoverPrefix(setId, versionNo);
+    }
+
+    /// <summary>
+    /// Reads only the image header first and refuses a source above <paramref name="maxPixels"/>
+    /// before anything is decoded. The refusal is an <c>InvalidImageContentException</c>, an
+    /// <c>ImageFormatException</c> like every other unreadable upload, so callers that already
+    /// handle a corrupt image handle an oversized one the same way.
+    /// </summary>
+    /// <exception cref="UnknownImageFormatException">The source is not a decodable image.</exception>
+    public static async Task<Image> LoadWithinBudgetAsync(Stream source, long maxPixels, CancellationToken ct = default)
+    {
+        // Identify and decode both read from the start, so a stream that cannot rewind is
+        // buffered once (every current caller passes a seekable one).
+        if (!source.CanSeek)
+        {
+            var copy = new MemoryStream();
+            await source.CopyToAsync(copy, ct);
+            copy.Position = 0;
+            source = copy;
+        }
+
+        long start = source.Position;
+        var info = await Image.IdentifyAsync(source, ct);
+
+        if ((long)info.Width * info.Height > maxPixels)
+            throw new InvalidImageContentException($"The image is {info.Width}x{info.Height}, above the {maxPixels} pixel budget.");
+
+        source.Position = start;
+        return await Image.LoadAsync(source, ct);
     }
 
     private static async Task writeAsync(Image source, string key, int width, int height, JpegEncoder encoder, IFileStore store, CancellationToken ct)

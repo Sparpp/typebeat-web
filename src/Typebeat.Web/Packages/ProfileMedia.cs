@@ -30,9 +30,10 @@ public static class ProfileMedia
 
     private static async Task<string> writeAsync(Stream upload, string key, int width, int height, IFileStore store, CancellationToken ct)
     {
-        // Throws UnknownImageFormatException on a non-image upload; the page turns that into a
-        // friendly form error rather than a 500.
-        using var image = await Image.LoadAsync(upload, ct);
+        // Throws UnknownImageFormatException on a non-image upload, and InvalidImageContentException
+        // on a corrupt one or one above the pixel budget; the page turns either into a friendly
+        // form error rather than a 500.
+        using var image = await CoverGenerator.LoadWithinBudgetAsync(upload, CoverGenerator.MaxSourcePixels, ct);
 
         image.Mutate(ctx => ctx.Resize(new ResizeOptions
         {
