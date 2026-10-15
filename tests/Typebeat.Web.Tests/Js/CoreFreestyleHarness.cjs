@@ -326,6 +326,26 @@ function shimmer() {
     };
 }
 
+// A (tick, position) grid of glyphs and a (time, tick) table, for the C# side to hold against
+// FreestyleGlyphs.Glyph and FreestyleGlyphs.TickFor. One string per tick, one char per position.
+function shimmerGrid() {
+    const ticks = [-61, -1, 0, 1, 2, 3, 17, 59, 60, 1000, 123456, 2147483647];
+    const positions = 16;
+    const times = [-61, -60, -1, 0, 59.9, 60, 61, 119.99, 120, 1234.5, 3600000];
+    return {
+        ticks: ticks,
+        positions: positions,
+        glyphs: ticks.map(function (tick) {
+            let row = '';
+            for (let position = 0; position < positions; position++) row += TB.freestyleGlyph(tick, position);
+            return row;
+        }),
+        intervalMs: TB.constants.SHIMMER_INTERVAL_MS,
+        times: times,
+        timeTicks: times.map(function (t) { return TB.freestyleTick(t); })
+    };
+}
+
 const out = {
     // Typeability: the marker stays outside the typeable surface and outside default normalize.
     isTypeableMarker: TB.isTypeable(MARKER),
@@ -360,6 +380,7 @@ const out = {
     flaggedShape: cellShape(build(FLAGGED_AMPERSAND_OSU)),
 
     shimmer: shimmer(),
+    shimmerGrid: shimmerGrid(),
 
     // The freestyle judgement ladder (PR 16): a slot is graded on a WIDER ladder than an ordinary
     // cell. Emitted so the C# side can pin the scale against SyncWindows.FREESTYLE_WINDOW_SCALE.

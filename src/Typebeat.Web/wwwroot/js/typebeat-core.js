@@ -5292,7 +5292,8 @@
 
     // The glyph an open freestyle slot shows on `tick`. `position` (the cell index) decorrelates
     // neighbouring slots. Same 32-bit mix as FreestyleGlyphs.Glyph (Math.imul is the unchecked
-    // uint multiply), so the browser shimmers through the identical sequence as the desktop client.
+    // uint multiply), so the browser shimmers through the identical sequence as the desktop client
+    // (held against FreestyleGlyphs.Glyph by WireCompat's FreestyleGlyphParityTest).
     function freestyleGlyph(tick, position) {
         let h = (Math.imul(tick | 0, 2654435761) ^ Math.imul((position | 0) + 1, 2246822519)) >>> 0;
         h = (h ^ (h >>> 15)) >>> 0;
