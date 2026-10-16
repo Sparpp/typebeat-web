@@ -27,8 +27,15 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="Sentry.AspNetCore" Version="6.7.0" />
-    <!-- Cover-image generation (M3 uploads). Managed-only, no native deps to ship in the image. -->
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <!--
+      Cover and profile-image generation (M3 uploads). SkiaSharp brings its Windows and macOS
+      native libraries itself; the Linux one is the NoDependencies build, which links no
+      libfontconfig (nothing here draws text), so the Debian runtime image needs no extra apt
+      package. ImageSharp was dropped because every advisory against it is fixed only in the
+      licence-keyed 4.x.
+    -->
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.119.4" />
   </ItemGroup>
 
 </Project>

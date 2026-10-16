@@ -72,7 +72,8 @@ per-section files under the session scratchpad
    test, don't guess (see recon `result.server.dto_infra`).
 5. **Covers**: generate all four osu bucket sizes at upload — `card` 400×140, `cover` 900×250,
    `list` 150×150, `slimcover` 1920×360, each with @2x — because the forked lazer client already
-   consumes exactly these keys. ImageSharp; JPEG quality ~80; source = the map's background image.
+   consumes exactly these keys. SkiaSharp (ImageSharp until 2026-10); JPEG quality ~80;
+   source = the map's background image.
 6. **Preview audio**: 30 s mp3 clipped at `PreviewTime` (fallback 40% into the track) via ffmpeg
    (present in the runtime image). Missing/failed → no preview (graceful null).
 7. **Difficulty on upload**: compute chars/words + effective typing time from the `[Lyrics]`

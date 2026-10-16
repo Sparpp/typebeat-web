@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
-using SixLabors.ImageSharp;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
 using Typebeat.Web.Email;
@@ -317,10 +316,9 @@ public sealed class IndexModel(
                 ? await ProfileMedia.WriteBannerAsync(upload, id, version, store, HttpContext.RequestAborted)
                 : await ProfileMedia.WriteAvatarAsync(upload, id, version, store, HttpContext.RequestAborted);
         }
-        catch (ImageFormatException)
+        catch (UnreadableImageException)
         {
-            // Covers UnknownImageFormatException (not an image) and InvalidImageContentException
-            // (declared format, corrupt bytes); both derive from ImageFormatException.
+            // Not an image, an unsupported format, corrupt bytes, or above the pixel budget.
             return await failAsync(id, "That file isn't a readable image. Try a PNG or JPEG.");
         }
 
