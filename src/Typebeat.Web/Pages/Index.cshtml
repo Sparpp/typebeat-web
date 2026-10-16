@@ -2,14 +2,12 @@
 @using System.Globalization
 @model IndexModel
 @{
-    // Generic search phrases, once each (backlog 369): "lyric typing rhythm game", "type to
-    // the beat", "typing game with music". The visible line under the hero carries the first.
-    string description = "type!beat is a free lyric typing rhythm game: type to the beat as the words "
-        + "drop with the song. A typing game with music, in your browser or on Windows, macOS and Linux, "
-        + "with community maps and leaderboards.";
+    // The description's search phrases are listed on Seo.GAME_DESCRIPTION, which the JSON-LD
+    // shares (backlog 417).
     ViewData["FullTitle"] = Seo.LANDING_TITLE;
-    ViewData["MetaDescription"] = description;
-    ViewData["JsonLd"] = Seo.VideoGameJsonLd(Seo.CanonicalUrl("/"), description);
+    ViewData["MetaDescription"] = Seo.GAME_DESCRIPTION;
+    // The site-name node is the landing's alone (backlog 418).
+    ViewData["JsonLd"] = Seo.GameJsonLd(withWebSite: true);
     ViewData["PreloadImage"] = "/media/widedemo-poster.jpg";
 }
 

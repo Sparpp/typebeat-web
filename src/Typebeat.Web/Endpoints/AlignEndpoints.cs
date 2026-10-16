@@ -3,18 +3,16 @@ using Typebeat.Web.Wire;
 namespace Typebeat.Web.Endpoints;
 
 /// <summary>
-/// Tombstone for the retired server-side lyric aligner (backlog 287).
+/// Tombstone for the FIRST server-side lyric aligner route (backlog 287), kept for the clients
+/// built before it.
 ///
 /// The route used to accept a multipart audio + lyrics upload, hand it to a torch/demucs worker
 /// container over a shared /data job directory, and serve the resulting timing.json back through
-/// GET/DELETE by job id. All of that is gone: alignment is local now, and the game ships an
-/// installer for the local auto-aligner instead.
-///
-/// Why a 410 and not simply nothing: the only consumer was the desktop client's import fallback
-/// (RemoteAlignClient), so every build already installed in the wild will keep POSTing here for
-/// months. One honest tombstone tells those clients WHY and where to go, which a bare 404 (the
-/// catch-all a removed route would give them) cannot. Keeping the route also means a future
-/// re-add is a deliberate decision made here rather than an accident of routing.
+/// GET/DELETE by job id. Backlog 413 brought the server aligner back, but on a NEW route
+/// (<see cref="ServerAlignEndpoints"/>, <c>/api/v2/typebeat/server-align</c>) with a new
+/// contract (queue position, daily cap, vocal mode, language). This path stays a 410 on purpose:
+/// every build shipped before backlog 287 still POSTs here as its import fallback, with the old
+/// protocol, and must not start feeding the new queue.
 ///
 /// Deliberately minimal: no bearer requirement, no form read, and no raised body cap. There is
 /// nothing to authorise and nothing to parse, and draining a 64 MB audio upload just to answer
@@ -29,12 +27,12 @@ namespace Typebeat.Web.Endpoints;
 public static class AlignEndpoints
 {
     /// <summary>
-    /// What an installed client is told. Names the local aligner (Settings, Experimental) and the
-    /// zero-install alternative (timestamped lyrics), because the import flow that calls this has
-    /// no other way to learn either.
+    /// What an old installed client is told: newer builds of the game offer the server aligner as
+    /// an opt-in on the import screen, and the two ways that need no server (the local aligner from
+    /// Settings, timestamped lyrics) still work in any build.
     /// </summary>
     public const string RETIRED_MESSAGE =
-        "server-side alignment has been retired: install the local auto-aligner from the game's Settings (Experimental section), or add [mm:ss.xx] line timestamps to your lyrics";
+        "this version of the game uses a retired server aligner: update the game, whose import screen offers the server aligner as an option, or install the local auto-aligner from Settings, or add [mm:ss.xx] line timestamps to your lyrics";
 
     public static void Map(IEndpointRouteBuilder app)
     {

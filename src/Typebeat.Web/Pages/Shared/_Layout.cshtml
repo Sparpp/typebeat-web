@@ -9,13 +9,16 @@
 
     // Search and share metadata (backlog 369). The canonical names typebeat.sh whatever host
     // served the page; a page whose path is not its preferred URL (a profile reached by name)
-    // sets CanonicalPath. Pages under Seo.IsNoIndex get noindex and no canonical.
-    bool noIndex = Seo.IsNoIndex(Context.Request.Path);
+    // sets CanonicalPath. Pages under Seo.IsNoIndex get noindex and no canonical, and so does a
+    // page that sets NoIndex itself (backlog 417: internal search results, follow lists).
+    bool noIndex = Seo.IsNoIndex(Context.Request.Path) || ViewData["NoIndex"] is true;
     string canonicalUrl = ViewData["CanonicalPath"] is string canonicalPath
         ? Seo.CanonicalUrl(canonicalPath)
         : Seo.CanonicalUrl(Context.Request.Path, Context.Request.Query);
     // Every page has a share image (its own, or the default), so every card is the large one.
-    string shareImage = ViewData["OgImage"] as string ?? Seo.DEFAULT_OG_IMAGE;
+    // Only the default's size is known, so only it declares one (backlog 417).
+    string? ownShareImage = ViewData["OgImage"] as string;
+    string shareImage = ownShareImage ?? Seo.DEFAULT_OG_IMAGE;
     string? jsonLd = ViewData["JsonLd"] as string;
 }
 <!DOCTYPE html>
@@ -39,6 +42,11 @@
     <meta property="og:description" content="@metaDescription" />
     <meta property="og:url" content="@canonicalUrl" />
     <meta property="og:image" content="@shareImage" />
+    @if (ownShareImage is null)
+    {
+        <meta property="og:image:width" content="@Seo.DEFAULT_OG_IMAGE_WIDTH" />
+        <meta property="og:image:height" content="@Seo.DEFAULT_OG_IMAGE_HEIGHT" />
+    }
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="@fullTitle" />
     <meta name="twitter:description" content="@metaDescription" />

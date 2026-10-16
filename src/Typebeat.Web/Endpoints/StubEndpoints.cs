@@ -29,12 +29,13 @@ public static class StubEndpoints
         }).RequireBearer();
 
         // GET /api/v2/seasonal-backgrounds -> APISeasonalBackgrounds (ends_at + backgrounds).
-        // A far-future ends_at means the client never re-fetches expecting a new set.
+        // A far-future ends_at means the client never re-fetches expecting a new set. Anonymous
+        // since backlog 406: the same constant for everyone, fetched by a guest's menu too.
         app.MapGet("/api/v2/seasonal-backgrounds", () => WireJson.Ok(new
         {
             ends_at = "2099-01-01T00:00:00Z",
             backgrounds = Array.Empty<object>(),
-        })).RequireBearer();
+        }));
 
         // POST /api/v2/chat/ack -> ChatAckResponse (Responses/ChatAckResponse.cs): { "silences": [] }.
         app.MapPost("/api/v2/chat/ack", () => WireJson.Ok(new

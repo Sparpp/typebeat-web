@@ -6,13 +6,14 @@ using Newtonsoft.Json.Linq;
 namespace Typebeat.WireCompat;
 
 /// <summary>
-/// The retired server-side aligner (backlog 287) answers installed clients honestly.
+/// The first server-side aligner route (backlog 287) answers pre-287 clients honestly.
 ///
-/// This replaces AlignFlowTest, which drove the whole job protocol. What is left to pin is the
-/// tombstone's shape, because the desktop import fallback (RemoteAlignClient) in every build
-/// already shipped keeps POSTing here: a 410 carrying the error envelope, no auth needed to get
-/// it, nothing written to disk, and the id-bearing routes genuinely gone rather than tombstoned
-/// too.
+/// This replaced AlignFlowTest when the aligner was retired. Backlog 413 brought the server aligner
+/// back on a NEW route (/api/v2/typebeat/server-align, pinned by ServerAlignFlowTest in
+/// Typebeat.Web.Tests), so what is left to pin here is the old route's tombstone, because the
+/// desktop import fallback (RemoteAlignClient) in every build shipped before 287 keeps POSTing to
+/// it with the old protocol: a 410 carrying the error envelope, no auth needed to get it, nothing
+/// queued, and the id-bearing routes genuinely gone rather than tombstoned too.
 /// </summary>
 [TestFixture]
 public class AlignRetiredTest
@@ -35,24 +36,30 @@ public class AlignRetiredTest
         // The osu-web error envelope, so the client's existing error path reads it unchanged.
         Assert.That(body.Properties().Select(p => p.Name), Is.EqualTo(new[] { "error" }));
 
-        // It has to say where to go, in both directions the import flow can take.
+        // It has to say where to go: a newer game (the server aligner on its import screen), or
+        // either way the import flow can take without a server.
         Assert.That(error, Does.Contain("retired"));
+        Assert.That(error, Does.Contain("import screen"));
         Assert.That(error, Does.Contain("local auto-aligner"));
         Assert.That(error, Does.Contain("Settings"));
         Assert.That(error, Does.Contain("[mm:ss.xx]"));
     }
 
     [Test]
-    public async Task Align_Post_WithBearer_Is410_AndWritesNothingToDisk()
+    public async Task Align_Post_WithBearer_Is410_AndQueuesNothing()
     {
+        string jobsDir = Path.Combine(ServerFixture.FileRoot, "align-jobs");
+        int jobsBefore = Directory.Exists(jobsDir) ? Directory.EnumerateDirectories(jobsDir).Count() : 0;
+
         using var req = ServerFixture.Authed(HttpMethod.Post, "/api/v2/typebeat/align");
         req.Content = buildForm();
 
         using var resp = await client.SendAsync(req);
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.Gone));
 
-        // No job store any more: nothing under the file root should be created for this route.
-        Assert.That(Directory.Exists(Path.Combine(ServerFixture.FileRoot, "align-jobs")), Is.False);
+        // The old route never feeds the server aligner's job store (backlog 413): no job directory
+        // appears, whatever the new route's own tests may have left there.
+        Assert.That(Directory.Exists(jobsDir) ? Directory.EnumerateDirectories(jobsDir).Count() : 0, Is.EqualTo(jobsBefore));
     }
 
     [Test]

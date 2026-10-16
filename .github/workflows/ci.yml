@@ -87,9 +87,25 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        # no submodules: the image builds only src/Typebeat.Web; deploy ships the repo tree
-        # minus external/ (see tar below), and deploy/.env on the box is never overwritten
-        # because it is git-ignored and therefore absent from the checkout.
+        # no submodules here: the app image builds only src/Typebeat.Web; deploy ships the repo
+        # tree minus external/ (see tar below), and deploy/.env on the box is never overwritten
+        # because it is git-ignored and therefore absent from the checkout. The one thing the box
+        # needs from a submodule is staged by the next step.
+
+      # The aligner worker image (backlog 413) runs the aligner script the GAME PIN ships, not a
+      # copy in this repo, and the box's build context has no submodules (the tar below excludes
+      # external/, as does .dockerignore). So stage the pinned game's lyriclab/ into
+      # deploy/aligner/lyriclab/ (git-ignored), which the tar then carries like any other file and
+      # deploy/aligner/Dockerfile copies. Only the game submodule, shallow, at exactly the gitlink
+      # SHA; Sparpp/typebeat is public, so no token. ship-website.ps1 publishes the pin to the game
+      # remote before it pushes this repo, so the SHA is fetchable by the time this runs.
+      - name: Stage the aligner from the game pin
+        run: |
+          git submodule update --init --depth 1 external/typebeat-osu
+          test -f external/typebeat-osu/lyriclab/align_lyrics.py
+          rm -rf deploy/aligner/lyriclab
+          cp -r external/typebeat-osu/lyriclab deploy/aligner/lyriclab
+          echo "staged lyriclab from game $(git -C external/typebeat-osu rev-parse --short HEAD): $(grep -m 1 '^ALIGNER_VERSION' deploy/aligner/lyriclab/align_lyrics.py)"
 
       - name: Set up SSH
         run: |
@@ -106,7 +122,9 @@ jobs:
       - name: Ship source to server
         run: |
           tar czf - --exclude=.git --exclude=external . \
-            | ssh -i ~/.ssh/deploy_key root@46.62.142.5 'tar xzf - -C /opt/typebeat-web && chmod +x /opt/typebeat-web/deploy/up.sh'
+            | ssh -i ~/.ssh/deploy_key root@46.62.142.5 'rm -rf /opt/typebeat-web/deploy/aligner/lyriclab && tar xzf - -C /opt/typebeat-web && chmod +x /opt/typebeat-web/deploy/up.sh'
+          # The staged aligner dir is removed first because tar only adds and overwrites: a file the
+          # game pin dropped from lyriclab/ would otherwise linger in every later image.
           # up.sh is executable in git (mode 100755) now, but the chmod stays: the first
           # deploy after it was committed (as 100644) shipped it over the box's executable copy and
           # every later step died with "Permission denied" (2026-09-30).
@@ -170,6 +188,31 @@ jobs:
           curl -fsS --retry 20 --retry-delay 3 --retry-all-errors https://typebeat.mingda.sh/health | grep -qE '^(ok|degraded)'
           echo "healthy"
 
+      # The aligner worker (backlog 413, torch/demucs) is a separate long-lived service, deployed
+      # AFTER the app is live and healthy so its heavy build can never gate an app deploy, and
+      # scoped to the aligner service so postgres/caddy/app are untouched; restart: unless-stopped
+      # keeps it up between deploys. Its image is rebuilt ONLY when its inputs changed (the
+      # Dockerfile, worker.py and the staged lyriclab/, hashed here and stamped on the image as a
+      # label): the build-cache prune below runs on every deploy, and without this check a pruned
+      # cache could make every push re-download and re-install torch. `up -d` then recreates the
+      # container only when the image or its compose definition changed. A failure here leaves the
+      # running app alone (the rollback below is for the swap and the health check only) but turns
+      # the deploy red.
+      - name: Build + start aligner worker
+        run: |
+          inputs=$(find deploy/aligner -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
+          echo "aligner inputs $inputs"
+          ssh -i ~/.ssh/deploy_key root@46.62.142.5 "ALIGNER_INPUTS=$inputs bash -se" <<'REMOTE'
+          cd /opt/typebeat-web
+          have=$(docker image inspect typebeat-web-aligner --format '{{ index .Config.Labels "typebeat.aligner.inputs" }}' 2>/dev/null || true)
+          if [ "$have" = "$ALIGNER_INPUTS" ]; then
+            echo "aligner image already built from these inputs, not rebuilding"
+          else
+            ./deploy/up.sh build --build-arg ALIGNER_INPUTS="$ALIGNER_INPUTS" aligner
+          fi
+          ./deploy/up.sh up -d aligner
+          REMOTE
+
       # Automatic rollback (backlog 368), ONLY when the swap or the health check itself failed (a
       # failed swap may already have removed the old container). A red build or a failed caddy
       # reload does not trigger it (an earlier step failing skips the later ones, whose outcome is
@@ -191,12 +234,13 @@ jobs:
           curl -fsS --retry 60 --retry-delay 5 --retry-max-time 360 --retry-all-errors https://typebeat.sh/health | grep -qE '^(ok|degraded)'
           echo "rolled back to typebeat-web-app:previous and it is healthy; this deploy still FAILED"
 
-      # The build cache is what the box pays for the app image build, and nothing ever collected
-      # it: on 2026-09-04 it had reached 7 GB and helped fill the 75 GB disk (see deploy/README.md,
-      # "Disk"). Pruned LAST, after the build, so every layer this deploy could reuse was still
-      # there when it mattered; the cost is that the next deploy rebuilds from the image layers
-      # rather than the build cache, which is seconds on the app. Deliberately in CI and not in
-      # deploy/up.sh: that script is the thin compose wrapper the box runs, and a prune belongs
+      # The build cache is what the box pays for the image builds (the app, and the aligner when its
+      # inputs changed), and nothing ever collected it: on 2026-09-04 it had reached 7 GB and
+      # helped fill the 75 GB disk (see deploy/README.md, "Disk"). Pruned LAST, after both builds,
+      # so every layer this deploy could reuse was still there when it mattered; the cost is that
+      # the next deploy rebuilds from the image layers rather than the build cache, which is
+      # seconds on the app (and why the aligner step skips an unchanged build). Deliberately in CI
+      # and not in deploy/up.sh: that script is the thin compose wrapper the box runs, and a prune belongs
       # with the deploy that made the layers, not with every compose call.
       - name: Prune docker build cache
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'docker builder prune -f'
@@ -214,11 +258,10 @@ jobs:
       # digests and stop being shared with the old dangling one. Each leaked image then holds its
       # own full copy (the apt layer is the bulk of it) rather than just the published-app diff.
       #
-      # Dangling only: no `-a`, so nothing tagged is ever removed (the retired aligner image is
-      # tagged, so it survives for the owner to remove deliberately, per deploy/README.md; so does
-      # typebeat-web-app:previous, the one rollback point the step before the build keeps), and an
-      # image a container still uses cannot be pruned at all. Runs LAST, after the health check
-      # and the caddy reload, so the image this deploy is actually serving from is tagged and in
-      # use by then.
+      # Dangling only: no `-a`, so nothing tagged is ever removed (the aligner image is tagged, so
+      # only the predecessor a rebuild of it leaves behind goes; typebeat-web-app:previous, the one
+      # rollback point the step before the build keeps, is tagged too), and an image a container
+      # still uses cannot be pruned at all. Runs LAST, after the health check and the caddy
+      # reload, so the image this deploy is actually serving from is tagged and in use by then.
       - name: Prune dangling docker images
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'docker image prune -f'

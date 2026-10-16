@@ -94,7 +94,9 @@ public static class ScoreEndpoints
         // far above anything a person can play.
         app.MapPost("/api/v2/beatmaps/{beatmapId:long}/solo/scores", CreateToken).RequireBearer().RequireRateLimiting(RateLimits.ScoreToken);
         app.MapPut("/api/v2/beatmaps/{beatmapId:long}/solo/scores/{tokenId:long}", SubmitScore).RequireBearer().RequireRateLimiting(RateLimits.ScoreSubmit);
-        app.MapGet("/api/v2/beatmaps/{beatmapId:long}/scores", Leaderboard).RequireBearer().RequireRateLimiting(RateLimits.Leaderboard);
+        // The board is a READ and is public on the set page, so a guest may fetch it too (backlog
+        // 406); the bearer is optional and only adds the caller's own user_score.
+        app.MapGet("/api/v2/beatmaps/{beatmapId:long}/scores", Leaderboard).RequireRateLimiting(RateLimits.Leaderboard);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -534,13 +536,22 @@ public static class ScoreEndpoints
 
     // ---------------------------------------------------------------------------------------------
     // GET: beatmap leaderboard (global, best-per-user). GetScoresRequest.cs:46-59.
-    // type / mode / mods[] are ignored (always global); limit is capped at 50.
+    // mode / mods[] are ignored, and so is type for a signed-in caller (always global; a guest's
+    // type is read, below); limit is capped at 50.
     // The wire shape is the same whichever board a map serves (see the status switch below); the
     // client tells them apart from the beatmap status it already holds, plus each row's "ranked".
+    //
+    // Optional auth (backlog 406). A guest gets the GLOBAL board with no user_score. A guest asking
+    // for a personal scope (country, friend, team) gets an EMPTY board, 200: it has no country or
+    // friends to filter by, and a 401 would log a signed-in client out (APIAccess). A signed-in
+    // caller is unchanged, every scope still answering the global board.
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> Leaderboard(long beatmapId, HttpContext ctx, Db db)
     {
-        var user = ctx.AuthedUser();
+        var user = await ctx.ResolveBearerAsync();
+
+        if (user is null && !IsGlobalScope(ctx.Request.Query["type"].ToString()))
+            return WireJson.Ok(new ScoresCollectionWire { ScoreCount = 0, Scores = [], UserScore = null });
 
         int limit = 50;
         if (int.TryParse(ctx.Request.Query["limit"], NumberStyles.Integer, CultureInfo.InvariantCulture, out int requested))
@@ -567,6 +578,9 @@ public static class ScoreEndpoints
 
         var scores = slice.Scores;
         int scoreCount = slice.ScoreCount;
+
+        if (user is null)
+            return WireJson.Ok(new ScoresCollectionWire { ScoreCount = scoreCount, Scores = scores, UserScore = null });
 
         // The caller's own best score + its global position, if they have one.
         var callerBest = await conn.QuerySingleOrDefaultAsync<LeaderboardRow>(
@@ -710,6 +724,15 @@ public static class ScoreEndpoints
     }
 
     // ---- helpers ----
+
+    /// <summary>
+    /// Whether a leaderboard <c>type</c> is the global board: <c>global</c> (any case), or absent,
+    /// which every board on this server has always defaulted to. GetScoresRequest sends its
+    /// <c>BeatmapLeaderboardScope</c> lowercased, so the personal scopes arrive as
+    /// <c>country</c>, <c>friend</c> and <c>team</c>.
+    /// </summary>
+    private static bool IsGlobalScope(string? type)
+        => string.IsNullOrEmpty(type) || string.Equals(type, "global", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Position of the caller's best ranked+passed score, or null if they have none.</summary>
     private static async Task<int?> ComputeUserPosition(System.Data.Common.DbConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long userId)

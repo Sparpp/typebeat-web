@@ -14,6 +14,7 @@ public static class AuthExtensions
     {
         builder.Add(endpointBuilder =>
         {
+            endpointBuilder.Metadata.Add(BearerRequiredMetadata.Instance);
             endpointBuilder.FilterFactories.Add((_, next) => async invocationContext =>
             {
                 var ctx = invocationContext.HttpContext;
@@ -28,6 +29,19 @@ public static class AuthExtensions
         });
 
         return builder;
+    }
+
+    /// <summary>
+    /// Marks an endpoint as carrying <see cref="RequireBearer{TBuilder}"/>, so the route table can be
+    /// audited (backlog 406: every write stays signed-in, and a test enumerates them off this).
+    /// </summary>
+    public sealed class BearerRequiredMetadata
+    {
+        public static readonly BearerRequiredMetadata Instance = new();
+
+        private BearerRequiredMetadata()
+        {
+        }
     }
 
     /// <summary>The user resolved by <see cref="RequireBearer{TBuilder}"/>. Throws if used on an unauthenticated route.</summary>

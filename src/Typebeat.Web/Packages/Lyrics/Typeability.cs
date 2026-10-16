@@ -289,8 +289,13 @@ public static class Typeability
     /// <c>ToLowerInvariant</c> for every hyphen-free, mark-free line, i.e. every line of every blob
     /// written before punctuation existed. A run that DOES contain a hyphen collapses to one space
     /// ("a - b" is "a b"), and to none at either end of the line ("-a-" is "a").</para>
+    ///
+    /// <para>When <paramref name="sourceIndices"/> is given, it receives the index in
+    /// <paramref name="raw"/> each emitted char came from. A collapsed run reports the index of its
+    /// FIRST space-producing char, as the client's does, which is what lets the ratings charge a
+    /// surviving space to the authored word it sits in.</para>
     /// </summary>
-    public static void ProjectDefault(string raw, StringBuilder text)
+    public static void ProjectDefault(string raw, StringBuilder text, List<int>? sourceIndices = null)
     {
         if (string.IsNullOrEmpty(raw))
             return;
@@ -309,12 +314,14 @@ public static class Typeability
             if (c != ' ')
             {
                 text.Append(c);
+                sourceIndices?.Add(i);
                 wroteAny = true;
                 i++;
                 continue;
             }
 
             bool hasBreak = false;
+            int firstSpace = -1;
             int end = i;
 
             while (end < raw.Length)
@@ -331,6 +338,9 @@ public static class Typeability
                 if (raw[end] == WORD_BREAK)
                     hasBreak = true;
 
+                if (firstSpace < 0)
+                    firstSpace = end;
+
                 end++;
             }
 
@@ -342,12 +352,14 @@ public static class Typeability
                         continue;
 
                     text.Append(' ');
+                    sourceIndices?.Add(k);
                     wroteAny = true;
                 }
             }
             else if (wroteAny && end < raw.Length)
             {
                 text.Append(' ');
+                sourceIndices?.Add(firstSpace);
             }
 
             i = end;

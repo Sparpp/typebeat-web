@@ -228,6 +228,18 @@ public class RankingsPageTest
             await insertScoreAsync(conn, fillerId, pagingMap, 1_000 + i, pp: 0.5 + i * 0.001);
         }
 
+        // ---- player search (backlog 407) ----
+        //
+        // Names holding each of LIKE's three special characters, plus a decoy that an UNESCAPED
+        // pattern would also match: "wild%" unescaped matches "rk wildzz", "wild_" unescaped
+        // matches it too, and "wild\z" unescaped reads as "wildz" and misses the backslash name.
+        // Tiny figures again, so no ordering assertion above moves.
+        foreach (string name in new[] { "rk wild%a", "rk wild_b", @"rk wild\zc", "rk wildzz" })
+        {
+            long id = await insertUserAsync(conn, name);
+            await insertScoreAsync(conn, id, pagingMap, 500, pp: 0.25);
+        }
+
         await WebsiteFixture.EvictAllAsync();
     }
 
@@ -924,6 +936,227 @@ public class RankingsPageTest
         string html = await response.Content.ReadAsStringAsync();
 
         Assert.That(html, Does.Contain("href=\"/rankings\""));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Player search (backlog 407).
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>The searched page's rank cells, in order, read straight off the rendered rows.</summary>
+    private static List<long> renderedRanks(string html)
+        => Regex.Matches(html, "<td class=\"num\">#(\\d+)</td>").Select(m => long.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)).ToList();
+
+    /// <summary>A user's true position on the performance board, computed the board's own way.</summary>
+    private static async Task<long> performanceRankAsync(NpgsqlConnection conn, long userId)
+        => await conn.ExecuteScalarAsync<long>(
+            $"""
+             SELECT rn FROM (
+                 SELECT p.user_id, ROW_NUMBER() OVER (ORDER BY p.total_pp DESC, p.user_id ASC) AS rn
+                 FROM ({PpRanking.PerUserTotalSql}) p
+             ) ranked
+             WHERE ranked.user_id = @userId
+             """, new { userId });
+
+    [Test]
+    public void SearchHelpers_NormaliseEscapeAndBuildLinks()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(IndexModel.NormaliseQuery(null), Is.Null);
+            Assert.That(IndexModel.NormaliseQuery("   "), Is.Null);
+            Assert.That(IndexModel.NormaliseQuery("  rk alice "), Is.EqualTo("rk alice"));
+            Assert.That(IndexModel.NormaliseQuery(new string('x', 40)), Has.Length.EqualTo(IndexModel.MaxQueryLength));
+
+            Assert.That(IndexModel.LikePattern("ab"), Is.EqualTo("%ab%"));
+            Assert.That(IndexModel.LikePattern("50%"), Is.EqualTo(@"%50\%%"));
+            Assert.That(IndexModel.LikePattern("a_b"), Is.EqualTo(@"%a\_b%"));
+            Assert.That(IndexModel.LikePattern(@"a\b"), Is.EqualTo(@"%a\\b%"));
+
+            Assert.That(IndexModel.RankingsUrl(IndexModel.PerformanceBoard, 1, null), Is.EqualTo("/rankings"));
+            Assert.That(IndexModel.RankingsUrl(IndexModel.PerformanceBoard, 1, "rk a"), Is.EqualTo("/rankings?q=rk%20a"));
+            Assert.That(IndexModel.RankingsUrl(IndexModel.ScoreBoard, 3, "a&b"), Is.EqualTo("/rankings?board=score&page=3&q=a%26b"));
+        });
+    }
+
+    /// <summary>
+    /// A case-insensitive substring of the name finds the player, and the row shows the rank they
+    /// hold on the WHOLE board, not #1 of a one-row result.
+    /// </summary>
+    [Test]
+    public async Task Search_IsCaseInsensitiveSubstring_AndKeepsTheTrueRank()
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        long aliceRank = await performanceRankAsync(conn, aliceId);
+
+        using var response = await WebsiteFixture.Client.GetAsync("/rankings?q=K%20ALI");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(aliceRank, Is.GreaterThan(1), "the fixture ranks alice below the decay and dedup players");
+
+            Assert.That(html, Does.Contain($"href=\"/users/{aliceId}\""));
+            Assert.That(html, Does.Not.Contain($"href=\"/users/{bobId}\""));
+            Assert.That(html, Does.Not.Contain($"href=\"/users/{decayId}\""));
+            Assert.That(renderedRanks(html), Is.EqualTo(new[] { aliceRank }));
+
+            // The box echoes the search, and no pager for a single match.
+            Assert.That(html, Does.Contain("name=\"q\" value=\"K ALI\""));
+            Assert.That(html, Does.Not.Contain("class=\"pager\""));
+        });
+    }
+
+    /// <summary>The top-plays board searches by the PLAY's player and keeps each play's position.</summary>
+    [Test]
+    public async Task Search_OnTopPlays_FiltersByThePlayer_AndKeepsTheTruePositions()
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        var all = await topPlaysAsync(conn);
+        var expected = all.Select((play, i) => (play.UserId, Rank: (long)i + 1))
+                          .Where(p => p.UserId == runnerUpId)
+                          .Select(p => p.Rank)
+                          .ToList();
+
+        using var response = await WebsiteFixture.Client.GetAsync("/rankings?board=plays&q=RunnerUp");
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(expected, Is.Not.Empty);
+            Assert.That(expected[0], Is.GreaterThan(1), "the top player's 6000 pp play sits above the runner-up's");
+            Assert.That(renderedRanks(html), Is.EqualTo(expected));
+            Assert.That(html, Does.Not.Contain($"href=\"/users/{topPlayId}\""));
+
+            // The hidden board field keeps the search on this board when it is resubmitted.
+            Assert.That(html, Does.Contain("<input type=\"hidden\" name=\"board\" value=\"plays\" />"));
+        });
+    }
+
+    /// <summary>
+    /// The pager counts the SEARCHED population (the 120 paging fillers are "rk page 000".."119":
+    /// three 50-row pages), and every pager and tab link carries q so paging and switching boards
+    /// keep the search. Page 2's ranks are the fillers' true ranks, still ascending.
+    /// </summary>
+    [Test]
+    public async Task Search_PagerAndTabsFollowTheSearch()
+    {
+        await using var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString);
+        await conn.OpenAsync();
+
+        long count = await conn.ExecuteScalarAsync<long>(IndexModel.PerformanceSearchCountSql,
+            new { pattern = IndexModel.LikePattern("rk page") });
+
+        using var first = await WebsiteFixture.Client.GetAsync("/rankings?q=rk+page");
+        using var second = await WebsiteFixture.Client.GetAsync("/rankings?page=2&q=rk+page");
+        using var last = await WebsiteFixture.Client.GetAsync("/rankings?page=99&q=rk+page");
+
+        string firstHtml = await first.Content.ReadAsStringAsync();
+        string secondHtml = await second.Content.ReadAsStringAsync();
+        string lastHtml = await last.Content.ReadAsStringAsync();
+
+        var secondRanks = renderedRanks(secondHtml);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(count, Is.EqualTo(paging_users));
+
+            Assert.That(renderedRanks(firstHtml), Has.Count.EqualTo(IndexModel.PageSize));
+            Assert.That(firstHtml, Does.Contain("href=\"/rankings?page=2&amp;q=rk%20page\">2</a>"));
+            Assert.That(firstHtml, Does.Contain("href=\"/rankings?page=3&amp;q=rk%20page\">3</a>"));
+            Assert.That(firstHtml, Does.Not.Contain("href=\"/rankings?page=4&amp;q=rk%20page\""));
+
+            Assert.That(firstHtml, Does.Contain("href=\"/rankings?board=score&amp;q=rk%20page\">Score</a>"));
+            Assert.That(firstHtml, Does.Contain("href=\"/rankings?board=plays&amp;q=rk%20page\">Top plays</a>"));
+            Assert.That(firstHtml, Does.Contain("<a class=\"lb-tab is-active\" href=\"/rankings?q=rk%20page\">Performance</a>"));
+
+            Assert.That(secondHtml, Does.Contain("rel=\"prev\" aria-label=\"Previous page\" href=\"/rankings?q=rk%20page\""));
+            Assert.That(secondRanks, Has.Count.EqualTo(IndexModel.PageSize));
+            Assert.That(secondRanks, Is.Ordered.Ascending);
+            Assert.That(secondRanks[0], Is.GreaterThan(IndexModel.PageSize + 1), "true ranks, not the searched position");
+
+            // Past the end clamps to the searched board's last page, holding the remainder.
+            Assert.That(lastHtml, Does.Contain("aria-current=\"page\">3</span>"));
+            Assert.That(renderedRanks(lastHtml), Has.Count.EqualTo(paging_users - 2 * IndexModel.PageSize));
+        });
+    }
+
+    /// <summary>
+    /// LIKE's wildcards in the query are LITERAL: each probe matches exactly its own name, where an
+    /// unescaped pattern would also match the decoy (see the seeds).
+    /// </summary>
+    [TestCase("wild%", "rk wild%a")]
+    [TestCase("wild_", "rk wild_b")]
+    [TestCase(@"wild\z", @"rk wild\zc")]
+    public async Task Search_TreatsLikeWildcardsLiterally(string query, string only)
+    {
+        using var response = await WebsiteFixture.Client.GetAsync("/rankings?q=" + Uri.EscapeDataString(query));
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(renderedRanks(html), Has.Count.EqualTo(1));
+            Assert.That(html, Does.Contain($">{only}</a>"));
+            Assert.That(html, Does.Not.Contain(">rk wildzz</a>"));
+        });
+    }
+
+    /// <summary>No match: an empty state that says so, a link back to the unsearched board, no pager.</summary>
+    [Test]
+    public async Task Search_NoMatch_ShowsAnEmptyStateWithAClearLink()
+    {
+        using var performance = await WebsiteFixture.Client.GetAsync("/rankings?q=zz-no-such-player");
+        using var plays = await WebsiteFixture.Client.GetAsync("/rankings?board=plays&q=zz-no-such-player");
+
+        string performanceHtml = await performance.Content.ReadAsStringAsync();
+        string playsHtml = await plays.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(performance.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(performanceHtml, Does.Contain("No player matches &ldquo;zz-no-such-player&rdquo;"));
+            Assert.That(performanceHtml, Does.Contain("<a href=\"/rankings\">Clear the search</a>"));
+            Assert.That(performanceHtml, Does.Not.Contain("class=\"table-wrap\""));
+            Assert.That(performanceHtml, Does.Not.Contain("class=\"pager\""));
+
+            Assert.That(playsHtml, Does.Contain("No player matches"));
+            Assert.That(playsHtml, Does.Contain("<a href=\"/rankings?board=plays\">Clear the search</a>"));
+        });
+    }
+
+    /// <summary>
+    /// The anonymous output cache varies by q (CachePolicies.Rankings). Without it the second
+    /// search here is a cache hit on the first and serves alice's row for a search for bob.
+    /// </summary>
+    [Test]
+    public async Task Search_AnonymousOutputCache_VariesByQuery()
+    {
+        await WebsiteFixture.EvictAllAsync();
+
+        using var alice = await WebsiteFixture.Client.GetAsync("/rankings?q=rk+alice");
+        using var bob = await WebsiteFixture.Client.GetAsync("/rankings?q=rk+bob");
+        using var aliceAgain = await WebsiteFixture.Client.GetAsync("/rankings?q=rk+alice");
+
+        string aliceHtml = await alice.Content.ReadAsStringAsync();
+        string bobHtml = await bob.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(aliceHtml, Does.Contain($"href=\"/users/{aliceId}\""));
+
+            Assert.That(bob.Headers.Age, Is.Null, "a different q renders afresh");
+            Assert.That(bobHtml, Does.Contain($"href=\"/users/{bobId}\""));
+            Assert.That(bobHtml, Does.Not.Contain($"href=\"/users/{aliceId}\""));
+
+            // The same q is still cached, so the policy varies rather than bypassing.
+            Assert.That(aliceAgain.Headers.Age, Is.Not.Null, "the repeated search is a cache hit");
+        });
     }
 
     private static async Task<long> insertUserAsync(NpgsqlConnection conn, string username, bool restricted = false, bool deleted = false)

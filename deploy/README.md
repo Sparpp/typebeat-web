@@ -457,30 +457,62 @@ Do **not** add that file to the repo. Nothing in the deploy consumes `/etc/syste
 lands in `/opt/typebeat-web` only, so a copy kept here would drift silently and mislead the next
 reader into thinking it is deployed.
 
-### Retired aligner (one-time box cleanup, once)
+### Server aligner (backlog 413)
 
-Backlog 287 retired the server-side aligner: the `aligner` service, `deploy/aligner/` and
-`AlignJobStore` are all gone from the repo, and `POST /api/v2/typebeat/align` is now a 410
-tombstone for the installed clients that still call it. **Deleting it from the repo does not
-remove it from the box.** Compose only knows about services it can still see in the file, and CI
-never passes `--remove-orphans`, so the container keeps running under its `restart:
-unless-stopped` policy, forever, holding its torch/demucs image and its data. One pass, on the
-box, once (a deploy has to have landed first, so the file no longer declares the service):
+Backlog 287 retired the server-side aligner; backlog 413 brought it back as an OPT-IN on the game's
+import screen, for players who cannot run the local aligner. It is the `aligner` service in
+`compose.prod.yml`: a Python worker (`deploy/aligner/worker.py`) that runs one job at a time out of
+`/data/align-jobs` on the shared appdata volume, with the app's half in
+`src/Typebeat.Web/Align/AlignJobStore.cs` and the routes under `/api/v2/typebeat/server-align`.
+The old `POST /api/v2/typebeat/align` stays a 410 for clients built before 287.
 
-```
-cd /opt/typebeat-web
-./deploy/up.sh rm -sf aligner          # or: ./deploy/up.sh up -d --remove-orphans
-docker image ls | grep aligner         # find the tag compose built (typebeat-web-aligner)
-docker image rm typebeat-web-aligner
-docker builder prune -f                # its layers are the bulk of the build cache
-./deploy/up.sh exec -T app rm -rf /data/align-jobs /data/align-cache
-```
+**Where the aligner script comes from.** Not from this repo: the image runs the aligner the GAME
+PIN ships (`external/typebeat-osu/lyriclab/`), so moving the pin (which `ship-website.ps1` does)
+is what moves the server's aligner version. The box's build context has no submodules, so the CI
+deploy job stages the pinned `lyriclab/` into `deploy/aligner/lyriclab/` (git-ignored) before the
+tar, and the Dockerfile copies it. A build without that directory fails at the COPY. A hand build
+on the box (`./deploy/up.sh build aligner`) reuses whatever the last CI deploy staged there.
 
-The last line is a real reclaim, not tidying: `/data/align-jobs` held one directory per job (the
-uploaded audio at up to 64 MB each, never swept) and `/data/align-cache` was the worker's
-`TORCH_HOME`, where the demucs checkpoints landed. Those two directories were half of the
-suspects when the disk filled again for backlog 286, and nothing will ever write to them again.
-Check the result with `GET /api/v2/ops/disk` or `df -h /`.
+**What CI does.** After the app is healthy, `Build + start aligner worker` hashes
+`deploy/aligner/` (Dockerfile, worker.py, the staged script), skips the build when the running
+image carries the same hash as its `typebeat.aligner.inputs` label, and then `up -d aligner`. So an
+ordinary web deploy costs the worker nothing, a pin bump rebuilds only the image's last layers (the
+torch install sits above them), and the container is recreated only when its image or compose
+definition changed. A recreate kills the job in flight; the new worker fails it ("restarted while
+processing this job") and the player retries.
+
+**Resources (owner, check before the first deploy).**
+
+- RAM and CPU: the service is capped at `mem_limit: 5g` and `cpus: 3`, as before 287. The box must
+  have that headroom next to Postgres and the app, or a demucs peak makes them swap. The worker uses
+  three torch threads (`ALIGN_THREADS`).
+- Disk: the image is roughly 2 GB (CPU torch is the bulk), built once on the box; a pin bump adds a
+  small top layer and leaves the old image dangling until the deploy's image prune. The model caches
+  live in `/data/align-cache` (`TORCH_HOME`): the demucs checkpoint (about 80 MB) on the first job
+  and the fused path's QMUL weights (57 MB), which the worker fetches at start-up. Jobs are small:
+  the worker deletes a job's audio, stems and outputs the moment it ends (a 64 MB upload at most,
+  only while queued or running) and the rest of the directory after 48 hours.
+- The weekly appdata backup (`backup.sh appdata`) excludes both directories.
+
+**Limits** (all in `AlignJobStore.cs`; the job timeout, the pending age and the retention are also
+in `worker.py` and must stay equal): one active job per player (409), 10 jobs per player per UTC
+day (429), 20 pending jobs in all (503), a 64 MB audio and 64 KB lyrics cap (422), a 20 minute
+run timeout, a 3 hour pending limit, and a 6 a minute submission speed bump per token. A
+submission is also refused with 503 when the worker's heartbeat (`/data/align-jobs/worker.json`,
+every 15 s) is older than 2 minutes, and with 507 while the disk guard refuses uploads.
+
+**First deploy.** Nothing by hand is required: the first deploy that carries this builds the image
+(several minutes, mostly the torch download) and starts the worker. Watch it come up with
+`./deploy/up.sh logs -f aligner`: the first lines name the aligner version, then the QMUL weights
+being fetched. If the box still has the pre-287 cleanup left undone (an old `typebeat-web-aligner`
+image or `/data/align-cache` from before), the new build simply replaces the image, and the old
+cache is reused or overwritten; nothing needs removing first.
+
+**Turning it off.** `./deploy/up.sh stop aligner`: within two minutes the heartbeat goes stale and
+every submission gets the 503 ("not running right now ... use the local aligner"), and any job
+still pending is failed when its owner next polls. `./deploy/up.sh start aligner` brings it back,
+and so does the next deploy (CI runs `up -d aligner` every time), so a longer outage also needs the
+CI step disabled.
 
 ### Alerting
 
@@ -643,7 +675,7 @@ docker logs --tail 200 <buddy container> | grep -i disk   # 'disk feed error' = 
 
 `docker logs typebeat-web-app-1 | grep 'Disk:'` is the cross-check that does not depend on any of
 that. Reclaim, in the order that is safest: `docker image prune -f`, then `docker builder prune -f`,
-then `journalctl --vacuum-size=100M`, then the one-time cleanups above (retired aligner, `/root`
+then `journalctl --vacuum-size=100M`, then the one-time cleanups above (`/root`
 staging), and only then look at `/data` itself. Free space FIRST, restart Postgres, then fix the
 cause: a wedged Postgres is the symptom, never the cause.
 

@@ -58,6 +58,7 @@ public static class RateLimits
     public const string Leaderboard = "leaderboard";
     public const string Lookup = "lookup";
     public const string Report = "report";
+    public const string ServerAlignSubmit = "server-align-submit";
 
     public const int ScoreTokenPerMinute = 30;
     public const int ScoreSubmitPerMinute = 30;
@@ -69,16 +70,28 @@ public static class RateLimits
     public static readonly TimeSpan ReportWindow = TimeSpan.FromMinutes(10);
     public const int AnonymousReadsPerMinute = 300;
 
+    /// <summary>
+    /// Server aligner submissions (backlog 413), a speed bump per token in front of a 64 MB upload:
+    /// an honest player submits one job and maybe retries after a refusal. The real budget is
+    /// <see cref="Align.AlignJobStore.JobsPerDay"/>, counted from the job store (cancelled jobs
+    /// included), which answers its own 429 naming the reset time. Polling the job (GET, every
+    /// 2 s from the game) has no policy.
+    /// </summary>
+    public const int ServerAlignSubmitsPerMinute = 6;
+
     /// <summary>The message a limited wire caller (and so the player) reads.</summary>
     public const string RejectionMessage = "Too many requests. Please wait a minute and try again.";
 
     /// <summary>
     /// Paths the anonymous read cap never counts: the immutable media the CDN serves anyway, the
     /// uptime probe, and the error page a website 429 re-executes into (counting that would turn
-    /// the styled page into a second, empty 429).
+    /// the styled page into a second, empty 429). The beatmap lookup too (backlog 406): a guest's
+    /// pack import fires one per difficulty, hundreds at once, and the route's own
+    /// <see cref="Lookup"/> bucket (per IP for a guest) is the brake built for exactly that burst.
     /// </summary>
     private static readonly string[] anonymous_read_exempt =
-        ["/covers", "/previews", "/avatars", "/user-covers", "/img", "/releases", "/health", "/error"];
+        ["/covers", "/previews", "/avatars", "/user-covers", "/img", "/releases", "/health", "/error",
+         Endpoints.BeatmapLookupEndpoints.Path];
 
     public static IServiceCollection AddTypebeatRateLimiter(this IServiceCollection services)
     {
@@ -91,6 +104,7 @@ public static class RateLimits
             o.AddPolicy(ScoreSubmit, ctx => perMinute(ctx, ScoreSubmitPerMinute));
             o.AddPolicy(ReplayUpload, ctx => perMinute(ctx, ReplayUploadPerMinute));
             o.AddPolicy(Leaderboard, ctx => perMinute(ctx, LeaderboardPerMinute));
+            o.AddPolicy(ServerAlignSubmit, ctx => perMinute(ctx, ServerAlignSubmitsPerMinute));
 
             // Import of a beatmap pack fires one lookup per difficulty, hundreds at once: a deep
             // bucket that refills fast, rather than a window that would cut the burst off.

@@ -153,10 +153,13 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
                    -- Pre-M3 sets (backfilled by migration 004) have live diffs but no uploaded
                    -- package: the Download button must not render a dead /download link for them.
                    EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS HasPackage,
-                   -- LAST on purpose: Dapper binds a positional record's constructor parameters to
-                   -- the reader's columns BY POSITION, so a new column has to be appended at the
+                   -- Appended on purpose: Dapper binds a positional record's constructor parameters
+                   -- to the reader's columns BY POSITION, so a new column has to be appended at the
                    -- same index in both this SELECT and SetDetails.
-                   s.language         AS Language
+                   s.language         AS Language,
+                   -- Backlog 418: a live .osu difficulty, the card's HasPlayableDiff test (see
+                   -- SetDetails.CanWebplay).
+                   EXISTS (SELECT 1 FROM beatmaps b2 WHERE b2.set_id = s.id AND b2.filename LIKE '%.osu') AS HasPlayableDiff
             FROM beatmapsets s
             JOIN users u ON u.id = s.owner_id
             WHERE s.id = @id
@@ -268,13 +271,19 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
             comments.RemoveAt(BeatmapsetComments.PageSize);
         Comments = comments;
 
-        ViewData["Title"] = $"{Set.Artist} - {Set.Title}";
-        ViewData["MetaDescription"] =
-            $"{Set.Artist}: {Set.Title}, mapped by {Set.Creator}. Type it in type!beat.";
+        // Backlog 418: the stats are the selected difficulty's, the one the stats box shows.
+        string shortArtist = Seo.ShortArtist(Set.Artist);
+        ViewData["Title"] = shortArtist.Length > 0 ? $"{Set.Title} typing game: {shortArtist}" : $"{Set.Title} typing game";
+        ViewData["MetaDescription"] = Seo.SetDescription(
+            Set.Title, Set.Artist, Set.Creator, Diff?.Stars, Diff?.TotalLengthS, Diff?.TargetWpm, Set.CanWebplay);
+        // On the canonical origin, like the canonical itself, rather than whatever host served
+        // the request (backlog 417).
         if (Set.CoverKey is not null)
-            ViewData["OgImage"] = $"{Request.Scheme}://{Request.Host}/{Set.CoverKey}/cover.jpg";
+            ViewData["OgImage"] = $"{Seo.CANONICAL_ORIGIN}/{Set.CoverKey}/cover.jpg";
+        // The length is the selected difficulty's, the one the stats box shows.
         ViewData["JsonLd"] = Seo.MusicRecordingJsonLd(
-            Seo.CanonicalUrl($"/beatmapsets/{id}"), Set.Title, Set.Artist, ViewData["OgImage"] as string);
+            Seo.CanonicalUrl($"/beatmapsets/{id}"), Set.Title, Set.Artist, ViewData["OgImage"] as string,
+            Diff?.TotalLengthS, Set.LangTag, Set.Creator, Set.OwnerId);
 
         return Page();
     }
@@ -662,8 +671,17 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
         long Id, string Title, string Artist, string? TitleUnicode, string? ArtistUnicode, string Source, string Tags, string Description,
         string Status, bool Explicit, string Creator, bool OwnerRestricted, long OwnerId, string? CoverKey, string? PreviewUrl,
         int PlayCount, int FavouriteCount, int DownloadCount,
-        DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited, bool HasPackage, string Language)
+        DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited, bool HasPackage, string Language,
+        bool HasPlayableDiff)
     {
+        /// <summary>
+        /// Whether the browser can play this set (backlog 418). Must stay equal to
+        /// <see cref="BeatmapsetCardModel.CanWebplay"/> and the /play picker's
+        /// <c>playable_filter</c> (<see cref="Play.IndexModel"/>), or the set page would promise a
+        /// browser play the picker cannot load.
+        /// </summary>
+        public bool CanWebplay => Endpoints.BeatmapsetEndpoints.IsPublished(Status) && HasPackage && HasPlayableDiff;
+
         public string StatusLabel => BeatmapsetDisplay.StatusLabel(Status);
         public string PillClass => BeatmapsetDisplay.PillClass(Status);
         public string? CoverUrl => CoverKey is null ? null : $"/{CoverKey}/cover.jpg";

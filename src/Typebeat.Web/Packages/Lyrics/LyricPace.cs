@@ -434,6 +434,25 @@ public static class LyricPace
     /// it. <c>PerformancePoints.VERSION</c> stays at 24: this is a rating-only change (the
     /// precedent of v17 and v21), and the pp FORMULA does not move.</para>
     ///
+    /// <para>v26 = SPACES THAT PUNCTUATION PRODUCES ARE COUNTED (PR 35, mirrored from the game's
+    /// <c>LyricDifficulty.BuildWords</c> and <c>LyricWpmCurve.DefaultTargets</c>, whose difficulty
+    /// calculator moves to version 7 in the same change). Without Literate the rating no longer gives
+    /// each authored word one trailing space when another word follows on its line: it projects the
+    /// WHOLE line through <see cref="Typeability.ProjectDefault"/> and charges every surviving space,
+    /// hyphen breaks included ("W-O-R-D" plays as "w o r d", four keypresses of gap rather than none),
+    /// to the authored word it sits in, a punctuation-only token's gap going to the played word before
+    /// it. Literate keeps the authored-gap rule. The curve lays each hyphen that survives the
+    /// projection down as a SPACE cell at an interpolated slot between its neighbours. So all six star
+    /// columns, every cell of the <c>beatmaps.ratings</c> matrix, <c>target_wpm</c> (read off the
+    /// rating's envelope arm) and <c>peak_wpm</c>, <c>peak_cpm</c> and <c>wpm_curve</c> can move on
+    /// any map with a hyphen, or with a run of authored spaces or a punctuation-only token; a
+    /// hyphen-free, mark-free map rates and graphs byte-identically. <c>wpm</c>, the counts and
+    /// <c>skippable_s</c> are untouched: <see cref="PaceStatistics"/> already split the projected
+    /// stream. <see cref="PaceBackfill"/> re-rates the catalogue at boot and stamps
+    /// <c>pp_version = 0</c> on every score of every row it rewrites, and
+    /// <c>PerformancePoints.VERSION</c> bumps to 26 in the same change so even an unmoved row is
+    /// repriced under the new stamp. No column is added, so no migration comes with it.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -446,7 +465,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 25;
+    public const int VERSION = 26;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's

@@ -46,7 +46,9 @@ public static class CachePolicies
                 ["q", "s", "status", "after", "after_id", "after_tier"], [CacheTags.Listing],
                 "public, max-age=0, s-maxage=30"));
 
-            o.AddPolicy(Rankings, new AnonymousOnlyPolicy(TimeSpan.FromSeconds(60), ["board", "page"], [CacheTags.Rankings],
+            // Rankings/IndexModel.OnGetAsync binds board, page and q (the player search, backlog
+            // 407). Leaving q out would serve every anonymous search the cached unsearched board.
+            o.AddPolicy(Rankings, new AnonymousOnlyPolicy(TimeSpan.FromSeconds(60), ["board", "page", "q"], [CacheTags.Rankings],
                 "public, max-age=0, s-maxage=60"));
 
             // The user:{id} tag is added by ProfileModel itself once it has resolved the id.

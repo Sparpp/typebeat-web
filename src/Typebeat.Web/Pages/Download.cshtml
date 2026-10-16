@@ -4,7 +4,8 @@
     ViewData["Title"] = "Download";
     ViewData["MetaDescription"] = "Get type!beat for Windows, macOS or Linux, the free rhythm game "
         + "where the lyrics are the notes and your keyboard is the instrument.";
-    ViewData["JsonLd"] = Seo.VideoGameJsonLd(Seo.CanonicalUrl("/"), (string)ViewData["MetaDescription"]!);
+    // The landing's graph, ids and all, so both pages name the same game (backlog 417).
+    ViewData["JsonLd"] = Seo.GameJsonLd();
 }
 
 <section class="hero download-hero">

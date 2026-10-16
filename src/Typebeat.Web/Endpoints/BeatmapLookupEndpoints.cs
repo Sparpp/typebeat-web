@@ -21,16 +21,23 @@ namespace Typebeat.Web.Endpoints;
 ///
 /// Published sets ('pending', 'unranked', 'ranked' or 'loved') are visible, and the REAL status is reported:
 /// "ranked" unlocks leaderboards client-side, "pending" keeps them locked until a map
-/// reviewer approves the set (migration 005). Authed: the client always runs lookups through
-/// the API, so RequireBearer.
+/// reviewer approves the set (migration 005).
+///
+/// <para>Anonymous since backlog 406: a guest client imports maps too, and nothing here is not
+/// already on the public set page. The answer reads no caller, so a bearer changes nothing.</para>
 /// </summary>
 public static class BeatmapLookupEndpoints
 {
+    /// <summary>The route, shared with the anonymous read cap's exemption list.</summary>
+    public const string Path = "/api/v2/beatmaps/lookup";
+
     public static void Map(IEndpointRouteBuilder app)
     {
         // A pack import fires one lookup per difficulty, so this gets a deep token bucket rather
-        // than a window (backlog 366, Auth/RateLimits.cs).
-        app.MapGet("/api/v2/beatmaps/lookup", HandleAsync).RequireBearer().RequireRateLimiting(RateLimits.Lookup);
+        // than a window (backlog 366, Auth/RateLimits.cs). The bucket is per client IP for a guest,
+        // and this path is exempt from the anonymous read cap so a guest's import gets the same
+        // burst a signed-in one does (backlog 406, RateLimits.anonymous_read_exempt).
+        app.MapGet(Path, HandleAsync).RequireRateLimiting(RateLimits.Lookup);
     }
 
     private static async Task<IResult> HandleAsync(HttpContext ctx, Db db)
