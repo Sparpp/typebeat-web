@@ -22,11 +22,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="AWSSDK.S3" Version="4.0.104" />
-    <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="AWSSDK.S3" Version="4.0.104.4" />
+    <PackageReference Include="Dapper" Version="2.1.89" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
-    <PackageReference Include="Sentry.AspNetCore" Version="6.7.0" />
+    <PackageReference Include="Sentry.AspNetCore" Version="6.12.1" />
     <!--
       Cover and profile-image generation (M3 uploads). SkiaSharp brings its Windows and macOS
       native libraries itself; the Linux one is the NoDependencies build, which links no
