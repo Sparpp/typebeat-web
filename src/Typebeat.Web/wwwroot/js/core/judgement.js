@@ -70,7 +70,7 @@
         return delta < -w.me ? 'Premature' : 'Lagging';
     }
 
-    // TypeBeatResultMapping.AwardedTier (backlog 210). The tier a correct keypress is AWARDED, given
+    // EraRules.AwardedTier (backlog 210). The tier a correct keypress is AWARDED, given
     // the tier the clock classified it as and whether its cell held a wrong character before it was
     // ever judged: a CORRECTED cell resolves at min(that tier, 'Ok'), so perfect play strictly beats
     // corrected play per cell.
@@ -95,7 +95,7 @@
     // CorrectionCreditRule.Full (the pre-210 arm, which a stored row is re-derived under by the
     // recalculation tool) is one it can never be in and the clause collapses to the live
     // CorrectionCreditRule.Capped.
-    // (TypeBeatResultMapping.RushCapTier, backlog 347's Meh award for a press out past the rush
+    // (EraRules.RushCapTier, backlog 347's Meh award for a press out past the rush
     // cap, is not mirrored: the second input era, PR 3, removed the cap from every live run, and
     // the C# keeps the award only for the stored runs it re-derives.)
 
