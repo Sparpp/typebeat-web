@@ -439,15 +439,19 @@ public class SearchOperatorParityTest
 
     /// <summary>
     /// The game's keywords: the <c>case "..."</c> labels of <c>tryParseKeywordCriteria</c> in the
-    /// <c>FilterQueryParser.cs</c> this project compiles against (the sibling checkout first, then the
-    /// submodule, the order the project file resolves the game in).
+    /// <c>FilterQueryParser.cs</c> this project compiles against: the game project path the project
+    /// file resolved (sibling checkout, submodule or a command-line override), stamped into the
+    /// assembly as <c>TypebeatGameProject</c> metadata.
     /// </summary>
     private static HashSet<string> GameKeywords()
     {
-        string root = NodeHarness.RepoRoot();
-        string relative = Path.Combine("typebeat.Game", "Screens", "Select", "FilterQueryParser.cs");
-        string path = new[] { Path.Combine(root, "..", "typebeat-osu", relative), Path.Combine(root, "external", "typebeat-osu", relative) }
-            .FirstOrDefault(File.Exists) ?? throw new FileNotFoundException("FilterQueryParser.cs not found beside or inside this repo", relative);
+        string gameProject = typeof(SearchOperatorParityTest).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+                                                             .FirstOrDefault(a => a.Key == "TypebeatGameProject")?.Value
+                             ?? throw new InvalidOperationException("TypebeatGameProject assembly metadata is missing");
+        string path = Path.Combine(Path.GetDirectoryName(gameProject)!, "Screens", "Select", "FilterQueryParser.cs");
+
+        if (!File.Exists(path))
+            throw new FileNotFoundException("FilterQueryParser.cs not found in the game project this suite compiles against", path);
 
         string source = File.ReadAllText(path);
         int start = source.IndexOf("bool tryParseKeywordCriteria(", StringComparison.Ordinal);
