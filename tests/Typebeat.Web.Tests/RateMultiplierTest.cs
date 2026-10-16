@@ -166,6 +166,39 @@ public class RateMultiplierTest
     }
 
     /// <summary>
+    /// IsKnown is the ranked allowlist: every acronym this table prices is known, the
+    /// retired "RH" and "FT" and the server-appended "CL" included, so no stored or honest row
+    /// changes standing, and an acronym it does not price is not, so it can no longer rank at the
+    /// 2.0x allowance. The allowance itself is untouched: an unknown acronym is still PRICED at it.
+    /// </summary>
+    [Test]
+    public void ModMultiplier_KnowsEveryAcronymItPrices_AndNothingElse()
+    {
+        string[] priced =
+        [
+            "NF", "EZ", "HR", "SD", "GK", "FL", "LT", "RE", "RH", "FC", "FT", "CL", "MU",
+            "CT", "DX", "PT", "RX", "WU", "WD", "DT", "NC", "HT", "DC",
+        ];
+
+        Assert.Multiple(() =>
+        {
+            foreach (string acronym in priced)
+            {
+                Assert.That(ModMultiplier.IsKnown(acronym), Is.True, acronym);
+                Assert.That(ModMultiplier.IsKnown(acronym.ToLowerInvariant()), Is.True, acronym.ToLowerInvariant());
+            }
+
+            Assert.That(ModMultiplier.IsKnown(" fc "), Is.True, "trimmed as the wire is");
+
+            foreach (string? unknown in new[] { "ZZ", "HD", "AT", "PG", "", "  ", null })
+                Assert.That(ModMultiplier.IsKnown(unknown), Is.False, unknown ?? "null");
+
+            Assert.That(ModMultiplier.For("ZZ", null), Is.EqualTo(ModMultiplier.UNKNOWN_MOD_MULTIPLIER),
+                "an unknown acronym is still priced at the allowance; it just does not rank");
+        });
+    }
+
+    /// <summary>
     /// A STORED RHYTHMIC PLAY IS STILL BOUNDED AT THE PRICE IT WAS SUBMITTED AT. Backlog 147 removed
     /// the mod from the client, so no new play can carry RH, but the acronym shipped and the rows
     /// that carry it are re-priced by every path that re-derives a stored score. This table is what

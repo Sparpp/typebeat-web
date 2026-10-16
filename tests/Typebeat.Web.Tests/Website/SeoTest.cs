@@ -294,7 +294,7 @@ public class SeoTest
     {
         var recording = JsonDocument.Parse(Seo.MusicRecordingJsonLd(
             "https://typebeat.sh/beatmapsets/7", "See You Again", "Tyler, The Creator", null,
-            lengthSeconds: 3725.9, langTag: "ja", creator: "neon mapper", creatorId: 42)).RootElement;
+            lengthSeconds: 3725.9, langTag: "ja", creator: "neon mapper", creatorId: 42).Json).RootElement;
 
         Assert.Multiple(() =>
         {
@@ -311,7 +311,7 @@ public class SeoTest
     public void MusicRecording_OmitsAnUnknownLength()
     {
         var recording = JsonDocument.Parse(Seo.MusicRecordingJsonLd(
-            "https://typebeat.sh/beatmapsets/7", "t", "a", null, lengthSeconds: null, langTag: null, creator: "m", creatorId: 1)).RootElement;
+            "https://typebeat.sh/beatmapsets/7", "t", "a", null, lengthSeconds: null, langTag: null, creator: "m", creatorId: 1).Json).RootElement;
 
         Assert.Multiple(() =>
         {
@@ -380,9 +380,9 @@ public class SeoTest
             Assert.That(titleOf(html), Is.EqualTo("Play online free, no download: typing to music · type!beat"));
             Assert.That(metaOf(html, "name", "description"), Is.EqualTo(
                 "Play type!beat free in your browser: pick a song and type the lyrics in time with the music. "
-                + "No download, no account needed. Sign in to save your scores and earn pp."));
+                + "No download, no account needed. Sign in to save your scores."));
             Assert.That(html, Does.Contain(
-                "<a href=\"/login\">sign in</a> to save your scores to the leaderboard and earn pp on ranked maps.</p>"));
+                "<a href=\"/login\">sign in</a> to save your scores.</p>"));
         });
 
         // The intro sits inside the picker, above the card grid, so it hides with the picker when

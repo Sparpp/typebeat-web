@@ -211,6 +211,24 @@ public class ListingPageTest
     }
 
     [Test]
+    public async Task OutOfRangeCursor_IsIgnoredRatherThanFailing()
+    {
+        // A timestamp cursor beyond DateTime used to throw out of AddTicks (a 500 for any
+        // anonymous GET); it now reads as no cursor, so both the plain and the tiered sort serve
+        // their first page.
+        var plain = CardIds(await GetHtml("/beatmapsets"));
+        var plainHuge = CardIds(await GetHtml("/beatmapsets?after=9223372036854775807&after_id=1"));
+        var tiered = CardIds(await GetHtml("/beatmapsets?q=filler"));
+        var tieredHuge = CardIds(await GetHtml("/beatmapsets?q=filler&after=-9223372036854775808&after_id=1&after_tier=0"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(plainHuge, Is.EqualTo(plain));
+            Assert.That(tieredHuge, Is.EqualTo(tiered));
+        });
+    }
+
+    [Test]
     public async Task Search_NoResults_ShowsEmptyState()
     {
         string html = await GetHtml("/beatmapsets?q=zxqvbnrrrr");

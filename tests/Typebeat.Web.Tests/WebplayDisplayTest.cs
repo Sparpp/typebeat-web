@@ -512,8 +512,8 @@ public class WebplayDisplayTest
     public void LiveHudReadoutsTrackTheRun()
     {
         // Backlog 319: the score cell is the standardised total (ScoreProcessor.TotalScore, what the
-        // card shows and /play submits), not engine.score's internal points, and the accuracy cell
-        // is JUDGED-only accuracy (ScoreProcessor.Accuracy), not the old 'typed' completion.
+        // card shows and /play submits), and the accuracy cell is JUDGED-only accuracy
+        // (ScoreProcessor.Accuracy), not the old 'typed' completion.
         var root = Harness();
         var perfect = root.GetProperty("perfectHud");
         var partial = root.GetProperty("partialHud");
@@ -528,7 +528,6 @@ public class WebplayDisplayTest
             }
 
             Assert.That(Num(perfect, "score"), Is.EqualTo(1_000_000));
-            Assert.That(Num(perfect, "engineScore"), Is.Not.EqualTo(1_000_000), "the internal points are on another scale");
             Assert.That(perfect.GetProperty("accuracyText").GetString(), Is.EqualTo("100.00%"));
 
             // One Great and four seal misses, all five judged: 300 / 1500.

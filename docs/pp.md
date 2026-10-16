@@ -39,10 +39,12 @@ Factor by factor, in descending priority:
   rates is eighteen readings, `beatmaps.ratings` (034_ratings_matrix.sql). The client recomputes the
   one it needs from the beatmap it has loaded.
 * **`difficult`**: the map's DIFFICULT CHARACTERS at that same (arm, stream, rate), i.e.
-  `LyricDifficulty.ModelResult.DifficultCharacters`, every cell weighted by how close its own bin
-  sits to the map's peak. It is a property of the MAP, not of the play, and it travels in the same
-  stored cell as the rating because a price needs both. A play whose cell is not stored yet is
-  PENDING, exactly as an unfilled `sr_dt` has been since backlog 90.
+  `LyricDifficulty.ModelResult.DifficultCharacters`, which on the shipped axis
+  (`LyricDifficulty.Live`, `EnduranceAxis.Chunked`) is the chunked axis's `LengthCharacters`: every
+  chunk's weighted characters, counted in full where the chunk's strain is at or above the map's own
+  score and with falling credit below it. It is a property of the MAP, not of the play, and it
+  travels in the same stored cell as the rating because a price needs both. A play whose cell is not
+  stored yet is PENDING, exactly as an unfilled `sr_dt` has been since backlog 90.
 * **cleanliness^13.5134**: cells the play did not type right. Since the backlog-213 amendment that
   is `miss + good`, i.e. a cell nobody finished PLUS one finished with the wrong character and never
   corrected; before it, `miss` alone. Since the v22 amendment the count is measured as a FRACTION of
@@ -69,8 +71,9 @@ Factor by factor, in descending priority:
 * **Length**: NOT A FACTOR HERE, since the backlog-152 amendment. pp carried the standard osu log
   bonus `max(0.1, 1 + 0.50·log10(notes/100))` through v15; length is now priced by the STAR RATING
   instead. Since backlog 273 `LyricDifficulty` has no separate length term at all: length counts
-  only through the characters it adds to the envelope's difficulty sum, so pp still sees a long
-  map only through `SR_eff`, a few percent where the old term paid up to 1.70x. Two length terms
+  only through the chunked axis's saturating length bonus (its `LengthCharacters`, worth at most
+  `chunk_length_bonus`, 15%), so pp still sees a long map only through `SR_eff`, where the old term
+  paid up to 1.70x. Two length terms
   would double count, so pp keeps none. `notes` itself is
   still load-bearing: both penalty terms, the combo ratio and FL all read it.
 * **accShare(acc)**: a NORMALISED EXPONENTIAL above a FLOOR since the v23 amendment, replacing
@@ -1177,7 +1180,12 @@ so the shown columns sum to the judged cell count again.
 COMPLETION and therefore RANK are deliberately untouched, and the fold found that half already
 done: backlog 126 took an uncorrected typo out of completion's numerator, so it has cost the grade
 exactly as a miss does ever since. That is why accuracy could be re-weighted without touching
-`ScoringContract.CountsAsTyped` or `RankFromCompletion`.
+`ScoringContract.CountsAsTyped` or `RankFromCompletion`. (Superseded since: rank is no longer graded
+on completion and `RankFromCompletion` is gone. Ranks are graded on accuracy, the
+`ACCURACY_CUTOFF_*` bands, plus a missed-cell limit, none missed for X and under `S_MISS_LIMIT` for
+S, in `TypeBeatScoreProcessor`, `ScoringContract.RankFromAccuracy` and `typebeat-core.js`;
+migration 045 re-graded the stored rows, and the two `RankParityTest` fixtures (WireCompat and
+Web.Tests) pin the three.)
 
 **`VERSION` bumps to 18.** Every stored row carrying a `good` key is repriced, downwards, by
 `PpBackfill`'s sweep at the next boot; no migration is needed, since the sweep reads only columns
@@ -1455,7 +1463,8 @@ NULL IS THE UNFILLED STATE, not a rating of zero, and it has exactly the contrac
 since 020: a play whose cell is missing is NOT SETTLED, earns 0 for now and is left stale for
 `PpBackfill` to revisit. That is stricter than the six columns were, because `difficulty_rating` is
 NOT NULL and a no-mod play could never be pending before; on a row the pace sweep has not reached,
-every play is pending now, including a browser `/play` one.
+every desktop play is pending now. (A browser `/play` play was too, until every browser play
+was stored unranked: it is refused a price outright, never pending.)
 
 The six legacy columns are the matrix's ARM-NONE stars and stay written, from the same parse: they
 are what the set page and the listing cards print, what the client's own beatmap lookup reads off the

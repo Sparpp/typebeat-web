@@ -279,6 +279,23 @@ public class LovedStatusTest
         });
     }
 
+    /// <summary>PublishedSql is <see cref="BeatmapsetEndpoints.IsPublished"/> as a SQL list: it names
+    /// every published status, and the unpublished ones are neither listed nor published.</summary>
+    [Test]
+    public void PublishedSql_ListsExactlyThePublishedStatuses()
+    {
+        var listed = Regex.Matches(BeatmapsetEndpoints.PublishedSql, "'([a-z]+)'").Select(m => m.Groups[1].Value).ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(listed, Is.EquivalentTo(new[] { "pending", "unranked", "ranked", "loved" }));
+            foreach (string status in listed)
+                Assert.That(BeatmapsetEndpoints.IsPublished(status), Is.True, status);
+            foreach (string status in new[] { "hidden", "removed" })
+                Assert.That(BeatmapsetEndpoints.IsPublished(status), Is.False, status);
+        });
+    }
+
     [Test]
     public async Task LovedSet_IsPublic_OnTheGameApi()
     {
@@ -432,9 +449,13 @@ public class LovedStatusTest
         });
     }
 
-    /// <summary>The in-browser player (PlayEndpoints) follows the same rule as the game client.</summary>
+    /// <summary>
+    /// The in-browser player (PlayEndpoints) stores every play unranked, a loved set's included: the
+    /// play is recorded with no pp and nothing pending, and sits on no board, because a loved set
+    /// serves the ranked one.
+    /// </summary>
     [Test]
-    public async Task BrowserPlay_OnALovedSet_IsOnTheRankedBoard_WithNoPpAndNothingPending()
+    public async Task BrowserPlay_OnALovedSet_IsStoredUnranked_WithNoPpAndNothingPending()
     {
         const string name = "loved browser typist";
         const string password = "lovedbrowser-123456";
@@ -482,9 +503,9 @@ public class LovedStatusTest
 
         Assert.Multiple(() =>
         {
-            Assert.That((bool)submitted["ranked"]!, Is.True);
-            Assert.That((string?)submitted["board"], Is.EqualTo("ranked"));
-            Assert.That((int?)submitted["position"], Is.EqualTo(1));
+            Assert.That((bool)submitted["ranked"]!, Is.False);
+            Assert.That(submitted["board"]!.Type, Is.EqualTo(JTokenType.Null));
+            Assert.That(submitted["position"]!.Type, Is.EqualTo(JTokenType.Null));
             Assert.That(submitted["pp"]!.Type, Is.EqualTo(JTokenType.Null));
             Assert.That((bool)submitted["pp_pending"]!, Is.False);
         });
@@ -566,7 +587,7 @@ public class LovedStatusTest
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
             request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["version_hash"] = "loved-test-build",
+                ["version_hash"] = "7e570000000000000000000000000001",
                 ["beatmap_hash"] = checksum,
                 ["ruleset_id"] = "0",
             });

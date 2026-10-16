@@ -15,9 +15,14 @@ namespace Typebeat.Web.Auth;
 ///  - at most ONE code is active per (user, purpose); issuing a new one burns the previous;
 ///  - a code is burned after <see cref="MaxAttempts"/> wrong guesses (the 6th attempt);
 ///  - issuance is throttled: <see cref="ResendCooldown"/> between sends and
-///    <see cref="MaxPerHour"/> per (user, purpose) per hour.
-/// Together the expected guesses to hit a live code before it is burned or rotated is ~10^6/5,
-/// and the hourly issuance cap bounds how many fresh targets an attacker can force.
+///    <see cref="MaxPerHour"/> per (user, purpose) per hour;
+///  - at most <see cref="MaxAttemptsPerDay"/> verification attempts per (user, purpose) in any
+///    24 hours: past it no code is compared or issued until the window rolls on.
+/// Each guess hits with probability 10^-6, so what bounds an attacker is the guess RATE. The
+/// hourly cap alone allows <see cref="MaxPerHour"/> x <see cref="MaxAttempts"/> = 30 guesses an
+/// hour, about 263k a year (roughly a one in four chance of a hit), and nothing locked out across
+/// hours; the daily cap brings that to about 36.5k a year (under 4%). Reset codes ('reset') ride
+/// the same limits.
 ///
 /// Every failure path returns the SAME generic outcome to the caller ("incorrect or expired
 /// code"); no distinction between "no active code", "expired", and "wrong digits" leaks.
@@ -29,6 +34,14 @@ public sealed class EmailCodeService(Db db)
     public static readonly TimeSpan LoginTtl = TimeSpan.FromMinutes(10);
     public static readonly TimeSpan ResendCooldown = TimeSpan.FromSeconds(60);
     public const int MaxPerHour = 6;
+
+    /// <summary>
+    /// Verification attempts per (user, purpose) in a rolling 24 hours, summed from
+    /// <c>email_tokens.attempts</c> like the hourly window counts its rows. A success counts as
+    /// one attempt too (the column does not tell it apart from a wrong guess), so the cap is set
+    /// far above what any honest account spends in a day.
+    /// </summary>
+    public const int MaxAttemptsPerDay = 100;
 
     public enum IssueStatus { Sent, TooSoon, TooMany }
 
@@ -62,12 +75,14 @@ public sealed class EmailCodeService(Db db)
         // guards against re-spamming a code that is STILL LIVE (unused + unexpired); once the
         // previous code was consumed or expired, a fresh login legitimately issues a new one
         // immediately (fresh code on every login). The hourly cap is the absolute
-        // per-(user,purpose) ceiling regardless of consumption.
-        var throttle = await conn.QuerySingleAsync<(bool onCooldown, long hourly)>(
+        // per-(user,purpose) ceiling regardless of consumption; once the day's attempts are spent
+        // a fresh code could not be checked anyway, so none is sent.
+        var throttle = await conn.QuerySingleAsync<(bool onCooldown, long hourly, long daily)>(
             """
             SELECT COALESCE(bool_or(used_at IS NULL AND expires_at > now()
                                     AND created_at > now() - make_interval(secs => @cooldown)), false) AS onCooldown,
-                   count(*) FILTER (WHERE created_at > now() - interval '1 hour') AS hourly
+                   count(*) FILTER (WHERE created_at > now() - interval '1 hour') AS hourly,
+                   COALESCE(sum(attempts) FILTER (WHERE created_at > now() - interval '24 hours'), 0) AS daily
             FROM email_tokens
             WHERE user_id = @userId AND purpose = @purpose
             """,
@@ -76,7 +91,7 @@ public sealed class EmailCodeService(Db db)
         if (throttle.onCooldown)
             return new IssueResult(IssueStatus.TooSoon, null, expiryMinutes);
 
-        if (throttle.hourly >= MaxPerHour)
+        if (throttle.hourly >= MaxPerHour || throttle.daily >= MaxAttemptsPerDay)
             return new IssueResult(IssueStatus.TooMany, null, expiryMinutes);
 
         string code = GenerateCode();
@@ -104,7 +119,9 @@ public sealed class EmailCodeService(Db db)
     /// <summary>
     /// Verifies a code against the user's active code of this purpose. Locks the row FOR UPDATE,
     /// increments its attempt counter, burns it after <see cref="MaxAttempts"/> wrong guesses, and
-    /// compares in constant time. On success the code is marked used (single-use).
+    /// compares in constant time. On success the code is marked used (single-use). Once the
+    /// (user, purpose) has spent <see cref="MaxAttemptsPerDay"/> attempts in 24 hours, the live code
+    /// is burned without being compared.
     /// </summary>
     public async Task<VerifyResult> VerifyAsync(long userId, string purpose, string code, CancellationToken ct = default)
     {
@@ -131,7 +148,15 @@ public sealed class EmailCodeService(Db db)
 
         int attempts = token.attempts + 1;
 
-        if (attempts > MaxAttempts)
+        long daily = await conn.ExecuteScalarAsync<long>(
+            """
+            SELECT COALESCE(sum(attempts), 0)
+            FROM email_tokens
+            WHERE user_id = @userId AND purpose = @purpose AND created_at > now() - interval '24 hours'
+            """,
+            new { userId, purpose }, tx);
+
+        if (attempts > MaxAttempts || daily >= MaxAttemptsPerDay)
         {
             await conn.ExecuteAsync(
                 "UPDATE email_tokens SET used_at = now(), attempts = @attempts WHERE id = @id",

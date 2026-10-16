@@ -116,6 +116,21 @@ public class FreeTextSearchTest
     }
 
     [Test]
+    public void Typo_ProbesAtMostMaxTypoWords_TheFirstOnesTyped()
+    {
+        var words = Enumerable.Range(0, FreeTextSearch.MaxTypoWords + 5).Select(i => "word" + (char)('a' + i)).ToList();
+        var p = FreeTextSearch.Build(string.Join(' ', words))!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(p.Parameters.Where(kv => kv.Key.StartsWith("ft_t")).Select(kv => kv.Value),
+                Is.EquivalentTo(words.Take(FreeTextSearch.MaxTypoWords)));
+            // The literal layers still read every word; only the typo fallback is capped.
+            Assert.That(p.Parameters["ft_w" + (words.Count - 1)], Is.EqualTo(words[^1]));
+        });
+    }
+
+    [Test]
     public void TierOrder_IsExactThenPrefixThenSubstring()
     {
         string tier = FreeTextSearch.Build("dracula")!.TierSql!;

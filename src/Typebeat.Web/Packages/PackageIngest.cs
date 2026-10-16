@@ -366,6 +366,8 @@ public sealed class PackageIngest(
 
         foreach (var diff in package.Difficulties)
         {
+            var judged = JudgedCells.ForMap(diff.LyricSectionLines, diff.Lines);
+
             await conn.ExecuteAsync(
                 """
                 INSERT INTO beatmaps
@@ -373,13 +375,13 @@ public sealed class PackageIngest(
                      difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics,
                      sr_dt, sr_ht, sr_literate, sr_literate_dt, sr_literate_ht,
                      peak_wpm, peak_cpm, target_wpm, wpm_curve, gameplay_fingerprint, freestyle_cell_count,
-                     ratings, lyric_font, lyrics_original)
+                     ratings, lyric_font, lyrics_original, judged_cells, judged_cells_literate, judged_cells_version)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
                      @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
                      @srDt, @srHt, @srLiterate, @srLiterateDt, @srLiterateHt,
                      @peakWpm, @peakCpm, @targetWpm, @wpmCurve, @gameplayFingerprint, @freestyleCellCount,
-                     @ratings::jsonb, @lyricFont, @lyricsOriginal)
+                     @ratings::jsonb, @lyricFont, @lyricsOriginal, @judgedCells, @judgedCellsLiterate, @judgedCellsVersion)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -407,7 +409,10 @@ public sealed class PackageIngest(
                     freestyle_cell_count = EXCLUDED.freestyle_cell_count,
                     ratings = EXCLUDED.ratings,
                     lyric_font = EXCLUDED.lyric_font,
-                    lyrics_original = EXCLUDED.lyrics_original;
+                    lyrics_original = EXCLUDED.lyrics_original,
+                    judged_cells = EXCLUDED.judged_cells,
+                    judged_cells_literate = EXCLUDED.judged_cells_literate,
+                    judged_cells_version = EXCLUDED.judged_cells_version;
 
                 -- A re-upload can move this difficulty's star ratings, and the stored per-score pp
                 -- is a function of them, so hand every score set on this map back to PpBackfill
@@ -486,6 +491,13 @@ public sealed class PackageIngest(
                     // words, so it is the most expensive thing this upsert asks for, and it is
                     // asked for once per difficulty (BeatmapPackage.Ratings caches).
                     ratings = diff.RatingsJson,
+                    // The cells the game judges on each stream (048_judged_cells.sql), which both
+                    // submit routes hold a claimed maximum_statistics against. Counted off the same
+                    // parse as everything above, under the current JudgedCells.VERSION; null when
+                    // the game would decode the [Lyrics] differently (JudgedCells.ForMap).
+                    judgedCells = judged.Cells,
+                    judgedCellsLiterate = judged.Literate,
+                    judgedCellsVersion = JudgedCells.VERSION,
                 });
         }
 

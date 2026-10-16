@@ -25,13 +25,9 @@ public class PackageIngestDbTest
 {
     // NOTE: "typebeat_pkgtests"; must stay distinct from the website tests' "typebeat_webtests"
     // and WireCompat's "typebeat_wirecompat"; each fixture force-drops its own database.
-    private const string database_name = "typebeat_pkgtests";
+    private static readonly string database_name = TestDatabase.NameFor("typebeat_pkgtests");
 
-    private const string connection_string =
-        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private static readonly string connection_string = TestDatabase.ConnectionStringFor(database_name);
 
     private NpgsqlDataSource dataSource = null!;
     private Db db = null!;
@@ -45,12 +41,7 @@ public class PackageIngestDbTest
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
-        await using (var conn = new NpgsqlConnection(admin_connection_string))
-        {
-            await conn.OpenAsync();
-            await conn.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
-            await conn.ExecuteAsync($"CREATE DATABASE {database_name}");
-        }
+        await TestDatabase.RecreateAsync(database_name);
 
         await Db.EnsureExtensionsAsync(connection_string);
 
@@ -98,6 +89,8 @@ public class PackageIngestDbTest
 
         if (fileRoot != null && Directory.Exists(fileRoot))
             Directory.Delete(fileRoot, recursive: true);
+
+        await TestDatabase.DropAsync(database_name);
     }
 
     [Test]
@@ -259,6 +252,19 @@ public class PackageIngestDbTest
             Assert.That(ingested.Count, Is.EqualTo(18));
             Assert.That(ingested.TryGet(LyricDifficulty.JudgementArm.None, false, 1.0)!.Value.Stars,
                 Is.EqualTo(beatmap.Difficulty).Within(1e-12));
+        });
+
+        // 048_judged_cells.sql: the cells the game judges on each stream, written by the same
+        // upsert so a play on a freshly uploaded map is checked from its first submission. The
+        // fixture has no marks, so the two streams agree with each other and with char_count.
+        var judged = await conn.QuerySingleAsync<(int? Cells, int? Literate, int? Version)>(
+            "SELECT judged_cells AS Cells, judged_cells_literate AS Literate, judged_cells_version AS Version FROM beatmaps WHERE id = 1001");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(judged.Cells, Is.EqualTo(23));
+            Assert.That(judged.Literate, Is.EqualTo(23));
+            Assert.That(judged.Version, Is.EqualTo(JudgedCells.VERSION));
         });
 
         // Blobs + assembled package + covers exist in the store.
@@ -485,6 +491,42 @@ public class PackageIngestDbTest
         int stale = await conn.ExecuteScalarAsync<int>(
             "SELECT count(*) FROM beatmaps WHERE pace_version < @v", new { v = LyricPace.VERSION });
         Assert.That(stale, Is.Zero);
+    }
+
+    [Test]
+    [Order(6)]
+    public async Task JudgedCellBackfill_CountsUncountedAndStaleRowsFromStoredBlob()
+    {
+        // A row from before 048 (never counted) and one counted under another JudgedCells.VERSION
+        // are both recounted off the current version's .osu; the startup sweep is what makes a
+        // map's submissions checkable without a re-upload.
+        await using var conn = await db.OpenAsync();
+
+        await conn.ExecuteAsync(
+            "UPDATE beatmaps SET judged_cells = NULL, judged_cells_literate = NULL, judged_cells_version = NULL WHERE id = 1001");
+
+        await JudgedCellBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        var counted = await conn.QuerySingleAsync<(int? Cells, int? Literate, int? Version)>(
+            "SELECT judged_cells AS Cells, judged_cells_literate AS Literate, judged_cells_version AS Version FROM beatmaps WHERE id = 1001");
+
+        await conn.ExecuteAsync("UPDATE beatmaps SET judged_cells = 1, judged_cells_version = 0 WHERE id = 1001");
+
+        await JudgedCellBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        int? recounted = await conn.ExecuteScalarAsync<int?>("SELECT judged_cells FROM beatmaps WHERE id = 1001");
+        int stale = await conn.ExecuteScalarAsync<int>(
+            "SELECT count(*) FROM beatmaps WHERE filename IS NOT NULL AND judged_cells_version IS DISTINCT FROM @v",
+            new { v = JudgedCells.VERSION });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(counted.Cells, Is.EqualTo(23));
+            Assert.That(counted.Literate, Is.EqualTo(23));
+            Assert.That(counted.Version, Is.EqualTo(JudgedCells.VERSION));
+            Assert.That(recounted, Is.EqualTo(23), "a row counted under another version is recounted");
+            Assert.That(stale, Is.Zero, "every live difficulty is counted");
+        });
     }
 
     // ---------------------------------------------------------------------------------------------

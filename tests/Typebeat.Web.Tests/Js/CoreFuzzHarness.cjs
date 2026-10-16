@@ -945,7 +945,7 @@ function play(name, keys, spaceSkipsWord) {
     // the countable position after the press (the caret it started from, plus one if the judged
     // cell is countable) against the playhead's at the press.
     const priorCharJudged = engine.onCharJudged;
-    engine.onCharJudged = function (cellIndex, type, points) {
+    engine.onCharJudged = function (cellIndex, type) {
         const line = engine.lines[engine.activeLineIndex];
         const cell = line && line.cells[cellIndex];
         const judged = engine.totalKeypresses !== pressKeypressesBefore;
@@ -961,7 +961,7 @@ function play(name, keys, spaceSkipsWord) {
                 if (type !== 'Premature' && type !== 'Lagging' && engine.combo === 0) farAheadBreaks++;
             }
         }
-        if (priorCharJudged) priorCharJudged(cellIndex, type, points);
+        if (priorCharJudged) priorCharJudged(cellIndex, type);
     };
 
     // THE HEALTH ARM (backlog 306). The run plays under the pool's NO FAIL veto (see the header), so
@@ -1010,6 +1010,18 @@ function play(name, keys, spaceSkipsWord) {
     const end = endTimeFor(beatmap, keys);
     let next = 0;
 
+    // The HUD's cheap total (totalScoreOf) against the whole result's (computeScore), read after
+    // every key and every frame, so every state the run passes through is held to the one number:
+    // empty at the start, mid-run, with misses and typos, after combo breaks, finished or failed.
+    let totalScoreChecks = 0, totalScoreMismatches = 0;
+
+    function checkTotalScore() {
+        totalScoreChecks++;
+        if (TB.totalScoreOf(engine) !== TB.computeScore(engine).totalScore) totalScoreMismatches++;
+    }
+
+    checkTotalScore();
+
     // ReplayEngineFeed.Apply: update(frame time) FIRST, then the key.
     function apply(frame) {
         clock = frame[0];
@@ -1019,6 +1031,7 @@ function play(name, keys, spaceSkipsWord) {
         else engine.processKey(frame[1], frame[0]);
         healthAfterKeys.push(engine.health);
         minHealth = Math.min(minHealth, engine.health);
+        checkTotalScore();
     }
 
     for (let now = 0; now <= end; now += FRAME_MS) {
@@ -1026,12 +1039,14 @@ function play(name, keys, spaceSkipsWord) {
         clock = now;
         engine.update(now);
         minHealth = Math.min(minHealth, engine.health);
+        checkTotalScore();
     }
 
     while (next < keys.length) { apply(keys[next]); next++; }
     clock = end;
     engine.update(end);
     minHealth = Math.min(minHealth, engine.health);
+    checkTotalScore();
 
     const score = TB.computeScore(engine);
 
@@ -1045,10 +1060,11 @@ function play(name, keys, spaceSkipsWord) {
             completion: score.completion,
             rank: score.rank
         },
+        totalScoreChecks: totalScoreChecks,
+        totalScoreMismatches: totalScoreMismatches,
         engineFinished: engine.finished,
         engineFailed: engine.failed,
         engineMaxCombo: engine.maxCombo,
-        engineScore: engine.score,
         mistypes: engine.mistypes,
         restores: restores,
         passiveBreaks: passiveBreaks,

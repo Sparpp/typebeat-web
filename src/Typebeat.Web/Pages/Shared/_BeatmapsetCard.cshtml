@@ -30,7 +30,7 @@
         @if (Model.PreviewUrl is not null)
         {
             <button type="button" class="preview-btn" data-preview="@Model.PreviewUrl"
-                    aria-label="Play preview"></button>
+                    aria-label="Play preview of @displayTitle"></button>
         }
     </div>
     <div class="bset-card__info">
@@ -130,7 +130,7 @@
                renders on every card, play mode included. *@
             <button type="button" class="rail-btn tb-play" data-set-id="@Model.Id"
                     data-title="@displayTitle" data-artist="@displayArtist" data-status="@Model.Status"
-                    title="Play in browser" aria-label="Play in browser">&#9654;</button>
+                    title="Play in browser" aria-label="Play @displayTitle in browser">&#9654;</button>
         }
         else if (showDownloadChoice)
         {
@@ -139,11 +139,11 @@
                nothing; that is why the NO-video card below keeps its plain <a> verbatim, and it is
                also why the panel's first option is the same href the plain arm has. *@
             <button type="button" class="rail-btn" data-dl-toggle aria-expanded="false"
-                    title="Download" aria-label="Download">&#8595;</button>
+                    title="Download" aria-label="Download @displayTitle">&#8595;</button>
         }
         else if (Model.HasPackage)
         {
-            <a class="rail-btn" href="/beatmapsets/@Model.Id/download" title="Download" aria-label="Download">&#8595;</a>
+            <a class="rail-btn" href="/beatmapsets/@Model.Id/download" title="Download" aria-label="Download @displayTitle">&#8595;</a>
         }
         else
         {

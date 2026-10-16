@@ -10,6 +10,12 @@ public static class AuthExtensions
 {
     private const string item_key = "typebeat.authed_user";
 
+    /// <summary>
+    /// Where <see cref="ResolveBearerAsync"/> keeps its answer for the rest of the request: the
+    /// user, or null when the header resolved to nobody. Absent until the first resolution.
+    /// </summary>
+    public const string ResolvedBearerKey = "typebeat.bearer_user";
+
     public static TBuilder RequireBearer<TBuilder>(this TBuilder builder) where TBuilder : IEndpointConventionBuilder
     {
         builder.Add(endpointBuilder =>
@@ -69,8 +75,57 @@ public static class AuthExtensions
     /// <summary>What <see cref="GetClientIp"/> answers when the request carries no address at all.</summary>
     public const string UnknownClientIp = "unknown";
 
-    /// <summary>Resolves the Authorization header to a user without enforcing it (for optional-auth routes).</summary>
+    /// <summary>
+    /// Resolves the bearer once, BEFORE the rate limiter and the output cache (backlog 366), so
+    /// both can tell a real bearer from any other Authorization header: only a resolved user is
+    /// exempt from the anonymous read cap, keyed by token and refused by the cache. A request with
+    /// a session user skips it (the session already decides all three), and a request with no
+    /// Authorization header pays nothing. The answer is kept in <see cref="ResolvedBearerKey"/>,
+    /// so the handler's own <see cref="ResolveBearerAsync"/> or <see cref="RequireBearer{TBuilder}"/>
+    /// reuses it: still one token query per request.
+    /// </summary>
+    public static IApplicationBuilder UseBearerResolution(this IApplicationBuilder app)
+        => app.Use(async (ctx, next) =>
+        {
+            if (ctx.SessionUser() is null && ctx.Request.Headers.ContainsKey("Authorization"))
+            {
+                try
+                {
+                    await ctx.ResolveBearerAsync();
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    // Resolution failing (the database unreachable) must not take down routes that never
+                    // needed the bearer. Nothing is cached, so the request is limited and cached as a
+                    // guest, and a route that does need the bearer resolves it again and fails as before.
+                }
+            }
+
+            await next(ctx);
+        });
+
+    /// <summary>
+    /// The bearer user this request has already resolved to, or null (no bearer, one that resolved
+    /// to nobody, or not resolved yet). Never queries; see <see cref="UseBearerResolution"/>.
+    /// </summary>
+    public static AuthedUser? ResolvedBearer(this HttpContext ctx)
+        => ctx.Items[ResolvedBearerKey] as AuthedUser;
+
+    /// <summary>
+    /// Resolves the Authorization header to a user without enforcing it (for optional-auth routes).
+    /// The first call per request does the work and the rest reuse its answer.
+    /// </summary>
     public static async Task<AuthedUser?> ResolveBearerAsync(this HttpContext ctx)
+    {
+        if (ctx.Items.TryGetValue(ResolvedBearerKey, out object? resolved))
+            return resolved as AuthedUser;
+
+        var user = await resolveBearerUncachedAsync(ctx);
+        ctx.Items[ResolvedBearerKey] = user;
+        return user;
+    }
+
+    private static async Task<AuthedUser?> resolveBearerUncachedAsync(HttpContext ctx)
     {
         string? header = ctx.Request.Headers.Authorization.FirstOrDefault();
 

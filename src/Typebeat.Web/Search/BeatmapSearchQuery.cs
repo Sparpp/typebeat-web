@@ -15,6 +15,13 @@ namespace Typebeat.Web.Search;
 /// </summary>
 public sealed class BeatmapSearchQuery
 {
+    /// <summary>
+    /// How much of the raw query is read. Every operator and every word becomes a clause, so the
+    /// box is cut here rather than trusted; a title and artist pasted together, or a lyric line in
+    /// <c>lyrics:"..."</c>, stays well inside it.
+    /// </summary>
+    public const int MaxQueryLength = 256;
+
     /// <summary>Un-keyed text (and any unparseable operator tokens), reassembled with single
     /// spaces. Fed to the page's existing full-text / ILIKE path unchanged.</summary>
     public string FreeText { get; }
@@ -47,7 +54,7 @@ public sealed class BeatmapSearchQuery
         var boolean = new List<BoolFilter>();
         var freeTokens = new List<string>();
 
-        foreach (string token in Tokenize(raw ?? string.Empty))
+        foreach (string token in Tokenize(Truncate(raw ?? string.Empty)))
         {
             // A token is an operator only when it opens with a recognised KEY followed directly by
             // one of the operator spellings; a bare "ratio:2", "ratio>2" or "http://x" (unknown
@@ -263,6 +270,15 @@ public sealed class BeatmapSearchQuery
             default:
                 return false;
         }
+    }
+
+    /// <summary>The first <see cref="MaxQueryLength"/> characters, never ending on half a surrogate pair.</summary>
+    private static string Truncate(string raw)
+    {
+        if (raw.Length <= MaxQueryLength)
+            return raw;
+
+        return raw[..(char.IsHighSurrogate(raw[MaxQueryLength - 1]) ? MaxQueryLength - 1 : MaxQueryLength)];
     }
 
     /// <summary>

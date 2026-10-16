@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Dapper;
 using Newtonsoft.Json;
 using Microsoft.Extensions.Caching.Memory;
@@ -27,28 +28,21 @@ public static class ScoreEndpoints
 {
     private const int status_unprocessable = StatusCodes.Status422UnprocessableEntity;
 
+    /// <summary>
+    /// What a desktop <c>version_hash</c> must look like to be registered: 32 hex digits, the MD5
+    /// every game build sends (<c>OsuGameBase.VersionHash</c>, the hash of the game assembly, or of
+    /// its version and OS where the assembly cannot be read). Anything else is refused rather than
+    /// written into <c>builds</c>, so the table cannot be filled with arbitrary text, and a value
+    /// past the btree row limit is a 422 instead of a 500. Anchored with <c>\A</c> and <c>\z</c>,
+    /// because <c>$</c> would also match before a trailing newline.
+    /// </summary>
+    private static readonly Regex version_hash_shape = new(@"\A[0-9a-fA-F]{32}\z", RegexOptions.CultureInvariant);
+
     // THE ALWAYS-UNRANKED LIST LIVES IN Scoring/UnrankedMods.cs, exactly once (backlog 270). It
     // used to be declared here and again in GateRefund, whose copy claimed to mirror this one and
     // was three acronyms behind it, so a refund pass would re-rank a play this path had refused.
-
-    /// <summary>
-    /// Whether a single submitted mod is ranked at its submitted configuration; the server-side
-    /// mirror of the client's per-mod <c>Ranked</c>. Unknown/null acronyms are treated as ranked
-    /// (forward-compatible); the caller ANDs this across all mods.
-    ///
-    /// <para>
-    /// The rate mods (DT/NC/HT/DC) are ranked at EVERY speed, not just their default: the client pays
-    /// them on a continuous curve (<see cref="RateMultiplier"/>), so an odd rate is priced, not
-    /// banned. Only the always-unranked set above disqualifies a play.
-    /// </para>
-    /// </summary>
-    private static bool ModConfigRanked(SubmittedMod mod)
-    {
-        if (string.IsNullOrWhiteSpace(mod.Acronym))
-            return true;
-
-        return !UnrankedMods.IsAlwaysUnranked(mod.Acronym);
-    }
+    // Whether a submitted acronym ranks is ScoreSubmission.ModRanked, which reads that list and
+    // also refuses an acronym ModMultiplier does not know.
 
     /// <summary>
     /// The mods as they will be STORED: uppercased acronym plus, for a rate mod, the submitted
@@ -123,6 +117,9 @@ public static class ScoreEndpoints
             || rulesetId != 0)
             return WireJson.Error(status_unprocessable, "invalid ruleset");
 
+        if (!version_hash_shape.IsMatch(versionHash))
+            return WireJson.Error(status_unprocessable, "invalid version_hash");
+
         // A local-only mod (Polyglot, backlog 332) never asks for a token: the stock client keeps
         // the play on the device and sends no mods here at all. A modified client that names one
         // anyway is refused before anything is written, so not even a token row exists for it.
@@ -132,14 +129,14 @@ public static class ScoreEndpoints
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-            """
+            $"""
             SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                    b.difficulty_rating AS baseStars, b.sr_dt AS srDt, b.sr_ht AS srHt,
                    b.sr_literate AS srLiterate, b.sr_literate_dt AS srLiterateDt, b.sr_literate_ht AS srLiterateHt,
                    b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
             FROM beatmaps b
             JOIN beatmapsets bs ON bs.id = b.set_id
-            WHERE b.id = @beatmapId AND bs.status IN ('pending', 'unranked', 'ranked', 'loved')
+            WHERE b.id = @beatmapId AND bs.status IN {BeatmapsetEndpoints.PublishedSql}
             """,
             new { beatmapId });
 
@@ -261,11 +258,30 @@ public static class ScoreEndpoints
         bool setHasRankedBoard = setStatus is "ranked" or "loved";
         bool setAwardsPp = setStatus == "ranked";
 
-        var statistics = submission.Statistics ?? new Dictionary<string, int>();
-        var maximumStatistics = submission.MaximumStatistics ?? new Dictionary<string, int>();
+        // Only HitResult names survive, and a bonus count is held to the map's own maximum
+        // (ScoreSubmission.KnownStatistics): an unknown key prices nothing, and stored or echoed it
+        // would break the game's board for that map.
+        var (statistics, maximumStatistics, droppedKeys) = ScoreSubmission.KnownStatistics(submission.Statistics, submission.MaximumStatistics);
+
+        if (droppedKeys > 0)
+            logger.LogInformation("Score token {TokenId}: dropped {Count} unknown statistics key(s).", tokenId, droppedKeys);
 
         // The mods as they will be stored and priced: acronym + clamped rate, everything else dropped.
         var mods = NormalizeMods(submission.Mods);
+
+        // The claimed maximum must be the map's own: as many accuracy-affecting results as the map
+        // judges cells on the stream played (Literate types its marks as cells too). Refused before
+        // anything is written; a map whose count is not known for the version played is accepted
+        // unchecked (ScoreSubmission.MaximumMatchesMap).
+        bool literate = mods.Any(m => m.Acronym == PerformancePoints.LITERATE_ACRONYM);
+        int? mapJudgedCells = await ScoreSubmission.MapJudgedCellsAsync(conn, tx, tokenId, literate);
+
+        if (!ScoreSubmission.MaximumMatchesMap(maximumStatistics, mapJudgedCells))
+        {
+            logger.LogInformation("Score token {TokenId}: maximum_statistics claims {Claimed} judged cell(s), the map has {Cells}, refusing.",
+                tokenId, ScoringContract.CountAccuracyAffecting(maximumStatistics), mapJudgedCells);
+            return WireJson.Error(status_unprocessable, ScoreSubmission.MAP_MISMATCH_REFUSAL);
+        }
 
         // Recompute accuracy exactly and bound the score against a provable ceiling. The ceiling is
         // the no-mod maximum, so bound the UNMODDED score against it; the mod score-multiplier then
@@ -311,9 +327,10 @@ public static class ScoreEndpoints
 
         // Mirror the client's per-mod Ranked flag: a score is ranked only if every mod is ranked at
         // its submitted configuration. Always-unranked mods (Mashing/Relax "RX"; the time-ramp Wind
-        // Up/Down "WU"/"WD") disqualify it. The rate mods (DT/NC/HT/DC) no longer do at ANY speed: the
-        // rate is paid on a continuous curve instead of being banned off the default.
-        bool modsRanked = submission.Mods is null || submission.Mods.All(ModConfigRanked);
+        // Up/Down "WU"/"WD") disqualify it, and so does an acronym the server does not know. The rate
+        // mods (DT/NC/HT/DC) no longer do at ANY speed: the rate is paid on a continuous curve
+        // instead of being banned off the default.
+        bool modsRanked = submission.Mods is null || ScoreSubmission.StackRanked(submission.Mods.Select(m => m.Acronym));
 
         // Ranked only if the SET has a ranked board (ranked or loved) and it passed with every cell
         // judged, every hard invariant held, the total is within its ceiling, the play took long
@@ -322,7 +339,11 @@ public static class ScoreEndpoints
         bool ranked = setHasRankedBoard && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && modsRanked && !buildBlocked;
 
         if (!modsRanked)
-            logger.LogInformation("Score token {TokenId}: unranked mod used, storing unranked.", tokenId);
+        {
+            var refused = mods.Select(m => m.Acronym).Where(a => !ScoreSubmission.ModRanked(a)).ToList();
+            logger.LogInformation("Score token {TokenId}: {Count} unranked or unknown mod(s) used ({Sample}), storing unranked.",
+                tokenId, refused.Count, LogSample(refused));
+        }
 
         // What the player saw: final whole-map accuracy for completed plays, the running
         // (judged-only) accuracy at the moment of failure otherwise. Equal when fully judged.
@@ -464,7 +485,7 @@ public static class ScoreEndpoints
                     // A failed play didn't run the whole map; credit actual elapsed time, capped
                     // at the drain length (elapsed can exceed it via pauses).
                     playTime = (long)Math.Round(Math.Min(elapsedSeconds, beatmap.DrainLengthS), MidpointRounding.AwayFromZero),
-                    hitCounts = MergeHitCounts(existingHitCounts, statistics)
+                    hitCounts = ScoreSubmission.MergeHitCounts(existingHitCounts, statistics)
                 }, tx);
 
             // Play history (024_play_history.sql): the same play, credited to its UTC month for
@@ -479,7 +500,7 @@ public static class ScoreEndpoints
 
         // Position = rank of the caller's best ranked+passed score among distinct users. Null when
         // this submission is unranked and the caller has no other ranked score on the map.
-        int? position = ranked ? await ComputeUserPosition(conn, tx, beatmapId, user.Id) : null;
+        int? position = ranked ? (await ScoreSubmission.UserStandingAsync(conn, tx, beatmapId, user.Id, wantRanked: true))?.Position : null;
 
         await tx.CommitAsync(ctx.RequestAborted);
 
@@ -663,12 +684,7 @@ public static class ScoreEndpoints
             """,
             new { beatmapId });
 
-        bool? board = setStatus switch
-        {
-            "ranked" or "loved" => true,
-            "pending" or "unranked" => false,
-            _ => null,
-        };
+        bool? board = BeatmapLeaderboard.BoardFor(setStatus);
 
         if (board is not bool wantRanked)
             return new BoardSlice(null, [], 0, false);
@@ -733,25 +749,6 @@ public static class ScoreEndpoints
     /// </summary>
     private static bool IsGlobalScope(string? type)
         => string.IsNullOrEmpty(type) || string.Equals(type, "global", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>Position of the caller's best ranked+passed score, or null if they have none.</summary>
-    private static async Task<int?> ComputeUserPosition(System.Data.Common.DbConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long userId)
-    {
-        var best = await conn.QuerySingleOrDefaultAsync<BestScoreRow>(
-            $"""
-            SELECT s.id AS id, s.total_score AS totalScore
-            FROM scores s
-            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND {BeatmapLeaderboard.OnBoard("s", "true")}
-            ORDER BY {BeatmapLeaderboard.Order("s")}
-            LIMIT 1
-            """,
-            new { beatmapId, userId }, tx);
-
-        if (best is null)
-            return null;
-
-        return await PositionOf(conn, tx, beatmapId, best.TotalScore, best.Id, wantRanked: true);
-    }
 
     /// <summary>
     /// 1-based rank of a (total_score, scoreId) among distinct users' best scores on one board:
@@ -819,12 +816,25 @@ public static class ScoreEndpoints
     };
 
     /// <summary>
+    /// At most the first three of some client-sent strings, each stripped of control characters and
+    /// cut to eight, for a log line: the acronyms are whatever the body said, so neither their
+    /// number nor their content may shape what is written.
+    /// </summary>
+    private static string LogSample(IReadOnlyList<string> values)
+        => string.Join(",", values.Take(3).Select(v => new string(v.Where(c => !char.IsControl(c)).Take(8).ToArray())))
+           + (values.Count > 3 ? ",..." : "");
+
+    /// <summary>
     /// The stored statistics jsonb as the client's HitResult-keyed counts. Internal because the
     /// profile score rows (<see cref="ProfileScoreEndpoints"/>) carry the same two blobs and must
     /// decode them identically; a second copy is a second thing to keep in step.
+    ///
+    /// <para>Filtered to HitResult names on the way out (<see cref="ScoringContract.KnownKeysOnly"/>),
+    /// because the game reads these as <c>Dictionary&lt;HitResult, int&gt;</c> and a row stored
+    /// before submissions were filtered may still carry a key its enum does not have.</para>
     /// </summary>
     internal static Dictionary<string, int> ParseCounts(string? json)
-        => JsonConvert.DeserializeObject<Dictionary<string, int>>(json ?? "{}") ?? new Dictionary<string, int>();
+        => ScoringContract.KnownKeysOnly(JsonConvert.DeserializeObject<Dictionary<string, int>>(json ?? "{}"));
 
     /// <summary>
     /// The stored mods jsonb (<c>[{"acronym":"DT","settings":{"speed_change":1.5}}]</c>) passed
@@ -836,22 +846,6 @@ public static class ScoreEndpoints
         => string.IsNullOrWhiteSpace(json)
             ? Array.Empty<object>()
             : JsonConvert.DeserializeObject<object[]>(json) ?? Array.Empty<object>();
-
-    /// <summary>Sums per-key hit counts of <paramref name="add"/> into the stored hit_counts JSON.</summary>
-    private static string MergeHitCounts(string existingJson, IReadOnlyDictionary<string, int> add)
-    {
-        var merged = JsonConvert.DeserializeObject<Dictionary<string, int>>(existingJson) ?? new Dictionary<string, int>();
-
-        foreach (var (key, count) in add)
-        {
-            if (count <= 0)
-                continue; // ignore zero/negative (tamper) counts
-
-            merged[key] = merged.GetValueOrDefault(key) + count;
-        }
-
-        return JsonConvert.SerializeObject(merged);
-    }
 
     // ---- Dapper row shapes ----
 
@@ -865,8 +859,6 @@ public static class ScoreEndpoints
         double BaseStars, double? SrDt, double? SrHt,
         double? SrLiterate, double? SrLiterateDt, double? SrLiterateHt,
         string? Ratings, double? PlayedDurationS);
-
-    private sealed record BestScoreRow(long Id, long TotalScore);
 
     private sealed record BuildRow(long Id, bool Blocked);
 

@@ -28,13 +28,9 @@ namespace Typebeat.Web.Tests;
 [NonParallelizable]
 public class Migration015HalfTimeRescoreTest
 {
-    private const string database_name = "typebeat_migr015tests";
+    private static readonly string database_name = TestDatabase.NameFor("typebeat_migr015tests");
 
-    private const string connection_string =
-        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private static readonly string connection_string = TestDatabase.ConnectionStringFor(database_name);
 
     /// <summary>The decrease slope the stored totals were priced under, before task 44.</summary>
     private const double old_decrease_slope = 1.8;
@@ -71,12 +67,7 @@ public class Migration015HalfTimeRescoreTest
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
-        await using (var conn = new NpgsqlConnection(admin_connection_string))
-        {
-            await conn.OpenAsync();
-            await conn.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
-            await conn.ExecuteAsync($"CREATE DATABASE {database_name}");
-        }
+        await TestDatabase.RecreateAsync(database_name);
 
         await Db.EnsureExtensionsAsync(connection_string);
 
@@ -150,6 +141,8 @@ public class Migration015HalfTimeRescoreTest
     {
         if (dataSource != null)
             await dataSource.DisposeAsync();
+
+        await TestDatabase.DropAsync(database_name);
     }
 
     // ---- the re-base itself ----

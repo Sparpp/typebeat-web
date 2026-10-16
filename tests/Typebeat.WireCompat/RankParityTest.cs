@@ -62,6 +62,12 @@ public class RankParityTest
     }
 
     [Test]
+    public void TheTwoAccuracyExponentsAgree()
+    {
+        Assert.That(ServerContract.AccuracyExponent, Is.EqualTo(ClientProcessor.ACCURACY_PORTION_EXPONENT));
+    }
+
+    [Test]
     public void TheTwoCountsDerivedGradesAgree()
     {
         foreach (var (accuracy, great, ok, meh, miss) in Counts)

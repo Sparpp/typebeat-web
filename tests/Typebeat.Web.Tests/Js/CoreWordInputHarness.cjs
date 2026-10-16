@@ -183,7 +183,7 @@ function probe(session) {
         erases: session.erases,
         states: line.cells.map(c => c.state),
         typed: line.cells.map(c => (c.typedChar === null || c.typedChar === undefined) ? '' : c.typedChar),
-        score: engine.score,
+        tally: ['Great', 'Ok', 'Meh', 'Premature', 'Lagging'].map(t => engine.counts[t] || 0).join('/'),
         combo: engine.combo,
         maxCombo: engine.maxCombo,
         mistypes: engine.mistypes,

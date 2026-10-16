@@ -19,7 +19,7 @@
     // Only the default's size is known, so only it declares one (backlog 417).
     string? ownShareImage = ViewData["OgImage"] as string;
     string shareImage = ownShareImage ?? Seo.DEFAULT_OG_IMAGE;
-    string? jsonLd = ViewData["JsonLd"] as string;
+    Seo.JsonLd? jsonLd = ViewData["JsonLd"] as Seo.JsonLd;
 }
 <!DOCTYPE html>
 <html lang="en">
@@ -56,7 +56,7 @@
         @* Written raw as one string: as markup, the tag helpers would encode the "+" in the type
            attribute. The JSON is serialised by Seo with the default encoder (<, > and & escaped),
            so it cannot close the element early. *@
-        @Html.Raw("<script type=\"application/ld+json\">" + jsonLd + "</script>")
+        @Html.Raw("<script type=\"application/ld+json\">" + jsonLd.Json + "</script>")
     }
     <link rel="icon" href="~/favicon.svg" type="image/svg+xml" />
     @* The one self-hosted font, fetched early instead of after the stylesheet is parsed. *@

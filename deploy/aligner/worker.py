@@ -15,7 +15,7 @@ Protocol (see src/Typebeat.Web/Align/AlignJobStore.cs, the C# side of this contr
 
 The aligner script is NOT a copy kept here: CI stages the game pin's lyriclab/ (the web repo's
 external/typebeat-osu submodule) into the image, so the server always runs exactly the aligner the
-pinned game ships. Its command line is the game's (LyricMapImporter.AlignerArguments): --anchors
+pinned game ships. Its command line is the game's (AlignerEnvironment.AlignerArguments): --anchors
 from the manifest, --vocal-mode estimated when asked and the script has it (version 7+), and
 --evidence fused plus --lyrics-language on version 10+. The quality tier stays the default (fast):
 the server is sized for capacity, not for the full tier's accuracy.
@@ -52,7 +52,7 @@ HEAVY_AGE_S = 6 * 3600
 HEARTBEAT_S = 15
 POLL_S = 2.0
 
-# The first script versions with each flag (the game's LyricMapImporter constants).
+# The first script versions with each flag (the game's AlignerEnvironment constants).
 VOCAL_MODE_ALIGNER_VERSION = 7
 FUSED_EVIDENCE_ALIGNER_VERSION = 10
 
@@ -197,7 +197,7 @@ def next_job() -> Path | None:
 
 
 def build_command(job: Path, manifest: dict, audio: Path, lyrics: Path, out_dir: Path) -> list[str]:
-    """The game's LyricMapImporter.AlignerArguments, minus the device (CPU only here) and the
+    """The game's AlignerEnvironment.AlignerArguments, minus the device (CPU only here) and the
     quality tier (the default, fast)."""
     anchors = manifest.get("anchors")
     if anchors not in ALLOWED_ANCHORS:

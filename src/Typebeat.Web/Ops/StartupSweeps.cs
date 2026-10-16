@@ -113,10 +113,11 @@ public sealed class StartupSweepGate
 /// Program.cs still applies the extensions and the migrations synchronously before the app listens,
 /// then this runs every sweep in the original order, in the background, and opens
 /// <see cref="StartupSweepGate"/> when it is through. The order is load-bearing and unchanged:
-/// Pace, then Fingerprint, then Language (reads the lyric text Pace fills), SkipGate (reads Pace's
-/// skippable_s), RateGate, SetRank, SetRankClassicMark (backlog 398: the version rule pointed down,
-/// after the carry-up so the two cannot fight over a row), and Pp LAST (reads sr_dt / sr_ht and the
-/// ranked flags the refunds may have just flipped). The whole chain is caught: a failing sweep is logged as an error
+/// Pace, then Fingerprint, then JudgedCell (independent of the rest), then Language (reads the
+/// lyric text Pace fills), SetRank, SetRankClassicMark (backlog 398: the version rule pointed down,
+/// after the carry-up so the two cannot fight over a row), and Pp LAST (reads sr_dt / sr_ht and the ranked flags the refund may
+/// have just flipped). The one-shot repairs that used to sit in it (the 016 and 017 gate refunds,
+/// the 046 score reweight) ran in production and were deleted (S1-026); their migrations stay. The whole chain is caught: a failing sweep is logged as an error
 /// and recorded on the gate, and never takes the host down (it used to crash the boot, which on a
 /// deploy meant a crash loop re-running every sweep on each restart while the health check went red).
 /// A shutdown part way through cancels the current sweep; each one is idempotent and the next boot
@@ -147,25 +148,19 @@ public sealed class StartupSweeps(Db db, IFileStore fileStore, StartupSweepGate 
             await GameplayFingerprintBackfill.RunAsync(db, fileStore, logger, stoppingToken);
             gate.MarkFingerprintsCurrent();
 
+            // Count the cells each live difficulty judges (048_judged_cells.sql), which both submit
+            // routes hold a claimed maximum_statistics against. Until a row is counted its
+            // submissions are accepted unchecked, so nothing waits on this.
+            stage = nameof(JudgedCellBackfill);
+            await JudgedCellBackfill.RunAsync(db, fileStore, logger, stoppingToken);
+
             // Detect the song language of every set that still has none (019_language.sql) from the
             // lyric text, so after Pace. Only writes rows that are still unset.
             stage = nameof(LanguageBackfill);
             await LanguageBackfill.RunAsync(db, logger, stoppingToken);
 
-            // Re-rank scores the pre-task-47 play-time gate unranked for using the skip button
-            // (016_refund_skip_gate.sql); reads beatmaps.skippable_s, which Pace fills.
-            stage = nameof(SkipGateRefund);
-            await SkipGateRefund.RunAsync(db, logger, stoppingToken);
-
-            // Re-rank scores the rate-blind play-time gate unranked for an up-rate
-            // (017_rate_gate_refund.sql); after the skip refund, so a row only that one needed is no
-            // longer a candidate here.
-            stage = nameof(RateGateRefund);
-            await RateGateRefund.RunAsync(db, logger, stoppingToken);
-
             // Standing sweep (backlog 270): re-rank honest scores stored unranked only because their
-            // set was still pending. After both refunds, before PpBackfill, which prices what it
-            // flips. The rank button runs the same pass scoped to its set; this is the safety net.
+            // set was still pending. Before PpBackfill, which prices what it flips. The rank button runs the same pass scoped to its set; this is the safety net.
             stage = nameof(SetRankRefund);
             await SetRankRefund.RunAsync(db, fileStore, logger, stoppingToken);
 
@@ -180,16 +175,9 @@ public sealed class StartupSweeps(Db db, IFileStore fileStore, StartupSweepGate 
             await SetRankClassicMark.RunAsync(db, fileStore, logger, eviction, stoppingToken);
 
             // Recompute stored per-score pp below PerformancePoints.VERSION (020_performance_points.sql).
-            // LAST: reads sr_dt / sr_ht (Pace) and scores.ranked (the refunds above).
+            // LAST: reads sr_dt / sr_ht (Pace) and scores.ranked (the refund above).
             stage = nameof(PpBackfill);
             await PpBackfill.RunAsync(db, logger, stoppingToken);
-
-            // Re-base stored total_score onto the 300000/700000 split (046_score_reweight_marks.sql,
-            // owner 2026-10-04). Independent of everything above: pp prices from accuracy/misses/SR,
-            // not from total_score, and the transform reads only the stored row. LAST so the 0.95x
-            // Classic reprice above is already in the total this compounds.
-            stage = nameof(ScoreReweightBackfill);
-            await ScoreReweightBackfill.RunAsync(db, logger, eviction, stoppingToken);
 
             gate.Finish(failedStage: null);
             logger.LogInformation("Startup sweeps: done in {Seconds:0.0}s; package ingest and the rank button are open.",

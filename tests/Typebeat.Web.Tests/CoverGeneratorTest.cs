@@ -52,6 +52,33 @@ public class CoverGeneratorTest
             () => new CoverGenerator().GenerateAsync(junk, 1, 1, store));
     }
 
+    [Test]
+    public void LoadWithinBudget_OverBudget_ThrowsBeforeDecoding()
+    {
+        // The 64x48 fixture is 3072 pixels. The refusal must be an ImageFormatException, the type
+        // the settings page already turns into its "not a readable image" form error.
+        using var background = new MemoryStream(SyntheticPackage.TinyPng());
+
+        var e = Assert.ThrowsAsync<InvalidImageContentException>(
+            () => CoverGenerator.LoadWithinBudgetAsync(background, maxPixels: 64 * 48 - 1));
+
+        Assert.That(e, Is.InstanceOf<ImageFormatException>());
+    }
+
+    [Test]
+    public async Task LoadWithinBudget_AtBudget_Decodes()
+    {
+        using var background = new MemoryStream(SyntheticPackage.TinyPng());
+
+        using var image = await CoverGenerator.LoadWithinBudgetAsync(background, maxPixels: 64 * 48);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(image.Width, Is.EqualTo(64));
+            Assert.That(image.Height, Is.EqualTo(48));
+        });
+    }
+
     private async Task assertJpegAsync(string key, int width, int height)
     {
         await using var stream = await store.OpenObjectReadAsync(key);

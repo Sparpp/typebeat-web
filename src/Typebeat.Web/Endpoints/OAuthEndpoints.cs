@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Dapper;
 using Newtonsoft.Json;
 using Typebeat.Web.Auth;
@@ -31,7 +30,7 @@ public static class OAuthEndpoints
     // otherwise stateless).
     private const int rate_limit_max = 10;
     private static readonly TimeSpan rate_limit_window = TimeSpan.FromMinutes(5);
-    private static readonly ConcurrentDictionary<string, RateWindow> password_attempts = new();
+    private static readonly FixedWindowLimiter password_attempts = new(rate_limit_max, rate_limit_window);
 
     public static void Map(IEndpointRouteBuilder app)
     {
@@ -61,7 +60,7 @@ public static class OAuthEndpoints
 
     private static async Task<IResult> handlePasswordGrantAsync(HttpContext ctx, Db db, TokenService tokens, PasswordService passwords, IFormCollection form)
     {
-        if (!allowPasswordAttempt(ctx))
+        if (!password_attempts.Allow(ctx.GetClientIp()))
             return OAuthError("invalid_request", "Too many login attempts. Please wait a few minutes and try again.", StatusCodes.Status429TooManyRequests);
 
         // The client's login field is a single free-text box (APIAccess.ProvidedUsername); osu
@@ -88,7 +87,8 @@ public static class OAuthEndpoints
                 new { login });
         }
 
-        if (user is null || !passwords.Verify(user.PasswordHash, password))
+        // Verify runs the hasher even for an unknown login (a null hash), so timing says nothing either.
+        if (!passwords.Verify(user?.PasswordHash, password) || user is null)
             return OAuthError("invalid_grant", bad_credentials);
 
         // Restricted accounts cannot obtain a token; surfaced as a generic credential failure.
@@ -130,23 +130,6 @@ public static class OAuthEndpoints
     // deliberately not 401 (which the client reads as session-invalidation → Logout).
     private static IResult OAuthError(string error, string hint, int statusCode = StatusCodes.Status400BadRequest)
         => WireJson.Ok(new OAuthErrorBody { Error = error, Hint = hint, Message = hint }, statusCode);
-
-    private static bool allowPasswordAttempt(HttpContext ctx)
-    {
-        string ip = ctx.GetClientIp();
-        var now = DateTimeOffset.UtcNow;
-
-        var window = password_attempts.AddOrUpdate(
-            ip,
-            _ => new RateWindow(now, 1),
-            (_, existing) => now - existing.Start >= rate_limit_window
-                ? new RateWindow(now, 1)
-                : existing with { Count = existing.Count + 1 });
-
-        return window.Count <= rate_limit_max;
-    }
-
-    private sealed record RateWindow(DateTimeOffset Start, int Count);
 
     // password_hash is text, and NULL for an account created through Google (035), which has no
     // password and so can never take this grant until it sets one on the website (Verify refuses a

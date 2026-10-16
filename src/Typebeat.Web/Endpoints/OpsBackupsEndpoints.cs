@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
 
@@ -50,7 +51,7 @@ public static class OpsBackupsEndpoints
 
         var readout = Read(OpsEndpoints.FileRoot(config), DateTimeOffset.UtcNow);
 
-        return Results.Json(new
+        return WireJson.Ok(new
         {
             db = project(readout.Db),
             appdata = project(readout.Appdata),

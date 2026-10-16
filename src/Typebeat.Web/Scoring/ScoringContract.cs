@@ -21,11 +21,14 @@ namespace Typebeat.Web.Scoring;
 ///    Both dictionaries are transmitted, so accuracy is exact; we OVERRIDE the submitted value.
 ///  - <b>completion</b> and <b>rank</b>. Completion = typed cells (accuracy-affecting judgements
 ///    in <c>statistics</c> that <see cref="CountsAsTyped"/>) over TOTAL map cells
-///    (accuracy-affecting counts in <c>maximum_statistics</c>). Rank is graded on completion, NOT
-///    accuracy: typing every character RIGHT is an SS regardless of timing quality; what costs the
-///    grade is a cell the play did not type right, i.e. one that scrolled past untyped (a miss) or
-///    one left holding a wrong character (an uncorrected typo). Mirrors the client's
-///    <c>TypeBeatScoreProcessor</c>; keep the cutoffs in the two files in sync.
+///    (accuracy-affecting counts in <c>maximum_statistics</c>); stored and shown, but it no longer
+///    decides the rank. Rank is graded on ACCURACY plus a missed-cell limit
+///    (<see cref="RankFromAccuracy"/>): the <c>ACCURACY_CUTOFF_*</c> bands, with SS needing no
+///    missed cell and S a missed fraction under <c>S_MISS_LIMIT</c>, where a missed cell is one
+///    that scrolled past untyped (a miss) or one left holding a wrong character (an uncorrected
+///    typo). Mirrors the client's <c>TypeBeatScoreProcessor</c> and <c>typebeat-core.js</c>;
+///    migration 045 re-graded the stored rows under it and <c>RankParityTest</c> pins the copies,
+///    so keep the cutoffs in sync.
 ///  - <b>theoretical max combo</b>. Every combo-increasing judgement in <c>maximum_statistics</c>
 ///    (HitResult.IncreasesCombo = AffectsCombo &amp;&amp; IsHit, HitResult.cs:171-203). For a typing
 ///    map that is the note count. Submitted <c>max_combo</c> may not exceed it.
@@ -136,23 +139,8 @@ public static class ScoringContract
     private const double accuracy_portion_max = 700_000;
     private const double accuracy_exponent = 5; // Math.Pow(Accuracy.Value, 5), ScoreProcessor.cs:430
 
-    /// <summary>The combo half's weight (TypeBeatScoreProcessor.COMBO_PORTION_MAX). Public for the reweight backfill.</summary>
-    public const double ComboPortionMax = combo_portion_max;
-
-    /// <summary>The accuracy half's weight (TypeBeatScoreProcessor.ACCURACY_PORTION_MAX). Public for the reweight backfill.</summary>
-    public const double AccuracyPortionMax = accuracy_portion_max;
-
-    /// <summary>
-    /// The OLD second term (<c>500000 x acc^5 x accuracyProgress</c>, the pre-reweight weight), which
-    /// the score reweight backfill needs to re-base a stored total onto the new split. It is the term
-    /// the 2026-10-04 change grew, so a stored total's new value is <c>0.6 x old + 0.8 x this</c>.
-    /// </summary>
-    public static double OldAccuracyTerm(double accuracy, double accuracyProgress)
-    {
-        accuracy = double.IsFinite(accuracy) ? Math.Clamp(accuracy, 0, 1) : 0;
-        accuracyProgress = double.IsFinite(accuracyProgress) ? Math.Clamp(accuracyProgress, 0, 1) : 0;
-        return 500_000 * Math.Pow(accuracy, accuracy_exponent) * accuracyProgress;
-    }
+    /// <summary>The accuracy term's exponent (TypeBeatScoreProcessor.ACCURACY_PORTION_EXPONENT). Public so the parity tests can pin it.</summary>
+    public const double AccuracyExponent = accuracy_exponent;
 
     // Accuracy → rank cutoffs, mirroring TypeBeatScoreProcessor.ACCURACY_CUTOFF_* (and its
     // S_MISS_LIMIT): grades are awarded on timing accuracy with a missed-cell condition on SS and S.
@@ -183,7 +171,8 @@ public static class ScoringContract
     /// falsely flag honest submissions as out of bounds.
     ///
     /// <see cref="Completion"/> is whole-map: typed cells over the map's total cell count, so a
-    /// failed run reads as "typed 43% of the map". <see cref="Rank"/> is graded on it.
+    /// failed run reads as "typed 43% of the map". <see cref="Rank"/> is NOT graded on it: rank
+    /// reads accuracy and the missed fraction (<see cref="RankFromStatistics"/>).
     /// </summary>
     public readonly record struct Recomputed(
         double Accuracy,
@@ -339,6 +328,73 @@ public static class ScoringContract
         }
 
         return total;
+    }
+
+    /// <summary>
+    /// Every statistics key the client's <c>HitResult</c> enum can put on the wire: its
+    /// <c>EnumMember</c> values (HitResult.cs), all eighteen, and nothing else. Ordinal, because
+    /// the classifiers below are; a key spelled any other way prices nothing here either.
+    /// </summary>
+    private static readonly IReadOnlySet<string> hit_result_keys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "none", "miss", "meh", "ok", "good", "great", "perfect",
+        "small_tick_miss", "small_tick_hit", "large_tick_miss", "large_tick_hit",
+        "small_bonus", "large_bonus", "ignore_miss", "ignore_hit",
+        "combo_break", "slider_tail_hit", "legacy_combo_increase",
+    };
+
+    /// <summary>Whether <paramref name="key"/> names a <c>HitResult</c> member on the wire.</summary>
+    public static bool IsHitResultKey(string? key) => key is not null && hit_result_keys.Contains(key);
+
+    /// <summary>
+    /// <paramref name="counts"/> with every key that is not a <c>HitResult</c> name dropped, in the
+    /// original order. Both submit routes run the client's two dictionaries through this
+    /// BEFORE anything reads them, and the board and profile wire through it again on the way out
+    /// (<c>ScoreEndpoints.ParseCounts</c>).
+    ///
+    /// <para>An unknown key never priced anything here (every classifier answers false for it), so
+    /// dropping one cannot move an honest score. What it could do was ride along: stored verbatim,
+    /// summed into <c>user_stats.hit_counts</c>, and echoed on every board fetch, where the game
+    /// reads the row as <c>Dictionary&lt;HitResult, int&gt;</c> and one name its enum does not have
+    /// fails the whole leaderboard response for everyone viewing that map.</para>
+    /// </summary>
+    public static Dictionary<string, int> KnownKeysOnly(IReadOnlyDictionary<string, int>? counts)
+    {
+        var known = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        if (counts is null)
+            return known;
+
+        foreach (var (key, count) in counts)
+        {
+            if (IsHitResultKey(key))
+                known[key] = count;
+        }
+
+        return known;
+    }
+
+    /// <summary>
+    /// <paramref name="statistics"/> with every BONUS key's count held at the same key's count in
+    /// <paramref name="maximumStatistics"/>, an absent key reading as 0; every other key is passed
+    /// through as it is, in its original order.
+    ///
+    /// <para>A bonus hit is outside the accuracy invariants, so <see cref="Recompute"/> adds its
+    /// base score to the ceiling with nothing to bound it: a perfect run claiming twenty thousand
+    /// <c>large_bonus</c> would justify a total near twice what the play earned. A type!beat map has
+    /// no bonus judgement at all (every judgement is a Great-max cell or the scoring-inert line), so
+    /// an honest submission carries no bonus key on either side and this changes nothing for it.
+    /// Both submit routes apply it (through <c>ScoreSubmission.KnownStatistics</c>) before anything
+    /// reads the counts; a stored row is not re-bounded here.</para>
+    /// </summary>
+    public static Dictionary<string, int> BonusWithinMaximum(IReadOnlyDictionary<string, int> statistics, IReadOnlyDictionary<string, int> maximumStatistics)
+    {
+        var bounded = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var (key, count) in statistics)
+            bounded[key] = IsBonus(key) ? Math.Min(count, maximumStatistics.GetValueOrDefault(key)) : count;
+
+        return bounded;
     }
 
     /// <summary>
@@ -548,7 +604,7 @@ public static class ScoringContract
     };
 
     // HitResult.IsBonus (HitResult.cs:267-278).
-    private static bool IsBonus(string key) => key is "small_bonus" or "large_bonus";
+    internal static bool IsBonus(string key) => key is "small_bonus" or "large_bonus";
 
     /// <summary>
     /// The statistics key an UNCORRECTED TYPO is stored under (the client's

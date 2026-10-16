@@ -1,9 +1,13 @@
 using System.Globalization;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Dapper;
 using Npgsql;
+using Typebeat.Web.Packages;
 using Typebeat.Web.Search;
 using ClientBeatmap = typebeat.Game.Beatmaps.BeatmapInfo;
+using ClientLanguage = typebeat.Game.Beatmaps.BeatmapLanguage;
+using ClientLanguageNames = typebeat.Game.Beatmaps.BeatmapLanguageExtensions;
 using ClientCriteria = typebeat.Game.Screens.Select.FilterCriteria;
 using ClientMatcher = typebeat.Game.Screens.Select.BeatmapCarouselFilterMatching;
 using ClientParser = typebeat.Game.Screens.Select.FilterQueryParser;
@@ -42,6 +46,13 @@ namespace Typebeat.WireCompat;
 /// it both sides floored a 4.10 map to 4.09 and <c>stars=4.1</c> found nothing, identically. The
 /// sweep agreed on that bug, which is why the answer on every hundredth is now pinned as well as
 /// the agreement (<see cref="StarEquality_EveryExactHundredth_MatchesItsOwnOperand"/>).
+/// </para>
+///
+/// <para>
+/// The VOCABULARY is pinned too (<see cref="TheKeywordVocabulariesDifferOnlyByTheAllowLists"/>): every
+/// keyword one side reads and the other does not is named in an allow-list with its reason, so a key
+/// added to either side alone fails here until it is mirrored or listed. <c>lang:</c> is held to the
+/// site's semantics on every alias (<see cref="LanguageFilter_MatchesTheSiteOnEveryAliasAndOperator"/>).
 /// </para>
 /// </summary>
 [TestFixture]
@@ -134,7 +145,7 @@ public class SearchOperatorParityTest
     /// BPM IS A SITE-ONLY OPERATOR SINCE PR 3. The game dropped the <c>bpm</c> keyword from song
     /// select (with its BPM sort, group and HUD counter), so <c>bpm=128</c> is free search text there
     /// now and there is no game half left to hold the site's against. The site KEEPS its operator, as
-    /// it keeps <c>lang:</c>, <c>lyrics:</c> and <c>explicit:</c> which the game never had: removing a
+    /// it keeps <c>lyrics:</c> and <c>explicit:</c> which the game never had: removing a
     /// working website search operator is a product decision, not a mirror, and it is flagged for the
     /// owner rather than taken here. This pins both halves of that: the game really does leave the
     /// keyword unparsed (so if it ever comes back, this fails and the equality sweep this replaced
@@ -270,6 +281,205 @@ public class SearchOperatorParityTest
             Assert.That(literal.Success, Is.True, sql);
             Assert.That(double.Parse(literal.Groups[1].Value, CultureInfo.InvariantCulture), Is.EqualTo(BeatmapSearchSql.STAR_FLOOR_EPSILON), sql);
         });
+    }
+
+    /// <summary>
+    /// Keywords only the SITE reads, each with the reason the game does not. Song select searches what
+    /// it holds locally: it has no lyric text index, no explicit flag and no stored pace filters, and
+    /// the short spellings are the site's own aliases.
+    /// </summary>
+    private static readonly Dictionary<string, string> siteOnlyKeywords = new()
+    {
+        ["bpm"] = "dropped from song select in PR 3; see BpmIsASiteOnlyOperatorSinceTheGameDroppedIt",
+        ["lyrics"] = "the site searches stored lyric text; song select has no lyric index",
+        ["lyric"] = "alias of lyrics",
+        ["explicit"] = "the explicit flag is a site column",
+        ["nsfw"] = "alias of explicit",
+        ["wpm"] = "stored pace filter, site only",
+        ["cpm"] = "stored pace filter, site only",
+        ["target"] = "stored pace filter, site only",
+        ["date"] = "the site's upload date; the game has upstream's ranked:, created: and submitted:",
+        ["tags"] = "site alias of tag",
+        ["len"] = "site alias of length",
+    };
+
+    /// <summary>
+    /// Keywords only the GAME reads: upstream osu! keys over data the site does not search (the osu!
+    /// difficulty settings, the player's own history, online status and dates), and upstream's aliases.
+    /// </summary>
+    private static readonly Dictionary<string, string> gameOnlyKeywords = new()
+    {
+        ["ar"] = "upstream difficulty setting",
+        ["dr"] = "upstream difficulty setting",
+        ["hp"] = "upstream difficulty setting",
+        ["cs"] = "upstream difficulty setting",
+        ["od"] = "upstream difficulty setting",
+        ["divisor"] = "upstream editor beat divisor",
+        ["lastplayed"] = "the local player's history",
+        ["played"] = "the local player's history",
+        ["status"] = "upstream online status",
+        ["ranked"] = "upstream ranked date",
+        ["created"] = "upstream submitted date",
+        ["submitted"] = "upstream submitted date",
+        ["author"] = "upstream alias of creator",
+        ["diff"] = "upstream difficulty name",
+    };
+
+    /// <summary>One value of each shape a keyword takes, so "does this side read the key" is asked fairly.</summary>
+    private static readonly string[] probeValues = ["x", "4", "en", "yes", "ranked", "1d", "2020"];
+
+    /// <summary>
+    /// The two search vocabularies, compared. The site's is its keyword whitelist (<c>Fields</c>, read
+    /// by reflection); the game's is every <c>case</c> label of <c>FilterQueryParser</c>'s keyword
+    /// switch, read from the source this project compiles, so a key added to either side is seen. A key
+    /// on both sides must parse on both; a key on one side must be on that side's allow-list and must
+    /// NOT parse on the other, so when the other side gains it the list has to shrink.
+    /// </summary>
+    [Test]
+    public void TheKeywordVocabulariesDifferOnlyByTheAllowLists()
+    {
+        var siteKeys = SiteKeywords();
+        var gameKeys = GameKeywords();
+
+        Assert.That(gameKeys, Does.Contain("stars").And.Contain("lang"), "the game's keyword switch was not read");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(siteKeys.Except(gameKeys).Order(), Is.EqualTo(siteOnlyKeywords.Keys.Order()), "site-only keywords");
+            Assert.That(gameKeys.Except(siteKeys).Order(), Is.EqualTo(gameOnlyKeywords.Keys.Order()), "game-only keywords");
+
+            foreach (string key in siteKeys.Intersect(gameKeys))
+            {
+                Assert.That(probeValues.Any(v => SiteParses(key + "=" + v)), Is.True, $"the site does not read {key}=");
+                Assert.That(probeValues.Any(v => GameParses(key + "=" + v)), Is.True, $"the game does not read {key}=");
+            }
+
+            foreach (string key in siteOnlyKeywords.Keys)
+                Assert.That(probeValues.Where(v => GameParses(key + "=" + v)), Is.Empty, $"the game reads {key}= now; mirror it and drop it from the site-only list");
+
+            foreach (string key in gameOnlyKeywords.Keys)
+                Assert.That(probeValues.Where(v => SiteParses(key + "=" + v)), Is.Empty, $"the site reads {key}= now; drop it from the game-only list");
+        });
+    }
+
+    /// <summary>
+    /// <c>lang:</c> and <c>language:</c>, every spelling against every operator. The site folds the value
+    /// through <see cref="BeatmapLanguages.Normalize"/> and compares <c>s.language</c> for equality; the
+    /// game must read exactly the same queries and match exactly that language. Every alias in the site's
+    /// table is swept (read by reflection, so a new alias is covered the day it is added), with every name
+    /// in three casings and the values that must stay free text on both sides: an unknown language,
+    /// "unspecified" (the unset state is not searchable), a number, and the inequality operators.
+    /// </summary>
+    [Test]
+    public void LanguageFilter_MatchesTheSiteOnEveryAliasAndOperator()
+    {
+        var siteAliases = (IReadOnlyDictionary<string, string>)typeof(BeatmapLanguages)
+            .GetField("aliases", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+
+        string[] values = BeatmapLanguages.All
+            .SelectMany(n => new[] { n, n.ToUpperInvariant(), char.ToUpperInvariant(n[0]) + n[1..] })
+            .Concat(siteAliases.Keys.SelectMany(a => new[] { a, a.ToUpperInvariant() }))
+            .Concat(["unspecified", "Unspecified", "any", "klingon", "2", "english!", "\"ja\"", "\" en \"", "\"japanese\"!", "\"jap anese\"", "english,japanese", "korean,english"])
+            .Distinct()
+            .ToArray();
+
+        var mismatches = new List<string>();
+
+        foreach (string key in new[] { "lang", "language", "Lang", "LANGUAGE" })
+        {
+            foreach (string op in new[] { ":", "=", "!=", "!:", "<", ">", "<=", ">=" })
+            {
+                foreach (string value in values)
+                {
+                    string query = key + op + value;
+                    string? site = SiteLanguage(query);
+
+                    var criteria = new ClientCriteria();
+                    applyQueries.Invoke(null, [criteria, query]);
+                    bool gameParsed = string.IsNullOrWhiteSpace(criteria.SearchText);
+
+                    if (site == null)
+                    {
+                        if (gameParsed)
+                            mismatches.Add($"{query}: free text on the site, a filter in the game");
+                        continue;
+                    }
+
+                    var expected = ClientLanguageNames.FromCanonicalName(site);
+                    var game = Enum.GetValues<ClientLanguage>()
+                                   .Where(l => ClientMatcher.CheckCriteriaMatch(new ClientBeatmap { Metadata = { Language = l } }, criteria))
+                                   .ToArray();
+
+                    if (!gameParsed)
+                        mismatches.Add($"{query}: the site filters on {site}, the game left it as text");
+                    else if (expected == ClientLanguage.Unspecified || !game.SequenceEqual([expected]))
+                        mismatches.Add($"{query}: the site matches {site}, the game matches [{string.Join(", ", game)}]");
+                }
+            }
+        }
+
+        // The site's half is an equality on the set's language column, which is what makes "exactly
+        // that language, and never an unset one" the expectation above.
+        var (sql, _) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("lang:jp"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(mismatches, Is.Empty, $"{mismatches.Count} mismatches, first 20:\n" + string.Join("\n", mismatches.Take(20)));
+            Assert.That(sql, Does.Match(@"AND s\.language = @\w+"), sql);
+        });
+    }
+
+    private static HashSet<string> SiteKeywords()
+    {
+        var fields = typeof(BeatmapSearchQuery).Assembly.GetType("Typebeat.Web.Search.Fields", throwOnError: true)!;
+        var aliases = (System.Collections.IDictionary)fields.GetField("aliases", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+
+        return aliases.Keys.Cast<string>().Select(k => k.ToLowerInvariant()).ToHashSet();
+    }
+
+    /// <summary>
+    /// The game's keywords: the <c>case "..."</c> labels of <c>tryParseKeywordCriteria</c> in the
+    /// <c>FilterQueryParser.cs</c> this project compiles against: the game project path the project
+    /// file resolved (sibling checkout, submodule or a command-line override), stamped into the
+    /// assembly as <c>TypebeatGameProject</c> metadata.
+    /// </summary>
+    private static HashSet<string> GameKeywords()
+    {
+        string gameProject = typeof(SearchOperatorParityTest).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+                                                             .FirstOrDefault(a => a.Key == "TypebeatGameProject")?.Value
+                             ?? throw new InvalidOperationException("TypebeatGameProject assembly metadata is missing");
+        string path = Path.Combine(Path.GetDirectoryName(gameProject)!, "Screens", "Select", "FilterQueryParser.cs");
+
+        if (!File.Exists(path))
+            throw new FileNotFoundException("FilterQueryParser.cs not found in the game project this suite compiles against", path);
+
+        string source = File.ReadAllText(path);
+        int start = source.IndexOf("bool tryParseKeywordCriteria(", StringComparison.Ordinal);
+        int end = start < 0 ? -1 : source.IndexOf("private static Operator parseOperator(", start, StringComparison.Ordinal);
+
+        Assert.That(start >= 0 && end > start, Is.True, $"tryParseKeywordCriteria not found in {path}");
+
+        return Regex.Matches(source[start..end], @"case ""([a-z]+)"":").Select(m => m.Groups[1].Value).ToHashSet();
+    }
+
+    private static bool SiteParses(string query) => BeatmapSearchQuery.Parse(query).FreeText.Length == 0;
+
+    private static bool GameParses(string query)
+    {
+        var criteria = new ClientCriteria();
+        applyQueries.Invoke(null, [criteria, query]);
+        return string.IsNullOrWhiteSpace(criteria.SearchText);
+    }
+
+    /// <summary>The canonical language the site filters <paramref name="query"/> on, or null when it reads it as free text.</summary>
+    private static string? SiteLanguage(string query)
+    {
+        var parsed = BeatmapSearchQuery.Parse(query);
+
+        if (parsed.FreeText.Length > 0)
+            return null;
+
+        return parsed.TextFilters.Single(f => f.Field == FilterField.Language).Value;
     }
 
     private static bool GameMatches(string query, ClientBeatmap beatmap)

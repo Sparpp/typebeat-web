@@ -34,8 +34,8 @@ namespace Typebeat.Web.Packages;
 /// every score on that map back to version 0, so a stored pp can never outlive the star rating it
 /// was computed from.</item>
 /// </list>
-/// It should also run after the score-refund sweeps (SkipGateRefund / RateGateRefund), which flip
-/// <c>scores.ranked</c> on: a row those re-rank in this same boot is picked up here in the same
+/// It should also run after the score-refund sweep (SetRankRefund), which flips
+/// <c>scores.ranked</c> on: a row it re-ranks in this same boot is picked up here in the same
 /// pass, so a refunded play earns its pp immediately instead of on the following boot.
 /// </para>
 ///

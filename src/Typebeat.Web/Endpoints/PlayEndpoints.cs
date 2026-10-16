@@ -44,10 +44,11 @@ namespace Typebeat.Web.Endpoints;
 /// identical scores/user_stats side effects, but authenticated by the website session cookie
 /// (<see cref="SessionCookieAuth.SessionUser"/>) and CSRF-protected via <see cref="IAntiforgery"/>
 /// rather than a bearer token. Tamper-shaped input on the mutating routes always resolves to a 4xx,
-/// never a 500.
+/// never a 500. One deliberate difference: a browser play is always stored UNRANKED, with no pp
+/// because the browser submits no log the server could audit it with.
 ///
 /// <para>SUBMISSION INTEGRITY (backlog 312), the browser's half of the desktop token's two
-/// identities. BUILD: the server hashes the three /play scripts once at startup
+/// identities. BUILD: the server hashes the /play scripts once at startup
 /// (<see cref="Revision"/>), the page renders it, and the token route registers what the player
 /// sends back as its own build <c>web-&lt;revision&gt;</c>, so a tab left open across a deploy
 /// submits under its OWN build row, which an admin can block alone. MAP: the /osu route answers the
@@ -59,15 +60,30 @@ namespace Typebeat.Web.Endpoints;
 public static class PlayEndpoints
 {
     private const int status_unprocessable = StatusCodes.Status422UnprocessableEntity;
-    private const string web_build_hash = "web-player";
+    private const string web_build_hash = ScoreSubmission.BROWSER_BUILD_PREFIX + "player";
 
     /// <summary>The response header GET /play/map/{setId}/osu carries the served difficulty's
     /// stored checksum in (<c>beatmaps.checksum_md5</c>, the desktop's beatmap_hash).</summary>
     public const string ChecksumHeader = "X-Beatmap-Checksum";
 
-    /// <summary>The scripts whose content IS the browser client: the engine, the player, the page
-    /// glue. Their order is part of the hash.</summary>
-    private static readonly string[] revision_scripts = ["/js/typebeat-core.js", "/js/typebeat-player.js", "/js/play.js"];
+    /// <summary>The scripts whose content IS the browser client: the engine (its parts under
+    /// <c>/js/core/</c>, then <c>typebeat-core.js</c>, which assembles them), the player, the page
+    /// glue. The /play page renders its script tags from this list, in this order, which is also
+    /// the order the engine's parts must load in; the order is part of the hash.</summary>
+    public static readonly IReadOnlyList<string> RevisionScripts =
+    [
+        "/js/core/typeability.js",
+        "/js/core/lyric-beatmap-decoder.js",
+        "/js/core/syllabifier.js",
+        "/js/core/typing-line.js",
+        "/js/core/judgement.js",
+        "/js/core/score-and-health.js",
+        "/js/core/typing-engine.js",
+        "/js/core/freestyle-glyphs.js",
+        "/js/typebeat-core.js",
+        "/js/typebeat-player.js",
+        "/js/play.js",
+    ];
 
     /// <summary>What a client-sent revision must look like to be registered (the shape
     /// <see cref="ComputeRevision"/> produces). Anything else is refused rather than written into
@@ -85,12 +101,12 @@ public static class PlayEndpoints
     /// <summary>
     /// Combines the per-file values asp-append-version stamps onto each script tag (the
     /// <see cref="IFileVersionProvider"/>'s SHA-256 of the file's content) into one 16-hex-digit id.
-    /// Any byte of any of the three scripts changing changes it; nothing else does.
+    /// Any byte of any of the scripts changing changes it; nothing else does.
     /// </summary>
     public static string? ComputeRevision(IFileVersionProvider versions)
     {
         var sb = new StringBuilder();
-        foreach (string script in revision_scripts)
+        foreach (string script in RevisionScripts)
         {
             string stamped = versions.AddFileVersionToPath(PathString.Empty, script);
             int at = stamped.IndexOf("?v=", StringComparison.Ordinal);
@@ -314,7 +330,7 @@ public static class PlayEndpoints
         if (string.IsNullOrEmpty(request.Revision))
             versionHash = web_build_hash;
         else if (revision_shape.IsMatch(request.Revision))
-            versionHash = "web-" + request.Revision;
+            versionHash = ScoreSubmission.BROWSER_BUILD_PREFIX + request.Revision;
         else
             return WireJson.Error(StatusCodes.Status400BadRequest, "invalid request body");
 
@@ -334,24 +350,24 @@ public static class PlayEndpoints
         // leaderboard row would all follow the named one.
         var beatmap = request.BeatmapId > 0
             ? await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-                """
+                $"""
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                        b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.id = @beatmapId
                   AND (@setId <= 0 OR b.set_id = @setId)
-                  AND bs.status IN ('pending', 'unranked', 'ranked', 'loved')
+                  AND bs.status IN {BeatmapsetEndpoints.PublishedSql}
                   AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
                 """,
                 new { beatmapId = request.BeatmapId, setId = request.SetId })
             : await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
-                """
+                $"""
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                        b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
-                WHERE b.set_id = @setId AND bs.status IN ('pending', 'unranked', 'ranked', 'loved')
+                WHERE b.set_id = @setId AND bs.status IN {BeatmapsetEndpoints.PublishedSql}
                   AND b.filename IS NOT NULL AND b.filename LIKE '%.osu'
                 ORDER BY b.id
                 LIMIT 1
@@ -474,14 +490,24 @@ public static class PlayEndpoints
             """,
             new { beatmapId }, tx);
 
-        // A play is ranked (stored on the ranked board) on a 'ranked' or 'loved' set; only a 'ranked'
-        // set's plays are priced. Loved is osu!'s "leaderboard, no pp" status: the row is stored with
-        // pp 0 and the current pp_version, which every pp read already renders as no pp.
-        bool setHasRankedBoard = setStatus is "ranked" or "loved";
-        bool setAwardsPp = setStatus == "ranked";
 
-        var statistics = submission.Statistics ?? new Dictionary<string, int>();
-        var maximumStatistics = submission.MaximumStatistics ?? new Dictionary<string, int>();
+        // Only HitResult names survive, and a bonus count is held to the map's own maximum, exactly
+        // as on the game's route (ScoreSubmission.KnownStatistics).
+        var (statistics, maximumStatistics, droppedKeys) = ScoreSubmission.KnownStatistics(submission.Statistics, submission.MaximumStatistics);
+
+        if (droppedKeys > 0)
+            logger.LogInformation("Play token {TokenId}: dropped {Count} unknown statistics key(s).", token.Id, droppedKeys);
+
+        // The claimed maximum must be the map's own, as on the game's route. The browser plays the
+        // default stream only (no mods), so it is held against that count.
+        int? mapJudgedCells = await ScoreSubmission.MapJudgedCellsAsync(conn, tx, token.Id, literate: false);
+
+        if (!ScoreSubmission.MaximumMatchesMap(maximumStatistics, mapJudgedCells))
+        {
+            logger.LogInformation("Play token {TokenId}: maximumStatistics claims {Claimed} judged cell(s), the map has {Cells}, refusing.",
+                token.Id, ScoringContract.CountAccuracyAffecting(maximumStatistics), mapJudgedCells);
+            return WireJson.Error(status_unprocessable, ScoreSubmission.MAP_MISMATCH_REFUSAL);
+        }
 
         var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, submission.MaxCombo);
         bool withinBounds = ScoringContract.TotalScoreWithinBounds(submission.TotalScore, recomputed);
@@ -499,13 +525,18 @@ public static class PlayEndpoints
         double elapsedSeconds = (DateTimeOffset.UtcNow - token.CreatedAt).TotalSeconds;
         bool playTimeOk = PlayTimeGate.Passes(elapsedSeconds, beatmap.DrainLengthS, beatmap.SkippableS, rate);
 
-        bool buildBlocked = await conn.ExecuteScalarAsync<bool>(
-            "SELECT blocked FROM builds WHERE id = @buildId", new { buildId = token.BuildId }, tx);
-
         bool passed = submission.Passed;
         bool fullyJudged = recomputed.AccuracyProgress >= 1;
 
-        bool ranked = setHasRankedBoard && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && !buildBlocked;
+        // A BROWSER PLAY IS STORED UNRANKED, whatever its set and however clean its account.
+        // /play submits the aggregate alone (no replay, no keypress log), so nothing here can audit
+        // or recalculate it, and a console POST of all-Great statistics after waiting out the map
+        // would otherwise board and earn pp. Until the browser sends a log the server can re-derive,
+        // its plays stay off the ranked board and unpriced; everything else about the row (stored
+        // score, play counts, user_stats, play history, the unranked board of a pending or unranked
+        // set, the results the player is shown) is kept. The checks above still run, for the
+        // stored values and the logs. GateRefund never re-ranks such a row (ScoreSubmission.IsBrowserBuild).
+        bool ranked = false;
 
         double storedAccuracy = passed && fullyJudged ? recomputed.Accuracy : recomputed.JudgedAccuracy;
 
@@ -522,21 +553,14 @@ public static class PlayEndpoints
         string rank = passed ? recomputed.Rank : "F";
         var endedAt = DateTimeOffset.UtcNow;
 
-        // Performance points (docs/pp.md). The browser player stores a hardcoded empty mod stack
-        // (below), so there is no mod multiplier, no rate, no CONVERSION mod and no JUDGEMENT ARM to
-        // price: the play always reads the matrix's none/plain/1.00 cell.
-        //
-        // THAT CELL IS NOT ALWAYS THERE, which is a change from the six-column pricing this
-        // replaced (034_ratings_matrix.sql). difficulty_rating is NOT NULL and has been since 001,
-        // so a browser play used to be settled unconditionally; the matrix is a new column and is
-        // NULL on every row PaceBackfill has not swept, so a browser play on such a map is now
-        // PENDING and is priced on a later boot, exactly as a Double Time desktop play on an
-        // unswept map already was. Nothing else about the path changes, and the whole stack is
-        // still passed rather than assumed, so if /play ever gains mods this call already reads the
-        // cell they select.
+        // Performance points (docs/pp.md). A browser play is never ranked (above), so this is the
+        // formula's refusal, (null, settled), stored as pp 0 at the current version. The call is kept
+        // so the row is written exactly as any other refused play is. The browser player stores a
+        // hardcoded empty mod stack (below), so if /play is ever ranked again it reads the matrix's
+        // none/plain/1.00 cell, which is PENDING on a row PaceBackfill has not swept; a 'loved' set
+        // must then still be refused a price, as on the game's route.
         var (pp, ppSettled) = PerformancePoints.ForScore(
-            // A loved play is ranked but never priced (see setAwardsPp above).
-            ranked && setAwardsPp,
+            ranked,
             mods: [],
             PerformancePoints.CountNotes(statistics),
             storedAccuracy,
@@ -616,7 +640,7 @@ public static class PlayEndpoints
                     userId = user.Id,
                     totalScore = storedTotal,
                     playTime = (long)Math.Round(Math.Min(elapsedSeconds, beatmap.DrainLengthS), MidpointRounding.AwayFromZero),
-                    hitCounts = MergeHitCounts(existingHitCounts, statistics)
+                    hitCounts = ScoreSubmission.MergeHitCounts(existingHitCounts, statistics)
                 }, tx);
 
             // Play history (024_play_history.sql), same rule as the game client's path: browser
@@ -629,17 +653,12 @@ public static class PlayEndpoints
             new { scoreId, tokenId = token.Id }, tx);
 
         // WHICH BOARD this play sits on, by the set's CURRENT status, the same switch the game
-        // client's leaderboard makes (ScoreEndpoints.Leaderboard): a ranked or loved set serves the
+        // client's leaderboard makes (BeatmapLeaderboard.BoardFor, which ScoreEndpoints.Leaderboard also reads): a ranked or loved set serves the
         // ranked board, a pending or unranked set serves the unranked one. A play is only ON a board when
         // it passed and its stored flag matches (BeatmapLeaderboard.OnBoard), so a fail, and a
         // gate-refused play on a ranked set (stored unranked, but its map serves the RANKED board),
         // sit on none and are told no position.
-        bool? board = setStatus switch
-        {
-            "ranked" or "loved" => true,
-            "pending" or "unranked" => false,
-            _ => null,
-        };
+        bool? board = BeatmapLeaderboard.BoardFor(setStatus);
         bool? onBoard = board is bool wantRanked && passed && ranked == wantRanked ? wantRanked : null;
         long? scoreSetId = await conn.ExecuteScalarAsync<long?>(
             "SELECT set_id FROM beatmaps WHERE id = @beatmapId", new { beatmapId }, tx);
@@ -648,7 +667,7 @@ public static class PlayEndpoints
         // lists), and personal_best says whether that best is THIS play, so a run that did not
         // beat it is never told its best's rank as though it had earned it.
         var standing = onBoard is bool boardRanked
-            ? await ComputeUserPosition(conn, tx, beatmapId, user.Id, boardRanked)
+            ? await ScoreSubmission.UserStandingAsync(conn, tx, beatmapId, user.Id, boardRanked)
             : null;
 
         await tx.CommitAsync(ctx.RequestAborted);
@@ -872,61 +891,8 @@ public static class PlayEndpoints
         _ => "application/octet-stream",
     };
 
-    // ---- scoring helpers (the board rules come from BeatmapLeaderboard, as ScoreEndpoints' do) ----
-
-    /// <summary>
-    /// The user's best row on one board of a map (the ranked board when <paramref name="wantRanked"/>,
-    /// the unranked one otherwise) and its 1-based position among every player's best there, or
-    /// null when they have no row on it. Built entirely from the <see cref="BeatmapLeaderboard"/>
-    /// fragments, so eligibility, the per-player fold and the tie-break are the board's own rules
-    /// rather than a copy of them.
-    /// </summary>
-    private static async Task<(long BestScoreId, int Position)?> ComputeUserPosition(
-        NpgsqlConnection conn, System.Data.Common.DbTransaction? tx, long beatmapId, long userId, bool wantRanked)
-    {
-        var best = await conn.QuerySingleOrDefaultAsync<BestScoreRow>(
-            $"""
-            SELECT s.id AS id, s.total_score AS totalScore
-            FROM scores s
-            WHERE s.beatmap_id = @beatmapId AND s.user_id = @userId AND {BeatmapLeaderboard.OnBoard("s")}
-            ORDER BY {BeatmapLeaderboard.Order("s")}
-            LIMIT 1
-            """,
-            new { beatmapId, userId, wantRanked }, tx);
-
-        if (best is null)
-            return null;
-
-        int position = await conn.ExecuteScalarAsync<int>(
-            $"""
-            SELECT 1 + COUNT(*)
-            FROM (
-                SELECT DISTINCT ON (s.user_id) s.user_id, s.total_score, s.id
-                FROM scores s
-                WHERE s.beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("s")}
-                ORDER BY s.user_id, {BeatmapLeaderboard.Order("s")}
-            ) b
-            WHERE {BeatmapLeaderboard.Outranks("b")}
-            """,
-            new { beatmapId, totalScore = best.TotalScore, scoreId = best.Id, wantRanked }, tx);
-
-        return (best.Id, position);
-    }
-
-    private static string MergeHitCounts(string existingJson, IReadOnlyDictionary<string, int> add)
-    {
-        var merged = JsonConvert.DeserializeObject<Dictionary<string, int>>(existingJson) ?? new Dictionary<string, int>();
-
-        foreach (var (key, count) in add)
-        {
-            if (count <= 0)
-                continue;
-
-            merged[key] = merged.GetValueOrDefault(key) + count;
-        }
-
-        return JsonConvert.SerializeObject(merged);
-    }
+    // The caller's standing on a board and the hit_counts merge are ScoreSubmission's, shared with
+    // ScoreEndpoints; the board rules themselves come from BeatmapLeaderboard.
 
     // ---- Dapper row shapes ----
 
@@ -943,8 +909,6 @@ public static class PlayEndpoints
 
     /// <summary>One live difficulty, as the picker's difficulty step renders it.</summary>
     private sealed record DiffRow(long Id, string VersionName, double Stars, double? Wpm, double? AvgWpm);
-
-    private sealed record BestScoreRow(long Id, long TotalScore);
 
     // timestamptz arrives from Npgsql as UTC DateTime; DateTimeOffset ctor params break Dapper's
     // constructor matching at runtime.

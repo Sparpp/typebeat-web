@@ -480,7 +480,7 @@ public class RankedApprovalTest
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
             request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["version_hash"] = "approval-test-build",
+                ["version_hash"] = "7e570000000000000000000000000004",
                 ["beatmap_hash"] = checksum,
                 ["ruleset_id"] = "0",
             });

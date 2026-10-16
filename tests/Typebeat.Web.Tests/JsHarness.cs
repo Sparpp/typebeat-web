@@ -30,9 +30,10 @@ public static class JsHarness
 
     /// <summary>
     /// Runs tests/Typebeat.Web.Tests/Js/<paramref name="harnessFileName"/> under node with the
-    /// served core script's path as its only argument, and parses its stdout as JSON.
+    /// served core script's path as its first argument, followed by <paramref name="extraArgs"/>,
+    /// and parses its stdout as JSON.
     /// </summary>
-    public static JsonElement Run(string harnessFileName)
+    public static JsonElement Run(string harnessFileName, params string[] extraArgs)
     {
         string root = RepoRoot();
         string corePath = Path.Combine(root, "src", "Typebeat.Web", "wwwroot", "js", "typebeat-core.js");
@@ -52,6 +53,9 @@ public static class JsHarness
         };
         psi.ArgumentList.Add(harness);
         psi.ArgumentList.Add(corePath);
+
+        foreach (string arg in extraArgs)
+            psi.ArgumentList.Add(arg);
 
         Process process;
         try

@@ -157,16 +157,32 @@ public static class Seo
     public const string WEBSITE_NODE_ID = CANONICAL_ORIGIN + "/#website";
 
     /// <summary>
+    /// A JSON-LD block ready to sit raw inside a script element. The only way to make one is
+    /// <see cref="Of"/>, which serialises an object with the default encoder (<c>&lt;</c>,
+    /// <c>&gt;</c> and <c>&amp;</c> escaped), so the layout, which renders only this type, never
+    /// writes a caller's hand-built string as markup.
+    /// </summary>
+    public sealed class JsonLd
+    {
+        private JsonLd(string json) => Json = json;
+
+        /// <summary>The serialised block, without the script element around it.</summary>
+        public string Json { get; }
+
+        /// <summary>Serialises <paramref name="node"/> with the default encoder.</summary>
+        public static JsonLd Of(object node) => new(JsonSerializer.Serialize(node));
+    }
+
+    /// <summary>
     /// The schema.org graph for the landing and download pages (backlog 417): the game, the
     /// organisation that publishes it and the source code it is built from, as one <c>@graph</c>
     /// under one <c>@context</c>. The MIT licence sits on the source node only, never on the game,
-    /// whose bundled resources are CC BY-NC. Serialised with the default encoder, which escapes
-    /// <c>&lt;</c>, <c>&gt;</c> and <c>&amp;</c>, so the result is safe to emit raw inside a
-    /// script element. <paramref name="withWebSite"/> adds the WebSite node that names the site
+    /// whose bundled resources are CC BY-NC. Serialised through <see cref="JsonLd.Of"/>, so the
+    /// result is safe to emit raw inside a script element. <paramref name="withWebSite"/> adds the WebSite node that names the site
     /// in search results (backlog 418), on the landing only.
     /// </summary>
-    public static string GameJsonLd(bool withWebSite = false)
-        => JsonSerializer.Serialize(new Dictionary<string, object>
+    public static JsonLd GameJsonLd(bool withWebSite = false)
+        => JsonLd.Of(new Dictionary<string, object>
         {
             ["@context"] = "https://schema.org",
             ["@graph"] = new object[]
@@ -238,7 +254,7 @@ public static class Seo
     /// linked to their profile by id, as the page's "mapped by" line links it. The artist stays ONE MusicGroup, unsplit: a comma is part of
     /// names like "Tyler, The Creator".
     /// </summary>
-    public static string MusicRecordingJsonLd(
+    public static JsonLd MusicRecordingJsonLd(
         string url, string title, string artist, string? image,
         double? lengthSeconds, string? langTag, string creator, long creatorId)
     {
@@ -271,7 +287,7 @@ public static class Seo
             ["url"] = CANONICAL_ORIGIN + "/users/" + creatorId.ToString(CultureInfo.InvariantCulture),
         };
 
-        return JsonSerializer.Serialize(block);
+        return JsonLd.Of(block);
     }
 
     /// <summary>The longest artist credit a set page's title carries whole (backlog 418).</summary>

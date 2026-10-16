@@ -5,7 +5,6 @@ using typebeat.Game.Rulesets.Scoring;
 using typebeat.Game.Rulesets.TypeBeat.Mods;
 
 using ClientArm = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty.JudgementArm;
-using ClientAxis = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty.EnduranceAxis;
 using ClientDifficulty = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty;
 using ClientLine = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricLine;
 using ClientPp = typebeat.Game.Rulesets.TypeBeat.Scoring.PerformancePoints;
@@ -13,7 +12,6 @@ using ClientTypability = typebeat.Game.Rulesets.TypeBeat.Beatmaps.TypabilityInde
 using ClientUnit = typebeat.Game.Rulesets.TypeBeat.Beatmaps.TimedUnit;
 using ClientWordPause = typebeat.Game.Rulesets.TypeBeat.Beatmaps.WordPause;
 using ServerArm = Typebeat.Web.Packages.Lyrics.LyricDifficulty.JudgementArm;
-using ServerAxis = Typebeat.Web.Packages.Lyrics.LyricDifficulty.EnduranceAxis;
 using ServerDifficulty = Typebeat.Web.Packages.Lyrics.LyricDifficulty;
 using ServerLine = Typebeat.Web.Packages.Lyrics.LyricLine;
 using ServerPp = Typebeat.Web.Scoring.PerformancePoints;
@@ -1188,31 +1186,48 @@ public class PerformancePointsParityTest
     };
 
     [Test]
-    public void TheEnvelopeArmAgreesToo()
+    public void TheTargetWpmAgreesToo()
     {
-        // The chunked axis is what ships and what the eighteen cells hold, but the ENVELOPE arm is
-        // still read by both sides for the pace figures' target, so a divergence there shows up on
-        // the set page against song select's wedge rather than on a leaderboard. Same fixtures, same
-        // exactness, one axis over.
-        foreach (string name in new[] { "plain", "dense", "freestyle", "subdivided", "paused", "paused-ignored" })
+        // The chunked axis is what ships and what the eighteen cells hold, and since LyricPace v27 it
+        // is also where both sides read the pace figures' TARGET (the envelope arm that used to carry
+        // it is deleted), so a divergence there shows up on the set page against song select's wedge
+        // rather than on a leaderboard. Same fixtures, same exactness, and the figure the rating
+        // carries has to be the one the pace scan reads.
+        int measured = 0;
+
+        Assert.Multiple(() =>
         {
-            var (client, server) = Fixture(name);
-
-            foreach (double rate in new[] { 1.0, ClientPp.DOUBLE_TIME_BASE_RATE, ClientPp.HALF_TIME_BASE_RATE })
-            foreach (bool literate in new[] { false, true })
+            foreach (string name in new[] { "plain", "dense", "freestyle", "subdivided", "paused", "paused-ignored" })
             {
-                var c = ClientDifficulty.ComputeDetail(client, rate, literate, ClientAxis.Envelope);
-                var s = ServerDifficulty.ComputeDetail(server, rate, literate, ServerAxis.Envelope);
+                var (client, server) = Fixture(name);
 
-                string context = $"{name} rate={rate} literate={literate}";
+                foreach (double rate in new[] { 1.0, ClientPp.DOUBLE_TIME_BASE_RATE, ClientPp.HALF_TIME_BASE_RATE })
+                foreach (bool literate in new[] { false, true })
+                {
+                    double c = ClientDifficulty.TargetWpm(client, rate, literate);
+                    double s = ServerDifficulty.TargetWpm(server, rate, literate);
 
-                Assert.That(s.Stars, Is.EqualTo(c.Stars), $"{context}: stars");
-                Assert.That(s.DifficultCharacters, Is.EqualTo(c.DifficultCharacters), $"{context}: difficult characters");
-                Assert.That(s.TargetWpm, Is.EqualTo(c.TargetWpm), $"{context}: target WPM");
-                Assert.That(s.Peak, Is.EqualTo(c.Peak), $"{context}: peak");
-                Assert.That(s.Cells, Is.EqualTo(c.Cells), $"{context}: cells");
+                    string context = $"{name} rate={rate} literate={literate}";
+
+                    Assert.That(s, Is.EqualTo(c), $"{context}: target WPM");
+                    Assert.That(ServerDifficulty.ComputeDetail(server, rate, literate).TargetWpm, Is.EqualTo(s), $"{context}: the server's rating carries it");
+                    Assert.That(ClientDifficulty.ComputeDetail(client, rate, literate).TargetWpm, Is.EqualTo(c), $"{context}: and the client's");
+
+                    foreach ((ClientArm clientArm, ServerArm serverArm) in new[] { (ClientArm.Easy, ServerArm.Easy), (ClientArm.HardRock, ServerArm.HardRock) })
+                    {
+                        Assert.That(ServerDifficulty.ComputeDetail(server, rate, literate, ServerDifficulty.Live, serverArm).TargetWpm, Is.EqualTo(s),
+                            $"{context} {serverArm}: no judgement arm moves it");
+                        Assert.That(ClientDifficulty.ComputeDetail(client, rate, literate, ClientDifficulty.Live, clientArm).TargetWpm, Is.EqualTo(c),
+                            $"{context} {clientArm}: on either side");
+                    }
+
+                    if (s > 0)
+                        measured++;
+                }
             }
-        }
+        });
+
+        Assert.That(measured, Is.GreaterThan(0), "at least one fixture has to clear the target's character floor, or the equalities are vacuous");
     }
 
     [Test]

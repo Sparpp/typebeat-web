@@ -37,6 +37,12 @@ public class RankParityTest
     }
 
     [Test]
+    public void TheBrowserAccuracyExponentMatchesTheServer()
+    {
+        Assert.That(Harness().GetProperty("accuracyPortionExponent").GetDouble(), Is.EqualTo(ScoringContract.AccuracyExponent));
+    }
+
+    [Test]
     public void TheBrowserGradesFromCountsMatchTheServerRule()
     {
         var root = Harness();

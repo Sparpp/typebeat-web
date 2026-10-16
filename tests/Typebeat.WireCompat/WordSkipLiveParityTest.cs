@@ -31,7 +31,7 @@ namespace Typebeat.WireCompat;
 ///
 /// <para>This is the only project that compiles both repos, which is why the comparison lives here
 /// rather than beside the other JS fidelity guards in <c>Typebeat.Web.Tests</c>. Those pin the
-/// browser's ENGINE state (cell states, caret, combo, points) against the game suite's own
+/// browser's ENGINE state (cell states, caret, combo, tiers) against the game suite's own
 /// assertions (<c>WordSkipParityTest</c> there); this one pins the SUBMITTED ACCOUNT (statistics,
 /// max_combo, total score, accuracy, completion, rank) against the numbers the game's own scorer
 /// produces. The node harness is shared with them,
@@ -123,7 +123,7 @@ public class WordSkipLiveParityTest
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, wrongInputOnWordGaps: true, strictSpaces: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true, earlyFinish: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true, earlyFinish: true, keyTimeJudgement: true));
 
         foreach ((double time, char character) in keys)
             replay.Frames.Add(new TypeBeatReplayFrame(time, character));

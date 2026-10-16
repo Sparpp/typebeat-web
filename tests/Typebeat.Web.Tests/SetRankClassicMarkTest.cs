@@ -22,13 +22,9 @@ namespace Typebeat.Web.Tests;
 [NonParallelizable]
 public class SetRankClassicMarkTest
 {
-    private const string database_name = "typebeat_setrankclassictests";
+    private static readonly string database_name = TestDatabase.NameFor("typebeat_setrankclassictests");
 
-    private const string connection_string =
-        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private static readonly string connection_string = TestDatabase.ConnectionStringFor(database_name);
 
     /// <summary>The rated fixture lyric, retimed: same words, every time moved. A gameplay change.</summary>
     private const string retimed_lyrics =
@@ -49,12 +45,7 @@ public class SetRankClassicMarkTest
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
-        await using (var admin = new NpgsqlConnection(admin_connection_string))
-        {
-            await admin.OpenAsync();
-            await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
-            await admin.ExecuteAsync($"CREATE DATABASE {database_name}");
-        }
+        await TestDatabase.RecreateAsync(database_name);
 
         await Db.EnsureExtensionsAsync(connection_string);
 
@@ -82,6 +73,8 @@ public class SetRankClassicMarkTest
 
         if (fileRoot != null && Directory.Exists(fileRoot))
             Directory.Delete(fileRoot, recursive: true);
+
+        await TestDatabase.DropAsync(database_name);
     }
 
     /// <summary>

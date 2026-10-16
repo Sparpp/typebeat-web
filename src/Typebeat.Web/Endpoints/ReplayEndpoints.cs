@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using Dapper;
 using Microsoft.AspNetCore.Http.Features;
 using Npgsql;
@@ -16,7 +17,13 @@ namespace Typebeat.Web.Endpoints;
 ///
 ///  - PUT /api/v2/scores/{scoreId}/replay: bearer, owner only, raw .osr bytes as the request
 ///    body (application/octet-stream). 204 on success, 404 unknown score, 403 non-owner,
-///    413 over the size cap. Idempotent: the owner may re-upload and the newer bytes win.
+///    413 over the size cap, 409 when a DIFFERENT replay is already recorded for the score.
+///    WRITE-ONCE BY CONTENT: the first upload's SHA-256 is recorded on the score
+///    (<c>scores.replay_sha256</c>, 049_replay_sha256.sql) and only those exact bytes are accepted
+///    again. A re-upload of the same bytes is still a 204 (the game's leaderboard backfill re-sends
+///    what it holds, and it restores a pruned replay), but nothing can swap the replay of a ranked
+///    score for another one later. See <see cref="recordedHashAsync"/> for replays stored before
+///    the hash existed.
 ///  - GET /api/v2/scores/{scoreId}/replay: public (leaderboards are public), streams the stored
 ///    bytes back verbatim as application/octet-stream, 404 when nothing is stored. This is the
 ///    ONLY path that serves replay bytes anywhere (the game client's watch-replay action and the
@@ -27,8 +34,9 @@ namespace Typebeat.Web.Endpoints;
 /// Storage: the bytes are a NAMED object at <c>replays/{scoreId}.osr</c>
 /// (<see cref="StoreKeys.Replay"/>) and <c>scores.replay_key</c> is the index over it (migration
 /// 014). Named rather than content-addressed because a replay belongs to exactly one score (no
-/// dedup to win) and the contract is overwrite-on-re-upload, which write-once blobs cannot do
-/// without orphaning bytes forever.
+/// dedup to win). The contract used to be overwrite-on-re-upload; it is write-once by content now
+/// (above), and the named object stays because retention deletes it and a re-upload of the same
+/// bytes writes it back.
 ///
 /// Fidelity is NOT re-verified here: the game's engine is deterministic, so a replay either
 /// reproduces its score on playback or it does not, and re-simulating server-side would mean
@@ -46,7 +54,7 @@ public static class ReplayEndpoints
 
     /// <summary>
     /// In-memory speed bump, keyed by user id, the same pattern as the BSS upload limiter. Owner-
-    /// only already bounds this hard (you can only overwrite replays of scores you submitted, and
+    /// only already bounds this hard (you can only upload replays of scores you submitted, and
     /// submitting a score costs a whole play), so the budget is generous; it exists to stop a
     /// runaway client from rewriting the same object in a loop. Cloudflare WAF is the real layer.
     /// </summary>
@@ -66,7 +74,7 @@ public static class ReplayEndpoints
     }
 
     // ---------------------------------------------------------------------------------------------
-    // PUT: store (or overwrite) the caller's own replay for one score.
+    // PUT: store the caller's own replay for one score (again, only if it is the same bytes).
     // ---------------------------------------------------------------------------------------------
     private static async Task<IResult> UploadAsync(long scoreId, HttpContext ctx, Db db, IFileStore store, DiskGuard disk, ILoggerFactory loggerFactory)
     {
@@ -127,20 +135,74 @@ public static class ReplayEndpoints
         }
 
         string key = StoreKeys.Replay(scoreId);
+        byte[] sha256 = SHA256.HashData(replay);
 
-        // WriteObjectAsync is temp-file + atomic move, so a re-upload either fully replaces the
-        // old object or leaves it intact; a reader never sees a half-written replay.
+        // The score row is locked from the hash check to the write, so two first uploads racing
+        // with different bytes cannot both pass: the second one reads the first one's hash.
+        await using var tx = await conn.BeginTransactionAsync(ctx.RequestAborted);
+
+        var stored = await conn.QuerySingleOrDefaultAsync<StoredReplayRow>(
+            "SELECT replay_sha256 AS sha256, replay_key AS key FROM scores WHERE id = @scoreId FOR UPDATE",
+            new { scoreId }, tx);
+
+        // Deleted since the ownership check above.
+        if (stored is null)
+            return WireJson.Error(StatusCodes.Status404NotFound, "not found");
+
+        byte[]? recorded = await recordedHashAsync(stored, store, ctx.RequestAborted);
+
+        if (recorded != null && !recorded.AsSpan().SequenceEqual(sha256))
+        {
+            // A replay stored before 049 is pinned by this refusal too: its hash, just computed off
+            // the stored object, is kept, so those bytes are the only ones accepted from now on.
+            if (stored.Sha256 == null)
+            {
+                await conn.ExecuteAsync("UPDATE scores SET replay_sha256 = @recorded WHERE id = @scoreId",
+                    new { recorded, scoreId }, tx);
+            }
+
+            await tx.CommitAsync(ctx.RequestAborted);
+
+            loggerFactory.CreateLogger("ReplayUpload").LogInformation(
+                "Score {ScoreId}: refused a {Bytes}-byte upload that differs from the replay already recorded.", scoreId, replay.Length);
+
+            return WireJson.Error(StatusCodes.Status409Conflict, "a different replay is already stored for this score");
+        }
+
+        // The same bytes over a replay that is still stored change nothing: no rewrite, no new
+        // upload time (which retention reads) and no cache eviction, only the hash recorded for a
+        // replay stored before 049, whose bytes these are.
+        if (recorded != null && stored.Key is string storedKey
+            && (stored.Sha256 == null || await store.ObjectExistsAsync(storedKey, ctx.RequestAborted)))
+        {
+            if (stored.Sha256 == null)
+            {
+                await conn.ExecuteAsync("UPDATE scores SET replay_sha256 = @recorded WHERE id = @scoreId",
+                    new { recorded, scoreId }, tx);
+            }
+
+            await tx.CommitAsync(ctx.RequestAborted);
+
+            return Results.NoContent();
+        }
+
+        // WriteObjectAsync is temp-file + atomic move, so a reader never sees a half-written
+        // replay. Only a first upload, or the recorded bytes restoring a pruned or lost object, get
+        // here.
         using (var buffer = new MemoryStream(replay, writable: false))
             await store.WriteObjectAsync(key, buffer, ctx.RequestAborted);
 
         long? replayBeatmapId = await conn.ExecuteScalarAsync<long?>(
             """
             UPDATE scores
-            SET replay_key = @key, replay_bytes = @bytes, replay_uploaded_at = now(), replay_pruned_at = NULL
+            SET replay_key = @key, replay_bytes = @bytes, replay_uploaded_at = now(), replay_pruned_at = NULL,
+                replay_sha256 = @sha256
             WHERE id = @scoreId
             RETURNING beatmap_id
             """,
-            new { key, bytes = replay.Length, scoreId });
+            new { key, bytes = replay.Length, sha256, scoreId }, tx);
+
+        await tx.CommitAsync(ctx.RequestAborted);
 
         // The board row's has_replay just flipped (backlog 366: the board memo is dropped).
         await ctx.RequestServices.GetRequiredService<CacheEviction>().AfterReplayAsync(replayBeatmapId);
@@ -217,6 +279,30 @@ public static class ReplayEndpoints
     }
 
     // ---- helpers ----
+
+    /// <summary>
+    /// The SHA-256 of the replay a score is held to, or null when it has none yet (the next upload
+    /// is the first). Normally the recorded <c>replay_sha256</c>. A replay stored before 049 has no
+    /// recorded hash, so its stored object is hashed here, LAZILY, on the next upload attempt: no
+    /// startup sweep has to read every replay, and an old replay is protected the moment anyone
+    /// tries to replace it. A row whose object is gone (pruned before 049, or lost) has nothing left
+    /// to protect, and its next upload is treated as the first.
+    /// </summary>
+    private static async Task<byte[]?> recordedHashAsync(StoredReplayRow stored, IFileStore store, CancellationToken ct)
+    {
+        if (stored.Sha256 != null)
+            return stored.Sha256;
+
+        if (stored.Key is not string key)
+            return null;
+
+        await using var existing = await store.OpenObjectReadAsync(key, ct);
+
+        return existing == null ? null : await SHA256.HashDataAsync(existing, ct);
+    }
+
+    /// <summary>The score's replay columns the upload decides on.</summary>
+    private sealed record StoredReplayRow(byte[]? Sha256, string? Key);
 
     private static IResult tooLarge()
         => WireJson.Error(StatusCodes.Status413PayloadTooLarge,

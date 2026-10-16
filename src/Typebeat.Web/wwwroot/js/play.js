@@ -60,8 +60,8 @@
     // ---- what the player is told after /play/submit (backlog 321) ----------
     // Pure over the submit response `d`, the picked map's card data (its status) and the run's
     // results (passed), so the harness can drive every wording without a DOM. Answers
-    // { html, cls } for api.setSubmitStatus; every value interpolated is a number the server
-    // produced or one of the fixed strings below, never free text.
+    // { text, cls } for api.setSubmitStatus, which sets every string as text, never as markup;
+    // a status with a link names it as { linkText, linkHref } with textAfter following it.
     //
     // pp follows the desktop results panel's contract (ScoreEndpoints.SubmitScore): a number is
     // the price, and a null is NEVER printed as 0 (backlog 83). A null on a RANKED play is a
@@ -86,22 +86,21 @@
     function submitStatus(d, map, results) {
         const standing = standingText(d);
         const tail = ' · ' + ppText(d) + (standing ? ' · ' + standing : '');
-        if (d.ranked) return { html: 'submitted ✓ ranked' + tail, cls: 'tb-status-good' };
-        return { html: 'recorded, not ranked (' + notRankedReason(map, results) + ')' + tail, cls: 'tb-status-muted' };
+        if (d.ranked) return { text: 'submitted ✓ ranked' + tail, cls: 'tb-status-good' };
+        return { text: 'recorded, not ranked (' + notRankedReason(map, results) + ')' + tail, cls: 'tb-status-muted' };
     }
 
     // Why the server stored this play unranked, said honestly. Since backlog 230 the picker offers
     // every PUBLISHED map, so "map not ranked" is the ordinary case rather than an edge one, and the
-    // card that launched the play already told us which it is (data-status). Only a run on a map
-    // that IS ranked leaves the vaguer wording, where the reason really is one of the tamper/gate
-    // checks and the client cannot know which. A LOVED map counts here too: it has a ranked-style
-    // board, so a refused play on it is a gate failure, not "does not count". A pending or unranked map HAS a board (the unranked
-    // one the game client shows), so the reason says the play does not count, not that there is
-    // nowhere for it to go.
+    // card that launched the play already told us which it is (data-status). On a map that IS
+    // ranked (or LOVED, which has a ranked-style board) a passed run is stored unranked because the
+    // server stores every browser play unranked until the browser sends a log it can audit, so
+    // that is what it says. A pending or unranked map HAS a board (the unranked one the game client
+    // shows), so the reason says the play does not count, not that there is nowhere for it to go.
     function notRankedReason(map, results) {
         if (!results.passed) return 'you failed this run';
         if (map.status && map.status !== 'ranked' && map.status !== 'loved') return 'this map is ' + map.status + ', so it does not count';
-        return 'checks failed';
+        return 'browser plays do not rank, only the desktop game does';
     }
 
     // ---- submission integrity (backlog 312) ---------------------------------
@@ -122,17 +121,17 @@
     // page then carries the current scripts and fetches the current map.
     function tokenFailureStatus(error) {
         if (error === 'outdated client')
-            return { html: 'score not submitted: this page is out of date. <a href="">reload</a> to play on the current version.', cls: 'tb-status-bad' };
+            return { text: 'score not submitted: this page is out of date. ', linkText: 'reload', linkHref: '', textAfter: ' to play on the current version.', cls: 'tb-status-bad' };
         if (error === 'invalid or missing beatmap_hash')
-            return { html: 'score not submitted: this map was updated after it loaded. <a href="">reload</a> to play the current version.', cls: 'tb-status-bad' };
-        return { html: 'score not submitted (could not open a play session).', cls: 'tb-status-bad' };
+            return { text: 'score not submitted: this map was updated after it loaded. ', linkText: 'reload', linkHref: '', textAfter: ' to play the current version.', cls: 'tb-status-bad' };
+        return { text: 'score not submitted (could not open a play session).', cls: 'tb-status-bad' };
     }
 
     // The desktop's playback-validity veto (SubmittingPlayer.submitScore): the player flags a run
     // whose audio clock drifted from wall time (results.playbackValid === false, see
     // makePlaybackValidity in typebeat-player.js) and it is never sent.
     const PLAYBACK_INVALID_STATUS = {
-        html: 'score not submitted: audio playback was not running at the right speed. check your audio device, then play again.',
+        text: 'score not submitted: audio playback was not running at the right speed. check your audio device, then play again.',
         cls: 'tb-status-bad'
     };
 
@@ -334,7 +333,7 @@
                 discordNudge: (results) => takeDiscordNudge(nudgeStorage(), results.passed, discordUrl),
                 onFinish: async (results, api) => {
                     if (!CFG.signedIn) {
-                        api.setSubmitStatus('<a href="/login">sign in</a> to submit your score to the leaderboard.', 'tb-status-muted');
+                        api.setSubmitStatus({ text: '', linkText: 'sign in', linkHref: '/login', textAfter: ' to save your score.', cls: 'tb-status-muted' });
                         return;
                     }
                     // Cells TYPED, which deliberately excludes uncorrected typos: those are cells
@@ -342,34 +341,34 @@
                     // made entirely of them has hit no notes at all.
                     const hits = (results.counts.great + results.counts.ok + results.counts.meh);
                     if (hits <= 0 || results.totalScore <= 0) {
-                        api.setSubmitStatus('score not submitted (no notes hit).', 'tb-status-muted');
+                        api.setSubmitStatus({ text: 'score not submitted (no notes hit).', cls: 'tb-status-muted' });
                         return;
                     }
                     // The playback-validity veto (backlog 312): a run the audio clock did not play
                     // at wall speed is never sent, like the desktop's.
                     if (results.playbackValid === false) {
-                        api.setSubmitStatus(PLAYBACK_INVALID_STATUS.html, PLAYBACK_INVALID_STATUS.cls);
+                        api.setSubmitStatus(PLAYBACK_INVALID_STATUS);
                         return;
                     }
                     const minted = tokenPromise ? await tokenPromise : null;
                     const token = minted && minted.id != null ? minted.id : null;
                     if (token == null) {
                         const refused = tokenFailureStatus(minted && minted.error);
-                        api.setSubmitStatus(refused.html, refused.cls);
+                        api.setSubmitStatus(refused);
                         return;
                     }
-                    api.setSubmitStatus('submitting…', 'tb-status-muted');
+                    api.setSubmitStatus({ text: 'submitting…', cls: 'tb-status-muted' });
                     try {
                         const r = await submitScore(token, results);
                         if (!r.ok) {
-                            api.setSubmitStatus('submit failed: ' + ((r.data && r.data.error) || r.status), 'tb-status-bad');
+                            api.setSubmitStatus({ text: 'submit failed: ' + ((r.data && r.data.error) || r.status), cls: 'tb-status-bad' });
                             return;
                         }
                         const status = submitStatus(r.data || {}, map, results);
-                        api.setSubmitStatus(status.html, status.cls);
+                        api.setSubmitStatus(status);
                     } catch (e) {
                         console.error(e);
-                        api.setSubmitStatus('submit failed (network).', 'tb-status-bad');
+                        api.setSubmitStatus({ text: 'submit failed (network).', cls: 'tb-status-bad' });
                     }
                 }
             });
@@ -380,7 +379,7 @@
     }
 
     function loadError() {
-        stageMount.innerHTML = '<div class="tb-loading">could not load this map. <a href="#" id="tb-back">back</a></div>';
+        stageMount.innerHTML = '<div class="tb-loading" role="alert">could not load this map. <a href="#" id="tb-back">back</a></div>';
         const back = document.getElementById('tb-back');
         if (back) back.addEventListener('click', (ev) => { ev.preventDefault(); showPicker(); });
     }

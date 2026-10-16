@@ -202,7 +202,7 @@ public class HousekeepingTest
     /// One player, one map, a spread of stored replays that each exercises one keep rule, plus two
     /// that match none: the dry run must name exactly those two and delete nothing, the real run
     /// must prune exactly the same two (row nulled and stamped, object gone, GET 404), and a
-    /// re-upload must clear the stamp again.
+    /// re-upload of the same bytes must clear the stamp again.
     /// </summary>
     [Test]
     public async Task ReplayRetention_KeepsTopNPinnedRecentAndViewed_PrunesTheRest_DryRunFirst()
@@ -217,6 +217,12 @@ public class HousekeepingTest
         long top2 = await storedReplayAsync(conn, ownerId, beatmapId, 800_000, uploadedDaysAgo: 60);
         long top3 = await storedReplayAsync(conn, ownerId, beatmapId, 700_000, uploadedDaysAgo: 60);
         long prunedA = await storedReplayAsync(conn, ownerId, beatmapId, 600_000, uploadedDaysAgo: 60);
+
+        // prunedA's object is a real replay shape, so the game can upload it back below: a pruned
+        // replay is restorable only by the bytes it held (049).
+        byte[] prunedABytes = DiskGuardSiteTest.fakeReplay(3, 600);
+        using (var prunedABuffer = new MemoryStream(prunedABytes))
+            await store.WriteObjectAsync(StoreKeys.Replay(prunedA), prunedABuffer);
         long pinned = await storedReplayAsync(conn, ownerId, beatmapId, 500_000, uploadedDaysAgo: 60);
         long recent = await storedReplayAsync(conn, ownerId, beatmapId, 400_000, uploadedDaysAgo: 5);
         long viewedRecently = await storedReplayAsync(conn, ownerId, beatmapId, 300_000, uploadedDaysAgo: 60);
@@ -305,7 +311,7 @@ public class HousekeepingTest
 
         using (var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v2/scores/{prunedA}/replay"))
         {
-            var content = new ByteArrayContent(DiskGuardSiteTest.fakeReplay(3, 600));
+            var content = new ByteArrayContent(prunedABytes);
             content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
             request.Content = content;
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
@@ -322,6 +328,107 @@ public class HousekeepingTest
             Assert.That(healed.Key, Is.EqualTo(StoreKeys.Replay(prunedA)));
             Assert.That(healed.PrunedAt, Is.Null, "a replay that is stored again is not 'pruned'");
         });
+    }
+
+    /// <summary>
+    /// The rule the owner turned retention on under (S1-038): a player's best ranked play keeps its
+    /// replay, whatever else qualifies around it. Under the DEFAULT options (on, keep top 3) and under
+    /// the tightest top-N there is (1), with the best ranked replay old, unpinned and unwatched, and
+    /// outscored by a failed run and by an unranked play, only the superseded ones go.
+    /// </summary>
+    [TestCase(null)]
+    [TestCase(1)]
+    public async Task ReplayRetention_NeverPrunesTheBestRankedReplay(int? keepTopN)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        long ownerId = await insertUserAsync(conn, "hk best ranked");
+        var (_, beatmapId) = await insertMapAsync(conn, "Best Ranked Ballad");
+
+        long best = await storedReplayAsync(conn, ownerId, beatmapId, 700_000, uploadedDaysAgo: 400);
+        long failedHigher = await storedReplayAsync(conn, ownerId, beatmapId, 990_000, uploadedDaysAgo: 400, passed: false);
+        long unrankedHigher = await storedReplayAsync(conn, ownerId, beatmapId, 980_000, uploadedDaysAgo: 400, ranked: false);
+
+        var superseded = new List<long>();
+        for (int i = 0; i < 4; i++)
+            superseded.Add(await storedReplayAsync(conn, ownerId, beatmapId, 600_000 - i * 1000, uploadedDaysAgo: 400));
+
+        var options = keepTopN is int n ? new HousekeepingOptions { KeepTopN = n } : new HousekeepingOptions();
+        int keep = keepTopN ?? 3;
+
+        var report = await Housekeeping.RunOnceAsync(conn, store, options, DateTimeOffset.UtcNow);
+        string? bestKey = await conn.ExecuteScalarAsync<string?>("SELECT replay_key FROM scores WHERE id = @best", new { best });
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(report.ReplayMode, Is.EqualTo(ReplaySweepMode.On), "the default sweep prunes");
+            Assert.That(report.ReplayScoreIds, Does.Not.Contain(best), "the best ranked replay is never a candidate");
+            Assert.That(bestKey, Is.EqualTo(StoreKeys.Replay(best)));
+            Assert.That(await store.ObjectExistsAsync(StoreKeys.Replay(best)), Is.True, "the best ranked replay's object");
+            Assert.That(report.ReplayScoreIds, Does.Not.Contain(unrankedHigher), "the unranked board keeps its own best");
+
+            // Below the best, the ranked board keeps keep - 1 more passed plays, then the failed run sorts last.
+            var expectedPruned = superseded.Skip(keep - 1).Append(failedHigher);
+            Assert.That(report.ReplayScoreIds.Where(id => id == failedHigher || superseded.Contains(id)), Is.EquivalentTo(expectedPruned));
+        });
+    }
+
+    /// <summary>
+    /// A replay stored before 049 has no recorded hash; the upload route protects it by hashing the
+    /// stored object, which a prune deletes. So the prune records the hash first, in its own
+    /// transaction, and the pruned replay can then be restored only by the same bytes.
+    /// </summary>
+    [Test]
+    public async Task PruningAReplayWithNoRecordedHash_RecordsIt_SoOnlyTheSameBytesRestoreIt()
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        long ownerId = await insertUserAsync(conn, "hk replay hash");
+        var (_, beatmapId) = await insertMapAsync(conn, "Hash Before Prune");
+
+        for (int i = 0; i < 3; i++)
+            await storedReplayAsync(conn, ownerId, beatmapId, 900_000 - i * 1000, uploadedDaysAgo: 60);
+
+        long pruned = await storedReplayAsync(conn, ownerId, beatmapId, 100_000, uploadedDaysAgo: 60);
+
+        // The object as the game uploads it (a legacy replay shape), stored with no hash.
+        byte[] legacy = new byte[512];
+        RandomNumberGenerator.Fill(legacy);
+        legacy[0] = 0;
+        legacy[5] = 0x0b;
+        using (var buffer = new MemoryStream(legacy))
+            await store.WriteObjectAsync(StoreKeys.Replay(pruned), buffer);
+
+        var report = await Housekeeping.RunOnceAsync(conn, store, new HousekeepingOptions { ReplaySweep = ReplaySweepMode.On }, DateTimeOffset.UtcNow);
+        byte[]? recorded = await conn.ExecuteScalarAsync<byte[]?>("SELECT replay_sha256 FROM scores WHERE id = @pruned", new { pruned });
+
+        string bearer = (await new TokenService(new Db(dataSource)).IssueAsync(ownerId)).AccessToken;
+        byte[] other = (byte[])legacy.Clone();
+        other[100] ^= 0xff;
+
+        HttpStatusCode otherStatus, restoreStatus;
+        using (var response = await uploadReplayAsync(pruned, bearer, other))
+            otherStatus = response.StatusCode;
+        using (var response = await uploadReplayAsync(pruned, bearer, legacy))
+            restoreStatus = response.StatusCode;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(report.ReplayScoreIds, Does.Contain(pruned));
+            Assert.That(recorded, Is.EqualTo(SHA256.HashData(legacy)), "the prune recorded the deleted replay's hash");
+            Assert.That(otherStatus, Is.EqualTo(HttpStatusCode.Conflict), "different bytes cannot take the pruned replay's place");
+            Assert.That(restoreStatus, Is.EqualTo(HttpStatusCode.NoContent), "the same bytes restore it");
+        });
+
+        // Tidy, as below: a later pass in this database should not be told about this fixture's rows.
+        await conn.ExecuteAsync("UPDATE scores SET replay_uploaded_at = now() WHERE user_id = @ownerId", new { ownerId });
+    }
+
+    private static async Task<HttpResponseMessage> uploadReplayAsync(long scoreId, string bearer, byte[] body)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v2/scores/{scoreId}/replay") { Content = new ByteArrayContent(body) };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+        return await WebsiteFixture.Client.SendAsync(request);
     }
 
     [Test]

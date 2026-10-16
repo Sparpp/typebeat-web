@@ -16,7 +16,8 @@ namespace Typebeat.Web.Scoring;
 /// <item>WHICH board a map serves is decided by its set's CURRENT status, re-read per request, never
 /// trusted from the stored flags: 'ranked' and 'loved' sets serve the ranked board, 'pending' and
 /// 'unranked' sets serve the unranked one, and anything else (hidden, removed) serves no board at
-/// all. That switch lives at each call site because it also decides what the page renders instead.
+/// all (<see cref="BoardFor"/>, which the game client's board and a play's reported standing read;
+/// the set page picks its board from its tab and decides what it renders instead on its own).
 /// A loved set's board is ranked but earns no pp: its plays store ranked with pp 0, and the game's
 /// board sends no pp for any of its rows. First places stay confined to 'ranked' sets
 /// (<see cref="FirstPlacesOfUserSql"/>), as do the pp and ranked-score rankings.</item>
@@ -51,6 +52,20 @@ public static class BeatmapLeaderboard
     /// </summary>
     public static string OnBoard(string score, string board = "@wantRanked")
         => $"{score}.passed AND {score}.ranked = {board}";
+
+    /// <summary>
+    /// Which board a map serves, by its set's CURRENT status: true for the ranked board ('ranked',
+    /// 'loved'), false for the unranked one ('pending', 'unranked'), null for none (hidden, removed,
+    /// or no such beatmap). The game client makes the same decision from the wire status in
+    /// <c>GlobalLeaderboardAvailability.Resolve</c>; WireCompat's LeaderboardAvailabilityParityTest
+    /// pins the two together.
+    /// </summary>
+    public static bool? BoardFor(string? setStatus) => setStatus switch
+    {
+        "ranked" or "loved" => true,
+        "pending" or "unranked" => false,
+        _ => null,
+    };
 
     /// <summary>
     /// The board's ordering: highest total score first, the EARLIER submission (lower id) winning a

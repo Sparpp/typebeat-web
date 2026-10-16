@@ -13,7 +13,7 @@ namespace Typebeat.Web.Tests;
 ///
 /// <para>The sequences and the numbers are the game's own pins, transcribed cell for cell from
 /// <c>NonVisual/SpaceSkipWordTest.cs</c>, which is that feature's behaviour spec. Everything here is
-/// the browser's ENGINE state: cell states, the caret, the live combo, the points a press earns.
+/// the browser's ENGINE state: cell states, the caret, the live combo, the tiers a press earns.
 /// The SUBMITTED account is pinned separately, and against the live C# rather than against a
 /// literal, in <c>Typebeat.WireCompat.WordSkipLiveParityTest</c>: that is the only project that
 /// compiles both repos, and a shared leaderboard is what the two clients disagreeing costs.</para>
@@ -83,8 +83,7 @@ public class WordSkipParityTest
     ///
     /// <para>The gap's delta is 2600 - 3000 = -400, which the millisecond ladder would grade Ok, but
     /// the spacebar has been outside the timing challenge since backlog 148, so it takes the top
-    /// tier whatever the clock said. 600 is 300 for 'c' plus 300 for the space, the latter at combo
-    /// 0 after the skip's break, i.e. at a x1.00 multiplier.</para>
+    /// tier whatever the clock said: 'c' and the space are two Greats.</para>
     /// </summary>
     [Test]
     public void SpaceInsideAWordAbandonsTheRestOfItAndLandsOnTheNextWord()
@@ -110,7 +109,6 @@ public class WordSkipParityTest
             Assert.That(Int(run, "processorMisses"), Is.Zero, "the miss is the cell's resolution, and the line has not run out of time");
             Assert.That(Int(run, "ok"), Is.Zero);
             Assert.That(Int(run, "great"), Is.EqualTo(2));
-            Assert.That(Int(run, "score"), Is.EqualTo(600));
             Assert.That(Double(run, "accuracy"), Is.EqualTo(1.0), "the skip itself is not a keypress");
             Assert.That(Int(run, "maxCombo"), Is.EqualTo(1), "'c' made it 1, the skip broke it, the space rebuilt it to 1");
             Assert.That(Int(run, "breaks"), Is.EqualTo(1), "two cells given up, one break");
@@ -179,7 +177,6 @@ public class WordSkipParityTest
             Assert.That(Int(run, "caretIndex"), Is.EqualTo(3));
             Assert.That(Int(run, "processorMisses"), Is.Zero);
             Assert.That(Int(run, "great"), Is.EqualTo(3));
-            Assert.That(Int(run, "score"), Is.EqualTo(918));
             Assert.That(Int(run, "maxCombo"), Is.EqualTo(3), "never broken");
             Assert.That(Int(run, "breaks"), Is.Zero);
         });
@@ -285,7 +282,7 @@ public class WordSkipParityTest
 
     /// <summary>
     /// <c>RetypingAReclaimedWordEarnsRealJudgements</c>. The cells really are earnable again:
-    /// re-typing them produces ordinary judgements with ordinary points, not the scoring-inert retype
+    /// re-typing them produces ordinary judgements that are tallied, not the scoring-inert retype
     /// an already-earned cell produces. That is the whole point of withholding the osu result at the
     /// skip, since a cell takes only its first result.
     /// </summary>
@@ -296,9 +293,9 @@ public class WordSkipParityTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(Int(run, "pointsForTheInertRetype"), Is.Zero, "the gap was already earned before the undo erased it");
-            Assert.That(Int(run, "pointsForTheFirstReclaimedCell"), Is.GreaterThan(0),
-                "a reclaimed cell scores; an inert retype would not");
+            Assert.That(Int(run, "greatsForTheInertRetype"), Is.Zero, "the gap was already earned before the undo erased it");
+            Assert.That(Int(run, "greatsForTheFirstReclaimedCell"), Is.EqualTo(1),
+                "a reclaimed cell is tallied; an inert retype would not be");
 
             Assert.That(Strings(run, "states").Take(3), Is.EqualTo(new[] { "correct", "correct", "correct" }));
             Assert.That(Int(run, "great"), Is.EqualTo(4), "c, the gap, a, t, each counted once");
@@ -362,7 +359,7 @@ public class WordSkipParityTest
             Assert.That(Strings(run, "statesAfterReclaim").Take(3), Is.EqualTo(new[] { "untyped", "untyped", "untyped" }));
 
             Assert.That(Strings(run, "states")[0], Is.EqualTo("correct"), "and the head of the word is typeable again");
-            Assert.That(Int(run, "score"), Is.GreaterThan(0));
+            Assert.That(Int(run, "great"), Is.GreaterThan(0));
         });
     }
 

@@ -63,7 +63,7 @@ namespace Typebeat.Web.Scoring;
 /// WHAT IT CANNOT DISTINGUISH, and accepts. A row unranked for a reason that leaves no trace in
 /// the columns it can read is indistinguishable from a pending-set victim: there is no per-score
 /// reason column and no <c>ranked_at</c>. The re-derivation above is what stands in, and it is the
-/// same exposure <see cref="SkipGateRefund"/> already documents and accepts.
+/// same exposure the 016 skip-gate refund documented and accepted.
 /// </para>
 ///
 /// <para>

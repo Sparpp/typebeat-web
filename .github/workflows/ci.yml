@@ -28,12 +28,12 @@ jobs:
       # SUBMODULE_TOKEN: fine-grained PAT with read-only Contents on Sparpp/typebeat-web and
       # Sparpp/type-beat-assets (private). The game submodule Sparpp/typebeat is now public, so
       # it needs no explicit grant. checkout uses this token for the main repo and both submodules.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULE_TOKEN }}
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: |
             8.0.x
@@ -44,7 +44,7 @@ jobs:
       # demands, into the local feed declared in nuget.config.
       - name: Pack typebeat.Game.Resources into local feed
         run: |
-          # sed, not grep -P: portable across locales, and guard against an empty match —
+          # sed, not grep -P: portable across locales, and guard against an empty match:
           # an empty -p:Version fails the pack with an opaque MSB4044.
           VER=$(sed -n 's/.*Include="typebeat.Game.Resources" Version="\([^"]*\)".*/\1/p' external/typebeat-osu/typebeat.Game/typebeat.Game.csproj)
           if [ -z "$VER" ]; then echo "::error::could not extract typebeat.Game.Resources version from the game csproj"; exit 1; fi
@@ -57,7 +57,7 @@ jobs:
       # relative path (..\type-beat-assets\artifacts) that doesn't resolve on the Linux CI layout
       # and hard-fails restore with NU1301. The web build vendors typebeat.Game.Resources through
       # this repo's own feed (external/packages, packed above), so drop the submodule's config and
-      # restore purely from the root nuget.config — the same state CI had before the game repo
+      # restore purely from the root nuget.config, the same state CI had before the game repo
       # started tracking that file.
       - name: Drop game submodule's dev-local nuget.config
         run: rm -f external/typebeat-osu/nuget.config
@@ -71,11 +71,21 @@ jobs:
       - name: Build
         run: dotnet build typebeat-web.slnx -c Release
 
+      # Fail on any NuGet advisory against the deployed server's packages, direct or transitive:
+      # it decodes uploaded images and zips, so a flagged decoder is a live exposure. Reads the
+      # assets file the build just restored. `dotnet list package --vulnerable` exits 0 even when
+      # it reports something, so the step fails on the report's own heading instead.
+      - name: Vulnerable package check
+        run: |
+          set -o pipefail
+          dotnet list src/Typebeat.Web/Typebeat.Web.csproj package --vulnerable --include-transitive 2>&1 | tee vulnerable-packages.txt
+          if grep -q "has the following vulnerable packages" vulnerable-packages.txt; then echo "::error::the server references packages with known vulnerabilities (listed above)"; exit 1; fi
+
       - name: Unit tests
         run: dotnet test tests/Typebeat.Web.Tests -c Release --no-build
 
-      # ServerFixture connects to localhost:5432 as postgres/postgres and creates its own
-      # typebeat_wirecompat database — matches the service container above.
+      # ServerFixture connects to localhost:5432 as postgres/postgres (TYPEBEAT_TEST_PG_ADMIN overrides it)
+      # and creates its own typebeat_wirecompat_<run id> database, which matches the service container above.
       - name: Wire-compat tests (against the client's own DTOs)
         run: dotnet test tests/Typebeat.WireCompat -c Release --no-build
 
@@ -86,7 +96,7 @@ jobs:
     concurrency: production-deploy
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         # no submodules here: the app image builds only src/Typebeat.Web; deploy ships the repo
         # tree minus external/ (see tar below), and deploy/.env on the box is never overwritten
         # because it is git-ignored and therefore absent from the checkout. The one thing the box
@@ -144,6 +154,23 @@ jobs:
       # never takes production down (learned the hard way).
       - name: Build image on server
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web && ./deploy/up.sh build app'
+
+      # S1-018, one time: the Data Protection keyring moved from /data/dpkeys on the appdata volume
+      # to its own dpkeys volume (TYPEBEAT_DPKEYS_DIR). Copies the existing keys across BEFORE the
+      # first app that reads the new place starts, so the challenge, Google sign-in and antiforgery
+      # cookies issued before the deploy stay valid. Runs in a throwaway container of the image just
+      # built, which mounts both volumes exactly as the app will. The copy never overwrites (cp -n), so it is
+      # safe to repeat on every deploy and a no-op on a fresh box. The old copy stays where it was, for
+      # a rollback to :previous, which still reads /data/dpkeys; deploy/README.md, "Volumes", says
+      # when to delete it, and this step can go once it has run.
+      - name: Move the keyring off appdata
+        run: |
+          ssh -i ~/.ssh/deploy_key root@46.62.142.5 'bash -se' <<'REMOTE'
+          cd /opt/typebeat-web
+          ./deploy/up.sh run --rm --no-deps -T --entrypoint sh app -c '
+            if ls /data/dpkeys/key-*.xml >/dev/null 2>&1; then cp -pn /data/dpkeys/key-*.xml /dpkeys/ && echo "keyring in /dpkeys holds $(ls /dpkeys/key-*.xml | wc -l) keys after copying any missing ones from /data/dpkeys"
+            else echo "no keyring on appdata, nothing to move"; fi' </dev/null
+          REMOTE
 
       - name: Swap container
         id: swap

@@ -1,16 +1,13 @@
 using System.Globalization;
-using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Newtonsoft.Json.Linq;
 using Typebeat.Web.Auth;
-using Typebeat.Web.Caching;
 using Typebeat.Web.Data;
 using Typebeat.Web.Ops;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Social;
-using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Pages.Beatmapsets;
 
@@ -37,7 +34,7 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// policy itself counts only the Report POST.</para>
 /// </summary>
 [EnableRateLimiting(RateLimits.Report)]
-public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweeps, ILogger<SetModel> logger) : TypebeatPageModel
+public sealed class SetModel(Db db, BeatmapsetReview review) : TypebeatPageModel
 {
     private const int max_report_reason_length = 4000;
 
@@ -124,47 +121,7 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
-        var set = await conn.QuerySingleOrDefaultAsync<SetDetails>(
-            """
-            SELECT s.id               AS Id,
-                   s.title            AS Title,
-                   s.artist           AS Artist,
-                   s.title_unicode    AS TitleUnicode,
-                   s.artist_unicode   AS ArtistUnicode,
-                   s.source           AS Source,
-                   s.tags             AS Tags,
-                   s.description      AS Description,
-                   s.status           AS Status,
-                   s.explicit         AS Explicit,
-                   u.username::text   AS Creator,
-                   u.restricted       AS OwnerRestricted,
-                   s.owner_id         AS OwnerId,
-                   s.cover_key        AS CoverKey,
-                   CASE WHEN s.preview_key IS NOT NULL THEN '/' || s.preview_key END AS PreviewUrl,
-                   s.play_count       AS PlayCount,
-                   s.favourite_count  AS FavouriteCount,
-                   s.download_count   AS DownloadCount,
-                   -- No s.bpm: the stats box's BPM row became the peak-WPM row (028_wpm_curve.sql),
-                   -- and nothing else on this page ever read it. The column is still on the set and
-                   -- still drives the bpm: search operator; it is only unread HERE.
-                   s.submitted_at     AS SubmittedAt,
-                   s.updated_at       AS UpdatedAt,
-                   EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId) AS IsFavourited,
-                   -- Pre-M3 sets (backfilled by migration 004) have live diffs but no uploaded
-                   -- package: the Download button must not render a dead /download link for them.
-                   EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS HasPackage,
-                   -- Appended on purpose: Dapper binds a positional record's constructor parameters
-                   -- to the reader's columns BY POSITION, so a new column has to be appended at the
-                   -- same index in both this SELECT and SetDetails.
-                   s.language         AS Language,
-                   -- Backlog 418: a live .osu difficulty, the card's HasPlayableDiff test (see
-                   -- SetDetails.CanWebplay).
-                   EXISTS (SELECT 1 FROM beatmaps b2 WHERE b2.set_id = s.id AND b2.filename LIKE '%.osu') AS HasPlayableDiff
-            FROM beatmapsets s
-            JOIN users u ON u.id = s.owner_id
-            WHERE s.id = @id
-            """,
-            new { id, viewerId = CurrentUser?.Id ?? 0 });
+        var set = await SetQueries.DetailsAsync(conn, id, CurrentUser?.Id ?? 0);
 
         bool isOwner = CurrentUser?.Id == set?.OwnerId;
         bool isAdmin = CurrentUser?.IsAdmin == true;
@@ -183,35 +140,7 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
 
         // Every difficulty in the set, hardest first. The stats box + leaderboard show one at a
         // time: the ?diff= beatmap when it belongs to this set, otherwise the hardest.
-        Diffs = (await conn.QueryAsync<DiffStats>(
-            """
-            SELECT b.id                    AS Id,
-                   b.version_name          AS Name,
-                   b.total_length_s        AS TotalLengthS,
-                   b.word_count            AS WordCount,
-                   b.char_count            AS CharCount,
-                   b.wpm::double precision AS Wpm,
-                   b.difficulty_rating     AS Stars,
-                   b.lyrics                AS Lyrics,
-                   -- 028_wpm_curve.sql. NULL on any row the pace backfill has not reached, and on
-                   -- any map too short to measure; DiffStats.HasCurve folds the two together.
-                   b.peak_wpm              AS PeakWpm,
-                   b.peak_cpm              AS PeakCpm,
-                   -- 033_target_wpm.sql; NULL only until the v18 sweep fills it, since a per-line
-                   -- figure needs no rolling window the way the two above do.
-                   b.target_wpm            AS TargetWpm,
-                   b.wpm_curve             AS WpmCurve,
-                   -- 037_lyric_font.sql. NULL means "no font chosen", which hides the row; the
-                   -- name is informational (only the desktop client renders the font).
-                   b.lyric_font            AS LyricFont,
-                   -- 039_lyrics_original.sql: the same lyrics in their original script, line for
-                   -- line, or '' when the difficulty carries none (backlog 332).
-                   b.lyrics_original       AS LyricsOriginal
-            FROM beatmaps b
-            WHERE b.set_id = @id AND b.filename IS NOT NULL
-            ORDER BY b.difficulty_rating DESC, b.id ASC
-            """,
-            new { id })).ToList();
+        Diffs = await SetQueries.DiffsAsync(conn, id);
 
         Diff = Diffs.FirstOrDefault(d => d.Id == diff) ?? Diffs.FirstOrDefault();
         requestedDiff = diff != 0 && Diff?.Id == diff ? diff : 0;
@@ -227,37 +156,7 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
         // sets render a note instead, so don't even run the query for them.
         bool wantRanked = Board == "ranked";
         if (Set.Status is "ranked" or "loved" && Diff is not null)
-            Scores = (await conn.QueryAsync<ScoreRow>(
-            $"""
-            SELECT best.id           AS ScoreId,
-                   best.user_id      AS UserId,
-                   best.username     AS Username,
-                   best.avatar_key   AS AvatarKey,
-                   best.total_score  AS TotalScore,
-                   best.accuracy     AS Accuracy,
-                   best.completion   AS Completion,
-                   best.max_combo    AS MaxCombo,
-                   best.rank         AS Rank,
-                   best.ended_at     AS EndedAt,
-                   best.mods         AS ModsJson,
-                   best.statistics   AS StatisticsJson,
-                   best.has_replay   AS HasReplay,
-                   best.country_code AS CountryCode
-            FROM (
-                SELECT DISTINCT ON (sc.user_id)
-                       sc.id, sc.user_id, sc.total_score, sc.accuracy, sc.completion, sc.max_combo, sc.rank,
-                       sc.ended_at, sc.mods::text AS mods, sc.statistics::text AS statistics,
-                       sc.replay_key IS NOT NULL AS has_replay,
-                       u.username::text AS username, u.avatar_key, u.country_code::text AS country_code
-                FROM scores sc
-                JOIN users u ON u.id = sc.user_id
-                WHERE sc.beatmap_id = @beatmapId AND {BeatmapLeaderboard.OnBoard("sc")}
-                ORDER BY sc.user_id, {BeatmapLeaderboard.Order("sc")}
-            ) best
-            ORDER BY {BeatmapLeaderboard.Order("best")}
-            LIMIT 50
-            """,
-                new { beatmapId = Diff.Id, wantRanked })).ToList();
+            Scores = await SetQueries.BoardAsync(conn, Diff.Id, wantRanked);
 
         // The comments section (below the lyrics): live rows by non-delisted authors, oldest
         // first, keyset-paged. PageSize + 1 sentinel tells us whether a show-more link renders.
@@ -295,8 +194,7 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
-        string? status = await conn.ExecuteScalarAsync<string?>(
-            "SELECT status FROM beatmapsets WHERE id = @id", new { id });
+        string? status = await SetQueries.StatusAsync(conn, id);
 
         if (status is null or "removed")
             return NotFound();
@@ -307,8 +205,7 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
         // jumps to the top; a plain form submit still redirects for no-JS fallback.
         if (string.Equals(Request.Headers["X-Requested-With"], "fetch", StringComparison.Ordinal))
         {
-            int count = await conn.ExecuteScalarAsync<int>(
-                "SELECT favourite_count FROM beatmapsets WHERE id = @id", new { id });
+            int count = await SetQueries.FavouriteCountAsync(conn, id);
             return new JsonResult(new { favourited, count });
         }
 
@@ -326,16 +223,12 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
-        bool exists = await conn.ExecuteScalarAsync<bool>(
-            "SELECT EXISTS (SELECT 1 FROM beatmapsets WHERE id = @id AND status <> 'removed')", new { id });
+        bool exists = await SetQueries.ReportableAsync(conn, id);
 
         if (!exists)
             return NotFound();
 
-        // reporter_id is nullable by design (001_init.sql): anonymous reports are accepted.
-        await conn.ExecuteAsync(
-            "INSERT INTO reports (set_id, reporter_id, reason) VALUES (@id, @reporterId, @reason)",
-            new { id, reporterId = CurrentUser?.Id, reason });
+        await SetQueries.InsertReportAsync(conn, id, CurrentUser?.Id, reason);
 
         // "true" not "1": the bool handler parameter binds via the default TypeConverter,
         // which rejects numeric strings.
@@ -365,13 +258,7 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
-        int changed = await conn.ExecuteAsync(
-            """
-            UPDATE beatmapsets
-            SET description = @description
-            WHERE id = @id AND (owner_id = @uid OR @canReview)
-            """,
-            new { id, description, uid = CurrentUser.Id, canReview = CurrentUser.CanReviewMaps });
+        int changed = await SetQueries.UpdateDescriptionAsync(conn, id, description, CurrentUser.Id, CurrentUser.CanReviewMaps);
 
         if (changed == 0)
             return NotFound();
@@ -402,8 +289,7 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
-        string? status = await conn.ExecuteScalarAsync<string?>(
-            "SELECT status FROM beatmapsets WHERE id = @id", new { id });
+        string? status = await SetQueries.StatusAsync(conn, id);
 
         if (status is null or "removed")
             return NotFound();
@@ -422,8 +308,8 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
     /// WHERE clause (author, set owner, or reviewer); no row means NotFound, whether the comment
     /// never existed, is already gone, or is simply not the caller's to remove
     /// (indistinguishable on purpose, the pin handlers' rule). A REVIEWER removing somebody
-    /// else's comment on somebody else's set is moderation and writes the audit row, best-effort
-    /// like the rank/unrank audit; deleting your own comment, or tidying your own set's thread,
+    /// else's comment on somebody else's set is moderation and writes the audit row in the same
+    /// transaction as the removal; deleting your own comment, or tidying your own set's thread,
     /// is not.
     /// </summary>
     public async Task<IActionResult> OnPostDeleteCommentAsync(long id, long commentId)
@@ -432,74 +318,47 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
             return Redirect("/login");
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+        await using var tx = await conn.BeginTransactionAsync(HttpContext.RequestAborted);
 
         var deleted = await BeatmapsetComments.SoftDeleteAsync(
-            conn, id, commentId, CurrentUser.Id, CurrentUser.CanReviewMaps, HttpContext.RequestAborted);
+            conn, id, commentId, CurrentUser.Id, CurrentUser.CanReviewMaps, HttpContext.RequestAborted, tx);
 
         if (deleted is null)
             return NotFound();
 
         if (CommentModeration.IsModeration(deleted, CurrentUser.Id, CurrentUser.CanReviewMaps))
-        {
-            try
-            {
-                await CommentModeration.RecordAsync(conn, CurrentUser.Id, id, commentId);
-            }
-            catch (Exception e)
-            {
-                logger.LogWarning(e, "Comment {CommentId} on set {SetId} was removed but the audit row failed.", commentId, id);
-            }
-        }
+            await CommentModeration.RecordAsync(conn, CurrentUser.Id, id, commentId, tx);
+
+        await tx.CommitAsync(HttpContext.RequestAborted);
 
         return Redirect($"/beatmapsets/{id}#comments");
     }
 
     // ---- reviewer controls (map_reviewer or admin only) ----
 
-    public Task<IActionResult> OnPostRankAsync(long id) => transitionAsync(id, from: ["pending"], to: "ranked", action: "rank");
+    public Task<IActionResult> OnPostRankAsync(long id) => reviewAsync(id, BeatmapsetReview.Rank);
 
-    public Task<IActionResult> OnPostUnrankAsync(long id) => transitionAsync(id, from: ["ranked"], to: "pending", action: "unrank");
+    public Task<IActionResult> OnPostUnrankAsync(long id) => reviewAsync(id, BeatmapsetReview.Unrank);
 
-    public Task<IActionResult> OnPostLoveAsync(long id) => transitionAsync(id, from: ["pending", "unranked"], to: "loved", action: "love");
+    public Task<IActionResult> OnPostLoveAsync(long id) => reviewAsync(id, BeatmapsetReview.Love);
 
-    // Unlove returns the set to its own intended_status (pending or unranked), so a loved set
-    // goes back to whichever of the two it was before it was loved.
-    public Task<IActionResult> OnPostUnloveAsync(long id) => transitionAsync(id, from: ["loved"], to: null, action: "unlove");
+    public Task<IActionResult> OnPostUnloveAsync(long id) => reviewAsync(id, BeatmapsetReview.Unlove);
 
     /// <summary>
-    /// The review transitions are pending → ranked, ranked → pending, pending|unranked → loved and
-    /// loved → the set's intended_status (<paramref name="to"/> null); there is no direct
-    /// ranked ↔ loved. Hidden and removed sets are untouchable from here (takedowns stay an admin-SQL lever). 404 for
-    /// non-reviewers, and for a reviewer acting on their OWN set; the same nothing-to-see answer
-    /// the buttons' absence gives them (the site's custom cookie auth has no ASP.NET
-    /// authentication scheme for Forbid()).
+    /// The four levers, each a <see cref="BeatmapsetReview.Transition"/>; <see cref="BeatmapsetReview"/>
+    /// owns who may pull them, the status change, its audit row and what a rank carries. 404 for
+    /// non-reviewers, and for a reviewer acting on their OWN set (the site's custom cookie auth has
+    /// no ASP.NET authentication scheme for Forbid()).
     /// </summary>
-    private async Task<IActionResult> transitionAsync(long id, string[] from, string? to, string action)
+    private async Task<IActionResult> reviewAsync(long id, BeatmapsetReview.Transition transition)
     {
-        if (CurrentUser?.CanReviewMaps != true)
+        var outcome = await review.ApplyAsync(CurrentUser, id, transition, HttpContext.RequestAborted);
+
+        if (outcome == BeatmapsetReview.Outcome.NotFound)
             return NotFound();
 
-        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
-
-        // Review is someone else's judgement: a map_reviewer may not rank or unrank a set they
-        // own. The exemption is by ROLE and not by name, so an administrator (who can already
-        // reach every other moderation lever) may still flip their own set.
-        // This lookup doubles as the existence check the changed == 0 branch below used to run
-        // as a second query: owner_id is NOT NULL, so a null here means there is no such set.
-        var owner = await conn.QuerySingleOrDefaultAsync<(long OwnerId, string Status)?>(
-            "SELECT owner_id, status FROM beatmapsets WHERE id = @id", new { id });
-
-        if (owner is null || (owner.Value.OwnerId == CurrentUser.Id && !CurrentUser.IsAdmin))
-            return NotFound();
-
-        long ownerId = owner.Value.OwnerId;
-        string oldStatus = owner.Value.Status;
-
-        // Startup sweep gate (backlog 368): a rank carries the set's pending plays with the same
-        // SetRankRefund and PpBackfill passes the boot chain may still be running, so until the chain
-        // is through the rank is refused BEFORE anything changes (503, Retry-After), and the reviewer
-        // simply presses again a minute later. Unranking carries nothing and is never held.
-        if (to == "ranked" && !sweeps.RankOpen)
+        // A rank refused while the startup sweeps run: nothing changed, the reviewer presses again.
+        if (outcome == BeatmapsetReview.Outcome.SweepsRunning)
         {
             Response.Headers.RetryAfter = StartupSweepGate.RetryAfterSeconds.ToString(CultureInfo.InvariantCulture);
             return new ContentResult
@@ -510,143 +369,9 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
             };
         }
 
-        // RETURNING the new status serves the audit note and, for Unlove (to == null), tells us
-        // which intended_status the set went back to; null means the status guard matched nothing.
-        string? newStatus = await conn.QuerySingleOrDefaultAsync<string?>(
-            """
-            UPDATE beatmapsets SET status = COALESCE(@to, intended_status), updated_at = now()
-            WHERE id = @id AND status = ANY(@from)
-            RETURNING status
-            """,
-            new { id, from, to });
-
-        if (newStatus is not null)
-        {
-            // Record the review in the audit table. Until now nothing wrote here, so there was no
-            // way to ask "which sets were ranked since X": beatmapsets carries only updated_at,
-            // which any edit bumps. This row IS that history, and its monotonic id is what the
-            // Discord bot's ranked-map feed cursors over (BuddyEndpoints), the same way the score
-            // feed cursors over scores.id. Best-effort: the transition itself already committed,
-            // and a failed audit insert must not 500 a successful rank.
-            try
-            {
-                await conn.ExecuteAsync(
-                    """
-                    INSERT INTO moderation_actions (actor_id, set_id, action, note)
-                    VALUES (@actorId, @id, @action, @note)
-                    """,
-                    new { actorId = CurrentUser.Id, id, action, note = $"{oldStatus} -> {newStatus}" });
-            }
-            catch (Exception e)
-            {
-                logger.LogWarning(e, "Set {SetId} transitioned {From}->{To} but the audit row failed.", id, oldStatus, newStatus);
-            }
-
-            if (to == "loved")
-            {
-                try
-                {
-                    // Reopening the board must apply the same version policy as ranking, without
-                    // carrying pending plays or awarding pp to Respected maps.
-                    await SetRankClassicMark.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);
-                }
-                catch (Exception e)
-                {
-                    logger.LogWarning(e, "Set {SetId} was respected but marking its old-version plays failed; the next boot's sweep will retry.", id);
-                }
-            }
-
-            if (to == "ranked")
-                await carryPendingPlaysAsync(id);
-
-            // Every cached read that shows the status (the set's API, the listing and landing
-            // cards, the rankings, the owner's profile, every board and lookup memo) goes now
-            // rather than up to a minute from now (backlog 366).
-            await HttpContext.RequestServices.GetRequiredService<CacheEviction>().AfterSetStatusAsync(id, ownerId);
-        }
-
         // Wrong-state POSTs (double-submit, stale tab) are benign: land back on the page, which
         // shows the current state. A nonexistent set is a real 404, already answered above.
         return Redirect($"/beatmapsets/{id}");
-    }
-
-    /// <summary>
-    /// Carries the set's pending-era plays onto its ranked board IN THIS REQUEST (backlog 352):
-    /// the boot sweep's own pass (<see cref="SetRankRefund.RunForSetAsync"/>, same plan, same
-    /// version rule, narrowed to this set), then the boot pricing (<see cref="PpBackfill"/>,
-    /// narrowed the same way), so the page the reviewer is redirected to already lists the plays
-    /// with their pp. Unranking has no counterpart: a carried play keeps its flag, exactly as a
-    /// play submitted while the set was ranked does.
-    ///
-    /// <para>
-    /// IT ALSO PRICES LOVED-ERA PLAYS. A set reaches Rank from loved by way of Unlove (there is no
-    /// direct loved → ranked), and the plays made while it was loved are already stored ranked, so
-    /// the carry has nothing to flip on them; they were settled at 0 pp because loved earns none.
-    /// Stamping the set's ranked rows stale before the pricing pass is what prices them now.
-    /// </para>
-    ///
-    /// <para>
-    /// THE OTHER DIRECTION RUNS TOO (backlog 398). Ranking a set after a re-upload must also MARK
-    /// the plays made on the version that used to be ranked, or the newly-ranked board shows an old
-    /// version's plays as if they were on the current map. <see cref="SetRankClassicMark.RunForSetAsync"/>
-    /// is the same predicate pointed down: it appends the synthetic Classic mark ("CL") to those
-    /// scores, reprices them to 0.95x, and stamps them for a reprice. It is NOT an unranking, so it
-    /// touches both the ranked rows this board is about to show and any unranked ones on the set.
-    /// The two passes do not fight: the carry-up takes UNRANKED rows and the mark rewrites mods and
-    /// total without changing `ranked`, so a score is moved at most once per transition whichever
-    /// order they ran in.
-    /// </para>
-    ///
-    /// <para>
-    /// BEST-EFFORT, like the audit row above: the rank has already committed, and a failure here
-    /// must not 500 it. Each row commits on its own, so a failure part way leaves some rows marked
-    /// and the rest for the next boot's sweep, which reconsiders every row. Run to completion even
-    /// if the reviewer's browser goes away, for the same reason.
-    /// </para>
-    /// </summary>
-    private async Task carryPendingPlaysAsync(long id)
-    {
-        // FIRST, and on its own: loved-era plays are stored ranked but settled at 0 pp (backlog:
-        // loved status). The set is ranked now, so stamp its ranked rows stale for the one pricing
-        // path. It runs before the mark and the carry so a throw in either cannot skip it: once
-        // this commits, the PpBackfill below prices the rows, and if that never runs the next
-        // boot's sweep does (the set is ranked by then, so nothing holds them back). Rows from an
-        // earlier ranked spell are repriced to the price they already hold, which costs one formula
-        // run per row and nothing else; the mark and the carry leave their own rows stale anyway.
-        try
-        {
-            await using var conn = await db.OpenAsync(CancellationToken.None);
-            await conn.ExecuteAsync(
-                """
-                UPDATE scores SET pp_version = 0
-                WHERE ranked AND beatmap_id IN (SELECT id FROM beatmaps WHERE set_id = @id)
-                """,
-                new { id });
-        }
-        catch (Exception e)
-        {
-            // Nothing re-stamps these rows later: no sweep revisits a settled row on a set it has
-            // no reason to suspect, so the set's loved-era plays stay unpriced until the next pp
-            // version bump or a re-rank. Say so, rather than promise a retry.
-            logger.LogWarning(e, "Set {SetId} was ranked but stamping its loved-era plays for pricing failed; they stay unpriced until the next pp version bump or a re-rank.", id);
-        }
-
-        try
-        {
-            // Downward first: mark plays on a version that is no longer the ranked one, so the board
-            // this rank just reopened is honest about which plays were on a different map before the
-            // carry adds the pending-era ones. PpBackfill then prices the marked rows, the carried
-            // ones and the loved-era ones stamped above at once.
-            await SetRankClassicMark.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);
-
-            int carried = await SetRankRefund.RunForSetAsync(db, fileStore, logger, id, CancellationToken.None);
-
-            await PpBackfill.RunAsync(db, logger, CancellationToken.None, setId: id);
-        }
-        catch (Exception e)
-        {
-            logger.LogWarning(e, "Set {SetId} was ranked but settling its version-fresh plays failed; the next boot's sweep will retry.", id);
-        }
     }
 
     // ---- display helpers ----

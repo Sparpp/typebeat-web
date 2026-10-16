@@ -431,7 +431,7 @@ public class VariableRateScoreTest
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
             request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["version_hash"] = "variable-rate-test-build",
+                ["version_hash"] = "7e570000000000000000000000000002",
                 ["beatmap_hash"] = checksum,
                 ["ruleset_id"] = "0",
             });

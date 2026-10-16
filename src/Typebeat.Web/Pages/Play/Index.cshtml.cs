@@ -27,12 +27,20 @@ public sealed class IndexModel(Db db, IAntiforgery antiforgery) : TypebeatPageMo
 {
     /// <summary>
     /// Only sets satisfying this are playable: exactly what the /play/map endpoints need. The
-    /// status list is <see cref="Typebeat.Web.Endpoints.BeatmapsetEndpoints.IsPublished"/> in SQL,
+    /// status list is <see cref="Typebeat.Web.Endpoints.BeatmapsetEndpoints.PublishedSql"/>,
     /// and it must stay equal to <see cref="BeatmapsetCardModel.CanWebplay"/>, or the picker and the
     /// rail on every other listing would disagree about what is playable.
     /// </summary>
     private const string playable_filter =
-        "card.status IN ('pending', 'unranked', 'ranked', 'loved') AND card.haspackage AND card.hasplayablediff";
+        $"card.status IN {Endpoints.BeatmapsetEndpoints.PublishedSql} AND card.haspackage AND card.hasplayablediff";
+
+    /// <summary>
+    /// The listing's and the landing page's visibility rule, applied inside the card SQL where its
+    /// <c>s</c> and <c>u</c> aliases are in scope: restricted mappers' sets are delisted site-wide
+    /// (their profiles 404), so they are neither offered nor opened by a deep link; the owner
+    /// still finds their own.
+    /// </summary>
+    private const string visible_filter = "NOT u.restricted OR s.owner_id = @viewerId";
 
     public IReadOnlyList<BeatmapsetCardModel> Maps { get; private set; } = [];
     public string CsrfToken { get; private set; } = string.Empty;
@@ -58,6 +66,7 @@ public sealed class IndexModel(Db db, IAntiforgery antiforgery) : TypebeatPageMo
             $"""
             SELECT card.* FROM (
                 {BeatmapsetCardSql.Select}
+                WHERE {visible_filter}
             ) card
             WHERE {playable_filter}
             ORDER BY card.playcount DESC, card.id DESC
@@ -74,6 +83,7 @@ public sealed class IndexModel(Db db, IAntiforgery antiforgery) : TypebeatPageMo
             $"""
             SELECT card.* FROM (
                 {BeatmapsetCardSql.Select}
+                WHERE {visible_filter}
             ) card
             WHERE card.id = @set AND {playable_filter}
             """,

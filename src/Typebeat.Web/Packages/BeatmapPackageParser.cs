@@ -105,6 +105,7 @@ public static class BeatmapPackageParser
             var files = new List<PackageFileEntry>();
             var difficulties = new List<ParsedDifficulty>();
             long totalUncompressed = 0;
+            long totalRead = 0;
 
             foreach (var entry in archive.Entries)
             {
@@ -115,6 +116,8 @@ public static class BeatmapPackageParser
                 string filename = NormalizeFilename(entry.FullName);
                 validateFilename(filename);
 
+                // The declared lengths refuse an honest-looking bomb up front; the bytes actually
+                // read are what bound memory, since a header can lie in either direction.
                 totalUncompressed += entry.Length;
                 if (totalUncompressed > max_total_uncompressed)
                     throw new PackageValidationException("The package decompresses to more than 1 GiB.");
@@ -124,14 +127,14 @@ public static class BeatmapPackageParser
                 try
                 {
                     using var entryStream = entry.Open();
-                    using var buffer = new MemoryStream(checked((int)Math.Min(entry.Length, int.MaxValue)));
-                    entryStream.CopyTo(buffer);
-                    content = buffer.ToArray();
+                    content = ReadBounded(entryStream, max_total_uncompressed - totalRead);
                 }
                 catch (InvalidDataException)
                 {
                     throw new PackageValidationException($"File \"{filename}\" in the package is corrupt.");
                 }
+
+                totalRead += content.LongLength;
 
                 files.Add(new PackageFileEntry(SHA256.HashData(content), content.LongLength, filename));
 
@@ -146,6 +149,30 @@ public static class BeatmapPackageParser
                 PackageSize = packageSize,
             };
         }
+    }
+
+    /// <summary>
+    /// Reads one decompressed entry through a fixed-size buffer, growing only with the bytes that
+    /// actually arrive (never preallocating from the entry's declared length), and refuses it
+    /// once more than <paramref name="limit"/> bytes come out. The parser passes what is left of
+    /// the 1 GiB package budget, so that is also the cap on any single entry.
+    /// </summary>
+    /// <exception cref="PackageValidationException">More than <paramref name="limit"/> bytes were read.</exception>
+    public static byte[] ReadBounded(Stream source, long limit)
+    {
+        using var buffer = new MemoryStream();
+        byte[] chunk = new byte[81920];
+        int read;
+
+        while ((read = source.Read(chunk, 0, chunk.Length)) > 0)
+        {
+            if (buffer.Length + read > limit)
+                throw new PackageValidationException("The package decompresses to more than 1 GiB.");
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return buffer.ToArray();
     }
 
     /// <summary>Archive paths are compared and stored with forward slashes (osu's ToStandardisedPath).</summary>

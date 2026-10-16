@@ -748,8 +748,10 @@ public class ScoreRecalcTest
                     "bit 1 survives the .osr beside bit 0");
                 Assert.That(era2Frames[1].AuthoredSyllablesOnly, Is.True, "and bit 2 (backlog 363) beside them");
                 Assert.That(era2Frames[1].AlignSubdivisionTargets, Is.True, "and bit 3 (PR 5) beside them");
-                Assert.That(era2Frames[1].EarlyFinish, Is.True, "and bit 4 (EARLY FINISH) beside them: the live word, 31, survives whole");
-                Assert.That(frames[1].AuthoredSyllablesOnly || frames[1].AlignSubdivisionTargets || frames[1].EarlyFinish, Is.False, "while the 347-era header leaves bits 2, 3 and 4 clear");
+                Assert.That(era2Frames[1].EarlyFinish, Is.True, "and bit 4 (EARLY FINISH) beside them");
+                Assert.That(era2Frames[1].KeyTimeJudgement, Is.True, "and bit 9 (KEY-TIME JUDGEMENT) beside them: bits 0 to 4 and 9 survive whole");
+                Assert.That(frames[1].AuthoredSyllablesOnly || frames[1].AlignSubdivisionTargets || frames[1].EarlyFinish || frames[1].KeyTimeJudgement, Is.False,
+                    "while the 347-era header leaves bits 2, 3, 4 and 9 clear");
                 Assert.That(era2.Skip, Is.EqualTo(SkipReason.None), "the second-input-era row reproduces from its own .osr");
                 Assert.That(era2.NewMaxCombo, Is.EqualTo(12), "second input era: no cap, the run never broke");
                 Assert.That(era2.NewStatistics!.GetValueOrDefault("meh"), Is.Zero, "second input era: no cap, no Meh award");
@@ -760,6 +762,118 @@ public class ScoreRecalcTest
         {
             Directory.Delete(dir, true);
         }
+    }
+
+    /// <summary>
+    /// G2-003: second-word bit 9, KEY-TIME JUDGEMENT, travels in the extended header through the .osr
+    /// the tool decodes, and each era's row re-derives from its own frames. The same physical run is
+    /// recorded both ways: every key down on its letter's target, every commit paired after a 200 ms
+    /// frame hitch. The live client (bit set) stamps the key times; a client before it stamped the
+    /// pairing times, and that row keeps the grades it was given. The bit selects no engine rule (a
+    /// frame is fed at its own time either way), so it is the stamps that differ, and the header
+    /// says which instant they are.
+    /// </summary>
+    [Test]
+    public void TheKeyTimeEraTravelsInTheSecondHeaderThroughTheOsr()
+    {
+        var ruleset = new TypeBeatRuleset();
+        var map = RushMap();
+
+        var osuText = new StringWriter();
+        ruleset.EncodeToNativeFormat(map, null, osuText);
+        byte[] osu = Encoding.UTF8.GetBytes(osuText.ToString());
+        string md5 = Convert.ToHexStringLower(MD5.HashData(osu));
+
+        string dir = Path.Combine(Path.GetTempPath(), "typebeat-recalc-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+
+        try
+        {
+            string packagePath = Path.Combine(dir, "set.osz");
+
+            using (var zip = ZipFile.Open(packagePath, ZipArchiveMode.Create))
+            using (var entry = zip.CreateEntry("map.osu").Open())
+                entry.Write(osu);
+
+            using var source = new ReplayArchive("http://localhost", Path.Combine(dir, "cache"));
+            source.IndexPackage(packagePath);
+
+            ReplayArchive.DecodedReplay throughOsr(Replay replay)
+            {
+                var score = new Score
+                {
+                    Replay = replay,
+                    ScoreInfo = new ScoreInfo
+                    {
+                        Ruleset = ruleset.RulesetInfo,
+                        BeatmapInfo = new BeatmapInfo { MD5Hash = md5 },
+                        User = new typebeat.Game.Online.API.Requests.Responses.APIUser { Username = "recalc" },
+                        Date = new DateTimeOffset(2026, 10, 16, 0, 0, 0, TimeSpan.Zero),
+                    },
+                };
+
+                using var stream = new MemoryStream();
+                new LegacyScoreEncoder(score, map).Encode(stream);
+
+                var decoded = source.Decode(stream.ToArray());
+                Assert.That(decoded?.Score, Is.Not.Null, "the package must resolve the replay's beatmap hash");
+                return decoded!;
+            }
+
+            var keyTimeReplay = HitchedReplay(keyTimeJudgement: true);
+            var pairingReplay = HitchedReplay(keyTimeJudgement: false);
+
+            var keyTimeDecoded = throughOsr(keyTimeReplay);
+            var pairingDecoded = throughOsr(pairingReplay);
+
+            var keyTimeStored = StoredFor(keyTimeDecoded.Playable!, keyTimeReplay);
+            var pairingStored = StoredFor(pairingDecoded.Playable!, pairingReplay);
+
+            var keyTime = Recalculation.Run(keyTimeStored, keyTimeDecoded);
+            var pairing = Recalculation.Run(pairingStored, pairingDecoded);
+            var crossed = Recalculation.Run(pairingStored, keyTimeDecoded);
+
+            Assert.Multiple(() =>
+            {
+                var keyTimeHeader = keyTimeDecoded.Score!.Replay.Frames.Cast<TypeBeatReplayFrame>().ToList()[1];
+                var pairingHeader = pairingDecoded.Score!.Replay.Frames.Cast<TypeBeatReplayFrame>().ToList()[1];
+
+                Assert.That(keyTimeHeader.IsConfigExtended && keyTimeHeader.KeyTimeJudgement, Is.True, "bit 9 survives the .osr, set");
+                Assert.That(keyTimeHeader.RushCapCostsAccuracy && keyTimeHeader.InputEra2 && keyTimeHeader.EarlyFinish, Is.True, "beside the other live bits");
+                Assert.That(pairingHeader.IsConfigExtended && !pairingHeader.KeyTimeJudgement, Is.True, "and clear where the client did not stamp key times");
+
+                Assert.That(keyTime.Skip, Is.EqualTo(SkipReason.None), "the key-time row reproduces from its own .osr");
+                Assert.That(keyTime.NewStatistics!.GetValueOrDefault("great"), Is.EqualTo(word.Length), "key time: every press on its target");
+
+                Assert.That(pairing.Skip, Is.EqualTo(SkipReason.None), "the pairing-time row reproduces from its own .osr");
+                Assert.That(pairing.NewStatistics!.GetValueOrDefault("great"), Is.Zero, "pairing time: every press graded 200 ms late, as it was played");
+
+                Assert.That(crossed.Skip, Is.Not.EqualTo(SkipReason.None), "a pairing-time row is never re-graded at key time");
+            });
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    /// <summary>
+    /// The whole word, one key on each letter's target (1000, 1010, ... 1110) and each commit paired
+    /// 200 ms later; stamped at the key under <paramref name="keyTimeJudgement"/>, at the pairing
+    /// without it. The rest of the header is the live client's.
+    /// </summary>
+    private static Replay HitchedReplay(bool keyTimeJudgement)
+    {
+        var replay = new Replay();
+
+        replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, flexibleLines: true, boundedRush: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true, earlyFinish: true,
+            keyTimeJudgement: keyTimeJudgement));
+
+        for (int i = 0; i < word.Length; i++)
+            replay.Frames.Add(new TypeBeatReplayFrame(1000 + 10 * i + (keyTimeJudgement ? 0 : 200), word[i]));
+
+        return replay;
     }
 
     /// <summary>One line, "abcdefghijkl" over [1000, 1120] (targets 10 ms apart), inside a window to 60000.</summary>
@@ -793,7 +907,8 @@ public class ScoreRecalcTest
     /// Nine presses at 1000 on the unpinned caret, then 'j', 'k', 'l' at 1120. The extended header
     /// carries bit 0 (backlog 347) and, with <paramref name="inputEra2"/>, bit 1 (PR 3), bit 2
     /// (backlog 363, the live grouping), bit 3 (PR 5, the aligned subdivision targets) and bit 4
-    /// (EARLY FINISH, the final line sealing the moment it is fully typed), which is the live word 31.
+    /// (EARLY FINISH, the final line sealing the moment it is fully typed) and bit 9 (KEY-TIME
+    /// JUDGEMENT, the frames stamped at key time), which are the live word's Latin-map eras.
     /// </summary>
     private static Replay RushReplay(bool withExtendedHeader, bool inputEra2 = false)
     {
@@ -802,7 +917,7 @@ public class ScoreRecalcTest
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, flexibleLines: true, boundedRush: true));
 
         if (withExtendedHeader)
-            replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2, earlyFinish: inputEra2));
+            replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2, earlyFinish: inputEra2, keyTimeJudgement: inputEra2));
 
         for (int i = 0; i < 9; i++)
             replay.Frames.Add(new TypeBeatReplayFrame(1000, word[i]));

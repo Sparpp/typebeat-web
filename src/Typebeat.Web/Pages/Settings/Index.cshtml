@@ -35,7 +35,7 @@
             }
             <form method="post" asp-page-handler="Avatar" enctype="multipart/form-data" class="settings-upload">
                 @Html.AntiForgeryToken()
-                <input class="input" type="file" name="avatar" accept="image/png,image/jpeg,image/webp" required />
+                <input class="input" type="file" name="avatar" aria-label="Avatar image" accept="image/png,image/jpeg,image/webp" required />
                 <button type="submit" class="btn btn-primary btn-small">Upload avatar</button>
             </form>
         </div>
@@ -54,7 +54,7 @@
         <form method="post" asp-page-handler="Banner" enctype="multipart/form-data" class="settings-upload">
             @Html.AntiForgeryToken()
             <p class="faint">A wide image works best (3:1, e.g. 1500&times;500). It's cropped to fit.</p>
-            <input class="input" type="file" name="banner" accept="image/png,image/jpeg,image/webp" required />
+            <input class="input" type="file" name="banner" aria-label="Banner image" accept="image/png,image/jpeg,image/webp" required />
             <button type="submit" class="btn btn-primary btn-small">Upload banner</button>
         </form>
     </div>

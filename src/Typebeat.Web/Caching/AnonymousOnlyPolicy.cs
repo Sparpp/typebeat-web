@@ -12,8 +12,10 @@ namespace Typebeat.Web.Caching;
 /// (sessions live in <c>HttpContext.Items</c>, see <see cref="SessionCookieAuth"/>), so the
 /// framework's default IsAuthenticated check is blind and would happily serve a cached signed-out
 /// page to a signed-in visitor, or the reverse. A request is refused outright when it has a
-/// resolved session user, an Authorization header, or ANY of the four auth cookies, even one that
-/// no longer resolves (a stale cookie costs that one visitor a cache miss, nothing else).</para>
+/// resolved session user, a resolved bearer (<see cref="AuthExtensions.UseBearerResolution"/>), or
+/// ANY of the four auth cookies, even one that no longer resolves (a stale cookie costs that one
+/// visitor a cache miss, nothing else). An Authorization header that resolves to nobody is
+/// answered as a guest by every handler, so it is served the guest's entry like any guest.</para>
 ///
 /// <para><see cref="CacheVaryByRules.VaryByHost"/> is always on: every wire DTO and most pages
 /// build absolute URLs from <c>Request.Host</c>, and the app answers on several names
@@ -65,7 +67,7 @@ public sealed class AnonymousOnlyPolicy : IOutputCachePolicy
         if (ctx.SessionUser() is not null)
             return false;
 
-        if (ctx.Request.Headers.ContainsKey("Authorization"))
+        if (ctx.ResolvedBearer() is not null)
             return false;
 
         foreach (string cookie in PersonalCookies)

@@ -7,8 +7,8 @@ namespace Typebeat.Web.Tests.Website;
 /// <summary>
 /// Restricting a mapper (users.restricted = true, the existing moderation lever) must delist
 /// their sets everywhere their profile already 404s: landing strip, /beatmapsets listing and
-/// search, favourite walls, and the set page itself; otherwise every "mapped by" link
-/// site-wide points at a 404.
+/// search, the /play picker and its deep link, favourite walls, and the set page itself;
+/// otherwise every "mapped by" link site-wide points at a 404.
 /// </summary>
 public class RestrictedOwnerTest
 {
@@ -95,6 +95,28 @@ public class RestrictedOwnerTest
                 "future submitted_at means it would lead the default sort if leaked");
             Assert.That(byTitleHtml, Does.Not.Contain($"data-set-id=\"{restrictedSetId}\""));
             Assert.That(byMapperHtml, Does.Not.Contain($"data-set-id=\"{restrictedSetId}\""));
+        });
+    }
+
+    /// <summary>
+    /// The set is ranked, packaged and has a live .osu difficulty, so it is playable in every other
+    /// respect: only the restriction keeps it off the /play picker and its deep link.
+    /// </summary>
+    [Test]
+    public async Task PlayPicker_And_DeepLink_OmitRestrictedMappersSets()
+    {
+        using var picker = await WebsiteFixture.Client.GetAsync("/play");
+        using var deepLink = await WebsiteFixture.Client.GetAsync($"/play?set={restrictedSetId}");
+
+        string pickerHtml = await picker.Content.ReadAsStringAsync();
+        string deepLinkHtml = await deepLink.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(picker.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(pickerHtml, Does.Not.Contain($"data-set-id=\"{restrictedSetId}\""));
+            Assert.That(deepLink.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(deepLinkHtml, Does.Contain("autoPlay: null"), "the deep link falls back to the picker");
         });
     }
 

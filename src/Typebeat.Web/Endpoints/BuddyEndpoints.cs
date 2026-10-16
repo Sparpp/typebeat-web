@@ -1,6 +1,8 @@
 using System.Globalization;
 using Dapper;
+using Newtonsoft.Json;
 using Typebeat.Web.Data;
+using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
 
@@ -22,6 +24,11 @@ namespace Typebeat.Web.Endpoints;
 /// the play's CURRENT position on its map's leaderboard, and whether it is the player's own best.
 /// Deriving those here keeps the leaderboard rules (best-per-user, and which board a set's status
 /// selects) in one place instead of reimplemented in the bot.
+///
+/// Every body here and on the ops routes that share the key goes through <see cref="WireJson"/>
+/// (S1-029), like the wire routes: one serializer, explicit property names, and the
+/// <c>{"error": "..."}</c> envelope for a failure that has a message. The key gate's own 404 and 401
+/// stay bodyless.
 /// </summary>
 public static class BuddyEndpoints
 {
@@ -96,7 +103,7 @@ public static class BuddyEndpoints
 
         var list = rows.ToList();
 
-        return Results.Json(new
+        return WireJson.Ok(new
         {
             cursor = list.Count > 0 ? list[^1].EventId : afterId,
             count = list.Count,
@@ -136,19 +143,46 @@ public static class BuddyEndpoints
     public sealed class RankedSetRow
     {
         /// <summary>The audit row's id: the cursor, NOT the set id (a set can be ranked twice).</summary>
+        [JsonProperty("eventId")]
         public long EventId { get; set; }
+
+        [JsonProperty("setId")]
         public long SetId { get; set; }
+
+        [JsonProperty("artist")]
         public string? Artist { get; set; }
+
+        [JsonProperty("title")]
         public string? Title { get; set; }
+
+        [JsonProperty("language")]
         public string? Language { get; set; }
+
+        [JsonProperty("explicit")]
         public bool Explicit { get; set; }
+
+        [JsonProperty("coverKey")]
         public string? CoverKey { get; set; }
+
+        [JsonProperty("creator")]
         public string? Creator { get; set; }
+
+        [JsonProperty("rankedBy")]
         public string? RankedBy { get; set; }
+
+        [JsonProperty("rankedAt")]
         public DateTimeOffset RankedAt { get; set; }
+
+        [JsonProperty("difficultyCount")]
         public int DifficultyCount { get; set; }
+
+        [JsonProperty("minStars")]
         public double? MinStars { get; set; }
+
+        [JsonProperty("maxStars")]
         public double? MaxStars { get; set; }
+
+        [JsonProperty("lengthSeconds")]
         public double? LengthSeconds { get; set; }
     }
 
@@ -246,7 +280,7 @@ public static class BuddyEndpoints
 
         var list = rows.ToList();
 
-        return Results.Json(new
+        return WireJson.Ok(new
         {
             // Echoed so the poller can advance its cursor without re-scanning the payload, and so
             // an empty batch still tells it where it stands.
@@ -272,34 +306,83 @@ public static class BuddyEndpoints
 
     /// <summary>
     /// Mapped by NAME (not a positional record) on purpose: the SELECT above is long and will be
-    /// edited, and positional mapping breaks silently when a column moves.
+    /// edited, and positional mapping breaks silently when a column moves. Serialized through
+    /// <see cref="WireJson"/> under the explicit camelCase names below, which are the names the bot
+    /// has always read (System.Text.Json's web casing, before S1-029).
     /// </summary>
     public sealed class RecentScoreRow
     {
+        [JsonProperty("id")]
         public long Id { get; set; }
+
+        [JsonProperty("userId")]
         public long UserId { get; set; }
+
+        [JsonProperty("username")]
         public string Username { get; set; } = string.Empty;
+
         /// <summary>Storage key (avatars/{id}/{v}.jpg); the bot composes the absolute URL from its site base.</summary>
+        [JsonProperty("avatarKey")]
         public string? AvatarKey { get; set; }
+
+        [JsonProperty("beatmapId")]
         public long BeatmapId { get; set; }
+
+        [JsonProperty("setId")]
         public long SetId { get; set; }
+
+        [JsonProperty("artist")]
         public string? Artist { get; set; }
+
+        [JsonProperty("title")]
         public string? Title { get; set; }
+
+        [JsonProperty("versionName")]
         public string? VersionName { get; set; }
+
+        [JsonProperty("setStatus")]
         public string SetStatus { get; set; } = string.Empty;
+
+        [JsonProperty("starRating")]
         public double StarRating { get; set; }
+
+        [JsonProperty("totalScore")]
         public long TotalScore { get; set; }
+
+        [JsonProperty("pp")]
         public double Pp { get; set; }
+
+        [JsonProperty("rank")]
         public string? Rank { get; set; }
+
+        [JsonProperty("accuracy")]
         public double Accuracy { get; set; }
+
+        [JsonProperty("maxCombo")]
         public int MaxCombo { get; set; }
+
+        [JsonProperty("notes")]
         public int Notes { get; set; }
+
+        [JsonProperty("missCount")]
         public int MissCount { get; set; }
+
+        [JsonProperty("modsJson")]
         public string? ModsJson { get; set; }
+
+        [JsonProperty("ranked")]
         public bool Ranked { get; set; }
+
+        [JsonProperty("endedAt")]
         public DateTimeOffset EndedAt { get; set; }
+
+        [JsonProperty("hasReplay")]
         public bool HasReplay { get; set; }
+
+        [JsonProperty("position")]
         public int Position { get; set; }
+
+        [JsonProperty("isPersonalBest")]
         public bool IsPersonalBest { get; set; }
     }
 }

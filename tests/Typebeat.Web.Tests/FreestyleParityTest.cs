@@ -137,7 +137,7 @@ public class FreestyleParityTest
             // And every one of those observations matches a space pressed on an ORDINARY cell under
             // the rejection model: that equality IS the semantics ("same consequences as any
             // strictly rejected key").
-            foreach (string field in new[] { "caretIndex", "combo", "consecutiveWrongKeys", "liveAccuracy", "judged", "refillWrongKeys", "score", "maxCombo", "finalAccuracy" })
+            foreach (string field in new[] { "caretIndex", "combo", "consecutiveWrongKeys", "liveAccuracy", "judged", "refillWrongKeys", "maxCombo", "finalAccuracy" })
                 Assert.That(Num(free, field), Is.EqualTo(Num(ordinary, field)), field);
 
             foreach (string field in new[] { "state", "rejected", "refillState" })
@@ -206,14 +206,13 @@ public class FreestyleParityTest
         Assert.Multiple(() =>
         {
             // Same map shape, letters only, played identically: every submitted number must match.
-            foreach (string field in new[] { "totalCells", "engineScore", "totalScore", "maxCombo", "accuracy", "completion", "wpm", "liveAccuracy" })
+            foreach (string field in new[] { "totalCells", "totalScore", "maxCombo", "accuracy", "completion", "wpm", "liveAccuracy" })
                 Assert.That(Num(free, field), Is.EqualTo(Num(plain, field)), field);
 
             Assert.That(Str(free, "rank"), Is.EqualTo(Str(plain, "rank")));
             Assert.That(Num(free.GetProperty("counts"), "great"), Is.EqualTo(Num(plain.GetProperty("counts"), "great")));
 
             // And the absolute values, so a change to BOTH sides still trips this.
-            Assert.That(Num(free, "engineScore"), Is.EqualTo(918)); // 300 + 306 + 312, combo multiplier
             Assert.That(Num(free, "totalScore"), Is.EqualTo(1000000));
             Assert.That(Num(free, "completion"), Is.EqualTo(1.0));
             Assert.That(Str(free, "rank"), Is.EqualTo("X"));
@@ -286,7 +285,7 @@ public class FreestyleParityTest
 
             // Retyping a once-correct cell is scoring-inert (the first judgement stands), exactly
             // as for a normal cell; the only visible change is the displayed char.
-            Assert.That(Num(r, "scoreAfterRetype"), Is.EqualTo(Num(r, "scoreAfterFirst")));
+            Assert.That(Str(r, "tallyAfterRetype"), Is.EqualTo(Str(r, "tallyAfterFirst")));
             Assert.That(Num(r, "judgedDelta"), Is.EqualTo(0));
         });
     }

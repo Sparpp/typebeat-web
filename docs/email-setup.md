@@ -63,9 +63,11 @@ upstream error is never surfaced to the browser.
 ## New persistent state
 
 Data Protection keys (which encrypt the mid-flow **challenge cookie** and sign antiforgery tokens)
-are now persisted to `${TYPEBEAT_FILE_ROOT}/dpkeys` — i.e. `/data/dpkeys`, on the existing `appdata`
-volume. This survives container redeploys so in-flight verifications and open forms are not
-invalidated on every deploy. It is created automatically; `deploy/backup.sh` already tars `/data`.
+are persisted to `TYPEBEAT_DPKEYS_DIR`: in production `/dpkeys`, the app's own `dpkeys` volume (it
+was `/data/dpkeys` on the `appdata` volume until S1-018, see deploy/README.md, "Volumes"). Unset, it
+falls back to `${TYPEBEAT_FILE_ROOT}/dpkeys`. This survives container redeploys so in-flight
+verifications and open forms are not invalidated on every deploy. It is created automatically and
+is not in the appdata backup: losing it only invalidates those short-lived cookies and tokens.
 
 ## Notes
 

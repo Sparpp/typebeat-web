@@ -7,12 +7,14 @@ namespace Typebeat.Web.Scoring;
 
 /// <summary>
 /// The shared machinery behind every startup pass that restores the <c>ranked</c> flag on a score
-/// stored unranked for a reason that was never the player's. Two of them correct a since-fixed bug
-/// in <see cref="PlayTimeGate"/>, one per correction, and differ only in a handful of values:
+/// stored unranked for a reason that was never the player's. Two of them corrected a since-fixed bug
+/// in <see cref="PlayTimeGate"/>, one per correction, and differed only in a handful of values:
 /// <list type="bullet">
-/// <item><see cref="SkipGateRefund"/> (016): the gate ignored the in-game skip button.</item>
-/// <item><see cref="RateGateRefund"/> (017): the gate ignored the play's rate mod.</item>
+/// <item>SkipGateRefund (016): the gate ignored the in-game skip button.</item>
+/// <item>RateGateRefund (017): the gate ignored the play's rate mod.</item>
 /// </list>
+/// Both ran in production and were deleted with their boot sweeps (S1-026); the one-shot mode
+/// (<see cref="Plan.Standing"/> false) is what they used.
 ///
 /// <para>
 /// SINCE BACKLOG 270 IT ALSO CARRIES A THIRD KIND OF PASS, <see cref="SetRankRefund"/>, which is
@@ -47,10 +49,10 @@ namespace Typebeat.Web.Scoring;
 /// PRECISION OVER RECALL. A score is refunded only when every other submit-time condition can be
 /// re-derived from stored data and holds. Everything the gate itself did not decide is re-checked:
 /// the set is ranked, the play passed and was fully judged, the statistics are valid, no
-/// always-unranked mod was used, the build is not blocked, and the stored total is inside the
-/// ceiling its own statistics justify. A row failing any of those was unranked for a DIFFERENT
-/// reason (a mod-multiplier violation from tasks 36/44, a blocked build, a fail, an unranked set)
-/// and is left exactly as it is.
+/// always-unranked mod was used, the build is not blocked and is not the browser's, and the stored
+/// total is inside the ceiling its own statistics justify. A row failing any of those was unranked
+/// for a DIFFERENT reason (a mod-multiplier violation from tasks 36/44, a blocked build, a browser
+/// play, a fail, an unranked set) and is left exactly as it is.
 /// </para>
 ///
 /// <para>
@@ -205,7 +207,8 @@ public static class GateRefund
                    b.id                                              AS beatmapId,
                    b.checksum_md5                                    AS currentChecksum,
                    bs.current_version                                AS currentVersion,
-                   t.beatmap_hash                                    AS playedHash
+                   t.beatmap_hash                                    AS playedHash,
+                   bd.version_hash                                   AS buildHash
             FROM scores s
             JOIN beatmaps b ON b.id = s.beatmap_id
             JOIN beatmapsets bs ON bs.id = b.set_id
@@ -318,10 +321,17 @@ public static class GateRefund
         if (row.BuildBlocked)
             return false;
 
+        // A browser play is stored unranked by design, not by any gate: it carries no log
+        // the server could audit it with, so no pass may rank it either.
+        if (ScoreSubmission.IsBrowserBuild(row.BuildHash))
+            return false;
+
         // Read from the ONE list (backlog 270). This used to be a private copy that claimed to
         // mirror ScoreEndpoints' and was three acronyms behind it, so a Conductor, Dyslexia or
-        // Puppeteer play the submit path refused could be re-ranked here.
-        if (UnrankedMods.StackIsUnranked(row.Mods.Select(m => m.Acronym)))
+        // Puppeteer play the submit path refused could be re-ranked here. The submit routes' own
+        // predicate, so an acronym the server does not know, which they store unranked, is never
+        // re-ranked here either.
+        if (!ScoreSubmission.StackRanked(row.Mods.Select(m => m.Acronym)))
             return false;
 
         var statistics = ParseCounts(row.StatisticsJson);
@@ -349,10 +359,11 @@ public static class GateRefund
     }
 
     /// <summary>
-    /// One refund candidate, as stored. Times in seconds, both lengths in map time. The last five
-    /// columns feed <see cref="PlayedVersionRule"/>: which difficulty and set, the checksum and
-    /// version that are current, and the .osu hash the play's token was issued for (null when the
-    /// score has no token).
+    /// One refund candidate, as stored. Times in seconds, both lengths in map time. The five
+    /// columns from <c>SetId</c> feed <see cref="PlayedVersionRule"/>: which difficulty and set, the
+    /// checksum and version that are current, and the .osu hash the play's token was issued for (null
+    /// when the score has no token). <c>BuildHash</c> is the play's build <c>version_hash</c> (null
+    /// with no build), which is how a browser play is told apart.
     /// </summary>
     public sealed record CandidateRow(
         long ScoreId,
@@ -370,7 +381,8 @@ public static class GateRefund
         long BeatmapId,
         string CurrentChecksum,
         int CurrentVersion,
-        string? PlayedHash)
+        string? PlayedHash,
+        string? BuildHash = null)
     {
         private IReadOnlyList<StoredMod>? parsedMods;
 

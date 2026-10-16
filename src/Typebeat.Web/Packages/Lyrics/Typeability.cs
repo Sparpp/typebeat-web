@@ -7,7 +7,9 @@ namespace Typebeat.Web.Packages.Lyrics;
 /// Server-side port of the game's text-normalization / typeability authority
 /// (typebeat-osu typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricBeatmap.cs:33-166, class
 /// Typeability). The upload pipeline must count exactly the cells the client will make the
-/// player type, so this logic is copied verbatim; any change there must be mirrored here.
+/// player type, so this logic is copied verbatim; any change there must be mirrored here. A change
+/// that moves which chars are cells also moves the stored judged cell counts, and must bump
+/// <see cref="JudgedCells.VERSION"/>.
 /// </summary>
 public static class Typeability
 {
@@ -90,7 +92,7 @@ public static class Typeability
     /// FORMAT, and only the ingest of a foreign lyrics file still reads "(oh oh)" as a backing
     /// vocal to throw away. The game keeps the two surviving callers on the import side of that
     /// seam (LrcParser, TimingJsonLoader.TryParse and the .osu writer's own sweep in
-    /// LyricMapImporter.StripBackingVocalLines), so an imported map is bracket-free before it is
+    /// TimingJsonPostProcess.StripBackingVocalLines), so an imported map is bracket-free before it is
     /// ever stored and nothing an upload carries needs stripping.</para>
     ///
     /// <para>The server never sees an import, only a STORED map, so its one caller is the FORMAT
