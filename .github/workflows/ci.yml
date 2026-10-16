@@ -132,9 +132,13 @@ jobs:
       - name: Ship source to server
         run: |
           tar czf - --exclude=.git --exclude=external . \
-            | ssh -i ~/.ssh/deploy_key root@46.62.142.5 'rm -rf /opt/typebeat-web/deploy/aligner/lyriclab && tar xzf - -C /opt/typebeat-web && chmod +x /opt/typebeat-web/deploy/up.sh'
-          # The staged aligner dir is removed first because tar only adds and overwrites: a file the
-          # game pin dropped from lyriclab/ would otherwise linger in every later image.
+            | ssh -i ~/.ssh/deploy_key root@46.62.142.5 'rm -rf /opt/typebeat-web/src /opt/typebeat-web/deploy/aligner/lyriclab && tar xzf - -C /opt/typebeat-web && chmod +x /opt/typebeat-web/deploy/up.sh'
+          # src/ and the staged aligner dir are removed first because tar only adds and overwrites:
+          # a file deleted from the repo would otherwise linger on the box and be compiled into every
+          # later image. That broke the 2026-10-16 deploy: ScoreReweightBackfill.cs, deleted in the
+          # repo, was still on the box and no longer compiled. src/ is wholly the repo's (deploy/.env
+          # and the backups live elsewhere), so clearing it loses nothing; a game pin that dropped a
+          # file from lyriclab/ is the same case for the aligner.
           # up.sh is executable in git (mode 100755) now, but the chmod stays: the first
           # deploy after it was committed (as 100644) shipped it over the box's executable copy and
           # every later step died with "Permission denied" (2026-09-30).
