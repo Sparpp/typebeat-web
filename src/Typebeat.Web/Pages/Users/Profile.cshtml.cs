@@ -1,5 +1,4 @@
 using System.Globalization;
-using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OutputCaching;
 using Typebeat.Web.Caching;
@@ -184,31 +183,14 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         if (!long.TryParse(idOrName, NumberStyles.None, CultureInfo.InvariantCulture, out long id))
         {
-            // Name lookup, then canonical-redirect to the id URL. The parameter must be cast:
-            // a bare text param makes Postgres pick text = text (case-SENSITIVE); citext = citext
-            // gives the case-insensitive match usernames deserve.
-            long? resolved = await conn.ExecuteScalarAsync<long?>(
-                "SELECT id FROM users WHERE username = @name::citext AND NOT restricted",
-                new { name = idOrName });
+            // Name lookup (case-insensitive, see ProfileQueries.IdByNameAsync), then
+            // canonical-redirect to the id URL.
+            long? resolved = await ProfileQueries.IdByNameAsync(conn, idOrName);
 
             return resolved is long found ? Redirect($"/users/{found}") : NotFound();
         }
 
-        var user = await conn.QuerySingleOrDefaultAsync<UserHeader>(
-            """
-            SELECT u.id          AS Id,
-                   u.username::text AS Username,
-                   u.avatar_key  AS AvatarKey,
-                   u.cover_key   AS CoverKey,
-                   u.description AS Description,
-                   u.created_at  AS CreatedAt,
-                   u.last_visit  AS LastVisit,
-                   u.restricted  AS Restricted,
-                   u.country_code::text AS CountryCode
-            FROM users u
-            WHERE u.id = @id
-            """,
-            new { id });
+        var user = await ProfileQueries.HeaderAsync(conn, id);
 
         // Restricted profiles are hidden like their scores are (mirrors the auth layer, where
         // restricted users read as signed out).
@@ -223,8 +205,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         // appending a constructor parameter (the Dapper landmine this file already lives with),
         // and the section order is not header data. One extra primary-key lookup on a page that
         // already runs a dozen aggregate queries.
-        SectionOrder = ProfileSections.Resolve(await conn.ExecuteScalarAsync<string[]?>(
-            "SELECT profile_order FROM users WHERE id = @id", new { id }));
+        SectionOrder = ProfileSections.Resolve(await ProfileQueries.SectionOrderAsync(conn, id));
 
         long viewerId = CurrentUser?.Id ?? 0;
 
@@ -245,43 +226,13 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         PpRank = performance.GlobalRank;
         TotalPp = performance.TotalPp;
 
-        // Value tuple defaults to all-zero when the user_stats row doesn't exist yet.
-        (TotalScore, PlayCount, PlayTimeS) = await conn.QuerySingleOrDefaultAsync<(long, int, long)>(
-            "SELECT total_score, play_count, play_time_s FROM user_stats WHERE user_id = @id",
-            new { id });
+        (TotalScore, PlayCount, PlayTimeS) = await ProfileQueries.StatsAsync(conn, id);
 
-        // Maps played out of the ranked pool: distinct ranked sets with any score by this user,
-        // over the count of publicly-visible ranked sets (restricted mappers' sets are delisted).
-        (MapsPlayed, RankedMapPool) = await conn.QuerySingleAsync<(int, int)>(
-            """
-            SELECT
-                (SELECT count(DISTINCT b.set_id)
-                 FROM scores sc
-                 JOIN beatmaps b    ON b.id = sc.beatmap_id
-                 JOIN beatmapsets s ON s.id = b.set_id
-                 JOIN users ow      ON ow.id = s.owner_id
-                 WHERE sc.user_id = @id AND s.status = 'ranked' AND NOT ow.restricted) AS played,
-                (SELECT count(*)
-                 FROM beatmapsets s
-                 JOIN users ow ON ow.id = s.owner_id
-                 WHERE s.status = 'ranked' AND NOT ow.restricted) AS pool
-            """,
-            new { id });
+        (MapsPlayed, RankedMapPool) = await ProfileQueries.MapsPlayedAsync(conn, id);
 
         // Deliberately no status filter: loved plays count toward grades and accuracy (as on osu!'s profile).
         // Grade counts + accuracy from the SAME per-map-best fold (see class doc).
-        var gradeRows = (await conn.QueryAsync<(string Rank, long Count, double AccuracySum)>(
-            $"""
-            SELECT best.rank AS Rank, count(*) AS Count, sum(best.accuracy) AS AccuracySum
-            FROM (
-                SELECT DISTINCT ON (sc.beatmap_id) sc.rank, sc.accuracy
-                FROM scores sc
-                WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
-                ORDER BY sc.beatmap_id, {BeatmapLeaderboard.Order("sc")}
-            ) best
-            GROUP BY best.rank
-            """,
-            new { id })).ToList();
+        var gradeRows = await ProfileQueries.GradeRowsAsync(conn, id);
 
         int ss = 0, s = 0, a = 0, b = 0, c = 0, d = 0;
         long bestCount = 0;
@@ -310,50 +261,10 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         // ---- score sections (published sets only: hidden/removed titles must not leak here;
         //      pending sets are browsable, so their plays legitimately show) ----
 
-        const string score_row_select =
-            """
-            SELECT best.id         AS ScoreId,
-                   best.has_replay AS HasReplay,
-                   s.id            AS SetId,
-                   s.title         AS Title,
-                   s.artist        AS Artist,
-                   s.title_unicode  AS TitleUnicode,
-                   s.artist_unicode AS ArtistUnicode,
-                   s.explicit       AS Explicit,
-                   b.version_name   AS Version,
-                   CASE WHEN s.cover_key IS NOT NULL THEN '/' || s.cover_key || '/list.jpg' END AS CoverUrl,
-                   best.rank       AS Rank,
-                   best.completion AS Completion,
-                   best.accuracy   AS Accuracy,
-                   best.total_score AS TotalScore,
-                   best.ended_at   AS Date,
-                   best.mods       AS ModsJson
-            """;
-
-        // What each section's row-set fragment (Scoring/ProfileScores) has to project for the
-        // SELECT above to read it back off the `best` subquery. pp rides along for every section
-        // even though only Best orders by it: one column list keeps the fragments interchangeable
-        // here, and the cost is one double per row already being fetched.
-        const string section_columns =
-            """
-            sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.pp,
-            sc.ended_at, sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
-            """;
-
         // Pinned: the user's own curation, newest pin first, capped by the pin cap itself.
         // WHICH rows those are is ProfileScores', not this page's: the game client's profile
         // overlay serves the same section from the same fragment, so the two cannot drift.
-        PinnedScores = (await conn.QueryAsync<ScoreRowModel>(
-            $"""
-             {score_row_select}
-             FROM ({ProfileScores.PinnedOfUser(section_columns)}) best
-             JOIN beatmaps b ON b.id = best.beatmap_id
-             JOIN beatmapsets s ON s.id = b.set_id
-             WHERE {ProfileScores.OnVisibleSet("s")}
-             ORDER BY {ProfileScores.PinnedOrder}
-             LIMIT {ScorePins.MaxPins}
-             """,
-            new { id })).ToList();
+        PinnedScores = await ProfileQueries.PinnedAsync(conn, id);
 
         // Best scores: the pp board's view of this user, not the score board's (task 77). Both the
         // per-SONG fold and the section's order lead with pp, so the number each row headlines is
@@ -379,17 +290,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         //
         // Both the fold and the order now live in ProfileScores, shared with the game client's
         // "Best performance" subsection, which is the same section on a different screen.
-        BestScores = (await conn.QueryAsync<ScoreRowModel>(
-            $"""
-             {score_row_select}
-             FROM ({ProfileScores.BestOfUser(section_columns)}) best
-             JOIN beatmaps b ON b.id = best.beatmap_id
-             JOIN beatmapsets s ON s.id = b.set_id
-             WHERE {ProfileScores.OnVisibleSet("s")}
-             ORDER BY {ProfileScores.BestOrder}
-             LIMIT {score_section_size}
-             """,
-            new { id })).ToList();
+        BestScores = await ProfileQueries.BestAsync(conn, id, score_section_size);
 
         // pp per Best-scores row (scores.pp, docs/pp.md), opt-in only on this section: a second
         // small query keyed by score id, merged onto the already-hydrated rows in C#, the same
@@ -403,9 +304,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         {
             long[] bestScoreIds = BestScores.Select(r => r.ScoreId).ToArray();
 
-            var ppByScoreId = (await conn.QueryAsync<(long ScoreId, double Pp)>(
-                "SELECT id AS ScoreId, pp AS Pp FROM scores WHERE id = ANY(@bestScoreIds)",
-                new { bestScoreIds })).ToDictionary(r => r.ScoreId, r => r.Pp);
+            var ppByScoreId = await ProfileQueries.PpByScoreIdAsync(conn, bestScoreIds);
 
             foreach (var row in BestScores)
                 row.Pp = ppByScoreId.GetValueOrDefault(row.ScoreId);
@@ -419,35 +318,14 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         // Two reads of one definition: the total (the stats card, and the section's "of M" note)
         // and the capped page of rows. No set-status filter is needed on the outer query, first
         // places only exist on 'ranked' sets, which is a subset of what the other sections show.
-        FirstPlaceCount = await conn.ExecuteScalarAsync<int>(
-            $"SELECT count(*) FROM ({BeatmapLeaderboard.FirstPlacesOfUserSql}) fp",
-            new { id });
+        FirstPlaceCount = await ProfileQueries.FirstPlaceCountAsync(conn, id);
 
         if (FirstPlaceCount > 0)
-            FirstPlaces = (await conn.QueryAsync<ScoreRowModel>(
-                $"""
-                 {score_row_select}
-                 FROM ({BeatmapLeaderboard.FirstPlacesOfUserSql}) best
-                 JOIN beatmaps b ON b.id = best.beatmap_id
-                 JOIN beatmapsets s ON s.id = b.set_id
-                 ORDER BY {ProfileScores.FirstPlacesOrder}
-                 LIMIT {score_section_size}
-                 """,
-                new { id })).ToList();
+            FirstPlaces = await ProfileQueries.FirstPlacesAsync(conn, id, score_section_size);
 
         // Recent plays include fails (rank F renders like the game), still ranked-only so
         // admin-unranked scores never resurface. Shared with the client's Historical section.
-        RecentScores = (await conn.QueryAsync<ScoreRowModel>(
-            $"""
-             {score_row_select}
-             FROM ({ProfileScores.RecentOfUser(section_columns)}) best
-             JOIN beatmaps b ON b.id = best.beatmap_id
-             JOIN beatmapsets s ON s.id = b.set_id
-             WHERE {ProfileScores.OnVisibleSet("s")}
-             ORDER BY {ProfileScores.RecentOrder}
-             LIMIT {score_section_size}
-             """,
-            new { id })).ToList();
+        RecentScores = await ProfileQueries.RecentAsync(conn, id, score_section_size);
 
         // Most viewed replays (025_replay_views.sql): the same score rows, ordered by how often
         // OTHER players watched them. The total is read first and gates the query, because for
@@ -469,34 +347,13 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
             // score-row select is mapped onto a positional record, and Dapper demands a constructor
             // matching the WHOLE column list, so one extra column makes every row fail to
             // materialize. The count is attached in C# afterwards, like the pin flags.
-            var ranked = (await conn.QueryAsync<(long ScoreId, int Views)>(
-                $"""
-                 SELECT id AS ScoreId, replay_views AS Views
-                 FROM scores
-                 WHERE user_id = @id AND replay_views > 0 AND ranked
-                 ORDER BY replay_views DESC, id ASC
-                 LIMIT {most_viewed_size}
-                 """,
-                new { id })).ToList();
+            var ranked = await ProfileQueries.MostViewedRankingAsync(conn, id, most_viewed_size);
 
             if (ranked.Count > 0)
             {
                 long[] ids = ranked.Select(r => r.ScoreId).ToArray();
 
-                var hydrated = (await conn.QueryAsync<ScoreRowModel>(
-                    $"""
-                     {score_row_select}
-                     FROM (
-                         SELECT sc.id, sc.beatmap_id, sc.rank, sc.completion, sc.accuracy, sc.total_score, sc.ended_at,
-                                sc.mods::text AS mods, sc.replay_key IS NOT NULL AS has_replay
-                         FROM scores sc
-                         WHERE sc.id = ANY(@ids)
-                     ) best
-                     JOIN beatmaps b ON b.id = best.beatmap_id
-                     JOIN beatmapsets s ON s.id = b.set_id
-                     WHERE s.status IN ('pending', 'unranked', 'ranked', 'loved')
-                     """,
-                    new { ids })).ToDictionary(r => r.ScoreId);
+                var hydrated = (await ProfileQueries.ScoresByIdAsync(conn, ids)).ToDictionary(r => r.ScoreId);
 
                 // Ordered by the ranking query, not by the hydration query: a score whose set has
                 // since been hidden simply drops out (the section then shows fewer rows than the
@@ -534,23 +391,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         // the same aggregate the client's Historical section pages over. The display columns come
         // from a join rather than from the GROUP BY, which is what lets one definition serve two
         // very different projections without either of them repeating the grouping key.
-        MostPlayed = (await conn.QueryAsync<MostPlayedRow>(
-            $"""
-             SELECT s.id     AS SetId,
-                    s.title  AS Title,
-                    s.artist AS Artist,
-                    s.title_unicode  AS TitleUnicode,
-                    s.artist_unicode AS ArtistUnicode,
-                    s.explicit       AS Explicit,
-                    CASE WHEN s.cover_key IS NOT NULL THEN '/' || s.cover_key || '/list.jpg' END AS CoverUrl,
-                    mp.plays AS Plays
-             FROM ({ProfileScores.MostPlayedOfUserSql}) mp
-             JOIN beatmaps b ON b.id = mp.beatmap_id
-             JOIN beatmapsets s ON s.id = b.set_id
-             ORDER BY {ProfileScores.MostPlayedOrder}
-             LIMIT {most_played_size}
-             """,
-            new { id })).ToList();
+        MostPlayed = await ProfileQueries.MostPlayedAsync(conn, id, most_played_size);
 
         // Play history: the monthly rollup, gap-filled into a continuous axis (024_play_history.sql).
         // A user with nothing recorded gets no chart at all, and the view renders no section.
@@ -580,15 +421,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         // difficulty still shows to its owner as before (backlog 385).
         bool ownProfile = viewerId == id;
 
-        var maps = (await conn.QueryAsync<BeatmapsetCardModel>(
-            $"""
-             {BeatmapsetCardSql.Select}
-             WHERE s.owner_id = @id AND (s.status IN ('pending', 'unranked', 'ranked', 'loved') OR @ownProfile)
-               AND (s.status <> 'hidden' OR EXISTS (SELECT 1 FROM beatmaps lb WHERE lb.set_id = s.id AND lb.filename IS NOT NULL))
-             ORDER BY s.submitted_at DESC, s.id DESC
-             LIMIT {card_section_size + 1}
-             """,
-            new { id, ownProfile, viewerId })).ToList();
+        var maps = await ProfileQueries.MapsAsync(conn, id, ownProfile, viewerId, card_section_size + 1);
 
         HasMoreMaps = maps.Count > card_section_size;
         if (HasMoreMaps)
@@ -597,15 +430,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         // Restricted mappers' sets are delisted site-wide; they drop out of favourite walls too
         // (their "mapped by" link would 404 for every viewer).
-        var favourites = (await conn.QueryAsync<BeatmapsetCardModel>(
-            $"""
-             {BeatmapsetCardSql.Select}
-             JOIN favourites fav ON fav.set_id = s.id AND fav.user_id = @id
-             WHERE s.status IN ('pending', 'unranked', 'ranked', 'loved') AND (NOT u.restricted OR s.owner_id = @viewerId)
-             ORDER BY fav.created_at DESC, s.id DESC
-             LIMIT {card_section_size + 1}
-             """,
-            new { id, viewerId })).ToList();
+        var favourites = await ProfileQueries.FavouritesAsync(conn, id, viewerId, card_section_size + 1);
 
         HasMoreFavourites = favourites.Count > card_section_size;
         if (HasMoreFavourites)
@@ -618,12 +443,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
         ViewData["MetaDescription"] = $"{ProfileUser.Username}'s type!beat profile: scores, maps and favourites.";
 
         // Backlog 418: a thin profile is noindex, on the counts the sitemap's profile query reads.
-        var (rankedPlays, publishedSets) = await conn.QuerySingleAsync<(long, long)>(
-            """
-            SELECT (SELECT count(*) FROM scores WHERE user_id = @id AND ranked),
-                   (SELECT count(*) FROM beatmapsets WHERE owner_id = @id AND status IN ('pending', 'unranked', 'ranked', 'loved'))
-            """,
-            new { id });
+        var (rankedPlays, publishedSets) = await ProfileQueries.IndexableCountsAsync(conn, id);
 
         if (!Seo.ProfileIndexable(rankedPlays, publishedSets))
             ViewData["NoIndex"] = true;
@@ -693,14 +513,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
-        // Two statements rather than one with a nullable array parameter: Dapper hands an array
-        // straight to Npgsql as a text[] (that is why ANY(@ids) works above), but a NULL one
-        // arrives as an untyped DBNull, and "back to the default" is worth spelling out in SQL
-        // instead of relying on Postgres inferring the column's type for it.
-        if (stored is null)
-            await conn.ExecuteAsync("UPDATE users SET profile_order = NULL WHERE id = @id", new { id = CurrentUser.Id });
-        else
-            await conn.ExecuteAsync("UPDATE users SET profile_order = @stored WHERE id = @id", new { stored, id = CurrentUser.Id });
+        await ProfileQueries.SetProfileOrderAsync(conn, CurrentUser.Id, stored);
 
         // The fetch path only needs to know it landed; the page it is on already shows the new
         // order (the client moved the DOM before asking). The plain-POST path (a replayed request,
@@ -750,11 +563,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
 
-        // Restricted users are delisted site-wide, and their profile 404s, so they cannot be
-        // followed either.
-        bool followable = await conn.ExecuteScalarAsync<bool>(
-            "SELECT EXISTS (SELECT 1 FROM users WHERE id = @targetId AND NOT restricted)",
-            new { targetId });
+        bool followable = await ProfileQueries.FollowableAsync(conn, targetId);
 
         if (!followable)
             return NotFound();

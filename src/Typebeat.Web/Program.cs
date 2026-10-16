@@ -12,6 +12,7 @@ using Typebeat.Web.Endpoints;
 using Typebeat.Web.Ops;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
+using Typebeat.Web.Social;
 using Typebeat.Web.Storage;
 using Typebeat.Web.Wire;
 
@@ -126,6 +127,10 @@ builder.Services.AddSingleton<UploadSessionStore>();
 // The server-hosted auto-aligner (backlog 413): file-based job exchange with the aligner worker
 // container over the align_jobs volume (Align/AlignJobStore.cs, deploy/aligner/worker.py).
 builder.Services.AddSingleton<AlignJobStore>();
+
+// The set page's reviewer levers (Rank/Unrank, Love/Unlove) and their moderation_actions rows
+// (Social/BeatmapsetReview.cs).
+builder.Services.AddSingleton<BeatmapsetReview>();
 
 // The website (M3): server-rendered Razor Pages under Pages/, HTML only; every APIv2/BSS JSON
 // response keeps going through WireJson (Newtonsoft), untouched by this. AddRazorPages also
