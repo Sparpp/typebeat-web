@@ -39,6 +39,28 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 [EnableRateLimiting(RateLimits.Report)]
 public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweeps, ILogger<SetModel> logger) : TypebeatPageModel
 {
+    public long MetadataRevision { get; private set; }
+    public int PackageRevision { get; private set; }
+    public bool CanEditMetadata => CurrentUser?.CanReviewMaps == true && Endpoints.BeatmapsetEndpoints.IsPublished(Set.Status);
+
+    public async Task<IActionResult> OnPostMetadataAsync(long id, long metadataRevision, int packageRevision,
+        string? title, string? artist, string? titleUnicode, string? artistUnicode, string? source,
+        string? tags, Dictionary<long, string>? difficultyNames)
+    {
+        if (CurrentUser?.CanReviewMaps != true) return NotFound();
+        if (!ModelState.IsValid) return BadRequest("Invalid metadata fields.");
+        var result = await BeatmapMetadataEditor.SaveAsync(db, id, CurrentUser.Id, metadataRevision, packageRevision,
+            title, artist, titleUnicode, artistUnicode, source, tags, difficultyNames, HttpContext.RequestAborted);
+        if (result == BeatmapMetadataEditor.Result.NotFound) return NotFound();
+        if (result == BeatmapMetadataEditor.Result.Invalid) return BadRequest("Names must be nonempty, fields must fit their limits, and all current difficulties must belong to this set.");
+        if (result == BeatmapMetadataEditor.Result.Conflict)
+            return new ContentResult { StatusCode = 409, Content = "This map changed since you opened the form. Reload the page and apply your corrections again." };
+        await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+        long ownerId = await conn.ExecuteScalarAsync<long>("SELECT owner_id FROM beatmapsets WHERE id=@id", new { id });
+        await HttpContext.RequestServices.GetRequiredService<CacheEviction>().AfterSetChangedAsync(id, ownerId);
+        return Redirect($"/beatmapsets/{id}?saved=metadata");
+    }
+
     private const int max_report_reason_length = 4000;
 
     public SetDetails Set { get; private set; } = null!;
@@ -123,6 +145,11 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
         Board = board == "unranked" ? "unranked" : "ranked";
 
         await using var conn = await db.OpenAsync(HttpContext.RequestAborted);
+
+        var revisions = await conn.QuerySingleOrDefaultAsync<(long MetadataRevision, int PackageRevision)>(
+            "SELECT metadata_revision, current_version FROM beatmapsets WHERE id=@id", new { id });
+        MetadataRevision = revisions.MetadataRevision;
+        PackageRevision = revisions.PackageRevision;
 
         var set = await conn.QuerySingleOrDefaultAsync<SetDetails>(
             """

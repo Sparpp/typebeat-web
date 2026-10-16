@@ -119,6 +119,12 @@ public sealed class APIBeatmapResponse
 /// </summary>
 public sealed class APIBeatmapSetResponse
 {
+    [JsonProperty("metadata_revision", NullValueHandling = NullValueHandling.Ignore)]
+    public long? MetadataRevision { get; init; }
+
+    [JsonProperty("package_revision", NullValueHandling = NullValueHandling.Ignore)]
+    public int? PackageRevision { get; init; }
+
     [JsonProperty("id")]
     public required int Id { get; init; }
 
