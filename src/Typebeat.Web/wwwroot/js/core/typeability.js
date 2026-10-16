@@ -156,7 +156,7 @@
         s = s
             .replace(/[‘’‚′]/g, "'")
             .replace(/[“”„″]/g, '"')
-            .replace(/[–—―−]/g, '-')
+            .replace(/[\u2013\u2014\u2015\u2212]/g, '-')
             .replace(/ /g, ' ');
         let out = '';
         for (const ch of s) {
