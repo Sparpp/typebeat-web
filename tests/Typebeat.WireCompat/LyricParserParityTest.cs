@@ -224,6 +224,58 @@ public class LyricParserParityTest
     }
 
     /// <summary>
+    /// The type!beat keys as the game's shared spelling writes them (<c>TypeBeatOsuKeys</c>, used by
+    /// both client encoders), and in the older spelling the legacy encoder wrote before the keys were
+    /// shared (a space after the colon for <c>Language</c>, none for the font keys), read by both
+    /// production parsers. The game's writer output must carry exactly the shared lines, and either
+    /// spelling must read to the same language and font on both sides, so a stored package parses
+    /// identically whichever client wrote it.
+    /// </summary>
+    [Test]
+    public void BothParsersReadTheTypeBeatKeysInEitherSpelling()
+    {
+        string shared = LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(),
+            language: "japanese", audioGain: 2.5, lyricFont: "Blocky Pixels", lyricFontFile: "lyricfont.woff2");
+
+        string[] sharedLines =
+        {
+            typebeat.Game.Beatmaps.Formats.TypeBeatOsuKeys.LanguageLine("japanese")!,
+            typebeat.Game.Beatmaps.Formats.TypeBeatOsuKeys.AudioGainLine(2.5)!,
+            typebeat.Game.Beatmaps.Formats.TypeBeatOsuKeys.LyricFontLine("Blocky Pixels")!,
+            typebeat.Game.Beatmaps.Formats.TypeBeatOsuKeys.LyricFontFileLine("lyricfont.woff2")!,
+        };
+
+        string spaced = shared.Replace("Language:japanese", "Language: japanese")
+                              .Replace("AudioGain:2.5", "AudioGain: 2.5")
+                              .Replace("LyricFont: Blocky Pixels", "LyricFont:Blocky Pixels")
+                              .Replace("LyricFontFile: lyricfont.woff2", "LyricFontFile:lyricfont.woff2");
+
+        string[] fileLines = shared.Replace("\r\n", "\n").Split('\n');
+
+        Assert.Multiple(() =>
+        {
+            foreach (string line in sharedLines)
+                Assert.That(fileLines, Does.Contain(line), $"the game's writer emits the shared line {line}");
+
+            Assert.That(spaced, Is.Not.EqualTo(shared), "the variant must actually differ for the test to mean anything");
+
+            foreach (var (name, osu) in new[] { ("shared", shared), ("spaced", spaced) })
+            {
+                var client = ClientDecode(osu).Metadata;
+                var server = ServerParse(osu);
+
+                Assert.That(client.Language, Is.EqualTo(BeatmapLanguage.Japanese), $"{name}: client language");
+                Assert.That(server.Language, Is.EqualTo(client.Language.ToCanonicalName()), $"{name}: server language");
+                Assert.That(client.AudioGain, Is.EqualTo(2.5), $"{name}: client gain");
+                Assert.That(client.LyricFont, Is.EqualTo("Blocky Pixels"), $"{name}: client family");
+                Assert.That(server.LyricFont, Is.EqualTo(client.LyricFont), $"{name}: server family");
+                Assert.That(client.LyricFontFile, Is.EqualTo("lyricfont.woff2"), $"{name}: client file");
+                Assert.That(server.LyricFontFile, Is.EqualTo(client.LyricFontFile), $"{name}: server file");
+            }
+        });
+    }
+
+    /// <summary>
     /// The map's track gain (backlog 315) through the same lens, but between the game's production
     /// decoder and the BROWSER's <c>parseLyricOsu</c>: the server never reads the key, /play is
     /// served the stored .osu verbatim and applies the gain itself. The files are the game writer's
@@ -254,6 +306,11 @@ public class LyricParserParityTest
             ("written 1/3", LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(), audioGain: 1.0 / 3)),
             ("written 0", LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(), audioGain: 0)),
             ("written 4", LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(), audioGain: 4)),
+            // The spelling the legacy encoder wrote before the keys were shared (a space after the colon):
+            // every reader must still take it, the browser included.
+            ("written 2.5, spaced", LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(), audioGain: 2.5).Replace("AudioGain:2.5", "AudioGain: 2.5")),
+            ("written 1/3, spaced", LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(), audioGain: 1.0 / 3)
+                                        .Replace("AudioGain:", "AudioGain: ")),
             ("good then junk", spliced("2", "junk")),
             ("junk then good", spliced("junk", "3")),
         };
@@ -309,6 +366,9 @@ public class LyricParserParityTest
                 Assert.That(gains[i], Is.EqualTo(game), $"{cases[i].Name}: parse");
                 Assert.That(built[i], Is.EqualTo(game), $"{cases[i].Name}: carried by buildBeatmap");
             }
+
+            Assert.That(gains[cases.FindIndex(c => c.Name == "written 2.5, spaced")], Is.EqualTo(2.5), "the browser reads the spaced spelling");
+            Assert.That(gains[cases.FindIndex(c => c.Name == "written 1/3, spaced")], Is.EqualTo(1.0 / 3), "exactly, not rounded");
         });
 
         // Coverage: most cases must move the gain, or the agreement is mostly on the default.

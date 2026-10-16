@@ -81,12 +81,15 @@ public static class BeatmapLookupEndpoints
         string urlBase = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
         string status = BeatmapsetEndpoints.StatusString(row.Status);
 
-        // Whether the set's current version carries a vocals stem (backlog 396). Computed once per
-        // lookup, on the set the resolved difficulty belongs to, never per difficulty row: a stem is
-        // a set-level file and every difficulty shares the package. Deliberately outside the lookup
-        // memo (which caches only the row): a stem attach cuts a new version, and this must read the
-        // live version every time rather than a memoised one.
-        bool hasVocalsStem = await StemBackfill.CurrentVersionHasStemAsync(db, row.BeatmapSetId, ctx.RequestAborted);
+        // The tracked files the set's current version carries (backlog 396, see SetFileManifest), and
+        // the vocals stem flag older clients read off the same list. Computed once per lookup, on the
+        // set the resolved difficulty belongs to, never per difficulty row: these are set-level files
+        // and every difficulty shares the package. Deliberately outside the lookup memo (which caches
+        // only the row): a stem attach cuts a new version, and this must read the live version every
+        // time rather than a memoised one. Follows beatmapsets.current_version (the version the
+        // download route serves), so an unpublished cut cannot report a file the client would not get.
+        string fileManifest = await SetFileManifest.CurrentVersionAsync(db, row.BeatmapSetId, ctx.RequestAborted);
+        bool hasVocalsStem = SetFileManifest.Names(fileManifest, SetFileManifest.VocalsStem);
 
         return WireJson.Ok(new APIBeatmapResponse
         {
@@ -118,8 +121,9 @@ public static class BeatmapLookupEndpoints
                 Explicit = row.Explicit,
                 // Fills a local Unspecified language for maps whose .osu carries no Language: line.
                 SongLanguage = row.Language,
-                // The set-level stem flag (backlog 396); the client's UPDATE offer reads it against
-                // its local copy's stem presence.
+                // The set-level tracked-file manifest (backlog 396); the client's UPDATE offer reads
+                // it against its local copy's own. The stem flag is what clients before it read.
+                FileManifest = fileManifest,
                 HasVocalsStem = hasVocalsStem,
             },
         });

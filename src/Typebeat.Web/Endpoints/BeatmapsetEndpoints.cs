@@ -191,10 +191,12 @@ public static class BeatmapsetEndpoints
             "SELECT EXISTS (SELECT 1 FROM favourites WHERE user_id = @userId AND set_id = @setId)",
             new { userId = requester!.Id, setId });
 
-        // Whether the set's current version carries a vocals stem (backlog 396), the same set-level
-        // flag the lookup emits; the submission wizard's update flow and the client's offer both read
-        // it. Computed once on the single set this route serves.
-        bool hasVocalsStem = await StemBackfill.CurrentVersionHasStemAsync(db, setId, ctx.RequestAborted);
+        // The tracked files the set's current version carries (backlog 396), and the vocals stem flag
+        // read off the same list: the same set-level values the lookup emits. The client's offer reads
+        // the manifest; the submission wizard's update flow and older clients read the flag. Computed
+        // once on the single set this route serves.
+        string fileManifest = await SetFileManifest.CurrentVersionAsync(db, setId, ctx.RequestAborted);
+        bool hasVocalsStem = SetFileManifest.Names(fileManifest, SetFileManifest.VocalsStem);
 
         string urlBase = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
         string status = StatusString(set.Status);
@@ -227,6 +229,7 @@ public static class BeatmapsetEndpoints
             Explicit = set.Explicit,
             SongLanguage = set.Language,
             HasVocalsStem = hasVocalsStem,
+            FileManifest = fileManifest,
             Description = set.Description,
             DownloadCount = set.DownloadCount,
             HasPackage = set.HasPackage,

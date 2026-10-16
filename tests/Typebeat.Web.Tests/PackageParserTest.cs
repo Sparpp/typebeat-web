@@ -92,6 +92,37 @@ public class PackageParserTest
     }
 
     /// <summary>
+    /// The type!beat keys in either spelling. The game's writers emit one spelling (the native
+    /// writer's: <c>Language:</c> with no space, <c>LyricFont: </c> with one), but the legacy encoder
+    /// used to write <c>Language: </c> with a space, and a stored package keeps whatever it was
+    /// uploaded with. Both spellings must parse to the same values.
+    /// </summary>
+    [Test]
+    public void Parse_TypeBeatKeys_ReadTheSameInEitherSpelling()
+    {
+        string shared = SyntheticPackage.OsuText(language: "japanese", lyricFont: "Blocky Pixels", lyricFontFile: "lyricfont.woff2");
+        string spaced = shared.Replace("Language:japanese", "Language: japanese")
+                              .Replace("LyricFont: Blocky Pixels", "LyricFont:Blocky Pixels")
+                              .Replace("LyricFontFile: lyricfont.woff2", "LyricFontFile:lyricfont.woff2");
+
+        var a = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(shared));
+        var b = BeatmapPackageParser.ParseDifficulty("map.osu", SyntheticPackage.Utf8(spaced));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(b.ChecksumMd5, Is.Not.EqualTo(a.ChecksumMd5), "the variant must actually differ for the test to mean anything");
+
+            Assert.That(a.Language, Is.EqualTo("japanese"));
+            Assert.That(a.LyricFont, Is.EqualTo("Blocky Pixels"));
+            Assert.That(a.LyricFontFile, Is.EqualTo("lyricfont.woff2"));
+
+            Assert.That(b.Language, Is.EqualTo(a.Language));
+            Assert.That(b.LyricFont, Is.EqualTo(a.LyricFont));
+            Assert.That(b.LyricFontFile, Is.EqualTo(a.LyricFontFile));
+        });
+    }
+
+    /// <summary>
     /// PR 3's EDITOR TIMING, in a file shaped like the game's new writer output: an [Editor] section
     /// with BeatDivisor and several [TimingPoints] rows (a kiai effect row, negative beat length,
     /// folded in) in place of the one placeholder row. The parser takes the set's BPM from the
