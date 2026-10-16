@@ -532,7 +532,7 @@ public class LyricPaceParityTest
         }
 
         string plainJson = $"{{\"version\":2,\"song_end_ms\":{(t + 1000).ToString(inv)},\"lines\":[{string.Join(",", lines)}]}}";
-        string importedJson = typebeat.Game.Rulesets.TypeBeat.Beatmaps.ImportSyllables.ApplyToTimingJson(plainJson);
+        string importedJson = typebeat.Game.Rulesets.TypeBeat.Import.ImportSyllables.ApplyToTimingJson(plainJson);
 
         string plainOsu = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", plainJson);
         string importedOsu = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", importedJson);
