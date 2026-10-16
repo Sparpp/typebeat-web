@@ -179,6 +179,7 @@ public class Migration004BackfillTest
             "047_loved_status.sql",
             "048_judged_cells.sql",
             "049_replay_sha256.sql",
+            "050_metadata_revision.sql",
         }));
     }
 
