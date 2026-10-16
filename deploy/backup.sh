@@ -282,7 +282,18 @@ case "$MODE" in
     # sit on appdata from before its own volume. The Data Protection keyring is not under /data
     # (its own dpkeys volume) and deliberately not backed up offsite: losing it only invalidates
     # short-lived cookies and form tokens.
-    docker exec typebeat-web-app-1 tar czf - -C / --exclude=data/align-jobs --exclude=data/align-cache data > "$PARTIAL"
+    # GNU tar exits 1 for "file changed as we read it" and 2 for real errors. A live site writes
+    # packages while the tar runs (an upload or a re-assembly), and an assembled package is
+    # rebuildable from its content-addressed blobs anyway, so exit 1 is a usable archive: accept it
+    # instead of discarding a 27 GB backup over one file in flight. gzip -t below still guards the
+    # stream itself. Any other non-zero exit fails the run.
+    TAR_RC=0
+    docker exec typebeat-web-app-1 tar czf - -C / --warning=no-file-changed \
+      --exclude=data/align-jobs --exclude=data/align-cache data > "$PARTIAL" || TAR_RC=$?
+    if [ "$TAR_RC" -ne 0 ] && [ "$TAR_RC" -ne 1 ]; then
+      echo "backup FAILED: tar exited $TAR_RC, discarding" >&2
+      exit 1
+    fi
     gzip -t "$PARTIAL" || { echo "backup FAILED: appdata archive is corrupt, discarding" >&2; exit 1; }
     mv "$PARTIAL" "$DIR/appdata_$TS.tar.gz"
     trap - EXIT
