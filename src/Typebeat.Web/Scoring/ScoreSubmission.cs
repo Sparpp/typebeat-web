@@ -12,8 +12,8 @@ namespace Typebeat.Web.Scoring;
 /// THE PIPELINE STILL EXISTS TWICE. Each route keeps its own token lock, recompute,
 /// gate, pp call, INSERT and stats upsert. What lives here is every piece that was a private copy
 /// in both, or that an integrity check needs to be the same on both: the ranked verdict of a
-/// submitted acronym, the <c>user_stats.hit_counts</c> merge, and the caller's standing on the
-/// board. A check added to submission belongs here, so it cannot land on one route only.
+/// submitted acronym, the claimed maximum held against the map, the <c>user_stats.hit_counts</c>
+/// merge, and the caller's standing on the board. A check added to submission belongs here, so it cannot land on one route only.
 /// </para>
 ///
 /// <para>
@@ -96,6 +96,61 @@ public static class ScoreSubmission
 
         return JsonConvert.SerializeObject(merged);
     }
+
+    /// <summary>
+    /// The prefix of every build a BROWSER play is registered under: <c>web-player</c>, or
+    /// <c>web-</c> plus the page's script revision (<c>PlayEndpoints</c>). A desktop build is 32 hex
+    /// digits, so the prefix alone tells the two clients apart on a stored row.
+    /// </summary>
+    public const string BROWSER_BUILD_PREFIX = "web-";
+
+    /// <summary>
+    /// Whether a stored play came from the browser player, read off its build's
+    /// <c>version_hash</c>. A browser play is stored unranked until the browser sends a keypress
+    /// log the server can audit, so nothing may rank one later either
+    /// (<see cref="GateRefund.Qualifies"/>).
+    /// </summary>
+    public static bool IsBrowserBuild(string? versionHash)
+        => versionHash != null && versionHash.StartsWith(BROWSER_BUILD_PREFIX, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The error both routes answer a refused <see cref="MaximumMatchesMap"/> with (422, as the other
+    /// submit refusals). Both clients print a submit error's text to the player.
+    /// </summary>
+    public const string MAP_MISMATCH_REFUSAL = "maximum_statistics does not match the beatmap";
+
+    /// <summary>
+    /// Whether a submission's claimed maximum agrees with the map it was played on: its
+    /// accuracy-affecting count (<see cref="ScoringContract.CountAccuracyAffecting"/>, one Great per
+    /// judged cell on an honest client) must equal the cells the server counted for that map and
+    /// stream (<see cref="MapJudgedCellsAsync"/>). The maximum used to be the client's word alone,
+    /// so a run cut short and claimed as a ten-cell map recomputed as a complete X.
+    ///
+    /// <para>A null count (a row the backfill has not reached, or a token issued for another
+    /// version of the map) is accepted unchecked, which is how every submission was treated before
+    /// the count existed.</para>
+    /// </summary>
+    public static bool MaximumMatchesMap(IReadOnlyDictionary<string, int>? maximumStatistics, int? mapJudgedCells)
+        => mapJudgedCells is not int cells || ScoringContract.CountAccuracyAffecting(maximumStatistics) == cells;
+
+    /// <summary>
+    /// The cells the map behind <paramref name="tokenId"/> judges on the default or the Literate
+    /// stream (048_judged_cells.sql), or null when that is not known for the version played: the
+    /// pair is not counted yet, was counted under another <see cref="Packages.Lyrics.JudgedCells.VERSION"/>,
+    /// or the map was re-uploaded after the token was issued (the token's <c>beatmap_hash</c> is not
+    /// the stored checksum any more, so the stored count describes a map this run never saw).
+    /// </summary>
+    public static async Task<int?> MapJudgedCellsAsync(DbConnection conn, DbTransaction? tx, long tokenId, bool literate)
+        => await conn.ExecuteScalarAsync<int?>(
+            """
+            SELECT CASE WHEN @literate THEN b.judged_cells_literate ELSE b.judged_cells END
+            FROM score_tokens t
+            JOIN beatmaps b ON b.id = t.beatmap_id
+            WHERE t.id = @tokenId
+              AND b.judged_cells_version = @version
+              AND lower(b.checksum_md5) = lower(t.beatmap_hash)
+            """,
+            new { tokenId, literate, version = Packages.Lyrics.JudgedCells.VERSION }, tx);
 
     /// <summary>
     /// The user's best row on one board of a map (the ranked board when <paramref name="wantRanked"/>,

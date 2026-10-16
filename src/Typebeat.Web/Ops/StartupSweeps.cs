@@ -113,9 +113,9 @@ public sealed class StartupSweepGate
 /// Program.cs still applies the extensions and the migrations synchronously before the app listens,
 /// then this runs every sweep in the original order, in the background, and opens
 /// <see cref="StartupSweepGate"/> when it is through. The order is load-bearing and unchanged:
-/// Pace, then Fingerprint, then Language (reads the lyric text Pace fills), SetRank,
-/// SetRankClassicMark (backlog 398: the version rule pointed down, after the carry-up so the two
-/// cannot fight over a row), and Pp LAST (reads sr_dt / sr_ht and the ranked flags the refund may
+/// Pace, then Fingerprint, then JudgedCell (independent of the rest), then Language (reads the
+/// lyric text Pace fills), SetRank, SetRankClassicMark (backlog 398: the version rule pointed down,
+/// after the carry-up so the two cannot fight over a row), and Pp LAST (reads sr_dt / sr_ht and the ranked flags the refund may
 /// have just flipped). The one-shot repairs that used to sit in it (the 016 and 017 gate refunds,
 /// the 046 score reweight) ran in production and were deleted (S1-026); their migrations stay. The whole chain is caught: a failing sweep is logged as an error
 /// and recorded on the gate, and never takes the host down (it used to crash the boot, which on a
@@ -147,6 +147,12 @@ public sealed class StartupSweeps(Db db, IFileStore fileStore, StartupSweepGate 
             stage = nameof(GameplayFingerprintBackfill);
             await GameplayFingerprintBackfill.RunAsync(db, fileStore, logger, stoppingToken);
             gate.MarkFingerprintsCurrent();
+
+            // Count the cells each live difficulty judges (048_judged_cells.sql), which both submit
+            // routes hold a claimed maximum_statistics against. Until a row is counted its
+            // submissions are accepted unchecked, so nothing waits on this.
+            stage = nameof(JudgedCellBackfill);
+            await JudgedCellBackfill.RunAsync(db, fileStore, logger, stoppingToken);
 
             // Detect the song language of every set that still has none (019_language.sql) from the
             // lyric text, so after Pace. Only writes rows that are still unset.

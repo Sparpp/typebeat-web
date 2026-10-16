@@ -1463,7 +1463,8 @@ NULL IS THE UNFILLED STATE, not a rating of zero, and it has exactly the contrac
 since 020: a play whose cell is missing is NOT SETTLED, earns 0 for now and is left stale for
 `PpBackfill` to revisit. That is stricter than the six columns were, because `difficulty_rating` is
 NOT NULL and a no-mod play could never be pending before; on a row the pace sweep has not reached,
-every play is pending now, including a browser `/play` one.
+every desktop play is pending now. (A browser `/play` play was too, until every browser play
+was stored unranked: it is refused a price outright, never pending.)
 
 The six legacy columns are the matrix's ARM-NONE stars and stay written, from the same parse: they
 are what the set page and the listing cards print, what the client's own beatmap lookup reads off the

@@ -92,16 +92,15 @@
 
     // Why the server stored this play unranked, said honestly. Since backlog 230 the picker offers
     // every PUBLISHED map, so "map not ranked" is the ordinary case rather than an edge one, and the
-    // card that launched the play already told us which it is (data-status). Only a run on a map
-    // that IS ranked leaves the vaguer wording, where the reason really is one of the tamper/gate
-    // checks and the client cannot know which. A LOVED map counts here too: it has a ranked-style
-    // board, so a refused play on it is a gate failure, not "does not count". A pending or unranked map HAS a board (the unranked
-    // one the game client shows), so the reason says the play does not count, not that there is
-    // nowhere for it to go.
+    // card that launched the play already told us which it is (data-status). On a map that IS
+    // ranked (or LOVED, which has a ranked-style board) a passed run is stored unranked because the
+    // server stores every browser play unranked until the browser sends a log it can audit, so
+    // that is what it says. A pending or unranked map HAS a board (the unranked one the game client
+    // shows), so the reason says the play does not count, not that there is nowhere for it to go.
     function notRankedReason(map, results) {
         if (!results.passed) return 'you failed this run';
         if (map.status && map.status !== 'ranked' && map.status !== 'loved') return 'this map is ' + map.status + ', so it does not count';
-        return 'checks failed';
+        return 'browser plays do not rank, only the desktop game does';
     }
 
     // ---- submission integrity (backlog 312) ---------------------------------
@@ -334,7 +333,7 @@
                 discordNudge: (results) => takeDiscordNudge(nudgeStorage(), results.passed, discordUrl),
                 onFinish: async (results, api) => {
                     if (!CFG.signedIn) {
-                        api.setSubmitStatus({ text: '', linkText: 'sign in', linkHref: '/login', textAfter: ' to submit your score to the leaderboard.', cls: 'tb-status-muted' });
+                        api.setSubmitStatus({ text: '', linkText: 'sign in', linkHref: '/login', textAfter: ' to save your score.', cls: 'tb-status-muted' });
                         return;
                     }
                     // Cells TYPED, which deliberately excludes uncorrected typos: those are cells

@@ -47,7 +47,7 @@ public class PlaySubmitStatusTest
         {
             Assert.That(status("rankedPending").Text, Is.EqualTo("submitted ✓ ranked · pp pending · new best, #1"));
             Assert.That(status("failedRun"), Is.EqualTo(("recorded, not ranked (you failed this run) · - pp", "tb-status-muted")));
-            Assert.That(status("checksFailed").Text, Is.EqualTo("recorded, not ranked (checks failed) · - pp"));
+            Assert.That(status("checksFailed").Text, Is.EqualTo("recorded, not ranked (browser plays do not rank, only the desktop game does) · - pp"));
 
             foreach (string name in new[] { "rankedPending", "failedRun", "checksFailed", "pendingMap", "unrankedMapNotBest" })
                 Assert.That(status(name).Text, Does.Not.Contain("0pp"), name);
@@ -55,9 +55,9 @@ public class PlaySubmitStatusTest
     }
 
     [Test]
-    public void ARefusedPlayOnALovedMap_SaysChecksFailed_NotThatTheMapDoesNotCount()
+    public void APlayOnALovedMap_SaysBrowserPlaysDoNotRank_NotThatTheMapDoesNotCount()
     {
-        Assert.That(status("lovedChecksFailed").Text, Is.EqualTo("recorded, not ranked (checks failed) · - pp"));
+        Assert.That(status("lovedChecksFailed").Text, Is.EqualTo("recorded, not ranked (browser plays do not rank, only the desktop game does) · - pp"));
     }
 
     [Test]

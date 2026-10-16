@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Dapper;
 using Npgsql;
 using Typebeat.Web.Data;
@@ -371,7 +372,8 @@ public sealed class Housekeeping(
     /// <summary>
     /// Replay retention. Per pruned row, in its own transaction: re-read the row FOR UPDATE with the
     /// upload time the scan saw (a re-upload since then means it is a fresh replay and is skipped),
-    /// null replay_key and stamp replay_pruned_at, delete the object, commit. The download route
+    /// null replay_key and stamp replay_pruned_at (recording the replay's SHA-256 if it has none yet),
+    /// delete the object, commit. The download route
     /// already answers 404 for a row that says stored while the object is gone, so the order is
     /// safe for readers, and a re-upload clears replay_pruned_at again.
     ///
@@ -426,21 +428,37 @@ public sealed class Housekeeping(
     {
         await using var tx = await conn.BeginTransactionAsync(ct);
 
-        string? key = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
+        var row = await conn.QuerySingleOrDefaultAsync<(string Key, byte[]? Sha256)?>(new CommandDefinition(
             """
-            SELECT replay_key FROM scores
+            SELECT replay_key AS Key, replay_sha256 AS Sha256 FROM scores
             WHERE id = @id AND replay_key IS NOT NULL AND replay_uploaded_at = @seen
             FOR UPDATE
             """,
             new { id = candidate.Id, seen = candidate.UploadedAt }, tx, cancellationToken: ct));
 
         // Re-uploaded (or already gone) since the scan: not the replay that qualified.
-        if (key is null)
+        if (row is not { } stored)
             return false;
 
+        string key = stored.Key;
+
+        // A replay stored before 049 has no recorded hash, and the upload route hashes the stored
+        // object to protect it (ReplayEndpoints). Once the object is deleted that is no longer
+        // possible, so its hash is recorded here first, in the same transaction: a pruned replay
+        // is then restorable only by the same bytes, exactly like one uploaded after 049.
+        byte[]? sha256 = stored.Sha256;
+
+        if (sha256 == null)
+        {
+            await using var existing = await store.OpenObjectReadAsync(key, ct);
+
+            if (existing != null)
+                sha256 = await SHA256.HashDataAsync(existing, ct);
+        }
+
         await conn.ExecuteAsync(new CommandDefinition(
-            "UPDATE scores SET replay_key = NULL, replay_pruned_at = @now WHERE id = @id",
-            new { id = candidate.Id, now = utcNow }, tx, cancellationToken: ct));
+            "UPDATE scores SET replay_key = NULL, replay_pruned_at = @now, replay_sha256 = @sha256 WHERE id = @id",
+            new { id = candidate.Id, now = utcNow, sha256 }, tx, cancellationToken: ct));
 
         try
         {

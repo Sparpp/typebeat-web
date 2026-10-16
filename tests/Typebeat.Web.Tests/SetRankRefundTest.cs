@@ -67,6 +67,7 @@ public class SetRankRefundTest
     private long failedId;        // a failed play
     private long overCeilingId;   // a total its own statistics cannot justify
     private long blockedBuildId;  // a blocked build
+    private long browserId;       // a browser play: stored unranked by design, not by any gate
     private long tokenlessId;     // no score_tokens row: nothing names the version it was played on
 
     // Already ranked and already priced: never a candidate, and its pp stamp must not be reset.
@@ -106,6 +107,8 @@ public class SetRankRefundTest
                 "INSERT INTO builds (version_hash, blocked) VALUES ('clean-build', false) RETURNING id");
             long blockedBuild = await conn.ExecuteScalarAsync<long>(
                 "INSERT INTO builds (version_hash, blocked) VALUES ('blocked-build', true) RETURNING id");
+            long browserBuild = await conn.ExecuteScalarAsync<long>(
+                "INSERT INTO builds (version_hash, blocked) VALUES ('web-0123456789abcdef', false) RETURNING id");
 
             // ---- the victims ----
             // ppVersion 19 on purpose: these rows really are stamped BELOW the current version in
@@ -127,6 +130,7 @@ public class SetRankRefundTest
             failedId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId, passed: false, rank: "F");
             overCeilingId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId, totalScore: 1_500_000);
             blockedBuildId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: blockedBuild);
+            browserId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: browserBuild);
             tokenlessId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId, withToken: false);
 
             alreadyRankedId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId,
@@ -202,6 +206,7 @@ public class SetRankRefundTest
             (failedId, "a failed play"),
             (overCeilingId, "a total its own statistics cannot justify"),
             (blockedBuildId, "a blocked build"),
+            (browserId, "a browser play, which carries no log the server could audit, honest as its account looks"),
             (tokenlessId, "no token, so no evidence of which version it was played on (the version rule, backlog 352)"),
         };
 

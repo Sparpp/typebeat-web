@@ -269,6 +269,20 @@ public static class ScoreEndpoints
         // The mods as they will be stored and priced: acronym + clamped rate, everything else dropped.
         var mods = NormalizeMods(submission.Mods);
 
+        // The claimed maximum must be the map's own: as many accuracy-affecting results as the map
+        // judges cells on the stream played (Literate types its marks as cells too). Refused before
+        // anything is written; a map whose count is not known for the version played is accepted
+        // unchecked (ScoreSubmission.MaximumMatchesMap).
+        bool literate = mods.Any(m => m.Acronym == PerformancePoints.LITERATE_ACRONYM);
+        int? mapJudgedCells = await ScoreSubmission.MapJudgedCellsAsync(conn, tx, tokenId, literate);
+
+        if (!ScoreSubmission.MaximumMatchesMap(maximumStatistics, mapJudgedCells))
+        {
+            logger.LogInformation("Score token {TokenId}: maximum_statistics claims {Claimed} judged cell(s), the map has {Cells}, refusing.",
+                tokenId, ScoringContract.CountAccuracyAffecting(maximumStatistics), mapJudgedCells);
+            return WireJson.Error(status_unprocessable, ScoreSubmission.MAP_MISMATCH_REFUSAL);
+        }
+
         // Recompute accuracy exactly and bound the score against a provable ceiling. The ceiling is
         // the no-mod maximum, so bound the UNMODDED score against it; the mod score-multiplier then
         // legitimately scales the ranked TotalScore up (DT/NC/FL) or down (HT).

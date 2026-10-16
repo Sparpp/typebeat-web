@@ -380,9 +380,9 @@ public class SeoTest
             Assert.That(titleOf(html), Is.EqualTo("Play online free, no download: typing to music · type!beat"));
             Assert.That(metaOf(html, "name", "description"), Is.EqualTo(
                 "Play type!beat free in your browser: pick a song and type the lyrics in time with the music. "
-                + "No download, no account needed. Sign in to save your scores and earn pp."));
+                + "No download, no account needed. Sign in to save your scores."));
             Assert.That(html, Does.Contain(
-                "<a href=\"/login\">sign in</a> to save your scores to the leaderboard and earn pp on ranked maps.</p>"));
+                "<a href=\"/login\">sign in</a> to save your scores.</p>"));
         });
 
         // The intro sits inside the picker, above the card grid, so it hides with the picker when

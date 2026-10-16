@@ -44,7 +44,8 @@ namespace Typebeat.Web.Endpoints;
 /// identical scores/user_stats side effects, but authenticated by the website session cookie
 /// (<see cref="SessionCookieAuth.SessionUser"/>) and CSRF-protected via <see cref="IAntiforgery"/>
 /// rather than a bearer token. Tamper-shaped input on the mutating routes always resolves to a 4xx,
-/// never a 500.
+/// never a 500. One deliberate difference: a browser play is always stored UNRANKED, with no pp
+/// because the browser submits no log the server could audit it with.
 ///
 /// <para>SUBMISSION INTEGRITY (backlog 312), the browser's half of the desktop token's two
 /// identities. BUILD: the server hashes the three /play scripts once at startup
@@ -59,7 +60,7 @@ namespace Typebeat.Web.Endpoints;
 public static class PlayEndpoints
 {
     private const int status_unprocessable = StatusCodes.Status422UnprocessableEntity;
-    private const string web_build_hash = "web-player";
+    private const string web_build_hash = ScoreSubmission.BROWSER_BUILD_PREFIX + "player";
 
     /// <summary>The response header GET /play/map/{setId}/osu carries the served difficulty's
     /// stored checksum in (<c>beatmaps.checksum_md5</c>, the desktop's beatmap_hash).</summary>
@@ -314,7 +315,7 @@ public static class PlayEndpoints
         if (string.IsNullOrEmpty(request.Revision))
             versionHash = web_build_hash;
         else if (revision_shape.IsMatch(request.Revision))
-            versionHash = "web-" + request.Revision;
+            versionHash = ScoreSubmission.BROWSER_BUILD_PREFIX + request.Revision;
         else
             return WireJson.Error(StatusCodes.Status400BadRequest, "invalid request body");
 
@@ -474,11 +475,6 @@ public static class PlayEndpoints
             """,
             new { beatmapId }, tx);
 
-        // A play is ranked (stored on the ranked board) on a 'ranked' or 'loved' set; only a 'ranked'
-        // set's plays are priced. Loved is osu!'s "leaderboard, no pp" status: the row is stored with
-        // pp 0 and the current pp_version, which every pp read already renders as no pp.
-        bool setHasRankedBoard = setStatus is "ranked" or "loved";
-        bool setAwardsPp = setStatus == "ranked";
 
         // Only HitResult names survive, and a bonus count is held to the map's own maximum, exactly
         // as on the game's route (ScoreSubmission.KnownStatistics).
@@ -486,6 +482,17 @@ public static class PlayEndpoints
 
         if (droppedKeys > 0)
             logger.LogInformation("Play token {TokenId}: dropped {Count} unknown statistics key(s).", token.Id, droppedKeys);
+
+        // The claimed maximum must be the map's own, as on the game's route. The browser plays the
+        // default stream only (no mods), so it is held against that count.
+        int? mapJudgedCells = await ScoreSubmission.MapJudgedCellsAsync(conn, tx, token.Id, literate: false);
+
+        if (!ScoreSubmission.MaximumMatchesMap(maximumStatistics, mapJudgedCells))
+        {
+            logger.LogInformation("Play token {TokenId}: maximumStatistics claims {Claimed} judged cell(s), the map has {Cells}, refusing.",
+                token.Id, ScoringContract.CountAccuracyAffecting(maximumStatistics), mapJudgedCells);
+            return WireJson.Error(status_unprocessable, ScoreSubmission.MAP_MISMATCH_REFUSAL);
+        }
 
         var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, submission.MaxCombo);
         bool withinBounds = ScoringContract.TotalScoreWithinBounds(submission.TotalScore, recomputed);
@@ -503,13 +510,18 @@ public static class PlayEndpoints
         double elapsedSeconds = (DateTimeOffset.UtcNow - token.CreatedAt).TotalSeconds;
         bool playTimeOk = PlayTimeGate.Passes(elapsedSeconds, beatmap.DrainLengthS, beatmap.SkippableS, rate);
 
-        bool buildBlocked = await conn.ExecuteScalarAsync<bool>(
-            "SELECT blocked FROM builds WHERE id = @buildId", new { buildId = token.BuildId }, tx);
-
         bool passed = submission.Passed;
         bool fullyJudged = recomputed.AccuracyProgress >= 1;
 
-        bool ranked = setHasRankedBoard && passed && fullyJudged && recomputed.StatisticsValid && withinBounds && playTimeOk && !buildBlocked;
+        // A BROWSER PLAY IS STORED UNRANKED, whatever its set and however clean its account.
+        // /play submits the aggregate alone (no replay, no keypress log), so nothing here can audit
+        // or recalculate it, and a console POST of all-Great statistics after waiting out the map
+        // would otherwise board and earn pp. Until the browser sends a log the server can re-derive,
+        // its plays stay off the ranked board and unpriced; everything else about the row (stored
+        // score, play counts, user_stats, play history, the unranked board of a pending or unranked
+        // set, the results the player is shown) is kept. The checks above still run, for the
+        // stored values and the logs. GateRefund never re-ranks such a row (ScoreSubmission.IsBrowserBuild).
+        bool ranked = false;
 
         double storedAccuracy = passed && fullyJudged ? recomputed.Accuracy : recomputed.JudgedAccuracy;
 
@@ -526,21 +538,14 @@ public static class PlayEndpoints
         string rank = passed ? recomputed.Rank : "F";
         var endedAt = DateTimeOffset.UtcNow;
 
-        // Performance points (docs/pp.md). The browser player stores a hardcoded empty mod stack
-        // (below), so there is no mod multiplier, no rate, no CONVERSION mod and no JUDGEMENT ARM to
-        // price: the play always reads the matrix's none/plain/1.00 cell.
-        //
-        // THAT CELL IS NOT ALWAYS THERE, which is a change from the six-column pricing this
-        // replaced (034_ratings_matrix.sql). difficulty_rating is NOT NULL and has been since 001,
-        // so a browser play used to be settled unconditionally; the matrix is a new column and is
-        // NULL on every row PaceBackfill has not swept, so a browser play on such a map is now
-        // PENDING and is priced on a later boot, exactly as a Double Time desktop play on an
-        // unswept map already was. Nothing else about the path changes, and the whole stack is
-        // still passed rather than assumed, so if /play ever gains mods this call already reads the
-        // cell they select.
+        // Performance points (docs/pp.md). A browser play is never ranked (above), so this is the
+        // formula's refusal, (null, settled), stored as pp 0 at the current version. The call is kept
+        // so the row is written exactly as any other refused play is. The browser player stores a
+        // hardcoded empty mod stack (below), so if /play is ever ranked again it reads the matrix's
+        // none/plain/1.00 cell, which is PENDING on a row PaceBackfill has not swept; a 'loved' set
+        // must then still be refused a price, as on the game's route.
         var (pp, ppSettled) = PerformancePoints.ForScore(
-            // A loved play is ranked but never priced (see setAwardsPp above).
-            ranked && setAwardsPp,
+            ranked,
             mods: [],
             PerformancePoints.CountNotes(statistics),
             storedAccuracy,

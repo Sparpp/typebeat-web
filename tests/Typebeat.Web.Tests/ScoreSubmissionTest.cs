@@ -1,11 +1,13 @@
 using Newtonsoft.Json.Linq;
+using Typebeat.Web.Packages.Lyrics;
 using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Tests;
 
 /// <summary>
 /// DB-free tests for the pure halves of <see cref="ScoreSubmission"/>, the pieces both submit routes
-/// share: the ranked verdict of a submitted acronym and the <c>user_stats.hit_counts</c> merge.
+/// share: the ranked verdict of a submitted acronym, the claimed maximum held against the map's own
+/// judged cells, and the <c>user_stats.hit_counts</c> merge.
 /// </summary>
 public class ScoreSubmissionTest
 {
@@ -68,6 +70,58 @@ public class ScoreSubmissionTest
             Assert.That(statistics["large_bonus"], Is.Zero, "a type!beat map has no bonus judgement");
             Assert.That(maximum.Keys, Is.EquivalentTo(new[] { "great" }));
             Assert.That(dropped, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void MaximumMatchesMap_RefusesAClaimThatIsNotTheMapsCellCount()
+    {
+        Assert.Multiple(() =>
+        {
+            // The audit's case: ten Greats against a claimed ten-cell map, on a map of 240 cells.
+            Assert.That(ScoreSubmission.MaximumMatchesMap(new Dictionary<string, int> { ["great"] = 10 }, 240), Is.False);
+            Assert.That(ScoreSubmission.MaximumMatchesMap(new Dictionary<string, int> { ["great"] = 240 }, 240), Is.True);
+
+            // Over-claiming is refused too: it would deflate completion, but it is not the map.
+            Assert.That(ScoreSubmission.MaximumMatchesMap(new Dictionary<string, int> { ["great"] = 241 }, 240), Is.False);
+
+            // Only accuracy-affecting results count, as the recompute reads them: the line objects'
+            // ignore_hit and a combo-only key leave the count where it is.
+            Assert.That(ScoreSubmission.MaximumMatchesMap(
+                new Dictionary<string, int> { ["great"] = 240, ["ignore_hit"] = 12, ["combo_break"] = 3 }, 240), Is.True);
+
+            // An empty or absent claim against a map with cells is not the map.
+            Assert.That(ScoreSubmission.MaximumMatchesMap(new Dictionary<string, int>(), 240), Is.False);
+            Assert.That(ScoreSubmission.MaximumMatchesMap(null, 240), Is.False);
+
+            // Not counted (yet, or for this version of the map): accepted unchecked, as before.
+            Assert.That(ScoreSubmission.MaximumMatchesMap(new Dictionary<string, int> { ["great"] = 10 }, null), Is.True);
+        });
+    }
+
+    [Test]
+    public void JudgedCells_CountsTheDefaultAndTheLiterateStreams()
+    {
+        Assert.Multiple(() =>
+        {
+            // Default: lower-cased, a hyphen becomes one word break, every other mark is gone.
+            // "the bad cat sat" is 15 cells, spaces included.
+            Assert.That(JudgedCells.CountDefault("The bad-cat sat."), Is.EqualTo(15));
+            // Literate: every authored char, the hyphen and the full stop included.
+            Assert.That(JudgedCells.CountLiterate("The bad-cat sat."), Is.EqualTo(16));
+
+            // A hyphen run collapses to one space, and to none at either end of the line.
+            Assert.That(JudgedCells.CountDefault("-a - b-"), Is.EqualTo(3));
+            Assert.That(JudgedCells.CountLiterate("-a - b-"), Is.EqualTo(7));
+
+            // A freestyle slot is a judged cell on both streams; a mark standing alone keeps both
+            // authored spaces on the default stream.
+            Assert.That(JudgedCells.CountDefault("go && go"), Is.EqualTo(8));
+            Assert.That(JudgedCells.CountDefault("oh , no"), Is.EqualTo(6));
+            Assert.That(JudgedCells.CountLiterate("oh , no"), Is.EqualTo(7));
+
+            Assert.That(JudgedCells.CountDefault(""), Is.Zero);
+            Assert.That(JudgedCells.CountLiterate(""), Is.Zero);
         });
     }
 

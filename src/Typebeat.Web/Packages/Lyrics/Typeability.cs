@@ -7,7 +7,9 @@ namespace Typebeat.Web.Packages.Lyrics;
 /// Server-side port of the game's text-normalization / typeability authority
 /// (typebeat-osu typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricBeatmap.cs:33-166, class
 /// Typeability). The upload pipeline must count exactly the cells the client will make the
-/// player type, so this logic is copied verbatim; any change there must be mirrored here.
+/// player type, so this logic is copied verbatim; any change there must be mirrored here. A change
+/// that moves which chars are cells also moves the stored judged cell counts, and must bump
+/// <see cref="JudgedCells.VERSION"/>.
 /// </summary>
 public static class Typeability
 {

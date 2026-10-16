@@ -449,9 +449,13 @@ public class LovedStatusTest
         });
     }
 
-    /// <summary>The in-browser player (PlayEndpoints) follows the same rule as the game client.</summary>
+    /// <summary>
+    /// The in-browser player (PlayEndpoints) stores every play unranked, a loved set's included: the
+    /// play is recorded with no pp and nothing pending, and sits on no board, because a loved set
+    /// serves the ranked one.
+    /// </summary>
     [Test]
-    public async Task BrowserPlay_OnALovedSet_IsOnTheRankedBoard_WithNoPpAndNothingPending()
+    public async Task BrowserPlay_OnALovedSet_IsStoredUnranked_WithNoPpAndNothingPending()
     {
         const string name = "loved browser typist";
         const string password = "lovedbrowser-123456";
@@ -499,9 +503,9 @@ public class LovedStatusTest
 
         Assert.Multiple(() =>
         {
-            Assert.That((bool)submitted["ranked"]!, Is.True);
-            Assert.That((string?)submitted["board"], Is.EqualTo("ranked"));
-            Assert.That((int?)submitted["position"], Is.EqualTo(1));
+            Assert.That((bool)submitted["ranked"]!, Is.False);
+            Assert.That(submitted["board"]!.Type, Is.EqualTo(JTokenType.Null));
+            Assert.That(submitted["position"]!.Type, Is.EqualTo(JTokenType.Null));
             Assert.That(submitted["pp"]!.Type, Is.EqualTo(JTokenType.Null));
             Assert.That((bool)submitted["pp_pending"]!, Is.False);
         });

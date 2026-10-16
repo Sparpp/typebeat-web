@@ -3,7 +3,7 @@
 @{
     // Backlog 418: indexed, so it carries its own title and description.
     ViewData["FullTitle"] = "Play online free, no download: typing to music · type!beat";
-    ViewData["MetaDescription"] = "Play type!beat free in your browser: pick a song and type the lyrics in time with the music. No download, no account needed. Sign in to save your scores and earn pp.";
+    ViewData["MetaDescription"] = "Play type!beat free in your browser: pick a song and type the lyrics in time with the music. No download, no account needed. Sign in to save your scores.";
     ViewData["CardPlayMode"] = true; // the shared card renders a play button instead of download
     var user = Model.CurrentUser;
     var auto = Model.AutoPlay;
@@ -16,7 +16,7 @@
        paragraph goes with it: a signed-in visitor would otherwise get an empty one. *@
     @if (user is null)
     {
-        <p class="play-sub"><a href="/login">sign in</a> to save your scores to the leaderboard and earn pp on ranked maps.</p>
+        <p class="play-sub"><a href="/login">sign in</a> to save your scores.</p>
     }
 </section>
 
