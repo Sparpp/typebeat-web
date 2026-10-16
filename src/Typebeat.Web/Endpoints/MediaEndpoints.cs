@@ -2,9 +2,7 @@ using System.IO.Compression;
 using Dapper;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Primitives;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
@@ -562,7 +560,7 @@ public static class MediaEndpoints
         var magenta = (R: 0xe8, G: 0x4b, B: 0xaf);
         var surface = (R: 0x18, G: 0x14, B: 0x30);
 
-        using var image = new Image<Rgba32>(width, height);
+        using var image = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque));
 
         for (int y = 0; y < height; y++)
         {
@@ -578,16 +576,16 @@ public static class MediaEndpoints
 
                 // Blended onto the dark surface (60% gradient) so it reads as a backdrop, not a button.
                 const double strength = 0.6;
-                image[x, y] = new Rgba32(
+                image.SetPixel(x, y, new SKColor(
                     (byte)(surface.R + (r - surface.R) * strength),
                     (byte)(surface.G + (g - surface.G) * strength),
-                    (byte)(surface.B + (b - surface.B) * strength));
+                    (byte)(surface.B + (b - surface.B) * strength)));
             }
         }
 
-        using var buffer = new MemoryStream();
-        image.SaveAsJpeg(buffer, new JpegEncoder { Quality = CoverGenerator.JpegQuality });
-        return buffer.ToArray();
+        using var pixels = image.PeekPixels();
+        using var jpeg = CoverGenerator.EncodeJpeg(pixels);
+        return jpeg.ToArray();
     });
 
     private sealed record DownloadRow(string Status, long OwnerId, string Artist, string Title, string? PackageKey, string? PublicKey);

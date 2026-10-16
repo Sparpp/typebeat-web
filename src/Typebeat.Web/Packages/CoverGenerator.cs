@@ -1,6 +1,4 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Packages;
@@ -36,17 +34,15 @@ public sealed class CoverGenerator
     /// Generates all eight cover jpegs under <c>covers/{setId}/{versionNo}/</c>.
     /// </summary>
     /// <returns>The cover key prefix to store in <c>beatmapsets.cover_key</c>.</returns>
-    /// <exception cref="UnknownImageFormatException">The background is not a decodable image.</exception>
+    /// <exception cref="UnreadableImageException">The background is not a decodable image.</exception>
     public async Task<string> GenerateAsync(Stream backgroundImage, long setId, int versionNo, IFileStore store, CancellationToken ct = default)
     {
         using var source = await LoadWithinBudgetAsync(backgroundImage, MaxSourcePixels, ct);
 
-        var encoder = new JpegEncoder { Quality = JpegQuality };
-
         foreach (var (name, width, height) in Sizes)
         {
-            await writeAsync(source, StoreKeys.Cover(setId, versionNo, name), width, height, encoder, store, ct);
-            await writeAsync(source, StoreKeys.Cover(setId, versionNo, name + "@2x"), width * 2, height * 2, encoder, store, ct);
+            await WriteCoverFitJpegAsync(source, StoreKeys.Cover(setId, versionNo, name), width, height, store, ct);
+            await WriteCoverFitJpegAsync(source, StoreKeys.Cover(setId, versionNo, name + "@2x"), width * 2, height * 2, store, ct);
         }
 
         return StoreKeys.CoverPrefix(setId, versionNo);
@@ -54,50 +50,103 @@ public sealed class CoverGenerator
 
     /// <summary>
     /// Reads only the image header first and refuses a source above <paramref name="maxPixels"/>
-    /// before anything is decoded. The refusal is an <c>InvalidImageContentException</c>, an
-    /// <c>ImageFormatException</c> like every other unreadable upload, so callers that already
-    /// handle a corrupt image handle an oversized one the same way.
+    /// before anything is decoded. The refusal is an <see cref="UnreadableImageException"/>, like
+    /// every other unreadable upload, so callers that already handle a corrupt image handle an
+    /// oversized one the same way.
     /// </summary>
-    /// <exception cref="UnknownImageFormatException">The source is not a decodable image.</exception>
-    public static async Task<Image> LoadWithinBudgetAsync(Stream source, long maxPixels, CancellationToken ct = default)
+    /// <exception cref="UnreadableImageException">The source is not a decodable image, or is above the budget.</exception>
+    public static async Task<SKImage> LoadWithinBudgetAsync(Stream source, long maxPixels, CancellationToken ct = default)
     {
-        // Identify and decode both read from the start, so a stream that cannot rewind is
-        // buffered once (every current caller passes a seekable one).
-        MemoryStream? copy = null;
+        // Skia's codec reads synchronously, and an upload stream may only allow async reads, so
+        // the encoded bytes are buffered once (they are already capped by the upload size limits).
+        byte[] bytes;
 
-        if (!source.CanSeek)
+        using (var buffer = new MemoryStream())
         {
-            copy = new MemoryStream();
-            await source.CopyToAsync(copy, ct);
-            copy.Position = 0;
-            source = copy;
+            await source.CopyToAsync(buffer, ct);
+            bytes = buffer.ToArray();
         }
 
-        await using var ownedCopy = copy;
+        using var data = SKData.CreateCopy(bytes);
 
-        long start = source.Position;
-        var info = await Image.IdentifyAsync(source, ct);
+        // A null codec covers both "not an image" and "an image format Skia cannot read".
+        using var codec = SKCodec.Create(data)
+                          ?? throw new UnreadableImageException("The file is not a decodable image.");
+
+        // The codec has parsed the header only; nothing is decoded until the bitmap below.
+        var info = codec.Info;
 
         if ((long)info.Width * info.Height > maxPixels)
-            throw new InvalidImageContentException($"The image is {info.Width}x{info.Height}, above the {maxPixels} pixel budget.");
+            throw new UnreadableImageException($"The image is {info.Width}x{info.Height}, above the {maxPixels} pixel budget.");
 
-        source.Position = start;
-        return await Image.LoadAsync(source, ct);
+        // Null when the pixel data is corrupt past the header.
+        using var bitmap = SKBitmap.Decode(codec)
+                           ?? throw new UnreadableImageException("The image data is corrupt.");
+
+        // Immutable, so the image shares the decoded pixels rather than copying them.
+        bitmap.SetImmutable();
+        return SKImage.FromBitmap(bitmap)
+               ?? throw new UnreadableImageException("The image data is corrupt.");
     }
 
-    private static async Task writeAsync(Image source, string key, int width, int height, JpegEncoder encoder, IFileStore store, CancellationToken ct)
+    /// <summary>
+    /// Scales <paramref name="source"/> to fill <paramref name="width"/> x <paramref name="height"/>,
+    /// crops the overflow around the center (cover-fit), and writes it to <paramref name="key"/> as
+    /// a quality-<see cref="JpegQuality"/> JPEG.
+    /// </summary>
+    public static async Task WriteCoverFitJpegAsync(SKImage source, string key, int width, int height, IFileStore store, CancellationToken ct)
     {
-        // ResizeMode.Crop = scale to fill, crop the overflow around the center anchor (cover-fit).
-        using var sized = source.Clone(ctx => ctx.Resize(new ResizeOptions
-        {
-            Size = new Size(width, height),
-            Mode = ResizeMode.Crop,
-        }));
+        using var jpeg = CoverFitJpeg(source, width, height);
+        await using var stream = jpeg.AsStream();
 
-        using var buffer = new MemoryStream();
-        await sized.SaveAsJpegAsync(buffer, encoder, ct);
-        buffer.Position = 0;
+        await store.WriteObjectAsync(key, stream, ct);
+    }
 
-        await store.WriteObjectAsync(key, buffer, ct);
+    /// <summary>The cover-fit render behind <see cref="WriteCoverFitJpegAsync"/>, as JPEG bytes.</summary>
+    public static SKData CoverFitJpeg(SKImage source, int width, int height)
+    {
+        // Scale to fill: the larger of the two ratios, so the scaled source covers the target on
+        // both axes; the source rectangle that lands on the target is then centered in the source.
+        double scale = Math.Max(width / (double)source.Width, height / (double)source.Height);
+        float cropWidth = (float)(width / scale);
+        float cropHeight = (float)(height / scale);
+        float left = (source.Width - cropWidth) / 2f;
+        float top = (source.Height - cropHeight) / 2f;
+
+        // Downscaling reads from mipmaps so a large background does not alias; upscaling a small
+        // one uses a bicubic (Catmull-Rom) filter.
+        var sampling = scale < 1
+            ? new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear)
+            : new SKSamplingOptions(SKCubicResampler.CatmullRom);
+
+        using var surface = SKSurface.Create(new SKImageInfo(width, height, SKImageInfo.PlatformColorType, SKAlphaType.Premul))
+                            ?? throw new InvalidOperationException($"Could not allocate a {width}x{height} surface.");
+
+        surface.Canvas.DrawImage(source, SKRect.Create(left, top, cropWidth, cropHeight), SKRect.Create(width, height), sampling);
+        surface.Canvas.Flush();
+
+        using var rendered = surface.PeekPixels();
+        return EncodeJpeg(rendered);
+    }
+
+    /// <summary>
+    /// Encodes <paramref name="pixels"/> as a quality-<see cref="JpegQuality"/>, 4:2:0 JPEG. JPEG
+    /// has no alpha, so a translucent pixel keeps its own (unpremultiplied) colour and drops the
+    /// alpha, rather than being darkened toward black.
+    /// </summary>
+    public static SKData EncodeJpeg(SKPixmap pixels)
+    {
+        var options = new SKJpegEncoderOptions(JpegQuality, SKJpegEncoderDownsample.Downsample420, SKJpegEncoderAlphaOption.Ignore);
+
+        if (pixels.AlphaType != SKAlphaType.Premul)
+            return pixels.Encode(options) ?? throw new InvalidOperationException("JPEG encoding failed.");
+
+        using var unpremul = new SKBitmap(pixels.Info.WithAlphaType(SKAlphaType.Unpremul));
+        using var target = unpremul.PeekPixels();
+
+        if (!pixels.ReadPixels(target))
+            throw new InvalidOperationException("Could not unpremultiply the rendered pixels.");
+
+        return target.Encode(options) ?? throw new InvalidOperationException("JPEG encoding failed.");
     }
 }

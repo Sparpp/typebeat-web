@@ -1,7 +1,6 @@
 using System.IO.Compression;
 using System.Text;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using Typebeat.Web.Packages;
 
 namespace Typebeat.Web.Tests;
@@ -194,14 +193,13 @@ public static class SyntheticPackage
     /// <summary>A decodable 64x48 PNG for cover-generation paths.</summary>
     public static byte[] TinyPng()
     {
-        using var image = new Image<Rgba32>(64, 48);
+        using var image = new SKBitmap(new SKImageInfo(64, 48, SKColorType.Rgba8888, SKAlphaType.Opaque));
 
         for (int y = 0; y < image.Height; y++)
         for (int x = 0; x < image.Width; x++)
-            image[x, y] = new Rgba32((byte)(x * 4), (byte)(y * 5), 128);
+            image.SetPixel(x, y, new SKColor((byte)(x * 4), (byte)(y * 5), 128));
 
-        using var stream = new MemoryStream();
-        image.SaveAsPng(stream);
-        return stream.ToArray();
+        using var png = image.Encode(SKEncodedImageFormat.Png, 100);
+        return png.ToArray();
     }
 }
