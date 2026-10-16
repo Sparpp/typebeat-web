@@ -7,10 +7,11 @@ namespace Typebeat.Web.Align;
 
 /// <summary>
 /// File-based job exchange between the web app and the aligner worker container (backlog 413,
-/// bringing back what backlog 287 retired), rooted at {TYPEBEAT_FILE_ROOT}/align-jobs (the shared
-/// /data volume in prod). The app owns job creation, status reads and cancellation; the worker
-/// (deploy/aligner/worker.py) claims the oldest pending job, streams progress, and terminates it
-/// with timing.json or error.json. No database involvement: the protocol is plain files, so the
+/// bringing back what backlog 287 retired), rooted at {TYPEBEAT_FILE_ROOT}/align-jobs (in prod the
+/// align_jobs volume, mounted there in both containers; the worker sees nothing else of /data).
+/// The app owns job creation, status reads and cancellation; the worker (deploy/aligner/worker.py)
+/// claims the oldest pending job, streams progress, and terminates it with timing.json or
+/// error.json. No database involvement: the protocol is plain files, so the
 /// worker needs no credentials.
 ///
 ///   {root}/align-jobs/worker.json          worker heartbeat: aligner_version, heartbeat_at (UTC)

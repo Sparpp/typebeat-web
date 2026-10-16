@@ -7,12 +7,14 @@ namespace Typebeat.Web.Scoring;
 
 /// <summary>
 /// The shared machinery behind every startup pass that restores the <c>ranked</c> flag on a score
-/// stored unranked for a reason that was never the player's. Two of them correct a since-fixed bug
-/// in <see cref="PlayTimeGate"/>, one per correction, and differ only in a handful of values:
+/// stored unranked for a reason that was never the player's. Two of them corrected a since-fixed bug
+/// in <see cref="PlayTimeGate"/>, one per correction, and differed only in a handful of values:
 /// <list type="bullet">
-/// <item><see cref="SkipGateRefund"/> (016): the gate ignored the in-game skip button.</item>
-/// <item><see cref="RateGateRefund"/> (017): the gate ignored the play's rate mod.</item>
+/// <item>SkipGateRefund (016): the gate ignored the in-game skip button.</item>
+/// <item>RateGateRefund (017): the gate ignored the play's rate mod.</item>
 /// </list>
+/// Both ran in production and were deleted with their boot sweeps (S1-026); the one-shot mode
+/// (<see cref="Plan.Standing"/> false) is what they used.
 ///
 /// <para>
 /// SINCE BACKLOG 270 IT ALSO CARRIES A THIRD KIND OF PASS, <see cref="SetRankRefund"/>, which is

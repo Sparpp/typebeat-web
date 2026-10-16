@@ -23,9 +23,9 @@ namespace Typebeat.Web.Tests;
 /// </para>
 ///
 /// <para>
-/// Same harness shape as <see cref="Migration016SkipGateRefundTest"/>, minus its
-/// migration-by-migration replay: this pass is not tied to a migration, so the schema is simply
-/// brought fully up to date and the rows are seeded into it.
+/// Same harness shape as the deleted 016 skip-gate refund test, minus its migration-by-migration
+/// replay: this pass is not tied to a migration, so the schema is simply brought fully up to date
+/// and the rows are seeded into it.
 /// </para>
 /// </summary>
 [TestFixture]

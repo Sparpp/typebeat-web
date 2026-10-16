@@ -12,10 +12,11 @@ public enum ReplaySweepMode
     /// <summary>The pass does not even look.</summary>
     Off,
 
-    /// <summary>Counts and logs "would prune N replays, B bytes" and deletes nothing. The default.</summary>
+    /// <summary>Counts and logs "would prune N replays, B bytes" and deletes nothing.</summary>
     DryRun,
 
-    /// <summary>Deletes the replay bytes and stamps <c>scores.replay_pruned_at</c>.</summary>
+    /// <summary>Deletes the replay bytes and stamps <c>scores.replay_pruned_at</c>. The default
+    /// (S1-038, owner decision: retention on, under the keep rules of <c>ReplayCandidatesSql</c>).</summary>
     On,
 }
 
@@ -29,9 +30,10 @@ public sealed record HousekeepingOptions
     public const string KeepViewedDaysKey = "TYPEBEAT_REPLAY_KEEP_VIEWED_DAYS";
     public const string SoftCapKey = "TYPEBEAT_REPLAY_SOFT_CAP_GB";
 
-    public ReplaySweepMode ReplaySweep { get; init; } = ReplaySweepMode.DryRun;
+    public ReplaySweepMode ReplaySweep { get; init; } = ReplaySweepMode.On;
 
-    /// <summary>A replay among the player's top N plays on that map, per board, is always kept.</summary>
+    /// <summary>A replay among the player's top N plays on that map, per board, is always kept. Configuration
+    /// cannot set it below 1, so the player's best ranked replay is never pruned.</summary>
     public int KeepTopN { get; init; } = 3;
 
     /// <summary>A replay uploaded within this many days is always kept.</summary>
@@ -55,15 +57,17 @@ public sealed record HousekeepingOptions
     public static HousekeepingOptions FromConfiguration(IConfiguration config) => new()
     {
         ReplaySweep = ParseMode(config[ReplaySweepKey]),
-        KeepTopN = (int)DiskGuardOptions.ParseNonNegative(config[KeepTopNKey], 3),
+        KeepTopN = Math.Max(1, (int)DiskGuardOptions.ParseNonNegative(config[KeepTopNKey], 3)),
         KeepDays = (int)DiskGuardOptions.ParseNonNegative(config[KeepDaysKey], 30),
         KeepViewedDays = (int)DiskGuardOptions.ParseNonNegative(config[KeepViewedDaysKey], 90),
         SoftCapBytes = DiskGuardOptions.GigabytesToBytes(DiskGuardOptions.ParseNonNegative(config[SoftCapKey], 10)),
     };
 
-    /// <summary>off | dryrun | on, case-insensitive; anything else (empty included) is dryrun, the safe middle.</summary>
+    /// <summary>off | dryrun | on, case-insensitive; unset or empty is on, the default. Anything else is
+    /// dryrun, the safe middle: a mistyped value must not delete what its author meant to keep.</summary>
     public static ReplaySweepMode ParseMode(string? value) => value?.Trim().ToLowerInvariant() switch
     {
+        null or "" => ReplaySweepMode.On,
         "off" => ReplaySweepMode.Off,
         "on" => ReplaySweepMode.On,
         _ => ReplaySweepMode.DryRun,
@@ -129,8 +133,8 @@ public sealed class HousekeepingStatus
 /// <item>Expired chunked upload sessions (otherwise swept only when a new session is created).</item>
 /// <item>Cover jpegs of set versions below latest - 1, except the version cover_key names
 /// (<see cref="CoverPrune"/>), a catch-up for the ingest's own per-version prune.</item>
-/// <item>Replay retention, under <see cref="ReplaySweepMode"/>, DRY RUN by default: see
-/// <see cref="sweepReplaysAsync"/>.</item>
+/// <item>Replay retention, under <see cref="ReplaySweepMode"/>, ON by default (it was a dry run
+/// until S1-038): see <see cref="sweepReplaysAsync"/>.</item>
 /// </list>
 ///
 /// <para>Content-addressed blobs are left alone (they are shared across versions and sets). No

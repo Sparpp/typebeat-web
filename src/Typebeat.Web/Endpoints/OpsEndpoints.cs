@@ -2,6 +2,7 @@ using Typebeat.Web.Data;
 using Typebeat.Web.Ops;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Storage;
+using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
 
@@ -94,7 +95,7 @@ public static class OpsEndpoints
         var logger = loggerFactory.CreateLogger("SetRankClassicMark");
         var report = await SetRankClassicMark.ReportAsync(db, store, logger, setId, ctx.RequestAborted);
 
-        return Results.Json(new
+        return WireJson.Ok(new
         {
             setId,
             examined = report.Examined,
@@ -125,9 +126,8 @@ public static class OpsEndpoints
         {
             // A readout that cannot be taken must not answer 200 with zeroes: a "0 percent used"
             // is indistinguishable from a healthy disk and would silence the alert permanently.
-            return Results.Problem(
-                $"could not read disk usage for '{root}': {status.FilesError}",
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            return WireJson.Error(StatusCodes.Status503ServiceUnavailable,
+                $"could not read disk usage for '{root}': {status.FilesError}");
         }
 
         // The same rule one level down, and the hole backlog 286 found in it: a probe can SUCCEED
@@ -137,9 +137,8 @@ public static class OpsEndpoints
         // forever. A zero-size filesystem does not exist, so treat it as the failed probe it is.
         if (!Usable(readout))
         {
-            return Results.Problem(
-                $"disk usage for '{root}' read back as a zero-size filesystem, which cannot be true: treating it as a failed probe rather than an empty disk",
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            return WireJson.Error(StatusCodes.Status503ServiceUnavailable,
+                $"disk usage for '{root}' read back as a zero-size filesystem, which cannot be true: treating it as a failed probe rather than an empty disk");
         }
 
         long? replayBytes;
@@ -154,7 +153,7 @@ public static class OpsEndpoints
             replayBytes = null;
         }
 
-        return Results.Json(new
+        return WireJson.Ok(new
         {
             totalBytes = readout.TotalBytes,
             freeBytes = readout.FreeBytes,

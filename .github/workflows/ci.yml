@@ -155,6 +155,23 @@ jobs:
       - name: Build image on server
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web && ./deploy/up.sh build app'
 
+      # S1-018, one time: the Data Protection keyring moved from /data/dpkeys on the appdata volume
+      # to its own dpkeys volume (TYPEBEAT_DPKEYS_DIR). Copies the existing keys across BEFORE the
+      # first app that reads the new place starts, so the challenge, Google sign-in and antiforgery
+      # cookies issued before the deploy stay valid. Runs in a throwaway container of the image just
+      # built, which mounts both volumes exactly as the app will. The copy never overwrites (cp -n), so it is
+      # safe to repeat on every deploy and a no-op on a fresh box. The old copy stays where it was, for
+      # a rollback to :previous, which still reads /data/dpkeys; deploy/README.md, "Volumes", says
+      # when to delete it, and this step can go once it has run.
+      - name: Move the keyring off appdata
+        run: |
+          ssh -i ~/.ssh/deploy_key root@46.62.142.5 'bash -se' <<'REMOTE'
+          cd /opt/typebeat-web
+          ./deploy/up.sh run --rm --no-deps -T --entrypoint sh app -c '
+            if ls /data/dpkeys/key-*.xml >/dev/null 2>&1; then cp -pn /data/dpkeys/key-*.xml /dpkeys/ && echo "keyring in /dpkeys holds $(ls /dpkeys/key-*.xml | wc -l) keys after copying any missing ones from /data/dpkeys"
+            else echo "no keyring on appdata, nothing to move"; fi' </dev/null
+          REMOTE
+
       - name: Swap container
         id: swap
         run: ssh -i ~/.ssh/deploy_key root@46.62.142.5 'cd /opt/typebeat-web && ./deploy/up.sh up -d app'

@@ -324,6 +324,49 @@ public class HousekeepingTest
         });
     }
 
+    /// <summary>
+    /// The rule the owner turned retention on under (S1-038): a player's best ranked play keeps its
+    /// replay, whatever else qualifies around it. Under the DEFAULT options (on, keep top 3) and under
+    /// the tightest top-N there is (1), with the best ranked replay old, unpinned and unwatched, and
+    /// outscored by a failed run and by an unranked play, only the superseded ones go.
+    /// </summary>
+    [TestCase(null)]
+    [TestCase(1)]
+    public async Task ReplayRetention_NeverPrunesTheBestRankedReplay(int? keepTopN)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        long ownerId = await insertUserAsync(conn, "hk best ranked");
+        var (_, beatmapId) = await insertMapAsync(conn, "Best Ranked Ballad");
+
+        long best = await storedReplayAsync(conn, ownerId, beatmapId, 700_000, uploadedDaysAgo: 400);
+        long failedHigher = await storedReplayAsync(conn, ownerId, beatmapId, 990_000, uploadedDaysAgo: 400, passed: false);
+        long unrankedHigher = await storedReplayAsync(conn, ownerId, beatmapId, 980_000, uploadedDaysAgo: 400, ranked: false);
+
+        var superseded = new List<long>();
+        for (int i = 0; i < 4; i++)
+            superseded.Add(await storedReplayAsync(conn, ownerId, beatmapId, 600_000 - i * 1000, uploadedDaysAgo: 400));
+
+        var options = keepTopN is int n ? new HousekeepingOptions { KeepTopN = n } : new HousekeepingOptions();
+        int keep = keepTopN ?? 3;
+
+        var report = await Housekeeping.RunOnceAsync(conn, store, options, DateTimeOffset.UtcNow);
+        string? bestKey = await conn.ExecuteScalarAsync<string?>("SELECT replay_key FROM scores WHERE id = @best", new { best });
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(report.ReplayMode, Is.EqualTo(ReplaySweepMode.On), "the default sweep prunes");
+            Assert.That(report.ReplayScoreIds, Does.Not.Contain(best), "the best ranked replay is never a candidate");
+            Assert.That(bestKey, Is.EqualTo(StoreKeys.Replay(best)));
+            Assert.That(await store.ObjectExistsAsync(StoreKeys.Replay(best)), Is.True, "the best ranked replay's object");
+            Assert.That(report.ReplayScoreIds, Does.Not.Contain(unrankedHigher), "the unranked board keeps its own best");
+
+            // Below the best, the ranked board keeps keep - 1 more passed plays, then the failed run sorts last.
+            var expectedPruned = superseded.Skip(keep - 1).Append(failedHigher);
+            Assert.That(report.ReplayScoreIds.Where(id => id == failedHigher || superseded.Contains(id)), Is.EquivalentTo(expectedPruned));
+        });
+    }
+
     [Test]
     public async Task ReplaySweepOff_LooksAtNothing()
     {

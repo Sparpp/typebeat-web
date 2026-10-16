@@ -68,13 +68,19 @@ if (!string.IsNullOrEmpty(builder.Configuration["TYPEBEAT_RESEND_API_KEY"]))
 else
     builder.Services.AddSingleton<IEmailSender, LogEmailSender>();
 
-// Persist Data Protection keys (challenge cookies + antiforgery tokens) across container
-// redeploys when a file root is configured (prod: the /data appdata volume). Without this,
-// every redeploy would rotate the in-memory keys and invalidate in-flight challenge cookies and
-// any rendered antiforgery tokens. Local/tests keep the default ephemeral keyring.
-if (builder.Configuration["TYPEBEAT_FILE_ROOT"] is { Length: > 0 } fileRoot)
+// Persist Data Protection keys (challenge cookies, Google sign-in cookies + antiforgery tokens)
+// across container redeploys. Without this, every redeploy would rotate the in-memory keys and
+// invalidate in-flight challenge cookies and any rendered antiforgery tokens. Prod keeps them in
+// TYPEBEAT_DPKEYS_DIR, their own volume (S1-018): the appdata volume holds every upload, and a
+// keyring there was one mount away from anything else that shares it. Unset, they stay under
+// {TYPEBEAT_FILE_ROOT}/dpkeys as before; with neither, local/tests keep the ephemeral keyring.
+string? keyPath = builder.Configuration["TYPEBEAT_DPKEYS_DIR"] is { Length: > 0 } dpkeysDir
+    ? dpkeysDir
+    : builder.Configuration["TYPEBEAT_FILE_ROOT"] is { Length: > 0 } fileRoot ? Path.Combine(fileRoot, "dpkeys") : null;
+
+if (keyPath is not null)
 {
-    var keyDir = new DirectoryInfo(Path.Combine(fileRoot, "dpkeys"));
+    var keyDir = new DirectoryInfo(keyPath);
     keyDir.Create();
     builder.Services.AddDataProtection()
         .PersistKeysToFileSystem(keyDir)
@@ -103,7 +109,7 @@ builder.Services.AddSingleton(sp => new DiskGuard(
     logger: sp.GetRequiredService<ILoggerFactory>().CreateLogger<DiskGuard>()));
 
 // Housekeeping (backlog 365), a hosted service: hourly token/download-log/cover/upload
-// session cleanup and replay retention (TYPEBEAT_REPLAY_SWEEP, dryrun by default). Off unless
+// session cleanup and replay retention (TYPEBEAT_REPLAY_SWEEP, on by default). Off unless
 // TYPEBEAT_HOUSEKEEPING=true, so test hosts never run it. The status is registered either way for
 // the ops endpoint's lastSweepAt.
 builder.Services.AddSingleton<HousekeepingStatus>();
@@ -118,7 +124,7 @@ builder.Services.AddSingleton<PackageIngest>();
 builder.Services.AddSingleton<UploadSessionStore>();
 
 // The server-hosted auto-aligner (backlog 413): file-based job exchange with the aligner worker
-// container over the shared /data volume (Align/AlignJobStore.cs, deploy/aligner/worker.py).
+// container over the align_jobs volume (Align/AlignJobStore.cs, deploy/aligner/worker.py).
 builder.Services.AddSingleton<AlignJobStore>();
 
 // The website (M3): server-rendered Razor Pages under Pages/, HTML only; every APIv2/BSS JSON
@@ -131,7 +137,14 @@ builder.Services.AddRazorPages();
 // Sets the header the in-browser web player (PlayEndpoints) sends its antiforgery token in;
 // AddRazorPages already registered the antiforgery services. Additive: the page pipeline still
 // validates form tokens as before. The /play mutating endpoints validate explicitly via IAntiforgery.
-builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
+// Antiforgery's own X-Frame-Options: SAMEORIGIN is suppressed: SecurityHeaders owns framing (DENY
+// everywhere but /play), and the SAMEORIGIN it stamps on every page that mints a token would keep
+// /play, the itch.io embed, unframeable.
+builder.Services.AddAntiforgery(o =>
+{
+    o.HeaderName = "X-CSRF-TOKEN";
+    o.SuppressXFrameOptionsHeader = true;
+});
 
 // Spike survival (backlog 366): anonymous-only output caching with tag eviction, and the ASP.NET
 // rate limiter. Both are registered in their own files (Caching/CachePolicies.cs,
@@ -142,8 +155,8 @@ builder.Services.AddTypebeatRateLimiter();
 var app = builder.Build();
 
 // Backlog 368: only the extensions (above) and the migrations (here) run before the app listens.
-// The backfill sweeps that used to follow this line (Pace, Fingerprint, Language, SkipGate,
-// RateGate, SetRank, Pp, same order) run in the StartupSweeps hosted service registered above,
+// The backfill sweeps that used to follow this line (Pace, Fingerprint, Language, SetRank, Pp,
+// same order) run in the StartupSweeps hosted service registered above,
 // so a deploy is down for the migrations alone; BSS package ingest and the rank button answer 503
 // with Retry-After until StartupSweepGate opens, and /health stays liveness.
 await app.Services.GetRequiredService<Db>().MigrateAsync(app.Logger);
@@ -212,6 +225,11 @@ if (Flags.IsEnabled(builder.Configuration, "TYPEBEAT_BEHIND_PROXY"))
     forwarded.KnownProxies.Clear();
     app.UseForwardedHeaders(forwarded);
 }
+
+// nosniff, Referrer-Policy, HSTS and framing protection on every response, every host (the
+// grey-cloud bss.* names have no Cloudflare edge in front). Ahead of the error pages so a
+// re-executed /error/{code} keeps the headers of the path that failed. See SecurityHeaders.
+app.UseSecurityHeaders();
 
 // Styled error/status pages for the WEBSITE's navigable surface only: GET/HEAD requests
 // outside every wire prefix. Scoped with UseWhen so the wire surfaces, /api/*, /bss/*,

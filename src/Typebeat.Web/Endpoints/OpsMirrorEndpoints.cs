@@ -1,5 +1,6 @@
 using System.Globalization;
 using Typebeat.Web.Storage;
+using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
 
@@ -28,7 +29,7 @@ public static class OpsMirrorEndpoints
         if (!BuddyEndpoints.Authorised(ctx, config, out IResult? failure))
             return failure!;
 
-        return Results.Json(Project(publicStore.Enabled, status));
+        return WireJson.Ok(Project(publicStore.Enabled, status));
     }
 
     /// <summary>The response body, pure, so it is testable without a host.</summary>
