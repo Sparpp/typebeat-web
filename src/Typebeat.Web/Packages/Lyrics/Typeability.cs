@@ -92,7 +92,7 @@ public static class Typeability
     /// FORMAT, and only the ingest of a foreign lyrics file still reads "(oh oh)" as a backing
     /// vocal to throw away. The game keeps the two surviving callers on the import side of that
     /// seam (LrcParser, TimingJsonLoader.TryParse and the .osu writer's own sweep in
-    /// LyricMapImporter.StripBackingVocalLines), so an imported map is bracket-free before it is
+    /// TimingJsonPostProcess.StripBackingVocalLines), so an imported map is bracket-free before it is
     /// ever stored and nothing an upload carries needs stripping.</para>
     ///
     /// <para>The server never sees an import, only a STORED map, so its one caller is the FORMAT
