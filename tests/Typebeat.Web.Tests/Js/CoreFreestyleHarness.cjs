@@ -119,7 +119,6 @@ function playThrough(osuText, middle) {
     const results = TB.computeScore(engine);
     return {
         totalCells: beatmap.totalCells,
-        engineScore: engine.score,
         totalScore: results.totalScore,
         maxCombo: results.maxCombo,
         accuracy: results.accuracy,
@@ -174,7 +173,6 @@ function spaceRejected(osuText, refill, strict) {
     after.refillAccepted = engine.processKey(refill, 2000);
     after.refillState = engine.lines[0].cells[1].state;
     after.refillWrongKeys = engine.consecutiveWrongKeys;
-    after.score = engine.score;
     after.maxCombo = engine.maxCombo;
     after.finalAccuracy = engine.liveAccuracy;
     return after;
@@ -270,7 +268,7 @@ function backspace() {
     engine.processKey('a', 1000);
     engine.update(2000);
     engine.processKey('q', 2000);
-    const scoreAfterFirst = engine.score;
+    const tallyAfterFirst = JSON.stringify(engine.counts);
 
     engine.processBackspace();
     const cell = engine.lines[0].cells[1];
@@ -282,13 +280,13 @@ function backspace() {
     const accepted = engine.processKey('7', 2400);
 
     return {
-        scoreAfterFirst: scoreAfterFirst,
+        tallyAfterFirst: tallyAfterFirst,
         reopenedState: reopenedState,
         reopenedChar: reopenedChar,
         reopenedCaret: reopenedCaret,
         accepted: accepted,
         retypedChar: cell.typedChar,
-        scoreAfterRetype: engine.score,
+        tallyAfterRetype: JSON.stringify(engine.counts),
         judgedDelta: cell.judgedDelta
     };
 }

@@ -3714,10 +3714,11 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     pointer-events: none;
 }
 .tb-hold-on { display: flex; }
+.tb-hold-label { letter-spacing: .04em; }
 .tb-hold-track { width: 80px; height: 3px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
 .tb-hold-fill { display: block; height: 100%; width: 0; background: var(--violet); }
 .tb-hold-on .tb-hold-fill { animation: tbHoldFill .2s ease-out forwards; }
-.tb-hold-exit .tb-hold-fill { background: var(--text); }
+.tb-hold-quit .tb-hold-fill { background: var(--text); }
 @keyframes tbHoldFill { from { width: 0; } to { width: 100%; } }
 
 /* ---- /play end of play (backlog 314) ---- */

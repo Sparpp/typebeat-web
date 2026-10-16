@@ -399,7 +399,6 @@ public class KeyHandlerOrderLiveParityTest
             Eq(engine.MaxCombo, step.GetProperty("maxCombo").GetInt32(), "max combo");
             Eq(breaks, step.GetProperty("comboBreaks").GetInt32(), "combo breaks");
             Eq(engine.Mistypes, step.GetProperty("mistypes").GetInt32(), "mistypes");
-            Eq(engine.Score, step.GetProperty("score").GetInt64(), "score");
             Eq(engine.LiveWpm, step.GetProperty("liveWpm").GetDouble(), "live WPM (the WPM clock)");
             Eq(engine.ActiveLineUntouched, step.GetProperty("activeLineUntouched").GetBoolean(), "ActiveLineUntouched");
             Eq(engine.SongIsOnTheCaretsLine, step.GetProperty("songIsOnTheCaretsLine").GetBoolean(), "SongIsOnTheCaretsLine");

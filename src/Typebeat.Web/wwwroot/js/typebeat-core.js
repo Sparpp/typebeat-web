@@ -2053,10 +2053,6 @@
         return delta < -w.me ? 'Premature' : 'Lagging';
     }
 
-    function basePoints(type) {
-        return type === 'Great' ? 300 : type === 'Ok' ? 150 : type === 'Meh' ? 50 : 0;
-    }
-
     // TypeBeatResultMapping.AwardedTier (backlog 210). The tier a correct keypress is AWARDED, given
     // the tier the clock classified it as and whether its cell held a wrong character before it was
     // ever judged: a CORRECTED cell resolves at min(that tier, 'Ok'), so perfect play strictly beats
@@ -2072,8 +2068,8 @@
     // is what the rule is about.
     //
     // APPLIED TO THE TIER AND NOT TO THE osu RESULT, exactly as the C# applies it, and both of that
-    // decision's reasons bind here too. Everything downstream follows from the one tier (the point
-    // ladder, `counts`, the result applyCellResult stores, the judgement onCharJudged announces to
+    // decision's reasons bind here too. Everything downstream follows from the one tier (`counts`,
+    // the result applyCellResult stores, the judgement onCharJudged announces to
     // typebeat-player.js), so a result-level cap would show the player a Great while storing an Ok,
     // and the inert-retype arm below announces a tier without applying any result at all, so there
     // would be nothing there for a result-level cap to reach.
@@ -2506,8 +2502,6 @@
     // ---------------------------------------------------------------------------
     // TypingEngine: the frame-driven gameplay/judgement core.
     // ---------------------------------------------------------------------------
-    const COMBO_CAP = 50;
-
     // THERE IS NO RUSH CAP (PR 3, TypingEngine.InputEra2, bit 1 of the second CONFIG flags word).
     // TypingEngine.FLETCHER_MAX_CHARS_AHEAD bounded how many COUNTABLE characters the caret could
     // sit ahead of the playhead before a press was penalised: a combo break at five before backlog
@@ -2617,7 +2611,6 @@
             // correct once is inert on every retype, so nothing here grows with the length of the
             // play.
             this.runPositions = [];
-            this.score = 0;
             this.totalKeypresses = 0;
             this.correctKeypresses = 0;
             this.errorCount = 0;
@@ -4600,10 +4593,10 @@
 
             const w = windowsFor(cell);
             const inertRetype = cell.firstCorrectDelta !== null;
-            let type, points = 0;
+            let type;
 
             if (inertRetype) {
-                // Scoring-inert on BOTH accounts: the engine leaves its own combo/score alone, and
+                // Scoring-inert on BOTH accounts: the engine leaves its own combo alone, and
                 // no result reaches the processor, because the cell drawable already carries one
                 // (DrawableTypeBeatCharObject.ApplyEngineResult: `if (Judged) return;`). The branch
                 // below relies on the SAME guard rather than on this condition, because with
@@ -4624,30 +4617,23 @@
                 // The clock classifies the press, then backlog 210's CORRECTION CAP decides what it
                 // is awarded: a cell that held a wrong character before it was ever judged resolves
                 // at min(that tier, 'Ok'), so a corrected cell can never be worth what a clean one
-                // is. Applied here, above everything the tier decides, so the point ladder below,
-                // `counts`, the announced onCharJudged and the cell's osu result all follow the one
-                // decision and cannot say different things. The delta itself is untouched: it
-                // stays the press the player actually made, for accuracy and WireCompat parity
-                // with the C# engine (before backlog 251, this was also what the browser's sync
-                // tint and live sync percent saw; that display is gone, the delta is not).
+                // is. Applied here, above everything the tier decides, so `counts`, the announced
+                // onCharJudged and the cell's osu result all follow the one decision and cannot
+                // say different things. The delta itself is untouched: it stays the press the
+                // player actually made, for accuracy and WireCompat parity with the C# engine
+                // (before backlog 251, this was also what the browser's sync tint and live sync
+                // percent saw; that display is gone, the delta is not).
                 type = awardedTier(classify(delta, w), cell.heldWrongBeforeJudged);
 
                 // NO RUSH CAP (PR 3): the C# line is `FletcherEnabled && !RushCapExempt && !InputEra2
                 // && rushesPastCap(...)`, which is always false in the second input era, so nothing
-                // stands between the clock's tier and the point ladder however far past the playhead
+                // stands between the clock's tier and the judgement however far past the playhead
                 // the caret is. Backlog 347's Meh award and the pre-347 combo break are both stored
                 // eras only.
-                const bp = basePoints(type);
-
-                if (bp > 0) {
-                    // Multiplier reads combo BEFORE the increment; capped at COMBO_CAP => up to 2.0x.
-                    points = Math.round(bp * (1 + Math.min(this.combo, COMBO_CAP) / COMBO_CAP));
-                    this.score += points;
-                }
 
                 // An OFF-TIME press (Premature/Lagging: the right character, outside the outermost
-                // Meh window) earns nothing above, and since backlog 199 that is the whole of what
-                // it costs the score ladder. It is a HIT: it extends the combo like any other
+                // Meh window) earns no tier, and since backlog 199 that is the whole of what
+                // it costs the tier ladder. It is a HIT: it extends the combo like any other
                 // accepted character, raises no onComboBroken, and leaves an outstanding restorable
                 // claim alone, because only a BREAK discards one, so fumbling the beat between a
                 // typo and its fix no longer costs the fix its restore. Its cell resolves as an osu
@@ -4716,7 +4702,7 @@
             // is a WrongChar, whose break the mistype path has already carried.
             if (this.fletcherEnabled && this.combo === 0) this.processor.breakCombo();
 
-            if (this.onCharJudged) this.onCharJudged(judgedIndex, type, points);
+            if (this.onCharJudged) this.onCharJudged(judgedIndex, type);
             this.rollForwardIfFinishedEarly(time);
             return true;
         }
@@ -5162,9 +5148,10 @@
     }
 
     // The all-Great combo portion over the typeable cells, the one term of computeScore that
-    // depends on nothing the play does. The live HUD (backlog 319) calls computeScore every frame,
-    // so the loop is run once per engine and remembered here, OUTSIDE the engine: a WeakMap the
-    // engine never sees, keyed on the engine and checked against the lines array it walked, so a
+    // depends on nothing the play does (and so one term of totalScoreOf too). The live HUD
+    // (backlog 319) asks totalScoreOf every frame, so the loop is run once per engine and
+    // remembered here, OUTSIDE the engine: a WeakMap the engine never sees, keyed on the engine
+    // and checked against the lines array it walked, so a
     // cache can never answer for cells it did not count. Which cells are typeable is fixed when the
     // beatmap is built, and play only ever writes a cell's state, never its typeable flag.
     // uncachedMaxComboPortion is the loop itself, exported so a harness can hold the two equal.
@@ -5188,6 +5175,20 @@
         const value = uncachedMaxComboPortion(engine.lines);
         maxComboPortionCache.set(engine, { lines: engine.lines, value: value });
         return value;
+    }
+
+    // The standardised total_score of the play so far, and nothing else: the live HUD asks for it
+    // every frame, where computeScore would build a whole result (statistics, counts, rank) to
+    // throw all but one field away. The same arithmetic as computeScore's totalScore, kept apart so
+    // the fuzz sweep can hold the two equal after every key and frame of every run.
+    function totalScoreOf(engine) {
+        const total = engine.beatmap.totalCells;
+        const processor = engine.processor;
+        const maxComboPortion = maxComboPortionOf(engine);
+        const comboProgress = maxComboPortion > 0 ? processor.comboPortion / maxComboPortion : 1;
+        const accuracyProgress = total > 0 ? processor.judgementCount / total : 1;
+        const accJudged = processor.maximumBaseScore > 0 ? processor.baseScore / processor.maximumBaseScore : 1;
+        return Math.round(COMBO_PORTION_MAX * accJudged * comboProgress + ACCURACY_PORTION_MAX * Math.pow(accJudged, ACCURACY_PORTION_EXPONENT) * accuracyProgress);
     }
 
     function computeScore(engine) {
@@ -5324,7 +5325,7 @@
         // SyllableSegments (backlog 181): the shared authored-vs-derived split derivation, exported
         // for the same reason, so the game's own SyllableSegments can be held against it.
         isAuthoredValid, derivedSplits, splitsFor, cellCuts, segmentOf,
-        TypingEngine, computeScore, rankFromAccuracy, rankFromStatistics,
+        TypingEngine, computeScore, totalScoreOf, rankFromAccuracy, rankFromStatistics,
         WINDOWS, FREESTYLE_WINDOWS, FREESTYLE_WINDOW_SCALE, windowsFor, classify, toHitResult,
         COMBO_PORTION_MAX, ACCURACY_PORTION_MAX, ACCURACY_PORTION_EXPONENT,
         freestyleTick, freestyleGlyph,

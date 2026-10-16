@@ -791,6 +791,7 @@ public class EngineFuzzLiveParityTest
         int leadInOpens = 0, pauseJudgements = 0;
         int manualHandOvers = 0, typedLetterNewlines = 0, awaitingSwallows = 0, holdExtensions = 0, enters = 0;
         int cellLessLetterNewlines = 0;
+        int totalScoreChecks = 0, totalScoreMismatches = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -829,6 +830,8 @@ public class EngineFuzzLiveParityTest
             cellLessLetterNewlines += browserCase.GetProperty("cellLessLetterNewlines").GetInt32();
             awaitingSwallows += browserCase.GetProperty("awaitingSwallows").GetInt32();
             holdExtensions += browserCase.GetProperty("holdExtensions").GetInt32();
+            totalScoreChecks += browserCase.GetProperty("totalScoreChecks").GetInt32();
+            totalScoreMismatches += browserCase.GetProperty("totalScoreMismatches").GetInt32();
             enters += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "\n");
             backspaces += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "");
         }
@@ -993,6 +996,12 @@ public class EngineFuzzLiveParityTest
             Assert.That(awaitingSwallows, Is.GreaterThan(0), "no run pressed into a line whose entry window had not opened");
             Assert.That(holdExtensions, Is.GreaterThan(0), "no run held a finished line open past its deadline");
             Assert.That(enters, Is.GreaterThan(0), "no run pressed Enter");
+
+            // Backlog 319's live HUD reads totalScoreOf where the card reads computeScore: the
+            // harness compared the two after every key and every frame of every run, and they
+            // never differ.
+            Assert.That(totalScoreChecks, Is.GreaterThan(0), "no state was compared");
+            Assert.That(totalScoreMismatches, Is.Zero, "totalScoreOf parted from computeScore's total");
         });
     }
 

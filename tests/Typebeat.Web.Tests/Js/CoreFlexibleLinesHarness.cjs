@@ -693,8 +693,7 @@ const out = {};
     engine.onComboBroken = () => { breaks++; };
 
     const types = [];
-    const points = [];
-    engine.onCharJudged = (cellIndex, type, p) => { types.push(type); points.push(p); };
+    engine.onCharJudged = (cellIndex, type) => { types.push(type); };
 
     const lead = [];
     const combos = [];
@@ -716,7 +715,6 @@ const out = {};
         leadAfterEachPress: lead,
         comboAfterEachPress: combos,
         types: types,
-        points: points,
         deltas: engine.lines[0].cells.slice(0, 10).map(c => c.judgedDelta),
         comboBreaks: breaks,
         maxCombo: engine.maxCombo

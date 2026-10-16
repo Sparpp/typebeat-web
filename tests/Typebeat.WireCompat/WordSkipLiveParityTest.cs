@@ -31,7 +31,7 @@ namespace Typebeat.WireCompat;
 ///
 /// <para>This is the only project that compiles both repos, which is why the comparison lives here
 /// rather than beside the other JS fidelity guards in <c>Typebeat.Web.Tests</c>. Those pin the
-/// browser's ENGINE state (cell states, caret, combo, points) against the game suite's own
+/// browser's ENGINE state (cell states, caret, combo, tiers) against the game suite's own
 /// assertions (<c>WordSkipParityTest</c> there); this one pins the SUBMITTED ACCOUNT (statistics,
 /// max_combo, total score, accuracy, completion, rank) against the numbers the game's own scorer
 /// produces. The node harness is shared with them,

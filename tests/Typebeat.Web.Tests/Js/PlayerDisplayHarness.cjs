@@ -938,7 +938,6 @@ function keyOrderRun(presses = KEY_ORDER_PRESSES, map = build(KEY_ORDER_OSU), en
             maxCombo: engine.maxCombo,
             comboBreaks: breaks,
             mistypes: engine.mistypes,
-            score: engine.score,
             liveWpm: engine.liveWpm,
             counts: Object.assign({}, engine.counts),
             activeLineUntouched: engine.activeLineUntouched,
@@ -1517,6 +1516,8 @@ const out = {
     startGateHint: D.START_GATE_HINT,
 
     // ---- stack layout and animation timings (backlog 322) ----
+    caretDampHalfTime: D.constants.CARET_DAMP_HALF_TIME,
+    sungDampHalfTime: D.constants.SUNG_DAMP_HALF_TIME,
     perfectPopMs: D.constants.PERFECT_POP_MS,
     caretFadeMs: D.constants.CARET_FADE_MS,
     caretFade: (() => {
@@ -1554,7 +1555,6 @@ function hudOf(engine) {
         computeTotalScore: s.totalScore,
         cardAccuracy: s.accuracy,
         completion: s.completion,
-        engineScore: engine.score,
         liveAccuracy: engine.liveAccuracy,
         baseScore: p.baseScore,
         maximumBaseScore: p.maximumBaseScore,

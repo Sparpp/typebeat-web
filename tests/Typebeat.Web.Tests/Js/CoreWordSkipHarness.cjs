@@ -124,7 +124,7 @@ function states(engine) { return engine.lines[0].cells.map(c => c.state); }
 function judgeTypes(engine) { return engine.lines[0].cells.map(c => c.judgeType); }
 
 /**
- * Everything both accounts hold. The engine's own `score` / `combo` / `maxCombo` / `liveAccuracy`
+ * Everything both accounts hold. The engine's own `combo` / `maxCombo` / `liveAccuracy`
  * are what ResultsSummary reports on the desktop and what the HUD shows; `processor*` is the
  * osu-side account, whose `highestCombo` is submitted as max_combo and whose `counts.miss` is the
  * submitted miss count. The engine's own `counts` dict is deliberately NOT read for misses: it is
@@ -139,7 +139,6 @@ function snapshot(engine) {
         finished: engine.finished,
         combo: engine.combo,
         maxCombo: engine.maxCombo,
-        score: engine.score,
         accuracy: engine.liveAccuracy,
         mistypes: engine.mistypes,
         breaks: engine.breaks,
@@ -333,7 +332,7 @@ function oneBackspaceReOpensTheWord() {
 }
 
 // SpaceSkipWordTest.RetypingAReclaimedWordEarnsRealJudgements. The cells really are earnable again:
-// ordinary judgements with ordinary points, not the scoring-inert retype of an already-earned cell.
+// ordinary judgements that are tallied, not the scoring-inert retype of an already-earned cell.
 // Since PR 3 (RetypingAReclaimedWordEarnsRealJudgementsUnderInputEra2) one backspace undoes the
 // skip, so the retype starts on the first abandoned cell; the inert retype this case also reads is
 // the GAP's, which the undo erased and which was already earned.
@@ -344,20 +343,20 @@ function retypingEarnsRealJudgements() {
     engine.processKey(' ', 2600);
     engine.processBackspace();
 
-    const scoreBefore = engine.score;
+    const greatsBefore = engine.counts.Great || 0;
 
     engine.processKey('a', A_TARGET); // the first abandoned cell, earned for real
-    const scoreAfterFirstReclaim = engine.score;
+    const greatsAfterFirstReclaim = engine.counts.Great || 0;
 
     engine.processKey('t', T_TARGET);
-    const scoreBeforeInert = engine.score;
+    const greatsBeforeInert = engine.counts.Great || 0;
 
     engine.processKey(' ', 3000);     // inert: the gap was already earned before the undo erased it
-    const scoreAfterInert = engine.score;
+    const greatsAfterInert = engine.counts.Great || 0;
 
     return Object.assign(snapshot(engine), {
-        pointsForTheInertRetype: scoreAfterInert - scoreBeforeInert,
-        pointsForTheFirstReclaimedCell: scoreAfterFirstReclaim - scoreBefore
+        greatsForTheInertRetype: greatsAfterInert - greatsBeforeInert,
+        greatsForTheFirstReclaimedCell: greatsAfterFirstReclaim - greatsBefore
     });
 }
 

@@ -70,8 +70,10 @@
     const CUE_LEAD_MS = Core.constants.CUE_LEAD_MS;
     const CUE_BAR_MAX_PX = 140;             // LyricStage.approach_bar_max_width
     const PUSH_FADE_IN_MS = 400;            // LyricStage.push_fade_in_ms: the push warning's entrance
-    const CARET_DAMP_HALF_TIME = 35;        // TypeBeatStyle.CARET_DAMP_HALF_TIME (ms)
-    const SUNG_DAMP_HALF_TIME = 45;         // TypeBeatStyle.SUNG_DAMP_HALF_TIME (ms)
+    // Both carets glide with the desktop's CaretSmoothing setting at its default; held to
+    // TypeBeatRulesetConfigManager.DEFAULT_CARET_SMOOTHING_MS by CaretSmoothingParityTest.
+    const CARET_DAMP_HALF_TIME = 20;        // ms
+    const SUNG_DAMP_HALF_TIME = 20;         // ms
     const CARET_BLINK_PERIOD = 530;         // TypeBeatStyle.CARET_BLINK_PERIOD (ms)
     const LINE_SCROLL_MS = 220;             // TypeBeatStyle.LINE_SCROLL_DURATION (ms), OutQuint
     const CARET_SNAP_FACTOR = 1.5;          // Caret.MoveToTarget: snap past 1.5 line heights
@@ -352,10 +354,9 @@
     //
     // score: the standardised total climbing live (GameplayScoreCounter, bound to
     // ScoreProcessor.TotalScore). ScoreProcessor.updateScore runs the very formula computeScore
-    // does, so the HUD asks computeScore rather than restating it, and the last frame's figure is
-    // the one the card shows and /play submits. engine.score, the combo-weighted internal points,
-    // stays engine data (the fuzz harnesses pin it for parity) and is no longer on screen: it is
-    // on a different scale from the 1,000,000 total.
+    // does, so the HUD asks totalScoreOf, which the fuzz sweep holds equal to computeScore's total,
+    // rather than building a whole result every frame, and the last frame's figure is the one the
+    // card shows and /play submits.
     //
     // accuracy: JUDGED-only accuracy (GameplayAccuracyCounter's Standard mode, bound to
     // ScoreProcessor.Accuracy = currentBaseScore / currentMaximumBaseScore), 1 before anything is
@@ -368,7 +369,7 @@
     function hudReadouts(engine) {
         const processor = engine.processor;
         return {
-            score: Core.computeScore(engine).totalScore,
+            score: Core.totalScoreOf(engine),
             accuracy: processor.maximumBaseScore > 0 ? processor.baseScore / processor.maximumBaseScore : 1
         };
     }
@@ -2117,7 +2118,7 @@
         function routeLifecycleKey(e) {
             if (isHoldKey(e)) {
                 e.preventDefault();
-                if (!e.repeat && !e.metaKey) beginHold(e.ctrlKey ? 'exit' : 'retry');
+                if (!e.repeat && !e.metaKey) beginHold(e.ctrlKey ? 'quit' : 'retry');
                 return true;
             }
             if (e.key === 'Escape') {

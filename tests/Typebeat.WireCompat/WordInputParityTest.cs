@@ -316,8 +316,8 @@ public class WordInputParityTest
 
         // THE COMPOSED COLLAPSE, and the pin the whole gesture rests on: a mass backspace to the
         // anchor and then an ordinary judged keypress there. Both arms must land on identical cell
-        // states, identical typed chars and an identical score, or a browser retype is worth a
-        // different number of points from a desktop one on the same leaderboard.
+        // states, identical typed chars and an identical judgement tally, or a browser retype is
+        // judged differently from a desktop one on the same leaderboard.
         new Scenario
         {
             Name = "consumingASelectionErasesToTheAnchorAndTypesThere",
@@ -720,7 +720,7 @@ public class WordInputParityTest
         int Erases,
         string[] States,
         string[] Typed,
-        long Score,
+        string Tally,
         int Combo,
         int MaxCombo,
         int Mistypes,
@@ -738,6 +738,14 @@ public class WordInputParityTest
         _ => state.ToString(),
     };
 
+    /// <summary>The tier counts as the JS mirror spells them: great/ok/meh/premature/lagging.</summary>
+    private static string Tally(TypingEngine engine)
+    {
+        var counts = engine.BuildResults().Counts;
+
+        return string.Join('/', new[] { JudgementType.Great, JudgementType.Ok, JudgementType.Meh, JudgementType.Premature, JudgementType.Lagging }.Select(t => counts[t]));
+    }
+
     private static Probe Take(Session session)
     {
         var engine = session.Engine;
@@ -754,7 +762,7 @@ public class WordInputParityTest
             session.Erases,
             cells.Select(c => StateName(c.State)).ToArray(),
             cells.Select(c => c.TypedChar?.ToString() ?? string.Empty).ToArray(),
-            engine.Score,
+            Tally(engine),
             engine.Combo,
             engine.MaxCombo,
             engine.Mistypes,
@@ -862,7 +870,7 @@ public class WordInputParityTest
                     Assert.That(theirs.GetProperty("erases").GetInt32(), Is.EqualTo(mine.Erases), $"{what}: erases made");
                     Assert.That(Strings(theirs, "states"), Is.EqualTo(mine.States), $"{what}: cell states");
                     Assert.That(Strings(theirs, "typed"), Is.EqualTo(mine.Typed), $"{what}: typed chars");
-                    Assert.That(theirs.GetProperty("score").GetInt64(), Is.EqualTo(mine.Score), $"{what}: score");
+                    Assert.That(theirs.GetProperty("tally").GetString(), Is.EqualTo(mine.Tally), $"{what}: judgement tally");
                     Assert.That(theirs.GetProperty("combo").GetInt32(), Is.EqualTo(mine.Combo), $"{what}: combo");
                     Assert.That(theirs.GetProperty("maxCombo").GetInt32(), Is.EqualTo(mine.MaxCombo), $"{what}: max combo");
                     Assert.That(theirs.GetProperty("mistypes").GetInt32(), Is.EqualTo(mine.Mistypes), $"{what}: mistypes");
