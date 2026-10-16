@@ -48,7 +48,7 @@ namespace Typebeat.Web.Endpoints;
 /// because the browser submits no log the server could audit it with.
 ///
 /// <para>SUBMISSION INTEGRITY (backlog 312), the browser's half of the desktop token's two
-/// identities. BUILD: the server hashes the three /play scripts once at startup
+/// identities. BUILD: the server hashes the /play scripts once at startup
 /// (<see cref="Revision"/>), the page renders it, and the token route registers what the player
 /// sends back as its own build <c>web-&lt;revision&gt;</c>, so a tab left open across a deploy
 /// submits under its OWN build row, which an admin can block alone. MAP: the /osu route answers the
@@ -66,9 +66,24 @@ public static class PlayEndpoints
     /// stored checksum in (<c>beatmaps.checksum_md5</c>, the desktop's beatmap_hash).</summary>
     public const string ChecksumHeader = "X-Beatmap-Checksum";
 
-    /// <summary>The scripts whose content IS the browser client: the engine, the player, the page
-    /// glue. Their order is part of the hash.</summary>
-    private static readonly string[] revision_scripts = ["/js/typebeat-core.js", "/js/typebeat-player.js", "/js/play.js"];
+    /// <summary>The scripts whose content IS the browser client: the engine (its parts under
+    /// <c>/js/core/</c>, then <c>typebeat-core.js</c>, which assembles them), the player, the page
+    /// glue. The /play page renders its script tags from this list, in this order, which is also
+    /// the order the engine's parts must load in; the order is part of the hash.</summary>
+    public static readonly IReadOnlyList<string> RevisionScripts =
+    [
+        "/js/core/typeability.js",
+        "/js/core/lyric-beatmap-decoder.js",
+        "/js/core/syllabifier.js",
+        "/js/core/typing-line.js",
+        "/js/core/judgement.js",
+        "/js/core/score-and-health.js",
+        "/js/core/typing-engine.js",
+        "/js/core/freestyle-glyphs.js",
+        "/js/typebeat-core.js",
+        "/js/typebeat-player.js",
+        "/js/play.js",
+    ];
 
     /// <summary>What a client-sent revision must look like to be registered (the shape
     /// <see cref="ComputeRevision"/> produces). Anything else is refused rather than written into
@@ -86,12 +101,12 @@ public static class PlayEndpoints
     /// <summary>
     /// Combines the per-file values asp-append-version stamps onto each script tag (the
     /// <see cref="IFileVersionProvider"/>'s SHA-256 of the file's content) into one 16-hex-digit id.
-    /// Any byte of any of the three scripts changing changes it; nothing else does.
+    /// Any byte of any of the scripts changing changes it; nothing else does.
     /// </summary>
     public static string? ComputeRevision(IFileVersionProvider versions)
     {
         var sb = new StringBuilder();
-        foreach (string script in revision_scripts)
+        foreach (string script in RevisionScripts)
         {
             string stamped = versions.AddFileVersionToPath(PathString.Empty, script);
             int at = stamped.IndexOf("?v=", StringComparison.Ordinal);

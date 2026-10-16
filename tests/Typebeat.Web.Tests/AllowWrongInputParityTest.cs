@@ -26,7 +26,7 @@ namespace Typebeat.Web.Tests;
 ///
 /// <para>The keypress itself costs a mistype and a combo break in BOTH models, and in neither does
 /// that break travel on a judgement result, so both sides mirror it by hand into the score processor
-/// (<c>TypeBeatPlayfield.onMistyped</c>). That is what stops <c>max_combo</c> counting on through the
+/// (<c>TypeBeatComboFeed.OnMistyped</c>). That is what stops <c>max_combo</c> counting on through the
 /// rest of the line after a break the engine has already taken. The space KEY stays strict in both
 /// models on both sides, and the mash-fail streak stays on the rejection path only. WHICH CELLS the
 /// type-through reaches moved once more in backlog 181: the lyric characters always, and the word

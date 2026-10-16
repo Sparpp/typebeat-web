@@ -54,7 +54,7 @@
     window.TYPEBEAT_PLAY = {
         signedIn: @(user is not null ? "true" : "false"),
         csrf: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CsrfToken)),
-        // The content hash of the three scripts below (backlog 312), computed once at startup.
+        // The content hash of the scripts below (backlog 312), computed once at startup.
         // play.js sends it with every token, and the server registers it as this run's build
         // ('web-' + revision), so a tab left open across a deploy keeps its own build identity.
         revision: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Typebeat.Web.Endpoints.PlayEndpoints.Revision)),
@@ -73,6 +73,9 @@
               }))
     };
 </script>
-<script src="~/js/typebeat-core.js" asp-append-version="true"></script>
-<script src="~/js/typebeat-player.js" asp-append-version="true"></script>
-<script src="~/js/play.js" asp-append-version="true"></script>
+@* The engine's parts, the engine, the player and the page glue, in order, from the one list the
+   revision above is hashed over, so no script reaches the page outside the hash. *@
+@foreach (string script in Typebeat.Web.Endpoints.PlayEndpoints.RevisionScripts)
+{
+    <script src="@script" asp-append-version="true"></script>
+}
