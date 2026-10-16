@@ -1,10 +1,12 @@
 using ClientCurve = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricWpmCurve;
+using ClientDifficulty = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty;
 using ClientLine = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricLine;
 using ClientPace = typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricPaceStatistics;
 using ClientTypeability = typebeat.Game.Rulesets.TypeBeat.Beatmaps.Typeability;
 using ClientUnit = typebeat.Game.Rulesets.TypeBeat.Beatmaps.TimedUnit;
 using ClientWordPause = typebeat.Game.Rulesets.TypeBeat.Beatmaps.WordPause;
 using ServerCurve = Typebeat.Web.Packages.Lyrics.LyricWpmCurve;
+using ServerDifficulty = Typebeat.Web.Packages.Lyrics.LyricDifficulty;
 using ServerLine = Typebeat.Web.Packages.Lyrics.LyricLine;
 using ServerPace = Typebeat.Web.Packages.Lyrics.LyricPace;
 using ServerTypeability = Typebeat.Web.Packages.Lyrics.Typeability;
@@ -153,8 +155,8 @@ public class LyricPaceParityTest
         // rating input. PR 3 (LyricPace v23) then made a rest a PACE input as well, but only past
         // the one-second cap every pause is charged at: the paused fixtures' rests are all shorter
         // than that, so they still prove the figures did not follow there, and the long-rest fixture
-        // is the one whose rests the whole-map rate has to trim. The target reads the envelope arm's
-        // DENSITY, which spreads a word's cells over its whole span (only the chunked axis's rhythm
+        // is the one whose rests the whole-map rate has to trim. The target reads the chunked axis's
+        // cell DENSITY, which spreads a word's cells over its whole span (only that axis's rhythm
         // arm reads a word's dividers), on every one of them.
         var fixtures = new[]
         {
@@ -198,7 +200,7 @@ public class LyricPaceParityTest
             Assert.That(ClientPace.Compute(pausedClient).AverageCpm, Is.EqualTo(ClientPace.Compute(bareClient).AverageCpm),
                 "on the client either");
             Assert.That(ServerPace.Compute(pausedServer).TargetWpm, Is.EqualTo(ServerPace.Compute(bareServer).TargetWpm),
-                "nor for the target, whose envelope density spreads a word over its whole span");
+                "nor for the target, whose cell density spreads a word over its whole span");
             Assert.That(ClientPace.Compute(pausedClient).TargetWpm, Is.EqualTo(ClientPace.Compute(bareClient).TargetWpm),
                 "on the client either");
 
@@ -225,6 +227,87 @@ public class LyricPaceParityTest
             // 4000 ms rest between the two lines. 2 * (20 letters + 1 space) = 42 cells over 11000 ms.
             Assert.That(ServerPace.Compute(longServer).AverageCpm, Is.EqualTo(42 * 60000.0 / 11000).Within(1e-9), "the hand figure");
         });
+    }
+
+    /// <summary>
+    /// THE TARGET IS THE CHUNKED AXIS'S OWN SCAN ON BOTH SIDES (LyricPace v27). Both pace files read
+    /// <c>LyricDifficulty.TargetWpm</c>, the fastest window by raw speed among the chunked axis's
+    /// overlapping windows, and floor it at the whole-map average; until v27 both read the envelope
+    /// arm's schedule scan instead. This holds the model's own (unfloored) figure equal across the
+    /// repos on every synthetic shape and clock, holds each side's published figure to that figure
+    /// floored, and pins the rate-1 values so a later change to the scan has to come through here.
+    ///
+    /// <para>The pins, against the envelope figures they replaced: the awkward fixture 128.683
+    /// (was 123.848), the peaked two-pace map 302.317 (was 302.103), and the flat one 190.072 (was
+    /// 198.889), which the floor still raises to its 205.714 average on both sides.</para>
+    /// </summary>
+    [Test]
+    public void TheTargetIsTheChunkedAxisScanOnBothSides()
+    {
+        var fixtures = new[]
+        {
+            ("awkward", TwinMaps()),
+            ("peaked", TwoPaceTwinMaps(fastLines: 6)),
+            ("flat", TwoPaceTwinMaps(fastLines: 0)),
+            ("paused", PerformancePointsParityTest.PausedTwinMaps()),
+            ("long rests", LongRestTwinMaps(withRests: true)),
+        };
+
+        Assert.Multiple(() =>
+        {
+            foreach ((string name, (IReadOnlyList<ClientLine> client, IReadOnlyList<ServerLine> server)) in fixtures)
+            foreach (bool literate in new[] { false, true })
+            foreach (double rate in new[] { 1.0, 1.5, 0.75 })
+            {
+                double c = ClientDifficulty.TargetWpm(client, rate, literate);
+                double s = ServerDifficulty.TargetWpm(server, rate, literate);
+                string context = $"{name} literate={literate} rate={rate}";
+
+                Assert.That(s, Is.EqualTo(c), $"{context}: the model's own target");
+                Assert.That(s, Is.GreaterThan(0), $"{context}: every fixture here clears the character floor");
+                Assert.That(ServerPace.Compute(server, literate, rate).TargetWpm, Is.EqualTo(Math.Max(s, ServerPace.Compute(server, literate, rate).AverageWpm)),
+                    $"{context}: the server publishes it floored at the average");
+                Assert.That(ClientPace.Compute(client, literate, rate).TargetWpm, Is.EqualTo(Math.Max(c, ClientPace.Compute(client, literate, rate).AverageWpm)),
+                    $"{context}: and so does the client");
+            }
+
+            var (_, awkward) = TwinMaps();
+            var (_, peaked) = TwoPaceTwinMaps(fastLines: 6);
+            var (_, flat) = TwoPaceTwinMaps(fastLines: 0);
+
+            Assert.That(ServerDifficulty.TargetWpm(awkward), Is.EqualTo(128.68333131603856).Within(1e-9), "awkward");
+            Assert.That(ServerPace.Compute(awkward).TargetWpm, Is.EqualTo(128.68333131603856).Within(1e-9), "published unfloored");
+            Assert.That(ServerDifficulty.TargetWpm(peaked), Is.EqualTo(302.3166220351384).Within(1e-9), "peaked");
+            Assert.That(ServerDifficulty.TargetWpm(flat), Is.EqualTo(190.07195101954).Within(1e-9), "flat");
+            Assert.That(ServerPace.Compute(flat).TargetWpm, Is.EqualTo(ServerPace.Compute(flat).AverageWpm), "the flat map publishes its average");
+            Assert.That(ServerPace.Compute(flat).TargetWpm, Is.EqualTo(205.71428571428572).Within(1e-9));
+        });
+    }
+
+    /// <summary>
+    /// Twelve lines of "the quick brown fox jumps over" (6 words, 30 cells) end to end over 21 s,
+    /// the first <paramref name="fastLines"/> of them sung in one second each and the rest sharing
+    /// the remaining time evenly; each word fills an equal share of its line. Both shapes hold the
+    /// same cells over the same seconds, so only a window figure can tell them apart.
+    /// </summary>
+    private static (IReadOnlyList<ClientLine> Client, IReadOnlyList<ServerLine> Server) TwoPaceTwinMaps(int fastLines)
+    {
+        const string text = "the quick brown fox jumps over";
+        string[] words = text.Split(' ');
+        double slowMs = (21000.0 - fastLines * 1000) / (12 - fastLines);
+        var source = new List<(string Text, double Start, double End, (string Text, double Start, double End)[] Units)>();
+        double at = 1000;
+
+        for (int i = 0; i < 12; i++)
+        {
+            double ms = i < fastLines ? 1000 : slowMs;
+            double step = ms / words.Length;
+            double lineStart = at;
+            source.Add((text, lineStart, lineStart + ms, words.Select((w, k) => (w, lineStart + k * step, lineStart + (k + 1) * step)).ToArray()));
+            at += ms;
+        }
+
+        return Twin(source.ToArray());
     }
 
     [Test]
@@ -541,7 +624,9 @@ public class LyricPaceParityTest
             // (pp 25). They move together here because the matrix is what pp's rating arm reads.
             // Both moved again in PR 35: the rating counts the spaces punctuation produces (pace 26),
             // and pp bumps with it so every stored row reprices on the new ratings (pp 26).
-            Assert.That(ServerPace.VERSION, Is.EqualTo(26));
+            // Pace alone moved to 27 when target_wpm went onto the chunked axis and the envelope
+            // model was deleted: no rating and no pp figure moves, so pp stays at 26.
+            Assert.That(ServerPace.VERSION, Is.EqualTo(27));
             Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(26)); // pp:version
         });
     }

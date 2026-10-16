@@ -13,8 +13,9 @@
 ///    <see cref="PaceStatistics.LineAverageWpm"/> is the figure that averaged before it, the
 ///    unweighted mean of the per-line (cells / boundary window) rates, kept as the companion the
 ///    whole-map rate is read against. <see cref="PaceStatistics.TargetWpm"/> is neither: it is the
-///    map's hardest window BY RAW SPEED, read off the difficulty model's envelope arm and
-///    re-expressed at <c>LyricDifficulty.TargetWindowSeconds</c>, floored at the whole-map rate.
+///    map's hardest window BY RAW SPEED, read off the difficulty model's chunked axis
+///    (<see cref="LyricDifficulty.TargetWpm"/>) and re-expressed at
+///    <c>LyricDifficulty.TargetWindowSeconds</c>, floored at the whole-map rate.
 ///    The word convention is the TYPING-TEST one, so WPM here means what it means on MonkeyType,
 ///    on the in-game HUD and on the results screen; the map's true word length is published
 ///    separately as <see cref="PaceStatistics.AverageCharsPerWord"/> rather than left implicit in
@@ -22,8 +23,8 @@
 ///  - stars: <see cref="LyricDifficulty"/>, mirroring the game's
 ///    typebeat.Game.Rulesets.TypeBeat.Beatmaps.LyricDifficulty. That file's own summary is the
 ///    model description; since the difficulty rework the SHIPPED reading is its CHUNKED ENDURANCE
-///    axis (<c>LyricDifficulty.Live</c>), with the envelope model kept as the named
-///    <c>EnduranceAxis.Envelope</c> arm that the target figure above still reads. Unlike the pace,
+///    axis (<c>LyricDifficulty.Live</c>), and since v27 the only one (the envelope model the target
+///    figure above used to read is deleted). Unlike the pace,
 ///    the rating DOES use unit target times (a word occupies the timeline from its onset to the
 ///    end of its sung span) and, since the rework, the words' authored syllable boundaries too.
 /// </summary>
@@ -453,6 +454,25 @@ public static class LyricPace
     /// <c>PerformancePoints.VERSION</c> bumps to 26 in the same change so even an unmoved row is
     /// repriced under the new stamp. No column is added, so no migration comes with it.</para>
     ///
+    /// <para>v27 = TARGET WPM MOVES ONTO THE CHUNKED AXIS AND THE ENVELOPE MODEL IS DELETED (mirrored
+    /// from the game's <c>LyricDifficulty</c>, <c>LyricPaceStatistics</c>, <c>ChunkedEndurance</c>
+    /// and <c>RhythmicComplexity</c>, whose difficulty calculator moves to version 8 in the same
+    /// change). <c>target_wpm</c> is no longer read off the envelope arm's schedule scan (1.36 s, then
+    /// 1.5 to 60 s on the 50 ms grid, against that arm's own capability curve). It is
+    /// <see cref="LyricDifficulty.TargetWpm"/>: the fastest window by raw speed among the chunked
+    /// axis's own overlapping windows (1.5 s doubling up to 60.75 s, tried at every 375 ms sample's
+    /// start, centre and end) against that axis's capability curve, still re-expressed at
+    /// <c>LyricDifficulty.TargetWindowSeconds</c>, still gated at
+    /// <c>LyricDifficulty.MinimumWindowChars</c> and still floored at the whole-map average. So
+    /// <c>target_wpm</c> moves by a few percent either way on most maps, wherever the floor does not
+    /// bind. NOTHING ELSE MOVES: all six star columns, every cell of the <c>beatmaps.ratings</c>
+    /// matrix, <c>wpm</c>, the counts, the curve columns and <c>skippable_s</c> rewrite
+    /// byte-identically, because the deleted arm fed none of them. <see cref="PaceBackfill"/> revisits
+    /// every row at boot and stamps <c>pp_version = 0</c> on every score of every row it rewrites, so
+    /// <see cref="PpBackfill"/> reprices the score table TO IDENTICAL VALUES, as at v15, v18 and v23.
+    /// No column is added, so no migration comes with it, and <c>PerformancePoints.VERSION</c> stays
+    /// at 26.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -465,7 +485,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 26;
+    public const int VERSION = 27;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's
@@ -568,14 +588,14 @@ public static class LyricPace
     /// <param name="TargetWpm">
     /// The pace to SUSTAIN: the map's hardest window BY RAW SPEED, re-expressed as the WPM an
     /// equally demanding <c>LyricDifficulty.TargetWindowSeconds</c> stretch would ask for, stored as
-    /// <c>beatmaps.target_wpm</c> (033_target_wpm.sql). It is <c>ModelResult.TargetWpm</c> off the
-    /// difficulty model's ENVELOPE arm, so the figure the website prints and the figure song select
-    /// prints are one computation rather than two kept in step by hand.
+    /// <c>beatmaps.target_wpm</c> (033_target_wpm.sql). It is <see cref="LyricDifficulty.TargetWpm"/>,
+    /// read off the chunked axis's own timeline and window family, so the figure the website prints
+    /// and the figure song select prints are one computation rather than two kept in step by hand.
     ///
-    /// <para>The window is chosen on the AUTHORED density with the typability multiplier and the
-    /// rhythm bonus left out of BOTH the choice and the conversion, which is what stops the figure
-    /// moving when either experiment does; it can therefore name a different window from the
-    /// rating's peak. DISPLAY ONLY: nothing here feeds a rating.</para>
+    /// <para>The window is chosen on the AUTHORED density with typability, the judgement-window
+    /// premium and the rhythm boost left out of BOTH the choice and the conversion, which is what
+    /// stops the figure moving when any of them does; it can therefore name a different window from
+    /// the one the rating weighs most. DISPLAY ONLY: nothing here feeds a rating.</para>
     ///
     /// <para>FLOORED at <paramref name="AverageCpm"/> over <see cref="CHARS_PER_WORD"/> (see
     /// <see cref="pace_floor_target"/>), so a map whose hardest window is slower than its own
@@ -747,13 +767,11 @@ public static class LyricPace
 
         double averageCpm = chargedMs > 0 ? totalCells * 60000.0 * rate / chargedMs : 0;
 
-        // THE TARGET. Read from the difficulty model, which is where the window schedule, the
+        // THE TARGET. Read from the difficulty model, which is where the window family, the
         // density prefix and the capability curve live: this file has no second copy of the scan, so
         // the figure the set page prints and the figure song select prints are the same computation
-        // rather than two that have to be kept in step by hand. The ENVELOPE axis is asked for by
-        // name because that is the arm that owns the scan on every configuration (the chunked axis
-        // rates none of it), and typability and rhythm are left out of the figure there by
-        // construction.
+        // rather than two that have to be kept in step by hand. Typability, the judgement windows and
+        // the rhythm are left out of it by construction (see PaceStatistics.TargetWpm).
         //
         // Guarded rather than thrown, exactly as the game guards it: a map too long for the model
         // (30 minutes at the read rate) still has a perfectly good average, and dropping the target
@@ -766,9 +784,7 @@ public static class LyricPace
             // means: a faster clock does not merely scale the figures it finds, it moves the reading
             // durations (the timeline is binned in REAL milliseconds) and can therefore name a
             // different window. Scaling the rate-1 target would answer a different question.
-            targetWpm = LyricDifficulty
-                .ComputeDetail(lines, rate, literate, LyricDifficulty.EnduranceAxis.Envelope)
-                .TargetWpm;
+            targetWpm = LyricDifficulty.TargetWpm(lines, rate, literate);
         }
         catch (InvalidOperationException)
         {

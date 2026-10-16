@@ -71,8 +71,9 @@ Factor by factor, in descending priority:
 * **Length**: NOT A FACTOR HERE, since the backlog-152 amendment. pp carried the standard osu log
   bonus `max(0.1, 1 + 0.50·log10(notes/100))` through v15; length is now priced by the STAR RATING
   instead. Since backlog 273 `LyricDifficulty` has no separate length term at all: length counts
-  only through the characters it adds to the envelope's difficulty sum, so pp still sees a long
-  map only through `SR_eff`, a few percent where the old term paid up to 1.70x. Two length terms
+  only through the chunked axis's saturating length bonus (its `LengthCharacters`, worth at most
+  `chunk_length_bonus`, 15%), so pp still sees a long map only through `SR_eff`, where the old term
+  paid up to 1.70x. Two length terms
   would double count, so pp keeps none. `notes` itself is
   still load-bearing: both penalty terms, the combo ratio and FL all read it.
 * **accShare(acc)**: a NORMALISED EXPONENTIAL above a FLOOR since the v23 amendment, replacing
