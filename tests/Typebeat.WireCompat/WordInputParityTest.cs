@@ -585,6 +585,10 @@ public class WordInputParityTest
             // EARLY FINISH (bit 4 of the second CONFIG flags word, the 0x01 CONFIG_EXTENDED carrier):
             // the final line seals the moment it is fully typed, so a bare live engine needs it set.
             EarlyFinish = true,
+            // KEY-TIME JUDGEMENT (bit 9 of the second CONFIG flags word): set for every live stack and
+            // read by no engine rule (it says the frames carry key times), carried here so the bare
+            // engine is the live one; the browser has always judged at keydown.
+            KeyTimeJudgement = true,
             ManualNewlines = true,
             NewlineOnTypedLetter = true,
         };

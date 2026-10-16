@@ -1601,6 +1601,11 @@
     // TypeBeatPlayfield's TypeLatinText: every press keyToChars made of one keydown ('ss' for a
     // 'ß') is one ordinary processKey at the same instant, in order.
     //
+    // That instant is the keydown's, which is the desktop's too since KeyTimeJudgement (bit 9 of the
+    // second CONFIG flags word): there the OS commit can arrive frames after its key, or never for
+    // the spacebar, and the press is still judged at its key's time. The browser has e.key on the
+    // keydown itself, so it has always judged there and takes the era unconditionally.
+    //
     // A retype selection is consumed FIRST, so the press lands on the anchor cell: mass backspace,
     // then the ordinary judged keypress. Space is not special here, nor is any other typeable key:
     // "collapse, then process normally" is the whole rule. The desktop suspends its line-complete
