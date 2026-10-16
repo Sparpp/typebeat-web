@@ -210,7 +210,16 @@ public class WebsiteFixture
         using (var loginResponse = await client.PostAsync("/login", new FormUrlEncodedContent(form)))
             Assert.That(loginResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"login as {login} should land on /verify");
 
-        string code = Emails.LastCode ?? throw new InvalidOperationException($"no login code captured for {login}");
+        // The code emailed to THIS user, not Emails.LastCode: fixtures that run in parallel log in
+        // concurrently, and a code meant for someone else made /verify re-render its form (still a
+        // 200), so the caller carried on signed out and its next request 404'd (CI, 2026-10-16).
+        string? email;
+        await using (var conn = new NpgsqlConnection(ConnectionString))
+            email = await conn.QuerySingleOrDefaultAsync<string?>(
+                "SELECT email::text FROM users WHERE username = @login::citext OR email = @login::citext", new { login });
+
+        string code = (email is null ? null : Emails.LastCodeFor(email))
+                      ?? throw new InvalidOperationException($"no login code captured for {login}");
 
         string verifyToken = await GetAntiforgeryTokenAsync(client, "/verify");
         var verifyResponse = await client.PostAsync("/verify", new FormUrlEncodedContent(new Dictionary<string, string>
@@ -220,6 +229,9 @@ public class WebsiteFixture
         }));
 
         Assert.That(verifyResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"verify for {login}");
+        // A refused code re-renders /verify with a 200 too, so prove the redirect away happened.
+        Assert.That(verifyResponse.RequestMessage?.RequestUri?.AbsolutePath, Is.Not.EqualTo("/verify"),
+            $"verify for {login} should have signed in and left /verify");
         return verifyResponse;
     }
 
