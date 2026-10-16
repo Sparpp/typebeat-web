@@ -5,6 +5,7 @@ using Typebeat.Web.Scoring;
 using PerformancePoints = Typebeat.Web.Scoring.PerformancePoints;
 using typebeat.Game.Beatmaps;
 using typebeat.Game.Rulesets.Scoring;
+using typebeat.Game.Rulesets.TypeBeat.Gameplay;
 using typebeat.Game.Rulesets.TypeBeat.Scoring;
 using typebeat.Game.Scoring;
 
