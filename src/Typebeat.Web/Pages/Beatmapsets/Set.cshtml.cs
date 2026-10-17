@@ -273,7 +273,7 @@ public sealed class SetModel(Db db, IFileStore fileStore, StartupSweepGate sweep
 
         // Backlog 418: the stats are the selected difficulty's, the one the stats box shows.
         string shortArtist = Seo.ShortArtist(Set.Artist);
-        ViewData["Title"] = shortArtist.Length > 0 ? $"{Set.Title} typing game: {shortArtist}" : $"{Set.Title} typing game";
+        ViewData["Title"] = $"{shortArtist} - {Set.Title}";
         ViewData["MetaDescription"] = Seo.SetDescription(
             Set.Title, Set.Artist, Set.Creator, Diff?.Stars, Diff?.TotalLengthS, Diff?.TargetWpm, Set.CanWebplay);
         // On the canonical origin, like the canonical itself, rather than whatever host served
