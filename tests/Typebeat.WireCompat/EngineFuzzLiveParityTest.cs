@@ -362,6 +362,11 @@ public class EngineFuzzLiveParityTest
     /// before its own end, so the bit is inert to the readings here; <c>EarlyFinishParityTest</c> is
     /// where the rule itself is pinned, on a map that does reach it early.</para>
     ///
+    /// <para>Bit 9 (<see cref="TypingEngine.KeyTimeJudgement"/>, the live word growing by 512) says
+    /// the frames carry the time each key went down, which is the only time the browser has ever
+    /// judged at. No engine rule reads it, so it is inert to every reading here; it is carried so the
+    /// live arm's header is the live client's, and a stored-era arm clears it with bit 1.</para>
+    ///
     /// <para>Bit 5 is the one that cannot be read as a single fact, which is why it is a parameter
     /// here rather than a constant: bit 5 CLEAR means a PINNED caret for a plain old replay, but an
     /// unpinned caret WITHOUT the line-start snap for one carrying the retired "FT" acronym, so
@@ -369,12 +374,12 @@ public class EngineFuzzLiveParityTest
     /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>. The sweep passes no mods, so the frame is
     /// the whole of the answer here.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true, bool manualNewlines = true, bool rushCapCostsAccuracy = true, bool inputEra2 = true, bool authoredSyllablesOnly = true, bool alignSubdivisionTargets = true, bool earlyFinish = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true, bool manualNewlines = true, bool rushCapCostsAccuracy = true, bool inputEra2 = true, bool authoredSyllablesOnly = true, bool alignSubdivisionTargets = true, bool earlyFinish = true, bool keyTimeJudgement = true)
     {
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming, backDatedSealBreak: backDatedSealBreak, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: foldsDisplacedClaim, manualNewlines: manualNewlines, newlineOnTypedLetter: manualNewlines, firstLineLeadIn: firstLineLeadIn));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: authoredSyllablesOnly, alignSubdivisionTargets: alignSubdivisionTargets, earlyFinish: earlyFinish));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: authoredSyllablesOnly, alignSubdivisionTargets: alignSubdivisionTargets, earlyFinish: earlyFinish, keyTimeJudgement: keyTimeJudgement));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -735,7 +740,7 @@ public class EngineFuzzLiveParityTest
 
             return TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(),
                 // A stored-era arm predates backlog 363 and PR 5 too, so it clears bits 2 and 3 with bit 1.
-                Keystrokes(browserCase.GetProperty("keys"), spaceSkipsWord: false, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2, earlyFinish: inputEra2),
+                Keystrokes(browserCase.GetProperty("keys"), spaceSkipsWord: false, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2, earlyFinish: inputEra2, keyTimeJudgement: inputEra2),
                 TypoRule.Deferred, ComboRestoreRule.OnFix);
         }
 
@@ -786,6 +791,7 @@ public class EngineFuzzLiveParityTest
         int leadInOpens = 0, pauseJudgements = 0;
         int manualHandOvers = 0, typedLetterNewlines = 0, awaitingSwallows = 0, holdExtensions = 0, enters = 0;
         int cellLessLetterNewlines = 0;
+        int totalScoreChecks = 0, totalScoreMismatches = 0;
 
         foreach (var browserCase in cases.EnumerateArray())
         {
@@ -824,6 +830,8 @@ public class EngineFuzzLiveParityTest
             cellLessLetterNewlines += browserCase.GetProperty("cellLessLetterNewlines").GetInt32();
             awaitingSwallows += browserCase.GetProperty("awaitingSwallows").GetInt32();
             holdExtensions += browserCase.GetProperty("holdExtensions").GetInt32();
+            totalScoreChecks += browserCase.GetProperty("totalScoreChecks").GetInt32();
+            totalScoreMismatches += browserCase.GetProperty("totalScoreMismatches").GetInt32();
             enters += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "\n");
             backspaces += browserCase.GetProperty("keys").EnumerateArray().Count(key => key[1].GetString() == "");
         }
@@ -988,6 +996,12 @@ public class EngineFuzzLiveParityTest
             Assert.That(awaitingSwallows, Is.GreaterThan(0), "no run pressed into a line whose entry window had not opened");
             Assert.That(holdExtensions, Is.GreaterThan(0), "no run held a finished line open past its deadline");
             Assert.That(enters, Is.GreaterThan(0), "no run pressed Enter");
+
+            // Backlog 319's live HUD reads totalScoreOf where the card reads computeScore: the
+            // harness compared the two after every key and every frame of every run, and they
+            // never differ.
+            Assert.That(totalScoreChecks, Is.GreaterThan(0), "no state was compared");
+            Assert.That(totalScoreMismatches, Is.Zero, "totalScoreOf parted from computeScore's total");
         });
     }
 

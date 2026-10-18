@@ -52,6 +52,10 @@ handle @maintenance {
 # matches it here, so Caddy writes the status alone), which is what the game already treats as a
 # gateway blip and retries.
 handle_errors {
+	# Error routes run apart from the site block's, so its security header defaults (the
+	# security_headers snippet in the Caddyfile) are imported again here for the page below.
+	import security_headers
+
 	@restarting_page {
 		expression {err.status_code} == 502
 		method GET HEAD

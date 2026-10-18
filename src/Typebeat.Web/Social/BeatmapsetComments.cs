@@ -190,7 +190,7 @@ public static class BeatmapsetComments
     /// nothing was deleted.</returns>
     public static async Task<DeletedComment?> SoftDeleteAsync(
         NpgsqlConnection conn, long setId, long commentId, long viewerId, bool canReview,
-        CancellationToken ct = default)
+        CancellationToken ct = default, NpgsqlTransaction? tx = null)
         => await conn.QuerySingleOrDefaultAsync<DeletedComment?>(
             new CommandDefinition(
                 """
@@ -202,7 +202,7 @@ public static class BeatmapsetComments
                   AND (c.user_id = @viewerId OR s.owner_id = @viewerId OR @canReview)
                 RETURNING c.user_id AS AuthorId, s.owner_id AS OwnerId
                 """,
-                new { setId, commentId, viewerId, canReview }, cancellationToken: ct));
+                new { setId, commentId, viewerId, canReview }, transaction: tx, cancellationToken: ct));
 }
 
 /// <summary>The moderation audit for a comment deletion, shared by the website's and the game's delete handlers.</summary>
@@ -215,14 +215,17 @@ public static class CommentModeration
     public static bool IsModeration(DeletedComment deleted, long actorId, bool canReview)
         => canReview && deleted.AuthorId != actorId && deleted.OwnerId != actorId;
 
-    /// <summary>Writes the audit row. Callers treat it as best-effort (the deletion has already happened).</summary>
-    public static Task RecordAsync(NpgsqlConnection conn, long actorId, long setId, long commentId)
+    /// <summary>
+    /// Writes the audit row. Callers pass the soft delete's transaction, so the removal and its
+    /// record commit together or not at all.
+    /// </summary>
+    public static Task RecordAsync(NpgsqlConnection conn, long actorId, long setId, long commentId, NpgsqlTransaction? tx = null)
         => conn.ExecuteAsync(
             """
             INSERT INTO moderation_actions (actor_id, set_id, action, note)
             VALUES (@actorId, @setId, 'comment_delete', @note)
             """,
-            new { actorId, setId, note = $"comment {commentId}" });
+            new { actorId, setId, note = $"comment {commentId}" }, tx);
 }
 
 /// <summary>A comment and the set it is on (<see cref="BeatmapsetComments.FindAsync"/>).</summary>

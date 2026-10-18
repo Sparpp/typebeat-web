@@ -28,10 +28,22 @@ build of the game client talks to. Point the app at a different database with
 
 Or open `typebeat-web.slnx` in your IDE.
 
-The tests that prove the website and the game client still agree on scoring
-compile the game as well, so they need a checkout of
-[`typebeat`](https://github.com/Sparpp/typebeat) beside this one (or the
-`external/typebeat-osu` submodule):
+The tests need more than the SDK:
+
+- A local PostgreSQL superuser `postgres` / `postgres` on `localhost:5432`, as in
+  `.github/workflows/ci.yml`. The website and wire-compat tests create their own
+  databases there.
+- The tests that prove the website and the game client still agree on scoring
+  compile the game as well, so they need a checkout of
+  [`typebeat`](https://github.com/Sparpp/typebeat) beside this one (or the
+  `external/typebeat-osu` submodule).
+- The game in turn needs the `typebeat.Game.Resources` package. It is too large
+  for git, so CI packs it from the private `external/type-beat-assets` submodule
+  into the local feed in `nuget.config` (the "Pack typebeat.Game.Resources" step
+  of the workflow); without that package, or access to that submodule, the game
+  and so the wire-compat project will not restore.
+- Node, for the JS harnesses (the tests that use one are skipped without it).
+- ffmpeg is optional: the preview tests degrade without it.
 
 ```
 git submodule update --init external/typebeat-osu
@@ -44,7 +56,7 @@ dotnet test
 |---|---|
 | `src/Typebeat.Web` | The app: the API the game client speaks, the website (Razor Pages), the browser player, scoring and difficulty rating |
 | `tests/Typebeat.Web.Tests` | The test suite |
-| `tests/Typebeat.WireCompat` | Compiles the game client against the server and pins that the two agree on the wire and on every mirrored formula |
+| `tests/Typebeat.WireCompat` | Compiles the game client against the server and pins that the two agree on the wire and on the mirrored formulas its tests name (not every mirrored formula has a pin there yet) |
 | `tools/` | Operator tools: seeding maps, admin actions, score recalculation and reprice reports |
 | `deploy/` | Production deployment: Docker Compose, Caddy, backups, runbook |
 | `docs/` | The performance points spec and other design notes |

@@ -1,7 +1,8 @@
 // Node harness for what /play tells the player once /play/submit answers (play.js's
 // submitStatus, backlog 321). play.js is an IIFE that publishes window.TypeBeatPlayPage before its
 // stage guard, so a document whose getElementById answers null takes the guard's early return and
-// nothing else runs. Emits { case: { html, cls } } as JSON for PlaySubmitStatusTest to assert.
+// nothing else runs. Emits { case: { text, cls } } as JSON for PlaySubmitStatusTest to assert
+// (a status with a link also carries linkText, linkHref and textAfter).
 //
 // Usage: node PlaySubmitStatusHarness.cjs <absolute path to typebeat-core.js>
 

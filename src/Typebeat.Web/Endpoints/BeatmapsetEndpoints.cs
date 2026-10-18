@@ -41,6 +41,8 @@ public static class BeatmapsetEndpoints
     {
         // Output-cached for anonymous callers only (backlog 366): an authed one gets has_favourited
         // and their own hidden sets, so the policy refuses any bearer or session request outright.
+        app.MapGet("/api/v2/beatmapsets/{setId:long}/state", GetStateAsync);
+
         app.MapGet("/api/v2/beatmapsets/{setId:long}", GetBeatmapSetAsync).CacheOutput(CachePolicies.SetApi);
 
         // Not output-cached: the set GET's entries are evicted per set, and this route is keyed by a
@@ -93,6 +95,27 @@ public static class BeatmapsetEndpoints
         return WireJson.Ok(new { favourite_count = count });
     }
 
+    // A live indexed row read, without the full set response's cache or expensive lyrics/stats.
+    private static async Task<IResult> GetStateAsync(long setId, HttpContext ctx, Db db)
+    {
+        var requester = await ctx.ResolveBearerAsync() ?? ctx.SessionUser();
+        await using var conn = await db.OpenAsync(ctx.RequestAborted);
+        var state = await conn.QuerySingleOrDefaultAsync<StateRow>(
+            """
+            SELECT metadata_revision AS metadataRevision, current_version AS packageRevision,
+                   status, owner_id AS ownerId, updated_at AS updatedAt,
+                   EXISTS(SELECT 1 FROM favourites WHERE set_id=@setId AND user_id=@userId) AS hasFavourited
+            FROM beatmapsets WHERE id=@setId
+            """, new { setId, userId = requester?.Id });
+        ctx.Response.Headers.CacheControl = "private, no-store";
+        if (state is null || (!IsPublished(state.Status) && state.OwnerId != requester?.Id))
+            return WireJson.Error(StatusCodes.Status404NotFound, "not found");
+        return WireJson.Ok(new { metadata_revision = state.MetadataRevision, package_revision = state.PackageRevision,
+            status = StatusString(state.Status), last_updated = state.UpdatedAt, has_favourited = state.HasFavourited });
+    }
+
+    private sealed record StateRow(long MetadataRevision, int PackageRevision, string Status, long OwnerId, DateTime UpdatedAt, bool HasFavourited);
+
     private static async Task<IResult> LookupAsync(HttpContext ctx, Db db)
     {
         if (!long.TryParse(ctx.Request.Query["beatmap_id"], NumberStyles.Integer, CultureInfo.InvariantCulture, out long beatmapId))
@@ -123,6 +146,8 @@ public static class BeatmapsetEndpoints
             """
             SELECT s.id              AS id,
                    s.owner_id        AS ownerId,
+                   s.metadata_revision AS metadataRevision,
+                   s.current_version AS packageRevision,
                    s.title           AS title,
                    s.title_unicode   AS titleUnicode,
                    s.artist          AS artist,
@@ -191,10 +216,12 @@ public static class BeatmapsetEndpoints
             "SELECT EXISTS (SELECT 1 FROM favourites WHERE user_id = @userId AND set_id = @setId)",
             new { userId = requester!.Id, setId });
 
-        // Whether the set's current version carries a vocals stem (backlog 396), the same set-level
-        // flag the lookup emits; the submission wizard's update flow and the client's offer both read
-        // it. Computed once on the single set this route serves.
-        bool hasVocalsStem = await StemBackfill.CurrentVersionHasStemAsync(db, setId, ctx.RequestAborted);
+        // The tracked files the set's current version carries (backlog 396), and the vocals stem flag
+        // read off the same list: the same set-level values the lookup emits. The client's offer reads
+        // the manifest; the submission wizard's update flow and older clients read the flag. Computed
+        // once on the single set this route serves.
+        string fileManifest = await SetFileManifest.CurrentVersionAsync(db, setId, ctx.RequestAborted);
+        bool hasVocalsStem = SetFileManifest.Names(fileManifest, SetFileManifest.VocalsStem);
 
         string urlBase = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
         string status = StatusString(set.Status);
@@ -213,6 +240,8 @@ public static class BeatmapsetEndpoints
             // No dedicated ranked-date column; updated_at is the same anchor the lookup uses.
             RankedDate = set.Status is "ranked" or "loved" ? set.UpdatedAt : null,
             LastUpdated = set.UpdatedAt,
+            MetadataRevision = set.MetadataRevision,
+            PackageRevision = set.PackageRevision,
             TitleUnicode = set.TitleUnicode,
             ArtistUnicode = set.ArtistUnicode,
             Source = set.Source,
@@ -227,6 +256,7 @@ public static class BeatmapsetEndpoints
             Explicit = set.Explicit,
             SongLanguage = set.Language,
             HasVocalsStem = hasVocalsStem,
+            FileManifest = fileManifest,
             Description = set.Description,
             DownloadCount = set.DownloadCount,
             HasPackage = set.HasPackage,
@@ -290,6 +320,14 @@ public static class BeatmapsetEndpoints
     /// </summary>
     public static bool IsPublished(string dbStatus) => dbStatus is "pending" or "unranked" or "ranked" or "loved";
 
+    /// <summary>
+    /// <see cref="IsPublished"/> as a SQL list, for <c>status IN {PublishedSql}</c> filters. The two
+    /// must name the same four statuses. The listing, landing, /play, search and score-token filters
+    /// use it; older hand-typed copies remain elsewhere (profiles, SEO, lookup) and should move to it
+    /// when touched.
+    /// </summary>
+    public const string PublishedSql = "('pending', 'unranked', 'ranked', 'loved')";
+
     /// <summary>DB status → the wire string the client's BeatmapOnlineStatus binds by name.</summary>
     public static string StatusString(string dbStatus) => dbStatus switch
     {
@@ -305,6 +343,8 @@ public static class BeatmapsetEndpoints
     private sealed record SetRow(
         long Id,
         long OwnerId,
+        long MetadataRevision,
+        int PackageRevision,
         string Title,
         string TitleUnicode,
         string Artist,

@@ -79,6 +79,13 @@
     <ProjectReference Include="$(TypebeatRulesetProject)" />
   </ItemGroup>
 
+  <!-- Tests that read game SOURCE (SearchOperatorParityTest) must read the checkout this project
+       compiles against, including a command-line override pointing at a worktree, so the resolved
+       game project's full path is stamped into the assembly. -->
+  <ItemGroup>
+    <AssemblyMetadata Include="TypebeatGameProject" Value="$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(TypebeatGameProject)'))))" />
+  </ItemGroup>
+
   <!-- RomaniserParityTest (backlog 329) reads the romaniser fixtures from the GAME repo, where its
        own RomaniserTest reads them, so both sides are held to one file per script; and both
        copies of Romaniser.cs as text, to pin that they differ only in the namespace line. All

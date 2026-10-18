@@ -217,7 +217,11 @@ case "$MODE" in
     docker exec -e PGPASSWORD="$PW" typebeat-web-postgres-1 \
       pg_dump -U typebeat -d typebeat -Fc | gzip > "$PARTIAL"
     gzip -t "$PARTIAL" || { echo "backup FAILED: the db dump is not a whole gzip stream, discarding" >&2; exit 1; }
-    gunzip -c "$PARTIAL" | docker exec -i typebeat-web-postgres-1 pg_restore --list > /dev/null \
+    # pg_restore --list stops reading once it has the table of contents. With pipefail on, gunzip
+    # then dies of SIGPIPE and fails the pipeline, which is what discarded every dump from
+    # 2026-10-02 on, the first night the dump outgrew the pipe buffer. Drain the rest of stdin
+    # after a successful listing so the writer always finishes.
+    gunzip -c "$PARTIAL" | docker exec -i typebeat-web-postgres-1 sh -c 'pg_restore --list > /dev/null && cat > /dev/null' \
       || { echo "backup FAILED: pg_restore cannot read the dump's table of contents, discarding" >&2; exit 1; }
     mv "$PARTIAL" "$DIR/typebeat_$TS.dump.gz"
     trap - EXIT
@@ -244,11 +248,20 @@ case "$MODE" in
     # a few skipped weeks must never age out the only copies we have.
     ls -1t "$DIR"/appdata_*.tar.gz 2>/dev/null | tail -n +2 | xargs -r rm -f
 
-    # Refuse to start if the free space cannot hold an archive about the size of the last one
-    # (plus 20%). Failing loudly on a Sunday morning is enormously better than filling the disk
-    # out from under Postgres, which is what happens when tar is allowed to run out of room.
-    LAST_SIZE=$(stat -c %s "$(ls -1t "$DIR"/appdata_*.tar.gz 2>/dev/null | head -1)" 2>/dev/null || echo 0)
-    NEED_KB=$(( (LAST_SIZE / 1024) * 12 / 10 ))
+    # Refuse to start if the free space cannot hold this archive (plus 10%). Failing loudly on a
+    # Sunday morning is enormously better than filling the disk out from under Postgres, which is
+    # what happens when tar is allowed to run out of room. The estimate is the data being archived
+    # (a tar.gz of mostly compressed audio and images is never meaningfully larger than its input),
+    # measured now: sizing from the LAST archive refused every run from 2026-09 on, because package
+    # pruning shrank /data well below the 47 GB archive of 2026-08-30. The last archive's size is
+    # the fallback when the measurement fails.
+    DATA_KB=$(docker exec typebeat-web-app-1 du -sk --exclude=align-jobs --exclude=align-cache /data 2>/dev/null | cut -f1)
+    if [ -n "$DATA_KB" ] && [ "$DATA_KB" -gt 0 ] 2>/dev/null; then
+      NEED_KB=$(( DATA_KB * 11 / 10 ))
+    else
+      LAST_SIZE=$(stat -c %s "$(ls -1t "$DIR"/appdata_*.tar.gz 2>/dev/null | head -1)" 2>/dev/null || echo 0)
+      NEED_KB=$(( (LAST_SIZE / 1024) * 12 / 10 ))
+    fi
     FREE_KB=$(df -Pk "$DIR" | awk 'NR==2 {print $4}')
     if [ "$NEED_KB" -gt 0 ] && [ "$FREE_KB" -lt "$NEED_KB" ]; then
       echo "backup ABORTED: appdata needs ~$((NEED_KB/1024/1024)) GB free, have $((FREE_KB/1024/1024)) GB" >&2
@@ -262,10 +275,25 @@ case "$MODE" in
     PARTIAL="$DIR/appdata_$TS.tar.gz.partial"
     trap 'rm -f "$PARTIAL"' EXIT
 
-    # The server aligner's two directories (backlog 413) stay out: align-jobs is transient scratch
-    # the worker appends to mid-tar (a "file changed as we read it" exits tar 1 and fails the whole
-    # backup), and align-cache is model weights that re-download by themselves.
-    docker exec typebeat-web-app-1 tar czf - -C / --exclude=data/align-jobs --exclude=data/align-cache data > "$PARTIAL"
+    # The server aligner's two directories (backlog 413) stay out: align-jobs (its own volume since
+    # S1-018, mounted into the app at /data/align-jobs, so tar still walks into it) is transient
+    # scratch the worker appends to mid-tar (a "file changed as we read it" exits tar 1 and fails
+    # the whole backup), and align-cache, model weights that re-download by themselves, may still
+    # sit on appdata from before its own volume. The Data Protection keyring is not under /data
+    # (its own dpkeys volume) and deliberately not backed up offsite: losing it only invalidates
+    # short-lived cookies and form tokens.
+    # GNU tar exits 1 for "file changed as we read it" and 2 for real errors. A live site writes
+    # packages while the tar runs (an upload or a re-assembly), and an assembled package is
+    # rebuildable from its content-addressed blobs anyway, so exit 1 is a usable archive: accept it
+    # instead of discarding a 27 GB backup over one file in flight. gzip -t below still guards the
+    # stream itself. Any other non-zero exit fails the run.
+    TAR_RC=0
+    docker exec typebeat-web-app-1 tar czf - -C / --warning=no-file-changed \
+      --exclude=data/align-jobs --exclude=data/align-cache data > "$PARTIAL" || TAR_RC=$?
+    if [ "$TAR_RC" -ne 0 ] && [ "$TAR_RC" -ne 1 ]; then
+      echo "backup FAILED: tar exited $TAR_RC, discarding" >&2
+      exit 1
+    fi
     gzip -t "$PARTIAL" || { echo "backup FAILED: appdata archive is corrupt, discarding" >&2; exit 1; }
     mv "$PARTIAL" "$DIR/appdata_$TS.tar.gz"
     trap - EXIT

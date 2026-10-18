@@ -1,6 +1,7 @@
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Storage;
+using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
 
@@ -47,7 +48,7 @@ public static class OpsStemEndpoints
         var logger = loggerFactory.CreateLogger("StemBackfill");
         var rows = await StemBackfill.ListMissingStemAsync(db, store, logger, ctx.RequestAborted);
 
-        return Results.Json(new
+        return WireJson.Ok(new
         {
             count = rows.Count,
             sets = rows.Select(r => new
@@ -73,7 +74,7 @@ public static class OpsStemEndpoints
         string? sha256 = ctx.Request.Query["sha256"];
 
         if (string.IsNullOrWhiteSpace(sha256))
-            return Results.Problem("sha256 query parameter is required.", statusCode: StatusCodes.Status400BadRequest);
+            return WireJson.Error(StatusCodes.Status400BadRequest, "sha256 query parameter is required.");
 
         Stream? stream;
 
@@ -83,7 +84,7 @@ public static class OpsStemEndpoints
         }
         catch (FormatException)
         {
-            return Results.Problem("sha256 is not valid hex.", statusCode: StatusCodes.Status400BadRequest);
+            return WireJson.Error(StatusCodes.Status400BadRequest, "sha256 is not valid hex.");
         }
 
         if (stream == null)
@@ -102,12 +103,11 @@ public static class OpsStemEndpoints
         // Writing a blob to the store, so the same disk floor every other write route holds applies
         // (507 rather than 503: this is an operator tool, not a gateway blip).
         if (disk.Current is { UploadsRefused: true } status)
-            return Results.Problem(DiskGuard.UploadRefusal(status), statusCode: StatusCodes.Status507InsufficientStorage);
+            return WireJson.Error(StatusCodes.Status507InsufficientStorage, DiskGuard.UploadRefusal(status));
 
         if (ctx.Request.ContentLength is { } length && length > StemBackfill.MaxStemBytes)
-            return Results.Problem(
-                $"The vocals stem exceeds the {StemBackfill.MaxStemBytes} byte limit.",
-                statusCode: StatusCodes.Status413PayloadTooLarge);
+            return WireJson.Error(StatusCodes.Status413PayloadTooLarge,
+                $"The vocals stem exceeds the {StemBackfill.MaxStemBytes} byte limit.");
 
         byte[] content;
 
@@ -123,9 +123,8 @@ public static class OpsStemEndpoints
                 total += read;
 
                 if (total > StemBackfill.MaxStemBytes)
-                    return Results.Problem(
-                        $"The vocals stem exceeds the {StemBackfill.MaxStemBytes} byte limit.",
-                        statusCode: StatusCodes.Status413PayloadTooLarge);
+                    return WireJson.Error(StatusCodes.Status413PayloadTooLarge,
+                        $"The vocals stem exceeds the {StemBackfill.MaxStemBytes} byte limit.");
 
                 buffer.Write(chunk, 0, read);
             }
@@ -134,7 +133,7 @@ public static class OpsStemEndpoints
         }
 
         if (content.Length == 0)
-            return Results.Problem("The vocals stem body is empty.", statusCode: StatusCodes.Status400BadRequest);
+            return WireJson.Error(StatusCodes.Status400BadRequest, "The vocals stem body is empty.");
 
         try
         {
@@ -144,7 +143,7 @@ public static class OpsStemEndpoints
                 "Attached {Filename} ({Sha256}, {Bytes} bytes) to set {SetId} as v{VersionNo} (new version: {Cut}).",
                 result.Filename, result.Sha256Hex, content.Length, setId, result.VersionNo, result.CutNewVersion);
 
-            return Results.Json(new
+            return WireJson.Ok(new
             {
                 set_id = result.SetId,
                 version_no = result.VersionNo,
@@ -155,7 +154,7 @@ public static class OpsStemEndpoints
         }
         catch (StemBackfill.StemBackfillException e)
         {
-            return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity, e.Message);
         }
     }
 }

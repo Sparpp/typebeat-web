@@ -271,15 +271,18 @@ public class PlayHistoryTest
         {
             Assert.That(storedBeatmapId, Is.EqualTo(PublicSiteSeed.MultiDiffHardId));
             Assert.That(storedBeatmapId, Is.Not.EqualTo(PublicSiteSeed.MultiDiffEasyId), "the primary (lowest-id) difficulty");
-            // The ranked control for the unranked case below: same play, same path, a ranked set.
-            Assert.That((bool)submitted["ranked"]!, Is.True);
+            // A ranked set, and still stored unranked: every browser play is, until the browser
+            // sends a keypress log the server can audit.
+            Assert.That((bool)submitted["ranked"]!, Is.False);
         });
     }
 
     /// <summary>
     /// (b)'s server half, asserted rather than assumed: a browser play of an UNRANKED (published,
-    /// never rankable) set is recorded and stored <c>ranked = false</c>. Paired with the ranked
-    /// control above, which is the same submission over the same wall-clock with only the set's
+    /// never rankable) set is recorded and stored <c>ranked = false</c>. Every browser play is now
+    /// stored unranked (see the ranked set above), so this pins the other half: the row, the play
+    /// count and the month are all still kept. It used to be paired with a ranked control, the
+    /// same submission over the same wall-clock with only the set's
     /// status different, so this cannot pass for the trivial reason that a fast play never ranks.
     /// </summary>
     [Test]
@@ -357,13 +360,15 @@ public class PlayHistoryTest
     // this the player's best" starts from nothing.
 
     /// <summary>
-    /// A ranked, PRICED browser play reports its pp exactly as the formula returned it, and its
-    /// board position is the player's BEST row's, with personal_best saying whether that row is this
-    /// play. A rival sits between the best and the worse run, so a regression that reported the
-    /// worse run's own placement would read one place (or more) lower and fail.
+    /// A browser play on a ranked, PRICED map is stored unranked and earns nothing: the browser
+    /// submits the aggregate account alone, which the server cannot audit or recalculate, so a
+    /// console POST of all-Great statistics must not board or be priced. The response says so
+    /// (ranked false, a refused null pp rather than a pending one, no board and no position), and
+    /// the row is still stored, settled at pp 0. A rival on the ranked board and a rating cell for
+    /// the map make it a play that WOULD have been priced and placed.
     /// </summary>
     [Test]
-    public async Task BrowserSubmitResponse_RankedPricedMap_CarriesPp_AndTheBestRowsPosition()
+    public async Task BrowserSubmitResponse_RankedPricedMap_IsStoredUnranked_WithNoPpAndNoBoard()
     {
         long me = await WebsiteFixture.SeedUserAsync("submit priced", "submit.priced@example.com", "submitpriced-123456", verified: true);
         long hardId = PublicSiteSeed.MultiDiffHardId;
@@ -382,32 +387,31 @@ public class PlayHistoryTest
             await WebsiteFixture.LoginAndVerifyAsync(client, "submit priced", "submitpriced-123456");
             string csrf = await browserCsrfAsync(client);
 
-            var (best, bestId) = await browserPlayAsync(client, csrf, PublicSiteSeed.MultiDiffSetId, hardId, totalScore: 90_000);
-            var (worse, worseId) = await browserPlayAsync(client, csrf, PublicSiteSeed.MultiDiffSetId, hardId, totalScore: 50_000);
-            var (better, betterId) = await browserPlayAsync(client, csrf, PublicSiteSeed.MultiDiffSetId, hardId, totalScore: 95_000);
+            var (played, playedId) = await browserPlayAsync(client, csrf, PublicSiteSeed.MultiDiffSetId, hardId, totalScore: 90_000);
 
-            double expectedPp = PerformancePoints.Compute(2.0, 10, TestRatings.DEFAULT_DIFFICULT_CHARACTERS, 0, 1.0, 10, []);
+            double wouldHaveEarned = PerformancePoints.Compute(2.0, 10, TestRatings.DEFAULT_DIFFICULT_CHARACTERS, 0, 1.0, 10, []);
 
-            int bestPosition = await boardPositionAsync(conn, hardId, me, 90_000, bestId, ranked: true);
-            int worseOwnPlacement = await boardPositionAsync(conn, hardId, me, 50_000, worseId, ranked: true);
-            int betterPosition = await boardPositionAsync(conn, hardId, me, 95_000, betterId, ranked: true);
+            var stored = await conn.QuerySingleAsync<(long UserId, bool Ranked, bool Passed, double Pp, int PpVersion)>(
+                "SELECT user_id AS UserId, ranked AS Ranked, passed AS Passed, pp::double precision AS Pp, pp_version AS PpVersion FROM scores WHERE id = @playedId",
+                new { playedId });
 
             Assert.Multiple(() =>
             {
-                Assert.That((bool)best["ranked"]!, Is.True);
-                Assert.That((double)best["pp"]!, Is.EqualTo(expectedPp).Within(1e-9), "the price the formula returned");
-                Assert.That(expectedPp, Is.GreaterThan(0), "a priced play, not a placeholder");
-                Assert.That((bool)best["pp_pending"]!, Is.False);
-                Assert.That((string?)best["board"], Is.EqualTo("ranked"));
-                Assert.That((bool)best["personal_best"]!, Is.True);
-                Assert.That((int)best["position"]!, Is.EqualTo(bestPosition));
+                Assert.That(wouldHaveEarned, Is.GreaterThan(0), "non-vacuity: the map prices a play like this one");
 
-                Assert.That((bool)worse["personal_best"]!, Is.False, "50k did not beat the 90k best");
-                Assert.That((int)worse["position"]!, Is.EqualTo(bestPosition), "the BEST row's position, still");
-                Assert.That(worseOwnPlacement, Is.GreaterThan(bestPosition), "non-vacuity: the rival sits between the two runs");
+                Assert.That((bool)played["ranked"]!, Is.False);
+                Assert.That(played["pp"]!.Type, Is.EqualTo(JTokenType.Null), "no price");
+                Assert.That((bool)played["pp_pending"]!, Is.False, "refused, not pending: the player sees a dash");
+                Assert.That(played["board"]!.Type, Is.EqualTo(JTokenType.Null), "a ranked set serves the ranked board, which this play is not on");
+                Assert.That(played["position"]!.Type, Is.EqualTo(JTokenType.Null));
+                Assert.That((bool)played["personal_best"]!, Is.False);
+                Assert.That((long)played["total_score"]!, Is.EqualTo(90_000), "the results the player is shown are kept");
 
-                Assert.That((bool)better["personal_best"]!, Is.True, "95k is the new best");
-                Assert.That((int)better["position"]!, Is.EqualTo(betterPosition));
+                Assert.That(stored.UserId, Is.EqualTo(me), "the row is stored");
+                Assert.That(stored.Ranked, Is.False);
+                Assert.That(stored.Passed, Is.True);
+                Assert.That(stored.Pp, Is.Zero);
+                Assert.That(stored.PpVersion, Is.EqualTo(PerformancePoints.VERSION), "settled, so PpBackfill never prices it later");
             });
         }
         finally
@@ -417,12 +421,12 @@ public class PlayHistoryTest
     }
 
     /// <summary>
-    /// A ranked play on a map whose rating cell is not stored yet is PENDING: pp null with
-    /// pp_pending true, never a confident 0 (the stored column's 0 is a placeholder PpBackfill
-    /// overwrites).
+    /// On a ranked map whose rating cell is not stored yet, a desktop play would be PENDING. A
+    /// browser play is not: it is stored unranked, so its pp is refused outright and nothing is left
+    /// for PpBackfill to price later.
     /// </summary>
     [Test]
-    public async Task BrowserSubmitResponse_RankedUnpricedMap_IsPpPending()
+    public async Task BrowserSubmitResponse_RankedUnpricedMap_IsRefusedNotPending()
     {
         await WebsiteFixture.SeedUserAsync("submit pending", "submit.pending@example.com", "submitpending-123456", verified: true);
 
@@ -438,11 +442,11 @@ public class PlayHistoryTest
 
         Assert.Multiple(() =>
         {
-            Assert.That((bool)played["ranked"]!, Is.True);
-            Assert.That(played["pp"]!.Type, Is.EqualTo(JTokenType.Null), "no price yet, and not a 0");
-            Assert.That((bool)played["pp_pending"]!, Is.True);
-            Assert.That((string?)played["board"], Is.EqualTo("ranked"));
-            Assert.That((bool)played["personal_best"]!, Is.True);
+            Assert.That((bool)played["ranked"]!, Is.False);
+            Assert.That(played["pp"]!.Type, Is.EqualTo(JTokenType.Null), "no price, and not a 0");
+            Assert.That((bool)played["pp_pending"]!, Is.False);
+            Assert.That(played["board"]!.Type, Is.EqualTo(JTokenType.Null));
+            Assert.That((bool)played["personal_best"]!, Is.False);
         });
     }
 
@@ -627,7 +631,7 @@ public class PlayHistoryTest
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
             request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["version_hash"] = "play-history-test-build",
+                ["version_hash"] = "7e570000000000000000000000000007",
                 ["beatmap_hash"] = checksum,
                 ["ruleset_id"] = "0",
             });

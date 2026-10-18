@@ -1,6 +1,3 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Processing;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Packages;
@@ -19,32 +16,23 @@ public static class ProfileMedia
     public const int BannerHeight = 500;
 
     /// <summary>Writes a square avatar JPEG; returns the key to store in <c>users.avatar_key</c>.</summary>
-    /// <exception cref="UnknownImageFormatException">The upload is not a decodable image.</exception>
+    /// <exception cref="UnreadableImageException">The upload is not a decodable image.</exception>
     public static Task<string> WriteAvatarAsync(Stream upload, long userId, long version, IFileStore store, CancellationToken ct = default)
         => writeAsync(upload, StoreKeys.Avatar(userId, version), AvatarSize, AvatarSize, store, ct);
 
     /// <summary>Writes a 3:1 banner JPEG; returns the key to store in <c>users.cover_key</c>.</summary>
-    /// <exception cref="UnknownImageFormatException">The upload is not a decodable image.</exception>
+    /// <exception cref="UnreadableImageException">The upload is not a decodable image.</exception>
     public static Task<string> WriteBannerAsync(Stream upload, long userId, long version, IFileStore store, CancellationToken ct = default)
         => writeAsync(upload, StoreKeys.UserCover(userId, version), BannerWidth, BannerHeight, store, ct);
 
     private static async Task<string> writeAsync(Stream upload, string key, int width, int height, IFileStore store, CancellationToken ct)
     {
-        // Throws UnknownImageFormatException on a non-image upload; the page turns that into a
-        // friendly form error rather than a 500.
-        using var image = await Image.LoadAsync(upload, ct);
+        // Throws UnreadableImageException on a non-image upload, a corrupt one, or one above the
+        // pixel budget; the page turns it into a friendly form error rather than a 500.
+        using var image = await CoverGenerator.LoadWithinBudgetAsync(upload, CoverGenerator.MaxSourcePixels, ct);
 
-        image.Mutate(ctx => ctx.Resize(new ResizeOptions
-        {
-            Size = new Size(width, height),
-            Mode = ResizeMode.Crop, // scale to fill, crop the overflow around the centre.
-        }));
-
-        using var buffer = new MemoryStream();
-        await image.SaveAsJpegAsync(buffer, new JpegEncoder { Quality = CoverGenerator.JpegQuality }, ct);
-        buffer.Position = 0;
-
-        await store.WriteObjectAsync(key, buffer, ct);
+        // Scale to fill, crop the overflow around the centre.
+        await CoverGenerator.WriteCoverFitJpegAsync(image, key, width, height, store, ct);
         return key;
     }
 }

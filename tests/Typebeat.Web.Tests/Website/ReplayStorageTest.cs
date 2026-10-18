@@ -1,10 +1,13 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
 using Newtonsoft.Json.Linq;
 using Npgsql;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Tests.Website;
 
@@ -15,8 +18,9 @@ namespace Typebeat.Web.Tests.Website;
 ///
 /// The motivating bug: nothing on the server ever accepted a replay, so every online row said
 /// "no replay available" no matter what the client had locally. These tests pin the whole
-/// contract the client is built against: 204/404/403/413, byte-identical roundtrip, overwrite on
-/// re-upload, and has_replay flipping false → true for exactly the score that got one.
+/// contract the client is built against: 204/404/403/413, byte-identical roundtrip, write-once by
+/// content (the same bytes again are a 204, different bytes a 409, a replay stored before the hash
+/// existed included), and has_replay flipping false → true for exactly the score that got one.
 /// </summary>
 [TestFixture]
 [NonParallelizable]
@@ -210,11 +214,14 @@ public class ReplayStorageTest
             "SELECT replay_key AS Key, replay_bytes AS Bytes, replay_uploaded_at AS UploadedAt FROM scores WHERE id = @id",
             new { id = ownerScoreId });
 
+        byte[]? recorded = await ReplayHashAsync(ownerScoreId);
+
         Assert.Multiple(() =>
         {
             Assert.That(row.Key, Is.EqualTo($"replays/{ownerScoreId}.osr"));
             Assert.That(row.Bytes, Is.EqualTo(replay.Length));
             Assert.That(row.UploadedAt, Is.Not.Null);
+            Assert.That(recorded, Is.EqualTo(SHA256.HashData(replay)), "the first upload's hash is recorded on the score");
         });
     }
 
@@ -252,17 +259,130 @@ public class ReplayStorageTest
 
     [Test]
     [Order(11)]
-    public async Task Reupload_ByTheOwner_OverwritesTheStoredReplay()
+    public async Task Reupload_OfTheSameBytes_IsAccepted()
     {
+        // The game's leaderboard backfill re-sends the replay it holds; that is not a conflict.
+        byte[] original = FakeReplay(seed: 7, length: 4096);
+        DateTime? uploadedBefore = await ReplayUploadedAtAsync(ownerScoreId);
+
+        using (var upload = await UploadAsync(ownerScoreId, ownerBearer, original))
+            Assert.That(upload.StatusCode, Is.EqualTo(HttpStatusCode.NoContent), "the same bytes again are idempotent");
+
+        using var download = await WebsiteFixture.Client.GetAsync($"/api/v2/scores/{ownerScoreId}/replay");
+        byte[] served = await download.Content.ReadAsByteArrayAsync();
+        DateTime? uploadedAfter = await ReplayUploadedAtAsync(ownerScoreId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(served, Is.EqualTo(original));
+            // Nothing is rewritten: retention reads the upload time, so a backfill re-send must not
+            // keep a replay young.
+            Assert.That(uploadedAfter, Is.EqualTo(uploadedBefore), "the stored replay's upload time does not move");
+        });
+    }
+
+    [Test]
+    [Order(11)]
+    public async Task Reupload_OfDifferentBytes_IsRefused_AndTheStoredReplayStays()
+    {
+        // The overwrite this replaced: an owner could swap a ranked score's replay at any time.
+        byte[] original = FakeReplay(seed: 7, length: 4096);
         byte[] replacement = FakeReplay(seed: 11, length: 1024);
 
         using (var upload = await UploadAsync(ownerScoreId, ownerBearer, replacement))
-            Assert.That(upload.StatusCode, Is.EqualTo(HttpStatusCode.NoContent), "re-upload is idempotent, not a conflict");
+        {
+            Assert.That(upload.StatusCode, Is.EqualTo(HttpStatusCode.Conflict), await upload.Content.ReadAsStringAsync());
+            Assert.That((string?)JObject.Parse(await upload.Content.ReadAsStringAsync())["error"],
+                Is.EqualTo("a different replay is already stored for this score"));
+        }
 
         using var download = await WebsiteFixture.Client.GetAsync($"/api/v2/scores/{ownerScoreId}/replay");
 
-        Assert.That(await download.Content.ReadAsByteArrayAsync(), Is.EqualTo(replacement), "the newer bytes win");
-        Assert.That(await ReplaySizeAsync(ownerScoreId), Is.EqualTo(replacement.Length), "the recorded size follows the object");
+        byte[] served = await download.Content.ReadAsByteArrayAsync();
+        int? size = await ReplaySizeAsync(ownerScoreId);
+        byte[]? recorded = await ReplayHashAsync(ownerScoreId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(served, Is.EqualTo(original), "the first bytes stay");
+            Assert.That(size, Is.EqualTo(original.Length));
+            Assert.That(recorded, Is.EqualTo(SHA256.HashData(original)));
+        });
+    }
+
+    /// <summary>
+    /// A replay stored before the hash existed (049) has none recorded. The next upload hashes the
+    /// stored object first, so different bytes are refused for it too, and that refusal records the
+    /// stored replay's hash; the same bytes are accepted and recorded.
+    /// </summary>
+    [Test]
+    [Order(14)]
+    public async Task AReplayStoredBeforeTheHash_IsProtectedOnTheNextUpload()
+    {
+        byte[] legacy = FakeReplay(seed: 23, length: 2048);
+        byte[] other = FakeReplay(seed: 29, length: 2048);
+        long refusedScoreId, acceptedScoreId;
+
+        await using (var conn = await dataSource.OpenConnectionAsync())
+        {
+            refusedScoreId = await insertScoreAsync(conn, ownerId, beatmapId, 300_000);
+            acceptedScoreId = await insertScoreAsync(conn, ownerId, beatmapId, 200_000);
+        }
+
+        await storeLegacyReplayAsync(refusedScoreId, legacy);
+        await storeLegacyReplayAsync(acceptedScoreId, legacy);
+
+        using (var refused = await UploadAsync(refusedScoreId, ownerBearer, other))
+            Assert.That(refused.StatusCode, Is.EqualTo(HttpStatusCode.Conflict), "different bytes over an unhashed stored replay");
+
+        using (var accepted = await UploadAsync(acceptedScoreId, ownerBearer, legacy))
+            Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.NoContent), "the stored bytes themselves");
+
+        using var download = await WebsiteFixture.Client.GetAsync($"/api/v2/scores/{refusedScoreId}/replay");
+        byte[] served = await download.Content.ReadAsByteArrayAsync();
+        byte[]? refusedHash = await ReplayHashAsync(refusedScoreId);
+        byte[]? acceptedHash = await ReplayHashAsync(acceptedScoreId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(served, Is.EqualTo(legacy), "the stored replay is untouched");
+            Assert.That(refusedHash, Is.EqualTo(SHA256.HashData(legacy)), "the refusal records the stored replay's hash");
+            Assert.That(acceptedHash, Is.EqualTo(SHA256.HashData(legacy)));
+        });
+    }
+
+    /// <summary>
+    /// Retention prunes the bytes and keeps the hash, so a pruned replay comes back only as the same
+    /// bytes: the game's backfill can restore it, and nothing else can take its place.
+    /// </summary>
+    [Test]
+    [Order(15)]
+    public async Task APrunedReplay_IsRestoredOnlyByTheSameBytes()
+    {
+        byte[] original = FakeReplay(seed: 31, length: 1536);
+        long scoreId;
+
+        await using (var conn = await dataSource.OpenConnectionAsync())
+            scoreId = await insertScoreAsync(conn, ownerId, beatmapId, 100_000);
+
+        using (var first = await UploadAsync(scoreId, ownerBearer, original))
+            Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+
+        // What Housekeeping's sweep does to a pruned replay: the key goes, the hash stays.
+        await using (var conn = await dataSource.OpenConnectionAsync())
+            await conn.ExecuteAsync("UPDATE scores SET replay_key = NULL, replay_pruned_at = now() WHERE id = @scoreId", new { scoreId });
+        await WebsiteFixture.Services.GetRequiredService<IFileStore>().DeleteObjectAsync(StoreKeys.Replay(scoreId));
+
+        using (var other = await UploadAsync(scoreId, ownerBearer, FakeReplay(seed: 37, length: 1536)))
+            Assert.That(other.StatusCode, Is.EqualTo(HttpStatusCode.Conflict), "different bytes cannot fill the pruned slot");
+
+        using (var restore = await UploadAsync(scoreId, ownerBearer, original))
+            Assert.That(restore.StatusCode, Is.EqualTo(HttpStatusCode.NoContent), "the same bytes restore it");
+
+        using var download = await WebsiteFixture.Client.GetAsync($"/api/v2/scores/{scoreId}/replay");
+
+        Assert.That(await download.Content.ReadAsByteArrayAsync(), Is.EqualTo(original));
+        Assert.That(await ReplayKeyAsync(scoreId), Is.Not.Null);
     }
 
     [Test]
@@ -351,6 +471,34 @@ public class ReplayStorageTest
         await using var conn = await dataSource.OpenConnectionAsync();
         return await conn.ExecuteScalarAsync<string?>(
             "SELECT replay_key FROM scores WHERE id = @scoreId", new { scoreId });
+    }
+
+    private static async Task<DateTime?> ReplayUploadedAtAsync(long scoreId)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<DateTime?>(
+            "SELECT replay_uploaded_at FROM scores WHERE id = @scoreId", new { scoreId });
+    }
+
+    private static async Task<byte[]?> ReplayHashAsync(long scoreId)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<byte[]?>(
+            "SELECT replay_sha256 FROM scores WHERE id = @scoreId", new { scoreId });
+    }
+
+    /// <summary>A replay as the upload stored it before 049: the object and its key, no hash.</summary>
+    private static async Task storeLegacyReplayAsync(long scoreId, byte[] replay)
+    {
+        string key = StoreKeys.Replay(scoreId);
+
+        using (var buffer = new MemoryStream(replay, writable: false))
+            await WebsiteFixture.Services.GetRequiredService<IFileStore>().WriteObjectAsync(key, buffer);
+
+        await using var conn = await dataSource.OpenConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE scores SET replay_key = @key, replay_bytes = @bytes, replay_uploaded_at = now() WHERE id = @scoreId",
+            new { key, bytes = replay.Length, scoreId });
     }
 
     private static async Task<int?> ReplaySizeAsync(long scoreId)

@@ -19,21 +19,33 @@
         if (btn) btn.dataset.busy = '1';
 
         try {
-            const res = await fetch(form.action, {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: { 'X-Requested-With': 'fetch' },
-                body: new FormData(form) // carries the antiforgery token + returnUrl
-            });
+            let res;
+            try {
+                res = await fetch(form.action, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'X-Requested-With': 'fetch' },
+                    body: new FormData(form) // carries the antiforgery token + returnUrl
+                });
+            } catch (err) {
+                console.error(err);
+                form.submit(); // no response at all: fall back to a normal submit so the action still happens
+                return;
+            }
 
             // Not signed in (server redirects to /login); honour it.
             if (res.redirected) { window.location.href = res.url; return; }
-            if (!res.ok) throw new Error('follow failed: ' + res.status);
 
-            applyState(form, await res.json());
-        } catch (err) {
-            console.error(err);
-            form.submit(); // fall back to a normal submit so the action still happens
+            // The server answered, so the action may have committed and the handler toggles: a
+            // second POST would undo it. Reload to show the real state instead.
+            try {
+                if (!res.ok) throw new Error('follow failed: ' + res.status);
+
+                applyState(form, await res.json());
+            } catch (err) {
+                console.error(err);
+                window.location.reload();
+            }
         } finally {
             if (btn) delete btn.dataset.busy;
         }

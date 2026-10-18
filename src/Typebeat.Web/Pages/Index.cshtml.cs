@@ -43,13 +43,13 @@ public sealed class IndexModel(Db db, GameInstallers installers, IConfiguration 
         // One cheap round trip for the whole stats line. Restricted mappers' sets are invisible
         // site-wide (mirroring their 404ing profiles), so they don't count either.
         (Players, ScoresTotal, Maps) = await conn.QuerySingleAsync<(long, long, long)>(
-            """
+            $"""
             SELECT (SELECT count(*) FROM users)                                          AS players,
                    (SELECT count(*) FROM scores)                                        AS scoresTotal,
                    (SELECT count(*)
                     FROM beatmapsets s
                     JOIN users u ON u.id = s.owner_id
-                    WHERE s.status IN ('pending', 'unranked', 'ranked', 'loved') AND NOT u.restricted)        AS maps
+                    WHERE s.status IN {Endpoints.BeatmapsetEndpoints.PublishedSql} AND NOT u.restricted)        AS maps
             """);
 
         NewestSets = (await conn.QueryAsync<BeatmapsetCardModel>(

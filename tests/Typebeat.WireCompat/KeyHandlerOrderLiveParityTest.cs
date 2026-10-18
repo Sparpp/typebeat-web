@@ -1,6 +1,12 @@
 using System.Text.Json;
+using osu.Framework.Input.Bindings;
+using osu.Framework.Input.Events;
+using osu.Framework.Input.States;
+using Key = osuTK.Input.Key;
+using typebeat.Game.Rulesets.TypeBeat;
 using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 using typebeat.Game.Rulesets.TypeBeat.Gameplay;
+using typebeat.Game.Rulesets.TypeBeat.UI;
 
 namespace Typebeat.WireCompat;
 
@@ -23,9 +29,10 @@ namespace Typebeat.WireCompat;
 /// the whole of the player's keydown listener) on a 60 Hz tick whose phase keeps every tick off a
 /// whole millisecond, with every press landing between two ticks. This side feeds the game's real
 /// <see cref="TypingEngine"/> the same ticks, and each press the way the desktop key handler does:
-/// <c>Update(Math.Round(t))</c>, then the op, gated exactly as <c>TypeBeatPlayfield</c> gates it
-/// (including the parked-untouched-head Space drop). Every step is compared with zero tolerance on
-/// cells, judged deltas, combo, score, statistics and the WPM clock.</para>
+/// <c>Update(Math.Round(t))</c>, then the op the game's own <see cref="TypeBeatKeyGate"/> routes it
+/// to (the gate the playfield's key handler runs, including the parked-untouched-head Space drop),
+/// so a desktop-side change to an arm is a change on this side too. Every step is compared with
+/// zero tolerance on cells, judged deltas, combo, score, statistics and the WPM clock.</para>
 /// </summary>
 [TestFixture]
 public class KeyHandlerOrderLiveParityTest
@@ -117,6 +124,10 @@ public class KeyHandlerOrderLiveParityTest
         // EARLY FINISH (bit 4 of the second CONFIG flags word, the 0x01 CONFIG_EXTENDED carrier):
         // the final line seals the moment it is fully typed, so a bare live engine needs it set.
         EarlyFinish = true,
+        // KEY-TIME JUDGEMENT (bit 9 of the second CONFIG flags word): set for every live stack and
+        // read by no engine rule (it says the frames carry key times), carried here so the bare
+        // engine is the live one; the browser has always judged at keydown.
+        KeyTimeJudgement = true,
         ManualNewlines = true,
         NewlineOnTypedLetter = true,
         AllowWrongInput = true,
@@ -135,10 +146,35 @@ public class KeyHandlerOrderLiveParityTest
 
     #endregion
 
+    /// <summary>The game's default bindings, which the browser's router resolves its gestures against too.</summary>
+    private static readonly IEnumerable<IKeyBinding> DefaultBindings = new TypeBeatRuleset().GetDefaultKeyBindings();
+
+    /// <summary>The key a harness press names: the spacebar, Backspace, Enter or a lowercase letter, with no modifiers.</summary>
+    private static Key KeyOf(string key) => key switch
+    {
+        " " => Key.Space,
+        "Backspace" => Key.BackSpace,
+        "Enter" => Key.Enter,
+        _ when key.Length == 1 && key[0] >= 'a' && key[0] <= 'z' => Key.A + (key[0] - 'a'),
+        _ => throw new ArgumentException($"no desktop key for the harness press '{key}'"),
+    };
+
+    /// <summary>A harness press as the desktop key handler reads it, its gesture resolved by the game's own resolver.</summary>
+    private static TypeBeatKeyPress PressOf(string key)
+    {
+        var k = KeyOf(key);
+        var state = new InputState(keyboard: new KeyboardState());
+        state.Keyboard.Keys.SetPressed(k, true);
+
+        var gesture = TypeBeatInputManager.ResolveGesture(new KeyDownEvent(state, k), DefaultBindings);
+        return new TypeBeatKeyPress(k, Repeat: false, Shift: false, Control: false, Alt: false, Super: false, gesture);
+    }
+
     /// <summary>
-    /// The desktop key handler's routing for one press (TypeBeatPlayfield's OnKeyDown, default
-    /// bindings, no modifiers), AFTER its update: which engine op it makes, if any. Returns the op's
-    /// result, or null when the handler makes no EFFECTIVE engine call and lets the key fall through.
+    /// The desktop key handler's routing for one press (default bindings, no modifiers, no IME, no
+    /// retype selection), AFTER its update: the arm the game's <see cref="TypeBeatKeyGate"/> routes it
+    /// to, and the engine op that arm makes. Returns the op's result, or null when the handler makes
+    /// no EFFECTIVE engine call and lets the key fall through or swallows it.
     ///
     /// <para>The line-complete arm is the MANUAL NEWLINE's (backlog 307, the setting the browser
     /// takes at the desktop's shipped default): with no selection live, a Space goes to
@@ -148,36 +184,40 @@ public class KeyHandlerOrderLiveParityTest
     /// tolerates the browser's matching refused calls for exactly that reason. Enter never reaches
     /// that arm: the SkipLine binding above it hands a finished line to
     /// <see cref="TypingEngine.ProcessEnter"/>, which is where its newline lives.</para>
+    ///
+    /// <para>A typed arm's character is the key's own: what a US layout commits for a lowercase
+    /// letter or the spacebar, which the playfield's text path types unchanged.</para>
     /// </summary>
     private static bool? DesktopPress(TypingEngine engine, string key, double time)
     {
-        if (!engine.LineIsActive && !engine.FirstLineTypingOpensAt(time))
-            return null;
+        var press = PressOf(key);
+        var outcome = TypeBeatKeyGate.Decide(TypeBeatKeyPlay.Of(engine, imeComposing: false), TypeBeatKeyLine.Of(engine, time, retypeSelection: false), press);
 
-        if (engine.FletcherEnabled && key == " " && !engine.SongIsOnTheCaretsLine && engine.ActiveLineUntouched)
-            return null;
-
-        switch (key)
+        switch (outcome)
         {
-            case "Backspace":
-                return engine.AllowWrongInput ? engine.ProcessBackspace() : null;
+            case TypeBeatKeyOutcome.FallThrough:
+            case TypeBeatKeyOutcome.Swallow:
+                return null;
 
-            case "Enter":
+            case TypeBeatKeyOutcome.Erase:
+                return engine.ProcessBackspace();
+
+            case TypeBeatKeyOutcome.SkipLine:
                 return engine.ProcessEnter(time);
+
+            case TypeBeatKeyOutcome.NewLine:
+                return (press.Key == Key.Space ? engine.ProcessKey(' ', time) : engine.ProcessEnter(time)) ? true : null;
+
+            case TypeBeatKeyOutcome.TypedNewLine:
+                return engine.ProcessKey(key[0], time) ? true : null;
+
+            case TypeBeatKeyOutcome.Type:
+            case TypeBeatKeyOutcome.TypeSpace:
+                return engine.ProcessKey(key[0], time);
+
+            default:
+                throw new InvalidOperationException($"the harness press '{key}' reached the {outcome} arm, which no browser keystroke here can");
         }
-
-        if (engine.IsLineComplete)
-        {
-            if (engine.ManualNewlines && key == " " && engine.ProcessKey(' ', time))
-                return true;
-
-            if (engine.NewlineOnTypedLetter && key.Length == 1 && engine.ProcessKey(key[0], time))
-                return true;
-
-            return null;
-        }
-
-        return engine.ProcessKey(key[0], time);
     }
 
     /// <summary>
@@ -395,7 +435,6 @@ public class KeyHandlerOrderLiveParityTest
             Eq(engine.MaxCombo, step.GetProperty("maxCombo").GetInt32(), "max combo");
             Eq(breaks, step.GetProperty("comboBreaks").GetInt32(), "combo breaks");
             Eq(engine.Mistypes, step.GetProperty("mistypes").GetInt32(), "mistypes");
-            Eq(engine.Score, step.GetProperty("score").GetInt64(), "score");
             Eq(engine.LiveWpm, step.GetProperty("liveWpm").GetDouble(), "live WPM (the WPM clock)");
             Eq(engine.ActiveLineUntouched, step.GetProperty("activeLineUntouched").GetBoolean(), "ActiveLineUntouched");
             Eq(engine.SongIsOnTheCaretsLine, step.GetProperty("songIsOnTheCaretsLine").GetBoolean(), "SongIsOnTheCaretsLine");

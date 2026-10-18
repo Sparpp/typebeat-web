@@ -1,0 +1,20 @@
+-- typebeat-web migration 049: the SHA-256 of a score's replay, recorded on its first upload.
+--
+-- Until now the owner could re-upload a replay at any time and the newer bytes won (014's
+-- overwrite-on-re-upload contract), long after the score was ranked. Replays feed tools/score-recalc
+-- and are the evidence other players watch, so nothing tied the stored bytes to the submitted score.
+-- PUT /api/v2/scores/{id}/replay now records the first upload's hash here and refuses different
+-- bytes with 409; the same bytes are still accepted (the game's leaderboard backfill re-sends what it
+-- holds, and a re-upload restores a replay retention pruned).
+--
+-- NULL, and NO BACKFILL. A score with no replay simply has none yet. A replay stored before this
+-- migration is hashed LAZILY: the next upload attempt for that score hashes the stored object first
+-- and compares against it (Endpoints/ReplayEndpoints.cs), and a refused attempt records that hash, so
+-- an existing replay is protected from its first replacement attempt on, without a startup sweep
+-- reading every stored replay. The one row it cannot protect is one whose object is already gone
+-- (pruned before this migration): there are no bytes left to hold an upload to, and the next upload
+-- is treated as the first.
+--
+-- Retention keeps the hash when it prunes the bytes (Ops/Housekeeping.cs nulls replay_key only), so a
+-- pruned replay can be restored only by the same bytes.
+ALTER TABLE scores ADD COLUMN replay_sha256 bytea;

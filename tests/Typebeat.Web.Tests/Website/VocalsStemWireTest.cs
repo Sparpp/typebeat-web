@@ -14,7 +14,9 @@ namespace Typebeat.Web.Tests.Website;
 /// It is true when the set's CURRENT version carries a <c>vocals.ogg</c>/<c>vocals.wav</c> file (a
 /// backfilled set), false otherwise, and always present. The client's UPDATE offer reads it against
 /// the stem its local copy holds, which is how a stem-only version cut (every <c>.osu</c> MD5
-/// unchanged) finally offers an update.
+/// unchanged) finally offers an update. The same list also travels as the tracked-file manifest
+/// <c>file_manifest</c> (<see cref="Typebeat.Web.Packages.SetFileManifest"/>), which is what current
+/// clients read: <c>vocals</c> for a stemmed set, empty for an ordinary one.
 /// </summary>
 [TestFixture]
 [NonParallelizable]
@@ -79,6 +81,9 @@ public class VocalsStemWireTest
 
             Assert.That((long)plain["id"]!, Is.EqualTo(plainSetId));
             Assert.That((bool)plain["has_vocals_stem"]!, Is.False, "an ordinary set has none");
+
+            Assert.That((string?)stem["file_manifest"], Is.EqualTo("vocals"), "the manifest names the stem kind");
+            Assert.That((string?)plain["file_manifest"], Is.EqualTo(string.Empty), "and is empty, not absent, for an ordinary set");
         });
     }
 
@@ -117,6 +122,8 @@ public class VocalsStemWireTest
         {
             Assert.That((bool)stem["has_vocals_stem"]!, Is.True);
             Assert.That((bool)plain["has_vocals_stem"]!, Is.False);
+            Assert.That((string?)stem["file_manifest"], Is.EqualTo("vocals"));
+            Assert.That((string?)plain["file_manifest"], Is.EqualTo(string.Empty));
         });
     }
 
@@ -152,7 +159,11 @@ public class VocalsStemWireTest
             new { setId, checksum });
 
         var set = (JObject)(await getObjectAsync($"/api/v2/beatmaps/lookup?checksum={checksum}"))["beatmapset"]!;
-        Assert.That((bool)set["has_vocals_stem"]!, Is.True, "vocals.wav is a stem too");
+        Assert.Multiple(() =>
+        {
+            Assert.That((bool)set["has_vocals_stem"]!, Is.True, "vocals.wav is a stem too");
+            Assert.That((string?)set["file_manifest"], Is.EqualTo("vocals"), "and the same kind as vocals.ogg");
+        });
     }
 
     // ---- helpers ----

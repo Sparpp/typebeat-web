@@ -27,10 +27,28 @@
  * per-cell tint: the desktop metric they mirrored is off by default too, and the browser has no
  * settings UI to gate it behind, so it mirrors the default by dropping it entirely.
  *
- * It is DISPLAY ONLY. typebeat-core.js (the hand-written mirror of the C# TypingEngine and
- * scorer) is not touched by any of it: nothing here calls back into judgement, and every
- * derived value is computed here from state core already exposes. Browser scores land on the
- * same leaderboards as desktop, so the engine must stay byte-compatible.
+ * The presentation is display only: typebeat-core.js (the hand-written mirror of the C#
+ * TypingEngine and scorer) is not touched by any of it, nothing in it calls back into judgement,
+ * and every derived value is computed here from state core already exposes.
+ *
+ * The FILE is not display only, though. It also owns four pieces that decide what the engine is
+ * fed, when a seek is allowed, or whether a run is submitted at all. Each mirrors desktop code,
+ * each affects scores, and each is covered by a parity test:
+ *   - what a keypress types: keyToChars and the foldTyped fold under it (the game's
+ *     TextInputFold.Fold), held against the game by WireCompat's KeyToCharParityTest;
+ *   - the keystroke protocol: routeKeyDown, the whole keydown listener (a press is quantised to a
+ *     whole millisecond and the engine advanced to it before any gate or judgement, as
+ *     TypeBeatPlayfield's key handler does), held by WireCompat's KeyHandlerOrderLiveParityTest,
+ *     whose C# side is a hand copy of the playfield's gates rather than the playfield itself;
+ *   - the instrumental-skip rule: computeGaps, skipAllowed and the skip targets, a third copy of
+ *     InstrumentalGaps (game and server) and also the WPM-clock guard, held against the server's
+ *     InstrumentalGaps.Compute by WebplayDisplayTest;
+ *   - the playback-validity veto: makePlaybackValidity, the desktop's check on an audio clock that
+ *     drifts from wall time (a flagged run is never submitted), pinned by PlaybackValidityHarness
+ *     through PlaybackValidityTest.
+ * A change to any of them is a scoring change: it lands with the matching desktop change and its
+ * parity test, or not at all. Browser scores land on the same leaderboards as desktop, so the
+ * engine must stay byte-compatible.
  *
  * Everything animated is clocked off the SAME audio clock the engine judges against
  * (nowMs()), never wall time, so the visuals can never drift from judgement. The only
@@ -48,11 +66,14 @@
     // ---------------------------------------------------------------------------
     // LyricStage.approach_lead_ms is TypingEngine.CUE_LEAD_MS; core exposes the same value, so
     // the cue bar can never disagree with the window the engine actually activates a line in.
-    const CUE_LEAD_MS = (Core.constants && Core.constants.CUE_LEAD_MS) || 1500;
+    if (!Core.constants || !Core.constants.CUE_LEAD_MS) throw new Error('typebeat-core.js does not export constants.CUE_LEAD_MS');
+    const CUE_LEAD_MS = Core.constants.CUE_LEAD_MS;
     const CUE_BAR_MAX_PX = 140;             // LyricStage.approach_bar_max_width
     const PUSH_FADE_IN_MS = 400;            // LyricStage.push_fade_in_ms: the push warning's entrance
-    const CARET_DAMP_HALF_TIME = 35;        // TypeBeatStyle.CARET_DAMP_HALF_TIME (ms)
-    const SUNG_DAMP_HALF_TIME = 45;         // TypeBeatStyle.SUNG_DAMP_HALF_TIME (ms)
+    // Both carets glide with the desktop's CaretSmoothing setting at its default; held to
+    // TypeBeatRulesetConfigManager.DEFAULT_CARET_SMOOTHING_MS by CaretSmoothingParityTest.
+    const CARET_DAMP_HALF_TIME = 20;        // ms
+    const SUNG_DAMP_HALF_TIME = 20;         // ms
     const CARET_BLINK_PERIOD = 530;         // TypeBeatStyle.CARET_BLINK_PERIOD (ms)
     const LINE_SCROLL_MS = 220;             // TypeBeatStyle.LINE_SCROLL_DURATION (ms), OutQuint
     const CARET_SNAP_FACTOR = 1.5;          // Caret.MoveToTarget: snap past 1.5 line heights
@@ -333,10 +354,9 @@
     //
     // score: the standardised total climbing live (GameplayScoreCounter, bound to
     // ScoreProcessor.TotalScore). ScoreProcessor.updateScore runs the very formula computeScore
-    // does, so the HUD asks computeScore rather than restating it, and the last frame's figure is
-    // the one the card shows and /play submits. engine.score, the combo-weighted internal points,
-    // stays engine data (the fuzz harnesses pin it for parity) and is no longer on screen: it is
-    // on a different scale from the 1,000,000 total.
+    // does, so the HUD asks totalScoreOf, which the fuzz sweep holds equal to computeScore's total,
+    // rather than building a whole result every frame, and the last frame's figure is the one the
+    // card shows and /play submits.
     //
     // accuracy: JUDGED-only accuracy (GameplayAccuracyCounter's Standard mode, bound to
     // ScoreProcessor.Accuracy = currentBaseScore / currentMaximumBaseScore), 1 before anything is
@@ -349,7 +369,7 @@
     function hudReadouts(engine) {
         const processor = engine.processor;
         return {
-            score: Core.computeScore(engine).totalScore,
+            score: Core.totalScoreOf(engine),
             accuracy: processor.maximumBaseScore > 0 ? processor.baseScore / processor.maximumBaseScore : 1
         };
     }
@@ -984,11 +1004,13 @@
 
     // InstrumentalGaps.LastTypeableTarget: the target of the line's last typeable cell, or null.
     //
-    // The C# reconstructs this from the raw token/unit layout because the server does not decode
-    // words[].syllables; here the decoded cells are to hand, so it is a scan. The two agree wherever
-    // the value can matter: it is only ever consulted through max(singEndTime, ...), so it moves the
-    // answer at all only on weird data where a word overruns the line's reported sing end, and a
-    // subdivided word's last char still sits inside the same [unitStart, unitEnd] the flat ramp does.
+    // Here the decoded cells are to hand, so it is a scan of the real targets, as in the game. The
+    // server's C# instead puts a flat ramp over each word's unit, kept on purpose for the reason
+    // given above FirstTypeableTarget in Packages/Lyrics/InstrumentalGaps.cs. The two agree
+    // wherever the value can matter: it is only ever consulted through max(singEndTime, ...), so it
+    // moves the answer at all only on weird data where a word overruns the line's reported sing
+    // end, and then by part of one unit, since a subdivided word's last char still sits inside the
+    // same [unitStart, unitEnd] the flat ramp does.
     function lastTypeableTarget(line) {
         for (let i = line.cells.length - 1; i >= 0; i--) {
             if (line.cells[i].typeable) return line.cells[i].target;
@@ -1580,6 +1602,11 @@
     // TypeBeatPlayfield's TypeLatinText: every press keyToChars made of one keydown ('ss' for a
     // 'ß') is one ordinary processKey at the same instant, in order.
     //
+    // That instant is the keydown's, which is the desktop's too since KeyTimeJudgement (bit 9 of the
+    // second CONFIG flags word): there the OS commit can arrive frames after its key, or never for
+    // the spacebar, and the press is still judged at its key's time. The browser has e.key on the
+    // keydown itself, so it has always judged there and takes the era unconditionally.
+    //
     // A retype selection is consumed FIRST, so the press lands on the anchor cell: mass backspace,
     // then the ordinary judged keypress. Space is not special here, nor is any other typeable key:
     // "collapse, then process normally" is the whole rule. The desktop suspends its line-complete
@@ -1947,6 +1974,10 @@
         const meta = el('div', 'tb-meta', `<span class="tb-meta-title">${escapeHtml(title)}</span>${artist ? ' <span class="tb-meta-artist">' + escapeHtml(artist) + '</span>' : ''}`);
 
         const overlay = el('div', 'tb-overlay');
+        // The cards shown here (start gate, pause, results, load errors) are announced to screen
+        // readers as they replace each other; the overlay is empty while a run plays unpaused.
+        overlay.setAttribute('role', 'status');
+        overlay.setAttribute('aria-live', 'polite');
         root.append(hud, health, stage, progress, progressTime, meta, overlay);
         // The hold-` / hold-Ctrl+` fill (backlog 311), empty and hidden until a hold begins.
         const holdBox = el('div', 'tb-hold');
@@ -2087,7 +2118,7 @@
         function routeLifecycleKey(e) {
             if (isHoldKey(e)) {
                 e.preventDefault();
-                if (!e.repeat && !e.metaKey) beginHold(e.ctrlKey ? 'exit' : 'retry');
+                if (!e.repeat && !e.metaKey) beginHold(e.ctrlKey ? 'quit' : 'retry');
                 return true;
             }
             if (e.key === 'Escape') {
@@ -3236,6 +3267,8 @@
             const nudgeUrl = nudgeUrlFor(opts.discordNudge, results);
             if (nudgeUrl) card.appendChild(el('div', 'tb-result-nudge', nudgeHtml(nudgeUrl)));
             const status = el('div', 'tb-submit-status', '');
+            status.setAttribute('role', 'status');
+            status.setAttribute('aria-live', 'polite');
             card.appendChild(status);
             const actions = el('div', 'tb-result-actions');
             const again = el('button', 'tb-btn tb-btn-primary tb-result-again', 'play again');
@@ -3323,11 +3356,20 @@
             get paused() { return paused; },
             get running() { return running; },
             get playbackValidity() { return { valid: validity.valid, discrepancies: validity.discrepancies }; },
-            setSubmitStatus(html, cls) {
-                if (publicApi._status) {
-                    publicApi._status.innerHTML = html;
-                    publicApi._status.className = 'tb-submit-status' + (cls ? ' ' + cls : '');
+            // status: { text, cls }, plus an optional link { linkText, linkHref } with textAfter
+            // following it. Every string is set as text, so a server message is never markup.
+            setSubmitStatus(status) {
+                const box = publicApi._status;
+                if (!box) return;
+                box.textContent = status.text || '';
+                if (status.linkText) {
+                    const a = document.createElement('a');
+                    a.href = status.linkHref || '';
+                    a.textContent = status.linkText;
+                    box.appendChild(a);
+                    if (status.textAfter) box.appendChild(document.createTextNode(status.textAfter));
                 }
+                box.className = 'tb-submit-status' + (status.cls ? ' ' + status.cls : '');
             }
         };
 

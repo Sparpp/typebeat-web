@@ -272,17 +272,34 @@ public class DiskGuardTest
     }
 
     [Test]
-    public void ReplaySweepMode_DefaultsToDryRun()
+    public void ReplaySweepMode_DefaultsToOn_AMistypedValueToDryRun()
     {
         Assert.Multiple(() =>
         {
-            Assert.That(HousekeepingOptions.ParseMode(null), Is.EqualTo(ReplaySweepMode.DryRun));
-            Assert.That(HousekeepingOptions.ParseMode(""), Is.EqualTo(ReplaySweepMode.DryRun));
+            Assert.That(HousekeepingOptions.ParseMode(null), Is.EqualTo(ReplaySweepMode.On));
+            Assert.That(HousekeepingOptions.ParseMode(""), Is.EqualTo(ReplaySweepMode.On));
+            Assert.That(HousekeepingOptions.ParseMode("  "), Is.EqualTo(ReplaySweepMode.On));
             Assert.That(HousekeepingOptions.ParseMode("yes please"), Is.EqualTo(ReplaySweepMode.DryRun));
+            Assert.That(HousekeepingOptions.ParseMode("of"), Is.EqualTo(ReplaySweepMode.DryRun));
             Assert.That(HousekeepingOptions.ParseMode("dryrun"), Is.EqualTo(ReplaySweepMode.DryRun));
             Assert.That(HousekeepingOptions.ParseMode(" ON "), Is.EqualTo(ReplaySweepMode.On));
             Assert.That(HousekeepingOptions.ParseMode("off"), Is.EqualTo(ReplaySweepMode.Off));
-            Assert.That(HousekeepingOptions.FromConfiguration(new ConfigurationBuilder().Build()).ReplaySweep, Is.EqualTo(ReplaySweepMode.DryRun));
+            Assert.That(HousekeepingOptions.FromConfiguration(new ConfigurationBuilder().Build()).ReplaySweep, Is.EqualTo(ReplaySweepMode.On));
+            Assert.That(new HousekeepingOptions().ReplaySweep, Is.EqualTo(ReplaySweepMode.On));
+        });
+    }
+
+    [Test]
+    public void ReplayKeepTopN_CannotBeConfiguredBelowOne()
+    {
+        IConfiguration Config(string value) => new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { [HousekeepingOptions.KeepTopNKey] = value }).Build();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(HousekeepingOptions.FromConfiguration(Config("0")).KeepTopN, Is.EqualTo(1));
+            Assert.That(HousekeepingOptions.FromConfiguration(Config("2")).KeepTopN, Is.EqualTo(2));
+            Assert.That(HousekeepingOptions.FromConfiguration(new ConfigurationBuilder().Build()).KeepTopN, Is.EqualTo(3));
         });
     }
 

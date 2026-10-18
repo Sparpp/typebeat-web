@@ -15,19 +15,30 @@
 	}
 }
 
+# Security headers (S1-023), imported into every site block. The app sets these itself on every
+# response it writes, on every host (src/Typebeat.Web/SecurityHeaders.cs, which also owns framing:
+# frame-ancestors 'none' everywhere but /play, the itch.io embed). These are DEFAULTS (the `?`
+# prefix: written only when the response has none, so never a duplicate) for the responses Caddy
+# writes itself: the maintenance and restarting pages (maintenance.caddy imports this snippet
+# into its handle_errors too) and the redirects. Framing is left to the app, because a Caddy
+# default would re-add it to /play. The bss.* names are grey-cloud, so no Cloudflare edge adds
+# anything there either.
+# No includeSubDomains or preload on HSTS (backlog 417) until every subdomain (dl, bss) is
+# confirmed HTTPS-only, since either would lock browsers out of a plain-HTTP one.
+(security_headers) {
+	header {
+		?Strict-Transport-Security "max-age=31536000"
+		?X-Content-Type-Options nosniff
+		?Referrer-Policy strict-origin-when-cross-origin
+	}
+}
+
 # The canonical site. Moved here from typebeat.mingda.sh, which stays up below for the clients
 # that have it compiled in.
 typebeat.sh {
 	encode zstd gzip
+	import security_headers
 	import /etc/caddy/deploy/maintenance.caddy
-
-	# Backlog 417. No includeSubDomains or preload on HSTS until every subdomain (dl, bss) is
-	# confirmed HTTPS-only, since either would lock browsers out of a plain-HTTP one.
-	header {
-		Strict-Transport-Security "max-age=31536000"
-		X-Content-Type-Options nosniff
-		Referrer-Policy strict-origin-when-cross-origin
-	}
 
 	# WebSocket upgrade for /ws/notifications is handled transparently by reverse_proxy.
 	reverse_proxy app:8080 {
@@ -41,6 +52,7 @@ typebeat.sh {
 }
 
 www.typebeat.sh {
+	import security_headers
 	redir https://typebeat.sh{uri} permanent
 }
 
@@ -54,6 +66,7 @@ www.typebeat.sh {
 # browsers; switch to permanent once typebeat.sh has settled.
 typebeat.mingda.sh {
 	encode zstd gzip
+	import security_headers
 	import /etc/caddy/deploy/maintenance.caddy
 
 	@browser {
@@ -83,6 +96,7 @@ typebeat.mingda.sh {
 # permissive. The mingda.sh name is what shipped clients fall back to, so it stays.
 bss.typebeat.sh, bss.typebeat.mingda.sh {
 	encode zstd gzip
+	import security_headers
 	import /etc/caddy/deploy/maintenance.caddy
 
 	# Grey-cloud: no Cloudflare edge sits in front of these names, so a CF-Connecting-IP arriving

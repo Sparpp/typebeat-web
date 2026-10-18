@@ -73,7 +73,7 @@ public static class CommentEndpoints
         return WireJson.Ok(bundle(ctx, set, posted, total: posted.Count, hasMore: false));
     }
 
-    private static async Task<IResult> DeleteCommentAsync(long commentId, HttpContext ctx, Db db, ILoggerFactory loggers)
+    private static async Task<IResult> DeleteCommentAsync(long commentId, HttpContext ctx, Db db)
     {
         var user = ctx.AuthedUser();
 
@@ -84,24 +84,20 @@ public static class CommentEndpoints
         if (found is null)
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");
 
+        // One transaction for the removal and its moderation audit row, so a reviewer's removal
+        // never lands without its record.
+        await using var tx = await conn.BeginTransactionAsync(ctx.RequestAborted);
+
         // Permission is the soft delete's WHERE clause: no row means not found, whatever the reason.
-        var deleted = await BeatmapsetComments.SoftDeleteAsync(conn, found.SetId, commentId, user.Id, user.CanReviewMaps, ctx.RequestAborted);
+        var deleted = await BeatmapsetComments.SoftDeleteAsync(conn, found.SetId, commentId, user.Id, user.CanReviewMaps, ctx.RequestAborted, tx);
 
         if (deleted is null)
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");
 
         if (CommentModeration.IsModeration(deleted, user.Id, user.CanReviewMaps))
-        {
-            try
-            {
-                await CommentModeration.RecordAsync(conn, user.Id, found.SetId, commentId);
-            }
-            catch (Exception e)
-            {
-                loggers.CreateLogger(nameof(CommentEndpoints))
-                       .LogWarning(e, "Comment {CommentId} on set {SetId} was removed but the audit row failed.", commentId, found.SetId);
-            }
-        }
+            await CommentModeration.RecordAsync(conn, user.Id, found.SetId, commentId, tx);
+
+        await tx.CommitAsync(ctx.RequestAborted);
 
         var set = await findSetAsync(conn, found.SetId, ctx.RequestAborted);
         var wire = bundle(ctx, set!, [found.Comment], total: 0, hasMore: false);

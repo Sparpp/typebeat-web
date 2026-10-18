@@ -17,7 +17,7 @@
 
     <!-- In-process host for the website tests (Typebeat.Web.Tests.Website namespace); same
          version as tests/Typebeat.WireCompat. Those tests need local Postgres (they create
-         their own typebeat_webtests database); the pure wire-shape tests above stay DB-free. -->
+         their own typebeat_webtests_<run id> database); the pure wire-shape tests above stay DB-free. -->
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="Dapper" Version="2.1.79" />

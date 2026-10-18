@@ -10,8 +10,9 @@ namespace Typebeat.WireCompat;
 
 /// <summary>
 /// Assembly-wide fixture for the wire-compat harness. It:
-///  1. drop+recreates a DEDICATED database "typebeat_wirecompat" (superuser postgres, so the
-///     migration's <c>CREATE EXTENSION citext</c> works); the dev db is never touched;
+///  1. drop+recreates a DEDICATED database "typebeat_wirecompat_{run id}" (see
+///     <see cref="TestDatabase"/>; superuser postgres, so the migration's
+///     <c>CREATE EXTENSION citext</c> works; dropped again on teardown); the dev db is never touched;
 ///  2. points the server at it via the <c>TYPEBEAT_DB</c> env var, read at startup by
 ///     <c>Db.ResolveConnectionString</c>, BEFORE the <see cref="WebApplicationFactory{Program}"/>
 ///     builds the host (which runs the SQL migrations);
@@ -24,14 +25,9 @@ namespace Typebeat.WireCompat;
 [SetUpFixture]
 public class ServerFixture
 {
-    public const string DatabaseName = "typebeat_wirecompat";
+    public static string DatabaseName { get; } = TestDatabase.NameFor("typebeat_wirecompat");
 
-    public const string ConnectionString =
-        "Host=localhost;Port=5432;Database=" + DatabaseName + ";Username=postgres;Password=postgres";
-
-    // Connect to the maintenance db to CREATE/DROP the test db.
-    private const string AdminConnectionString =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    public static string ConnectionString { get; } = TestDatabase.ConnectionStringFor(DatabaseName);
 
     /// <summary>The fixed checksum stored on the primary seeded beatmap (tests d/e/f).</summary>
     public const string SeedChecksum = "11111111111111111111111111111111";
@@ -125,23 +121,18 @@ public class ServerFixture
     }
 
     [OneTimeTearDown]
-    public void OneTimeTearDown()
+    public async Task OneTimeTearDown()
     {
         Client?.Dispose();
         factory?.Dispose();
+
+        await TestDatabase.DropAsync(DatabaseName);
     }
 
     private static async Task recreateDatabaseAsync()
     {
-        await using (var conn = new NpgsqlConnection(AdminConnectionString))
-        {
-            await conn.OpenAsync();
-
-            // FORCE terminates any lingering connections (Postgres 13+); neither statement may run
-            // inside a transaction, so they are executed as standalone commands.
-            await conn.ExecuteAsync($"DROP DATABASE IF EXISTS {DatabaseName} WITH (FORCE)");
-            await conn.ExecuteAsync($"CREATE DATABASE {DatabaseName}");
-        }
+        // FORCE terminates any lingering connections (Postgres 13+); see TestDatabase.
+        await TestDatabase.RecreateAsync(DatabaseName);
 
         // Create citext BEFORE the server's NpgsqlDataSource opens its first connection. That
         // connection (made during MigrateAsync) snapshots the database's type catalog; the

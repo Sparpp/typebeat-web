@@ -74,7 +74,7 @@ public class UntimedSpaceParityTest
     /// <summary>
     /// The headline, asserted as an equality between two runs that differ only in when the space was
     /// pressed (5 seconds late against dead on target), because "the spacebar is not part of the
-    /// timing challenge" IS that equality. Before backlog 148 the late one was a Lagging: no points,
+    /// timing challenge" IS that equality. Before backlog 148 the late one was a Lagging: no tier,
     /// and a combo break in the middle of the line.
     /// </summary>
     [Test]
@@ -86,15 +86,13 @@ public class UntimedSpaceParityTest
 
         Assert.Multiple(() =>
         {
-            foreach (string field in new[] { "caretIndex", "combo", "maxCombo", "breaks", "score", "mistypes", "liveAccuracy", "processorHighestCombo" })
+            foreach (string field in new[] { "caretIndex", "combo", "maxCombo", "breaks", "mistypes", "liveAccuracy", "processorHighestCombo" })
                 Assert.That(Num(late, field), Is.EqualTo(Num(onTime, field)), field);
 
             Assert.That(Arr(late, "judgeTypes"), Is.EqualTo(Arr(onTime, "judgeTypes")));
             Assert.That(Delta(late, 2), Is.EqualTo(Delta(onTime, 2)));
 
-            // And the absolute values, so a change to BOTH sides still trips this. 300 + 306 + 312
-            // with the combo multiplier, exactly as the game's fixture computes it.
-            Assert.That(Num(late, "score"), Is.EqualTo(918));
+            // And the absolute values, so a change to BOTH sides still trips this.
             Assert.That(Arr(late, "judgeTypes"), Is.EqualTo(new[] { "Great", "Great", "Great", null, null }));
             Assert.That(Num(late, "combo"), Is.EqualTo(3), "an untimed space cannot break the run it sits in");
             Assert.That(Num(late, "breaks"), Is.Zero);
@@ -139,14 +137,13 @@ public class UntimedSpaceParityTest
             Assert.That(Delta(r, 3), Is.EqualTo(5100));
 
             // Backlog 199: the run the space kept alive survives the fumble as well, and grows by
-            // the press, because an off-time press is an accepted character worth zero points
+            // the press, because an off-time press is an accepted character that earns no tier
             // rather than a break.
             Assert.That(Num(r, "combo"), Is.EqualTo(4));
             Assert.That(Num(r, "maxCombo"), Is.EqualTo(4));
             Assert.That(Num(r, "breaks"), Is.Zero);
             Assert.That(Num(r, "processorHighestCombo"), Is.EqualTo(4),
                 "the cell resolves as a Meh, so the SUBMITTED combo follows the engine's without being mirrored by hand");
-            Assert.That(Num(r, "score"), Is.EqualTo(918), "Lagging scores nothing, so the total is unmoved");
         });
     }
 
@@ -274,8 +271,7 @@ public class UntimedSpaceParityTest
         Assert.Multiple(() =>
         {
             Assert.That(Str(r, "reopenedState"), Is.EqualTo("untyped"));
-            Assert.That(Num(r, "scoreAfterFirst"), Is.EqualTo(918));
-            Assert.That(Num(r, "score"), Is.EqualTo(Num(r, "scoreAfterFirst")), "a retype earns nothing");
+            Assert.That(Str(r, "tallyAfterRetype"), Is.EqualTo(Str(r, "tallyAfterFirst")), "a retype earns nothing");
             Assert.That(Arr(r, "judgeTypes")[2], Is.EqualTo("Great"));
             Assert.That(Delta(r, 2), Is.EqualTo(0));
             Assert.That(Num(r, "processorHighestCombo"), Is.EqualTo(3), "and is not counted twice");

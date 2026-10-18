@@ -12,8 +12,8 @@ namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
 /// Backlog 366 on the website host: the anonymous-only output cache (a hit for the anonymous,
-/// never for a signed-in visitor or a bearer caller, evicted by the writes that change what it
-/// shows) and the rate limits a browser can reach (the anonymous report brake and the global
+/// never for a signed-in visitor or a bearer caller whose token resolves, evicted by the writes
+/// that change what it shows) and the rate limits a browser can reach (the anonymous report brake and the global
 /// anonymous read cap, whose website 429 still renders the styled error page).
 /// </summary>
 [TestFixture]
@@ -68,6 +68,34 @@ public class SpikeSurvivalTest
             // antiforgery already set for the nav's sign-out form token.
             Assert.That(mine.Headers.CacheControl?.NoStore, Is.True);
             Assert.That(mine.Headers.CacheControl?.Public, Is.False);
+        });
+    }
+
+    [Test]
+    public async Task AnAuthorizationHeaderThatResolvesToNobody_IsServedTheCachedAnonymousPage()
+    {
+        string url = "/beatmapsets?q=" + Guid.NewGuid().ToString("N");
+        string bearer = await issueBearerAsync(PublicSiteSeed.MapperId);
+
+        using (var warm = await WebsiteFixture.Client.GetAsync(url))
+            Assert.That(warm.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        using var bare = await getWithAuthorizationAsync(WebsiteFixture.Client, url, "x");
+        using var madeUp = await getWithAuthorizationAsync(WebsiteFixture.Client, url, "Bearer made-up-" + Guid.NewGuid().ToString("N"));
+        using var real = await getWithAuthorizationAsync(WebsiteFixture.Client, url, "Bearer " + bearer);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(bare.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(bare.Headers.Age, Is.Not.Null, "a header that is no bearer is a guest's cache hit");
+            Assert.That(bare.Headers.CacheControl?.ToString(), Is.EqualTo("public, max-age=0, s-maxage=30"));
+
+            Assert.That(madeUp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(madeUp.Headers.Age, Is.Not.Null, "a bearer that resolves to nobody is a guest's cache hit");
+
+            Assert.That(real.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(real.Headers.Age, Is.Null, "a real bearer never gets the anonymous entry");
+            Assert.That(real.Headers.CacheControl?.NoStore, Is.True);
         });
     }
 
@@ -178,7 +206,42 @@ public class SpikeSurvivalTest
         });
     }
 
+    [Test]
+    public async Task MadeUpBearers_CountAgainstTheAnonymousReadCap_AsOneVisitor()
+    {
+        var (browser, _) = WebsiteFixture.CreateBrowser();
+        using var _b = browser;
+
+        // A fresh made-up token on every read: none of them buys a budget of its own.
+        for (int i = 0; i < RateLimits.AnonymousReadsPerMinute; i++)
+        {
+            using var ok = await getWithAuthorizationAsync(browser, "/menu-content.json", "Bearer made-up-" + i);
+            Assert.That(ok.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"read {i + 1} is inside the cap");
+        }
+
+        using var bare = await getWithAuthorizationAsync(browser, "/menu-content.json", "x");
+        using var madeUp = await getWithAuthorizationAsync(browser, "/menu-content.json", "Bearer made-up-last");
+
+        // A real bearer from the same address is a signed-in caller, outside the cap.
+        string bearer = await issueBearerAsync(PublicSiteSeed.MapperId);
+        using var real = await getWithAuthorizationAsync(browser, "/menu-content.json", "Bearer " + bearer);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(bare.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
+            Assert.That(madeUp.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
+            Assert.That(real.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        });
+    }
+
     // ---- helpers ----
+
+    private static async Task<HttpResponseMessage> getWithAuthorizationAsync(HttpClient client, string url, string authorization)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.TryAddWithoutValidation("Authorization", authorization);
+        return await client.SendAsync(request);
+    }
 
     private static async Task<(HttpClient Browser, string Username)> signedInBrowserAsync(string label)
     {

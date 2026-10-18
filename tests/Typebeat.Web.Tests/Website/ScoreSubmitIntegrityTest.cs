@@ -1,0 +1,529 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.RegularExpressions;
+using Dapper;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using Npgsql;
+using Typebeat.Web.Auth;
+using Typebeat.Web.Data;
+using Typebeat.Web.Packages.Lyrics;
+
+namespace Typebeat.Web.Tests.Website;
+
+/// <summary>
+/// The submit-path integrity checks both routes share (Scoring/ScoreSubmission.cs): an acronym the
+/// server does not know stores UNRANKED instead of boarding at the 2.0x unknown-mod allowance, and a
+/// statistics key that is not a HitResult name is dropped before it is stored, merged into
+/// <c>user_stats.hit_counts</c> or echoed to a board reader. The game route (bearer, the two-phase
+/// solo score) and the browser route (session, /play/submit) are each driven once, on LOVED sets so
+/// a ranked play reaches the ranked board without touching the shared database's pp and ranked
+/// score rankings, which other fixtures pin by rank.
+///
+/// <para>The browser player sends no mods at all (its row stores <c>'[]'</c>), so the acronym check
+/// has only the game route to be pinned on.</para>
+/// </summary>
+[TestFixture]
+[NonParallelizable]
+public class ScoreSubmitIntegrityTest
+{
+    private const string typist_name = "integrity typist";
+    private const string browser_name = "integrity browser typist";
+    private const string browser_password = "integritybrowser-123456";
+
+    private static long typistId;
+    private static string typistBearer = null!;
+
+    [OneTimeSetUp]
+    public async Task OneTimeSetUp()
+    {
+        await PublicSiteSeed.EnsureSeededAsync();
+
+        await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        typistId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO users (username, email, password_hash, country_code)
+            VALUES (@name, 'integrity.typist@example.com', 'x', 'US')
+            RETURNING id
+            """,
+            new { name = typist_name });
+
+        typistBearer = (await new TokenService(new Db(dataSource)).IssueAsync(typistId)).AccessToken;
+
+        await WebsiteFixture.SeedUserAsync(browser_name, "integrity.browser@example.com", browser_password, verified: true);
+    }
+
+    /// <summary>
+    /// A perfect honest run plus one invented acronym used to board at 2,000,000, above every
+    /// stack the client can assemble. It is still stored (and still priced at the allowance, so its
+    /// total is in bounds), but unranked, so it never reaches the board. The control, a ranked
+    /// acronym the server knows, still ranks at its own price.
+    /// </summary>
+    [Test]
+    public async Task GameRoute_UnknownAcronym_IsStoredUnranked_AndAKnownOneStillRanks()
+    {
+        var (beatmapId, checksum) = await seedLovedMapAsync("Integrity Acronym Song");
+
+        var unknown = await submitScoreAsync(beatmapId, checksum, totalScore: 2_000_000, mods: [new { acronym = "ZZ" }]);
+        var known = await submitScoreAsync(beatmapId, checksum, totalScore: 1_020_000, mods: [new { acronym = "FC" }]);
+
+        var board = (JArray)(await getLeaderboardAsync(beatmapId))["scores"]!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((bool)unknown["ranked"]!, Is.False, "an unknown acronym must not rank");
+            Assert.That(unknown["position"]?.Type ?? JTokenType.Null, Is.EqualTo(JTokenType.Null));
+            Assert.That((bool)known["ranked"]!, Is.True, "a known ranked acronym still ranks");
+            Assert.That((long)known["total_score"]!, Is.EqualTo(1_020_000));
+            Assert.That(board, Has.Count.EqualTo(1));
+            Assert.That((long)board[0]["id"]!, Is.EqualTo((long)known["id"]!));
+        });
+
+        Assert.That(await rankedAsync((long)unknown["id"]!), Is.False);
+    }
+
+    /// <summary>
+    /// An unknown statistics key is dropped on the game route before anything reads it: the play
+    /// still ranks on its honest counts, and neither the stored row, the submit response, the board
+    /// nor the player's lifetime hit counts carry the key.
+    /// </summary>
+    [Test]
+    public async Task GameRoute_UnknownStatisticsKey_IsDropped_AndThePlayStillRanks()
+    {
+        var (beatmapId, checksum) = await seedLovedMapAsync("Integrity Statistics Song");
+
+        var submitted = await submitScoreAsync(beatmapId, checksum, totalScore: 1_000_000,
+            statistics: new Dictionary<string, int> { ["great"] = 5, ["zz"] = 2_000_000_000, ["Great"] = 3 },
+            maximumStatistics: new Dictionary<string, int> { ["great"] = 5, ["zz"] = 1 });
+        long scoreId = (long)submitted["id"]!;
+
+        var board = (JArray)(await getLeaderboardAsync(beatmapId))["scores"]!;
+        var (statistics, maximumStatistics) = await storedStatisticsAsync(scoreId);
+        string hitCounts = await hitCountsAsync(typistId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((bool)submitted["ranked"]!, Is.True, "the honest counts still rank");
+            Assert.That(((JObject)submitted["statistics"]!).Properties().Select(p => p.Name), Is.EquivalentTo(new[] { "great" }));
+            Assert.That(statistics.Properties().Select(p => p.Name), Is.EquivalentTo(new[] { "great" }));
+            Assert.That(maximumStatistics.Properties().Select(p => p.Name), Is.EquivalentTo(new[] { "great" }));
+            Assert.That(board, Has.Count.EqualTo(1));
+            Assert.That(((JObject)board[0]["statistics"]!).Properties().Select(p => p.Name), Is.EquivalentTo(new[] { "great" }));
+            Assert.That(JObject.Parse(hitCounts)["zz"], Is.Null, "an unknown key never reaches the lifetime hit counts");
+        });
+    }
+
+    /// <summary>
+    /// A row stored before submissions were filtered can still hold a junk key. The board filters
+    /// on the way out too, so such a row cannot fail the game's <c>Dictionary&lt;HitResult, int&gt;</c>
+    /// read for everyone viewing the map.
+    /// </summary>
+    [Test]
+    public async Task Board_FiltersAnAlreadyStoredUnknownKey()
+    {
+        var (beatmapId, _) = await seedLovedMapAsync("Integrity Stored Row Song");
+
+        await using (var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString))
+        await using (var conn = await dataSource.OpenConnectionAsync())
+        {
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO scores
+                    (user_id, beatmap_id, total_score, accuracy, completion, max_combo, rank, passed, ranked,
+                     mods, statistics, maximum_statistics, pp, pp_version)
+                VALUES
+                    (@typistId, @beatmapId, 900000, 1.0, 1.0, 5, 'X', true, true,
+                     '[]'::jsonb, '{"great":5,"zz":1}'::jsonb, '{"great":5,"zz":1}'::jsonb, 0, 0)
+                """,
+                new { typistId, beatmapId });
+        }
+
+        var board = (JArray)(await getLeaderboardAsync(beatmapId))["scores"]!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(board, Has.Count.EqualTo(1));
+            Assert.That(((JObject)board[0]["statistics"]!).Properties().Select(p => p.Name), Is.EquivalentTo(new[] { "great" }));
+            Assert.That(((JObject)board[0]["maximum_statistics"]!).Properties().Select(p => p.Name), Is.EquivalentTo(new[] { "great" }));
+        });
+    }
+
+    /// <summary>
+    /// The game's token route registers only a version_hash shaped like the MD5 every game build
+    /// sends: anything else is a 422 with its own error, and no builds row is written for it. A
+    /// trailing newline is refused too (a plain <c>$</c> anchor would have let it through), and a
+    /// value far past the btree row limit is refused before it can reach the index.
+    /// </summary>
+    [Test]
+    public async Task GameRoute_AVersionHashThatIsNotAnMd5_IsRefused_AndNotRegistered()
+    {
+        var (beatmapId, checksum) = await seedLovedMapAsync("Integrity Version Hash Song");
+
+        string[] refused =
+        [
+            "",
+            "0123456789abcdef0123456789abcde",
+            "0123456789abcdef0123456789abcdef0",
+            "0123456789abcdef0123456789abcdeg",
+            "0123456789abcdef0123456789abcdef\n",
+            new string('a', 3000),
+        ];
+
+        foreach (string versionHash in refused)
+        {
+            using var response = await requestTokenAsync(beatmapId, checksum, versionHash);
+            string body = await response.Content.ReadAsStringAsync();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.UnprocessableEntity), $"{versionHash.Length} chars: {body}");
+                Assert.That((string?)JObject.Parse(body)["error"], Is.EqualTo("invalid version_hash"));
+            });
+
+            Assert.That(await buildRowsAsync(versionHash), Is.Zero, $"no builds row for the refused {versionHash.Length}-char value");
+        }
+
+        // The control: a well-formed hash is issued a token and registered, upper case included.
+        using (var accepted = await requestTokenAsync(beatmapId, checksum, "7E570000000000000000000000000009"))
+            Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        Assert.That(await buildRowsAsync("7E570000000000000000000000000009"), Is.EqualTo(1));
+    }
+
+    /// <summary>
+    /// The browser route drops an unknown statistics key exactly as the game route does. Its play is
+    /// stored unranked, as every browser play is, but the row is still written, filtered.
+    /// </summary>
+    [Test]
+    public async Task BrowserRoute_UnknownStatisticsKey_IsDropped_AndThePlayIsStored()
+    {
+        var (beatmapId, _) = await seedLovedMapAsync("Integrity Browser Song");
+
+        var (submitted, tokenId) = await browserSubmitAsync(beatmapId,
+            statistics: new Dictionary<string, int> { ["great"] = 10, ["zz"] = 2_000_000_000 },
+            maximumStatistics: new Dictionary<string, int> { ["great"] = 10, ["zz"] = 1 });
+
+        long scoreId;
+        await using (var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString))
+        await using (var conn = await dataSource.OpenConnectionAsync())
+            scoreId = await conn.ExecuteScalarAsync<long>("SELECT score_id FROM score_tokens WHERE id = @tokenId", new { tokenId });
+
+        var (statistics, maximumStatistics) = await storedStatisticsAsync(scoreId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((bool)submitted["ranked"]!, Is.False, "a browser play is stored unranked");
+            Assert.That(statistics.Properties().Select(p => p.Name), Is.EquivalentTo(new[] { "great" }));
+            Assert.That(maximumStatistics.Properties().Select(p => p.Name), Is.EquivalentTo(new[] { "great" }));
+        });
+    }
+
+    /// <summary>
+    /// The claimed maximum is held against the cells the server counted for the map: a run
+    /// cut short and claimed as a smaller map used to recompute as a complete X. Both streams are
+    /// checked, Literate against its own count, and a refusal stores nothing.
+    /// </summary>
+    [Test]
+    public async Task GameRoute_AMaximumThatIsNotTheMaps_IsRefused_OnEitherStream()
+    {
+        var (beatmapId, checksum) = await seedLovedMapAsync("Integrity Cell Count Song");
+        await countCellsAsync(beatmapId, judgedCells: 5, judgedCellsLiterate: 7);
+
+        var truncated = await submitScoreAsync(beatmapId, checksum, totalScore: 1_000_000,
+            statistics: new Dictionary<string, int> { ["great"] = 3 },
+            maximumStatistics: new Dictionary<string, int> { ["great"] = 3 },
+            expected: HttpStatusCode.UnprocessableEntity);
+
+        // The default stream's count under Literate, which types the map's marks as cells too.
+        var wrongStream = await submitScoreAsync(beatmapId, checksum, totalScore: 1_050_000, mods: [new { acronym = "LT" }],
+            expected: HttpStatusCode.UnprocessableEntity);
+
+        var honest = await submitScoreAsync(beatmapId, checksum, totalScore: 1_000_000);
+        var honestLiterate = await submitScoreAsync(beatmapId, checksum, totalScore: 1_050_000, mods: [new { acronym = "LT" }],
+            statistics: new Dictionary<string, int> { ["great"] = 7 },
+            maximumStatistics: new Dictionary<string, int> { ["great"] = 7 });
+
+        long rows = await scoreRowsAsync(beatmapId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((string?)truncated["error"], Is.EqualTo("maximum_statistics does not match the beatmap"));
+            Assert.That((string?)wrongStream["error"], Is.EqualTo("maximum_statistics does not match the beatmap"));
+            Assert.That((bool)honest["ranked"]!, Is.True, "the map's own count is accepted");
+            Assert.That((bool)honestLiterate["ranked"]!, Is.True, "and the Literate count under Literate");
+            Assert.That(rows, Is.EqualTo(2), "the two refusals stored nothing");
+        });
+    }
+
+    /// <summary>
+    /// A count the server cannot vouch for is not checked, so an honest play is never refused for
+    /// it: a map not counted yet (the startup backfill fills it), one counted under another
+    /// JudgedCells.VERSION, and one re-uploaded after the token was issued (its stored count is the
+    /// new version's, which this run never played).
+    /// </summary>
+    [Test]
+    public async Task GameRoute_AnUnknownCount_IsAcceptedUnchecked()
+    {
+        var (uncounted, uncountedChecksum) = await seedLovedMapAsync("Integrity Uncounted Song");
+        var (stale, staleChecksum) = await seedLovedMapAsync("Integrity Stale Count Song");
+        var (reuploaded, reuploadedChecksum) = await seedLovedMapAsync("Integrity Reuploaded Song");
+
+        await countCellsAsync(stale, judgedCells: 50, judgedCellsLiterate: 50, version: 0);
+        await countCellsAsync(reuploaded, judgedCells: 50, judgedCellsLiterate: 50);
+
+        await submitScoreAsync(uncounted, uncountedChecksum, totalScore: 1_000_000);
+        await submitScoreAsync(stale, staleChecksum, totalScore: 1_000_000);
+        await submitScoreAsync(reuploaded, reuploadedChecksum, totalScore: 1_000_000, beforeSubmit: async () =>
+        {
+            await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+            await using var conn = await dataSource.OpenConnectionAsync();
+            await conn.ExecuteAsync("UPDATE beatmaps SET checksum_md5 = @checksum WHERE id = @reuploaded",
+                new { checksum = Guid.NewGuid().ToString("N"), reuploaded });
+        });
+
+        // The control: the same claim on the same map, played on the version that was counted.
+        var (control, controlChecksum) = await seedLovedMapAsync("Integrity Counted Control Song");
+        await countCellsAsync(control, judgedCells: 50, judgedCellsLiterate: 50);
+        await submitScoreAsync(control, controlChecksum, totalScore: 1_000_000, expected: HttpStatusCode.UnprocessableEntity);
+    }
+
+    /// <summary>The browser route holds the claimed maximum against the map exactly as the game route does.</summary>
+    [Test]
+    public async Task BrowserRoute_AMaximumThatIsNotTheMaps_IsRefused()
+    {
+        var (beatmapId, _) = await seedLovedMapAsync("Integrity Browser Cell Count Song");
+        await countCellsAsync(beatmapId, judgedCells: 10, judgedCellsLiterate: 12);
+
+        var (refused, _) = await browserSubmitAsync(beatmapId,
+            statistics: new Dictionary<string, int> { ["great"] = 4 },
+            maximumStatistics: new Dictionary<string, int> { ["great"] = 4 },
+            expected: HttpStatusCode.UnprocessableEntity);
+
+        await browserSubmitAsync(beatmapId,
+            statistics: new Dictionary<string, int> { ["great"] = 10 },
+            maximumStatistics: new Dictionary<string, int> { ["great"] = 10 });
+
+        long rows = await scoreRowsAsync(beatmapId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((string?)refused["error"], Is.EqualTo("maximum_statistics does not match the beatmap"));
+            Assert.That(rows, Is.EqualTo(1), "only the honest play is stored");
+        });
+    }
+
+    // ---- helpers ----
+
+    /// <summary>Stamps a seeded map's judged cell counts, as ingest or the startup backfill would.</summary>
+    private static async Task countCellsAsync(long beatmapId, int judgedCells, int judgedCellsLiterate, int version = JudgedCells.VERSION)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+        await using var conn = await dataSource.OpenConnectionAsync();
+        await conn.ExecuteAsync(
+            """
+            UPDATE beatmaps
+            SET judged_cells = @judgedCells, judged_cells_literate = @judgedCellsLiterate, judged_cells_version = @version
+            WHERE id = @beatmapId
+            """,
+            new { beatmapId, judgedCells, judgedCellsLiterate, version });
+    }
+
+    private static async Task<long> scoreRowsAsync(long beatmapId)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<long>("SELECT count(*) FROM scores WHERE beatmap_id = @beatmapId", new { beatmapId });
+    }
+
+    /// <summary>
+    /// One browser play end to end: sign in, read the /play page's antiforgery token, mint a play
+    /// token for the map and submit the given counts. Answers the submit body and the token id.
+    /// </summary>
+    private static async Task<(JObject Body, long TokenId)> browserSubmitAsync(long beatmapId,
+        Dictionary<string, int> statistics, Dictionary<string, int> maximumStatistics, HttpStatusCode expected = HttpStatusCode.OK)
+    {
+        long setId;
+
+        await using (var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString))
+        await using (var conn = await dataSource.OpenConnectionAsync())
+            setId = await conn.ExecuteScalarAsync<long>("SELECT set_id FROM beatmaps WHERE id = @beatmapId", new { beatmapId });
+
+        var (client, _) = WebsiteFixture.CreateBrowser();
+        using var _c = client;
+        using (await WebsiteFixture.LoginAndVerifyAsync(client, browser_name, browser_password)) { }
+
+        string page = await (await client.GetAsync("/play")).Content.ReadAsStringAsync();
+        var csrfMatch = Regex.Match(page, "csrf:\\s*\"([^\"]+)\"");
+        Assert.That(csrfMatch.Success, Is.True, "the /play page must publish an antiforgery token");
+        string csrf = csrfMatch.Groups[1].Value;
+
+        long tokenId;
+        using (var request = new HttpRequestMessage(HttpMethod.Post, "/play/token"))
+        {
+            request.Headers.Add("X-CSRF-TOKEN", csrf);
+            request.Content = new StringContent(
+                JsonConvert.SerializeObject(new { setId, beatmapId }), Encoding.UTF8, "application/json");
+
+            using var response = await client.SendAsync(request);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "play token");
+            tokenId = (long)JObject.Parse(await response.Content.ReadAsStringAsync())["id"]!;
+        }
+
+        using (var request = new HttpRequestMessage(HttpMethod.Post, "/play/submit"))
+        {
+            request.Headers.Add("X-CSRF-TOKEN", csrf);
+            request.Content = new StringContent(JsonConvert.SerializeObject(new
+            {
+                token = tokenId,
+                passed = true,
+                totalScore = 100_000,
+                maxCombo = 10,
+                statistics,
+                maximumStatistics,
+            }), Encoding.UTF8, "application/json");
+
+            using var response = await client.SendAsync(request);
+            string body = await response.Content.ReadAsStringAsync();
+            Assert.That(response.StatusCode, Is.EqualTo(expected), $"play submit: {body}");
+            return (JObject.Parse(body), tokenId);
+        }
+    }
+
+    private static async Task<(long BeatmapId, string Checksum)> seedLovedMapAsync(string title)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        long setId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist, status, submitted_at, updated_at)
+            VALUES (@ownerId, @title, 'The Integrity', 'loved', now() - interval '6 days', now() - interval '6 days')
+            RETURNING id
+            """,
+            new { ownerId = PublicSiteSeed.MapperId, title });
+
+        string checksum = Guid.NewGuid().ToString("N");
+
+        long beatmapId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating, filename)
+            VALUES (@setId, 'type!beat', @checksum, 60, 0, 2.0, 'map.osu')
+            RETURNING id
+            """,
+            new { setId, checksum });
+
+        return (beatmapId, checksum);
+    }
+
+    /// <summary>
+    /// The game's two-phase submission (as LovedStatusTest). 1,000,000 is the exact no-mod ceiling
+    /// for 5/5 greats, which is what the default counts below describe.
+    /// </summary>
+    private static async Task<JObject> submitScoreAsync(long beatmapId, string checksum, long totalScore,
+        object[]? mods = null, Dictionary<string, int>? statistics = null, Dictionary<string, int>? maximumStatistics = null,
+        HttpStatusCode expected = HttpStatusCode.OK, Func<Task>? beforeSubmit = null)
+    {
+        long tokenId;
+
+        using (var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v2/beatmaps/{beatmapId}/solo/scores"))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
+            request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["version_hash"] = "7e570000000000000000000000000008",
+                ["beatmap_hash"] = checksum,
+                ["ruleset_id"] = "0",
+            });
+
+            using var response = await WebsiteFixture.Client.SendAsync(request);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "score token");
+
+            tokenId = (long)JObject.Parse(await response.Content.ReadAsStringAsync())["id"]!;
+        }
+
+        if (beforeSubmit != null)
+            await beforeSubmit();
+
+        using (var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v2/beatmaps/{beatmapId}/solo/scores/{tokenId}"))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
+            request.Content = new StringContent(JsonConvert.SerializeObject(new
+            {
+                passed = true,
+                total_score = totalScore,
+                total_score_without_mods = 1_000_000,
+                accuracy = 1.0,
+                max_combo = 5,
+                ruleset_id = 0,
+                rank = "X",
+                statistics = statistics ?? new Dictionary<string, int> { ["great"] = 5 },
+                maximum_statistics = maximumStatistics ?? new Dictionary<string, int> { ["great"] = 5 },
+                mods = mods ?? [],
+            }), Encoding.UTF8, "application/json");
+
+            using var response = await WebsiteFixture.Client.SendAsync(request);
+            string body = await response.Content.ReadAsStringAsync();
+            Assert.That(response.StatusCode, Is.EqualTo(expected), $"score submit: {body}");
+
+            return JObject.Parse(body);
+        }
+    }
+
+    private static async Task<HttpResponseMessage> requestTokenAsync(long beatmapId, string checksum, string versionHash)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v2/beatmaps/{beatmapId}/solo/scores");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["version_hash"] = versionHash,
+            ["beatmap_hash"] = checksum,
+            ["ruleset_id"] = "0",
+        });
+
+        return await WebsiteFixture.Client.SendAsync(request);
+    }
+
+    private static async Task<long> buildRowsAsync(string versionHash)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<long>("SELECT count(*) FROM builds WHERE version_hash = @versionHash", new { versionHash });
+    }
+
+    private static async Task<JObject> getLeaderboardAsync(long beatmapId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v2/beatmaps/{beatmapId}/scores");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", typistBearer);
+
+        using var response = await WebsiteFixture.Client.SendAsync(request);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "leaderboard");
+
+        return JObject.Parse(await response.Content.ReadAsStringAsync());
+    }
+
+    private static async Task<bool> rankedAsync(long scoreId)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<bool>("SELECT ranked FROM scores WHERE id = @scoreId", new { scoreId });
+    }
+
+    private static async Task<(JObject Statistics, JObject MaximumStatistics)> storedStatisticsAsync(long scoreId)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+        await using var conn = await dataSource.OpenConnectionAsync();
+        var (statistics, maximum) = await conn.QuerySingleAsync<(string, string)>(
+            "SELECT statistics::text, maximum_statistics::text FROM scores WHERE id = @scoreId", new { scoreId });
+        return (JObject.Parse(statistics), JObject.Parse(maximum));
+    }
+
+    private static async Task<string> hitCountsAsync(long userId)
+    {
+        await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<string>("SELECT hit_counts::text FROM user_stats WHERE user_id = @userId", new { userId }) ?? "{}";
+    }
+}

@@ -23,22 +23,18 @@ namespace Typebeat.Web.Tests;
 /// </para>
 ///
 /// <para>
-/// Same harness shape as <see cref="Migration016SkipGateRefundTest"/>, minus its
-/// migration-by-migration replay: this pass is not tied to a migration, so the schema is simply
-/// brought fully up to date and the rows are seeded into it.
+/// Same harness shape as the deleted 016 skip-gate refund test, minus its migration-by-migration
+/// replay: this pass is not tied to a migration, so the schema is simply brought fully up to date
+/// and the rows are seeded into it.
 /// </para>
 /// </summary>
 [TestFixture]
 [NonParallelizable]
 public class SetRankRefundTest
 {
-    private const string database_name = "typebeat_setrankrefundtests";
+    private static readonly string database_name = TestDatabase.NameFor("typebeat_setrankrefundtests");
 
-    private const string connection_string =
-        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private static readonly string connection_string = TestDatabase.ConnectionStringFor(database_name);
 
     private const double drain_s = 100;
 
@@ -71,6 +67,7 @@ public class SetRankRefundTest
     private long failedId;        // a failed play
     private long overCeilingId;   // a total its own statistics cannot justify
     private long blockedBuildId;  // a blocked build
+    private long browserId;       // a browser play: stored unranked by design, not by any gate
     private long tokenlessId;     // no score_tokens row: nothing names the version it was played on
 
     // Already ranked and already priced: never a candidate, and its pp stamp must not be reset.
@@ -79,12 +76,7 @@ public class SetRankRefundTest
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
-        await using (var admin = new NpgsqlConnection(admin_connection_string))
-        {
-            await admin.OpenAsync();
-            await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
-            await admin.ExecuteAsync($"CREATE DATABASE {database_name}");
-        }
+        await TestDatabase.RecreateAsync(database_name);
 
         await Db.EnsureExtensionsAsync(connection_string);
 
@@ -115,6 +107,8 @@ public class SetRankRefundTest
                 "INSERT INTO builds (version_hash, blocked) VALUES ('clean-build', false) RETURNING id");
             long blockedBuild = await conn.ExecuteScalarAsync<long>(
                 "INSERT INTO builds (version_hash, blocked) VALUES ('blocked-build', true) RETURNING id");
+            long browserBuild = await conn.ExecuteScalarAsync<long>(
+                "INSERT INTO builds (version_hash, blocked) VALUES ('web-0123456789abcdef', false) RETURNING id");
 
             // ---- the victims ----
             // ppVersion 19 on purpose: these rows really are stamped BELOW the current version in
@@ -136,6 +130,7 @@ public class SetRankRefundTest
             failedId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId, passed: false, rank: "F");
             overCeilingId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId, totalScore: 1_500_000);
             blockedBuildId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: blockedBuild);
+            browserId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: browserBuild);
             tokenlessId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId, withToken: false);
 
             alreadyRankedId = await insertScoreAsync(conn, rankedMapId, elapsed: 95, buildId: cleanBuildId,
@@ -153,6 +148,8 @@ public class SetRankRefundTest
 
         if (fileRoot != null && Directory.Exists(fileRoot))
             Directory.Delete(fileRoot, recursive: true);
+
+        await TestDatabase.DropAsync(database_name);
     }
 
     [Test]
@@ -209,6 +206,7 @@ public class SetRankRefundTest
             (failedId, "a failed play"),
             (overCeilingId, "a total its own statistics cannot justify"),
             (blockedBuildId, "a blocked build"),
+            (browserId, "a browser play, which carries no log the server could audit, honest as its account looks"),
             (tokenlessId, "no token, so no evidence of which version it was played on (the version rule, backlog 352)"),
         };
 
@@ -378,13 +376,9 @@ public class SetRankRefundTest
 [NonParallelizable]
 public class SetRankRefundVersionTest
 {
-    private const string database_name = "typebeat_setrankversiontests";
+    private static readonly string database_name = TestDatabase.NameFor("typebeat_setrankversiontests");
 
-    private const string connection_string =
-        "Host=localhost;Port=5432;Database=" + database_name + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private static readonly string connection_string = TestDatabase.ConnectionStringFor(database_name);
 
     /// <summary>The rated fixture lyric, retimed: same words, every time moved. A gameplay change.</summary>
     private const string retimed_lyrics =
@@ -406,12 +400,7 @@ public class SetRankRefundVersionTest
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
-        await using (var admin = new NpgsqlConnection(admin_connection_string))
-        {
-            await admin.OpenAsync();
-            await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)");
-            await admin.ExecuteAsync($"CREATE DATABASE {database_name}");
-        }
+        await TestDatabase.RecreateAsync(database_name);
 
         await Db.EnsureExtensionsAsync(connection_string);
 
@@ -441,6 +430,8 @@ public class SetRankRefundVersionTest
 
         if (fileRoot != null && Directory.Exists(fileRoot))
             Directory.Delete(fileRoot, recursive: true);
+
+        await TestDatabase.DropAsync(database_name);
     }
 
     [Test]

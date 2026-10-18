@@ -308,6 +308,51 @@ Caveats:
   If anything above disagrees with it, that file wins. `PATCH /bss/beatmapsets/{id}` exists for
   delta uploads and is deliberately not used here: for this op the full package is what you have.
 
+## Volumes
+
+Five data volumes (the live names carry the `typebeat-web_` prefix; Caddy keeps two more of its own,
+`caddy_data` and `caddy_config`), and since S1-018 each one is mounted only where it is needed:
+
+| Volume | Mounted by | Holds |
+| --- | --- | --- |
+| `pgdata` | postgres | the database |
+| `appdata` | app (`/data`) | packages, covers, previews, replays, upload sessions, downloads |
+| `dpkeys` | app (`/dpkeys`, `TYPEBEAT_DPKEYS_DIR`) | the Data Protection keyring: the email challenge and Google sign-in cookies, antiforgery tokens |
+| `align_jobs` | app (over `/data/align-jobs`) and aligner (`/data/align-jobs`) | the server aligner's job exchange |
+| `align_cache` | aligner (`/data/align-cache`, `TORCH_HOME`) | the aligner's model weights |
+
+The aligner runs third-party ML code on user audio, so it sees only its two volumes: never the
+uploads, the replays or the keyring. Until S1-018 it mounted the whole of `appdata` read-write, and
+the keyring lived there as `/data/dpkeys`.
+
+**The deploy that carried S1-018** created the three new volumes, and CI's one-time `Move the
+keyring off appdata` step copied `/data/dpkeys/key-*.xml` into `dpkeys` before the new app started,
+so no cookie or open form was invalidated. A deploy BY HAND (`./deploy/up.sh up -d --build`) does
+not run that step; on a box that has never had it, run it first, after the build and before the
+swap:
+
+```
+./deploy/up.sh build app
+./deploy/up.sh run --rm --no-deps -T --entrypoint sh app -c \
+  'ls /dpkeys/key-*.xml >/dev/null 2>&1 || cp -p /data/dpkeys/key-*.xml /dpkeys/'
+./deploy/up.sh up -d app
+```
+
+Skipping it costs a fresh keyring: everyone midway through an email code or a Google sign-in starts
+again, and a page left open needs a reload before its form posts. Sessions are not affected (they
+are database tokens, not keyring-protected).
+
+The aligner's jobs and model cache start empty on their new volumes: a job in flight across that
+deploy was lost (its owner retries), and the worker fetches its weights again on start-up (about
+140 MB). The old copies stay on `appdata`, hidden from the app by the new mount. Once the deploy has
+settled (no rollback to `:previous` wanted any more, since that image still reads `/data/dpkeys`),
+delete them from a throwaway container that mounts `appdata` alone:
+
+```
+docker run --rm --entrypoint sh -v typebeat-web_appdata:/data typebeat-web-app \
+  -c 'rm -rf /data/dpkeys /data/align-jobs /data/align-cache'
+```
+
 ## Backups
 
 `deploy/backup.sh`: LOCAL only (offsite/R2 copy is a follow-up):
@@ -364,8 +409,8 @@ and neither covers the other.
   and never deleted here"), which is what makes old package versions reconstructible. It grows with
   every distinct uploaded file, forever, and a takedown deliberately leaves the blobs behind.
 - `/data/replays/{scoreId}.osr`, one per score, capped at 5 MB each (`ReplayEndpoints.MaxReplayBytes`).
-  Housekeeping's replay retention (below) can prune them, but it ships in DRY RUN: until you set
-  `TYPEBEAT_REPLAY_SWEEP=on` they are still never pruned.
+  Housekeeping's replay retention (below) prunes the ones outside its keep rules (on by default
+  since S1-038); the keepers, a player's best plays among them, grow with use like everything else.
 - Postgres (`pgdata`). No cap, and it is the component a full disk kills first.
 - `/root` release staging from the client ship path, and the systemd journal: both manual, below.
 
@@ -462,7 +507,7 @@ reader into thinking it is deployed.
 Backlog 287 retired the server-side aligner; backlog 413 brought it back as an OPT-IN on the game's
 import screen, for players who cannot run the local aligner. It is the `aligner` service in
 `compose.prod.yml`: a Python worker (`deploy/aligner/worker.py`) that runs one job at a time out of
-`/data/align-jobs` on the shared appdata volume, with the app's half in
+`/data/align-jobs` on its own `align_jobs` volume (see Volumes), with the app's half in
 `src/Typebeat.Web/Align/AlignJobStore.cs` and the routes under `/api/v2/typebeat/server-align`.
 The old `POST /api/v2/typebeat/align` stays a 410 for clients built before 287.
 
@@ -488,11 +533,12 @@ processing this job") and the player retries.
   three torch threads (`ALIGN_THREADS`).
 - Disk: the image is roughly 2 GB (CPU torch is the bulk), built once on the box; a pin bump adds a
   small top layer and leaves the old image dangling until the deploy's image prune. The model caches
-  live in `/data/align-cache` (`TORCH_HOME`): the demucs checkpoint (about 80 MB) on the first job
+  live in `/data/align-cache` (`TORCH_HOME`, the `align_cache` volume): the demucs checkpoint (about 80 MB) on the first job
   and the fused path's QMUL weights (57 MB), which the worker fetches at start-up. Jobs are small:
   the worker deletes a job's audio, stems and outputs the moment it ends (a 64 MB upload at most,
   only while queued or running) and the rest of the directory after 48 hours.
-- The weekly appdata backup (`backup.sh appdata`) excludes both directories.
+- The weekly appdata backup (`backup.sh appdata`) excludes both directories (`align-jobs` is
+  still visible to it, mounted into the app's `/data`).
 
 **Limits** (all in `AlignJobStore.cs`; the job timeout, the pending age and the retention are also
 in `worker.py` and must stay equal): one active job per player (409), 10 jobs per player per UTC
@@ -505,8 +551,8 @@ every 15 s) is older than 2 minutes, and with 507 while the disk guard refuses u
 (several minutes, mostly the torch download) and starts the worker. Watch it come up with
 `./deploy/up.sh logs -f aligner`: the first lines name the aligner version, then the QMUL weights
 being fetched. If the box still has the pre-287 cleanup left undone (an old `typebeat-web-aligner`
-image or `/data/align-cache` from before), the new build simply replaces the image, and the old
-cache is reused or overwritten; nothing needs removing first.
+image), the new build simply replaces it. A `/data/align-cache` left on `appdata` is no longer read
+since the cache has its own volume; Volumes says how to remove it.
 
 **Turning it off.** `./deploy/up.sh stop aligner`: within two minutes the heartbeat goes stale and
 every submission gets the 503 ("not running right now ... use the local aligner"), and any job
@@ -630,24 +676,31 @@ Content-addressed blobs under `/data/files/` are still never deleted. The pass n
 after the FIRST pass on the box, run `VACUUM (ANALYZE) oauth_tokens, score_tokens, email_tokens;`
 by hand, and keep `VACUUM FULL` for a maintenance window.
 
-**Replay retention**, `TYPEBEAT_REPLAY_SWEEP=off|dryrun|on`, **dryrun by default**. A stored replay is
+**Replay retention**, `TYPEBEAT_REPLAY_SWEEP=off|dryrun|on`, **on by default** (S1-038; it shipped as
+dryrun, and an unrecognised value still means dryrun, never on). A stored replay is
 KEPT when any of these holds: it is among the player's top `TYPEBEAT_REPLAY_KEEP_TOP_N` (3) plays on
 that beatmap on its board (ranked and unranked separately, passed plays first, then the board
 order); it is pinned; it was uploaded within `TYPEBEAT_REPLAY_KEEP_DAYS` (30); someone else watched
 it within `TYPEBEAT_REPLAY_KEEP_VIEWED_DAYS` (90). Everything else is pruned: the object is deleted,
 `replay_key` nulled and `scores.replay_pruned_at` stamped (migration 042); the score row itself is
 untouched and a later re-upload clears the stamp. `TYPEBEAT_REPLAY_SOFT_CAP_GB` (10) only warns; a
-keeper is never deleted to meet it. In dryrun each pass logs:
+keeper is never deleted to meet it. Keep `TYPEBEAT_REPLAY_KEEP_TOP_N` at 1 or more: 0 would drop the
+top-N rule entirely, a player's best ranked play included. Each pass logs:
 
 ```
 docker logs typebeat-web-app-1 | grep 'replay sweep'
+Housekeeping: replay sweep pruned N replays, B bytes (x GiB); y GiB of replays stored.
 Housekeeping: replay sweep dryrun, would prune N replays, B bytes (x GiB); y GiB of replays stored.
 ```
 
-**Before flipping it to `on`:** announce it (a pruned replay can no longer be watched or re-derived),
-make sure a fresh weekly appdata tar exists, and note that `tools/score-recalc` now reports pruned
-rows as their own case, `pruned`, which a bare `--unreplayable keep|unrank` does NOT decide: a
-supersede run that hits one needs `--unreplayable pruned=keep` (recommended) or `pruned=unrank`.
+The first is `on`, the second `dryrun` (set `TYPEBEAT_REPLAY_SWEEP=dryrun` in `deploy/.env` to go
+back to counting only, `off` to skip the sweep). **Pruning is permanent:** a pruned replay can no
+longer be watched or re-derived, and the first pass after the switch (two minutes after boot) prunes
+the whole backlog at once, so the deploy that turns it on is announced and preceded by a fresh
+appdata tar (or ships with `TYPEBEAT_REPLAY_SWEEP=dryrun` in `deploy/.env` until both are done).
+Note that `tools/score-recalc` reports pruned rows as their own case, `pruned`, which a bare
+`--unreplayable keep|unrank` does NOT decide: a supersede run that hits one needs
+`--unreplayable pruned=keep` (recommended) or `pruned=unrank`.
 
 ### Diagnosing a fill (owner, on the box)
 

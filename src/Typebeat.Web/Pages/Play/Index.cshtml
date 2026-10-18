@@ -3,7 +3,7 @@
 @{
     // Backlog 418: indexed, so it carries its own title and description.
     ViewData["FullTitle"] = "Play online free, no download: typing to music · type!beat";
-    ViewData["MetaDescription"] = "Play type!beat free in your browser: pick a song and type the lyrics in time with the music. No download, no account needed. Sign in to save your scores and earn pp.";
+    ViewData["MetaDescription"] = "Play type!beat free in your browser: pick a song and type the lyrics in time with the music. No download, no account needed. Sign in to save your scores.";
     ViewData["CardPlayMode"] = true; // the shared card renders a play button instead of download
     var user = Model.CurrentUser;
     var auto = Model.AutoPlay;
@@ -16,7 +16,7 @@
        paragraph goes with it: a signed-in visitor would otherwise get an empty one. *@
     @if (user is null)
     {
-        <p class="play-sub"><a href="/login">sign in</a> to save your scores to the leaderboard and earn pp on ranked maps.</p>
+        <p class="play-sub"><a href="/login">sign in</a> to save your scores.</p>
     }
 </section>
 
@@ -53,9 +53,8 @@
 <script>
     window.TYPEBEAT_PLAY = {
         signedIn: @(user is not null ? "true" : "false"),
-        username: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(user?.Username ?? "")),
         csrf: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CsrfToken)),
-        // The content hash of the three scripts below (backlog 312), computed once at startup.
+        // The content hash of the scripts below (backlog 312), computed once at startup.
         // play.js sends it with every token, and the server registers it as this run's build
         // ('web-' + revision), so a tab left open across a deploy keeps its own build identity.
         revision: @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Typebeat.Web.Endpoints.PlayEndpoints.Revision)),
@@ -74,6 +73,9 @@
               }))
     };
 </script>
-<script src="~/js/typebeat-core.js" asp-append-version="true"></script>
-<script src="~/js/typebeat-player.js" asp-append-version="true"></script>
-<script src="~/js/play.js" asp-append-version="true"></script>
+@* The engine's parts, the engine, the player and the page glue, in order, from the one list the
+   revision above is hashed over, so no script reaches the page outside the hash. *@
+@foreach (string script in Typebeat.Web.Endpoints.PlayEndpoints.RevisionScripts)
+{
+    <script src="@script" asp-append-version="true"></script>
+}

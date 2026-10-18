@@ -119,7 +119,6 @@ function playThrough(osuText, middle) {
     const results = TB.computeScore(engine);
     return {
         totalCells: beatmap.totalCells,
-        engineScore: engine.score,
         totalScore: results.totalScore,
         maxCombo: results.maxCombo,
         accuracy: results.accuracy,
@@ -174,7 +173,6 @@ function spaceRejected(osuText, refill, strict) {
     after.refillAccepted = engine.processKey(refill, 2000);
     after.refillState = engine.lines[0].cells[1].state;
     after.refillWrongKeys = engine.consecutiveWrongKeys;
-    after.score = engine.score;
     after.maxCombo = engine.maxCombo;
     after.finalAccuracy = engine.liveAccuracy;
     return after;
@@ -270,7 +268,7 @@ function backspace() {
     engine.processKey('a', 1000);
     engine.update(2000);
     engine.processKey('q', 2000);
-    const scoreAfterFirst = engine.score;
+    const tallyAfterFirst = JSON.stringify(engine.counts);
 
     engine.processBackspace();
     const cell = engine.lines[0].cells[1];
@@ -282,13 +280,13 @@ function backspace() {
     const accepted = engine.processKey('7', 2400);
 
     return {
-        scoreAfterFirst: scoreAfterFirst,
+        tallyAfterFirst: tallyAfterFirst,
         reopenedState: reopenedState,
         reopenedChar: reopenedChar,
         reopenedCaret: reopenedCaret,
         accepted: accepted,
         retypedChar: cell.typedChar,
-        scoreAfterRetype: engine.score,
+        tallyAfterRetype: JSON.stringify(engine.counts),
         judgedDelta: cell.judgedDelta
     };
 }
@@ -326,6 +324,26 @@ function shimmer() {
     };
 }
 
+// A (tick, position) grid of glyphs and a (time, tick) table, for the C# side to hold against
+// FreestyleGlyphs.Glyph and FreestyleGlyphs.TickFor. One string per tick, one char per position.
+function shimmerGrid() {
+    const ticks = [-61, -1, 0, 1, 2, 3, 17, 59, 60, 1000, 123456, 2147483647];
+    const positions = 16;
+    const times = [-61, -60, -1, 0, 59.9, 60, 61, 119.99, 120, 1234.5, 3600000];
+    return {
+        ticks: ticks,
+        positions: positions,
+        glyphs: ticks.map(function (tick) {
+            let row = '';
+            for (let position = 0; position < positions; position++) row += TB.freestyleGlyph(tick, position);
+            return row;
+        }),
+        intervalMs: TB.constants.SHIMMER_INTERVAL_MS,
+        times: times,
+        timeTicks: times.map(function (t) { return TB.freestyleTick(t); })
+    };
+}
+
 const out = {
     // Typeability: the marker stays outside the typeable surface and outside default normalize.
     isTypeableMarker: TB.isTypeable(MARKER),
@@ -360,6 +378,7 @@ const out = {
     flaggedShape: cellShape(build(FLAGGED_AMPERSAND_OSU)),
 
     shimmer: shimmer(),
+    shimmerGrid: shimmerGrid(),
 
     // The freestyle judgement ladder (PR 16): a slot is graded on a WIDER ladder than an ordinary
     // cell. Emitted so the C# side can pin the scale against SyncWindows.FREESTYLE_WINDOW_SCALE.

@@ -155,6 +155,10 @@ public class DisplacedClaimFoldLiveParityTest
         // EARLY FINISH (bit 4 of the second CONFIG flags word, the 0x01 CONFIG_EXTENDED carrier):
         // the final line seals the moment it is fully typed, so a bare live engine needs it set.
         EarlyFinish = true,
+        // KEY-TIME JUDGEMENT (bit 9 of the second CONFIG flags word): set for every live stack and
+        // read by no engine rule (it says the frames carry key times), carried here so the bare
+        // engine is the live one; the browser has always judged at keydown.
+        KeyTimeJudgement = true,
         ManualNewlines = true,
         NewlineOnTypedLetter = true,
     };
@@ -172,7 +176,7 @@ public class DisplacedClaimFoldLiveParityTest
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: foldsDisplacedClaim, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true, keyTimeJudgement: true));
 
         foreach (var step in Run(scenario).GetProperty("script").EnumerateArray())
         {

@@ -16,17 +16,9 @@ namespace Typebeat.Web.Tests;
 /// <see cref="Typeability.IsTypeable"/> rather than <see cref="Typeability.IsCell"/>, so freestyle
 /// slots are out of it; and the target is no longer a selection over lines at all. THE STARS:
 /// <see cref="LyricDifficulty"/>'s shipped reading is the CHUNKED ENDURANCE axis
-/// (<see cref="LyricDifficulty.Live"/>), so EVERY star figure in this file is a value of that axis
-/// unless it names <see cref="LyricDifficulty.EnduranceAxis.Envelope"/>, the model that used to
-/// ship and that the target figure still reads.</para>
-///
-/// <para>WHAT THIS FILE CAN NO LONGER LOCK. The envelope numbers the game's LyricDifficultyTest
-/// pins are taken with typability OFF (its own NoScores source, which is internal there and
-/// unreachable here), and the public API this mirror has to call applies the shipped typability
-/// index. So an envelope-arm figure below is this port's own measurement WITH typability, not the
-/// prototype's; the cross-port lock on the prototype value lives in the game's fixture and in
-/// WireCompat, and <see cref="DifficultyRating_TheSharedAnchorMapUnderBothArms"/> says so out
-/// loud.</para>
+/// (<see cref="LyricDifficulty.Live"/>), and since v27 the only one, so EVERY star figure in this
+/// file is a value of that axis. The envelope model that used to ship beside it, and that the
+/// target figure read until v27, is deleted, and so are the assertions that named it.</para>
 /// </summary>
 public class LyricPaceTest
 {
@@ -407,13 +399,13 @@ public class LyricPaceTest
 
     /// <summary>The model's own speed-window figure for a map, which the strip publishes.</summary>
     private static double modelTargetWpm(LyricLine[] lines)
-        => LyricDifficulty.ComputeDetail(lines, 1, false, LyricDifficulty.EnduranceAxis.Envelope).TargetWpm;
+        => LyricDifficulty.TargetWpm(lines);
 
     /// <summary>
     /// THE TARGET, REDEFINED (v21). It is the map's hardest window BY RAW SPEED re-expressed at
     /// <c>LyricDifficulty.TargetWindowSeconds</c>, floored at the whole-map average, and this file
     /// does not re-derive it: <see cref="LyricPace"/> hands the lines to the difficulty model's
-    /// ENVELOPE arm and publishes what comes back, so the number the set page prints and the number
+    /// target scan (the CHUNKED axis's own windows since v27) and publishes what comes back, so the number the set page prints and the number
     /// the model computed cannot drift apart. That equality IS the contract, and it is asserted on
     /// every shape below.
     ///
@@ -447,13 +439,15 @@ public class LyricPaceTest
         // rest between each, published its model figure until v22 (52.26 against an average of
         // 48.98), then the floor at v22 (the 16-character floor put the model's figure at 43.05,
         // below that average), and its model figure again since v23: the model did not move, but
-        // the average fell to 36.55 once the five rests were charged, so 43.05 clears it.
+        // the average fell to 36.55 once the five rests were charged, so 43.05 clears it. At v27 the
+        // scan moved onto the chunked axis's own windows: the peaked map reads 151.63 and the
+        // six-window map 39.98, which still clears its 36.55 average.
         Assert.Multiple(() =>
         {
-            Assert.That(LyricPace.Compute(twoPaceMap(6, 1000, 21000)).TargetWpm, Is.EqualTo(151.05142388501122).Within(1e-9));
-            Assert.That(modelTargetWpm(linesAtWindows(six_windows)), Is.EqualTo(43.052892689999808).Within(1e-9), "the model's own figure");
+            Assert.That(LyricPace.Compute(twoPaceMap(6, 1000, 21000)).TargetWpm, Is.EqualTo(151.62801198400828).Within(1e-9));
+            Assert.That(modelTargetWpm(linesAtWindows(six_windows)), Is.EqualTo(39.981515597773289).Within(1e-9), "the model's own figure");
             Assert.That(LyricPace.Compute(linesAtWindows(six_windows)).AverageWpm, Is.EqualTo(30 * 60000.0 / 9850 / 5).Within(1e-9), "the v23 average");
-            Assert.That(LyricPace.Compute(linesAtWindows(six_windows)).TargetWpm, Is.EqualTo(43.052892689999808).Within(1e-9),
+            Assert.That(LyricPace.Compute(linesAtWindows(six_windows)).TargetWpm, Is.EqualTo(39.981515597773289).Within(1e-9),
                 "published at the model's figure, which clears the average");
         });
     }
@@ -493,7 +487,7 @@ public class LyricPaceTest
         }
 
         // The floor ENGAGING, pinned rather than left to the loop: twelve equal dense lines have no
-        // hardest window worth the name, so the model asks for 99.77 WPM and the map already runs at
+        // hardest window worth the name, so the model asks for 96.09 WPM and the map already runs at
         // 102.857 everywhere. The published figure is the average exactly.
         var flat = twoPaceMap(0, 0, 21000);
         var flatPace = LyricPace.Compute(flat);
@@ -618,24 +612,14 @@ public class LyricPaceTest
     }
 
     /// <summary>
-    /// THE SHARED ANCHOR MAP, under both arms, and the honest note about what this file can still
-    /// lock. The four words below are the fixture the game's LyricDifficultyTest calls its anchor and
-    /// pins at 1.433936415287919 since the character floor (<c>LyricDifficulty.MinimumWindowChars</c>)
-    /// went to 16 (it was 1.9987321307058443 before, every digit of which came out of the prototype,
-    /// docs/sr-envelope-model.js in the parent superrepo, that the envelope model is a port of): the
-    /// map carries 22 cells, so the shortest stretch holding 16 of them is longer than the 1.36 s
-    /// duration floor and the peak is read off that longer window instead.
-    ///
-    /// <para>THIS MIRROR CAN NO LONGER REACH THAT NUMBER, so it no longer claims to. The game takes
-    /// it with typability OFF, through an internal score source; the public API here applies the
-    /// shipped typability index, which this fixture's lines clear the gate for, so the envelope arm
-    /// reads 1.4250 instead (2.0477 before v22). The prototype lock lives
-    /// in the game's own fixture and in WireCompat. What this test pins is the pair the WEBSITE
-    /// stores and shows: the SHIPPED chunked rating, which is what <c>difficulty_rating</c> holds,
-    /// and the envelope arm beside it so a failure says which of the two moved.</para>
+    /// THE SHARED ANCHOR MAP. The four words below are the fixture the game's LyricDifficultyTest
+    /// called its anchor while it pinned the envelope model (whose prototype,
+    /// docs/sr-envelope-model.js in the parent superrepo, produced every digit of that figure). The
+    /// envelope model is deleted at v27, and what this test pins is what the WEBSITE stores and
+    /// shows: the SHIPPED chunked rating, which is what <c>difficulty_rating</c> holds.
     /// </summary>
     [Test]
-    public void DifficultyRating_TheSharedAnchorMapUnderBothArms()
+    public void DifficultyRating_TheSharedAnchorMap()
     {
         LyricLine[] map =
         [
@@ -668,8 +652,6 @@ public class LyricPaceTest
         Assert.Multiple(() =>
         {
             Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(1.8489909033945315), "the shipped (chunked) reading");
-            Assert.That(LyricDifficulty.Compute(map, 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.EqualTo(1.4250280885191169),
-                "the envelope arm, with the typability the public API applies");
 
             // The default argument IS the shipped axis, which is what makes every unqualified
             // Compute call in this file a chunked reading.
@@ -686,20 +668,15 @@ public class LyricPaceTest
     ///
     /// <para>THE CHUNKED AXIS RATES IT. It scores the map's own windows directly, so a map that is
     /// one short burst is simply a map with one short window: six words in a second reads as a
-    /// fast burst. The old claim is not deleted here, it is relocated: the envelope arm still
-    /// returns exactly zero, and that is asserted below so the property has somewhere to fail
-    /// from.</para>
+    /// fast burst. The envelope arm that still returned exactly zero here was deleted at v27.</para>
     ///
     /// <para>THE FIXTURE CARRIES 23 CELLS SINCE v22, so the DURATION is the only thing under test.
-    /// "cat cat" over 800 ms was this file's anchor for six backlog items, but the character floor
-    /// (16, the sandbox's dial, which <c>LyricDifficulty.MinimumWindowChars</c> mirrors on the
-    /// envelope arm) prices its 7 cells at zero on BOTH arms whatever its length, so the claim needs
-    /// a map that clears the floor to be about the duration at all. The same six words the game's
-    /// own test uses; and "cat cat" is kept, to say that 7 cells is under the floor however long
-    /// the map runs.</para>
+    /// "cat cat" over 800 ms was this file's anchor for six backlog items, until a character floor
+    /// priced its 7 cells at zero whatever its length; that floor is gone from the rating (v25), and
+    /// "cat cat" is kept to say that a sparse map now rates its own windows.</para>
     /// </summary>
     [Test]
-    public void DifficultyRating_AMapShorterThanTheSmallestWindow_RatesZeroOnlyOnTheEnvelopeArm()
+    public void DifficultyRating_AMapShorterThanTheSmallestWindow_StillRates()
     {
         static LyricLine cats(int count, double end)
         {
@@ -729,16 +706,10 @@ public class LyricPaceTest
             Assert.That(LyricPace.Compute([longEnough]).DifficultyRating, Is.EqualTo(2.666707015839954), "3 s of the same six words is a slow one");
 
             // The ORDER is the part worth saying out loud: the short map outrates the long one,
-            // where the envelope model has it at exactly nothing.
+            // where the envelope model had it at exactly nothing.
             Assert.That(LyricPace.Compute([tooShort]).DifficultyRating, Is.GreaterThan(LyricPace.Compute([longEnough]).DifficultyRating));
 
-            Assert.That(LyricDifficulty.Compute([tooShort], 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.Zero,
-                "1.0 s of singing still fits no scheduled window at all");
-            Assert.That(LyricDifficulty.Compute([longEnough], 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.GreaterThan(0),
-                "and 3 s of it does");
-
             Assert.That(LyricPace.Compute([belowTheFloor]).DifficultyRating, Is.EqualTo(0.81774938592926361), "a sparse map now rates its own windows: the character floor is gone (PerformancePoints v25)");
-            Assert.That(LyricDifficulty.Compute([belowTheFloor], 1, false, LyricDifficulty.EnduranceAxis.Envelope), Is.Zero, "on either arm");
         });
     }
 
@@ -888,7 +859,7 @@ public class LyricPaceTest
             // are built to a RATIO of the capability curve, and the curve is a function of the
             // stretch's duration, so a 15 second section at 0.75 asks for more raw WPM than a 120
             // second one at 0.75. A fixed-length chunk reads raw pace, so it sees that difference.
-            Assert.That(LyricDifficulty.Capability(15), Is.GreaterThan(LyricDifficulty.Capability(120)));
+            Assert.That(envelopeCapability(15), Is.GreaterThan(envelopeCapability(120)));
         });
     }
 
@@ -930,8 +901,8 @@ public class LyricPaceTest
     /// <para>ON THE SHIPPED AXIS THE TAIL IS NOT FREE. Bolting ten easy two-word lines onto the dense
     /// half, 45 seconds after it ends, LOWERS the rating: the gap and the easy tail are chunks like
     /// any other, and a decay-weighted mean over more chunks of which many are easy sits below the
-    /// mean over the dense half alone. The envelope arm still has the opposite ordering, by a hair,
-    /// and both are pinned so a failure says which model moved.</para>
+    /// mean over the dense half alone. (The envelope arm, deleted at v27, had the opposite ordering,
+    /// by a hair.)</para>
     /// </summary>
     [Test]
     public void DifficultyRating_ALongInstrumentalGapIsNotFreeOnTheChunkedAxis()
@@ -948,9 +919,6 @@ public class LyricPaceTest
             Assert.That(LyricDifficulty.Compute(gapped), Is.LessThan(LyricDifficulty.Compute(denseHalf)),
                 "the chunked axis charges for the easy tail behind the gap");
 
-            Assert.That(LyricDifficulty.Compute(gapped, 1, false, LyricDifficulty.EnduranceAxis.Envelope),
-                Is.GreaterThan(LyricDifficulty.Compute(denseHalf, 1, false, LyricDifficulty.EnduranceAxis.Envelope)),
-                "where the envelope arm reads the same pair the other way round");
         });
     }
 
@@ -1535,12 +1503,10 @@ public class LyricPaceTest
 
     /// <summary>
     /// The model's own weighted CELL MASS for a map: every typeable character, every inter-word
-    /// space, and every freestyle slot at its quarter. Both arms build the same word list, so the
-    /// figure is the same on either and the envelope arm is asked for only because it is the one
-    /// whose <c>Cells</c> readout the sandbox documents. Mirrors the game's CellMass helper.
+    /// space, and every freestyle slot at its quarter. Mirrors the game's CellMass helper.
     /// </summary>
     private static double cellMass(LyricLine[] lines, bool literate = false)
-        => LyricDifficulty.ComputeDetail(lines, 1, literate, LyricDifficulty.EnduranceAxis.Envelope).Cells;
+        => LyricDifficulty.ComputeDetail(lines, 1, literate).Cells;
 
     /// <summary>
     /// THE BROAD REGRESSION PIN. Every value here is an exact double rather than a tolerance, so any

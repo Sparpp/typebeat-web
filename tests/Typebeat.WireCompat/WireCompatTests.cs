@@ -12,6 +12,7 @@ using typebeat.Game.Online.Rooms;
 using typebeat.Game.Rulesets.Scoring;
 using typebeat.Game.Scoring;
 using osu.Framework.Extensions;
+using GameFileManifest = typebeat.Game.Beatmaps.SetFileManifest;
 
 // The server's two ranking metrics, aliased so the client's own Online/Scoring namespaces above
 // can't collide with them.
@@ -235,7 +236,10 @@ public class WireCompatTests
     // (d3) The set-level vocals-stem flag rides the lookup as `has_vocals_stem` (backlog 396): the server
     // says whether the set's CURRENT version carries vocals.ogg/vocals.wav, and the client binds it to
     // APIBeatmapSet.HasVocalsStem, which the update-availability predicate reads against the local copy's
-    // stem presence. Both directions pinned here, and the false case (an ordinary set).
+    // stem presence. Both directions pinned here, and the false case (an ordinary set). The same list
+    // rides as the tracked-file manifest `file_manifest`, which current clients read: the game's own
+    // SetFileManifest must compute the same string from the same files, and the client's read of the DTO
+    // (SetFileManifest.Online) must land on it.
     [Test]
     public async Task BeatmapLookup_CarriesTheSetsVocalsStemFlag_InTheClientsCanonicalForm()
     {
@@ -292,6 +296,8 @@ public class WireCompatTests
 
             Assert.That(stem?.BeatmapSet, Is.Not.Null);
             Assert.That(stem!.BeatmapSet!.HasVocalsStem, Is.True, "a backfilled set reports its stem through the client DTO");
+            Assert.That(stem.BeatmapSet.FileManifest, Is.EqualTo(GameFileManifest.Of(new[] { "vocals.ogg" })), "the server's manifest is the game's for the same files");
+            Assert.That(GameFileManifest.Online(stem.BeatmapSet.FileManifest, stem.BeatmapSet.HasVocalsStem), Is.EqualTo(GameFileManifest.VOCALS_STEM));
         }
 
         using (var plainReq = ServerFixture.Authed(HttpMethod.Get, $"/api/v2/beatmaps/lookup?checksum={plainChecksum}"))
@@ -301,6 +307,7 @@ public class WireCompatTests
 
             Assert.That(plain?.BeatmapSet, Is.Not.Null);
             Assert.That(plain!.BeatmapSet!.HasVocalsStem, Is.False, "an ordinary set reports false");
+            Assert.That(plain.BeatmapSet.FileManifest, Is.EqualTo(GameFileManifest.EMPTY), "and an empty manifest, not an absent one");
         }
     }
 

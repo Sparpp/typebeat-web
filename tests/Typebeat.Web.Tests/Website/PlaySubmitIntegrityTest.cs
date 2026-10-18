@@ -57,7 +57,7 @@ public class PlaySubmitIntegrityTest
 
     /// <summary>
     /// The page renders the revision the server computed at startup, in the shape the token route
-    /// accepts, and it is the hash of the three scripts' asp-append-version values: the same
+    /// accepts, and it is the hash of the scripts' asp-append-version values: the same
     /// <c>?v=</c> strings the page's own script tags carry.
     /// </summary>
     [Test]
@@ -68,7 +68,7 @@ public class PlaySubmitIntegrityTest
         Assert.That(match.Success, Is.True, "the /play page must publish a 16-hex revision");
 
         var sb = new StringBuilder();
-        foreach (string script in new[] { "/js/typebeat-core.js", "/js/typebeat-player.js", "/js/play.js" })
+        foreach (string script in PlayEndpoints.RevisionScripts)
         {
             var v = Regex.Match(page, Regex.Escape(script) + "\\?v=([^\"&]+)\"");
             Assert.That(v.Success, Is.True, $"{script} is stamped by asp-append-version");
@@ -80,6 +80,28 @@ public class PlaySubmitIntegrityTest
         {
             Assert.That(match.Groups[1].Value, Is.EqualTo(expected));
             Assert.That(PlayEndpoints.Revision, Is.EqualTo(expected));
+        });
+    }
+
+    /// <summary>
+    /// The revision covers every script the client is made of: the page's own (non-deferred) script
+    /// tags are exactly the hashed list, in its order, and that list holds the engine's every part
+    /// under <c>wwwroot/js/core</c> as well as the engine, the player and the page glue.
+    /// </summary>
+    [Test]
+    public async Task ThePlayPage_LoadsExactlyTheHashedScripts()
+    {
+        string page = await (await client.GetAsync("/play")).Content.ReadAsStringAsync();
+        var tags = Regex.Matches(page, "<script src=\"(/js/[^\"?]+)\\?v=[^\"]+\"></script>").Select(m => m.Groups[1].Value).ToList();
+
+        string coreDir = Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "js", "core");
+        var parts = Directory.GetFiles(coreDir, "*.js").Select(f => "/js/core/" + Path.GetFileName(f)).ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(tags, Is.EqualTo(PlayEndpoints.RevisionScripts));
+            Assert.That(PlayEndpoints.RevisionScripts, Is.SupersetOf(parts.Concat(["/js/typebeat-core.js", "/js/typebeat-player.js", "/js/play.js"])));
+            Assert.That(parts, Is.Not.Empty);
         });
     }
 

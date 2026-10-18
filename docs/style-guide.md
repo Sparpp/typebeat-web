@@ -91,7 +91,7 @@ way: **violet leads, magenta seasons**.
 | `.auth-card` | narrow (420px) centered card for login/register |
 | `.card-note` | small muted footnote line at the bottom of a card |
 | `.prose` | 68ch max-width column for long-form text pages |
-| `.muted` / `.faint` / `.text-center` / `.stack` | tiny helpers |
+| `.muted` / `.faint` / `.stack` | tiny helpers |
 
 Pattern for new pages: compose these; add page-specific classes to `site.css` under a clearly
 commented section rather than inline styles.

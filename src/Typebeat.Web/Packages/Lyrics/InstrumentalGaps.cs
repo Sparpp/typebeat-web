@@ -144,14 +144,18 @@ public static class InstrumentalGaps
     // syllableCharTarget(unitStart, unitEnd, boundaries, k, j); plus, after every token but the
     // last, an inter-word SPACE cell which is also typeable and targets that token's unit end.
     // Only the FIRST and LAST typeable targets are needed here, and for those the syllable
-    // subdivision drops out or is not available:
+    // subdivision drops out or is approximated:
     //   * char j = 0 always lands exactly on unitStart, whatever the boundaries are
     //     (TypingLine.syllableCharTarget: segment 0, offset 0), so the first vocal is exact;
-    //   * the last typeable char uses the flat ramp unitStart + (k-1)(unitEnd-unitStart)/k, which
-    //     is what the game computes for every word the SERVER can see: LyricTiming does not decode
-    //     words[].syllables (only the browser player's typebeat-core.js does), and a subdivided
-    //     word's last char still sits inside [unitStart, unitEnd]. It only matters at all in the
-    //     weird-data case where a word overruns SingEndTime.
+    //   * the last typeable char uses the flat ramp unitStart + (k-1)(unitEnd-unitStart)/k. The
+    //     game and the browser player scan the real cell targets instead, and LyricTiming does
+    //     decode words[].syllables now, so for a subdivided word this is an approximation, kept on
+    //     purpose. The value is only consulted through max(SingEndTime, last) and a subdivided
+    //     word's last char still sits inside [unitStart, unitEnd], so the answers differ only when
+    //     a word overruns SingEndTime, by part of one unit, against a 90% gate. Reading the parsed
+    //     syllables here would move the play-time gate and, through the stored skippable_s, what
+    //     the GateRefund sweeps decide for existing rows, so that change waits until it can land
+    //     with a WireCompat test that runs the same .osu through the game's Compute and this one.
     // The game's monotonic-clamp pass over targets cannot move either extreme: units are already
     // non-decreasing out of LyricTiming.BuildLines.
 

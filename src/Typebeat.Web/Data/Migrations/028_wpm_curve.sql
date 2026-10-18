@@ -2,8 +2,9 @@
 -- (LyricPace v11). The game computes the same three numbers locally from the beatmap it has loaded
 -- (typebeat.Game.Rulesets.TypeBeat/Beatmaps/LyricWpmCurve.cs, mirrored here as
 -- Packages/Lyrics/LyricWpmCurve.cs); these columns exist so the SET PAGE can draw the same graph
--- without reparsing a .osu blob on every request. Deliberately NOT on the wire: the client already
--- has the map, so shipping the curve to it would only create a second thing to keep in step.
+-- without reparsing a .osu blob on every request. (Written as "deliberately not on the wire"; that
+-- has since changed: the set GET serves these columns as peak_wpm and wpm_curve (Wire/BeatmapWire.cs),
+-- and the game shows the server's figures whenever they apply to the installed map.)
 --
 -- None of this can be computed in SQL. LyricWpmCurve sweeps a 30-cell rolling window over the cell
 -- target times it reconstructs from the stored .osu lyric data, exactly as 009 / 016 / 018 / 020

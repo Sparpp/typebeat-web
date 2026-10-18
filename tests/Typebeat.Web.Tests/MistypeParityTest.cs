@@ -171,7 +171,7 @@ public class MistypeParityTest
     /// weights by the judgement's MAX result, always Great = 300, and by the combo as it stands
     /// AFTER the increment).</item>
     /// <item>A rejected wrong key raises no judgement at all:
-    /// <c>TypeBeatPlayfield.onWrongKeyRejected</c> sets <c>Combo.Value = 0</c> by hand and moves
+    /// <c>TypeBeatComboFeed.OnMistyped</c> sets <c>Combo.Value = 0</c> by hand and moves
     /// nothing else. It is only the LATER contributions, now weighted by a restarted combo, that
     /// make it cost anything.</item>
     /// <item>A cell that seals untyped becomes a Miss: <c>Combo = 0</c> and a contribution of

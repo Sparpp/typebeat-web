@@ -13,10 +13,11 @@ namespace Typebeat.Web.Tests.Bss;
 
 /// <summary>
 /// Fixture for the BSS (beatmap submission) end-to-end tests: drop+recreate a DEDICATED
-/// "typebeat_bsstests" database (kept distinct from typebeat_webtests / typebeat_pkgtests /
-/// typebeat_wirecompat; every DB-backed fixture owns its own database), point the app at it
+/// "typebeat_bsstests_{run id}" database (see <see cref="TestDatabase"/>; kept distinct from
+/// typebeat_webtests / typebeat_pkgtests / typebeat_wirecompat; every DB-backed fixture owns its
+/// own database, dropped again on teardown), point the app at it
 /// AND at a throwaway TYPEBEAT_FILE_ROOT via environment, then boot the real app in-process.
-/// The app applies migrations 001–003 itself at startup.
+/// The app applies migrations 001 to 003 itself at startup.
 ///
 /// The host carries a <see cref="FakePublicObjectStore"/> in place of the real public bucket
 /// (backlog 364). It starts disabled, which is the unconfigured deployment every other test here
@@ -30,13 +31,9 @@ namespace Typebeat.Web.Tests.Bss;
 [SetUpFixture]
 public class BssFixture
 {
-    public const string DatabaseName = "typebeat_bsstests";
+    public static string DatabaseName { get; } = TestDatabase.NameFor("typebeat_bsstests");
 
-    public const string ConnectionString =
-        "Host=localhost;Port=5432;Database=" + DatabaseName + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    public static string ConnectionString { get; } = TestDatabase.ConnectionStringFor(DatabaseName);
 
     /// <summary>The app's IFileStore root for this run; assert stored objects via paths under it.</summary>
     public static string FileRoot { get; private set; } = null!;
@@ -85,12 +82,7 @@ public class BssFixture
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
-        await using (var conn = new NpgsqlConnection(admin_connection_string))
-        {
-            await conn.OpenAsync();
-            await conn.ExecuteAsync($"DROP DATABASE IF EXISTS {DatabaseName} WITH (FORCE)");
-            await conn.ExecuteAsync($"CREATE DATABASE {DatabaseName}");
-        }
+        await TestDatabase.RecreateAsync(DatabaseName);
 
         // citext must exist before the app's pooled data source first connects (type catalog
         // snapshot pitfall, same as the WireCompat/Website fixtures).
@@ -148,5 +140,7 @@ public class BssFixture
 
         if (FileRoot != null && Directory.Exists(FileRoot))
             Directory.Delete(FileRoot, recursive: true);
+
+        await TestDatabase.DropAsync(DatabaseName);
     }
 }

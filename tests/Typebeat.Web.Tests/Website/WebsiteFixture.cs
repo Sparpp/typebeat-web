@@ -16,8 +16,9 @@ namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
 /// Fixture for the website (Razor Pages + cookie auth) tests, mirroring the WireCompat
-/// ServerFixture pattern: drop+recreate a DEDICATED "typebeat_webtests" database (superuser
-/// postgres/postgres, matching CI's service container), point the server at it via TYPEBEAT_DB,
+/// ServerFixture pattern: drop+recreate a DEDICATED "typebeat_webtests_{run id}" database (see
+/// <see cref="TestDatabase"/>; superuser postgres/postgres by default, matching CI's service
+/// container; dropped again on teardown), point the server at it via TYPEBEAT_DB,
 /// boot the real app in-process via <see cref="WebApplicationFactory{Program}"/>, seed one user.
 ///
 /// Scoped to the Typebeat.Web.Tests.Website namespace so the pure wire-shape tests in the
@@ -29,13 +30,9 @@ namespace Typebeat.Web.Tests.Website;
 [SetUpFixture]
 public class WebsiteFixture
 {
-    public const string DatabaseName = "typebeat_webtests";
+    public static string DatabaseName { get; } = TestDatabase.NameFor("typebeat_webtests");
 
-    public const string ConnectionString =
-        "Host=localhost;Port=5432;Database=" + DatabaseName + ";Username=postgres;Password=postgres";
-
-    private const string admin_connection_string =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    public static string ConnectionString { get; } = TestDatabase.ConnectionStringFor(DatabaseName);
 
     public static readonly Uri BaseAddress = new Uri("https://localhost");
 
@@ -105,10 +102,12 @@ public class WebsiteFixture
     }
 
     [OneTimeTearDown]
-    public void OneTimeTearDown()
+    public async Task OneTimeTearDown()
     {
         Client?.Dispose();
         factory?.Dispose();
+
+        await TestDatabase.DropAsync(DatabaseName);
     }
 
     /// <summary>
@@ -211,7 +210,16 @@ public class WebsiteFixture
         using (var loginResponse = await client.PostAsync("/login", new FormUrlEncodedContent(form)))
             Assert.That(loginResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"login as {login} should land on /verify");
 
-        string code = Emails.LastCode ?? throw new InvalidOperationException($"no login code captured for {login}");
+        // The code emailed to THIS user, not Emails.LastCode: fixtures that run in parallel log in
+        // concurrently, and a code meant for someone else made /verify re-render its form (still a
+        // 200), so the caller carried on signed out and its next request 404'd (CI, 2026-10-16).
+        string? email;
+        await using (var conn = new NpgsqlConnection(ConnectionString))
+            email = await conn.QuerySingleOrDefaultAsync<string?>(
+                "SELECT email::text FROM users WHERE username = @login::citext OR email = @login::citext", new { login });
+
+        string code = (email is null ? null : Emails.LastCodeFor(email))
+                      ?? throw new InvalidOperationException($"no login code captured for {login}");
 
         string verifyToken = await GetAntiforgeryTokenAsync(client, "/verify");
         var verifyResponse = await client.PostAsync("/verify", new FormUrlEncodedContent(new Dictionary<string, string>
@@ -221,6 +229,9 @@ public class WebsiteFixture
         }));
 
         Assert.That(verifyResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"verify for {login}");
+        // A refused code re-renders /verify with a 200 too, so prove the redirect away happened.
+        Assert.That(verifyResponse.RequestMessage?.RequestUri?.AbsolutePath, Is.Not.EqualTo("/verify"),
+            $"verify for {login} should have signed in and left /verify");
         return verifyResponse;
     }
 
@@ -239,12 +250,7 @@ public class WebsiteFixture
 
     private static async Task recreateDatabaseAsync()
     {
-        await using (var conn = new NpgsqlConnection(admin_connection_string))
-        {
-            await conn.OpenAsync();
-            await conn.ExecuteAsync($"DROP DATABASE IF EXISTS {DatabaseName} WITH (FORCE)");
-            await conn.ExecuteAsync($"CREATE DATABASE {DatabaseName}");
-        }
+        await TestDatabase.RecreateAsync(DatabaseName);
 
         // citext must exist before the server's pooled data source first connects, same type
         // catalog snapshot pitfall documented in the WireCompat ServerFixture.

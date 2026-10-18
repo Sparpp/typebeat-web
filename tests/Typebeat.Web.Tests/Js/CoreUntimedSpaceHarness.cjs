@@ -75,7 +75,6 @@ function snapshot(engine) {
         combo: engine.combo,
         maxCombo: engine.maxCombo,
         breaks: engine.breaks,
-        score: engine.score,
         mistypes: engine.counts.WrongChar || 0,
         consecutiveWrongKeys: engine.consecutiveWrongKeys,
         liveAccuracy: engine.totalKeypresses === 0 ? 1 : engine.correctKeypresses / engine.totalKeypresses,
@@ -213,12 +212,13 @@ function retypeIsInert() {
     engine.processKey('a', 1000);
     engine.processKey('b', 1500);
     engine.processKey(' ', 7000);
-    const scoreAfterFirst = engine.score;
+    const tallyAfterFirst = JSON.stringify(engine.counts);
     engine.processBackspace();
     const reopenedState = engine.lines[0].cells[2].state;
     engine.processKey(' ', 9000);
     return Object.assign(snapshot(engine), {
-        scoreAfterFirst: scoreAfterFirst,
+        tallyAfterFirst: tallyAfterFirst,
+        tallyAfterRetype: JSON.stringify(engine.counts),
         reopenedState: reopenedState
     });
 }

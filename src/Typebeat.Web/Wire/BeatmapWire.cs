@@ -119,6 +119,12 @@ public sealed class APIBeatmapResponse
 /// </summary>
 public sealed class APIBeatmapSetResponse
 {
+    [JsonProperty("metadata_revision", NullValueHandling = NullValueHandling.Ignore)]
+    public long? MetadataRevision { get; init; }
+
+    [JsonProperty("package_revision", NullValueHandling = NullValueHandling.Ignore)]
+    public int? PackageRevision { get; init; }
+
     [JsonProperty("id")]
     public required int Id { get; init; }
 
@@ -236,6 +242,21 @@ public sealed class APIBeatmapSetResponse
     /// </summary>
     [JsonProperty("has_vocals_stem")]
     public bool HasVocalsStem { get; init; }
+
+    /// <summary>
+    /// The tracked-file manifest of the set's CURRENT online version (<see cref="Packages.SetFileManifest"/>):
+    /// the tracked kinds it carries, sorted and comma-joined, empty for none. The client compares it with
+    /// the manifest of its local copy, so it supersedes <see cref="HasVocalsStem"/> as the update signal
+    /// and covers every tracked file kind with one field.
+    ///
+    /// <para>
+    /// Null on a route that does not compute it (the listing cards); the client then falls back to
+    /// <see cref="HasVocalsStem"/>, as it does for a server that predates the field. Emitted on both the
+    /// lookup and the beatmapset GET.
+    /// </para>
+    /// </summary>
+    [JsonProperty("file_manifest")]
+    public string? FileManifest { get; init; }
 
     // The creator's plain-text description (empty when none); the set overlay shows it under the header.
     [JsonProperty("description")]

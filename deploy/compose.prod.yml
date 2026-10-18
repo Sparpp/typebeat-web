@@ -68,6 +68,10 @@ services:
       # volume so container swaps keep the files; deploy/backup.sh tars it WEEKLY (cron lines
       # in the script header; they are not installed automatically).
       TYPEBEAT_FILE_ROOT: "/data"
+      # The Data Protection keyring (challenge, Google sign-in and antiforgery cookies), on its own
+      # volume rather than under /data (S1-018): nothing but the app mounts it. Moved off appdata
+      # by CI's one-time "Move the keyring" step (deploy/README.md, "Volumes").
+      TYPEBEAT_DPKEYS_DIR: "/dpkeys"
       # Disk guard (backlog 365, Storage/DiskGuard.cs): below the upload floor replay, BSS and
       # avatar/banner writes answer 507 and /health says "degraded"; at the critical level new score
       # tokens are refused too. Empty = the defaults (10 / 5 / 2 GiB, a 15 s probe cache).
@@ -80,11 +84,13 @@ services:
       # read-only on app (pgdata:/pgdata-probe:ro) and set this to /pgdata-probe (deploy/README.md).
       TYPEBEAT_PG_PROBE_PATH: "${TYPEBEAT_PG_PROBE_PATH:-}"
       # Hourly housekeeping (Ops/Housekeeping.cs): expired tokens, the download log past 365 days,
-      # upload sessions, stale covers, and replay retention. The replay sweep is off|dryrun|on and
-      # stays dryrun (logs "would prune N replays") until the owner flips it after an announcement
-      # and a fresh appdata tar. Set TYPEBEAT_HOUSEKEEPING=false in deploy/.env to stop the service.
+      # upload sessions, stale covers, and replay retention. The replay sweep is off|dryrun|on and is
+      # on (S1-038): it prunes only replays outside every keep rule (a player's top 3 per map and
+      # board, so never their best ranked play, pinned, recent, recently watched). In deploy/.env,
+      # TYPEBEAT_REPLAY_SWEEP=dryrun only logs "would prune N replays" and =off skips the sweep. Set
+      # TYPEBEAT_HOUSEKEEPING=false in deploy/.env to stop the service.
       TYPEBEAT_HOUSEKEEPING: "${TYPEBEAT_HOUSEKEEPING:-true}"
-      TYPEBEAT_REPLAY_SWEEP: "${TYPEBEAT_REPLAY_SWEEP:-dryrun}"
+      TYPEBEAT_REPLAY_SWEEP: "${TYPEBEAT_REPLAY_SWEEP:-on}"
       TYPEBEAT_REPLAY_KEEP_TOP_N: "${TYPEBEAT_REPLAY_KEEP_TOP_N:-}"
       TYPEBEAT_REPLAY_KEEP_DAYS: "${TYPEBEAT_REPLAY_KEEP_DAYS:-}"
       TYPEBEAT_REPLAY_KEEP_VIEWED_DAYS: "${TYPEBEAT_REPLAY_KEEP_VIEWED_DAYS:-}"
@@ -135,8 +141,12 @@ services:
       # and every /auth/google route 404s.
       TYPEBEAT_GOOGLE_CLIENT_ID: "${TYPEBEAT_GOOGLE_CLIENT_ID:-}"
       TYPEBEAT_GOOGLE_CLIENT_SECRET: "${TYPEBEAT_GOOGLE_CLIENT_SECRET:-}"
+    # align_jobs is mounted over /data/align-jobs, where AlignJobStore looks for it, so the
+    # aligner can share the job exchange without seeing the rest of appdata (S1-018).
     volumes:
       - appdata:/data
+      - align_jobs:/data/align-jobs
+      - dpkeys:/dpkeys
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,10 +155,12 @@ services:
 
   # Server-side lyric alignment (backlog 413; retired by 287, back as an opt-in on the game's import
   # screen): torch/demucs plus the fused-evidence pair, CPU. File-based job exchange with the app
-  # over the shared appdata volume (/data/align-jobs, see src/Typebeat.Web/Align/AlignJobStore.cs
-  # and deploy/aligner/worker.py), and its model caches under /data/align-cache (TORCH_HOME). The
-  # image carries the game pin's lyriclab/, which the CI deploy job stages into the build context
-  # (deploy/aligner/Dockerfile says why). One job at a time by design; the memory cap keeps a
+  # over the align_jobs volume (/data/align-jobs in both containers, see
+  # src/Typebeat.Web/Align/AlignJobStore.cs and deploy/aligner/worker.py), and its model caches on
+  # its own align_cache volume at /data/align-cache (TORCH_HOME). It does NOT mount appdata (S1-018):
+  # a worker that runs third-party ML code on user audio must not reach the uploads, the replays
+  # or the keyring. The image carries the game pin's lyriclab/, which the CI deploy job stages
+  # into the build context (deploy/aligner/Dockerfile says why). One job at a time by design; the memory cap keeps a
   # demucs peak from starving postgres/app, and the CPU cap leaves the app its share.
   aligner:
     build:
@@ -166,7 +178,8 @@ services:
       # torch threads per job, matched to the cpus cap below.
       ALIGN_THREADS: "3"
     volumes:
-      - appdata:/data
+      - align_jobs:/data/align-jobs
+      - align_cache:/data/align-cache
     mem_limit: 5g
     cpus: 3
 
@@ -195,3 +208,6 @@ volumes:
   caddy_config:
   pgdata:
   appdata:
+  align_jobs:
+  align_cache:
+  dpkeys:

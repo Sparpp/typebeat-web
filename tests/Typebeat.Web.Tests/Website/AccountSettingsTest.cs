@@ -25,7 +25,7 @@ public class AccountSettingsTest
     private const string password = "correcthorse42";
 
     // A tiny valid 64x64 PNG (the same asset StubEndpoints serves as the default avatar), enough
-    // for ImageSharp to decode and re-encode into the stored avatar/banner JPEG.
+    // for the image pipeline to decode and re-encode into the stored avatar/banner JPEG.
     private const string png_base64 =
         "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAe0lEQVR4nO3PUQkAIBTAQJu9XsY2gSH8OITBAtzWnvN1" +
         "iwsa0IIGtKABLWhACxrQgga0oAEtaEALGtCCBrSgAS1oQAsa0IIGtKABLWhACxrQgga0oAEtaEALGtCCBrSgAS1oQAsa" +

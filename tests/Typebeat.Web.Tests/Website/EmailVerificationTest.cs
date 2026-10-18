@@ -1,7 +1,9 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Dapper;
 using Npgsql;
+using Typebeat.Web.Auth;
 
 namespace Typebeat.Web.Tests.Website;
 
@@ -111,6 +113,52 @@ public class EmailVerificationTest
             string html = await ok.Content.ReadAsStringAsync();
             Assert.That(html, Does.Contain("user-chip"), "the resent code verifies");
         }
+    }
+
+    [Test]
+    public async Task DailyAttemptCap_RefusesEvenTheRightCode_AndSendsNoNewOne()
+    {
+        const string email = "daily.cap@example.com";
+        long userId = await WebsiteFixture.SeedUserAsync("daily cap", email, "hunter2hunter2", verified: true);
+
+        var (client, cookies) = WebsiteFixture.CreateBrowser();
+        using var __ = client;
+
+        using (await postLoginAsync(client, "daily cap", "hunter2hunter2")) { }
+        string code = WebsiteFixture.Emails.LastCodeFor(email)!;
+
+        // Earlier today's spent codes, folded into one retired row carrying the day's whole budget.
+        // Two hours old, so the hourly issuance window is untouched and only the daily cap can bite.
+        await using (var conn = new NpgsqlConnection(WebsiteFixture.ConnectionString))
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(
+                """
+                INSERT INTO email_tokens (user_id, token_hash, purpose, expires_at, used_at, attempts, created_at)
+                VALUES (@userId, @hash, 'login', now() - interval '110 minutes', now() - interval '110 minutes', @attempts, now() - interval '2 hours')
+                """,
+                new { userId, hash = RandomNumberGenerator.GetBytes(32), attempts = (short)EmailCodeService.MaxAttemptsPerDay });
+        }
+
+        // The CORRECT code is refused: past the cap nothing is compared.
+        using (var capped = await postVerifyAsync(client, code))
+        {
+            string html = await capped.Content.ReadAsStringAsync();
+            Assert.Multiple(() =>
+            {
+                Assert.That(html, Does.Contain("Too many incorrect attempts"));
+                Assert.That(cookies.GetCookies(WebsiteFixture.BaseAddress)["typebeat_session"], Is.Null);
+            });
+        }
+
+        // And no fresh code goes out until the window rolls on.
+        using var resend = await postResendAsync(client);
+        string resendHtml = await resend.Content.ReadAsStringAsync();
+        Assert.Multiple(() =>
+        {
+            Assert.That(resendHtml, Does.Contain("too many codes recently"));
+            Assert.That(WebsiteFixture.Emails.CountFor(email), Is.EqualTo(1), "the daily cap suppresses the send");
+        });
     }
 
     [Test]

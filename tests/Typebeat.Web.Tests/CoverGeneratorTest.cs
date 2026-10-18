@@ -1,4 +1,4 @@
-using SixLabors.ImageSharp;
+using SkiaSharp;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Storage;
 
@@ -48,8 +48,66 @@ public class CoverGeneratorTest
         // The ingest catches this and records CoverStatus = "failed" (graceful skip).
         using var junk = new MemoryStream(SyntheticPackage.Utf8("not an image"));
 
-        Assert.ThrowsAsync<UnknownImageFormatException>(
+        Assert.ThrowsAsync<UnreadableImageException>(
             () => new CoverGenerator().GenerateAsync(junk, 1, 1, store));
+    }
+
+    [Test]
+    public void LoadWithinBudget_OverBudget_ThrowsBeforeDecoding()
+    {
+        // The 64x48 fixture is 3072 pixels. The refusal must be an UnreadableImageException, the
+        // type the settings page already turns into its "not a readable image" form error.
+        using var background = new MemoryStream(SyntheticPackage.TinyPng());
+
+        var e = Assert.ThrowsAsync<UnreadableImageException>(
+            () => CoverGenerator.LoadWithinBudgetAsync(background, maxPixels: 64 * 48 - 1));
+
+        Assert.That(e!.Message, Does.Contain("64x48"));
+    }
+
+    [Test]
+    public async Task LoadWithinBudget_AtBudget_Decodes()
+    {
+        using var background = new MemoryStream(SyntheticPackage.TinyPng());
+
+        using var image = await CoverGenerator.LoadWithinBudgetAsync(background, maxPixels: 64 * 48);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(image.Width, Is.EqualTo(64));
+            Assert.That(image.Height, Is.EqualTo(48));
+        });
+    }
+
+    [Test]
+    public void CoverFit_CropsTheOverflowAroundTheCentre()
+    {
+        // A 300x100 source of three 100-wide bands (red, green, blue) cover-fit into a square:
+        // the scale is 1 on the height, so the square is exactly the green middle band.
+        using var bands = new SKBitmap(new SKImageInfo(300, 100, SKColorType.Rgba8888, SKAlphaType.Opaque));
+
+        for (int y = 0; y < 100; y++)
+        for (int x = 0; x < 300; x++)
+            bands.SetPixel(x, y, x < 100 ? SKColors.Red : x < 200 ? SKColors.Lime : SKColors.Blue);
+
+        bands.SetImmutable();
+        using var source = SKImage.FromBitmap(bands);
+        using var jpeg = CoverGenerator.CoverFitJpeg(source, 100, 100);
+        using var decoded = SKBitmap.Decode(jpeg);
+
+        Assert.That(decoded, Is.Not.Null);
+
+        foreach (var (x, y) in new[] { (5, 5), (50, 50), (94, 94) })
+        {
+            var pixel = decoded!.GetPixel(x, y);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(pixel.Red, Is.LessThan(40), $"({x}, {y})");
+                Assert.That(pixel.Green, Is.GreaterThan(215), $"({x}, {y})");
+                Assert.That(pixel.Blue, Is.LessThan(40), $"({x}, {y})");
+            });
+        }
     }
 
     private async Task assertJpegAsync(string key, int width, int height)
@@ -57,13 +115,18 @@ public class CoverGeneratorTest
         await using var stream = await store.OpenObjectReadAsync(key);
         Assert.That(stream, Is.Not.Null, key);
 
-        using var image = await Image.LoadAsync(stream!);
+        using var buffer = new MemoryStream();
+        await stream!.CopyToAsync(buffer);
+        using var data = SKData.CreateCopy(buffer.ToArray());
+        using var codec = SKCodec.Create(data);
+
+        Assert.That(codec, Is.Not.Null, key);
 
         Assert.Multiple(() =>
         {
-            Assert.That(image.Width, Is.EqualTo(width), key);
-            Assert.That(image.Height, Is.EqualTo(height), key);
-            Assert.That(image.Metadata.DecodedImageFormat?.Name, Is.EqualTo("JPEG"), key);
+            Assert.That(codec.Info.Width, Is.EqualTo(width), key);
+            Assert.That(codec.Info.Height, Is.EqualTo(height), key);
+            Assert.That(codec.EncodedFormat, Is.EqualTo(SKEncodedImageFormat.Jpeg), key);
         });
     }
 }
