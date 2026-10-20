@@ -24,6 +24,18 @@
   <ItemGroup>
     <PackageReference Include="AWSSDK.S3" Version="4.0.104" />
     <PackageReference Include="Dapper" Version="2.1.79" />
+    <!--
+      Japanese readings for Polyglot (PR 43): the SAME two packages at the SAME versions the game's
+      ruleset references (typebeat.Game.Rulesets.TypeBeat.csproj), because a ranked Japanese Polyglot
+      play is judged on the minimum romaji input per character, and that comes from the game's reading
+      path (Kawazu over the IPAdic dictionary, Packages/Lyrics/Polyglot/JapaneseReading.cs). Both are
+      managed netstandard2.0 code; LibNMeCab.IpaDicBin copies its dictionary to IpaDic/ beside the
+      binary (about 51 MB), which the server reads through Kawazu and directly through
+      JapaneseLyricGenerator.SurfaceDictionary, exactly as the game does. Kawazu's own copy of the
+      same dictionary files does not flow into the publish output.
+    -->
+    <PackageReference Include="Kawazu" Version="1.1.4" />
+    <PackageReference Include="LibNMeCab.IpaDicBin" Version="0.10.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="Sentry.AspNetCore" Version="6.7.0" />

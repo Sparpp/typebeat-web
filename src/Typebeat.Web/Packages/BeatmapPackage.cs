@@ -121,7 +121,26 @@ public sealed class ParsedDifficulty
     /// than computed a second time for that reason, and for a better one: a cell and its column are
     /// then the same number by construction rather than by two evaluations agreeing.</para>
     /// </summary>
-    public BeatmapRatings Ratings => ratings ??= BeatmapRatings.Compute(Lines);
+    public BeatmapRatings Ratings => ratings ??= BeatmapRatings.Compute(Lines, PolyglotLines, Language);
+
+    /// <summary>
+    /// Whether the <c>[Lyrics]</c> parse strips bracketed backing vocals (a format version before the
+    /// literal-bracket one), so <see cref="PolyglotLines"/> parses the section exactly as
+    /// <see cref="Lines"/> was parsed.
+    /// </summary>
+    public bool StripBackingVocals { get; init; }
+
+    private IReadOnlyList<LyricLine>? polyglotLines;
+
+    /// <summary>
+    /// THE POLYGLOT PARSE (PR 43) of the same section: <see cref="LyricTiming.ParseSection"/> with
+    /// <c>polyglot: true</c>, the game's own TimingJsonLoader rules where they reach what a Polyglot
+    /// play types (lines kept for their originals, originals kept verbatim, unromanised words, cut
+    /// links). Read only by the Polyglot half of <see cref="Ratings"/>; every base figure keeps
+    /// reading <see cref="Lines"/>.
+    /// </summary>
+    public IReadOnlyList<LyricLine> PolyglotLines
+        => polyglotLines ??= LyricTiming.ParseSection(LyricSectionLines, StripBackingVocals, polyglot: true).Lines;
 
     /// <summary>The matrix as the <c>jsonb</c> the column holds (<see cref="BeatmapRatings.ToJson"/>).</summary>
     public string RatingsJson => Ratings.ToJson();

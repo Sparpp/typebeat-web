@@ -376,6 +376,7 @@ public static class BeatmapPackageParser
             VideoFilename = video,
             Bpm = bpm,
             LyricSectionLines = lyricLines,
+            StripBackingVocals = formatVersion < LiteralBracketsFromVersion,
             Lines = parsedLines,
             UnromanisedWords = lyricHeader.Unromanised,
             Pace = LyricPace.Compute(parsedLines),

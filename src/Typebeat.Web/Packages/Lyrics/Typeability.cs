@@ -83,6 +83,65 @@ public static class Typeability
     public static bool IsCell(char c) => IsTypeable(c) || IsFreestyle(c);
 
     /// <summary>
+    /// A character the POLYGLOT mod plays as a typed cell: a letter or a mark of any script
+    /// (Unicode categories L and M) or a decimal digit (game's <c>Typeability.IsPolyglotCell</c>,
+    /// copied verbatim). Read ONLY by the Polyglot mirror (<see cref="PolyglotLine"/>,
+    /// <see cref="TypingLine"/>): every legacy path keeps reading <see cref="IsTypeable"/>.
+    /// </summary>
+    public static bool IsPolyglotCell(char c)
+    {
+        switch (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c))
+        {
+            case System.Globalization.UnicodeCategory.UppercaseLetter:
+            case System.Globalization.UnicodeCategory.LowercaseLetter:
+            case System.Globalization.UnicodeCategory.TitlecaseLetter:
+            case System.Globalization.UnicodeCategory.ModifierLetter:
+            case System.Globalization.UnicodeCategory.OtherLetter:
+            case System.Globalization.UnicodeCategory.NonSpacingMark:
+            case System.Globalization.UnicodeCategory.SpacingCombiningMark:
+            case System.Globalization.UnicodeCategory.EnclosingMark:
+            case System.Globalization.UnicodeCategory.DecimalDigitNumber:
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>The Polyglot twin of <see cref="IsCell"/> (game's <c>IsPolyglotTypeCell</c>).</summary>
+    public static bool IsPolyglotTypeCell(char c) => IsCell(c) || IsPolyglotCell(c);
+
+    /// <summary>A mark the Polyglot mod types under Literate (game's <c>IsPolyglotPunctuation</c>).</summary>
+    public static bool IsPolyglotPunctuation(char c) => IsPunctuation(c) || char.IsPunctuation(c);
+
+    /// <summary>The Polyglot default stream's per-char rule (game's <c>PolyglotDefaultChar</c>).</summary>
+    public static char? PolyglotDefaultChar(char c)
+    {
+        if (c == WORD_BREAK || c == ' ')
+            return ' ';
+
+        return IsPolyglotTypeCell(c) ? Fold(c) : null;
+    }
+
+    /// <summary>The case fold every comparison uses (game's <c>Typeability.Fold</c>).</summary>
+    public static char Fold(char c) => char.ToLowerInvariant(c);
+
+    /// <summary>
+    /// The typographic variants folded into the supported ASCII forms, for ONE char (game's
+    /// <c>Typeability.FoldTypographic</c>, copied verbatim; the Polyglot mirror reads it to proxy an
+    /// original's own marks).
+    /// </summary>
+    public static char FoldTypographic(char c) => c switch
+    {
+        '\u2018' or '\u2019' or '\u201a' or '\u2032' => '\'',
+        '\u201c' or '\u201d' or '\u201e' or '\u2033' => '"',
+        '\u2013' or '\u2014' or '\u2015' or '\u2212' => '-',
+        // NBSP, figure space, narrow NBSP.
+        '\u00a0' or '\u2007' or '\u202f' => ' ',
+        _ => c
+    };
+
+    /// <summary>
     /// Removes bracketed backing-vocal spans, "(...)" and "[...]", the player never types.
     /// Unclosed brackets strip to end of string. Call BEFORE <see cref="Normalize"/>.
     /// (LyricBeatmap.cs:53-81.)
@@ -298,6 +357,14 @@ public static class Typeability
     /// surviving space to the authored word it sits in.</para>
     /// </summary>
     public static void ProjectDefault(string raw, StringBuilder text, List<int>? sourceIndices = null)
+        => ProjectDefault(raw, text, sourceIndices, DefaultChar);
+
+    /// <summary>
+    /// <see cref="ProjectDefault(string, StringBuilder, List{int}?)"/> under another per-char rule
+    /// (game's overload of the same name): the Polyglot flattening projects its default stream through
+    /// <see cref="PolyglotDefaultChar"/>. With <see cref="DefaultChar"/> it is the projection above.
+    /// </summary>
+    public static void ProjectDefault(string raw, StringBuilder text, List<int>? sourceIndices, Func<char, char?> defaultChar)
     {
         if (string.IsNullOrEmpty(raw))
             return;
@@ -307,7 +374,7 @@ public static class Typeability
 
         while (i < raw.Length)
         {
-            if (DefaultChar(raw[i]) is not char c)
+            if (defaultChar(raw[i]) is not char c)
             {
                 i++;
                 continue;
@@ -328,7 +395,7 @@ public static class Typeability
 
             while (end < raw.Length)
             {
-                if (DefaultChar(raw[end]) is not char d)
+                if (defaultChar(raw[end]) is not char d)
                 {
                     end++; // a deleted mark inside the run does not end it
                     continue;
@@ -350,7 +417,7 @@ public static class Typeability
             {
                 for (int k = i; k < end; k++)
                 {
-                    if (DefaultChar(raw[k]) is not ' ')
+                    if (defaultChar(raw[k]) is not ' ')
                         continue;
 
                     text.Append(' ');

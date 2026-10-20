@@ -71,8 +71,9 @@ public class LyricPaceTest
             // 0.6692 at the 12.0 anchor and 0.8197 on the chunked axis the rework shipped. It read
             // EXACTLY ZERO from v22 to v24: the line carries five cells, and the chunked axis's own
             // character floor (16) priced a map with no window holding that many at nothing. That
-            // floor is gone at v25, so the green reading is back. The pace figures above do not move.
-            Assert.That(pace.DifficultyRating, Is.EqualTo(0.93069279789319281));
+            // floor is gone at v25, so the green reading is back, and PR 43 (pace v28) lifts it from 0.9307
+            // by its whole-map typability bonus (a negative mean z). The pace figures above do not move.
+            Assert.That(pace.DifficultyRating, Is.EqualTo(0.94495566349513949));
         });
     }
 
@@ -702,14 +703,14 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricPace.Compute([tooShort]).DifficultyRating, Is.EqualTo(4.887130687171009), "1.0 s of singing is one fast burst");
-            Assert.That(LyricPace.Compute([longEnough]).DifficultyRating, Is.EqualTo(2.666707015839954), "3 s of the same six words is a slow one");
+            Assert.That(LyricPace.Compute([tooShort]).DifficultyRating, Is.EqualTo(4.902673451516768), "1.0 s of singing is one fast burst");
+            Assert.That(LyricPace.Compute([longEnough]).DifficultyRating, Is.EqualTo(2.6751880656377804), "3 s of the same six words is a slow one");
 
             // The ORDER is the part worth saying out loud: the short map outrates the long one,
             // where the envelope model had it at exactly nothing.
             Assert.That(LyricPace.Compute([tooShort]).DifficultyRating, Is.GreaterThan(LyricPace.Compute([longEnough]).DifficultyRating));
 
-            Assert.That(LyricPace.Compute([belowTheFloor]).DifficultyRating, Is.EqualTo(0.81774938592926361), "a sparse map now rates its own windows: the character floor is gone (PerformancePoints v25)");
+            Assert.That(LyricPace.Compute([belowTheFloor]).DifficultyRating, Is.EqualTo(0.82008219961232054), "a sparse map now rates its own windows: the character floor is gone (PerformancePoints v25)");
         });
     }
 
@@ -749,8 +750,8 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(oneLine), Is.EqualTo(2.1018069517667728), "23 cells: four words + the 3 spaces between them");
-            Assert.That(LyricDifficulty.Compute(fourLines), Is.EqualTo(1.7908710384500925), "20 cells: no space over a line break");
+            Assert.That(LyricDifficulty.Compute(oneLine), Is.EqualTo(2.1078517699642552), "23 cells: four words + the 3 spaces between them");
+            Assert.That(LyricDifficulty.Compute(fourLines), Is.EqualTo(1.7962369444673221), "20 cells: no space over a line break");
 
             Assert.That(LyricDifficulty.Compute(oneLine), Is.GreaterThan(LyricDifficulty.Compute(fourLines)),
                 "the extra keystrokes have to be worth something, whatever the axis");
@@ -774,9 +775,9 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(map, 0.75), Is.EqualTo(6.8277402216711653), "sr_ht");
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(8.6605850300065299), "difficulty_rating");
-            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(12.694611634615599), "sr_dt");
+            Assert.That(LyricDifficulty.Compute(map, 0.75), Is.EqualTo(6.8512192811076789), "sr_ht");
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(8.6903668295584655), "difficulty_rating");
+            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(12.738265542265243), "sr_dt");
         });
     }
 
@@ -797,8 +798,8 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(9.7403999749190024).Within(1e-9), "clear of 10 at 1.00x");
-            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(14.062221324374589).Within(1e-9), "under the old ceiling this read exactly 10.00");
+            Assert.That(LyricDifficulty.Compute(map), Is.EqualTo(9.7738950146424912).Within(1e-9), "clear of 10 at 1.00x");
+            Assert.That(LyricDifficulty.Compute(map, 1.50), Is.EqualTo(14.110578133445392).Within(1e-9), "under the old ceiling this read exactly 10.00");
         });
     }
 
@@ -912,9 +913,9 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(gapped), Is.EqualTo(7.3608261938824215));
-            Assert.That(LyricDifficulty.Compute(gapped, 1.50), Is.EqualTo(9.9989298988167334), "sr_dt");
-            Assert.That(LyricDifficulty.Compute(denseHalf), Is.EqualTo(7.7333046888624128), "the dense half alone");
+            Assert.That(LyricDifficulty.Compute(gapped), Is.EqualTo(7.3865843519889429));
+            Assert.That(LyricDifficulty.Compute(gapped, 1.50), Is.EqualTo(10.033919723388845), "sr_dt");
+            Assert.That(LyricDifficulty.Compute(denseHalf), Is.EqualTo(7.7598977803590934), "the dense half alone");
 
             Assert.That(LyricDifficulty.Compute(gapped), Is.LessThan(LyricDifficulty.Compute(denseHalf)),
                 "the chunked axis charges for the easy tail behind the gap");
@@ -1531,14 +1532,14 @@ public class LyricPaceTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(LyricDifficulty.Compute(big), Is.EqualTo(20.916395725603415));
-            Assert.That(LyricDifficulty.Compute(big, 1.50), Is.EqualTo(30.706334165525064));
-            Assert.That(LyricDifficulty.Compute(realistic), Is.EqualTo(5.1243366042448653));
-            Assert.That(LyricDifficulty.Compute(mid, 0.75), Is.EqualTo(6.8277402216711653));
-            Assert.That(LyricDifficulty.Compute(mid), Is.EqualTo(8.6605850300065299));
-            Assert.That(LyricDifficulty.Compute(mid, 1.50), Is.EqualTo(12.694611634615599));
+            Assert.That(LyricDifficulty.Compute(big), Is.EqualTo(20.989384416358078));
+            Assert.That(LyricDifficulty.Compute(big, 1.50), Is.EqualTo(30.813485280756332));
+            Assert.That(LyricDifficulty.Compute(realistic), Is.EqualTo(5.1418377347840236));
+            Assert.That(LyricDifficulty.Compute(mid, 0.75), Is.EqualTo(6.8512192811076789));
+            Assert.That(LyricDifficulty.Compute(mid), Is.EqualTo(8.6903668295584655));
+            Assert.That(LyricDifficulty.Compute(mid, 1.50), Is.EqualTo(12.738265542265243));
             // No mark and no capital in the pool, so the Literate stream is the same stream.
-            Assert.That(LyricDifficulty.Compute(mid, 1, literate: true), Is.EqualTo(8.6605850300065299));
+            Assert.That(LyricDifficulty.Compute(mid, 1, literate: true), Is.EqualTo(8.6903668295584655));
         });
     }
 

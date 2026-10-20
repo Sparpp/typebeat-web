@@ -69,11 +69,11 @@ public static class TypabilityIndex
     public const double MaxMultiplier = 4.0;
 
     /// <summary>
-    /// The z a line contributes is clamped to this range: the index was fitted on sentences
-    /// between about -1.24 and +1.08, and a single line far outside it should not be able to
-    /// define a window.
+    /// A line contributes z between -5 and +3. The lower bound allows difficult
+    /// punctuation-separated letter sequences to retain more of their estimated demand.
     /// </summary>
-    private const double clamp_z = 3.0;
+    private const double min_z = -5.0;
+    private const double max_z = 3.0;
 
     /// <summary>
     /// THE ONE SANCTIONED DIFFERENCE from the game's copy of this file: the same table, embedded
@@ -189,8 +189,8 @@ public static class TypabilityIndex
         return Math.Min(MaxMultiplier, Math.Max(MinMultiplier, raw));
     }
 
-    /// <summary>Clamps a raw z-score into the range the index was fitted on.</summary>
-    public static double ClampZ(double z) => Math.Min(clamp_z, Math.Max(-clamp_z, z));
+    /// <summary>Clamps a raw z-score to the contribution bounds of -5 and +3.</summary>
+    public static double ClampZ(double z) => Math.Min(max_z, Math.Max(min_z, z));
 
     private static Dictionary<string, Score> load()
     {

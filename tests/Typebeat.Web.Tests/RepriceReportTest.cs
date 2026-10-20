@@ -203,7 +203,7 @@ public class RepriceReportTest
         {
             Assert.That(Length.Count(parsed.Lines, literate: false), Is.EqualTo(5), "ab + space + cd");
             Assert.That(Length.StarBonus(Length.Count(parsed.Lines, literate: false)), Is.EqualTo(0));
-            Assert.That(parsed.Pace.DifficultyRating, Is.EqualTo(0.93069279789319281));
+            Assert.That(parsed.Pace.DifficultyRating, Is.EqualTo(0.94495566349513949));
         });
     }
 

@@ -182,7 +182,7 @@ public class PackageParserTest
             // floor priced at EXACTLY ZERO from v22. The floor is gone at v25, so it rates again
             // (0.93; 0.82 on the v21 chunked grid, 0.67 under the envelope model at the 12.0 anchor,
             // 0.59 at the 10.6 anchor, 0.63 under the strain model before that).
-            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.93069279789319281));
+            Assert.That(diff.Pace.DifficultyRating, Is.EqualTo(0.94495566349513949));
 
             // The rolling-window columns (028_wpm_curve.sql) are NULL here, and that is the
             // unmeasurable arm of their contract rather than an omission: "ab cd" is 5 cells

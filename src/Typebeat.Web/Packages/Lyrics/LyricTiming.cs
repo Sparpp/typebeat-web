@@ -54,12 +54,50 @@ public sealed class TimedUnit
     /// <summary>
     /// The word as the song WRITES it, in its own script (backlog 330; game's
     /// <c>TimedUnit.Original</c>), read off the word object's optional <c>original</c> key and null
-    /// when it has none. PRESERVED, never rated: nothing this server computes reads it, which is the
-    /// contract that lets a map gain originals without a single rating or fingerprint moving (see
-    /// <see cref="GameplayFingerprint"/>).
+    /// when it has none. PRESERVED, and never read by a BASE figure: nothing the server computes for a
+    /// play without Polyglot reads it, which is the contract that lets a map gain originals without a
+    /// single base rating or fingerprint moving (see <see cref="GameplayFingerprint"/>). Since PR 43 the
+    /// Polyglot half of the rating matrix reads it (<see cref="PolyglotSummary"/>), through the Polyglot
+    /// parse, which keeps it exactly as written.
     /// </summary>
     public string? Original { get; init; }
+
+    /// <summary>
+    /// Where the word's timing came from (game's <c>TimedUnit.Source</c>): explicit word timing or
+    /// the interpolation fallback. Read only by the Polyglot mirror, which carries it through.
+    /// </summary>
+    public TimingSource Source { get; init; } = TimingSource.Interpolated;
+
+    /// <summary>The aligner's score for the word (game's <c>TimedUnit.Confidence</c>), 1 when absent.</summary>
+    public double Confidence { get; init; } = 1;
+
+    /// <summary>
+    /// The word's AUTHORED character splits, one per kept boundary (game's
+    /// <c>TimedUnit.SyllableSplits</c>, the <c>split_chars</c> key), or empty for a derived split.
+    /// Kept only under the game's rule (nothing clamped away, a valid split of the token). No base
+    /// rating reads it; the Polyglot mirror carries romanised cuts onto the original through it.
+    /// </summary>
+    public IReadOnlyList<int> SyllableSplits { get; init; } = Array.Empty<int>();
+
+    /// <summary>The mapper's explicit cut links between the two spellings (game's <c>TimedUnit.OriginalSplits</c>).</summary>
+    public IReadOnlyList<OriginalLyricSplit> OriginalSplits { get; init; } = Array.Empty<OriginalLyricSplit>();
 }
+
+/// <summary>Where a unit's timing came from (game's <c>TimingSource</c>).</summary>
+public enum TimingSource
+{
+    Interpolated,
+    Explicit
+}
+
+/// <summary>A mapper-authored correspondence between cuts in the two spellings (game's <c>OriginalLyricSplit</c>).</summary>
+public readonly record struct OriginalLyricSplit(int TextIndex, int OriginalIndex);
+
+/// <summary>
+/// A word the romaniser could not spell (game's <c>UnromanisedWord</c>): no token in the line text,
+/// its original at <paramref name="Position"/> (the number of typed words before it) over its own span.
+/// </summary>
+public readonly record struct UnromanisedWord(int Position, string Original, double StartTime, double EndTime);
 
 /// <summary>
 /// AN AUTHORED PAUSE INSIDE ONE WORD, the Map Editor's <b>Insert Pause</b> (game's
@@ -106,6 +144,19 @@ public sealed class LyricLine
     /// Preserved, never rated, like <see cref="TimedUnit.Original"/>.
     /// </summary>
     public string? Original { get; init; }
+
+    /// <summary>The line's seal grace (game's <c>LyricLine.SealGraceMs</c>); read only by the Polyglot mirror.</summary>
+    public double SealGraceMs { get; init; }
+
+    /// <summary>The aligner's estimated flag (game's <c>LyricLine.Estimated</c>); carried, never read.</summary>
+    public bool Estimated { get; init; }
+
+    /// <summary>
+    /// The line's UNROMANISED words (game's <c>LyricLine.UnromanisedWords</c>). Filled only by the
+    /// Polyglot parse (<see cref="LyricTiming.ParseSection"/> with <c>polyglot: true</c>); the base parse
+    /// leaves it empty, as it always has.
+    /// </summary>
+    public IReadOnlyList<UnromanisedWord> UnromanisedWords { get; init; } = Array.Empty<UnromanisedWord>();
 }
 
 /// <summary>
@@ -128,6 +179,9 @@ public static class LyricTiming
     public const int SUPPORTED_VERSION = 2;
     public const double LAST_LINE_TAIL_MS = 3000;
 
+    /// <summary>TimingJsonLoader.MAX_SEAL_GRACE_MS: the cap on a line's seal grace.</summary>
+    public const double MAX_SEAL_GRACE_MS = 700;
+
     /// <summary>
     /// One parsed [Lyrics] line. <c>Words</c>'s fourth member is the word's AUTHORED SYLLABLE
     /// STARTS as they sit on the wire (the <c>start_ms</c> of each <c>"syllables"</c> object the
@@ -149,7 +203,12 @@ public static class LyricTiming
         List<(string Text, double Start, double End, double[] Syllables)> Words,
         List<List<(double Start, double End, int Split)>>? WordPauses = null,
         string? Original = null,
-        List<string?>? WordOriginals = null);
+        List<string?>? WordOriginals = null,
+        bool Estimated = false,
+        double? SealGraceMs = null,
+        List<List<int>>? WordSplits = null,
+        List<double>? WordScores = null,
+        List<List<OriginalLyricSplit>>? WordOriginalSplits = null);
 
     /// <summary>Header fields of a [Lyrics] section (all optional on the wire).</summary>
     public sealed class Header
@@ -178,7 +237,8 @@ public static class LyricTiming
     /// decoder does. Defaults to false (the map-format contract, brackets are literal), so a caller
     /// holding a [Lyrics] section with no file around it gets the CURRENT reading.
     /// </param>
-    public static (Header Header, IReadOnlyList<LyricLine> Lines) ParseSection(IEnumerable<string> sectionLines, bool stripBackingVocals = false)
+    public static (Header Header, IReadOnlyList<LyricLine> Lines) ParseSection(IEnumerable<string> sectionLines, bool stripBackingVocals = false,
+                                                                               bool polyglot = false)
     {
         var header = new Header();
         var raw = new List<RawLine>();
@@ -206,7 +266,7 @@ public static class LyricTiming
 
                 header.Unromanised.AddRange(UnromanisedOf(root, stripBackingVocals));
 
-                if (TryParseRawLine(root, out var rawLine, stripBackingVocals))
+                if (TryParseRawLine(root, out var rawLine, stripBackingVocals, polyglot))
                     raw.Add(rawLine);
             }
             catch (JsonException)
@@ -215,7 +275,7 @@ public static class LyricTiming
             }
         }
 
-        return (header, BuildLines(raw, header.SongEndMs));
+        return (header, BuildLines(raw, header.SongEndMs, polyglot));
     }
 
     /// <summary>
@@ -234,7 +294,7 @@ public static class LyricTiming
     /// yields no cell and is dropped, and a partial strip still changes the token count so the
     /// words[] pairing in <see cref="BuildLines"/> falls back to interpolation for that line.
     /// </param>
-    public static bool TryParseRawLine(JsonElement lineElement, out RawLine rawLine, bool stripBackingVocals = false)
+    public static bool TryParseRawLine(JsonElement lineElement, out RawLine rawLine, bool stripBackingVocals = false, bool polyglot = false)
     {
         rawLine = default;
 
@@ -265,7 +325,13 @@ public static class LyricTiming
         // but punctuation ("...") now normalizes non-empty yet still gives the player no cell at
         // all. The two conditions coincide exactly for every other input, so this is the same rule
         // the parser has always applied (and the same one the browser core applies).
-        if (Typeability.ToDefaultStream(normalized).Length == 0)
+        //
+        // THE POLYGLOT PARSE keeps the game's own rule instead (TimingJsonLoader.TryParseRawLine): a
+        // line with no cell survives when it carries an ORIGINAL or an unromanised word, because the
+        // original is what a Polyglot play types. The base parse keeps the stricter drop it has
+        // always had, so no base rating, pace figure or count moves for it.
+        if (Typeability.ToDefaultStream(normalized).Length == 0
+            && (!polyglot || readOriginal(lineElement, polyglot) == null && !carriesUnromanisedWord(lineElement, polyglot)))
             return false;
 
         if (!lineElement.TryGetProperty("start_ms", out JsonElement startElement)
@@ -282,7 +348,17 @@ public static class LyricTiming
             endMs = parsedEnd;
         }
 
+        bool estimated = lineElement.TryGetProperty("estimated", out JsonElement estimatedElement)
+                         && estimatedElement.ValueKind == JsonValueKind.True;
+
         var words = new List<(string Text, double Start, double End, double[] Syllables)>();
+
+        // Parallel to words[]: word i's authored char splits (split_chars), its aligner score and its
+        // explicit original cut links, read exactly as TimingJsonLoader reads them. No base figure
+        // reads any of the three; the Polyglot mirror carries them onto the original.
+        var wordSplits = new List<List<int>>();
+        var wordScores = new List<double>();
+        var wordOriginalSplits = new List<List<OriginalLyricSplit>>();
 
         // Parallel to words[]: word i's authored pauses, raw (TimingJsonLoader's wordPauses).
         var wordPauses = new List<List<(double Start, double End, int Split)>>();
@@ -338,8 +414,38 @@ public static class LyricTiming
                     syllables = parsed.Count == 0 ? Array.Empty<double>() : parsed.ToArray();
                 }
 
+                // Missing score = trusted (1).
+                double score = wordElement.TryGetProperty("score", out JsonElement scEl) && tryGetDouble(scEl, out double scv) ? scv : 1;
+
+                var splitChars = new List<int>();
+
+                if (wordElement.TryGetProperty("split_chars", out JsonElement splitsEl) && splitsEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement splitEl in splitsEl.EnumerateArray())
+                    {
+                        if (tryGetInt(splitEl, out int split))
+                            splitChars.Add(split);
+                    }
+                }
+
                 words.Add((wordText, ws, we, syllables));
-                wordOriginals.Add(readOriginal(wordElement));
+                wordSplits.Add(splitChars);
+                wordScores.Add(score);
+                wordOriginals.Add(readOriginal(wordElement, polyglot));
+
+                var originalSplits = new List<OriginalLyricSplit>();
+
+                if (wordElement.TryGetProperty("original_splits", out JsonElement links) && links.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement link in links.EnumerateArray())
+                    {
+                        if (link.ValueKind == JsonValueKind.Array && link.GetArrayLength() == 2
+                            && tryGetInt(link[0], out int textIndex) && tryGetInt(link[1], out int originalIndex))
+                            originalSplits.Add(new OriginalLyricSplit(textIndex, originalIndex));
+                    }
+                }
+
+                wordOriginalSplits.Add(originalSplits);
 
                 // THE AUTHORED PAUSES (type!beat editor extension): the rests inside the word, read
                 // RAW here and validated against the CLAMPED word in buildExplicitUnits, exactly as
@@ -377,23 +483,58 @@ public static class LyricTiming
             }
         }
 
+        double? sealGraceMs = null;
+
+        if (lineElement.TryGetProperty("seal_grace_ms", out JsonElement sealGraceElement)
+            && tryGetDouble(sealGraceElement, out double parsedSealGrace))
+        {
+            sealGraceMs = parsedSealGrace;
+        }
+
         rawLine = new RawLine(normalized, startMs, endMs, words,
             wordPauses.Exists(p => p.Count > 0) ? wordPauses : null,
-            readOriginal(lineElement),
-            wordOriginals.Exists(o => o != null) ? wordOriginals : null);
+            readOriginal(lineElement, polyglot),
+            wordOriginals.Exists(o => o != null) ? wordOriginals : null,
+            estimated,
+            sealGraceMs,
+            wordSplits.Exists(w => w.Count > 0) ? wordSplits : null,
+            wordScores,
+            wordOriginalSplits.Exists(o => o.Count > 0) ? wordOriginalSplits : null);
         return true;
     }
 
     /// <summary>
-    /// The object's optional <c>original</c> string (backlog 330), or null when absent, empty or
-    /// not a string (TimingJsonLoader.readOriginal).
+    /// The object's optional <c>original</c> string, or null. The base parse reads a non-empty string
+    /// only, as it always has; the Polyglot parse also keeps the editor's EMPTY placeholder, which is
+    /// the game's rule since PR 43 (TimingJsonLoader.readOriginal).
     /// </summary>
-    private static string? readOriginal(JsonElement element)
+    private static string? readOriginal(JsonElement element, bool polyglot = false)
         => element.TryGetProperty("original", out JsonElement originalElement)
            && originalElement.ValueKind == JsonValueKind.String
-           && originalElement.GetString() is { Length: > 0 } original
+           && originalElement.GetString() is string original
+           && (polyglot || original.Length > 0)
             ? original
             : null;
+
+    /// <summary>Whether any of the line's words[] is an unromanised word (TimingJsonLoader.carriesUnromanisedWord).</summary>
+    private static bool carriesUnromanisedWord(JsonElement lineElement, bool polyglot)
+    {
+        if (!lineElement.TryGetProperty("words", out JsonElement wordsElement) || wordsElement.ValueKind != JsonValueKind.Array)
+            return false;
+
+        foreach (JsonElement word in wordsElement.EnumerateArray())
+        {
+            if (word.ValueKind == JsonValueKind.Object
+                && readOriginal(word, polyglot) != null
+                && word.TryGetProperty("text", out JsonElement text) && text.ValueKind == JsonValueKind.String
+                && text.GetString()?.Length == 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Whether word <paramref name="index"/> of <paramref name="line"/> is UNROMANISED (backlog
@@ -453,7 +594,7 @@ public static class LyricTiming
     /// line's hard seal is the next line's start; the last line gets vocal end + 3 s tail capped
     /// at song_end_ms. (TimingJsonLoader.BuildLines, TimingJsonLoader.cs:191-255.)
     /// </summary>
-    public static IReadOnlyList<LyricLine> BuildLines(IReadOnlyList<RawLine> raw, double? songEndMs)
+    public static IReadOnlyList<LyricLine> BuildLines(IReadOnlyList<RawLine> raw, double? songEndMs, bool polyglot = false)
     {
         var result = new List<LyricLine>(raw.Count);
 
@@ -479,16 +620,37 @@ public static class LyricTiming
 
             double singEnd = Math.Clamp(line.EndMs, start, end);
 
+            // TimingJsonLoader.BuildLines' seal grace: an explicit one wins, else the raw overrun.
+            double rawWordsEnd = start;
+
+            foreach (var w in line.Words)
+                rawWordsEnd = Math.Max(rawWordsEnd, Math.Max(w.Start, w.End));
+
+            double sealGrace = line.SealGraceMs is double explicitGrace
+                ? Math.Clamp(explicitGrace, 0, MAX_SEAL_GRACE_MS)
+                : Math.Min(Math.Max(0, rawWordsEnd - end), MAX_SEAL_GRACE_MS);
+
             string[] tokens = line.Text.Split(' ');
             IReadOnlyList<TimedUnit> units;
 
             // UNROMANISED WORDS (backlog 330) have no token, so they are taken out of the pairing,
             // exactly as TimingJsonLoader.pairedWords takes them out. A line without one pairs
             // exactly as it always has.
-            var (words, wordPauses, wordOriginals) = pairedWords(line);
+            var unromanised = new List<(int Before, int Index)>();
+            var paired = pairedWords(line, unromanised);
 
-            if (tokens.Length == words.Count && tokens.Length > 0)
-                units = buildExplicitUnits(tokens, words, wordPauses, start, end, wordOriginals);
+            if (tokens.Length == paired.Words.Count && tokens.Length > 0)
+            {
+                units = buildExplicitUnits(tokens, paired.Words, paired.WordPauses, start, end, paired.WordOriginals,
+                    paired.WordSplits, paired.WordScores, polyglot);
+
+                if (polyglot && line.WordOriginalSplits != null)
+                {
+                    var links = line.WordOriginalSplits.Where((_, index) => !IsUnromanisedWord(line, index)).ToArray();
+                    units = units.Select((unit, index) => index < links.Length
+                        ? OriginalLyricSubdivisions.WithExplicit(unit, links[index]) : unit).ToArray();
+                }
+            }
             else
                 units = withDerivedOriginals(InterpolateUnits(line.Text, start, singEnd), line.Original);
 
@@ -500,6 +662,15 @@ public static class LyricTiming
                 SingEndTime = singEnd,
                 Units = units,
                 Original = line.Original,
+                SealGraceMs = sealGrace,
+                Estimated = line.Estimated,
+                UnromanisedWords = !polyglot || unromanised.Count == 0
+                    ? Array.Empty<UnromanisedWord>()
+                    : unromanised.Select(u => new UnromanisedWord(
+                        Math.Min(u.Before, units.Count),
+                        line.WordOriginals![u.Index]!,
+                        Math.Clamp(line.Words[u.Index].Start, start, end),
+                        Math.Clamp(line.Words[u.Index].End, Math.Clamp(line.Words[u.Index].Start, start, end), end))).ToArray(),
             });
         }
 
@@ -528,7 +699,10 @@ public static class LyricTiming
                 StartTime = u.StartTime,
                 EndTime = u.EndTime,
                 SyllableBoundaries = u.SyllableBoundaries,
+                SyllableSplits = u.SyllableSplits,
                 Pauses = u.Pauses,
+                Source = u.Source,
+                Confidence = u.Confidence,
                 Original = originals[i],
             }
             : u).ToArray();
@@ -568,7 +742,8 @@ public static class LyricTiming
     /// (TimingJsonLoader.pairedWords). A line with none comes back with its own lists.
     /// </summary>
     private static (List<(string Text, double Start, double End, double[] Syllables)> Words,
-        List<List<(double Start, double End, int Split)>>? WordPauses, List<string?>? WordOriginals) pairedWords(RawLine line)
+        List<List<(double Start, double End, int Split)>>? WordPauses, List<string?>? WordOriginals,
+        List<List<int>>? WordSplits, List<double>? WordScores) pairedWords(RawLine line, List<(int Before, int Index)> unromanised)
     {
         bool any = false;
 
@@ -576,23 +751,30 @@ public static class LyricTiming
             any = IsUnromanisedWord(line, i);
 
         if (!any)
-            return (line.Words, line.WordPauses, line.WordOriginals);
+            return (line.Words, line.WordPauses, line.WordOriginals, line.WordSplits, line.WordScores);
 
         var words = new List<(string Text, double Start, double End, double[] Syllables)>();
         var pauses = line.WordPauses == null ? null : new List<List<(double Start, double End, int Split)>>();
         var originals = new List<string?>();
+        var splits = line.WordSplits == null ? null : new List<List<int>>();
+        var scores = line.WordScores == null ? null : new List<double>();
 
         for (int i = 0; i < line.Words.Count; i++)
         {
             if (IsUnromanisedWord(line, i))
+            {
+                unromanised.Add((words.Count, i));
                 continue;
+            }
 
             words.Add(line.Words[i]);
             pauses?.Add(i < line.WordPauses!.Count ? line.WordPauses[i] : new List<(double, double, int)>());
             originals.Add(line.WordOriginals![i]);
+            splits?.Add(i < line.WordSplits!.Count ? line.WordSplits[i] : new List<int>());
+            scores?.Add(i < line.WordScores!.Count ? line.WordScores[i] : 1);
         }
 
-        return (words, pauses, originals);
+        return (words, pauses, originals, splits, scores);
     }
 
     /// <summary>
@@ -647,7 +829,10 @@ public static class LyricTiming
         List<List<(double Start, double End, int Split)>>? wordPauses,
         double lineStart,
         double lineEnd,
-        List<string?>? wordOriginals = null)
+        List<string?>? wordOriginals = null,
+        List<List<int>>? wordSplits = null,
+        List<double>? wordScores = null,
+        bool polyglot = false)
     {
         var units = new List<TimedUnit>(tokens.Length);
         double prevEnd = lineStart;
@@ -675,19 +860,34 @@ public static class LyricTiming
                 tokens[m], ws, we,
                 rawPauses?.Select(pause => new WordPause(pause.Start, pause.End, pause.Split)) ?? Enumerable.Empty<WordPause>());
 
+            // The authored split (split_chars), kept only when nothing was clamped away and the
+            // indices are a valid split of this token, exactly as TimingJsonLoader keeps it.
+            var boundaries = syllableBoundaries(words[m].Syllables, ws, we);
+            var splits = wordSplits != null && m < wordSplits.Count ? wordSplits[m] : null;
+            int[] keptSplits = splits != null
+                               && boundaries.Count == words[m].Syllables.Length
+                               && SyllableSegments.IsAuthoredValid(tokens[m], boundaries.Count + 1, splits)
+                ? splits.ToArray()
+                : Array.Empty<int>();
+
             units.Add(new TimedUnit
             {
                 Text = tokens[m],
                 StartTime = ws,
                 EndTime = we,
+                Source = TimingSource.Explicit,
+                Confidence = Math.Clamp(wordScores != null && m < wordScores.Count ? wordScores[m] : 1, 0, 1),
+                SyllableSplits = keptSplits,
                 // "Keep only subdivisions that stayed strictly inside the (possibly clamped) word",
                 // distinct and ordered, exactly as TimingJsonLoader.cs:406 filters them. A boundary
                 // ON either edge would author an empty syllable segment, which is why the
                 // comparisons are strict on both sides.
-                SyllableBoundaries = syllableBoundaries(words[m].Syllables, ws, we),
+                SyllableBoundaries = boundaries,
                 Pauses = keptPauses.Count == 0 ? Array.Empty<WordPause>() : keptPauses,
-                // Preserved, never rated (backlog 330).
-                Original = wordOriginals != null && m < wordOriginals.Count && wordOriginals[m] != tokens[m] ? wordOriginals[m] : null,
+                // Preserved, never rated by the base figures (backlog 330). The Polyglot parse keeps it
+                // exactly as written, the game's rule since PR 43; the base parse keeps dropping an
+                // original equal to its token, so lyrics_original and the base figures are untouched.
+                Original = wordOriginals != null && m < wordOriginals.Count && (polyglot || wordOriginals[m] != tokens[m]) ? wordOriginals[m] : null,
             });
 
             prevEnd = we;

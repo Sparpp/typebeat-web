@@ -100,4 +100,48 @@
     <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Romaniser.cs" Link="RomaniserMirror\server.cs.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- PR 43: PolyglotMirrorSourceTest holds the server's Polyglot and Japanese copies to the game's
+       text, and JapaneseReadingParityTest reads the game's Japanese fixtures (the mozc romaji table and
+       every Japanese literal of its Japanese, Polyglot and Original tests) as its corpus. -->
+  <ItemGroup>
+    <None Include="$(TypebeatRulesetDir)\Gameplay\PausedWord.cs" Link="PolyglotMirror\game\PausedWord.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Gameplay\SyllableSegments.cs" Link="PolyglotMirror\game\SyllableSegments.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Gameplay\Syllabifier.cs" Link="PolyglotMirror\game\Syllabifier.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Gameplay\PolyglotText.cs" Link="PolyglotMirror\game\PolyglotText.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Gameplay\PolyglotLine.cs" Link="PolyglotMirror\game\PolyglotLine.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Gameplay\JapaneseRomaji.cs" Link="PolyglotMirror\game\JapaneseRomaji.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Gameplay\JapaneseCharacterReadings.cs" Link="PolyglotMirror\game\JapaneseCharacterReadings.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Gameplay\JapaneseInputPlan.cs" Link="PolyglotMirror\game\JapaneseInputPlan.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Gameplay\TypingLine.cs" Link="PolyglotMirror\game\TypingLine.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Beatmaps\OriginalLyricAlignment.cs" Link="PolyglotMirror\game\OriginalLyricAlignment.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Beatmaps\OriginalLyricSubdivisions.cs" Link="PolyglotMirror\game\OriginalLyricSubdivisions.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Beatmaps\JapaneseReading.cs" Link="PolyglotMirror\game\JapaneseReading.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Beatmaps\JapaneseTextCache.cs" Link="PolyglotMirror\game\JapaneseTextCache.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Beatmaps\PolyglotDifficulty.cs" Link="PolyglotMirror\game\PolyglotDifficulty.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Beatmaps\PolyglotRatingSupport.cs" Link="PolyglotMirror\game\PolyglotRatingSupport.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Beatmaps\LyricOriginals.cs" Link="PolyglotMirror\game\LyricOriginals.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Beatmaps\LrcParser.cs" Link="PolyglotMirror\game\LrcParser.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Import\OriginalLyricGenerator.cs" Link="PolyglotMirror\game\OriginalLyricGenerator.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Import\JapaneseLyricGenerator.cs" Link="PolyglotMirror\game\JapaneseLyricGenerator.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\Import\JapaneseLyricGenerator.SurfaceReadings.cs" Link="PolyglotMirror\game\JapaneseLyricGenerator.SurfaceReadings.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\PausedWord.cs" Link="PolyglotMirror\server\PausedWord.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\SyllableSegments.cs" Link="PolyglotMirror\server\SyllableSegments.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Syllabifier.cs" Link="PolyglotMirror\server\Syllabifier.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\PolyglotText.cs" Link="PolyglotMirror\server\PolyglotText.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\PolyglotLine.cs" Link="PolyglotMirror\server\PolyglotLine.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\JapaneseRomaji.cs" Link="PolyglotMirror\server\JapaneseRomaji.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\JapaneseCharacterReadings.cs" Link="PolyglotMirror\server\JapaneseCharacterReadings.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\JapaneseInputPlan.cs" Link="PolyglotMirror\server\JapaneseInputPlan.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\TypingLine.cs" Link="PolyglotMirror\server\TypingLine.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\OriginalLyricAlignment.cs" Link="PolyglotMirror\server\OriginalLyricAlignment.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\OriginalLyricSubdivisions.cs" Link="PolyglotMirror\server\OriginalLyricSubdivisions.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\JapaneseReading.cs" Link="PolyglotMirror\server\JapaneseReading.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\JapaneseTextCache.cs" Link="PolyglotMirror\server\JapaneseTextCache.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\PolyglotDifficulty.cs" Link="PolyglotMirror\server\PolyglotDifficulty.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\PolyglotRatingSupport.cs" Link="PolyglotMirror\server\PolyglotRatingSupport.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Typebeat.Web\Packages\Lyrics\Polyglot\PolyglotImportMirror.cs" Link="PolyglotMirror\server\PolyglotImportMirror.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\..\typebeat.Game.Rulesets.TypeBeat.Tests\NonVisual\fixtures\japanese-input\mozc-romaji.tsv" Link="JapaneseFixtures\mozc-romaji.tsv" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TypebeatRulesetDir)\..\typebeat.Game.Rulesets.TypeBeat.Tests\NonVisual\Japanese*.cs;$(TypebeatRulesetDir)\..\typebeat.Game.Rulesets.TypeBeat.Tests\NonVisual\Polyglot*.cs;$(TypebeatRulesetDir)\..\typebeat.Game.Rulesets.TypeBeat.Tests\NonVisual\Original*.cs" Link="JapaneseFixtures\%(Filename).txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

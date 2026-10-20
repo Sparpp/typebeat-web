@@ -58,8 +58,13 @@ public sealed class BeatmapRatings
     /// be told from this one on sight rather than by guessing from its keys. It is NOT a content
     /// version: a rating change bumps <see cref="LyricPace.VERSION"/> and rewrites every row, which
     /// is how a recompute reaches stored maps.
+    ///
+    /// <para>Schema 2 (PR 43) adds the POLYGLOT half: up to eighteen more cells on the two Polyglot
+    /// streams (<see cref="STREAM_POLYGLOT"/>, <see cref="STREAM_POLYGLOT_LITERATE"/>) and the
+    /// <see cref="PolyglotSummary"/> a Polyglot play is judged on, under a <c>polyglot</c> key. A
+    /// schema 1 document parses as before, with no Polyglot half (its Polyglot plays are pending).</para>
     /// </summary>
-    public const int SCHEMA_VERSION = 1;
+    public const int SCHEMA_VERSION = 2;
 
     /// <summary>The three judgement arms, as the document keys them.</summary>
     public const string ARM_NONE = "none";
@@ -70,12 +75,29 @@ public sealed class BeatmapRatings
     public const string STREAM_PLAIN = "plain";
     public const string STREAM_LITERATE = "literate";
 
+    /// <summary>
+    /// The two POLYGLOT streams (PR 43): the map as a Polyglot play types it, its originals projected
+    /// to the input stream the game rates (<see cref="PolyglotDifficulty.LinesFor"/>: Latin and Cyrillic
+    /// on their own characters at the native-layout key costs, Japanese on the shortest accepted
+    /// romaji), without and with Literate. Present only on a map that records originals and that the
+    /// game can rate under the mod (<see cref="PolyglotSummary.Supported"/>).
+    /// </summary>
+    public const string STREAM_POLYGLOT = "polyglot";
+    public const string STREAM_POLYGLOT_LITERATE = "polyglot-literate";
+
     private readonly Dictionary<string, MapRating> cells;
 
-    private BeatmapRatings(Dictionary<string, MapRating> cells)
+    private BeatmapRatings(Dictionary<string, MapRating> cells, PolyglotSummary? polyglot = null)
     {
         this.cells = cells;
+        Polyglot = polyglot;
     }
+
+    /// <summary>
+    /// What a Polyglot play on this map is judged on and how it may rank (see the type), or null on a
+    /// document written before schema 2 or computed without the Polyglot parse.
+    /// </summary>
+    public PolyglotSummary? Polyglot { get; }
 
     /// <summary>How many cells the matrix actually carries; 18 for a map this server rated itself.</summary>
     public int Count => cells.Count;
@@ -100,8 +122,14 @@ public sealed class BeatmapRatings
     /// "1.50" is the same key on every machine and in every locale. Flat rather than nested because
     /// the document is read by exact key and never walked.
     /// </summary>
-    public static string Key(LyricDifficulty.JudgementArm arm, bool literate, double rate)
-        => Key(ArmKey(arm), literate ? STREAM_LITERATE : STREAM_PLAIN, rate);
+    public static string Key(LyricDifficulty.JudgementArm arm, bool literate, double rate, bool polyglot = false)
+        => Key(ArmKey(arm), StreamKey(literate, polyglot), rate);
+
+    /// <summary>The document key of one typed stream.</summary>
+    public static string StreamKey(bool literate, bool polyglot)
+        => polyglot
+            ? literate ? STREAM_POLYGLOT_LITERATE : STREAM_POLYGLOT
+            : literate ? STREAM_LITERATE : STREAM_PLAIN;
 
     /// <summary>
     /// Whether a cell is storable at all. NaN and the infinities are refused on BOTH
@@ -138,10 +166,18 @@ public sealed class BeatmapRatings
     /// <para><c>ComputeDetail</c> rather than <c>Compute</c>, because the pair is what a price needs
     /// and the detail reading carries both halves off one pass; asking for the stars and the
     /// difficult characters separately would double the cost for nothing.</para>
+    ///
+    /// <para>THE POLYGLOT HALF (PR 43) is computed when <paramref name="polyglotLines"/> is given (the
+    /// difficulty's Polyglot parse, <see cref="LyricTiming.ParseSection"/> with <c>polyglot: true</c>,
+    /// and <paramref name="declaredLanguage"/> its own <c>Language:</c>): the
+    /// <see cref="PolyglotSummary"/> always, and on a map the game can rate under the mod eighteen
+    /// more cells, each the game's <c>PerformancePoints.StarsFor</c> /
+    /// <c>DifficultCharactersFor</c> with Polyglot in the stack: the lines projected per stream
+    /// (Literate changes the projection, the arm and the rate do not), then the same detail pass.</para>
     /// </summary>
-    public static BeatmapRatings Compute(IReadOnlyList<LyricLine> lines)
+    public static BeatmapRatings Compute(IReadOnlyList<LyricLine> lines, IReadOnlyList<LyricLine>? polyglotLines = null, string? declaredLanguage = null)
     {
-        var cells = new Dictionary<string, MapRating>(Arms.Length * 2 * Rates.Length, StringComparer.Ordinal);
+        var cells = new Dictionary<string, MapRating>(Arms.Length * 4 * Rates.Length, StringComparer.Ordinal);
 
         foreach ((string armKey, LyricDifficulty.JudgementArm arm) in Arms)
         {
@@ -157,15 +193,41 @@ public sealed class BeatmapRatings
             }
         }
 
-        return new BeatmapRatings(cells);
+        PolyglotSummary? polyglot = null;
+
+        if (polyglotLines != null)
+        {
+            polyglot = PolyglotSummary.Compute(polyglotLines, declaredLanguage);
+
+            if (polyglot.Available && polyglot.Supported)
+            {
+                foreach (bool literate in (ReadOnlySpan<bool>)[false, true])
+                {
+                    var projected = PolyglotDifficulty.LinesFor(polyglotLines, PolyglotSummary.ModsFor(literate), polyglot.Language);
+
+                    foreach ((string armKey, LyricDifficulty.JudgementArm arm) in Arms)
+                    {
+                        foreach (double rate in Rates)
+                        {
+                            var detail = LyricDifficulty.ComputeDetail(projected, rate, literate, LyricDifficulty.Live, arm);
+
+                            cells[Key(armKey, StreamKey(literate, polyglot: true), rate)] =
+                                new MapRating(detail.Stars, detail.DifficultCharacters);
+                        }
+                    }
+                }
+            }
+        }
+
+        return new BeatmapRatings(cells, polyglot);
     }
 
     /// <summary>
     /// The cell for one play, or null when the matrix does not carry it. Null is the PENDING signal
     /// (see the type's own docs), so a caller must not coalesce it into a zeroed rating.
     /// </summary>
-    public MapRating? TryGet(LyricDifficulty.JudgementArm arm, bool literate, double rate)
-        => cells.TryGetValue(Key(arm, literate, rate), out MapRating cell) ? cell : null;
+    public MapRating? TryGet(LyricDifficulty.JudgementArm arm, bool literate, double rate, bool polyglot = false)
+        => cells.TryGetValue(Key(arm, literate, rate, polyglot), out MapRating cell) ? cell : null;
 
     /// <summary>
     /// A copy with every ARM-NONE star replaced by the one <paramref name="stars"/> gives for that
@@ -196,7 +258,7 @@ public sealed class BeatmapRatings
             }
         }
 
-        return new BeatmapRatings(replaced);
+        return new BeatmapRatings(replaced, Polyglot);
     }
 
     /// <summary>
@@ -219,7 +281,7 @@ public sealed class BeatmapRatings
         // two ingests of the same map produce byte-identical jsonb and a diff of two rows reads.
         foreach ((string armKey, LyricDifficulty.JudgementArm _) in Arms)
         {
-            foreach (string stream in (ReadOnlySpan<string>)[STREAM_PLAIN, STREAM_LITERATE])
+            foreach (string stream in (ReadOnlySpan<string>)[STREAM_PLAIN, STREAM_LITERATE, STREAM_POLYGLOT, STREAM_POLYGLOT_LITERATE])
             {
                 foreach (double rate in Rates)
                 {
@@ -238,6 +300,10 @@ public sealed class BeatmapRatings
         }
 
         document["cells"] = body;
+
+        if (Polyglot != null)
+            document["polyglot"] = Polyglot.ToJson();
+
         return document.ToString(Formatting.None);
     }
 
@@ -294,6 +360,6 @@ public sealed class BeatmapRatings
             cells[property.Name] = rating;
         }
 
-        return cells.Count == 0 ? null : new BeatmapRatings(cells);
+        return cells.Count == 0 ? null : new BeatmapRatings(cells, PolyglotSummary.Parse(document["polyglot"]));
     }
 }

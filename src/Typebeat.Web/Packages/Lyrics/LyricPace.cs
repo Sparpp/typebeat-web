@@ -473,6 +473,25 @@ public static class LyricPace
     /// No column is added, so no migration comes with it, and <c>PerformancePoints.VERSION</c> stays
     /// at 26.</para>
     ///
+    /// <para>v28 = PR 43: THE STAR RATING IS RETUNED FOR EVERY MAP, AND POLYGLOT IS RATED (mirrored
+    /// from the game's <c>LyricDifficulty</c>, <c>ChunkedEndurance</c>, <c>TypabilityIndex</c> and
+    /// <c>TypabilityModel</c>, whose difficulty calculator moves from version 8 to 17 in the same
+    /// change). Four things move the stored ratings. A line's typability z now clamps to
+    /// <c>[-5, 3]</c> instead of <c>[-3, 3]</c>; a line with no known character bigram is scored again
+    /// with its punctuation removed (<c>TypabilityModel.meanBigramFrequency</c>), so a
+    /// punctuation-separated letter run ("F. (F) B.") gets a reading; the whole map earns a final
+    /// <c>1 + max(0, -meanZ) / 100</c> (<c>LyricDifficulty.WholeMapTypabilityMultiplier</c>) when its
+    /// typability applies, Literate included; and under Literate each shifted SYMBOL pays its own
+    /// Shift surcharge unless it repeats the symbol before it (capitals still share one held Shift).
+    /// All six star columns, every cell of the <c>beatmaps.ratings</c> matrix and <c>target_wpm</c>
+    /// can move. THE MATRIX ALSO GAINS ITS POLYGLOT HALF (schema 2): on a map that records originals,
+    /// the <see cref="PolyglotSummary"/> a Polyglot play is judged on and, where the game can rate the
+    /// mod, eighteen cells on the two Polyglot streams. No column is added (both live inside
+    /// <c>ratings</c>), so no migration comes with it. <see cref="PaceBackfill"/> re-rates the whole
+    /// catalogue at boot and stamps <c>pp_version = 0</c> on every score of every row it rewrites, and
+    /// <c>PerformancePoints.VERSION</c> bumps to 27 in the same change (the combo maximum a Japanese
+    /// Polyglot play is clamped to).</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -485,7 +504,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 27;
+    public const int VERSION = 28;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's

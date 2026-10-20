@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Typebeat.Web.Packages;
 using Typebeat.Web.Packages.Lyrics;
+using Typebeat.Web.Scoring;
 
 namespace Typebeat.Web.Tests;
 
@@ -102,7 +103,9 @@ public class OriginalTextTest
 
     /// <summary>
     /// The parse READS and PRESERVES the originals and rates nothing off them: every unit, boundary,
-    /// pace figure and rating is the no-original map's.
+    /// pace figure and BASE rating is the no-original map's. Since PR 43 the originals do reach one
+    /// thing, the matrix's POLYGLOT half (a Polyglot play types them), which the no-original map
+    /// carries no cells of, so the eighteen base cells are compared rather than the whole document.
     /// </summary>
     [Test]
     public void TheParseReadsOriginalsAndRatesNothingOffThem()
@@ -123,7 +126,15 @@ public class OriginalTextTest
                 Is.EqualTo(plain.Lines[i].Units.SelectMany(u => u.SyllableBoundaries)));
         }
 
-        Assert.That(withOriginals.RatingsJson, Is.EqualTo(plain.RatingsJson));
+        foreach (var arm in new[] { LyricDifficulty.JudgementArm.None, LyricDifficulty.JudgementArm.Easy, LyricDifficulty.JudgementArm.HardRock })
+        foreach (bool literate in new[] { false, true })
+        foreach (double rate in BeatmapRatings.Rates)
+            Assert.That(withOriginals.Ratings.TryGet(arm, literate, rate), Is.EqualTo(plain.Ratings.TryGet(arm, literate, rate)), $"{arm} {literate} {rate}");
+
+        Assert.That(plain.Ratings.TryGet(LyricDifficulty.JudgementArm.None, false, 1.0, polyglot: true), Is.Null, "no originals, no Polyglot cells");
+        Assert.That(withOriginals.Ratings.TryGet(LyricDifficulty.JudgementArm.None, false, 1.0, polyglot: true), Is.Not.Null, "the Cyrillic originals rate under Polyglot");
+        Assert.That(withOriginals.Ratings.Polyglot!.Available, Is.True);
+        Assert.That(plain.Ratings.Polyglot!.Available, Is.False);
         Assert.That(withOriginals.Pace, Is.EqualTo(plain.Pace));
         Assert.That(withOriginals.UnromanisedWords, Is.Empty);
 
