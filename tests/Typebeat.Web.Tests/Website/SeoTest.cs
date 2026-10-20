@@ -203,7 +203,9 @@ public class SeoTest
             Assert.That(titleOf(html), Does.EndWith(" · type!beat"));
 
             // Backlog 418: the selected difficulty's stars, length and target, and a browser play.
-            Assert.That(titleOf(html), Is.EqualTo("Leaderboard Anthem typing game: The Score Settlers · type!beat"));
+            Assert.That(titleOf(html), Is.EqualTo("The Score Settlers - Leaderboard Anthem · type!beat"));
+            Assert.That(metaOf(html, "property", "og:title"), Is.EqualTo(titleOf(html)));
+            Assert.That(metaOf(html, "name", "twitter:title"), Is.EqualTo(titleOf(html)));
             Assert.That(metaOf(html, "name", "description"), Is.EqualTo(
                 "Type the lyrics of Leaderboard Anthem by The Score Settlers in time with the song. "
                 + "3.2★ map by neon mapper, 1:35 long, about 118 WPM target. Play free in your browser or in the desktop client."));
@@ -264,7 +266,7 @@ public class SeoTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(titleOf(html), Is.EqualTo("Editor Era Classic typing game: The Backfilled · type!beat"));
+            Assert.That(titleOf(html), Is.EqualTo("The Backfilled - Editor Era Classic · type!beat"));
             Assert.That(metaOf(html, "name", "description"), Is.EqualTo(
                 "Type the lyrics of Editor Era Classic by The Backfilled in time with the song. "
                 + "2.5★ map by neon mapper, 1:40 long. Play free in the desktop client."));
