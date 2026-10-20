@@ -189,11 +189,19 @@ public static class ScoringContract
     /// dictionaries. Never throws: unknown result keys contribute nothing, and degenerate input
     /// (null/empty maximum, negative counts) yields <c>StatisticsValid == false</c> rather than an
     /// exception.
+    ///
+    /// <para><paramref name="comboMaximum"/>, when given, replaces the combo ceiling the maximum
+    /// statistics imply. A JAPANESE Polyglot play needs it (PR 43): its combo grows by each
+    /// character's MINIMUM romaji inputs (<c>TypeBeatScoreProcessor.GetComboIncrease</c>) while its
+    /// maximum statistics count the inputs the player actually typed, so a play typed in kana (fewer
+    /// keys than the minimum romaji) honestly ends with a combo above its own maximum count. The
+    /// caller passes the map's minimum-input combo (<c>PolyglotSummary.Stream.Combo</c>).</para>
     /// </summary>
     public static Recomputed Recompute(
         IReadOnlyDictionary<string, int>? statistics,
         IReadOnlyDictionary<string, int>? maximumStatistics,
-        int maxCombo)
+        int maxCombo,
+        int? comboMaximum = null)
     {
         statistics ??= empty;
         maximumStatistics ??= empty;
@@ -250,6 +258,9 @@ public static class ScoringContract
             if (IncreasesCombo(key))
                 theoreticalMaxCombo += count;
         }
+
+        if (comboMaximum is int fixedCombo)
+            theoreticalMaxCombo = fixedCombo;
 
         // Hard invariants. Any breach means the score cannot be trusted for ranking.
         if (denominator <= 0)

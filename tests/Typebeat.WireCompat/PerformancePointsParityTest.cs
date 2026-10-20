@@ -285,6 +285,40 @@ public class PerformancePointsParityTest
     }
 
     [Test]
+    public void TheComboMaximumAgreesOnBothSides()
+    {
+        // PR 43 (v27): a Japanese Polyglot play's combo is clamped to its MINIMUM-ROMAJI full combo
+        // (comboNotes), which can sit above or below its note count, because its notes count the
+        // inputs actually typed. Both mirrors over a spread, plus the two identities the shape owes:
+        // no comboNotes is the old price, and comboNotes equal to the note count is that price too.
+        int compared = 0;
+
+        Assert.Multiple(() =>
+        {
+            foreach (int notes in new[] { 1, 47, 500, 2137 })
+            foreach (int comboNotes in new[] { 1, notes / 2 + 1, notes, notes * 2, notes * 3 })
+            foreach (int maxCombo in new[] { 0, notes / 2, notes, comboNotes, comboNotes * 2 })
+            foreach (int misses in new[] { 0, notes / 3 })
+            {
+                double client = ClientPp.Compute(4.2, notes, notes / 2.0, misses, 0.93, maxCombo, no_client_mods, comboNotes: comboNotes);
+                double server = ServerPp.Compute(4.2, notes, notes / 2.0, misses, 0.93, maxCombo, no_server_mods, comboNotes: comboNotes);
+
+                Assert.That(server, Is.EqualTo(client), $"notes={notes} comboNotes={comboNotes} combo={maxCombo} miss={misses}");
+                compared++;
+            }
+
+            Assert.That(ServerPp.Compute(4.2, 500, 250, 0, 0.93, 400, no_server_mods, comboNotes: 500),
+                Is.EqualTo(ServerPp.Compute(4.2, 500, 250, 0, 0.93, 400, no_server_mods)), "comboNotes equal to the notes is the old price");
+
+            // The premise: a combo maximum away from the note count really moves the price.
+            Assert.That(ServerPp.Compute(4.2, 500, 250, 0, 0.93, 700, no_server_mods, comboNotes: 1000),
+                Is.Not.EqualTo(ServerPp.Compute(4.2, 500, 250, 0, 0.93, 700, no_server_mods)));
+        });
+
+        Assert.That(compared, Is.GreaterThan(100));
+    }
+
+    [Test]
     public void TheComboFactorMultipliesThePriceOnBothSides()
     {
         // THE PLACEMENT, which is the one thing this shape invites getting wrong, and it is the
@@ -428,7 +462,7 @@ public class PerformancePointsParityTest
 
         // And the generation itself, so a half-landed cross-repo change that bumped BOTH mirrors
         // but left docs/pp.md and the two per-repo pins behind is caught here too.
-        Assert.That(ServerPp.VERSION, Is.EqualTo(26)); // pp:version
+        Assert.That(ServerPp.VERSION, Is.EqualTo(27)); // pp:version
     }
 
     #endregion

@@ -513,7 +513,8 @@ public sealed class SetModel(Db db, BeatmapsetReview review) : TypebeatPageModel
         /// <summary>
         /// The lyrics in their ORIGINAL SCRIPT (039_lyrics_original.sql, backlog 332), aligned line
         /// for line with <see cref="Lyrics"/>, or empty when the difficulty carries none. A
-        /// difficulty with originals is one the desktop client's local-only Polyglot mod can play.
+        /// difficulty with originals is one the desktop client's Polyglot mod can play (ranked since
+        /// PR 43, local only on a Chinese or Korean map).
         /// </summary>
         public string LyricsOriginal { get; init; } = string.Empty;
 

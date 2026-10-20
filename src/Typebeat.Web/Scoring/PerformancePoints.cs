@@ -458,8 +458,18 @@ public static class PerformancePoints
     /// breaks included) in the star rating's cells (<c>LyricPace.VERSION</c> 26), so the ratings and
     /// difficult-character counts a price reads can move, and the bump reprices every stored row
     /// against them.</para>
+    ///
+    /// <para>v27 is PR 43. The combo terms clamp to a COMBO MAXIMUM rather than to the note count:
+    /// <see cref="Compute"/> takes an optional <c>comboNotes</c> (<c>max(1, comboNotes ?? notes)</c>
+    /// replaces <c>notes</c> in the max-combo clamp, the combo ceiling, the combo ratio and the
+    /// full-combo kicker), which a Japanese POLYGLOT play passes as its minimum-romaji full combo
+    /// because its notes count inputs while its combo counts characters at their minimum inputs.
+    /// Every other play passes nothing and prices as before. The same change re-rates every map (the
+    /// star rating retune, <c>LyricPace.VERSION</c> 28) and makes Polyglot a ranked mod priced on its
+    /// own original-script stream (<see cref="BeatmapRatings.STREAM_POLYGLOT"/>), so every stored row
+    /// reprices.</para>
     /// </summary>
-    public const int VERSION = 26;
+    public const int VERSION = 27;
 
     /// <summary>
     /// Decay of the per-play weighting in the total (see <see cref="PpRanking"/>): the i-th best
@@ -1031,10 +1041,34 @@ public static class PerformancePoints
         if (ratings is null)
             return RateStars.Unavailable;
 
+        // POLYGLOT (PR 43) reads its own stream's cells. A matrix written before its Polyglot half
+        // existed leaves the play pending; a map the game cannot rate under the mod (a script other
+        // than Latin, Cyrillic or Japanese, or a Chinese or Korean declaration) is never priced, as
+        // the game's performance calculator gives such a play no stars at all.
+        if (IsPolyglot(mods))
+        {
+            if (ratings.Polyglot is not { } polyglot)
+                return RateStars.Unavailable;
+
+            if (!polyglot.Supported || PolyglotSummary.IsLocalOnlyLanguage(polyglot.Declared))
+                return RateStars.Ineligible;
+
+            return ratings.TryGet(JudgementArmFor(mods), IsLiterate(mods), rate, polyglot: true) is MapRating polyglotRating
+                ? RateStars.Of(polyglotRating)
+                : RateStars.Unavailable;
+        }
+
         return ratings.TryGet(JudgementArmFor(mods), IsLiterate(mods), rate) is MapRating rating
             ? RateStars.Of(rating)
             : RateStars.Unavailable;
     }
+
+    /// <summary>The acronym of the POLYGLOT mod (PR 43), keyed as <see cref="LITERATE_ACRONYM"/> is.</summary>
+    public const string POLYGLOT_ACRONYM = "PG";
+
+    /// <summary>Whether the play typed the lyric in its original script (the game's <c>TypeBeatModPolyglot</c>).</summary>
+    public static bool IsPolyglot(IReadOnlyList<ScoreMod>? mods)
+        => mods != null && mods.Any(mod => string.Equals(mod.Acronym?.Trim(), POLYGLOT_ACRONYM, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// The mod multiplier for a play. There is NO rate term here on purpose: DT / HT are priced
@@ -1176,10 +1210,11 @@ public static class PerformancePoints
     /// count; on this server a play with no cell never reaches here, because
     /// <see cref="StarsFor"/> leaves it pending.</para>
     ///
-    /// <para>Inputs are clamped rather than trusted: misses and combo into <c>[0, notes]</c> (the
-    /// theoretical max combo of a typing map IS its note count), the difficult characters to a
-    /// finite non-negative, and accuracy into <c>[0, 1]</c>. The result is guaranteed finite and
-    /// non-negative.</para>
+    /// <para>Inputs are clamped rather than trusted: misses into <c>[0, notes]</c>, combo into the
+    /// combo maximum (<paramref name="comboNotes"/>, normally the note count: since v27 a Japanese
+    /// Polyglot play passes its minimum-romaji full combo, see <see cref="VERSION"/>), the difficult
+    /// characters to a finite non-negative, and accuracy into <c>[0, 1]</c>. The result is guaranteed
+    /// finite and non-negative.</para>
     ///
     /// <para><paramref name="typos"/> IS NO LONGER READ (v22 deleted the typo term). It stays on
     /// the signature, defaulted, so every call site that passes a count reads unchanged and the two
@@ -1204,14 +1239,16 @@ public static class PerformancePoints
         int maxCombo,
         IReadOnlyList<ScoreMod>? mods,
         int typos = 0,
-        double playedDurationSeconds = double.PositiveInfinity)
+        double playedDurationSeconds = double.PositiveInfinity,
+        int? comboNotes = null)
     {
         // No notes describes no play; a zero or non-finite rating prices nothing.
         if (notes <= 0 || !double.IsFinite(starRating) || starRating <= 0)
             return 0;
 
         misses = Math.Clamp(misses, 0, notes);
-        maxCombo = Math.Clamp(maxCombo, 0, notes);
+        int comboMaximum = Math.Max(1, comboNotes ?? notes);
+        maxCombo = Math.Clamp(maxCombo, 0, comboMaximum);
         difficultCharacters = double.IsFinite(difficultCharacters) ? Math.Max(0, difficultCharacters) : 0;
         accuracy = double.IsFinite(accuracy) ? Math.Clamp(accuracy, 0, 1) : 0;
 
@@ -1248,10 +1285,10 @@ public static class PerformancePoints
         // all. Because it is a percentage of the product rather than a number of pp beside it, a
         // price zeroed by misses stays zero, and the mod multiplier scales the bonus along with
         // everything else it multiplies. NO CLAMP IS NEEDED ON THE RATIO: maxCombo is already
-        // clamped into [0, notes] above, so it is in [0, 1].
-        double comboCeiling = Math.Min(combo_bonus_cap, Math.Max(0, notes) / 200.0 * combo_bonus_at_200_cells) / 100.0;
-        double comboRatio = (double)maxCombo / notes;
-        bool comboPerfect = misses == 0 && maxCombo >= notes;
+        // clamped into [0, comboMaximum] above, so it is in [0, 1].
+        double comboCeiling = Math.Min(combo_bonus_cap, comboMaximum / 200.0 * combo_bonus_at_200_cells) / 100.0;
+        double comboRatio = (double)maxCombo / comboMaximum;
+        bool comboPerfect = misses == 0 && maxCombo >= comboMaximum;
         double comboBonus = comboCeiling * comboRatio * (comboPerfect ? combo_bonus_perfect : 1);
 
         // THE BONUS IS INSIDE THE PRODUCT, deliberately, because it is a percentage OF the price and
@@ -1303,7 +1340,8 @@ public static class PerformancePoints
         double accuracy,
         int maxCombo,
         BeatmapRatings? ratings,
-        double basePlayedDurationSeconds = double.PositiveInfinity)
+        double basePlayedDurationSeconds = double.PositiveInfinity,
+        string? setLanguage = null)
     {
         if (!ranked)
             return (null, true);
@@ -1313,6 +1351,22 @@ public static class PerformancePoints
         if (stars.Stars is not double effective)
             return (null, !stars.Pending);
 
+        int? comboNotes = null;
+
+        // A POLYGLOT play (PR 43) is timed on its own stream: its played duration is the projected
+        // stream's (the game's difficulty calculator reads PlayedDurationFor over the Polyglot lines),
+        // and on a map whose declared language is Japanese its combo is clamped to the
+        // minimum-romaji full combo (TypeBeatPerformanceCalculator passes the attributes' MaxCombo
+        // exactly then). StarsFor has already made sure the summary is there.
+        if (IsPolyglot(mods) && ratings?.Polyglot is { } polyglot)
+        {
+            var stream = polyglot.For(IsLiterate(mods));
+            basePlayedDurationSeconds = stream.PlayedDurationS;
+
+            if (PolyglotSummary.EffectiveDeclared(polyglot.Declared, setLanguage) == "japanese" && stream.Combo > 0)
+                comboNotes = stream.Combo;
+        }
+
         // The stored span (044_played_duration.sql) is measured at the BASE rate; move it to the
         // played rate here, the same division the game's PlayedDurationFor does, so every caller
         // passes the map's stored figure and the cut is read at the length the player actually heard.
@@ -1320,7 +1374,7 @@ public static class PerformancePoints
             ? basePlayedDurationSeconds / (EligibleRate(mods) ?? 1)
             : basePlayedDurationSeconds;
 
-        return (Compute(effective, notes.Notes, stars.DifficultCharacters, notes.Misses, accuracy, maxCombo, mods, notes.Typos, playedDurationSeconds), true);
+        return (Compute(effective, notes.Notes, stars.DifficultCharacters, notes.Misses, accuracy, maxCombo, mods, notes.Typos, playedDurationSeconds, comboNotes), true);
     }
 
     /// <summary>

@@ -176,7 +176,7 @@ public class RateMultiplierTest
     {
         string[] priced =
         [
-            "NF", "EZ", "HR", "SD", "GK", "FL", "LT", "RE", "RH", "FC", "FT", "CL", "MU",
+            "NF", "EZ", "HR", "SD", "GK", "FL", "LT", "RE", "RH", "FC", "FT", "CL", "MU", "PG",
             "CT", "DX", "PT", "RX", "WU", "WD", "DT", "NC", "HT", "DC",
         ];
 
@@ -190,7 +190,7 @@ public class RateMultiplierTest
 
             Assert.That(ModMultiplier.IsKnown(" fc "), Is.True, "trimmed as the wire is");
 
-            foreach (string? unknown in new[] { "ZZ", "HD", "AT", "PG", "", "  ", null })
+            foreach (string? unknown in new[] { "ZZ", "HD", "AT", "", "  ", null })
                 Assert.That(ModMultiplier.IsKnown(unknown), Is.False, unknown ?? "null");
 
             Assert.That(ModMultiplier.For("ZZ", null), Is.EqualTo(ModMultiplier.UNKNOWN_MOD_MULTIPLIER),

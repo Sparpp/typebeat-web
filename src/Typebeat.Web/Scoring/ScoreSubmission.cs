@@ -140,6 +140,31 @@ public static class ScoreSubmission
     /// or the map was re-uploaded after the token was issued (the token's <c>beatmap_hash</c> is not
     /// the stored checksum any more, so the stored count describes a map this run never saw).
     /// </summary>
+    /// <summary>
+    /// The Polyglot twin of <see cref="MaximumMatchesMap"/> (PR 43): whether a Polyglot play's claimed
+    /// maximum is one the map's Polyglot stream (<see cref="Packages.Lyrics.PolyglotSummary"/>) can
+    /// produce. On a Latin or Cyrillic map every scoring object is one judgement, so the claim must be
+    /// exactly <see cref="Packages.Lyrics.PolyglotSummary.Stream.Cells"/>. A JAPANESE character is
+    /// judged once per romaji input and its maximum follows the spelling the player typed (the
+    /// game's <c>TypeBeatScoreProcessor.adjustJapaneseMaximum</c>), so the claim must lie between
+    /// one judgement per object and the longest accepted spelling
+    /// (<see cref="Packages.Lyrics.PolyglotSummary.Stream.MaximumInputs"/>). A map whose Polyglot
+    /// summary is not stored yet (a matrix the sweep has not rewritten) is accepted unchecked, as an
+    /// unknown judged-cell count is.
+    /// </summary>
+    public static bool PolyglotMaximumMatchesMap(IReadOnlyDictionary<string, int>? maximumStatistics, Packages.Lyrics.PolyglotSummary? summary, bool literate)
+    {
+        if (summary is null)
+            return true;
+
+        var stream = summary.For(literate);
+        int claimed = ScoringContract.CountAccuracyAffecting(maximumStatistics);
+
+        return summary.Japanese
+            ? claimed >= stream.Cells && claimed <= stream.MaximumInputs
+            : claimed == stream.Cells;
+    }
+
     public static async Task<int?> MapJudgedCellsAsync(DbConnection conn, DbTransaction? tx, long tokenId, bool literate)
         => await conn.ExecuteScalarAsync<int?>(
             """

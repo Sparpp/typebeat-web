@@ -91,7 +91,8 @@ public static class PpBackfill
                        b.sr_literate_ht     AS SrLiterateHt,
                        b.ratings::text      AS Ratings,
                        b.played_duration_s  AS PlayedDurationS,
-                       bs.status            AS SetStatus
+                       bs.status            AS SetStatus,
+                       bs.language          AS SetLanguage
                 FROM scores s
                 JOIN beatmaps b ON b.id = s.beatmap_id
                 JOIN beatmapsets bs ON bs.id = b.set_id
@@ -125,7 +126,10 @@ public static class PpBackfill
                     // The short-map factor's input (044_played_duration.sql): the map's span at the
                     // BASE rate, which ForScore divides by the play's rate. NULL is an unswept row,
                     // read as the legacy no-cut price.
-                    row.PlayedDurationS ?? double.PositiveInfinity);
+                    row.PlayedDurationS ?? double.PositiveInfinity,
+                    // The set's stored language, the Polyglot Japanese combo rule's fallback when the
+                    // difficulty declares none (PR 43).
+                    row.SetLanguage);
 
                 if (!settled)
                 {
@@ -174,5 +178,6 @@ public static class PpBackfill
         string? Ratings,
         double? PlayedDurationS,
         // Appended last: Dapper maps this positional record by column order.
-        string SetStatus);
+        string SetStatus,
+        string? SetLanguage);
 }

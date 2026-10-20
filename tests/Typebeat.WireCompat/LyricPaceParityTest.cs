@@ -626,8 +626,11 @@ public class LyricPaceParityTest
             // and pp bumps with it so every stored row reprices on the new ratings (pp 26).
             // Pace alone moved to 27 when target_wpm went onto the chunked axis and the envelope
             // model was deleted: no rating and no pp figure moves, so pp stays at 26.
-            Assert.That(ServerPace.VERSION, Is.EqualTo(27));
-            Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(26)); // pp:version
+            // Both moved again in PR 43: the star rating is retuned for every map and the matrix gains
+            // its Polyglot half (pace 28), and pp clamps a Japanese Polyglot combo to its
+            // minimum-romaji full combo (pp 27).
+            Assert.That(ServerPace.VERSION, Is.EqualTo(28));
+            Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(27)); // pp:version
         });
     }
 

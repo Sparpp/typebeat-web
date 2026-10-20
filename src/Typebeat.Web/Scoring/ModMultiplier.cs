@@ -216,6 +216,12 @@ public static class ModMultiplier
             // RE = 1.932449211, and x 0.95 only shrinks it.
             "CL" => 0.95,
             "MU" => 1.0,
+            // Polyglot (PR 43): RANKED at exactly the 1.0x the game's calculator gives it, on every
+            // map but a Chinese or Korean one, where it stays local only and is refused before it is
+            // priced (LocalOnlyMods). Listing it is what makes it a known, rankable acronym (IsKnown),
+            // and it tightens the ceiling as "GK" does: unlisted it would be allowed
+            // UNKNOWN_MOD_MULTIPLIER (2.0x) on a play whose honest total is its base.
+            "PG" => 1.0,
             // Conductor (backlog 226), Dyslexia (backlog 231) and Puppeteer (backlog 256), all
             // priced at exactly the 1.0 their game-side multiplier is. Conductor is not a
             // ModRateAdjust and never touches the score multiplier or the window scale (it steers

@@ -27,8 +27,9 @@ namespace Typebeat.Web.Packages.Lyrics;
 ///
 /// <para>
 /// NOT <c>char_count</c>: that is a pace figure (freestyle slots excluded, default stream only), and
-/// it is pinned against the game's pace statistics, not against its converter. Polyglot also
-/// changes the count, but it is local only and the server refuses it before a count is read.
+/// it is pinned against the game's pace statistics, not against its converter. Polyglot changes the
+/// count too: a Polyglot play is held against its own stream instead
+/// (<see cref="PolyglotSummary"/>, <see cref="Scoring.ScoreSubmission.PolyglotMaximumMatchesMap"/>).
 /// </para>
 ///
 /// <para>

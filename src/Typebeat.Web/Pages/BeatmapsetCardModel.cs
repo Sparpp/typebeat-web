@@ -94,7 +94,7 @@ public sealed record BeatmapsetCardModel(
                 ? "this map"
                 : $"{with.Count} of {Diffs.Count} difficulties";
 
-            return $"Polyglot available on {where}: type the lyrics in their original script in the desktop client (local only, no leaderboard)";
+            return $"Polyglot available on {where}: type the lyrics in their original script in the desktop client (ranked, except on Chinese and Korean maps)";
         }
     }
 
@@ -191,7 +191,7 @@ public sealed record BeatmapsetCardModel(
 /// json_agg writes it: <paramref name="Wpm"/> is the same coalesce(target_wpm, wpm) the set-level
 /// chip reads, per row. <paramref name="Polyglot"/> is whether the difficulty carries its lyrics in
 /// their original script (039_lyrics_original.sql, backlog 332), which is what makes the desktop
-/// client's local-only Polyglot mod available on it; absent from the json reads as false.</summary>
+/// client's Polyglot mod available on it; absent from the json reads as false.</summary>
 public sealed record CardDifficulty(long Id, string Name, double Stars, double? Wpm, bool Polyglot = false);
 
 /// <summary>Status wording shared by the card partial and the set page.</summary>

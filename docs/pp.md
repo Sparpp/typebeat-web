@@ -25,7 +25,8 @@ pp = C · SR_eff^2.30
 accShare(acc) = expCurve((acc − 0.5) / (1 − 0.5))       # 0 at or below the floor, 1 at a perfect play
 expCurve(t)   = (e^(1.75·t) − 1) / (e^1.75 − 1)         # or t itself at a steepness of 0
 knee(acc)     = 1                                       # acc_knee_width is 0: the knee is OFF
-comboBonus    = min(10, cells/200 · 1)/100 · maxcombo/cells · (1.5 on a spotless full combo)
+comboBonus    = min(10, comboMax/200 · 1)/100 · maxcombo/comboMax · (1.5 on a spotless full combo)
+comboMax      = cells, or a Japanese Polyglot play's minimum-romaji full combo (v27)
 
 C = 9.0     # global scale constant, does not affect ranking order
 ```
@@ -1499,3 +1500,37 @@ order, as at v24.
 
 v25 (the played-duration penalty, PR 17) has no amendment of its own here; its rule is documented on
 `PerformancePoints.VERSION` in both mirrors.
+
+## Amendment (2026-10-20): the combo maximum, and Polyglot is ranked (PR 43, v27)
+
+ONE SHAPE CHANGE, IN THE COMBO TERMS ONLY. `PerformancePoints.Compute` takes an optional
+`comboNotes`, and `comboMax = max(1, comboNotes ?? notes)` replaces `notes` everywhere the combo is
+read: the clamp on `maxCombo`, the combo ceiling (`min(10, comboMax/200 · 1)/100`), the combo ratio
+(`maxcombo/comboMax`) and the spotless-full-combo kicker (`maxCombo >= comboMax`). Every play that
+passes nothing prices exactly as before. Cleanliness, accuracy, the mod table and the scale do not
+move.
+
+THE ONE CALLER THAT PASSES IT is a JAPANESE POLYGLOT play on a map that declares Japanese. Polyglot
+(the `PG` mod) became a RANKED mod at 1.0x in PR 43, on every map except a Chinese or Korean one,
+where it stays local only and the server refuses it before anything is written. A Japanese character
+under Polyglot is judged once per romaji INPUT, so the play's `notes` count inputs (and follow the
+spelling the player chose: a longer spelling adds judgements, kana input removes some), while its
+combo grows by each character's MINIMUM accepted input whatever was typed. The combo maximum is
+therefore the map's minimum-romaji full combo, the game's `TypeBeatScoreProcessor.MaximumComboFor`,
+which the server stores per map and per stream beside the Polyglot rating cells
+(`PolyglotSummary.Stream.Combo` inside `beatmaps.ratings`).
+
+A POLYGLOT PLAY IS PRICED ON ITS OWN STREAM. SR_eff and `difficult` come from the two Polyglot
+streams of the matrix (`polyglot`, `polyglot-literate`), which rate the originals projected to the
+input stream the game rates (Latin and Cyrillic on their own characters at the native-layout key
+costs, Japanese on the shortest accepted romaji), in all three arms and at all three rates, and the
+short-map factor reads the projected stream's played duration. A map whose originals use any other
+script still ranks under the mod but is never priced, as the game's performance calculator gives
+such a play no stars.
+
+THE RATINGS MOVE UNDERNEATH TOO. PR 43 retunes the star rating for every map (the typability clamp
+widens to `[-5, 3]`, a punctuation-separated letter run gets a bigram reading, a whole-map
+typability bonus of `1 + max(0, -meanZ)/100`, and a Shift surcharge per shifted symbol under
+Literate), so `LyricPace.VERSION` moves 27 to 28 and the catalogue re-rates, and
+`PerformancePoints.VERSION` moves 26 to 27 so every stored row reprices. Both sweeps run at the next
+boot, in either order, as at v24.

@@ -231,11 +231,16 @@
                         <div class="stat-row"><span class="stat-row__label">Lyric font</span><span class="stat-row__value">@Model.Diff.LyricFont</span></div>
                     }
                     @* Polyglot (backlog 332): the difficulty carries its lyrics in their original
-                       script, so the desktop client's Polyglot mod can play it. Local only, which
-                       the title says, because a player looking for a board for it will not find one. *@
+                       script, so the desktop client's Polyglot mod can play it. Since PR 43 it is a
+                       ranked mod at 1.0x, except on a Chinese or Korean map, where it stays local
+                       only, which the title says, because a player looking for a board there will
+                       not find one. *@
                     @if (Model.Diff.HasOriginals)
                     {
-                        <div class="stat-row stat-row--polyglot" data-polyglot-available><span class="stat-row__label">Polyglot</span><span class="stat-row__value" title="Type this difficulty in its original script with the Polyglot mod in the desktop client. Polyglot plays stay on your device: no submission, no leaderboard.">available</span></div>
+                        string polyglotTitle = Model.Set.Language is "chinese" or "korean"
+                            ? "Type this difficulty in its original script with the Polyglot mod in the desktop client. On a Chinese or Korean map Polyglot plays stay on your device: no submission, no leaderboard."
+                            : "Type this difficulty in its original script with the Polyglot mod in the desktop client. Polyglot plays are ranked, at 1.0x.";
+                        <div class="stat-row stat-row--polyglot" data-polyglot-available><span class="stat-row__label">Polyglot</span><span class="stat-row__value" title="@polyglotTitle">available</span></div>
                     }
                     <div class="stat-row">
                         <span class="stat-row__label">Stars</span>

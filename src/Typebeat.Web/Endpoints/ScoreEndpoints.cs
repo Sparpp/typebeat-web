@@ -120,10 +120,13 @@ public static class ScoreEndpoints
         if (!version_hash_shape.IsMatch(versionHash))
             return WireJson.Error(status_unprocessable, "invalid version_hash");
 
-        // A local-only mod (Polyglot, backlog 332) never asks for a token: the stock client keeps
-        // the play on the device and sends no mods here at all. A modified client that names one
-        // anyway is refused before anything is written, so not even a token row exists for it.
-        if (LocalOnlyMods.AnyLocalOnly(form["mods"].Concat(form["mods[]"])))
+        // A mod local only on EVERY map (LocalOnlyMods.ACRONYMS, none since PR 43) never asks for a
+        // token: the stock client keeps the play on the device and sends no mods here at all. A
+        // modified client that names one anyway is refused before anything is read or written, so not
+        // even a token row exists.
+        var formMods = form["mods"].Concat(form["mods[]"]).ToArray();
+
+        if (LocalOnlyMods.AnyLocalOnly(formMods, mapLanguage: null))
             return WireJson.Error(status_unprocessable, LocalOnlyMods.REFUSAL);
 
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
@@ -133,12 +136,17 @@ public static class ScoreEndpoints
             SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
                    b.difficulty_rating AS baseStars, b.sr_dt AS srDt, b.sr_ht AS srHt,
                    b.sr_literate AS srLiterate, b.sr_literate_dt AS srLiterateDt, b.sr_literate_ht AS srLiterateHt,
-                   b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
+                   b.ratings::text AS ratings, b.played_duration_s AS playedDurationS, bs.language AS setLanguage
             FROM beatmaps b
             JOIN beatmapsets bs ON bs.id = b.set_id
             WHERE b.id = @beatmapId AND bs.status IN {BeatmapsetEndpoints.PublishedSql}
             """,
             new { beatmapId });
+
+        // Polyglot is local only on a Chinese or Korean map (PR 43, the game's IsLocalOnlyFor), so a
+        // token naming it there is refused the same way, still before anything is written.
+        if (beatmap is not null && LocalOnlyMods.AnyLocalOnly(formMods, beatmap.MapLanguage))
+            return WireJson.Error(status_unprocessable, LocalOnlyMods.REFUSAL);
 
         // Beatmap must exist on a published set (hidden shells and removed/DMCA'd sets take no
         // scores) AND the submitted hash must equal the stored final-.osu MD5 (the beatmap_hash
@@ -199,11 +207,13 @@ public static class ScoreEndpoints
         if (submission is null)
             return WireJson.Error(status_unprocessable, "invalid request body");
 
-        // A local-only mod (Polyglot, backlog 332) is REFUSED, not stored unranked the way an
-        // unranked mod is: the stock client never submits such a play, so one arriving here came
-        // from a modified client, and it is turned away before the token is even read, so no
-        // score row, no pp, no rating cell and no board ever sees it.
-        if (submission.Mods is { } submittedMods && LocalOnlyMods.StackIsLocalOnly(submittedMods.Select(m => m.Acronym)))
+        // A local-only mod (Polyglot on a Chinese or Korean map, PR 43) is REFUSED, not stored unranked
+        // the way an unranked mod is: the stock client never submits such a play, so one arriving here
+        // came from a modified client. A mod local only on every map (none today) is turned away
+        // before the token is even read; Polyglot's verdict needs the map's language, so it is read
+        // with the beatmap below, still before anything is written. Either way no score row, no pp, no
+        // rating cell and no board ever sees it.
+        if (submission.Mods is { } submittedMods && LocalOnlyMods.StackIsLocalOnly(submittedMods.Select(m => m.Acronym), mapLanguage: null))
         {
             logger.LogInformation("Score token {TokenId}: local-only mod submitted, refusing.", tokenId);
             return WireJson.Error(status_unprocessable, LocalOnlyMods.REFUSAL);
@@ -229,16 +239,26 @@ public static class ScoreEndpoints
 
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
             """
-            SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS,
-                   difficulty_rating AS baseStars, sr_dt AS srDt, sr_ht AS srHt,
-                   sr_literate AS srLiterate, sr_literate_dt AS srLiterateDt, sr_literate_ht AS srLiterateHt,
-                   ratings::text AS ratings, played_duration_s AS playedDurationS
-            FROM beatmaps WHERE id = @beatmapId
+            SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
+                   b.difficulty_rating AS baseStars, b.sr_dt AS srDt, b.sr_ht AS srHt,
+                   b.sr_literate AS srLiterate, b.sr_literate_dt AS srLiterateDt, b.sr_literate_ht AS srLiterateHt,
+                   b.ratings::text AS ratings, b.played_duration_s AS playedDurationS, bs.language AS setLanguage
+            FROM beatmaps b
+            JOIN beatmapsets bs ON bs.id = b.set_id
+            WHERE b.id = @beatmapId
             """,
             new { beatmapId }, tx);
 
         if (beatmap is null)
             return WireJson.Error(status_unprocessable, "invalid token");
+
+        // Polyglot on a Chinese or Korean map (PR 43): local only there, so refused like any local-only mod,
+        // and the transaction rolls back with the token unconsumed.
+        if (submission.Mods is { } stack && LocalOnlyMods.StackIsLocalOnly(stack.Select(m => m.Acronym), beatmap.MapLanguage))
+        {
+            logger.LogInformation("Score token {TokenId}: Polyglot on a {Language} map submitted, refusing.", tokenId, beatmap.MapLanguage);
+            return WireJson.Error(status_unprocessable, LocalOnlyMods.REFUSAL);
+        }
 
         // A score ranks only on a reviewer-approved set (ranked or loved). Plays on pending maps
         // are accepted and stored (they show in the player's own history) but never reach the
@@ -274,13 +294,32 @@ public static class ScoreEndpoints
         // anything is written; a map whose count is not known for the version played is accepted
         // unchecked (ScoreSubmission.MaximumMatchesMap).
         bool literate = mods.Any(m => m.Acronym == PerformancePoints.LITERATE_ACRONYM);
-        int? mapJudgedCells = await ScoreSubmission.MapJudgedCellsAsync(conn, tx, tokenId, literate);
 
-        if (!ScoreSubmission.MaximumMatchesMap(maximumStatistics, mapJudgedCells))
+        // A POLYGLOT play (PR 43) is judged on the original-script stream, which the map's rating
+        // matrix carries (PolyglotSummary): exactly its cell count on a Latin or Cyrillic map, and on a
+        // Japanese one an input count between one per character and the longest accepted spelling.
+        bool polyglot = mods.Any(m => m.Acronym == PerformancePoints.POLYGLOT_ACRONYM);
+        var polyglotSummary = polyglot ? BeatmapRatings.Parse(beatmap.Ratings)?.Polyglot : null;
+
+        if (polyglot)
         {
-            logger.LogInformation("Score token {TokenId}: maximum_statistics claims {Claimed} judged cell(s), the map has {Cells}, refusing.",
-                tokenId, ScoringContract.CountAccuracyAffecting(maximumStatistics), mapJudgedCells);
-            return WireJson.Error(status_unprocessable, ScoreSubmission.MAP_MISMATCH_REFUSAL);
+            if (!ScoreSubmission.PolyglotMaximumMatchesMap(maximumStatistics, polyglotSummary, literate))
+            {
+                logger.LogInformation("Score token {TokenId}: Polyglot maximum_statistics claims {Claimed} judgement(s), the map judges {Cells}, refusing.",
+                    tokenId, ScoringContract.CountAccuracyAffecting(maximumStatistics), polyglotSummary?.For(literate).Cells);
+                return WireJson.Error(status_unprocessable, ScoreSubmission.MAP_MISMATCH_REFUSAL);
+            }
+        }
+        else
+        {
+            int? mapJudgedCells = await ScoreSubmission.MapJudgedCellsAsync(conn, tx, tokenId, literate);
+
+            if (!ScoreSubmission.MaximumMatchesMap(maximumStatistics, mapJudgedCells))
+            {
+                logger.LogInformation("Score token {TokenId}: maximum_statistics claims {Claimed} judged cell(s), the map has {Cells}, refusing.",
+                    tokenId, ScoringContract.CountAccuracyAffecting(maximumStatistics), mapJudgedCells);
+                return WireJson.Error(status_unprocessable, ScoreSubmission.MAP_MISMATCH_REFUSAL);
+            }
         }
 
         // Recompute accuracy exactly and bound the score against a provable ceiling. The ceiling is
@@ -292,7 +331,10 @@ public static class ScoreEndpoints
         // flat 2x allowance: the client sends round(base × multiplier), so the ceiling is that value
         // plus one unit of rounding slack. Rates are priced from the CLAMPED speed_change, so a
         // tampered "speed_change": 40 buys the 2.00x price and no more.
-        var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, submission.MaxCombo);
+        // A Japanese Polyglot play's combo grows by each character's minimum romaji inputs, not by its
+        // judged inputs, so its ceiling is the map's minimum-input combo (ScoringContract.Recompute).
+        var recomputed = ScoringContract.Recompute(statistics, maximumStatistics, submission.MaxCombo,
+            polyglotSummary is { Japanese: true } japaneseSummary ? japaneseSummary.For(literate).Combo : null);
         double modMultiplier = ModMultiplier.MaxForStack(mods.Select(m => ((string?)m.Acronym, m.SpeedChange)));
         long modCeiling = ModMultiplier.TotalScoreCeiling(submission.TotalScoreWithoutMods, modMultiplier);
 
@@ -400,7 +442,10 @@ public static class ScoreEndpoints
             // The short-map factor's input (044_played_duration.sql), the map's span at the BASE
             // rate (ForScore divides it by the play's rate). NULL is an unswept row, read as the
             // legacy no-cut price rather than the maximum cut.
-            beatmap.PlayedDurationS ?? double.PositiveInfinity);
+            beatmap.PlayedDurationS ?? double.PositiveInfinity,
+            // The set's stored language, which a Polyglot play's Japanese combo rule falls back to
+            // when the difficulty declares none (PerformancePoints.ForScore).
+            beatmap.SetLanguage);
 
         long scoreId = await conn.ExecuteScalarAsync<long>(
             """
@@ -858,7 +903,16 @@ public static class ScoreEndpoints
         long Id, string ChecksumMd5, double DrainLengthS, double SkippableS,
         double BaseStars, double? SrDt, double? SrHt,
         double? SrLiterate, double? SrLiterateDt, double? SrLiterateHt,
-        string? Ratings, double? PlayedDurationS);
+        string? Ratings, double? PlayedDurationS, string? SetLanguage)
+    {
+        /// <summary>
+        /// The language Polyglot's local-only verdict reads (PR 43): the difficulty's own declared
+        /// language as its rating matrix recorded it, else the set's stored one, which is the
+        /// metadata language the game holds for a file that declares none.
+        /// </summary>
+        public string MapLanguage
+            => Packages.Lyrics.PolyglotSummary.EffectiveDeclared(BeatmapRatings.Parse(Ratings)?.Polyglot?.Declared, SetLanguage);
+    }
 
     private sealed record BuildRow(long Id, bool Blocked);
 

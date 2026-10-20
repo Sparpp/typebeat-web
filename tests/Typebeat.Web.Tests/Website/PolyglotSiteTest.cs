@@ -13,10 +13,12 @@ namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
 /// The site half of Polyglot (backlog 332). The desktop client's PG mod types a lyric in its
-/// ORIGINAL script and is LOCAL ONLY, so:
+/// ORIGINAL script. Since PR 43 it is RANKED at 1.0x except on a Chinese or Korean map, where it
+/// stays LOCAL ONLY, so:
 /// <list type="bullet">
-/// <item>the game API REFUSES a score token and a submission carrying PG, and stores nothing
-/// (the stock client never sends either, so only a modified one could);</item>
+/// <item>the game API ISSUES a token and STORES a submission carrying PG on any other map, and
+/// REFUSES both on a Chinese or Korean one, storing nothing (the stock client never sends either
+/// there, so only a modified one could);</item>
 /// <item>the set page shows a difficulty's originals beside the romanisation, ENCODED, each line
 /// declaring its language, led by whichever the viewer's "prefer original metadata" asks for, and
 /// marks the difficulty "Polyglot available";</item>
@@ -48,6 +50,8 @@ public class PolyglotSiteTest
     private static long plainBeatmapId;
     private static long plainSetId;
     private static string polyglotChecksum = null!;
+    private static long koreanBeatmapId;
+    private static string koreanChecksum = null!;
     private static long typistId;
     private static string bearer = null!;
 
@@ -122,6 +126,25 @@ public class PolyglotSiteTest
             """,
             new { plainSetId, checksum = Guid.NewGuid().ToString("N") });
 
+        // A Korean set (PR 43): Polyglot stays local only on it, so the API refuses PG there.
+        long koreanSetId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmapsets (owner_id, title, artist, title_unicode, language, status, submitted_at, updated_at)
+            VALUES (@ownerId, 'Hangul Polyglot', 'Kinoshki', '한글 폴리글롯', 'korean', 'ranked', now() - interval '3 days', now() - interval '3 days')
+            RETURNING id
+            """,
+            new { ownerId = PublicSiteSeed.MapperId });
+
+        koreanChecksum = Guid.NewGuid().ToString("N");
+        koreanBeatmapId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating,
+                                  filename, lyrics, lyrics_original)
+            VALUES (@koreanSetId, 'hangul', @checksum, 60, 0, 3.0, 'hangul.osu', 'saranghae', '사랑해')
+            RETURNING id
+            """,
+            new { koreanSetId, checksum = koreanChecksum });
+
         long preferringId = await WebsiteFixture.SeedUserAsync(preferring_username, "polyglot.prefers@example.com", preferring_password, verified: true);
         await conn.ExecuteAsync("UPDATE users SET prefer_original_metadata = true WHERE id = @preferringId", new { preferringId });
     }
@@ -133,18 +156,50 @@ public class PolyglotSiteTest
             await dataSource.DisposeAsync();
     }
 
-    // ---- local only: the game API refuses PG and stores nothing ----
+    // ---- ranked: PG is accepted and stored on a non-Chinese, non-Korean map ----
 
     [TestCase("PG")]
     [TestCase("pg")]
     [TestCase("""["HD","PG"]""")]
     [TestCase("""[{"acronym":"PG"}]""")]
     [TestCase("DT,PG")]
-    public async Task ScoreToken_CarryingPolyglot_IsRefused_AndNoTokenIsStored(string mods)
+    public async Task ScoreToken_CarryingPolyglot_IsIssued_OnARussianMap(string mods)
+    {
+        using var response = await RequestTokenAsync(new Dictionary<string, string> { ["mods"] = mods });
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), await response.Content.ReadAsStringAsync());
+    }
+
+    [Test]
+    public async Task Submission_CarryingPolyglot_IsStoredRanked_OnARussianMap()
+    {
+        long tokenId = await IssueTokenAsync();
+        long scoresBefore = await CountAsync("SELECT count(*) FROM scores WHERE user_id = @typistId");
+
+        using var response = await SubmitAsync(tokenId, [new { acronym = "PG" }]);
+        string body = await response.Content.ReadAsStringAsync();
+        long scoresAfter = await CountAsync("SELECT count(*) FROM scores WHERE user_id = @typistId");
+        long rankedPolyglot = await CountAsync(
+            "SELECT count(*) FROM scores WHERE user_id = @typistId AND ranked AND mods @> '[{\"acronym\":\"PG\"}]'::jsonb");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body);
+            Assert.That(scoresAfter, Is.EqualTo(scoresBefore + 1), "the play is stored");
+            Assert.That(rankedPolyglot, Is.GreaterThanOrEqualTo(1), "and ranked: Polyglot is a ranked mod at 1.0x here");
+        });
+    }
+
+    // ---- local only on a Chinese or Korean map: the game API refuses PG and stores nothing ----
+
+    [TestCase("PG")]
+    [TestCase("""[{"acronym":"pg"}]""")]
+    [TestCase("LT,PG")]
+    public async Task ScoreToken_CarryingPolyglot_IsRefused_OnAKoreanMap_AndNoTokenIsStored(string mods)
     {
         long tokensBefore = await CountAsync("SELECT count(*) FROM score_tokens WHERE user_id = @typistId");
 
-        using var response = await RequestTokenAsync(new Dictionary<string, string> { ["mods"] = mods });
+        using var response = await RequestTokenAsync(new Dictionary<string, string> { ["mods"] = mods }, koreanBeatmapId, koreanChecksum);
         string body = await response.Content.ReadAsStringAsync();
         long tokensAfter = await CountAsync("SELECT count(*) FROM score_tokens WHERE user_id = @typistId");
 
@@ -152,8 +207,7 @@ public class PolyglotSiteTest
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.UnprocessableEntity), body);
             Assert.That((string?)JObject.Parse(body)["error"], Does.Contain("Polyglot"), "the client reads the error field of any non-2xx body");
-            Assert.That(tokensAfter, Is.EqualTo(tokensBefore),
-                "a refused token request writes no token row");
+            Assert.That(tokensAfter, Is.EqualTo(tokensBefore), "a refused token request writes no token row");
         });
     }
 
@@ -167,12 +221,12 @@ public class PolyglotSiteTest
     }
 
     [Test]
-    public async Task Submission_CarryingPolyglot_IsRefused_AndNothingIsStored()
+    public async Task Submission_CarryingPolyglot_IsRefused_OnAKoreanMap_AndNothingIsStored()
     {
-        long tokenId = await IssueTokenAsync();
+        long tokenId = await IssueTokenAsync(koreanBeatmapId, koreanChecksum);
         long scoresBefore = await CountAsync("SELECT count(*) FROM scores WHERE user_id = @typistId");
 
-        using var response = await SubmitAsync(tokenId, [new { acronym = "PG" }]);
+        using var response = await SubmitAsync(tokenId, [new { acronym = "HD" }, new { acronym = "pg" }], koreanBeatmapId);
         string body = await response.Content.ReadAsStringAsync();
         long scoresAfter = await CountAsync("SELECT count(*) FROM scores WHERE user_id = @typistId");
         long consumed = await CountAsync("SELECT count(*) FROM score_tokens WHERE id = " + tokenId + " AND score_id IS NOT NULL");
@@ -181,27 +235,22 @@ public class PolyglotSiteTest
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.UnprocessableEntity), body);
             Assert.That((string?)JObject.Parse(body)["error"], Does.Contain("Polyglot"));
-            Assert.That(scoresAfter, Is.EqualTo(scoresBefore),
-                "no score row, so no pp, no rating cell and no board");
-            Assert.That(consumed, Is.Zero,
-                "the token is not even consumed");
+            Assert.That(scoresAfter, Is.EqualTo(scoresBefore), "no score row, so no pp, no rating cell and no board");
+            Assert.That(consumed, Is.Zero, "the token is not even consumed");
         });
     }
 
     [Test]
-    public async Task Submission_WithPolyglotInsideAStack_IsRefused_ButTheSameStackWithoutItIsStored()
+    public async Task Submission_OnAKoreanMap_WithoutPolyglot_IsStored()
     {
-        using (var refused = await SubmitAsync(await IssueTokenAsync(), [new { acronym = "HD" }, new { acronym = "pg" }]))
-            Assert.That(refused.StatusCode, Is.EqualTo(HttpStatusCode.UnprocessableEntity), "case-insensitive, anywhere in the stack");
-
         long scoresBefore = await CountAsync("SELECT count(*) FROM scores WHERE user_id = @typistId");
 
-        using var accepted = await SubmitAsync(await IssueTokenAsync(), [new { acronym = "HD" }]);
+        using var accepted = await SubmitAsync(await IssueTokenAsync(koreanBeatmapId, koreanChecksum), [new { acronym = "HD" }], koreanBeatmapId);
         long scoresAfter = await CountAsync("SELECT count(*) FROM scores WHERE user_id = @typistId");
 
         Assert.Multiple(() =>
         {
-            Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.OK), "the gate is PG, not mods in general");
+            Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.OK), "the gate is Polyglot on the map, not the map");
             Assert.That(scoresAfter, Is.EqualTo(scoresBefore + 1));
         });
     }
@@ -342,36 +391,36 @@ public class PolyglotSiteTest
         return await conn.ExecuteScalarAsync<long>(sql, new { typistId });
     }
 
-    private static async Task<HttpResponseMessage> RequestTokenAsync(Dictionary<string, string>? extra = null)
+    private static async Task<HttpResponseMessage> RequestTokenAsync(Dictionary<string, string>? extra = null, long? beatmapId = null, string? checksum = null)
     {
         var form = new Dictionary<string, string>
         {
             ["version_hash"] = "7e570000000000000000000000000005",
-            ["beatmap_hash"] = polyglotChecksum,
+            ["beatmap_hash"] = checksum ?? polyglotChecksum,
             ["ruleset_id"] = "0",
         };
 
         foreach (var (key, value) in extra ?? [])
             form[key] = value;
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v2/beatmaps/{polyglotBeatmapId}/solo/scores");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v2/beatmaps/{beatmapId ?? polyglotBeatmapId}/solo/scores");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
         request.Content = new FormUrlEncodedContent(form);
 
         return await WebsiteFixture.Client.SendAsync(request);
     }
 
-    private static async Task<long> IssueTokenAsync()
+    private static async Task<long> IssueTokenAsync(long? beatmapId = null, string? checksum = null)
     {
-        using var response = await RequestTokenAsync();
+        using var response = await RequestTokenAsync(null, beatmapId, checksum);
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "score token");
 
         return (long)JObject.Parse(await response.Content.ReadAsStringAsync())["id"]!;
     }
 
-    private static async Task<HttpResponseMessage> SubmitAsync(long tokenId, object[] mods)
+    private static async Task<HttpResponseMessage> SubmitAsync(long tokenId, object[] mods, long? beatmapId = null)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v2/beatmaps/{polyglotBeatmapId}/solo/scores/{tokenId}");
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v2/beatmaps/{beatmapId ?? polyglotBeatmapId}/solo/scores/{tokenId}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
         request.Content = new StringContent(JsonConvert.SerializeObject(new
         {
