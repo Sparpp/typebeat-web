@@ -888,6 +888,18 @@ function play(name, keys, spaceSkipsWord) {
         return awaiting;
     };
 
+    // PR 43, the BEST RETYPE JUDGEMENT: a correct retype of an already-judged cell that earned a
+    // strictly better tier and so replaced the cell's award (bestRetypeTier answering something
+    // other than the standing tier it was handed). The C# arm sets extended bit 13, so a port that
+    // lost the upgrade would part from it here, and this count says the sweep really retypes better.
+    let retypeUpgrades = 0;
+    const bestRetypeTier = engine.bestRetypeTier.bind(engine);
+    engine.bestRetypeTier = function (cell, standing, ...rest) {
+        const tier = bestRetypeTier(cell, standing, ...rest);
+        if (tier !== standing) retypeUpgrades++;
+        return tier;
+    };
+
     const holds = engine.manualNewlineHoldsLineOpen.bind(engine);
     const sealPermittedForHold = engine.sealPermitted;
     engine.sealPermitted = function (index, time) {
@@ -1093,6 +1105,8 @@ function play(name, keys, spaceSkipsWord) {
         cellLessLetterNewlines: cellLessLetterNewlines,
         awaitingSwallows: awaitingSwallows,
         holdExtensions: holdExtensions,
+        // PR 43, the best retype judgement.
+        retypeUpgrades: retypeUpgrades,
         // The health arm (backlog 306).
         health: {
             afterKeys: healthAfterKeys,

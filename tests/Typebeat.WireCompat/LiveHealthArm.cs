@@ -116,7 +116,15 @@ internal sealed class LiveHealthArm : IDisposable
         if (TypeBeatResultMapping.CellResult(judgement.Type, TypoRule.Deferred) is HitResult result
             && lines.TryGetValue(judgement.LineIndex, out var line)
             && line.cells.TryGetValue(judgement.CellIndex, out var cell))
-            apply(cell, result);
+        {
+            // PR 43's BEST RETYPE JUDGEMENT, TypeBeatPlayfield.applyCharJudgement's Upgraded arm: a
+            // better-timed retype AMENDS the cell's existing result in place (no second result, so
+            // no combo and no health), where anything else is the cell's one result as before.
+            if (judgement.Upgraded && cell.Judged)
+                Score.UpdateCellResult(cell.Result, result, judgement.Delta);
+            else
+                apply(cell, result);
+        }
 
         if (Engine.FletcherEnabled && judgement.ComboAfter == 0)
             Score.Combo.Value = 0;

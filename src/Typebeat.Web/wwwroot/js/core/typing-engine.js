@@ -10,7 +10,7 @@
 
     const {
         FREESTYLE_AUTO_CHAR, fold, syllableIndexOf, isCharTimedStretch, windowsFor, classify,
-        awardedTier, toHitResult, ScoreProcessorMirror, HealthAccount
+        awardedTier, betterTier, toHitResult, ScoreProcessorMirror, HealthAccount
     } = parts;
 
     // ---------------------------------------------------------------------------
@@ -73,6 +73,7 @@
                     // it in exactly the same place, TypingEngine.reset).
                     c.heldWrongBeforeJudged = false;
                     c.judged = false;
+                    c.scoredResult = null;
                 }
             }
             this.activeLineIndex = -1;
@@ -120,7 +121,7 @@
             // the back-dated seal drops exactly the entries it destroys (backDateBreakTo).
             //
             // Bounded by the map: a run is at most one increment per cell, since a cell judged
-            // correct once is inert on every retype, so nothing here grows with the length of the
+            // correct once earns no combo on any retype, so nothing here grows with the length of the
             // play.
             this.runPositions = [];
             this.totalKeypresses = 0;
@@ -938,7 +939,43 @@
 
             this.healthAccount.applyResult(result);
 
-            if (!failedAtJudgement) this.processor.applyResult(result, cell);
+            if (!failedAtJudgement) {
+                this.processor.applyResult(result, cell);
+                // The result the submitted account holds for this cell, which a better retype
+                // amends (bestRetypeTier). Null while the cell has none, and for a result
+                // stamped FailedAtJudgement, which UpdateScoringResult refuses to touch exactly as
+                // ApplyResultInternal refused to count it.
+                cell.scoredResult = result;
+            }
+        }
+
+        // The award a correct RETYPE leaves on an already-judged cell (PR 43, BEST RETYPE
+        // JUDGEMENT): the retype's own tier, through the same correction cap, when it is strictly
+        // better than the `standing` award (TypingEngine.Keys.cs's inert-retype arm), else the
+        // standing award untouched. An improvement is TypingEngine.improveRetypedAward plus the
+        // playfield's amend of the cell's existing osu result (TypeBeatPlayfield.applyCharJudgement's
+        // Upgraded arm, then TypeBeatScoreProcessor.UpdateCellResult): the engine's tier counts move
+        // from the standing award to the better one and the stored delta is replaced; combo, HP,
+        // the keypress counts and the judged-cell count are untouched. The C# also overwrites the
+        // cell's sample in its sync timeline, a results-screen series this core does not keep.
+        // A method rather than inline so the parity harness can stub it to the pre-PR 43 rule
+        // (bit 13 clear: return `standing`) and hold that arm against the C# with the bit clear.
+        bestRetypeTier(cell, standing, delta, w) {
+            const tier = awardedTier(classify(delta, w), cell.heldWrongBeforeJudged);
+
+            if (!betterTier(tier, standing)) return standing;
+
+            this.counts[standing] = (this.counts[standing] || 0) - 1;
+            this.counts[tier] = (this.counts[tier] || 0) + 1;
+            cell.firstCorrectDelta = delta;
+
+            if (cell.judged && cell.scoredResult) {
+                const result = toHitResult(tier);
+                this.processor.updateResult(cell.scoredResult, result);
+                cell.scoredResult = result;
+            }
+
+            return tier;
         }
 
         sealLine(idx) {
@@ -2087,20 +2124,37 @@
             let type;
 
             if (inertRetype) {
-                // Scoring-inert on BOTH accounts: the engine leaves its own combo alone, and
-                // no result reaches the processor, because the cell drawable already carries one
-                // (DrawableTypeBeatCharObject.ApplyEngineResult: `if (Judged) return;`). The branch
-                // below relies on the SAME guard rather than on this condition, because with
-                // allowWrongInput a cell can carry a result without ever having been correct.
-                const d = cell.firstCorrectDelta;
-                // The SAME award the first judgement took, re-derived: the stored delta through the
-                // same ladder, and through the same backlog 210 cap, because the flag it reads is
-                // set only before a cell is judged and never cleared. Announcing anything else here
-                // would show a Great on a cell whose stored result is the capped Ok.
-                type = awardedTier(classify(d, w), cell.heldWrongBeforeJudged);
+                // Combo-inert on BOTH accounts: the engine leaves its own combo alone, no second
+                // result reaches the processor (the cell drawable already carries one,
+                // DrawableTypeBeatCharObject.ApplyEngineResult: `if (Judged) return;`), and HP does
+                // not move. The branch below relies on the SAME guard rather than on this
+                // condition, because with allowWrongInput a cell can carry a result without ever
+                // having been correct.
+                //
+                // The award STANDING on the cell, re-derived: the stored delta through the same
+                // ladder, and through the same backlog 210 cap, because the flag it reads is set
+                // only before a cell is first judged and never cleared. The C# reads its stored
+                // JudgedTier instead; the two agree because an upgrade below writes the delta it was
+                // awarded on back into firstCorrectDelta, through this same cap.
+                type = awardedTier(classify(cell.firstCorrectDelta, w), cell.heldWrongBeforeJudged);
+
+                // BEST RETYPE JUDGEMENT (PR 43, extended CONFIG bit 13, TypingEngine.Keys.cs's
+                // inert-retype arm and improveRetypedAward). A retype that earns a STRICTLY better
+                // tier than the standing award replaces it: the tier counts move from the old tier
+                // to the new, firstCorrectDelta takes the retype's delta, and the submitted account
+                // amends the cell's existing result in place (ScoreProcessorMirror.updateResult,
+                // TypeBeatScoreProcessor.UpdateCellResult). Still no combo increment and no HP:
+                // the cell was already counted once, and the farming the inert rule exists to stop
+                // is the second count, not a better grade. The candidate goes through the SAME
+                // correction cap, so a corrected cell can climb from Meh to Ok but never to Great.
+                // The live stack sets the bit and the browser only plays live, so it is
+                // unconditional here. No rush-cap clause: the C# candidate's cap term is gated on
+                // !InputEra2, which is always false live.
+                type = this.bestRetypeTier(cell, type, delta, w);
+
                 cell.state = 'correct';
                 cell.typedChar = c;
-                cell.judgedDelta = d;
+                cell.judgedDelta = cell.firstCorrectDelta;
                 cell.judgeType = type;
             } else {
                 this.totalKeypresses++;
@@ -2539,7 +2593,7 @@
         // behind me", and it is one keystroke: offering the shortest retype would leave a player with
         // two spoiled words pressing it, retyping, pressing it again, and having no way to see from
         // the caret how many rounds are left. Retyping the cells in between costs nothing, since a
-        // correct cell re-typed is scoring-inert.
+        // correct cell re-typed earns no second count (since PR 43 it can only raise its own grade).
         //
         // WHICH run the mistake's cell opens: for an ordinary lyric character (a typo or an abandoned
         // cell alike) it is its WORD's first cell, walking back to the gap before it. Since PR 3 (the

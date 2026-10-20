@@ -104,6 +104,22 @@
         return type === 'Great' ? 'Ok' : type;
     }
 
+    // TypingEngine.tierValue / betterTier (PR 43, BEST RETYPE JUDGEMENT, extended CONFIG bit 13):
+    // the order a retype is compared on. Great 300, Ok 100, Meh 50, and every other tier 0, so the
+    // two off-time tiers rank alike and BELOW Meh: a Lagging press retyped inside the Meh window is
+    // an upgrade, a Premature one retyped Lagging is not. Strictly greater, so an equal retype never
+    // moves the stored award (or its delta).
+    function tierValue(type) {
+        switch (type) {
+            case 'Great': return 300;
+            case 'Ok': return 100;
+            case 'Meh': return 50;
+            default: return 0;
+        }
+    }
+
+    function betterTier(candidate, previous) { return tierValue(candidate) > tierValue(previous); }
+
     // Engine judgement -> osu HitResult (DrawableTypeBeatHitObject.toHitResult, i.e.
     // TypeBeatResultMapping.CellResult). The three quality tiers are the identity, an OFF-TIME
     // press ('Premature' / 'Lagging', the right character struck outside the outermost Meh window)
@@ -147,7 +163,7 @@
 
     Object.assign(parts, {
         WINDOWS, FREESTYLE_WINDOW_SCALE, FREESTYLE_WINDOWS, windowsFor, classify, awardedTier,
-        toHitResult
+        betterTier, toHitResult
     });
     parts.loaded.push('judgement.js');
 })(window.TypeBeatCoreParts = window.TypeBeatCoreParts || { loaded: [] });

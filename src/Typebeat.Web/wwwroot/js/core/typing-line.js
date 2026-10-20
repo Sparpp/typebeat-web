@@ -781,6 +781,36 @@
         return timeLo + (j - segIndexLo) / (segIndexHi - segIndexLo) * (timeHi - timeLo);
     }
 
+    // TypingLine.interpolateUntimedTargets (PR 43): time the still-untimed chars of
+    // targets[start, start + count) using only anchors INSIDE that span. A run of them between two
+    // timed chars is spread evenly across the gap (mark m of a run of len takes
+    // prev + (m+1)*(next-prev)/(len+1)); at the span's edges `leading` / `trailing` stand in for the
+    // missing anchor, and a run with neither side attaches to the one it has, or to `fallback`.
+    // The whole line is the span with no edge anchors; a paused word's stretch is a span whose
+    // edges are its own sung start and end.
+    function interpolateUntimedTargets(targets, start, count, fallback, leading = null, trailing = null) {
+        const limit = start + count;
+
+        for (let i = start; i < limit; i++) {
+            if (targets[i] !== null) continue;
+
+            let end = i;
+            while (end + 1 < limit && targets[end + 1] === null) end++;
+
+            const before = i > start ? targets[i - 1] : leading;
+            const after = end + 1 < limit ? targets[end + 1] : trailing;
+            const len = end - i + 1;
+
+            for (let q = 0; q < len; q++) {
+                targets[i + q] = before !== null
+                    ? (after !== null ? before + (q + 1) * (after - before) / (len + 1) : before)
+                    : (after !== null ? after : fallback);
+            }
+
+            i = end;
+        }
+    }
+
     // Expand a line's AUTHORED text + units into per-char cells (mirrors TypingLine.FromLyricLine
     // exactly; this is the scoring-fidelity seam, so it is written pass for pass).
     //
@@ -832,6 +862,23 @@
                 pos++;
             }
 
+            // PR 43: in a PAUSED word, the marks interpolate within the stretch on their own
+            // authored side of each rest (TypingLine.build), so none is timed inside the silence.
+            // Each stretch (pausedWordOf's pieces) is resolved on its own, its edges standing in for
+            // a missing letter anchor; the letter targets above are untouched. No era gate on either
+            // side.
+            if (k < token.length && unit) {
+                const paused = pausedWordOf(token, unitStart, unitEnd, unit);
+
+                if (paused !== null) {
+                    const tokenStart = pos - token.length;
+
+                    for (const piece of paused.pieces) {
+                        interpolateUntimedTargets(targets, tokenStart + piece.firstChar, piece.charCount, piece.startTime, piece.startTime, piece.endTime);
+                    }
+                }
+            }
+
             if (m < tokens.length - 1) {
                 expected[pos] = ' '; // inter-word space cell: preceding unit's end
                 typeableFlags[pos] = true;
@@ -844,24 +891,8 @@
         // supported marks. A run of them between two timed chars is spread EVENLY across the gap
         // (mark m of a run of len takes prev + (m+1)*(next-prev)/(len+1)); a run with nothing after
         // it attaches to the PRECEDING char's target, one with nothing before it to the FOLLOWING.
-        for (let i = 0; i < n; i++) {
-            if (targets[i] !== null) continue;
-
-            let end = i;
-            while (end + 1 < n && targets[end + 1] === null) end++;
-
-            const before = i > 0 ? targets[i - 1] : null;
-            const after = end + 1 < n ? targets[end + 1] : null;
-            const len = end - i + 1;
-
-            for (let q = 0; q < len; q++) {
-                targets[i + q] = before !== null
-                    ? (after !== null ? before + (q + 1) * (after - before) / (len + 1) : before)
-                    : (after !== null ? after : 0);
-            }
-
-            i = end;
-        }
+        // Paused stretches have already resolved their marks without crossing a rest.
+        interpolateUntimedTargets(targets, 0, n, 0);
 
         // Guard: targets non-decreasing (clamp to previous if data is inverted).
         for (let i = 1; i < n; i++) {

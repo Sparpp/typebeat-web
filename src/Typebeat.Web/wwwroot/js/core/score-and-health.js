@@ -38,7 +38,9 @@
     //      109): ApplyCharJudgement returns before applying anything, so a typo defers its cell's
     //      result instead of spending it on a Miss. The cell drawable applies at most ONE result
     //      ever (`if (Judged) return;`), so a backspace-and-retype after a typo is that cell's real
-    //      (first) result, while an inert retype of an already-correct cell moves nothing.
+    //      (first) result, while a retype of an already-correct cell applies nothing new: since
+    //      PR 43 a BETTER-timed one amends that first result in place (7 below), and any other
+    //      moves nothing.
     //   2. TypeBeatComboFeed.OnMistyped -> scoreProcessor.Combo.Value = 0, and
     //      TypeBeatScoreProcessor.RecordMistype. One seam for BOTH input models since backlog 109,
     //      because neither raises a result for a wrong keypress any more: a rejected key never did,
@@ -85,8 +87,15 @@
     //      health alone (TypeBeatHealthFeed.OnAbandonReclaimed), and lands on the health account
     //      (HealthAccount below).
     //
+    //   7. TypeBeatPlayfield.applyCharJudgement's UPGRADED arm (PR 43): a retype that earns a better
+    //      tier than the cell's standing award amends that cell's existing result in place
+    //      (TypeBeatScoreProcessor.UpdateCellResult), with no combo and no HP. See updateResult.
+    //
     // Judgement rewind (ScoreProcessor.RevertResultInternal) has no counterpart: gameplay here is
-    // never rewound, and neither is the desktop client's outside replay seeking.
+    // never rewound, and neither is the desktop client's outside replay seeking. That includes
+    // PR 43's rewind resync (TypeBeatScoreProcessor.ResyncAfterRewind re-reading every amended
+    // award off the rebuilt engine), which exists only because a desktop seek reverts results by
+    // their FIRST award time.
     // ---------------------------------------------------------------------------
 
     // ScoreProcessor.GetBaseScoreForResult for the five results a type!beat cell can take. `good`
@@ -190,6 +199,26 @@
             const weight = (neutral && result === 'miss') ? 0 : this.combo;
 
             this.comboPortion += MAX_RESULT_BASE_SCORE * Math.pow(weight, COMBO_EXPONENT);
+        }
+
+        // TypeBeatScoreProcessor.UpdateCellResult -> ScoreProcessor.UpdateScoringResult (PR 43, the
+        // BEST RETYPE JUDGEMENT): a cell's EXISTING result is replaced by a better one in place,
+        // without applying a second judgement. The C# takes the old contribution out and puts the
+        // new one in (counts, base score, maximum base score, judged count, combo portion), then
+        // restores Combo and HighestCombo, so what can actually move is the result COUNT and the
+        // BASE SCORE: the maximum and the judged count are per result, not per type, and the combo
+        // portion is MAX_RESULT_BASE_SCORE weighted by the combo the result was judged at, which an
+        // amend does not revisit. That last holds because the only result ever amended is a cell's
+        // first CORRECT one (great/ok/meh, combo-increasing, never marked neutral: only the seal
+        // marks a cell, and a sealed cell can no longer be typed), so the C# weight reads the same
+        // ComboAfterJudgement on both sides of the swap. Same type in, nothing moves (the C# early
+        // return also compares the delta, which this account does not keep).
+        updateResult(previous, result) {
+            if (previous === result) return;
+
+            this.counts[previous]--;
+            this.counts[result]++;
+            this.baseScore += HIT_BASE_SCORE[result] - HIT_BASE_SCORE[previous];
         }
 
         // TypeBeatScoreProcessor.MarkComboNeutral: the result about to be applied to this cell must
