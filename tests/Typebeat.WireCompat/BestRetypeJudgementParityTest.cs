@@ -130,6 +130,7 @@ public class BestRetypeJudgementParityTest
         BackDatedSealBreak = true,
         LosslessSkipReclaim = true,
         FoldsDisplacedClaim = true,
+        StacksDisplacedClaims = true,
         FirstLineLeadIn = true,
         RushCapCostsAccuracy = true,
         InputEra2 = true,
@@ -156,7 +157,7 @@ public class BestRetypeJudgementParityTest
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
         replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true,
-            earlyFinish: true, keyTimeJudgement: true, japaneseCharacterTiming: true, japaneseInputScoring: true, japaneseKanaInput: true, bestRetypeJudgement: bestRetype));
+            earlyFinish: true, keyTimeJudgement: true, japaneseCharacterTiming: true, japaneseInputScoring: true, japaneseKanaInput: true, bestRetypeJudgement: bestRetype, stacksDisplacedClaims: true));
 
         foreach (var step in Run(scenario).GetProperty("script").EnumerateArray())
         {

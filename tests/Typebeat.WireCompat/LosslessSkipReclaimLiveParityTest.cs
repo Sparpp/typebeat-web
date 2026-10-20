@@ -164,6 +164,7 @@ public class LosslessSkipReclaimLiveParityTest
         BackDatedSealBreak = true,
         LosslessSkipReclaim = losslessSkipReclaim,
         FoldsDisplacedClaim = true,
+        StacksDisplacedClaims = true,
         FirstLineLeadIn = true,
         // Backlog 347, the first bit of the SECOND CONFIG flags word: the browser takes it unconditionally.
         RushCapCostsAccuracy = true,
@@ -202,7 +203,7 @@ public class LosslessSkipReclaimLiveParityTest
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: true, syllableTiming: true,
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2, earlyFinish: inputEra2, keyTimeJudgement: inputEra2, bestRetypeJudgement: inputEra2));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2, earlyFinish: inputEra2, keyTimeJudgement: inputEra2, bestRetypeJudgement: inputEra2, stacksDisplacedClaims: inputEra2));
 
         foreach (var step in script.EnumerateArray())
         {
