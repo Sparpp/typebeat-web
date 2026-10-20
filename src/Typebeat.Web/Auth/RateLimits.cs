@@ -58,6 +58,7 @@ public static class RateLimits
     public const string ScoreSubmit = "score-submit";
     public const string ReplayUpload = "replay-upload";
     public const string Leaderboard = "leaderboard";
+    public const string BeatmapsetSearch = "beatmapset-search";
     public const string Lookup = "lookup";
     public const string Report = "report";
     public const string ServerAlignSubmit = "server-align-submit";
@@ -66,6 +67,14 @@ public static class RateLimits
     public const int ScoreSubmitPerMinute = 30;
     public const int ReplayUploadPerMinute = 30;
     public const int LeaderboardPerMinute = 120;
+
+    /// <summary>
+    /// The game's beatmap listing overlay (backlog 400): one request per filter change or page, behind
+    /// the overlay's own 500 ms debounce on typed text, so a player browsing never gets near this. Its
+    /// own budget rather than the board's, since a set opened from the listing reads the board too.
+    /// </summary>
+    public const int BeatmapsetSearchPerMinute = 120;
+
     public const int LookupBurst = 600;
     public const int LookupRefillPerSecond = 10;
     public const int ReportsPerWindow = 5;
@@ -106,6 +115,7 @@ public static class RateLimits
             o.AddPolicy(ScoreSubmit, ctx => perMinute(ctx, ScoreSubmitPerMinute));
             o.AddPolicy(ReplayUpload, ctx => perMinute(ctx, ReplayUploadPerMinute));
             o.AddPolicy(Leaderboard, ctx => perMinute(ctx, LeaderboardPerMinute));
+            o.AddPolicy(BeatmapsetSearch, ctx => perMinute(ctx, BeatmapsetSearchPerMinute));
             o.AddPolicy(ServerAlignSubmit, ctx => perMinute(ctx, ServerAlignSubmitsPerMinute));
 
             // Import of a beatmap pack fires one lookup per difficulty, hundreds at once: a deep

@@ -29,15 +29,71 @@ namespace Typebeat.Web.Endpoints;
 /// which is worse than a 404 because the caller is expecting a list and gets a deserialisation
 /// failure instead of a plain "no such route". Anything that is not this server's ruleset now 404s.
 /// </para>
+///
+/// <para>
+/// GET /api/v2/users/lookup?ids[]=..: the client's LookupUsersRequest, the batch read behind its
+/// UserLookupCache (a replay's HUD team flag, chat and multiplayer user fills). Answers osu's
+/// <c>{ "users": [...] }</c> (GetUsersResponse) with the compact user, for the ids that exist and are
+/// visible, in no promised order (the cache matches by id). The batch form osu also has,
+/// <c>users?ids[]=</c> (GetUsersRequest), is deliberately NOT served: its one caller is
+/// MultiplayerClient.PopulateUsers, which runs only on multiplayer hub events, and this server hosts
+/// no hub, so nothing can reach it.
+/// </para>
 /// </summary>
 public static class UserEndpoints
 {
+    /// <summary>The most ids one lookup answers: the client's own cap (LookupUsersRequest) and osu's.</summary>
+    public const int MaxLookupIds = 50;
+
     public static void Map(IEndpointRouteBuilder app)
     {
         // Anonymous since backlog 406: the payload reads no viewer and is the public profile page's
         // data, so a guest client's profile overlay can open it too.
         app.MapGet("/api/v2/users/{lookup}", Handle);
         app.MapGet("/api/v2/users/{lookup}/{ruleset}", HandleWithRuleset);
+
+        // The literal segment outranks {lookup} above, so it also catches the client's trailing-slash
+        // form (users/lookup/?ids[]=). Anonymous like the profile it is a subset of.
+        app.MapGet("/api/v2/users/lookup", LookupAsync);
+    }
+
+    /// <summary>
+    /// The batch lookup. A request with no <c>ids[]</c> at all is not a lookup but a profile fetch of a
+    /// user NAMED "lookup", which this literal route would otherwise shadow, so it is answered as one.
+    /// </summary>
+    private static async Task<IResult> LookupAsync(HttpContext ctx, Db db)
+    {
+        if (!ctx.Request.Query.TryGetValue("ids[]", out var raw))
+            return await Handle("lookup", ctx, db);
+
+        long[] ids = raw
+                     .Select(s => long.TryParse(s, NumberStyles.None, CultureInfo.InvariantCulture, out long id) ? id : 0)
+                     .Where(id => id > 0)
+                     .Distinct()
+                     .Take(MaxLookupIds)
+                     .ToArray();
+
+        var users = new List<ScoreUserWire>();
+
+        if (ids.Length > 0)
+        {
+            await using var conn = await db.OpenAsync(ctx.RequestAborted);
+
+            // Restricted/deleted users are invisible here as on the profile route: simply absent.
+            var rows = await conn.QueryAsync<LookupRow>(new CommandDefinition(
+                """
+                SELECT u.id AS Id, u.username::text AS Username, u.country_code::text AS CountryCode, u.avatar_key AS AvatarKey
+                FROM users u
+                WHERE u.id = ANY(@ids) AND NOT u.restricted AND u.deleted_at IS NULL
+                ORDER BY u.id
+                """,
+                new { ids }, cancellationToken: ctx.RequestAborted));
+
+            string urlBase = $"{ctx.Request.Scheme}://{ctx.Request.Host.Value ?? string.Empty}";
+            users.AddRange(rows.Select(r => UserWire.Compact(urlBase, r.Id, r.Username, r.CountryCode, r.AvatarKey)));
+        }
+
+        return WireJson.Ok(new { users });
     }
 
     /// <summary>
@@ -124,4 +180,12 @@ public static class UserEndpoints
     private sealed record UserRow(
         long Id, string Username, string CountryCode, string? AvatarKey, bool IsAdmin,
         DateTime CreatedAt, DateTime? LastVisit, string? CoverKey);
+
+    private sealed class LookupRow
+    {
+        public long Id { get; set; }
+        public string Username { get; set; } = string.Empty;
+        public string CountryCode { get; set; } = "XX";
+        public string? AvatarKey { get; set; }
+    }
 }

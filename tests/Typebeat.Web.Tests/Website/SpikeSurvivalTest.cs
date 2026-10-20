@@ -234,6 +234,45 @@ public class SpikeSurvivalTest
         });
     }
 
+    /// <summary>
+    /// Backlog 400: the game's listing search carries a budget like the other listing routes, keyed by the
+    /// bearer, answered with the game's error shape, and separate from the board's, which the same caller
+    /// still reads once the search is spent.
+    /// </summary>
+    [Test]
+    public async Task BeatmapsetSearch_IsLimited_OnABudgetOfItsOwn()
+    {
+        // A token of its own: bearer budgets are keyed by token.
+        string authorization = "Bearer " + await issueBearerAsync(PublicSiteSeed.MapperId);
+        string search = "/api/v2/beatmapsets/search?q=" + Guid.NewGuid().ToString("N");
+
+        for (int i = 0; i < RateLimits.BeatmapsetSearchPerMinute; i++)
+        {
+            using var ok = await getWithAuthorizationAsync(WebsiteFixture.Client, search, authorization);
+            Assert.That(ok.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"search {i + 1} is inside the budget");
+        }
+
+        using var limited = await getWithAuthorizationAsync(WebsiteFixture.Client, search, authorization);
+        string body = await limited.Content.ReadAsStringAsync();
+
+        using var board = await getWithAuthorizationAsync(WebsiteFixture.Client,
+            $"/api/v2/beatmaps/{PublicSiteSeed.LeaderboardBeatmapId}/scores", authorization);
+
+        // Another caller's search is untouched.
+        string otherAuthorization = "Bearer " + await issueBearerAsync(PublicSiteSeed.MapperId);
+        using var other = await getWithAuthorizationAsync(WebsiteFixture.Client, search, otherAuthorization);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(limited.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
+            Assert.That(limited.Headers.RetryAfter, Is.Not.Null);
+            Assert.That((string?)JObject.Parse(body)["error"], Is.EqualTo(RateLimits.RejectionMessage));
+
+            Assert.That(board.StatusCode, Is.EqualTo(HttpStatusCode.OK), "the board's budget is not the search's");
+            Assert.That(other.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        });
+    }
+
     // ---- helpers ----
 
     private static async Task<HttpResponseMessage> getWithAuthorizationAsync(HttpClient client, string url, string authorization)
