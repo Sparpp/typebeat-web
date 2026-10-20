@@ -639,6 +639,8 @@ public static class PlayEndpoints
                 {
                     userId = user.Id,
                     totalScore = storedTotal,
+                    // Capped at drain_length_s, the full lyric span (backlog 423), as on the game
+                    // client's route: an unskipped instrumental is time really spent playing.
                     playTime = (long)Math.Round(Math.Min(elapsedSeconds, beatmap.DrainLengthS), MidpointRounding.AwayFromZero),
                     hitCounts = ScoreSubmission.MergeHitCounts(existingHitCounts, statistics)
                 }, tx);

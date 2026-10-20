@@ -529,6 +529,9 @@ public static class ScoreEndpoints
                     totalScore = storedTotal,
                     // A failed play didn't run the whole map; credit actual elapsed time, capped
                     // at the drain length (elapsed can exceed it via pauses).
+                    // drain_length_s is the full lyric span, instrumentals included, on purpose
+                    // (backlog 423): an unskipped instrumental is wall clock really spent playing,
+                    // so the shorter displayed drain (hit_length_s) would undercount honest plays.
                     playTime = (long)Math.Round(Math.Min(elapsedSeconds, beatmap.DrainLengthS), MidpointRounding.AwayFromZero),
                     hitCounts = ScoreSubmission.MergeHitCounts(existingHitCounts, statistics)
                 }, tx);
