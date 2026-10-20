@@ -56,7 +56,7 @@
                 {
                     <form method="post" asp-page-handler="Favourite" asp-route-id="@Model.Set.Id">
                         <button type="submit" class="btn btn-ghost fav-btn @(Model.Set.IsFavourited ? "is-on" : "")">
-                            @(Model.Set.IsFavourited ? "♥ Favourited" : "♡ Favourite")
+                            @(Model.Set.IsFavourited ? "\u2665 Favourited" : "\u2661 Favourite")
                         </button>
                     </form>
                 }
@@ -100,6 +100,31 @@
                         </form>
                     }
                 </div>
+            }
+            @if (Model.CanEditMetadata)
+            {
+                <details class="report-box" id="metadata-editor" @(Request.Query["saved"] == "metadata" ? "open" : null)>
+                    <summary>Edit metadata</summary>
+                    @if (Request.Query["saved"] == "metadata")
+                    {
+                        <p role="status">Metadata saved.</p>
+                    }
+                    <form method="post" asp-page-handler="Metadata" asp-route-id="@Model.Set.Id">
+                        <input type="hidden" name="metadataRevision" value="@Model.MetadataRevision" />
+                        <input type="hidden" name="packageRevision" value="@Model.PackageRevision" />
+                        <div class="field"><label for="metadata-title">Title</label><input class="input" id="metadata-title" name="title" value="@Model.Set.Title" maxlength="512" required /></div>
+                        <div class="field"><label for="metadata-title-unicode">Original title</label><input class="input" id="metadata-title-unicode" name="titleUnicode" value="@Model.Set.TitleUnicode" maxlength="512" /></div>
+                        <div class="field"><label for="metadata-artist">Artist</label><input class="input" id="metadata-artist" name="artist" value="@Model.Set.Artist" maxlength="512" required /></div>
+                        <div class="field"><label for="metadata-artist-unicode">Original artist</label><input class="input" id="metadata-artist-unicode" name="artistUnicode" value="@Model.Set.ArtistUnicode" maxlength="512" /></div>
+                        <div class="field"><label for="metadata-source">Source</label><input class="input" id="metadata-source" name="source" value="@Model.Set.Source" maxlength="512" /></div>
+                        <div class="field"><label for="metadata-tags">Tags</label><input class="input" id="metadata-tags" name="tags" value="@Model.Set.Tags" maxlength="4096" /></div>
+                        @foreach (var difficulty in Model.Diffs)
+                        {
+                            <div class="field"><label for="metadata-diff-@difficulty.Id">Difficulty name</label><input class="input" id="metadata-diff-@difficulty.Id" name="difficultyNames[@difficulty.Id]" value="@difficulty.Name" maxlength="512" required /></div>
+                        }
+                        <button type="submit" class="btn btn-ghost btn-small">Save metadata</button>
+                    </form>
+                </details>
             }
             <details class="report-box" @(Model.Reported ? "open" : null)>
                 <summary>Report this beatmap</summary>
