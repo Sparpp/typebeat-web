@@ -58,6 +58,9 @@ public static class StubEndpoints
 
         // GET /api/v2/blocks -> GetBlocksRequest expects a bare List<APIRelation>: []. Fetched
         // unconditionally at login (LocalUserState); a 404 logs a failing request every session.
+        // Blocking itself is not offered (backlog 400): there is no POST/DELETE blocks, and the game
+        // dropped its Block / Unblock menu items, because with chat stubbed above a block would have
+        // nothing to apply to. Empty is therefore the true answer, not a placeholder.
         app.MapGet("/api/v2/blocks", () => WireJson.Ok(Array.Empty<object>())).RequireBearer();
 
         // GET /api/v2/me/beatmapset-favourites moved to BeatmapsetEndpoints (M3): it now reads

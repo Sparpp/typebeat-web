@@ -56,7 +56,9 @@ public static class BeatmapsetSearchEndpoints
 
     public static void Map(IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v2/beatmapsets/search", SearchAsync);
+        // A listing like the board, and costlier per request (free text runs two count(*) over the
+        // sets), so it carries a budget of its own like the other listing and lookup routes.
+        app.MapGet("/api/v2/beatmapsets/search", SearchAsync).RequireRateLimiting(RateLimits.BeatmapsetSearch);
     }
 
     private static async Task<IResult> SearchAsync(HttpContext ctx, Db db)
