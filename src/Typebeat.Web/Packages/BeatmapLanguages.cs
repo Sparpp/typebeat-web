@@ -21,8 +21,10 @@ public static class BeatmapLanguages
     public const string Unset = "";
 
     /// <summary>
-    /// Every storable language, in the game's dropdown order (which is osu's). Order is display
-    /// order only; nothing keys off the index.
+    /// Every storable language: osu's original thirteen in their old dropdown order, then the twenty
+    /// PR 43 appended (the game's persisted ids 14 to 33, in id order). Order is display order only;
+    /// nothing keys off the index, and the game's own dropdown order is a separate list
+    /// (<c>BeatmapLanguageExtensions.DisplayOrder</c>).
     /// </summary>
     public static readonly IReadOnlyList<string> All =
     [
@@ -39,6 +41,27 @@ public static class BeatmapLanguages
         "swedish",
         "instrumental",
         "other",
+        // PR 43's persisted ids 14 to 33, appended after the original thirteen (BeatmapLanguage.cs).
+        "afrikaans",
+        "bavarian",
+        "danish",
+        "dutch",
+        "lowgerman",
+        "norwegian",
+        "swissgerman",
+        "belarusian",
+        "bulgarian",
+        "croatian",
+        "czech",
+        "serbian",
+        "slovak",
+        "ukrainian",
+        "finnish",
+        "hungarian",
+        "catalan",
+        "neapolitan",
+        "portuguese",
+        "romanian",
     ];
 
     private static readonly HashSet<string> canonical = new(All, StringComparer.Ordinal);
@@ -97,8 +120,13 @@ public static class BeatmapLanguages
     /// anything unrecognised) to null so callers can render nothing at all rather than an
     /// awkward placeholder.
     /// </summary>
-    public static string? DisplayName(string? stored)
-        => IsCanonical(stored) ? char.ToUpperInvariant(stored![0]) + stored[1..] : null;
+    public static string? DisplayName(string? stored) => stored switch
+    {
+        // The two compound names the game labels with a Description attribute.
+        "lowgerman" => "Low German",
+        "swissgerman" => "Swiss German",
+        _ => IsCanonical(stored) ? char.ToUpperInvariant(stored![0]) + stored[1..] : null,
+    };
 
     /// <summary>
     /// The BCP 47 tag the pages put in a <c>lang</c> attribute for text in this language (backlog
@@ -119,17 +147,38 @@ public static class BeatmapLanguages
         "russian" => "ru",
         "polish" => "pl",
         "swedish" => "sv",
+        "afrikaans" => "af",
+        "bavarian" => "bar",
+        "danish" => "da",
+        "dutch" => "nl",
+        "lowgerman" => "nds",
+        "norwegian" => "no",
+        "swissgerman" => "gsw",
+        "belarusian" => "be",
+        "bulgarian" => "bg",
+        "croatian" => "hr",
+        "czech" => "cs",
+        "serbian" => "sr",
+        "slovak" => "sk",
+        "ukrainian" => "uk",
+        "finnish" => "fi",
+        "hungarian" => "hu",
+        "catalan" => "ca",
+        "neapolitan" => "nap",
+        "portuguese" => "pt",
+        "romanian" => "ro",
         _ => null,
     };
 
     /// <summary>
     /// The tag for this language's ROMANISED text: <c>-Latn</c> appended for a language whose own
-    /// script is not Latin (Japanese, Chinese, Korean, Russian), the bare tag otherwise.
+    /// script is not Latin (Japanese, Chinese, Korean, and the Cyrillic Russian, Ukrainian,
+    /// Belarusian, Bulgarian and Serbian), the bare tag otherwise.
     /// </summary>
     public static string? RomanisedLangTag(string? stored) => LangTag(stored) switch
     {
         null => null,
-        "ja" or "zh" or "ko" or "ru" => LangTag(stored) + "-Latn",
+        "ja" or "zh" or "ko" or "ru" or "uk" or "be" or "bg" or "sr" => LangTag(stored) + "-Latn",
         string tag => tag,
     };
 }
