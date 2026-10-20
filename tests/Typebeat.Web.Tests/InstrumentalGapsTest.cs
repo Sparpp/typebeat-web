@@ -202,6 +202,25 @@ public class InstrumentalGapsTest
             // but it clears the corrected bound comfortably.
             Assert.That(PlayTimeGate.RequiredSeconds(diff.DrainLengthS, 0), Is.EqualTo(88.2).Within(1e-9));
             Assert.That(PlayTimeGate.RequiredSeconds(diff.DrainLengthS, diff.SkippableS), Is.EqualTo(14.4).Within(1e-9));
+
+            // Backlog 423: the drain the client is shown leaves both instrumentals out WHOLE
+            // (perceived 2000 -> 58000 and 59000 -> 93000, 90 s), not just their skip windows.
+            Assert.That(InstrumentalGaps.InstrumentalMs(diff.Lines), Is.EqualTo(90000).Within(1e-9));
+            Assert.That(diff.HitLengthS, Is.EqualTo(8).Within(1e-9), "98 s of span, 90 s of it instrumental");
+        });
+    }
+
+    [Test]
+    public void DrainLength_IsTheSpanWhenNothingQualifies()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(InstrumentalGaps.InstrumentalMs(Lines(exactly_ten_second_gap)), Is.EqualTo(10000).Within(1e-9), "exactly 10 s qualifies, and counts whole");
+            Assert.That(InstrumentalGaps.InstrumentalMs(Lines(one_millisecond_short)), Is.Zero);
+
+            var lines = Lines(one_millisecond_short);
+            Assert.That(InstrumentalGaps.DrainLengthMs(lines), Is.EqualTo(lines[^1].EndTime - lines[0].StartTime).Within(1e-9));
+            Assert.That(InstrumentalGaps.DrainLengthMs(null), Is.Zero);
         });
     }
 

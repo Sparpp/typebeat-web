@@ -30,6 +30,8 @@ public class SkipGateTest
 
     private static long skippableBeatmapId;
     private static long plainBeatmapId;
+    private static long unmeasuredBeatmapId;
+    private static long setId;
     private static string skippableChecksum = null!;
     private static string plainChecksum = null!;
     private static string bearer = null!;
@@ -54,7 +56,7 @@ public class SkipGateTest
 
         bearer = (await new TokenService(new Db(dataSource)).IssueAsync(typistId)).AccessToken;
 
-        long setId = await conn.ExecuteScalarAsync<long>(
+        setId = await conn.ExecuteScalarAsync<long>(
             """
             INSERT INTO beatmapsets (owner_id, title, artist, status, submitted_at, updated_at)
             VALUES (@ownerId, 'Gap Heavy', 'The Instrumentalists', 'ranked', now() - interval '5 days', now() - interval '5 days')
@@ -67,6 +69,15 @@ public class SkipGateTest
 
         plainChecksum = Guid.NewGuid().ToString("N");
         plainBeatmapId = await InsertBeatmapAsync(conn, setId, plainChecksum, 0);
+
+        // A row from before 051: hit_length_s NULL, so the wire falls back to the span.
+        unmeasuredBeatmapId = await conn.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating, filename)
+            VALUES (@setId, 'unmeasured', @checksum, @drain, @drain, 2.0, 'unmeasured.osu')
+            RETURNING id
+            """,
+            new { setId, checksum = Guid.NewGuid().ToString("N"), drain = drain_s });
     }
 
     [OneTimeTearDown]
@@ -115,13 +126,34 @@ public class SkipGateTest
         });
     }
 
+    [Test]
+    public async Task TheSetServesTheShownDrain_FallingBackToTheSpanWhenUnmeasured()
+    {
+        // Backlog 423: hit_length is the shown drain (hit_length_s), total_length the map length,
+        // and a row the backfill has not reached yet serves the span it always served.
+        using var response = await WebsiteFixture.Client.GetAsync($"/api/v2/beatmapsets/{setId}");
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var beatmaps = ((JArray)JObject.Parse(await response.Content.ReadAsStringAsync())["beatmaps"]!).Cast<JObject>().ToDictionary(b => (long)b["id"]!);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((double)beatmaps[skippableBeatmapId]["hit_length"]!, Is.EqualTo(10));
+            Assert.That((double)beatmaps[skippableBeatmapId]["total_length"]!, Is.EqualTo(drain_s));
+            Assert.That((double)beatmaps[plainBeatmapId]["hit_length"]!, Is.EqualTo(10));
+            Assert.That((double)beatmaps[unmeasuredBeatmapId]["hit_length"]!, Is.EqualTo(drain_s), "unmeasured: the old span");
+        });
+    }
+
     // ---- helpers ----
 
+    // hit_length_s, the drain the client is SHOWN (backlog 423), is set far below the span on
+    // both rows: the gate must keep reading drain_length_s, so every bound above stays put.
     private static async Task<long> InsertBeatmapAsync(NpgsqlConnection conn, long setId, string checksum, double skippable)
         => await conn.ExecuteScalarAsync<long>(
             """
-            INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating, filename, skippable_s)
-            VALUES (@setId, 'type!beat', @checksum, @drain, @drain, 2.0, 'map.osu', @skippable)
+            INSERT INTO beatmaps (set_id, version_name, checksum_md5, total_length_s, drain_length_s, difficulty_rating, filename, skippable_s, hit_length_s)
+            VALUES (@setId, 'type!beat', @checksum, @drain, @drain, 2.0, 'map.osu', @skippable, 10)
             RETURNING id
             """,
             new { setId, checksum, drain = drain_s, skippable });

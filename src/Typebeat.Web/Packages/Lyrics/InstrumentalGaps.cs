@@ -3,9 +3,10 @@ namespace Typebeat.Web.Packages.Lyrics;
 /// <summary>
 /// Server-side mirror of the game's instrumental-skip qualification rule
 /// (typebeat-osu typebeat.Game.Rulesets.TypeBeat/Gameplay/InstrumentalGaps.cs, class
-/// <c>InstrumentalGaps</c>), reduced to the one number the anti-cheat play-time gate needs: how
-/// much wall-clock a player is ALLOWED to remove from a map by pressing every skip at the earliest
-/// possible moment.
+/// <c>InstrumentalGaps</c>), reduced to the two numbers the server stores: how much wall-clock a
+/// player is ALLOWED to remove from a map by pressing every skip at the earliest possible moment
+/// (the anti-cheat play-time gate's allowance, <see cref="SkippableSeconds"/>), and since backlog
+/// 423 the map's drain with its instrumentals left out (<see cref="DrainLengthMs"/>, display only).
 ///
 /// <para>
 /// CROSS-REPO INVARIANT. The four constants below and the qualification arithmetic in
@@ -122,6 +123,63 @@ public static class InstrumentalGaps
             total += gap.SkippableMs;
 
         return total / 1000;
+    }
+
+    /// <summary>
+    /// Bump when <see cref="DrainLengthMs"/>'s rule (or the stored parse it reads) changes, so
+    /// <see cref="HitLengthBackfill"/> recomputes every <c>beatmaps.hit_length_s</c> stamped with
+    /// an older one (051_hit_length.sql). Server only: the game recomputes its figure every time.
+    /// </summary>
+    public const int DRAIN_VERSION = 1;
+
+    /// <summary>
+    /// Milliseconds of the map that are NOT gameplay: for every consecutive pair whose perceived
+    /// instrumental (previous <c>SingEndTime</c> to next <see cref="FirstVocalTime"/>) qualifies
+    /// under <see cref="MIN_GAP_MS"/>, the whole perceived stretch (backlog 423). Mirrors the
+    /// game's <c>InstrumentalGaps.InstrumentalMs</c>.
+    ///
+    /// <para>The PERCEIVED stretch rather than the skip window, deliberately: the window is a
+    /// mechanical subset of it, and it rests on <see cref="LastTypeableTarget"/>, which is an
+    /// approximation here. The perceived stretch reads only <c>SingEndTime</c> and the first vocal,
+    /// both exact on this side, so the two copies agree by construction (WireCompat
+    /// <c>DrainLengthParityTest</c>).</para>
+    /// </summary>
+    public static double InstrumentalMs(IReadOnlyList<LyricLine>? lines)
+    {
+        double total = 0;
+
+        if (lines == null || lines.Count < 2)
+            return total;
+
+        for (int i = 0; i < lines.Count - 1; i++)
+        {
+            double perceived = FirstVocalTime(lines[i + 1]) - lines[i].SingEndTime;
+
+            if (perceived >= MIN_GAP_MS)
+                total += perceived;
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// The map's DRAIN length in milliseconds, the gameplay time only: first line start to last
+    /// line end, minus <see cref="InstrumentalMs"/>, never below zero. Stored as
+    /// <c>beatmaps.hit_length_s</c> and served as <c>hit_length</c>. Mirrors the game's
+    /// <c>InstrumentalGaps.DrainLengthMs</c>, which is what song select shows.
+    ///
+    /// <para>NOT the play-time gate's input. <see cref="Typebeat.Web.Scoring.PlayTimeGate"/>
+    /// takes the full span (<c>beatmaps.drain_length_s</c>) minus <see cref="SkippableSeconds"/>;
+    /// handing it this figure would subtract the same instrumentals twice and loosen the gate.</para>
+    /// </summary>
+    public static double DrainLengthMs(IReadOnlyList<LyricLine>? lines)
+    {
+        if (lines == null || lines.Count == 0)
+            return 0;
+
+        double span = lines[^1].EndTime - lines[0].StartTime;
+
+        return Math.Max(0, span - InstrumentalMs(lines));
     }
 
     /// <summary>
