@@ -14,6 +14,7 @@ namespace Typebeat.Web.Scoring;
 ///      · accuracyShare(acc) · knee(acc)                  timing quality
 ///      · modMult
 ///      · (1 + comboBonus)                              combo bonus, a FRACTION of the price
+///      · shortMapMultiplier(playedDurationSeconds)      0.40 to 1 below one minute
 ///
 /// accuracyShare(acc) = expCurve((acc − acc_floor) / (1 − acc_floor))
 /// expCurve(t)        = (e^(k·t) − 1) / (e^k − 1), or t itself when k is 0
