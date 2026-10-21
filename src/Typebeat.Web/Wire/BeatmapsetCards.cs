@@ -42,7 +42,7 @@ public static class BeatmapsetCards
             : (await conn.QueryAsync<BeatmapRow>(new CommandDefinition(
                 """
                 SELECT set_id AS setId, id AS id, ruleset_id AS rulesetId, checksum_md5 AS checksum,
-                       total_length_s AS totalLengthSeconds, drain_length_s AS drainLengthSeconds,
+                       total_length_s AS totalLengthSeconds, COALESCE(hit_length_s, drain_length_s) AS hitLengthSeconds,
                        difficulty_rating AS difficultyRating, version_name AS version, play_count AS playCount
                 FROM beatmaps
                 WHERE set_id = ANY(@ids) AND filename IS NOT NULL
@@ -89,7 +89,7 @@ public static class BeatmapsetCards
                     UserId = (int)set.OwnerId,
                     DifficultyRating = b.DifficultyRating,
                     TotalLength = b.TotalLengthSeconds,
-                    HitLength = b.DrainLengthSeconds,
+                    HitLength = b.HitLengthSeconds,
                     Version = b.Version,
                     LastUpdated = set.UpdatedAt,
                     PlayCount = b.PlayCount,
@@ -130,7 +130,7 @@ public static class BeatmapsetCards
         short RulesetId,
         string Checksum,
         double TotalLengthSeconds,
-        double DrainLengthSeconds,
+        double HitLengthSeconds,
         double DifficultyRating,
         string Version,
         int PlayCount);

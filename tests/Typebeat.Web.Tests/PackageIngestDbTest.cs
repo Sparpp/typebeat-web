@@ -529,6 +529,46 @@ public class PackageIngestDbTest
         });
     }
 
+    [Test]
+    [Order(6)]
+    public async Task HitLengthBackfill_MeasuresUnmeasuredAndStaleRows_AndTouchesNothingElse()
+    {
+        // Ingest wrote hit_length_s; a row from before 051 (never measured) and one measured under
+        // another DRAIN_VERSION are both remeasured off the current version's .osu, and the gate's
+        // inputs (drain_length_s, skippable_s) are left exactly as they were.
+        await using var conn = await db.OpenAsync();
+
+        var ingested = await conn.QuerySingleAsync<(double? HitLength, int? Version, double Drain, double Skippable)>(
+            "SELECT hit_length_s AS HitLength, hit_length_version AS Version, drain_length_s AS Drain, skippable_s AS Skippable FROM beatmaps WHERE id = 1001");
+
+        await conn.ExecuteAsync("UPDATE beatmaps SET hit_length_s = NULL, hit_length_version = NULL WHERE id = 1001");
+        await HitLengthBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        var measured = await conn.QuerySingleAsync<(double? HitLength, int? Version, double Drain, double Skippable)>(
+            "SELECT hit_length_s AS HitLength, hit_length_version AS Version, drain_length_s AS Drain, skippable_s AS Skippable FROM beatmaps WHERE id = 1001");
+
+        await conn.ExecuteAsync("UPDATE beatmaps SET hit_length_s = 1, hit_length_version = 0 WHERE id = 1001");
+        await HitLengthBackfill.RunAsync(db, fileStore, NullLogger.Instance);
+
+        double? remeasured = await conn.ExecuteScalarAsync<double?>("SELECT hit_length_s FROM beatmaps WHERE id = 1001");
+        int stale = await conn.ExecuteScalarAsync<int>(
+            "SELECT count(*) FROM beatmaps WHERE filename IS NOT NULL AND hit_length_version IS DISTINCT FROM @v",
+            new { v = InstrumentalGaps.DRAIN_VERSION });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ingested.HitLength, Is.Not.Null, "ingest writes the drain");
+            Assert.That(ingested.Version, Is.EqualTo(InstrumentalGaps.DRAIN_VERSION));
+            Assert.That(ingested.HitLength, Is.LessThanOrEqualTo(ingested.Drain), "drain never exceeds the span");
+            Assert.That(measured.HitLength, Is.EqualTo(ingested.HitLength), "the sweep measures what ingest wrote");
+            Assert.That(measured.Version, Is.EqualTo(InstrumentalGaps.DRAIN_VERSION));
+            Assert.That(measured.Drain, Is.EqualTo(ingested.Drain), "the gate's span is not touched");
+            Assert.That(measured.Skippable, Is.EqualTo(ingested.Skippable), "nor is its skip allowance");
+            Assert.That(remeasured, Is.EqualTo(ingested.HitLength), "a row measured under another version is remeasured");
+            Assert.That(stale, Is.Zero, "every live difficulty is measured");
+        });
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Song language (019_language.sql): ingest writes the mapper's tag, the backfill fills the rest.
     // ---------------------------------------------------------------------------------------------

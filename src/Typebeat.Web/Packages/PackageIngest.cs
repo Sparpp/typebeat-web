@@ -375,13 +375,15 @@ public sealed class PackageIngest(
                      difficulty_rating, filename, word_count, char_count, wpm, pace_version, skippable_s, lyrics,
                      sr_dt, sr_ht, sr_literate, sr_literate_dt, sr_literate_ht,
                      peak_wpm, peak_cpm, target_wpm, wpm_curve, gameplay_fingerprint, freestyle_cell_count,
-                     ratings, lyric_font, lyrics_original, judged_cells, judged_cells_literate, judged_cells_version)
+                     ratings, lyric_font, lyrics_original, judged_cells, judged_cells_literate, judged_cells_version,
+                     hit_length_s, hit_length_version)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
                      @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
                      @srDt, @srHt, @srLiterate, @srLiterateDt, @srLiterateHt,
                      @peakWpm, @peakCpm, @targetWpm, @wpmCurve, @gameplayFingerprint, @freestyleCellCount,
-                     @ratings::jsonb, @lyricFont, @lyricsOriginal, @judgedCells, @judgedCellsLiterate, @judgedCellsVersion)
+                     @ratings::jsonb, @lyricFont, @lyricsOriginal, @judgedCells, @judgedCellsLiterate, @judgedCellsVersion,
+                     @hitLengthS, @hitLengthVersion)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -412,7 +414,9 @@ public sealed class PackageIngest(
                     lyrics_original = EXCLUDED.lyrics_original,
                     judged_cells = EXCLUDED.judged_cells,
                     judged_cells_literate = EXCLUDED.judged_cells_literate,
-                    judged_cells_version = EXCLUDED.judged_cells_version;
+                    judged_cells_version = EXCLUDED.judged_cells_version,
+                    hit_length_s = EXCLUDED.hit_length_s,
+                    hit_length_version = EXCLUDED.hit_length_version;
 
                 -- A re-upload can move this difficulty's star ratings, and the stored per-score pp
                 -- is a function of them, so hand every score set on this map back to PpBackfill
@@ -498,6 +502,11 @@ public sealed class PackageIngest(
                     judgedCells = judged.Cells,
                     judgedCellsLiterate = judged.Literate,
                     judgedCellsVersion = JudgedCells.VERSION,
+                    // The drain the client is shown (051_hit_length.sql): gameplay time only, the
+                    // span minus its instrumentals. Display only; the play-time gate keeps reading
+                    // drain_length_s, the full span, above.
+                    hitLengthS = diff.HitLengthS,
+                    hitLengthVersion = InstrumentalGaps.DRAIN_VERSION,
                 });
         }
 

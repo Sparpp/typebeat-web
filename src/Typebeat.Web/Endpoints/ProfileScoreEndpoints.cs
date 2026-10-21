@@ -225,7 +225,7 @@ public static class ProfileScoreEndpoints
     private const string beatmap_select =
         """
         b.id AS BeatmapId, b.set_id AS SetId, b.ruleset_id AS RulesetId, b.checksum_md5 AS Checksum,
-        b.total_length_s AS TotalLengthS, b.drain_length_s AS DrainLengthS,
+        b.total_length_s AS TotalLengthS, COALESCE(b.hit_length_s, b.drain_length_s) AS HitLengthS,
         b.difficulty_rating AS DifficultyRating, b.version_name AS Version,
         s.owner_id AS OwnerId, s.title AS Title, s.artist AS Artist,
         s.title_unicode AS TitleUnicode, s.artist_unicode AS ArtistUnicode,
@@ -295,7 +295,7 @@ public static class ProfileScoreEndpoints
         UserId = (int)b.OwnerId,
         DifficultyRating = b.DifficultyRating,
         TotalLength = b.TotalLengthS,
-        HitLength = b.DrainLengthS,
+        HitLength = b.HitLengthS,
         Version = b.Version,
         LastUpdated = b.UpdatedAt,
         Beatmapset = set,
@@ -317,7 +317,7 @@ public static class ProfileScoreEndpoints
         public short RulesetId { get; set; }
         public string Checksum { get; set; } = string.Empty;
         public double TotalLengthS { get; set; }
-        public double DrainLengthS { get; set; }
+        public double HitLengthS { get; set; }
         public double DifficultyRating { get; set; }
         public string Version { get; set; } = string.Empty;
         public long OwnerId { get; set; }

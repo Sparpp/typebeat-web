@@ -113,7 +113,7 @@ public sealed class StartupSweepGate
 /// Program.cs still applies the extensions and the migrations synchronously before the app listens,
 /// then this runs every sweep in the original order, in the background, and opens
 /// <see cref="StartupSweepGate"/> when it is through. The order is load-bearing and unchanged:
-/// Pace, then Fingerprint, then JudgedCell (independent of the rest), then Language (reads the
+/// Pace, then Fingerprint, then JudgedCell and HitLength (independent of the rest), then Language (reads the
 /// lyric text Pace fills), SetRank, SetRankClassicMark (backlog 398: the version rule pointed down,
 /// after the carry-up so the two cannot fight over a row), and Pp LAST (reads sr_dt / sr_ht and the ranked flags the refund may
 /// have just flipped). The one-shot repairs that used to sit in it (the 016 and 017 gate refunds,
@@ -153,6 +153,11 @@ public sealed class StartupSweeps(Db db, IFileStore fileStore, StartupSweepGate 
             // submissions are accepted unchecked, so nothing waits on this.
             stage = nameof(JudgedCellBackfill);
             await JudgedCellBackfill.RunAsync(db, fileStore, logger, stoppingToken);
+
+            // Measure the drain the client is shown (051_hit_length.sql, backlog 423). Display only
+            // and independent of the rest: until a row is measured its readers serve the old span.
+            stage = nameof(HitLengthBackfill);
+            await HitLengthBackfill.RunAsync(db, fileStore, logger, stoppingToken);
 
             // Detect the song language of every set that still has none (019_language.sql) from the
             // lyric text, so after Pace. Only writes rows that are still unset.

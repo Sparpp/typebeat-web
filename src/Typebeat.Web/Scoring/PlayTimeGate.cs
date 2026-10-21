@@ -35,6 +35,15 @@ namespace Typebeat.Web.Scoring;
 /// </para>
 ///
 /// <para>
+/// The drain here is <c>beatmaps.drain_length_s</c>, the whole lyric SPAN (first line start to
+/// last line end), and must stay that. Since backlog 423 the drain the client is SHOWN is a
+/// different column, <c>hit_length_s</c>, which already leaves the instrumentals out; the skip
+/// allowance is carved out of those same instrumentals, so feeding this gate the shown drain would
+/// subtract them twice and loosen it. WireCompat's <c>DrainLengthParityTest</c> pins the required
+/// seconds of every real fixture to the values they had before that column existed.
+/// </para>
+///
+/// <para>
 /// Fail toward the OLD behaviour: a map whose skippable time could not be computed (blob missing,
 /// unparseable, a row the backfill has not reached yet) carries <c>skippable_s = 0</c>, which makes
 /// the requirement exactly the pre-task-47 one, and a stack with no rate mod is rate 1.0, which

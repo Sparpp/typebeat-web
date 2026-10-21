@@ -239,8 +239,23 @@ public sealed class ParsedDifficulty
     /// <summary>Last lyric line's hard end, seconds (0 for an empty map).</summary>
     public double TotalLengthS => Lines.Count > 0 ? Lines[^1].EndTime / 1000 : 0;
 
-    /// <summary>First lyric line start -> last line end, seconds.</summary>
+    /// <summary>
+    /// First lyric line start -> last line end, seconds: the whole lyric SPAN, instrumentals
+    /// included. Stored as <c>beatmaps.drain_length_s</c>, which despite its name is no longer the
+    /// drain anyone is shown (that is <see cref="HitLengthS"/>, since backlog 423). It stays because
+    /// it is the play-time anti-cheat gate's input (<see cref="Scoring.PlayTimeGate"/>, which takes
+    /// this minus <see cref="SkippableS"/>) and the cap on a score's stored play time; keeping it
+    /// unchanged is what keeps every map's required seconds identical.
+    /// </summary>
     public double DrainLengthS => Lines.Count > 0 ? (Lines[^1].EndTime - Lines[0].StartTime) / 1000 : 0;
+
+    /// <summary>
+    /// The map's drain, seconds: gameplay time only, the span above minus every qualifying
+    /// instrumental stretch (<see cref="InstrumentalGaps.DrainLengthMs"/>, mirrored by the game's
+    /// song select). Stored as <c>beatmaps.hit_length_s</c> (051_hit_length.sql) and served as the
+    /// wire's <c>hit_length</c>. Display only: nothing that gates or prices a score reads it.
+    /// </summary>
+    public double HitLengthS => InstrumentalGaps.DrainLengthMs(Lines) / 1000;
 
     /// <summary>
     /// Seconds of <see cref="DrainLengthS"/> the in-game skip button can legally remove, seconds
