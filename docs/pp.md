@@ -21,12 +21,14 @@ pp = C · SR_eff^2.30
        · accShare(acc) · knee(acc)                      # accuracy (timing quality)
        · modMult                                        # NOT for DT/HT; rate lives in SR_eff only
        · (1 + comboBonus)                               # combo bonus, a FRACTION of the price
+       · shortMapMultiplier(playedSeconds)              # 0.40 to 1 below one minute
 
 accShare(acc) = expCurve((acc − 0.5) / (1 − 0.5))       # 0 at or below the floor, 1 at a perfect play
 expCurve(t)   = (e^(1.75·t) − 1) / (e^1.75 − 1)         # or t itself at a steepness of 0
 knee(acc)     = 1                                       # acc_knee_width is 0: the knee is OFF
 comboBonus    = min(10, comboMax/200 · 1)/100 · maxcombo/comboMax · (1.5 on a spotless full combo)
 comboMax      = cells, or a Japanese Polyglot play's minimum-romaji full combo (v27)
+shortMapMultiplier(d) = 1 − 0.60 · (1 − clamp(d/60, 0, 1))^2    # 0.40 at 0 s, 0.85 at 30 s, 1 from 60 s on
 
 C = 9.0     # global scale constant, does not affect ranking order
 ```
@@ -118,6 +120,16 @@ Factor by factor, in descending priority:
   * `combo_bonus_slope` (12.5) and `combo_bonus_zero` (1.0), the v21 pair, are kept DECLARED in both
     mirrors and read by nothing. They are the record of what v21 priced, and they are what lets the
     retune tool tell a mirror one generation behind from a mirror that is simply broken.
+* **shortMapMultiplier(playedSeconds)**: a CUT on a short map, applied last, after the combo bonus
+  (`core · (1 + comboBonus) · shortMapMultiplier`). It is a quadratic ease-out: a play whose
+  lyric is 0 s long keeps 40% of its price, one 30 s long keeps 85%, and from 60 s up the factor is
+  exactly 1, joining the full-length price with zero slope. `playedSeconds` is the first-to-last
+  PLAYABLE unit span of the map (instrumental breaks inside the mapped lyrics count; leading audio,
+  seal deadlines and trailing audio do not), divided by the play's clock rate, so a Double Time play
+  is measured at its real-time length. An unknown legacy duration (positive infinity, a stored row
+  that predates the measurement) keeps the price at 1; a malformed one (NaN or negative infinity)
+  takes the maximum cut rather than evading it, and a negative duration clamps to 0. Implemented by
+  `PerformancePoints.ShortMapMultiplier` and `PlayedDurationFor` on both mirrors.
 
 **Definitions (pinned to the score row):**
 
@@ -219,6 +231,12 @@ stored `ranked = false` and therefore earn no pp.
   on, which since backlog 208 is the harder half of the pair (the unpinned caret became the
   default for every play and the mod reversed). Flat for the same reason again, and NOT to be
   confused with **FT** below, which is the retired acronym for the opposite behaviour.
+* **CL** (Classic, backlog 398): flat × 0.95. A SYNTHETIC SYSTEM MARK the server appends to a score
+  whose played version is not the current gameplay of its (re-ranked) map, so nobody can select it
+  in the client. The play was on a different map from the one that got ranked (earlier timing, or a
+  different recording), and is paid 5 percent less. Flat, because the mark converts nothing the
+  rating can see: the play's cells, target times and pace are whatever its version held, and there is
+  no rating cell for "a different version" to read. Mirrors the 0.95x term on the score side.
 * **FT** (the retired Fletcher): × 0.90, for stored rows only. It is a `ModType.System` mod
   nobody can select, kept resolvable so the rows that carry it keep the price and the era they
   were played under.
@@ -248,6 +266,7 @@ modMult = (FL ? FL(notes)              : 1)
         · (FC ? 1.02                   : 1)
         · (FT ? 0.90                   : 1)
         · (NF ? 0.90                   : 1)
+        · (CL ? 0.95                   : 1)     # synthetic mark, backlog 398
 ```
 
 ## Aggregation
