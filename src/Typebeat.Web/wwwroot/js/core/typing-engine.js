@@ -378,6 +378,16 @@
             // identical reason: LatestBreakWins exists in the C# to re-derive a row stored before
             // that rule, and StreakedBreakWins is the only arm a live play can be in.
             this.restorable = null;
+            // The claims a newer break DISPLACED from `restorable`, oldest first, each
+            // { lineIndex, cellIndex, streak, positions } and each still waiting for its own cell
+            // (backlog 422, TypingEngine.StacksDisplacedClaims, bit 14 of the second CONFIG word).
+            // Entry i holds the run its break cut off; the run between it and the next newer break
+            // is held by entry i + 1, or by `restorable` for the newest. Correcting a cell therefore
+            // JOINS its run to the next newer claim, which is a refund to the current run only when
+            // no newer break is still outstanding (resumeStreakIfThisRedeemsTheBreak). Never
+            // non-empty while `restorable` is null. The C# reads the era bit so stored replays keep
+            // backlog 262's fold; the browser only plays live, so the stack stands unguarded.
+            this.displacedClaims = [];
             // event hooks (optional; set by the renderer)
             this.onCharJudged = null;
             this.onWrongKey = null;
@@ -1092,7 +1102,7 @@
             // and then spoils a cell on the next one is holding a claim on a line the song is still
             // sealing behind it. Dropping it keeps the state truthful rather than relying on the
             // caret never going back.
-            if (this.restorable !== null && this.restorable.lineIndex === idx) this.restorable = null;
+            this.dropClaimOn(idx);
 
             // TypeBeatHealthFeed.OnAbandonSealed: the skip drained each phantom
             // cell at the keypress, and the Miss each is about to take below drains again, so the
@@ -1120,8 +1130,32 @@
         // ended after it. Called at every combo-break seam except the two REDEEMABLE ones, a wrong
         // keypress and a word skip, which snapshot instead (snapshotRedeemableBreak): a break of
         // either kind that cost a streak of its own takes the claim there, so it needs no case here.
+        // Every displaced claim below it goes too (backlog 422): their runs could only ever reach the
+        // current one through this break.
         discardRestorableStreak() {
             this.restorable = null;
+            this.displacedClaims = [];
+        }
+
+        // ComboLedger.DropClaimOn. A sealed line's cells can never be typed again, so a claim taken
+        // on line `idx` is unredeemable. Since backlog 422 that can be a DISPLACED claim as well as
+        // the one on top: its break is now permanent, so the NEWEST claim on the line goes and so
+        // does every claim OLDER than it, whatever line those are on, because their runs could only
+        // ever have joined the current one through it. Claims newer than it are untouched, which is
+        // the point: the earlier line's typo stops being anything a later correction can refund.
+        dropClaimOn(idx) {
+            if (this.restorable !== null && this.restorable.lineIndex === idx) {
+                this.restorable = null;
+                this.displacedClaims = [];
+                return;
+            }
+
+            for (let i = this.displacedClaims.length - 1; i >= 0; i--) {
+                if (this.displacedClaims[i].lineIndex === idx) {
+                    this.displacedClaims = this.displacedClaims.slice(i + 1);
+                    return;
+                }
+            }
         }
 
         // TypingEngine.creditCombo. Credit one combo increment, earned on the cell the press LANDED
@@ -1196,7 +1230,8 @@
         // just as unreachable as a passive break's, and a player who corrects both accidents in full
         // is entitled to both. The chain is then redeemed at the NEWEST of the broken cells, and the
         // seal's back-dated break (backlog 259) is what still takes back anything the line never
-        // really earned. See the arm itself, below.
+        // really earned. Since backlog 422 the displaced claim is KEPT below the new one rather than
+        // folded into it, so each break's run waits for its own cell. See the arm itself, below.
         //
         // The C# reads three era switches here that this file has no counterpart to, for the reason
         // set out on `restorable`: ComboRestoreRule, which decides whether any snapshot is taken at
@@ -1255,17 +1290,21 @@
             // max_combo its player was given. This file has no such arm, for the reason set out on
             // `restorable`: the browser only ever plays live, so the rule stands unguarded.
             //
-            // What keeps it honest is backlog 259's back-dated seal break: the fold restores
-            // increments earned before the older break without that break's own cell having been
-            // fixed, but the restored positions go back WHERE THEY WERE EARNED, so a line sealing on
-            // cells nobody typed still destroys every increment at or before its last unforeseen miss.
+            // BACKLOG 422 refines that, and the refinement is what this file runs. The fold credited
+            // the displaced streak whether or not its own cell was ever corrected, so a typo left
+            // WRONG on a line that had since sealed (not a miss, backlog 124, so the back-dated seal
+            // had nothing to claw back) was refunded by correcting the NEWER one. The displaced claim
+            // is now kept, separately, below this one (displacedClaims): each break's run comes back
+            // only when its own cell is corrected (resumeStreakIfThisRedeemsTheBreak), and a claim
+            // whose line seals is dropped (dropClaimOn). Two accidents both corrected still cost
+            // nothing, in either order. A displaced claim holding nothing is not kept, exactly as the
+            // fold ignored one. The C# gates this on TypingEngine.StacksDisplacedClaims (bit 14 of the
+            // second CONFIG word) beside FoldsDisplacedClaim, so every stored replay keeps the fold;
+            // this file has no such arm, for the reason set out on `restorable`.
             if (claim !== null && claim.streak > 0) {
-                this.restorable = {
-                    lineIndex: this.activeLineIndex, cellIndex: cellIndex, streak: claim.streak + brokenStreak,
-                    ownPressCredit: 0,
-                    positions: claim.positions.concat(brokenPositions)
-                };
-                return;
+                this.displacedClaims.push({
+                    lineIndex: claim.lineIndex, cellIndex: claim.cellIndex, streak: claim.streak, positions: claim.positions
+                });
             }
 
             this.restorable = {
@@ -1307,13 +1346,34 @@
         // Backlog 243's ownPressCredit is not read here, and the C# does not read it either: it
         // widened a positional destructure and discarded the new member. The credit only ever
         // decides who OWNS the claim, never what redeeming it is worth.
+        //
+        // Since backlog 422 the cell can also be one a DISPLACED claim is waiting for (see
+        // displacedClaims). Correcting it joins that claim's run to the run after it, which is still
+        // broken by a newer outstanding claim, so nothing is refunded NOW: the streak and positions
+        // fold into the next newer claim (oldest positions in front) and come back when that one is
+        // redeemed in turn. Redeeming the claim on top brings the newest displaced one back up to
+        // wait for its own cell, so two accidents corrected in either order both come back, and one
+        // left wrong stays lost.
         resumeStreakIfThisRedeemsTheBreak(cellIndex) {
+            this.joinDisplacedClaimsOn(this.activeLineIndex, cellIndex);
+
             const claim = this.restorable;
 
             if (claim === null) return;
             if (claim.lineIndex !== this.activeLineIndex || claim.cellIndex !== cellIndex) return;
 
             this.restorable = null;
+
+            // The newest displaced claim is the next break back, and with this one corrected the
+            // current run reaches all the way to it: it is the claim on top now, with no press credit.
+            if (this.displacedClaims.length > 0) {
+                const next = this.displacedClaims.pop();
+
+                this.restorable = {
+                    lineIndex: next.lineIndex, cellIndex: next.cellIndex, streak: next.streak, ownPressCredit: 0,
+                    positions: next.positions
+                };
+            }
 
             // A break that cost nothing restores nothing, and announcing it would have every
             // consumer write back a combo it already holds.
@@ -1335,6 +1395,44 @@
             this.processor.restoreCombo(claim.streak);
 
             if (this.onComboRestored) this.onComboRestored(claim.streak);
+        }
+
+        // ComboLedger.joinDisplacedClaimsOn (backlog 422). Fold every displaced claim waiting for
+        // cell `cellIndex` of line `lineIndex` into the next newer claim. Walked oldest first, so a
+        // claim folded into a newer one waiting for the same cell is carried on with it. NEW arrays
+        // throughout: a claim's positions may be the old runPositions reference.
+        joinDisplacedClaimsOn(lineIndex, cellIndex) {
+            let i = 0;
+
+            while (i < this.displacedClaims.length) {
+                const joined = this.displacedClaims[i];
+
+                if (joined.lineIndex !== lineIndex || joined.cellIndex !== cellIndex) {
+                    i++;
+                    continue;
+                }
+
+                this.displacedClaims.splice(i, 1);
+
+                // Index i now names the next newer displaced claim, or, past the end, the claim on
+                // top (never null while the stack is non-empty). The joined run was earned first, so
+                // its positions go in front; the counts still equal the streaks.
+                if (i < this.displacedClaims.length) {
+                    const newer = this.displacedClaims[i];
+
+                    this.displacedClaims[i] = {
+                        lineIndex: newer.lineIndex, cellIndex: newer.cellIndex, streak: joined.streak + newer.streak,
+                        positions: joined.positions.concat(newer.positions)
+                    };
+                } else if (this.restorable !== null) {
+                    const top = this.restorable;
+
+                    this.restorable = {
+                        lineIndex: top.lineIndex, cellIndex: top.cellIndex, streak: joined.streak + top.streak,
+                        ownPressCredit: top.ownPressCredit, positions: joined.positions.concat(top.positions)
+                    };
+                }
+            }
         }
 
         autoSkipForward() {

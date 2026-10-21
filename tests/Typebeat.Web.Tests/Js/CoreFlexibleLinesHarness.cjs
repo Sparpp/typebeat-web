@@ -2110,4 +2110,172 @@ const out = {};
     };
 }
 
+// THE DISPLACED CLAIM STACK (backlog 422). The owner's report: a miss on an earlier line, then a miss
+// on the current line, and correcting the latter put the combo back to what it was before the FORMER
+// miss. Backlog 262's fold moved the displaced claim's streak into the newer break's own claim
+// whether or not the older cell was ever corrected, and a cell left WRONG is not a miss at seal, so
+// nothing clawed it back. The rule: displaced claims are STACKED, each waits for its own cell, a
+// correction further down joins its run to the next newer claim, and a sealed line's claims are
+// dropped. Two accidents both corrected still cost nothing, in either order.
+//
+// EMITTED WITH THEIR SCRIPTS: Typebeat.WireCompat.DisplacedClaimStackLiveParityTest replays these
+// steps through the game's own TypingEngine with StacksDisplacedClaims set, and the same keystrokes
+// through TypeBeatReplayScorer for the SUBMITTED account (and with the bit clear, for the era every
+// stored replay re-derives under).
+{
+    // The reported shape's map, the game's DisplacedClaimStackTest twoLines:
+    //   L0 "abcd" [1000, 4000): a = 1000, b = 1500, c = 2000, d = 2500.
+    //   L1 "efgh" from 4000: e = 4000, f = 4500, g = 5000, h = 5500. Entry opens at 2500.
+    const TWO = osu([
+        { text: 'abcd', start_ms: 1000, end_ms: 3000, words: [word('abcd', 1000, 3000)] },
+        { text: 'efgh', start_ms: 4000, end_ms: 6000, words: [word('efgh', 4000, 6000)] }
+    ], 20000);
+
+    // The one-line shapes' map, the fold section's own REPORT: "abcde fg hi", eleven cells
+    //   0:a = 1000, 1:b = 1100, 2:c = 1200, 3:d = 1300, 4:e = 1400, 5:' ' = 1500, 6:f = 1500,
+    //   7:g = 1600, 8:' ' = 1700, 9:h = 1700, 10:i = 1800.
+    const ONE = osu([
+        {
+            text: 'abcde fg hi', start_ms: 1000, end_ms: 1900,
+            words: [word('abcde', 1000, 1500), word('fg', 1500, 1700), word('hi', 1700, 1900)]
+        }
+    ], 60000);
+
+    function k(c, t) { return { op: 'key', c: c, t: t }; }
+    function bs(t) { return { op: 'backspace', t: t }; }
+    function tick(t) { return { op: 'update', t: t }; }
+
+    // The reported shape's head: a, b (a run of 2), a typo on 'c' (claim 2), 'd' (L0 finished, a run
+    // of 1), then 'e' (the typed-letter newline onto L1, entry having opened at 2500) and 'f' (the run
+    // is 3), and a typo on 'g', which owns that 3 and displaces L0's claim. 'c' is never corrected.
+    const reportedHead = [
+        tick(1000), k('a', 1000), k('b', 1500), k('z', 2000), k('d', 2500),
+        k('e', 2700), k('f', 2800), k('z', 2900),
+    ];
+
+    const oneLineHead = [
+        tick(1000), k('a', 1000), k('b', 1100), k('c', 1200), k('d', 1300), k('e', 1400), k(' ', 1500),
+        k('z', 1500), k('g', 1600), k('z', 1700),
+    ];
+
+    const scenarios = {
+        // THE REPORT, corrected after L0 has sealed: the fix refunds the 3 its own break took and
+        // nothing owed to 'c'. The fold refunded 5.
+        reportedShape: {
+            map: TWO,
+            steps: [...reportedHead, tick(4100), bs(5000), k('g', 5000), k('h', 5500), tick(9500)]
+        },
+
+        // THE REPORT, corrected while L0 is still open: the same refund of 3, and L0's claim, back on
+        // top, is dropped when L0 seals with 'c' still wrong.
+        reportedShapeFixedBeforeTheSeal: {
+            map: TWO,
+            steps: [...reportedHead, bs(3000), k('g', 3100), tick(4100), k('h', 5500), tick(9500)]
+        },
+
+        // One line, no seal involved: the head of "fg" typo'd and left wrong, the gap typo'd and
+        // fixed in place. The refund is the gap's own 1, not the 6 the first typo broke.
+        olderLeftWrong: {
+            map: ONE,
+            steps: [...oneLineHead, bs(1700), k(' ', 1700), k('h', 1700), k('i', 1800), tick(8000)]
+        },
+
+        // Both corrected, the NEWER first: the gap fixed in place (its own 1), then three backspaces
+        // to the head of "fg" and a retype, whose claim is on top by then and refunds its 6. The run
+        // reaches the clean run's 11, as the fold's did.
+        bothCorrectedNewerFirst: {
+            map: ONE,
+            steps: [...oneLineHead, bs(1700), k(' ', 1700), bs(1700), bs(1700), bs(1700),
+                k('f', 1700), k('g', 1700), k(' ', 1700), k('h', 1700), k('i', 1800), tick(8000)]
+        },
+
+        // A THIRD BREAK: typos on 'c', 'e' and 'f' with one correct character between each pair, the
+        // newer two corrected and 'c' left wrong. The middle claim joins the newest, the newest
+        // refunds the two of them (2), and the 2 owed to 'c' stays lost.
+        threeBreaksOldestLeftWrong: {
+            map: ONE,
+            steps: [
+                tick(1000), k('a', 1000), k('b', 1100), k('z', 1200), k('d', 1300), k('z', 1400), k(' ', 1500), k('z', 1500),
+                bs(1500), bs(1500), bs(1500),
+                k('e', 1500), k(' ', 1500), k('f', 1500), k('g', 1600), k(' ', 1700), k('h', 1700), k('i', 1800), tick(8000)
+            ]
+        },
+    };
+
+    const runs = {};
+    const fixtures = {};
+
+    for (const name of Object.keys(scenarios)) {
+        const engine = new TB.TypingEngine(build(scenarios[name].map));
+        const readings = [];
+
+        let breaks = 0;
+        let restored = [];
+        engine.onComboBroken = () => { breaks++; };
+        engine.onComboRestored = (n) => { restored.push(n); };
+
+        for (const step of scenarios[name].steps) {
+            let handled = null;
+
+            if (step.op === 'update') engine.update(step.t);
+            else if (step.op === 'backspace') handled = engine.processBackspace();
+            else handled = engine.processKey(step.c, step.t);
+
+            readings.push({
+                op: step.op,
+                t: step.t,
+                c: step.c === undefined ? null : step.c,
+                handled: handled,
+                at: at(engine),
+                states: engine.lines.map(l => l.cells.map(c => c.state)),
+                combo: engine.combo,
+                maxCombo: engine.maxCombo,
+                comboBreaks: breaks,
+                comboRestores: restored.slice(),
+                mistypes: engine.mistypes,
+                finished: engine.finished,
+                // One { line, cell } per unit of combo: the stack has to keep positions and streaks
+                // together through every join, or a later back-dated seal reads a ledger that lies.
+                runPositions: engine.runPositions.map(p => ({ line: p.line, cell: p.cell })),
+                processorCombo: engine.processor.combo,
+                processorHighestCombo: engine.processor.highestCombo
+            });
+        }
+
+        const score = TB.computeScore(engine);
+
+        runs[name] = {
+            script: scenarios[name].steps,
+            readings: readings,
+            combo: engine.combo,
+            maxCombo: engine.maxCombo,
+            comboBreaks: breaks,
+            comboRestores: restored,
+            mistypes: engine.mistypes,
+            submitted: {
+                maxCombo: score.maxCombo,
+                totalScore: score.totalScore,
+                accuracy: score.accuracy,
+                completion: score.completion,
+                rank: score.rank,
+                statistics: score.statistics,
+                maximumStatistics: score.maximumStatistics
+            }
+        };
+
+        const fixture = new TB.TypingEngine(build(scenarios[name].map));
+
+        fixtures[name] = {
+            lines: fixture.lines.map(l => ({
+                activationTime: l.activationTime,
+                endTime: l.endTime,
+                sealGraceMs: l.sealGraceMs,
+                cells: l.cells.map(c => ({ expected: c.expected, target: c.target }))
+            }))
+        };
+    }
+
+    out.displacedClaimStack = { fixtures: fixtures, runs: runs };
+}
+
 process.stdout.write(JSON.stringify(out));
