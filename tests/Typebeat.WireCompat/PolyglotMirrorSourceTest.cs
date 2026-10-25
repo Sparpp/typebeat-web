@@ -53,6 +53,10 @@ public class PolyglotMirrorSourceTest
         [
             ("                : Import.OriginalLyricGenerator.MatchWords(line, line.Original, typebeat.Game.Beatmaps.BeatmapLanguage.Japanese);",
              "                : OriginalLyricGenerator.MatchWords(line, line.Original, \"japanese\");"),
+            // The derived line keeps its BACKING VOCALS (backlog 445), display data the server's
+            // LyricLine does not model (it never reads the "backing" array, which no figure reads).
+            ("                // Shown above the line, never typed (backlog 445): the derived line keeps them.\n", ""),
+            ("                BackingVocals = line.BackingVocals,\n", ""),
         ],
         ["OriginalLyricSubdivisions"] =
         [

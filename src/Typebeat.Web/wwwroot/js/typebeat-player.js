@@ -1191,6 +1191,57 @@
         return f % 2 === 0 ? f : f + 1;
     }
 
+    // BACKING VOCALS (backlog 445, LyricLineDisplay.BackingVocals): a line's backing words, drawn
+    // above it and never typed. Each is hidden until it is sung, then thrown up over its anchor with
+    // a little overshoot, growing and fading in, and settles at a tilt of its own. Pure and exported
+    // on Core.display, so WireCompat holds every pose, tilt and place against the desktop's own.
+    const BACKING_POP_DURATION_MS = 280;    // LyricLineDisplay.BACKING_POP_DURATION_MS
+    const BACKING_MAX_TILT_DEGREES = 10;    // LyricLineDisplay.BACKING_MAX_TILT_DEGREES
+    const BACKING_FONT_RATIO = 0.42;        // LyricLineDisplay.BACKING_FONT_RATIO (of the lyric size)
+    const BACKING_RISE = 0.6;               // LyricLineDisplay.BACKING_RISE (of the glyph row)
+    const BACKING_OUT_BACK = 1.70158;       // osu.Framework's Easing.OutBack overshoot
+
+    /// BackingVocals.AnchorOf: the word's own place across the line, else its default one (evenly
+    /// spread, each in the centre of its share of the width).
+    function backingAnchorOf(words, index) {
+        const anchor = words[index].anchor;
+        if (typeof anchor === 'number' && isFinite(anchor)) return anchor < 0 ? 0 : (anchor > 1 ? 1 : anchor);
+        const count = words.length;
+        return count <= 0 ? 0.5 : (Math.min(Math.max(index, 0), count - 1) + 0.5) / count;
+    }
+
+    /// LyricLineDisplay.BackingTilt, bit for bit: an FNV-1a fold of the word's UTF-16 units, its
+    /// start (rounded half to even, as Math.Round is) and its index, a final avalanche, then mapped
+    /// onto +-BACKING_MAX_TILT_DEGREES. The same word leans the same way here as on desktop.
+    function backingTiltOf(word, index) {
+        let hash = 2166136261;
+        const mix = (value) => {
+            for (let b = 0; b < 4; b++) {
+                hash = (hash ^ ((value >>> (8 * b)) & 0xff)) >>> 0;
+                hash = Math.imul(hash, 16777619) >>> 0;
+            }
+        };
+        for (let i = 0; i < word.text.length; i++) mix(word.text.charCodeAt(i));
+        mix(roundHalfEven(word.start) >>> 0);
+        mix(index >>> 0);
+        hash = (hash ^ (hash >>> 15)) >>> 0;
+        hash = Math.imul(hash, 0x2c1b3c6d) >>> 0;
+        hash = (hash ^ (hash >>> 12)) >>> 0;
+        const unit = (hash % 20001) / 20000;
+        return (unit * 2 - 1) * BACKING_MAX_TILT_DEGREES;
+    }
+
+    /// LyricLineDisplay.BackingPop: nothing before the word is sung, then the throw (OutBack over
+    /// BACKING_POP_DURATION_MS), fading in over its first third. lift is how far below its resting
+    /// place it still is as a share of BACKING_RISE, tilt how much of its lean it has taken.
+    function backingPoseAt(elapsed) {
+        if (!(elapsed >= 0)) return { alpha: 0, lift: 0, scale: 0, tilt: 0 };
+        const progress = Math.min(Math.max(elapsed / BACKING_POP_DURATION_MS, 0), 1);
+        const t = progress - 1;
+        const eased = t * t * ((BACKING_OUT_BACK + 1) * t + BACKING_OUT_BACK) + 1;
+        return { alpha: Math.min(Math.max(progress * 3, 0), 1), lift: 1 - eased, scale: 0.55 + 0.45 * eased, tilt: eased };
+    }
+
     // TypeBeatKeyHandler.OnKeyDown's word-gesture resolution against the default bindings
     // (Ctrl+Backspace, Ctrl+A). The desktop's gesture container matches under
     // KeyCombinationMatchingMode.Any, so a binding is satisfied with EXTRA modifiers held: Alt, and
@@ -2383,7 +2434,23 @@
             rowObj.bands = [];
             rowObj.sweep.classList.remove('tb-sweep-banded');
             rowObj.litSyllable = -1;
+            // The BACKING VOCALS (backlog 445): one span per word in a layer of the row's own, so
+            // they ride the row's dim and its fit. Placed by placeBacking, posed by updateBacking.
+            if (!rowObj.backingBox) {
+                rowObj.backingBox = el('div', 'tb-backing');
+                rowObj.row.appendChild(rowObj.backingBox);
+            }
+            rowObj.backingBox.textContent = '';
+            rowObj.backing = [];
             if (!line) return;
+
+            const backingWords = line.backing || [];
+            for (let k = 0; k < backingWords.length; k++) {
+                const span = el('span', 'tb-bv');
+                span.textContent = backingWords[k].text;
+                rowObj.backing.push({ el: span, word: backingWords[k], anchor: backingAnchorOf(backingWords, k), tilt: backingTiltOf(backingWords[k], k), pose: '' });
+                rowObj.backingBox.appendChild(span);
+            }
 
             const n = line.cells.length;
             for (const i of line.syllableMarkerCells || []) {
@@ -2427,6 +2494,40 @@
             for (const d of rowObj.dots) {
                 const x = (rowObj.offsets[d.index] + rowObj.offsets[d.index + 1]) / 2;
                 d.el.style.left = (isFinite(x) ? x : 0).toFixed(2) + 'px';
+            }
+        }
+
+        // A backing word rests over its anchor: that fraction of the line's measured width
+        // (LyricLineDisplay.layoutBackingVocals: cellX[^1] * AnchorOf), centred there.
+        function placeBacking(rowObj) {
+            const offs = rowObj.offsets;
+            const from = offs[0] || 0;
+            const width = (offs[offs.length - 1] || 0) - from;
+            for (const b of rowObj.backing || []) {
+                const x = from + width * b.anchor;
+                b.el.style.left = (isFinite(x) ? x : 0).toFixed(2) + 'px';
+            }
+        }
+
+        // Pose every backing word for the song time: a pure function of it, so a retry or a resume
+        // lands them exactly. A word only writes its style when its pose changed (once settled it
+        // stops), so a long line of them costs nothing per frame.
+        function updateBacking(time) {
+            const riseEm = 1.35 * BACKING_RISE / BACKING_FONT_RATIO; // the glyph row, in the word's own em
+            for (const r of rows) {
+                for (const b of r.backing || []) {
+                    const pose = backingPoseAt(time - b.word.start);
+                    const key = pose.alpha <= 0 ? 'hidden' : (pose.tilt === 1 && pose.alpha === 1 ? 'settled' : '');
+                    if (key !== '' && key === b.pose) continue;
+                    b.pose = key;
+                    if (pose.alpha <= 0) {
+                        b.el.style.opacity = '0';
+                        continue;
+                    }
+                    b.el.style.opacity = pose.alpha.toFixed(3);
+                    b.el.style.transform = 'translate(-50%, ' + (riseEm * pose.lift).toFixed(4) + 'em) scale('
+                        + pose.scale.toFixed(4) + ') rotate(' + (b.tilt * pose.tilt).toFixed(3) + 'deg)';
+                }
             }
         }
 
@@ -2584,6 +2685,7 @@
             for (const r of rows) measureRow(r);
             for (const r of rows) placeDots(r);
             for (const r of rows) placeMarks(r);
+            for (const r of rows) placeBacking(r);
             caretSnap = true;
             sungSnap = true;
         }
@@ -3003,6 +3105,7 @@
             updateScroll(time);
             updateSungSyllable(time, sungRow, caretIndex, shimmerTick);
             updateSweeps(time, sungRow);
+            updateBacking(time);
             updateCarets(time, elapsed, active, sungRow);
             // Repainted per frame like the caret, and for the same reason: a fit or a resize moves
             // every cell offset under it.
@@ -3544,6 +3647,11 @@
         resultMetaHtml,
         // The freestyle colour the stage paints (backlog 384), pure, pinned by WireCompat.
         freestyleColourOf,
+        // The backing vocals' places, tilts and pop-up poses (backlog 445), pure, pinned by
+        // WireCompat against the desktop's LyricLineDisplay.
+        backingAnchorOf,
+        backingTiltOf,
+        backingPoseAt,
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,

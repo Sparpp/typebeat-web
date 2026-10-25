@@ -3039,6 +3039,25 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     clip-path: polygon(50% 0, 100% 100%, 0 100%);
 }
 
+/* ---- backing vocals (backlog 445, LyricLineDisplay's backing vocals) ----
+   A line's backing words, drawn above it and never typed. Each rests over its anchor (left is
+   written by placeBacking, a fraction of the line's measured width) with its bottom the desktop's
+   BACKING_GAP above the glyph row, at its BACKING_FONT_RATIO of the lyric size, in the typed colour
+   with the lyric's shadow. Hidden until sung; the throw, the overshoot and the tilt are written per
+   frame by updateBacking, about the word's bottom-centre as on desktop. */
+.tb-backing { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 1; }
+.tb-bv {
+    position: absolute;
+    bottom: 6px;
+    font-size: .42em;
+    color: var(--text);
+    white-space: nowrap;
+    transform-origin: 50% 100%;
+    transform: translate(-50%, 0);
+    opacity: 0;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .78);
+}
+
 /* ---- carets ----
    Two 3px beams straddling a cell boundary, exactly as the client draws them: the PLAYER caret
    (accent) marks where you are and blinks while idle, the SUNG caret (song colour) marks where

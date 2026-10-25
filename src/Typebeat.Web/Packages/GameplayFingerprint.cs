@@ -55,7 +55,10 @@ namespace Typebeat.Web.Packages;
 /// or correcting it, is exactly the kind of edit backlog 173 says must not demote. A word's typed
 /// text is still in, so romanising an unromanised word (an empty <c>"text"</c> becoming a real
 /// one) is a gameplay change and demotes like any other. The pattern is a mirror of the game's
-/// <c>LyricOsuFormat.StripOriginals</c>, which its local ranked-status check applies. The beatdrop exclusion is not a judgement call made here:
+/// <c>LyricOsuFormat.StripOriginals</c>, which its local ranked-status check applies. Since <see cref="VERSION"/> 3 (backlog 445)
+/// every line's <c>"backing"</c> array is out too: a line's BACKING VOCALS are words shown above the
+/// lyric and never typed, judged or rated, so adding, retiming or placing them is a display edit and
+/// keeps the rank (the mirror of <c>LyricOsuFormat.StripBacking</c>). The beatdrop exclusion is not a judgement call made here:
 /// it mirrors the game's own <c>TypeBeatRuleset.NativeEncodingsEquivalentForStatus</c>, which
 /// normalises <c>beatdrop_ms</c> out precisely so a beatdrop-only editor save cannot demote a
 /// ranked map locally, on the grounds that the beatdrop only soundtracks the main-menu intro and
@@ -84,15 +87,16 @@ namespace Typebeat.Web.Packages;
 public static class GameplayFingerprint
 {
     /// <summary>
-    /// Stamped into every stored value as a <c>"v{VERSION}:"</c> prefix (<c>"v2:"</c> today;
-    /// version 2 added the <c>original</c> exclusion, backlog 330). Bump when the RECIPE below
+    /// Stamped into every stored value as a <c>"v{VERSION}:"</c> prefix (<c>"v3:"</c> today;
+    /// version 2 added the <c>original</c> exclusion, backlog 330, and version 3 the
+    /// <c>backing</c> one, backlog 445). Bump when the RECIPE below
     /// changes (a new field folded in, a different exclusion), which makes every stored value
     /// stale-shaped and hands the whole catalogue to
     /// <see cref="GameplayFingerprintBackfill"/> to rewrite. That sweep runs at startup BEFORE the
     /// app serves a request (Program.cs), so a recipe change can never be mistaken for a mapper's
     /// gameplay edit: by the time an upload can arrive, every row already speaks the new version.
     /// </summary>
-    public const int VERSION = 2;
+    public const int VERSION = 3;
 
     private static readonly string version_prefix = $"v{VERSION}:";
 
@@ -114,15 +118,22 @@ public static class GameplayFingerprint
     private static readonly Regex original_field =
         new Regex(@",""original"":""(?:[^""\\]|\\.)*""", RegexOptions.Compiled);
 
-    /// <summary>
-    /// One [Lyrics] line as the fingerprint hashes it: the beatdrop and every original removed. A
-    /// line that carries neither comes back as the very same string.
-    /// </summary>
-    public static string CanonicalLyricLine(string line)
-        => original_field.Replace(beatdrop_field.Replace(line, string.Empty), string.Empty);
+    // Mirror of LyricOsuFormat.StripBacking (backlog 445): the encoder writes "backing" as the LAST
+    // key of a line object, so the leading comma is what is stripped. Its value is an array of flat
+    // word objects (no array inside it), and a JSON string is consumed whole, so a bracket in a
+    // backing word's text cannot end the match early.
+    private static readonly Regex backing_field =
+        new Regex(@",""backing"":\[(?:[^\[\]""]|""(?:[^""\\]|\\.)*"")*\]", RegexOptions.Compiled);
 
     /// <summary>
-    /// The stored fingerprint for one difficulty: <c>"v2:"</c> + lowercase SHA256 hex over the
+    /// One [Lyrics] line as the fingerprint hashes it: the beatdrop, every original and the backing
+    /// vocals removed. A line that carries none of them comes back as the very same string.
+    /// </summary>
+    public static string CanonicalLyricLine(string line)
+        => backing_field.Replace(original_field.Replace(beatdrop_field.Replace(line, string.Empty), string.Empty), string.Empty);
+
+    /// <summary>
+    /// The stored fingerprint for one difficulty: <c>"v3:"</c> + lowercase SHA256 hex over the
     /// canonical form built by <see cref="CanonicalForm"/>.
     /// </summary>
     /// <param name="difficulty">The parsed .osu.</param>

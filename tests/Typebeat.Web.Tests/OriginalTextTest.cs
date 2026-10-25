@@ -73,8 +73,9 @@ public class OriginalTextTest
         const string romanised = """{"text":"eks mir","original":"x мир","start_ms":1000,"end_ms":2800,"words":[{"text":"eks","original":"x","start_ms":1000,"end_ms":1900},{"text":"mir","start_ms":1900,"end_ms":2800}]}""";
         Assert.That(GameplayFingerprint.CanonicalLyricLine(pending), Is.Not.EqualTo(GameplayFingerprint.CanonicalLyricLine(romanised)));
 
-        // The stamp is the new recipe's.
-        Assert.That(plain, Does.StartWith("v2:"));
+        // The stamp is the current recipe's (version 2 added this exclusion; backlog 445's backing
+        // one is version 3, see BackingVocalFingerprintTest).
+        Assert.That(plain, Does.StartWith($"v{GameplayFingerprint.VERSION}:"));
     }
 
     /// <summary>

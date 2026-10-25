@@ -933,6 +933,60 @@
     // player NEVER passes it (see play.js / mountPlayer): /play is always vanilla. It exists so
     // buildCells stays a line-for-line mirror of TypingLine.FromLyricLine and so the JS-vs-C#
     // fidelity harness can pin both branches, exactly as engine.caseSensitive already does.
+    // BACKING VOCALS (backlog 445, BackingVocals.Read / Fit): a line's optional "backing" array,
+    // words shown above it and never typed. DISPLAY ONLY: nothing below builds a cell, a target or
+    // a judgement from them, exactly as on desktop. Read on the C# reader's own terms (a JSON-number
+    // start, a missing end being the start, an anchor clamped into the line or else the default)
+    // and fitted into the line's window once it is known.
+    const EMPTY_BACKING = Object.freeze([]);
+
+    /// BackingVocals.CleanText: trimmed, inner whitespace collapsed to single spaces, controls dropped.
+    function cleanBackingText(text) {
+        if (typeof text !== 'string') return '';
+        let out = '';
+        let space = false;
+        for (const ch of text.trim()) {
+            if (/\s/.test(ch)) { space = true; continue; }
+            if (/[\u0000-\u001F\u007F-\u009F]/.test(ch)) continue;
+            if (space && out.length > 0) out += ' ';
+            space = false;
+            out += ch;
+        }
+        return out;
+    }
+
+    function readBacking(array) {
+        if (!Array.isArray(array)) return EMPTY_BACKING;
+        const words = [];
+        for (const item of array) {
+            if (item == null || typeof item !== 'object' || Array.isArray(item)) continue;
+            if (typeof item.text !== 'string') continue;
+            if (typeof item.start_ms !== 'number' || !isFinite(item.start_ms)) continue;
+            const text = cleanBackingText(item.text);
+            if (text.length === 0) continue;
+            const start = item.start_ms;
+            const end = typeof item.end_ms === 'number' && isFinite(item.end_ms) ? Math.max(start, item.end_ms) : start;
+            const anchor = typeof item.anchor === 'number' && isFinite(item.anchor) ? clamp(item.anchor, 0, 1) : null;
+            words.push({ text: text, start: start, end: end, anchor: anchor });
+        }
+        return words.length > 0 ? words : EMPTY_BACKING;
+    }
+
+    /// BackingVocals.Fit: each start clamped into the window, each end into [its start, the window's
+    /// end], and the list ordered by start (Array.prototype.sort is stable, as the C# OrderBy is).
+    function fitBacking(words, start, end) {
+        if (!words || words.length === 0) return EMPTY_BACKING;
+        if (end < start) end = start;
+        const fitted = [];
+        for (const w of words) {
+            if (!w.text) continue;
+            const s = clamp(w.start, start, end);
+            fitted.push({ text: w.text, start: s, end: clamp(w.end, s, end), anchor: w.anchor });
+        }
+        fitted.sort((a, b) => a.start - b.start);
+        return fitted;
+    }
+
     function buildBeatmap(parsed, literate = false) {
         const header = parsed.header || {};
         const songEndMs = isFinite(header.song_end_ms) ? header.song_end_ms : null;
@@ -1032,7 +1086,8 @@
                 }
             }
             const sealGraceMs = isFinite(+o.seal_grace_ms) ? +o.seal_grace_ms : null;
-            raw.push({ text: normalized, startMs, endMs, estimated, words, sealGraceMs });
+            const backing = readBacking(o.backing);
+            raw.push({ text: normalized, startMs, endMs, estimated, words, sealGraceMs, backing });
         }
 
         const granularity = granularityFor(header, raw);
@@ -1120,7 +1175,10 @@
                 charTimedStretch: buildCharTimedStretch(cells, grouped.cellSyllable),
                 // TypingLine.SyllableMarkerCells (backlog 317): the display's mid-word subdivision
                 // marks, one cell per mapper-authored boundary. Display only, read by no judgement.
-                syllableMarkerCells: grouped.syllableMarkerCells
+                syllableMarkerCells: grouped.syllableMarkerCells,
+                // LyricLine.BackingVocals (backlog 445): fitted into the window just resolved, as
+                // TimingJsonLoader.BuildLines fits them. Display only, read by no judgement.
+                backing: fitBacking(line.backing, start, endTime)
             });
         }
 
