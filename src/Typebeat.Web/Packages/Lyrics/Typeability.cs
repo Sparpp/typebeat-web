@@ -260,8 +260,11 @@ public static class Typeability
     /// punctuation. The only server-side caller that opts in is the decoder of a line the map
     /// explicitly flagged (<c>"freestyle": true</c>), so an ampersand that merely occurs in a
     /// song's lyrics ("R&amp;B") still disappears exactly as it always has.</para>
+    ///
+    /// <para><paramref name="keepSplitMarkers"/> keeps the '|' mark (<see cref="SplitMarkers"/>) for the
+    /// parse to locate; the stored text never carries one.</para>
     /// </summary>
-    public static string Normalize(string raw, bool keepFreestyleMarkers = false)
+    public static string Normalize(string raw, bool keepFreestyleMarkers = false, bool keepSplitMarkers = false)
     {
         if (string.IsNullOrEmpty(raw))
             return string.Empty;
@@ -299,7 +302,8 @@ public static class Typeability
 
             // Supported punctuation survives into the stored line (the author's form); freestyle
             // markers survive only for the callers that asked for them.
-            if (!char.IsWhiteSpace(c) && !IsTypeable(c) && !IsPunctuation(c) && !(keepFreestyleMarkers && IsFreestyle(c)))
+            if (!char.IsWhiteSpace(c) && !IsTypeable(c) && !IsPunctuation(c) && !(keepFreestyleMarkers && IsFreestyle(c))
+                && !(keepSplitMarkers && c == SplitMarkers.SPLIT_MARKER))
                 continue;
 
             if (char.IsWhiteSpace(c))

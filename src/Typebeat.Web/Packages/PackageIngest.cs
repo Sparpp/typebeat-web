@@ -376,14 +376,14 @@ public sealed class PackageIngest(
                      sr_dt, sr_ht, sr_literate, sr_literate_dt, sr_literate_ht,
                      peak_wpm, peak_cpm, target_wpm, wpm_curve, gameplay_fingerprint, freestyle_cell_count,
                      ratings, lyric_font, lyrics_original, judged_cells, judged_cells_literate, judged_cells_version,
-                     hit_length_s, hit_length_version)
+                     hit_length_s, hit_length_version, uses_word_objects, judged_cells_shorthand, judged_cells_shorthand_literate)
                 VALUES
                     (@id, @setId, @versionName, 0, @checksumMd5, @totalLengthS, @drainLengthS,
                      @difficultyRating, @filename, @wordCount, @charCount, @wpm, @paceVersion, @skippableS, @lyrics,
                      @srDt, @srHt, @srLiterate, @srLiterateDt, @srLiterateHt,
                      @peakWpm, @peakCpm, @targetWpm, @wpmCurve, @gameplayFingerprint, @freestyleCellCount,
                      @ratings::jsonb, @lyricFont, @lyricsOriginal, @judgedCells, @judgedCellsLiterate, @judgedCellsVersion,
-                     @hitLengthS, @hitLengthVersion)
+                     @hitLengthS, @hitLengthVersion, @usesWordObjects, @judgedCellsShorthand, @judgedCellsShorthandLiterate)
                 ON CONFLICT (id) DO UPDATE
                 SET set_id = EXCLUDED.set_id,
                     version_name = EXCLUDED.version_name,
@@ -416,7 +416,10 @@ public sealed class PackageIngest(
                     judged_cells_literate = EXCLUDED.judged_cells_literate,
                     judged_cells_version = EXCLUDED.judged_cells_version,
                     hit_length_s = EXCLUDED.hit_length_s,
-                    hit_length_version = EXCLUDED.hit_length_version;
+                    hit_length_version = EXCLUDED.hit_length_version,
+                    uses_word_objects = EXCLUDED.uses_word_objects,
+                    judged_cells_shorthand = EXCLUDED.judged_cells_shorthand,
+                    judged_cells_shorthand_literate = EXCLUDED.judged_cells_shorthand_literate;
 
                 -- A re-upload can move this difficulty's star ratings, and the stored per-score pp
                 -- is a function of them, so hand every score set on this map back to PpBackfill
@@ -474,6 +477,10 @@ public sealed class PackageIngest(
                     // the audio it points at. Compared against the snapshot above to decide
                     // whether this upload demotes a ranked set.
                     gameplayFingerprint = incomingFingerprints[diff.BeatmapId!.Value],
+                    // Whether the map carries auto-fill words or holds (055_uses_word_objects.sql):
+                    // the browser player has neither, so /play declines such a difficulty. Rewritten
+                    // each upload, like the rest of the parsed metadata.
+                    usesWordObjects = diff.UsesWordObjects,
                     // How many freestyle slots the map carries (031_freestyle_cell_count.sql).
                     // Since LyricPace v21 an ADDITION to charCount rather than a subset of it, the
                     // pace having stopped counting any-key cells, and always written (0 for a map
@@ -501,6 +508,9 @@ public sealed class PackageIngest(
                     // the game would decode the [Lyrics] differently (JudgedCells.ForMap).
                     judgedCells = judged.Cells,
                     judgedCellsLiterate = judged.Literate,
+                    // The same two under Shorthand (056_judged_cells_shorthand.sql).
+                    judgedCellsShorthand = judged.Shorthand,
+                    judgedCellsShorthandLiterate = judged.ShorthandLiterate,
                     judgedCellsVersion = JudgedCells.VERSION,
                     // The drain the client is shown (051_hit_length.sql): gameplay time only, the
                     // span minus its instrumentals. Display only; the play-time gate keeps reading

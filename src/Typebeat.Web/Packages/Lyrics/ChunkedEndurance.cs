@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace Typebeat.Web.Packages.Lyrics;
 
 /// <summary>
@@ -414,22 +416,34 @@ internal static class ChunkedEndurance
     /// Each shifted symbol pays unless the preceding played character is the same symbol.
     /// Capitals share a charge while Shift is held ("USA" pays one, "A B" two).
     /// Freestyle slots never pay. Nothing is charged without Literate.
+    ///
+    /// <para>With a <paramref name="pressed"/> mask (<see cref="LyricDifficulty.Word.Pressed"/>, built on
+    /// the Literate stream), an unpressed character is skipped without releasing Shift.</para>
     /// </summary>
-    internal static double ShiftSurcharge(string token, bool literate, double cost)
+    internal static double ShiftSurcharge(string token, bool literate, double cost, bool[]? pressed = null)
     {
         if (!literate || !(cost > 0))
             return 0;
 
+        Debug.Assert(pressed == null || pressed.Length == token.Count(ch => LyricDifficulty.IsTypedChar(ch, true)),
+            "A Shift mask must index the Literate typed stream.");
+
         double charges = 0;
         bool held = false;
         char previous = '\0';
+        int typedIndex = 0;
 
         foreach (char c in token)
         {
             // Only the characters the stream can actually put on a cell carry a flag: everything
             // else (the syllable-split marker, junk a normalizer let through) is skipped WITHOUT
-            // releasing Shift or interrupting a repeated symbol.
-            if (!Typeability.IsTypeable(c) && !Typeability.IsFreestyle(c) && !Typeability.IsPunctuation(c))
+            // releasing Shift or interrupting a repeated symbol. Under Literate that set is the
+            // typed stream plus the space.
+            if (c != ' ' && !LyricDifficulty.IsTypedChar(c, true))
+                continue;
+
+            // A space is in no mask and stays a keystroke; an unpressed character is skipped as above.
+            if (pressed != null && c != ' ' && !(typedIndex < pressed.Length && pressed[typedIndex++]))
                 continue;
 
             bool shiftedMark = IsShiftedMark(c);
@@ -483,7 +497,11 @@ internal static class ChunkedEndurance
             double lo = Math.Max(aMs, other.Start), hi = Math.Min(endMs, other.End);
 
             if (hi > lo)
-                mass += CharsOf(other.Token, literate) * ((hi - lo) / other.Span);
+            {
+                // An auto-fill word's material is the characters it presses.
+                double chars = other.Pressed == null ? CharsOf(other.Token, literate) : LyricDifficulty.PressedCharacters(other, literate);
+                mass += chars * ((hi - lo) / other.Span);
+            }
         }
 
         return mass;
@@ -612,7 +630,8 @@ internal static class ChunkedEndurance
 
         foreach (LyricDifficulty.Word word in words)
         {
-            double surcharge = ShiftSurcharge(word.Token, literate, settings.shift_cost) + word.ExtraInputs * settings.shift_cost;
+            // An auto-fill word pays Shift only on the characters it presses.
+            double surcharge = ShiftSurcharge(word.Token, literate, settings.shift_cost, word.Pressed) + word.ExtraInputs * settings.shift_cost;
 
             if (!(surcharge > 0))
                 continue;
@@ -792,7 +811,7 @@ internal static class ChunkedEndurance
             // The TYPEABLE count is read on the stream the play is typed in, so a Literate play
             // counts the punctuation marks its cells do, exactly as judgementWindows does in the
             // sandbox; the judgement windows themselves follow the arm.
-            double cells = LyricDifficulty.TypeableCellCount(word.Token, literate);
+            double cells = LyricDifficulty.PressCount(word, literate);
             wordWindows[i] = JudgementWindows(word, cells, Arm(settings).Shelter);
             wordTypeable[i] = Math.Max(1, cells);
         }

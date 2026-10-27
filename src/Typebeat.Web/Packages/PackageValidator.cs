@@ -1,3 +1,5 @@
+using Typebeat.Web.Packages.Lyrics;
+
 namespace Typebeat.Web.Packages;
 
 /// <summary>
@@ -116,6 +118,12 @@ public static class PackageValidator
 
             if (!seenFilenames.Contains(BeatmapPackageParser.NormalizeFilename(diff.AudioFilename)))
                 throw new PackageValidationException($"Audio file \"{diff.AudioFilename}\" referenced by \"{diff.Filename}\" is missing from the package.");
+
+            // WORD OBJECTS: holds and picked letters a play could not honour. Upload only: the
+            // backfills re-parse stored maps through ParseDifficulty and must never throw, so this
+            // lives here and not in the parser.
+            if (WordObjectsValidation.FirstProblem(diff.Lines) is { } problem)
+                throw new PackageValidationException($"\"{diff.Filename}\": {problem}");
 
             // THE ORIGINAL TEXT (backlog 330): a word the game's romaniser could not spell is stored
             // with no typed text until the mapper gives it one. The game's editor refuses to submit

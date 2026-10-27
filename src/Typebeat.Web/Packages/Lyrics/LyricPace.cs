@@ -492,6 +492,9 @@ public static class LyricPace
     /// <c>PerformancePoints.VERSION</c> bumps to 27 in the same change (the combo maximum a Japanese
     /// Polyglot play is clamped to).</para>
     ///
+    /// <para>v29 = WORD OBJECTS: an auto-fill word is rated on the letters typed and each hold's
+    /// release is credited. A map without them rates as at v28. pp is unchanged.</para>
+    ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The
     /// arithmetic now
@@ -504,7 +507,7 @@ public static class LyricPace
     /// what kept the backfill away from them: existing rows were not touched, and only a re-upload
     /// re-derived. v9 is that moment, so no deferral remains.</para>
     /// </summary>
-    public const int VERSION = 28;
+    public const int VERSION = 29;
 
     /// <summary>
     /// Typeable cells per word, the typing-test convention. Same 5 as the game's

@@ -301,6 +301,10 @@ public static class ScoreEndpoints
         bool polyglot = mods.Any(m => m.Acronym == PerformancePoints.POLYGLOT_ACRONYM);
         var polyglotSummary = polyglot ? BeatmapRatings.Parse(beatmap.Ratings)?.Polyglot : null;
 
+        // A Shorthand play is held against the map's Shorthand count. Under Polyglot the game ignores
+        // Shorthand (TypingLine.ForMods), so a stack claiming both takes the Polyglot check.
+        bool shorthand = mods.Any(m => m.Acronym == ScoreSubmission.SHORTHAND_ACRONYM);
+
         if (polyglot)
         {
             if (!ScoreSubmission.PolyglotMaximumMatchesMap(maximumStatistics, polyglotSummary, literate))
@@ -312,7 +316,7 @@ public static class ScoreEndpoints
         }
         else
         {
-            int? mapJudgedCells = await ScoreSubmission.MapJudgedCellsAsync(conn, tx, tokenId, literate);
+            int? mapJudgedCells = await ScoreSubmission.MapJudgedCellsAsync(conn, tx, tokenId, literate, shorthand);
 
             if (!ScoreSubmission.MaximumMatchesMap(maximumStatistics, mapJudgedCells))
             {

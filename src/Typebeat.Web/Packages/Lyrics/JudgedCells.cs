@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Typebeat.Web.Packages.Lyrics;
 
 /// <summary>
@@ -26,6 +28,13 @@ namespace Typebeat.Web.Packages.Lyrics;
 /// </list>
 ///
 /// <para>
+/// WORD OBJECTS AND SHORTHAND (v2, <see cref="CountLine"/>): an auto-fill word, and every word under
+/// Shorthand (<c>SH</c>), keeps only its onsets or picks typed (marks and the following space complete);
+/// a usable hold adds its tail and each usable tick. Shorthand has its own pair of counts
+/// (<see cref="Counts"/>), checked like Polyglot's.
+/// </para>
+///
+/// <para>
 /// NOT <c>char_count</c>: that is a pace figure (freestyle slots excluded, default stream only), and
 /// it is pinned against the game's pace statistics, not against its converter. Polyglot changes the
 /// count too: a Polyglot play is held against its own stream instead
@@ -52,21 +61,24 @@ public static class JudgedCells
     /// to the parse they read), so <see cref="Packages.JudgedCellBackfill"/> recounts every row and
     /// a submission is never refused against a count the current rules did not produce.
     /// </summary>
-    public const int VERSION = 1;
+    public const int VERSION = 2;
+
+    /// <summary>The default and Literate counts, and both again under Shorthand.</summary>
+    public readonly record struct Counts(int? Cells, int? Literate, int? Shorthand, int? ShorthandLiterate);
 
     /// <summary>
-    /// What ingest and <see cref="Packages.JudgedCellBackfill"/> store for a parsed difficulty: the
-    /// default and Literate counts, or both null when the game would not decode the same lines
-    /// (<see cref="GameReadsLikeTheServer"/>). Null under the current <see cref="VERSION"/> is read
-    /// as unknown, so the map's submissions are accepted unchecked and the backfill does not retry it.
+    /// What ingest and <see cref="Packages.JudgedCellBackfill"/> store for a parsed difficulty, or all
+    /// null when the game would not decode the same lines (<see cref="GameReadsLikeTheServer"/>). Null
+    /// under the current <see cref="VERSION"/> is read as unknown: submissions are accepted unchecked.
     /// </summary>
-    public static (int? Cells, int? Literate) ForMap(IReadOnlyList<string> lyricSectionLines, IEnumerable<LyricLine> lines)
+    public static Counts ForMap(IReadOnlyList<string> lyricSectionLines, IEnumerable<LyricLine> lines)
     {
         if (!GameReadsLikeTheServer(lyricSectionLines))
-            return (null, null);
+            return default;
 
         var all = lines as IReadOnlyCollection<LyricLine> ?? lines.ToList();
-        return (Count(all, literate: false), Count(all, literate: true));
+        return new Counts(Count(all, literate: false), Count(all, literate: true),
+            Count(all, literate: false, shorthand: true), Count(all, literate: true, shorthand: true));
     }
 
     /// <summary>
@@ -85,15 +97,268 @@ public static class JudgedCells
         return true;
     }
 
-    /// <summary>The judged cells of the whole map, on the default or the Literate stream.</summary>
-    public static int Count(IEnumerable<LyricLine> lines, bool literate)
+    /// <summary>The judged cells of the whole map, on the default or the Literate stream, with or without Shorthand.</summary>
+    public static int Count(IEnumerable<LyricLine> lines, bool literate, bool shorthand = false)
     {
         int total = 0;
 
         foreach (var line in lines)
-            total += literate ? CountLiterate(line.RawText) : CountDefault(line.RawText);
+            total += CountLine(line, literate, shorthand);
 
         return total;
+    }
+
+    /// <summary>
+    /// One line's judgements: its cells (<see cref="CountDefault"/> or <see cref="CountLiterate"/> on a
+    /// line without objects played without Shorthand), else the cells the onsets rule leaves typed
+    /// plus each usable hold's tail and ticks (<c>TypingLine.build</c> with <c>wordObjects</c> on, then
+    /// <c>TypeBeatHitObject.CreateNestedHitObjects</c>).
+    /// </summary>
+    public static int CountLine(LyricLine line, bool literate, bool shorthand = false)
+    {
+        if (!shorthand && line.Units.All(u => u.Objects.IsEmpty))
+            return literate ? CountLiterate(line.RawText) : CountDefault(line.RawText);
+
+        string text = line.RawText;
+        int n = text.Length;
+        var units = line.Units.Select(u => u.AsPlayed()).ToArray();
+        string[] tokens = text.Split(' ');
+
+        // The cells (TypingLine.build's Literate and default passes, reduced to char and typeability).
+        char[] expected;
+        bool[] typeable;
+        List<int>? defaultSources = null;
+
+        if (literate)
+        {
+            expected = text.ToCharArray();
+            typeable = expected.Select(c => Typeability.IsCell(c) || Typeability.IsPunctuation(c)).ToArray();
+        }
+        else
+        {
+            var sb = new StringBuilder(n);
+            defaultSources = new List<int>(n);
+            Typeability.ProjectDefault(text, sb, defaultSources);
+            expected = sb.ToString().ToCharArray();
+            typeable = expected.Select(Typeability.IsCell).ToArray();
+        }
+
+        int cellCount = expected.Length;
+        int[] rawGroup = authoredGroups(line, units, tokens, n);
+
+        // The authored syllable of a cell (TypingLine.buildSyllables: a space or untyped cell is in none).
+        int groupOf(int i) => typeable[i] && expected[i] != ' ' ? rawGroup[defaultSources?[i] ?? i] : -1;
+
+        // Word objects (TypingLine.build): found only when some word carries one.
+        Dictionary<int, WordHold>? held = null;
+        HashSet<int>? picked = null, pickedWordCells = null;
+        (int Token, int Offset)[]? positions = null;
+
+        if (units.Any(u => !u.Objects.IsEmpty))
+        {
+            positions = cellPositions(tokens, n, cellCount, defaultSources);
+            held = heldCellsOf(units, positions, typeable);
+            picked = pickedCellsOf(units, positions, typeable);
+
+            if (picked != null)
+            {
+                var pickedWords = picked.Select(i => positions[i].Token).ToHashSet();
+                pickedWordCells = Enumerable.Range(0, cellCount).Where(i => pickedWords.Contains(positions[i].Token)).ToHashSet();
+            }
+        }
+
+        bool[] typed = (bool[])typeable.Clone();
+
+        if (shorthand)
+            applyOnsetsOnly(expected, typeable, typed, groupOf, _ => true, completeSpaces: true, held, picked, pickedWordCells);
+        else if (positions is { } cellPos && units.Any(u => u.Objects.AutoFill))
+        {
+            applyOnsetsOnly(expected, typeable, typed, groupOf, i => cellPos[i].Token >= 0 && cellPos[i].Token < units.Length && units[cellPos[i].Token].Objects.AutoFill,
+                completeSpaces: false, held, picked, pickedWordCells);
+        }
+
+        int count = typed.Count(t => t);
+
+        // Each held cell's tail, and its usable ticks (TypeBeatHitObject.CreateNestedHitObjects).
+        if (held != null)
+        {
+            foreach (var hold in held.Values)
+                count += 1 + HoldTicks.UsableTicks(hold).Length;
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// The game's onsets-only pass (<c>TypingLine.applyOnsetsOnly</c>) on the typed flags: of the cells
+    /// <paramref name="applies"/> to, only the first letter of each word and of each authored syllable
+    /// stays typed, or a word's picks; freestyle slots and held cells stay typed; marks are completed,
+    /// and spaces too (every one under Shorthand, the one after an auto-fill word otherwise).
+    /// </summary>
+    private static void applyOnsetsOnly(char[] expected, bool[] typeable, bool[] typed, Func<int, int> groupOf, Func<int, bool> applies, bool completeSpaces,
+                                        IReadOnlyDictionary<int, WordHold>? held, ISet<int>? picked, ISet<int>? pickedWordCells)
+    {
+        int? lastGroup = null;
+        bool afterAppliedWord = false;
+
+        for (int i = 0; i < expected.Length; i++)
+        {
+            if (expected[i] == ' ')
+            {
+                lastGroup = null;
+
+                if ((completeSpaces || afterAppliedWord) && typeable[i])
+                    typed[i] = false;
+
+                continue;
+            }
+
+            afterAppliedWord = applies(i);
+
+            if (!typeable[i] || !afterAppliedWord)
+                continue;
+
+            bool freestyle = Typeability.IsFreestyle(expected[i]);
+
+            if (!freestyle && !char.IsLetterOrDigit(expected[i]))
+            {
+                typed[i] = false;
+                continue;
+            }
+
+            int group = groupOf(i);
+
+            bool onset = pickedWordCells?.Contains(i) == true
+                ? picked!.Contains(i)
+                : lastGroup == null || (group >= 0 && group != lastGroup);
+
+            lastGroup = group;
+
+            if (!(onset || freestyle || held?.ContainsKey(i) == true))
+                typed[i] = false;
+        }
+    }
+
+    /// <summary>
+    /// Per raw char, its AUTHORED syllable (<c>TypingLine.buildSyllables</c> with <c>authoredOnly</c>),
+    /// as a group id distinct per syllable, or -1 for a char in no group. Only the ids' identity is
+    /// read, so the game's compaction of empty groups and the spans are left out.
+    /// </summary>
+    private static int[] authoredGroups(LyricLine line, IReadOnlyList<TimedUnit> units, string[] tokens, int n)
+    {
+        int[] rawGroup = new int[n];
+        Array.Fill(rawGroup, -1);
+
+        int groups = 0;
+        int tokStart = 0;
+
+        for (int m = 0; m < tokens.Length; m++)
+        {
+            string token = tokens[m];
+            TimedUnit? unit = units.Count > 0 ? units[Math.Min(m, units.Count - 1)] : null;
+
+            double unitStart = unit?.StartTime ?? line.StartTime;
+            double unitEnd = unit?.EndTime ?? line.SingEndTime;
+            var boundaries = unit?.SyllableBoundaries ?? Array.Empty<double>();
+            bool subtimed = boundaries.Count > 0;
+            var paused = unit != null ? PausedWord.Of(token, unitStart, unitEnd, unit, Typeability.IsCell) : null;
+
+            if (token.Length > 0 && (subtimed || paused != null || Syllabifier.IsSyllabifiable(token)))
+            {
+                IReadOnlyList<int> splits = paused != null
+                    ? paused.Splits
+                    : subtimed
+                        ? SyllableSegments.SplitsFor(token, boundaries.Count + 1, unit?.SyllableSplits)
+                        : Array.Empty<int>();
+
+                int groupBase = groups;
+                groups += splits.Count + 1;
+                int inGroup = 0;
+
+                for (int t = 0; t < token.Length; t++)
+                {
+                    if (inGroup < splits.Count && t == splits[inGroup])
+                        inGroup++;
+
+                    rawGroup[tokStart + t] = groupBase + inGroup;
+                }
+            }
+
+            tokStart += token.Length + 1;
+        }
+
+        return rawGroup;
+    }
+
+    /// <summary>Per typeable cell, the usable hold on the first cell of its character (<c>TypingLine.heldCellsOf</c>); null when there are none.</summary>
+    private static Dictionary<int, WordHold>? heldCellsOf(IReadOnlyList<TimedUnit> units, (int Token, int Offset)[] positions, bool[] typeable)
+    {
+        Dictionary<int, WordHold>? result = null;
+        var usable = new IReadOnlyList<WordHold>?[units.Count];
+        var claimed = new HashSet<(int, int)>();
+
+        for (int i = 0; i < typeable.Length; i++)
+        {
+            var (m, offset) = positions[i];
+
+            if (!typeable[i] || m < 0 || m >= units.Count || units[m].Objects.Holds.Count == 0)
+                continue;
+
+            foreach (var hold in usable[m] ??= HeldWord.UsableHolds(units[m], Typeability.IsCell))
+            {
+                if (hold.Char == offset && claimed.Add((m, offset)))
+                    (result ??= new Dictionary<int, WordHold>())[i] = hold;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>The typeable cells usable picks land on (<c>TypingLine.pickedCellsOf</c>); null when there are none.</summary>
+    private static HashSet<int>? pickedCellsOf(IReadOnlyList<TimedUnit> units, (int Token, int Offset)[] positions, bool[] typeable)
+    {
+        HashSet<int>? picked = null;
+        var picks = new IReadOnlyList<int>?[units.Count];
+
+        for (int i = 0; i < typeable.Length; i++)
+        {
+            var (m, offset) = positions[i];
+
+            if (!typeable[i] || m < 0 || m >= units.Count || units[m].Objects.TypedLetters.Count == 0)
+                continue;
+
+            if ((picks[m] ??= TypedLetters.UsablePicks(units[m], Typeability.IsCell)).Contains(offset))
+                (picked ??= new HashSet<int>()).Add(i);
+        }
+
+        return picked;
+    }
+
+    /// <summary>Per cell, its whitespace token and offset in it; (-1, -1) for an inter-word space (<c>TypingLine.cellPositions</c>).</summary>
+    private static (int Token, int Offset)[] cellPositions(string[] tokens, int rawLength, int cellCount, List<int>? defaultSources)
+    {
+        var raw = new (int Token, int Offset)[rawLength];
+        Array.Fill(raw, (-1, -1));
+
+        int pos = 0;
+
+        for (int m = 0; m < tokens.Length; m++)
+        {
+            for (int t = 0; t < tokens[m].Length && pos + t < rawLength; t++)
+                raw[pos + t] = (m, t);
+
+            pos += tokens[m].Length + 1;
+        }
+
+        var result = new (int Token, int Offset)[cellCount];
+
+        for (int i = 0; i < cellCount; i++)
+        {
+            int src = defaultSources?[i] ?? i;
+            result[i] = src >= 0 && src < rawLength ? raw[src] : (-1, -1);
+        }
+
+        return result;
     }
 
     /// <summary>One line's judged cells on the default stream.</summary>
