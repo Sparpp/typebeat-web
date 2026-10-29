@@ -217,14 +217,18 @@ public class JudgedCellCountParityTest
         var server = ServerParse(osu).Lines;
         int plain = ServerJudgedCells.Count(server, literate: false);
         int literate = ServerJudgedCells.Count(server, literate: true);
+        int shorthand = ServerJudgedCells.Count(server, literate: false, shorthand: true);
+        int shorthandLiterate = ServerJudgedCells.Count(server, literate: true, shorthand: true);
 
         // The premise: the fixture's marks make the two streams differ, so a route that read the
-        // wrong column would be caught.
+        // wrong column would be caught, and Shorthand types fewer cells than either.
         Assert.That(literate, Is.GreaterThan(plain));
+        Assert.That(shorthand, Is.LessThan(plain));
 
         var submittable = new TypeBeatRuleset().CreateAllMods().Where(m => !m.LocalOnly).ToArray();
 
-        Assert.That(submittable.Select(m => m.Acronym), Does.Contain("LT").And.Contain("DT"), "the enumeration reaches the mods");
+        Assert.That(submittable.Select(m => m.Acronym), Does.Contain("LT").And.Contain("DT").And.Contain(ScoreSubmission.SHORTHAND_ACRONYM),
+            "the enumeration reaches the mods");
 
         Assert.Multiple(() =>
         {
@@ -232,12 +236,16 @@ public class JudgedCellCountParityTest
 
             foreach (var mod in submittable)
             {
-                // What the submit route reads: Literate in the stack selects the Literate column.
-                bool literateStack = mod.Acronym == Typebeat.Web.Scoring.PerformancePoints.LITERATE_ACRONYM;
-                Assert.That(GameMaximum(osu, [mod]), Is.EqualTo(literateStack ? literate : plain), mod.Acronym);
+                // What the submit route reads: Literate in the stack selects the Literate column, and
+                // Shorthand the Shorthand one.
+                int expected = mod.Acronym == Typebeat.Web.Scoring.PerformancePoints.LITERATE_ACRONYM ? literate
+                    : mod.Acronym == ScoreSubmission.SHORTHAND_ACRONYM ? shorthand
+                    : plain;
+                Assert.That(GameMaximum(osu, [mod]), Is.EqualTo(expected), mod.Acronym);
             }
 
             Assert.That(GameMaximum(osu, [new TypeBeatModLiterate(), new TypeBeatModDoubleTime()]), Is.EqualTo(literate), "LT+DT");
+            Assert.That(GameMaximum(osu, [new TypeBeatModLiterate(), new TypeBeatModShorthand()]), Is.EqualTo(shorthandLiterate), "LT+SH");
         });
     }
 
@@ -281,7 +289,7 @@ public class JudgedCellCountParityTest
         {
             Assert.That(GameMaximum(osu, []), Is.LessThan(ServerJudgedCells.Count(server.Lines, literate: false)),
                 "the premise: the game drops the line the server keeps");
-            Assert.That(ServerJudgedCells.ForMap(server.LyricSectionLines, server.Lines), Is.EqualTo(((int?)null, (int?)null)));
+            Assert.That(ServerJudgedCells.ForMap(server.LyricSectionLines, server.Lines), Is.EqualTo(new ServerJudgedCells.Counts(null, null, null, null)));
         });
 
         // The control: the same map without the comment marker is counted, and agrees with the game.

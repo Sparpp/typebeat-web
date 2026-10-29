@@ -629,7 +629,9 @@ public class LyricPaceParityTest
             // Both moved again in PR 43: the star rating is retuned for every map and the matrix gains
             // its Polyglot half (pace 28), and pp clamps a Japanese Polyglot combo to its
             // minimum-romaji full combo (pp 27).
-            Assert.That(ServerPace.VERSION, Is.EqualTo(28));
+            // Pace alone moved to 29 for word objects: an auto-fill word rates on the letters typed and a
+            // hold credits its release. No plain map moves, so pp stays at 27.
+            Assert.That(ServerPace.VERSION, Is.EqualTo(29));
             Assert.That(Typebeat.Web.Scoring.PerformancePoints.VERSION, Is.EqualTo(27)); // pp:version
         });
     }

@@ -181,6 +181,8 @@ public class Migration004BackfillTest
             "049_replay_sha256.sql",
             "050_metadata_revision.sql",
             "051_hit_length.sql",
+            "055_uses_word_objects.sql",
+            "056_judged_cells_shorthand.sql",
         }));
     }
 
