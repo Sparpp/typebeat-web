@@ -22,9 +22,7 @@ public static class WordObjectsValidation
 
                 string at = $"line {l + 1}, word \"{unit.Text}\"";
 
-                if (unit.Objects.Holds.Count > 0 && unit.Pauses.Count > 0)
-                    return $"{at}: a word with a pause cannot hold a letter.";
-
+                var rests = HeldWord.RestsOf(unit);
                 WordHold? previous = null;
 
                 foreach (WordHold hold in unit.Objects.Holds.OrderBy(h => h.Char))
@@ -40,6 +38,10 @@ public static class WordObjectsValidation
 
                     if (previous != null && (hold.Char <= previous.Char || hold.StartTime < previous.EndTime))
                         return $"{at}: two holds overlap or are out of order.";
+
+                    // A hold sits inside one sung stretch: it never spans or overlaps a pause.
+                    if (!rests.All(rest => HeldWord.ClearOfRest(hold, rest)))
+                        return $"{at}: a hold crosses a pause.";
 
                     previous = hold;
                 }

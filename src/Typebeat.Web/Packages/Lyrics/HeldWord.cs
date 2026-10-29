@@ -8,17 +8,19 @@ namespace Typebeat.Web.Packages.Lyrics
         /// <summary>
         /// The usable holds of <paramref name="unit"/>, in character order: on a cell, at least
         /// <see cref="MIN_HOLD_MS"/> long, inside the word (a first-letter hold starts with it), not
-        /// overlapping, between the word's cuts, and ending after its letter is due. None on a word with pauses.
+        /// overlapping, between the word's cuts, clear of its rests (<see cref="ClearOfRest"/>), and ending
+        /// after its letter is due.
         /// </summary>
         internal static IReadOnlyList<WordHold> UsableHolds(TimedUnit unit, Func<char, bool> isCell)
         {
             var holds = unit.Objects.Holds;
 
-            if (holds.Count == 0 || unit.Pauses.Count > 0)
+            if (holds.Count == 0)
                 return Array.Empty<WordHold>();
 
             string text = unit.Text;
-            var cuts = cutsOf(unit).ToArray();
+            var rests = RestsOf(unit, isCell);
+            var cuts = cutsOf(unit, rests.Count > 0, isCell).ToArray();
             var kept = new List<WordHold>();
             int lastChar = -1;
             double lastEnd = unit.StartTime;
@@ -47,7 +49,7 @@ namespace Typebeat.Web.Packages.Lyrics
                     : cut.Char == c || (cut.Char == c + 1 ? cut.Time >= hold.EndTime : cut.Time > hold.EndTime));
 
                 // The hold must end after its letter is due, or the on-time press would miss its tail.
-                if (!cutsOk || hold.EndTime <= TypingLine.HoldFreeCellTarget(unit, c, isCell))
+                if (!cutsOk || !rests.All(rest => ClearOfRest(hold, rest)) || hold.EndTime <= TypingLine.HoldFreeCellTarget(unit, c, isCell))
                     continue;
 
                 kept.Add(hold);
@@ -58,9 +60,36 @@ namespace Typebeat.Web.Packages.Lyrics
             return kept;
         }
 
-        /// <summary>The word's cuts as (character, time).</summary>
-        private static IEnumerable<(int Char, double Time)> cutsOf(TimedUnit unit)
+        /// <summary>The rests a play honours on <paramref name="unit"/> (<see cref="PausedWord.UsableRests"/>), in time order.</summary>
+        internal static IReadOnlyList<WordPause> RestsOf(TimedUnit unit, Func<char, bool>? isCell = null)
+            => unit.Pauses.Count == 0
+                ? Array.Empty<WordPause>()
+                : PausedWord.UsableRests(unit.Text, unit.StartTime, unit.EndTime, unit.Pauses, isCell ?? Typeability.IsCell);
+
+        /// <summary>
+        /// A hold sits wholly inside one sung stretch of its word: a letter before the rest's cut is let go by
+        /// the rest's start, a letter after it is held from the rest's end. A hold never spans or overlaps a rest.
+        /// </summary>
+        internal static bool ClearOfRest(WordHold hold, WordPause rest)
+            => hold.Char < rest.SplitChar ? hold.EndTime <= rest.StartTime : hold.StartTime >= rest.EndTime;
+
+        /// <summary>
+        /// The word's cuts as (character, time). On a paused word, each stretch's own cuts against its own
+        /// boundaries (<see cref="PausedWord.Of"/>); the rests themselves are <see cref="ClearOfRest"/>'s.
+        /// </summary>
+        private static IEnumerable<(int Char, double Time)> cutsOf(TimedUnit unit, bool paused, Func<char, bool> isCell)
         {
+            if (paused && PausedWord.Of(unit.Text, unit.StartTime, unit.EndTime, unit, isCell) is PausedWord.Cut cut)
+            {
+                foreach (var piece in cut.Pieces)
+                {
+                    for (int i = 0; i < piece.Cuts.Count && i < piece.Boundaries.Count; i++)
+                        yield return (piece.Cuts[i], piece.Boundaries[i]);
+                }
+
+                yield break;
+            }
+
             var splits = SyllableSegments.SplitsFor(unit);
 
             for (int i = 0; i < splits.Count && i < unit.SyllableBoundaries.Count; i++)
