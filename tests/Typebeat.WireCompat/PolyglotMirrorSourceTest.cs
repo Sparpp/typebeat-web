@@ -78,6 +78,9 @@ public class PolyglotMirrorSourceTest
             ("IReadOnlyList<Mod>? mods, string? language = null, bool forPace = false)", "IReadOnlyList<string>? mods, string? language = null, bool forPace = false)"),
             ("            bool literate = Scoring.PerformancePoints.IsLiterate(mods);",
              "            bool literate = mods?.Any(m => string.Equals(m, \"LT\", StringComparison.OrdinalIgnoreCase)) == true;"),
+            // Backing vocals are display-only and the server's line does not carry them.
+            ("SealGraceMs = line.SealGraceMs, Estimated = line.Estimated, BackingVocals = line.BackingVocals,",
+             "SealGraceMs = line.SealGraceMs, Estimated = line.Estimated,"),
         ],
         ["PolyglotRatingSupport"] =
         [

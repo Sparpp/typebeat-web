@@ -238,6 +238,9 @@ public static class ModMultiplier
             "CT" => 1.0,
             "DX" => 1.0,
             "PT" => 1.0,
+            // Shorthand: a fraction of the keypresses, each judged on the same windows (game's
+            // TypeBeatScoreMultiplierCalculator). Unranked, so this only prices the total shown.
+            "SH" => 0.6,
             "RX" => 0.1,
             // Rate ramps: the endpoints are not persisted, so price them at the most any ramp could
             // pay. 0.8·For(min) + 0.2·For(max) <= For(max) <= For(2.00), the curve being monotonic.

@@ -229,7 +229,7 @@ public class SetRankRefundTest
         // ONE canonical set rather than a private copy claiming to mirror it. That copy held
         // { RX, WU, WD } while the submit path had grown to six, so three of the rows above would
         // have been re-ranked here after the submit path refused them.
-        Assert.That(UnrankedMods.ACRONYMS, Is.EquivalentTo(new[] { "RX", "WU", "WD", "CT", "DX", "PT" }));
+        Assert.That(UnrankedMods.ACRONYMS, Is.EquivalentTo(new[] { "RX", "WU", "WD", "CT", "DX", "PT", "SH" }));
 
         Assert.Multiple(() =>
         {

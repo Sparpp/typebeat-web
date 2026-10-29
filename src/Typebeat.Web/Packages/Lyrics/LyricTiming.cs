@@ -81,6 +81,68 @@ public sealed class TimedUnit
 
     /// <summary>The mapper's explicit cut links between the two spellings (game's <c>TimedUnit.OriginalSplits</c>).</summary>
     public IReadOnlyList<OriginalLyricSplit> OriginalSplits { get; init; } = Array.Empty<OriginalLyricSplit>();
+
+    /// <summary>The word's objects (game's <c>TimedUnit.Objects</c>); <see cref="WordObjects.None"/> for every word without any.</summary>
+    public WordObjects Objects { get; init; } = WordObjects.None;
+
+    /// <summary>
+    /// The syllables the game's '|' split markers give this word (<see cref="SplitMarkers"/>), or null
+    /// when no pipe cuts it. No rating reads it; only <see cref="JudgedCells"/> does, via <see cref="AsPlayed"/>.
+    /// </summary>
+    public (IReadOnlyList<double> Boundaries, IReadOnlyList<int> Splits)? SplitMarkerSyllables { get; init; }
+
+    /// <summary>This word as the game plays it: its <see cref="SplitMarkerSyllables"/>, when it has any, in place of the rated syllables.</summary>
+    public TimedUnit AsPlayed()
+        => SplitMarkerSyllables is { } played ? copy(Objects, played.Boundaries, played.Splits, null) : this;
+
+    /// <summary>This word with <paramref name="objects"/> in place of its own (game's <c>TimedUnit.WithObjects</c>).</summary>
+    public TimedUnit WithObjects(WordObjects objects) => copy(objects, SyllableBoundaries, SyllableSplits, SplitMarkerSyllables);
+
+    internal TimedUnit WithSplitMarkerSyllables((IReadOnlyList<double> Boundaries, IReadOnlyList<int> Splits) played)
+        => copy(Objects, SyllableBoundaries, SyllableSplits, played);
+
+    private TimedUnit copy(WordObjects objects, IReadOnlyList<double> boundaries, IReadOnlyList<int> splits,
+                           (IReadOnlyList<double> Boundaries, IReadOnlyList<int> Splits)? splitMarkerSyllables) => new TimedUnit
+    {
+        Text = Text,
+        StartTime = StartTime,
+        EndTime = EndTime,
+        Source = Source,
+        Confidence = Confidence,
+        SyllableBoundaries = boundaries,
+        Pauses = Pauses,
+        SyllableSplits = splits,
+        Original = Original,
+        OriginalSplits = OriginalSplits,
+        Objects = objects,
+        SplitMarkerSyllables = splitMarkerSyllables,
+    };
+}
+
+/// <summary>
+/// A HOLD (game's <c>WordHold</c>, Beatmaps/WordObjects.cs): the character at <see cref="Char"/>
+/// (index into <see cref="TimedUnit.Text"/>) is held from <see cref="StartTime"/> to
+/// <see cref="EndTime"/>, absolute ms, with authored <see cref="Ticks"/>.
+/// </summary>
+public sealed record WordHold(int Char, double StartTime, double EndTime, IReadOnlyList<double> Ticks);
+
+/// <summary>
+/// The mapper-authored objects a word carries beyond its timing (game's <c>WordObjects</c>): holds.
+/// Rated by <see cref="LyricDifficulty"/>; a map with any is desktop-only (<c>beatmaps.uses_word_objects</c>).
+/// </summary>
+public sealed class WordObjects
+{
+    public static WordObjects None { get; } = new WordObjects();
+
+    public IReadOnlyList<WordHold> Holds { get; init; } = Array.Empty<WordHold>();
+
+    public bool IsEmpty => Holds.Count == 0;
+
+    /// <summary>These objects for a retyped word (game's <c>WordObjects.ForText</c>): a new spelling drops holds.</summary>
+    public WordObjects ForText(string oldText, string newText)
+        => Holds.Count == 0 || string.Equals(oldText, newText, StringComparison.Ordinal)
+            ? this
+            : None;
 }
 
 /// <summary>Where a unit's timing came from (game's <c>TimingSource</c>).</summary>
@@ -195,6 +257,11 @@ public static class LyricTiming
     /// line authored none, which is every line of every map written before the feature existed:
     /// the game's <c>TimingJsonLoader.RawLine.WordPauses</c>. It rides beside the word tuple rather
     /// than inside it so every existing construction of this struct is unchanged.</para>
+    ///
+    /// <para><paramref name="WordObjects"/> is parallel to <paramref name="Words"/> like the pauses, and null when no word carries an object.</para>
+    ///
+    /// <para><paramref name="Pipes"/> is parallel to the tokens of <paramref name="Text"/>: where each one's
+    /// '|' split markers sat (<see cref="SplitMarkers.Strip"/>), null when the line has none.</para>
     /// </summary>
     public readonly record struct RawLine(
         string Text,
@@ -208,7 +275,9 @@ public static class LyricTiming
         double? SealGraceMs = null,
         List<List<int>>? WordSplits = null,
         List<double>? WordScores = null,
-        List<List<OriginalLyricSplit>>? WordOriginalSplits = null);
+        List<List<OriginalLyricSplit>>? WordOriginalSplits = null,
+        List<WordObjects>? WordObjects = null,
+        IReadOnlyList<IReadOnlyList<int>>? Pipes = null);
 
     /// <summary>Header fields of a [Lyrics] section (all optional on the wire).</summary>
     public sealed class Header
@@ -320,6 +389,18 @@ public static class LyricTiming
         string normalized = Typeability.Normalize(stripBackingVocals ? Typeability.StripBackingVocals(raw) : raw,
             keepFreestyleMarkers: freestyle);
 
+        // The split markers, as TimingJsonLoader reads them; kept only when stripping them gives the stored text.
+        IReadOnlyList<IReadOnlyList<int>>? pipes = null;
+
+        if (SplitMarkers.Carries(raw))
+        {
+            string piped = Typeability.Normalize(stripBackingVocals ? Typeability.StripBackingVocals(raw) : raw,
+                keepFreestyleMarkers: freestyle, keepSplitMarkers: true);
+
+            if (SplitMarkers.Carries(piped) && SplitMarkers.Strip(piped) is var (stripped, positions) && stripped == normalized)
+                pipes = positions;
+        }
+
         // A line with nothing to TYPE is dropped, and the previous line extends over its span.
         // Tested on the DEFAULT stream, not on the normalized text, because a line that is nothing
         // but punctuation ("...") now normalizes non-empty yet still gives the player no cell at
@@ -365,6 +446,9 @@ public static class LyricTiming
 
         // Parallel to words[]: word i's ORIGINAL (backlog 330), TimingJsonLoader's wordOriginals.
         var wordOriginals = new List<string?>();
+
+        // Parallel to words[]: word i's objects, TimingJsonLoader's wordObjects.
+        var wordObjects = new List<WordObjects>();
 
         if (lineElement.TryGetProperty("words", out JsonElement wordsElement)
             && wordsElement.ValueKind == JsonValueKind.Array)
@@ -480,6 +564,37 @@ public static class LyricTiming
                 }
 
                 wordPauses.Add(pauses);
+
+                // WORD OBJECTS, read as written (TimingJsonLoader's word loop): a hold only with
+                // numeric char/start_ms/end_ms, ticks only numbers.
+                var holds = new List<WordHold>();
+
+                if (wordElement.TryGetProperty("holds", out JsonElement holdsEl) && holdsEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement holdEl in holdsEl.EnumerateArray())
+                    {
+                        if (holdEl.ValueKind == JsonValueKind.Object
+                            && holdEl.TryGetProperty("char", out JsonElement hc) && tryGetInt(hc, out int holdChar)
+                            && holdEl.TryGetProperty("start_ms", out JsonElement hs) && tryGetDouble(hs, out double holdStart)
+                            && holdEl.TryGetProperty("end_ms", out JsonElement he) && tryGetDouble(he, out double holdEnd))
+                        {
+                            var ticks = new List<double>();
+
+                            if (holdEl.TryGetProperty("ticks", out JsonElement ticksEl) && ticksEl.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (JsonElement tickEl in ticksEl.EnumerateArray())
+                                {
+                                    if (tryGetDouble(tickEl, out double tick))
+                                        ticks.Add(tick);
+                                }
+                            }
+
+                            holds.Add(new WordHold(holdChar, holdStart, holdEnd, ticks.ToArray()));
+                        }
+                    }
+                }
+
+                wordObjects.Add(holds.Count == 0 ? WordObjects.None : new WordObjects { Holds = holds.ToArray() });
             }
         }
 
@@ -499,7 +614,9 @@ public static class LyricTiming
             sealGraceMs,
             wordSplits.Exists(w => w.Count > 0) ? wordSplits : null,
             wordScores,
-            wordOriginalSplits.Exists(o => o.Count > 0) ? wordOriginalSplits : null);
+            wordOriginalSplits.Exists(o => o.Count > 0) ? wordOriginalSplits : null,
+            wordObjects.Exists(o => !o.IsEmpty) ? wordObjects : null,
+            pipes);
         return true;
     }
 
@@ -642,7 +759,7 @@ public static class LyricTiming
             if (tokens.Length == paired.Words.Count && tokens.Length > 0)
             {
                 units = buildExplicitUnits(tokens, paired.Words, paired.WordPauses, start, end, paired.WordOriginals,
-                    paired.WordSplits, paired.WordScores, polyglot);
+                    paired.WordSplits, paired.WordScores, polyglot, paired.WordObjects, line.Pipes);
 
                 if (polyglot && line.WordOriginalSplits != null)
                 {
@@ -652,7 +769,7 @@ public static class LyricTiming
                 }
             }
             else
-                units = withDerivedOriginals(InterpolateUnits(line.Text, start, singEnd), line.Original);
+                units = withSplitMarkers(withDerivedOriginals(InterpolateUnits(line.Text, start, singEnd), line.Original), line.Pipes);
 
             result.Add(new LyricLine
             {
@@ -675,6 +792,17 @@ public static class LyricTiming
         }
 
         return result;
+    }
+
+    /// <summary>The interpolated units with the syllables their pipes author (game's <c>LrcParser.InterpolateUnits</c>).</summary>
+    private static IReadOnlyList<TimedUnit> withSplitMarkers(IReadOnlyList<TimedUnit> units, IReadOnlyList<IReadOnlyList<int>>? pipes)
+    {
+        if (pipes == null)
+            return units;
+
+        return units.Select((u, i) => i < pipes.Count && SplitMarkers.Authored(u.Text, u.StartTime, u.EndTime, pipes[i]) is { } played
+            ? u.WithSplitMarkerSyllables(played)
+            : u).ToArray();
     }
 
     /// <summary>
@@ -703,6 +831,7 @@ public static class LyricTiming
                 Pauses = u.Pauses,
                 Source = u.Source,
                 Confidence = u.Confidence,
+                Objects = u.Objects,
                 Original = originals[i],
             }
             : u).ToArray();
@@ -743,7 +872,7 @@ public static class LyricTiming
     /// </summary>
     private static (List<(string Text, double Start, double End, double[] Syllables)> Words,
         List<List<(double Start, double End, int Split)>>? WordPauses, List<string?>? WordOriginals,
-        List<List<int>>? WordSplits, List<double>? WordScores) pairedWords(RawLine line, List<(int Before, int Index)> unromanised)
+        List<List<int>>? WordSplits, List<double>? WordScores, List<WordObjects>? WordObjects) pairedWords(RawLine line, List<(int Before, int Index)> unromanised)
     {
         bool any = false;
 
@@ -751,13 +880,14 @@ public static class LyricTiming
             any = IsUnromanisedWord(line, i);
 
         if (!any)
-            return (line.Words, line.WordPauses, line.WordOriginals, line.WordSplits, line.WordScores);
+            return (line.Words, line.WordPauses, line.WordOriginals, line.WordSplits, line.WordScores, line.WordObjects);
 
         var words = new List<(string Text, double Start, double End, double[] Syllables)>();
         var pauses = line.WordPauses == null ? null : new List<List<(double Start, double End, int Split)>>();
         var originals = new List<string?>();
         var splits = line.WordSplits == null ? null : new List<List<int>>();
         var scores = line.WordScores == null ? null : new List<double>();
+        var objects = line.WordObjects == null ? null : new List<WordObjects>();
 
         for (int i = 0; i < line.Words.Count; i++)
         {
@@ -772,9 +902,10 @@ public static class LyricTiming
             originals.Add(line.WordOriginals![i]);
             splits?.Add(i < line.WordSplits!.Count ? line.WordSplits[i] : new List<int>());
             scores?.Add(i < line.WordScores!.Count ? line.WordScores[i] : 1);
+            objects?.Add(i < line.WordObjects!.Count ? line.WordObjects[i] : WordObjects.None);
         }
 
-        return (words, pauses, originals, splits, scores);
+        return (words, pauses, originals, splits, scores, objects);
     }
 
     /// <summary>
@@ -832,7 +963,9 @@ public static class LyricTiming
         List<string?>? wordOriginals = null,
         List<List<int>>? wordSplits = null,
         List<double>? wordScores = null,
-        bool polyglot = false)
+        bool polyglot = false,
+        List<WordObjects>? wordObjects = null,
+        IReadOnlyList<IReadOnlyList<int>>? pipes = null)
     {
         var units = new List<TimedUnit>(tokens.Length);
         double prevEnd = lineStart;
@@ -870,6 +1003,19 @@ public static class LyricTiming
                 ? splits.ToArray()
                 : Array.Empty<int>();
 
+            // The word's pipes (TimingJsonLoader.buildExplicitUnits): a valid cut keeps the aligner's
+            // times when the counts match, else divides the word evenly. Never replaces the rated syllables.
+            (IReadOnlyList<double> Boundaries, IReadOnlyList<int> Splits)? splitMarkerSyllables = null;
+            var wordPipes = pipes != null && m < pipes.Count ? pipes[m] : Array.Empty<int>();
+
+            if (wordPipes.Count > 0 && SyllableSegments.IsAuthoredValid(tokens[m], wordPipes.Count + 1, wordPipes))
+            {
+                if (wordPipes.Count == boundaries.Count)
+                    splitMarkerSyllables = (boundaries, wordPipes.ToArray());
+                else
+                    splitMarkerSyllables = SplitMarkers.Authored(tokens[m], ws, we, wordPipes);
+            }
+
             units.Add(new TimedUnit
             {
                 Text = tokens[m],
@@ -888,6 +1034,8 @@ public static class LyricTiming
                 // exactly as written, the game's rule since PR 43; the base parse keeps dropping an
                 // original equal to its token, so lyrics_original and the base figures are untouched.
                 Original = wordOriginals != null && m < wordOriginals.Count && (polyglot || wordOriginals[m] != tokens[m]) ? wordOriginals[m] : null,
+                Objects = wordObjects != null && m < wordObjects.Count ? wordObjects[m] : WordObjects.None,
+                SplitMarkerSyllables = splitMarkerSyllables,
             });
 
             prevEnd = we;

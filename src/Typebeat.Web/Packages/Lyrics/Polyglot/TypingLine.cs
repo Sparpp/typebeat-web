@@ -42,7 +42,8 @@ namespace Typebeat.Web.Packages.Lyrics
     /// of <c>build</c> (the per-token ramp, the paused-stretch interpolation, the punctuation pass,
     /// the monotonic guard and the Literate and default streams), <c>tokenCellTargets</c>,
     /// <c>fillPausedStretches</c>, <c>syllableCharTarget</c>, <c>interpolateUntimedTargets</c>,
-    /// <c>CellTargetsFor</c>, <c>configureJapaneseEndpoints</c>, <c>JapaneseCharacterEnd</c>, the
+    /// <c>CellTargetsFor</c>, <c>HoldFreeCellTarget</c> (when a held letter is due, read by
+    /// <see cref="HeldWord"/>), <c>configureJapaneseEndpoints</c>, <c>JapaneseCharacterEnd</c>, the
     /// <c>JapaneseInput</c> plan and the <c>CellRules</c>. What is left out, because no server figure
     /// reads it: the syllable groupings, the word groups, the sung-position
     /// polyline, the seal grace and the era setters a replay flips (the server only ever builds the
@@ -416,5 +417,29 @@ namespace Typebeat.Web.Packages.Lyrics
         /// </summary>
         internal static double[] CellTargetsFor(TimedUnit unit, int typeableCount, Func<char, bool>? isCell = null)
             => tokenCellTargets(unit.Text, unit.StartTime, unit.EndTime, unit, typeableCount, isCell, alignSubdivisions: true);
+
+        /// <summary>When character <paramref name="charIndex"/> is due with no hold: the later of the two target eras.</summary>
+        internal static double HoldFreeCellTarget(TimedUnit unit, int charIndex, Func<char, bool> isCell)
+        {
+            int k = 0, j = 0;
+
+            for (int i = 0; i < unit.Text.Length; i++)
+            {
+                if (!isCell(unit.Text[i]))
+                    continue;
+
+                if (i < charIndex)
+                    j++;
+
+                k++;
+            }
+
+            if (j >= k)
+                return unit.EndTime;
+
+            double legacy = tokenCellTargets(unit.Text, unit.StartTime, unit.EndTime, unit, k, isCell)[j];
+            double aligned = tokenCellTargets(unit.Text, unit.StartTime, unit.EndTime, unit, k, isCell, alignSubdivisions: true)[j];
+            return Math.Max(legacy, aligned);
+        }
     }
 }

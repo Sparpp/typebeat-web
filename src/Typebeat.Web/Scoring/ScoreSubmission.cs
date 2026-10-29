@@ -119,6 +119,9 @@ public static class ScoreSubmission
     /// </summary>
     public const string MAP_MISMATCH_REFUSAL = "maximum_statistics does not match the beatmap";
 
+    /// <summary>The Shorthand mod's acronym (game's <c>TypeBeatModShorthand.Acronym</c>).</summary>
+    public const string SHORTHAND_ACRONYM = "SH";
+
     /// <summary>
     /// Whether a submission's claimed maximum agrees with the map it was played on: its
     /// accuracy-affecting count (<see cref="ScoringContract.CountAccuracyAffecting"/>, one Great per
@@ -135,7 +138,7 @@ public static class ScoreSubmission
 
     /// <summary>
     /// The cells the map behind <paramref name="tokenId"/> judges on the default or the Literate
-    /// stream (048_judged_cells.sql), or null when that is not known for the version played: the
+    /// stream, under Shorthand when <paramref name="shorthand"/> (048, 056), or null when that is not known for the version played: the
     /// pair is not counted yet, was counted under another <see cref="Packages.Lyrics.JudgedCells.VERSION"/>,
     /// or the map was re-uploaded after the token was issued (the token's <c>beatmap_hash</c> is not
     /// the stored checksum any more, so the stored count describes a map this run never saw).
@@ -165,17 +168,22 @@ public static class ScoreSubmission
             : claimed == stream.Cells;
     }
 
-    public static async Task<int?> MapJudgedCellsAsync(DbConnection conn, DbTransaction? tx, long tokenId, bool literate)
+    public static async Task<int?> MapJudgedCellsAsync(DbConnection conn, DbTransaction? tx, long tokenId, bool literate, bool shorthand = false)
         => await conn.ExecuteScalarAsync<int?>(
             """
-            SELECT CASE WHEN @literate THEN b.judged_cells_literate ELSE b.judged_cells END
+            SELECT CASE
+                       WHEN @shorthand AND @literate THEN b.judged_cells_shorthand_literate
+                       WHEN @shorthand THEN b.judged_cells_shorthand
+                       WHEN @literate THEN b.judged_cells_literate
+                       ELSE b.judged_cells
+                   END
             FROM score_tokens t
             JOIN beatmaps b ON b.id = t.beatmap_id
             WHERE t.id = @tokenId
               AND b.judged_cells_version = @version
               AND lower(b.checksum_md5) = lower(t.beatmap_hash)
             """,
-            new { tokenId, literate, version = Packages.Lyrics.JudgedCells.VERSION }, tx);
+            new { tokenId, literate, shorthand, version = Packages.Lyrics.JudgedCells.VERSION }, tx);
 
     /// <summary>
     /// The user's best row on one board of a map (the ranked board when <paramref name="wantRanked"/>,

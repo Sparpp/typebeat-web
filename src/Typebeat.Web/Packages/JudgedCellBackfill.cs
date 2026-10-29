@@ -7,7 +7,8 @@ namespace Typebeat.Web.Packages;
 
 /// <summary>
 /// Startup fill for <c>beatmaps.judged_cells</c> / <c>judged_cells_literate</c>
-/// (048_judged_cells.sql), the same shape as <see cref="PaceBackfill"/>: each live difficulty whose
+/// (048_judged_cells.sql) and their Shorthand pair (056_judged_cells_shorthand.sql), the same shape
+/// as <see cref="PaceBackfill"/>: each live difficulty whose
 /// pair is missing or was counted under another <see cref="JudgedCells.VERSION"/> has its .osu
 /// looked up through its set's current version manifest, reparsed and recounted. A row that fails
 /// (missing blob, parse error) is logged and left as it was, so the next boot retries it.
@@ -17,7 +18,7 @@ namespace Typebeat.Web.Packages;
 /// <para>
 /// Until a row is filled, a submission on it is accepted UNCHECKED, as every submission was before
 /// 048 (<see cref="Scoring.ScoreSubmission.MaximumMatchesMap"/>), so running this late, or failing
-/// on a row, never refuses an honest play. It writes nothing but its own three columns: the count
+/// on a row, never refuses an honest play. It writes nothing but its own five columns: the count
 /// moves no rating and no stored score, so unlike <see cref="PaceBackfill"/> it hands nothing to
 /// <see cref="PpBackfill"/>.
 /// </para>
@@ -68,6 +69,8 @@ public static class JudgedCellBackfill
                     UPDATE beatmaps
                     SET judged_cells = @judgedCells,
                         judged_cells_literate = @judgedCellsLiterate,
+                        judged_cells_shorthand = @judgedCellsShorthand,
+                        judged_cells_shorthand_literate = @judgedCellsShorthandLiterate,
                         judged_cells_version = @version
                     WHERE id = @id AND checksum_md5 = @checksumMd5
                     """,
@@ -76,6 +79,8 @@ public static class JudgedCellBackfill
                         id = row.BeatmapId,
                         judgedCells = judged.Cells,
                         judgedCellsLiterate = judged.Literate,
+                        judgedCellsShorthand = judged.Shorthand,
+                        judgedCellsShorthandLiterate = judged.ShorthandLiterate,
                         checksumMd5 = row.ChecksumMd5,
                         version = JudgedCells.VERSION,
                     });

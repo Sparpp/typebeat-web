@@ -19,7 +19,7 @@ public static class ModInfo
         // (see the Fletcher note below). There is no assist family to put DX in: Mashing is
         // "automation" because it plays the map for you, and Dyslexia does not.
         "DT" or "NC" or "FL" or "SD" or "LT" or "GK" or "RH" or "HR" or "RE" => "increase",
-        "HT" or "DC" or "NF" or "EZ" => "reduction",
+        "HT" or "DC" or "NF" or "EZ" or "SH" => "reduction",
         "RX" => "automation",
         // Classic ("CL", backlog 398) is a SYNTHETIC SYSTEM MARK the server appends, not a mod
         // anyone selects, and the game types its base ModClassic as ModType.Conversion, which is
@@ -66,6 +66,8 @@ public static class ModInfo
         // that row was played under rather than what the name means today).
         "PT" => "Conductor",
         "CT" => "Conductor (retired)",
+        // Shorthand mirrors the game's TypeBeatModShorthand.Name.
+        "SH" => "Shorthand",
         // The synthetic Classic mark (backlog 398): the score was played on a version of the map
         // that is not the one that was ranked. Mirrors the game's base ModClassic.Name ("Classic"),
         // so a marked board row reads the same in both places.

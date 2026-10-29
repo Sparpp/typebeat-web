@@ -116,6 +116,16 @@
         return body;
     }
 
+    // Holds (format v3 word objects) play only in the desktop client. Read off the [Lyrics]
+    // section's word objects, which the encoder writes only when set.
+    const WORD_OBJECTS = /"holds"\s*:\s*\[\s*\{/;
+    const DESKTOP_ONLY_MESSAGE = 'This map uses holds. Play it in the desktop client.';
+    function usesWordObjects(osuText) {
+        const text = String(osuText || '');
+        const at = text.indexOf('[Lyrics]');
+        return at >= 0 && WORD_OBJECTS.test(text.slice(at));
+    }
+
     // What the player is told when no token could be minted, keyed off the server's error wording
     // (the desktop's two refusals, ScoreEndpoints.CreateToken). Both are fixed by a RELOAD: the
     // page then carries the current scripts and fetches the current map.
@@ -124,6 +134,8 @@
             return { text: 'score not submitted: this page is out of date. ', linkText: 'reload', linkHref: '', textAfter: ' to play on the current version.', cls: 'tb-status-bad' };
         if (error === 'invalid or missing beatmap_hash')
             return { text: 'score not submitted: this map was updated after it loaded. ', linkText: 'reload', linkHref: '', textAfter: ' to play the current version.', cls: 'tb-status-bad' };
+        if (error === 'desktop only map')
+            return { text: 'score not submitted: ' + DESKTOP_ONLY_MESSAGE, cls: 'tb-status-bad' };
         return { text: 'score not submitted (could not open a play session).', cls: 'tb-status-bad' };
     }
 
@@ -140,7 +152,8 @@
     // window.TYPEBEAT_PLAY, which is the server-rendered page config read above.
     window.TypeBeatPlayPage = {
         takeDiscordNudge: takeDiscordNudge, DISCORD_NUDGE_KEY: DISCORD_NUDGE_KEY, submitStatus: submitStatus,
-        tokenBody: tokenBody, tokenFailureStatus: tokenFailureStatus, PLAYBACK_INVALID_STATUS: PLAYBACK_INVALID_STATUS
+        tokenBody: tokenBody, tokenFailureStatus: tokenFailureStatus, PLAYBACK_INVALID_STATUS: PLAYBACK_INVALID_STATUS,
+        usesWordObjects: usesWordObjects, DESKTOP_ONLY_MESSAGE: DESKTOP_ONLY_MESSAGE
     };
 
     const picker = document.getElementById('tb-picker');
@@ -307,6 +320,13 @@
             return;
         }
 
+        // Declined before anything is mounted or a token is minted: the browser core has no holds,
+        // so a run here would be a different game on the same board.
+        if (usesWordObjects(osuText)) {
+            loadError(DESKTOP_ONLY_MESSAGE);
+            return;
+        }
+
         // A fresh token per play (minted at play start, so the server's min-play-time gate keys
         // off the real start). "Play again" re-fires onPlayStart, so each attempt can submit.
         let tokenPromise = null;
@@ -378,8 +398,8 @@
         }
     }
 
-    function loadError() {
-        stageMount.innerHTML = '<div class="tb-loading" role="alert">could not load this map. <a href="#" id="tb-back">back</a></div>';
+    function loadError(message) {
+        stageMount.innerHTML = '<div class="tb-loading" role="alert">' + (message || 'could not load this map.') + ' <a href="#" id="tb-back">back</a></div>';
         const back = document.getElementById('tb-back');
         if (back) back.addEventListener('click', (ev) => { ev.preventDefault(); showPicker(); });
     }

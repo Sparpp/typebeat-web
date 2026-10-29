@@ -298,6 +298,7 @@ namespace Typebeat.Web.Packages.Lyrics
         /// <summary><paramref name="unit"/> with <paramref name="original"/> as its original, everything else kept.</summary>
         internal static TimedUnit WithOriginal(TimedUnit unit, string? original) => new TimedUnit
         {
+            Objects = unit.Objects,
             Text = unit.Text,
             StartTime = unit.StartTime,
             EndTime = unit.EndTime,
