@@ -1,7 +1,7 @@
 namespace Typebeat.Web.Packages.Lyrics;
 
 /// <summary>
-/// Upload checks for word objects. The game refuses to submit a map whose holds or picks a play would
+/// Upload checks for word objects. The game refuses to submit a map whose holds a play would
 /// not honour (<c>WordObjectsSubmission.Refusal</c>); this is the structural subset the server can
 /// check without the engine, so a hand-edited file cannot carry objects the rating would misread.
 /// Holds are checked in character order, as the game reads them (<c>HeldWord.UsableHolds</c> sorts by
@@ -21,12 +21,6 @@ public static class WordObjectsValidation
                     continue;
 
                 string at = $"line {l + 1}, word \"{unit.Text}\"";
-
-                foreach (int pick in unit.Objects.TypedLetters)
-                {
-                    if (pick < 0 || pick >= unit.Text.Length || !char.IsLetterOrDigit(unit.Text[pick]))
-                        return $"{at}: a picked letter is not a letter of the word.";
-                }
 
                 if (unit.Objects.Holds.Count > 0 && unit.Pauses.Count > 0)
                     return $"{at}: a word with a pause cannot hold a letter.";

@@ -94,7 +94,7 @@ public sealed class ParsedDifficulty
 
     public required IReadOnlyList<LyricLine> Lines { get; init; }
 
-    /// <summary>Whether any word carries objects (auto-fill, picks, holds): such a difficulty plays only in the desktop client.</summary>
+    /// <summary>Whether any word carries objects (holds): such a difficulty plays only in the desktop client.</summary>
     public bool UsesWordObjects => Lines.Any(l => l.Units.Any(u => !u.Objects.IsEmpty));
 
     public required LyricPace.PaceStatistics Pace { get; init; }

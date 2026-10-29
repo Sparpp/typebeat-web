@@ -116,10 +116,10 @@
         return body;
     }
 
-    // Auto-fill words and holds (format v3 word objects) play only in the desktop client. Read off the
-    // [Lyrics] section's word objects, which the encoder writes only when set.
-    const WORD_OBJECTS = /"autofill"\s*:\s*true|"holds"\s*:\s*\[\s*\{/;
-    const DESKTOP_ONLY_MESSAGE = 'This map uses holds or auto-fill words. Play it in the desktop client.';
+    // Holds (format v3 word objects) play only in the desktop client. Read off the [Lyrics]
+    // section's word objects, which the encoder writes only when set.
+    const WORD_OBJECTS = /"holds"\s*:\s*\[\s*\{/;
+    const DESKTOP_ONLY_MESSAGE = 'This map uses holds. Play it in the desktop client.';
     function usesWordObjects(osuText) {
         const text = String(osuText || '');
         const at = text.indexOf('[Lyrics]');
@@ -320,8 +320,8 @@
             return;
         }
 
-        // Declined before anything is mounted or a token is minted: the browser core has no holds or
-        // auto-fill words, so a run here would be a different game on the same board.
+        // Declined before anything is mounted or a token is minted: the browser core has no holds,
+        // so a run here would be a different game on the same board.
         if (usesWordObjects(osuText)) {
             loadError(DESKTOP_ONLY_MESSAGE);
             return;

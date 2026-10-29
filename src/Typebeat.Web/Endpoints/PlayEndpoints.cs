@@ -62,7 +62,7 @@ public static class PlayEndpoints
     private const int status_unprocessable = StatusCodes.Status422UnprocessableEntity;
     private const string web_build_hash = ScoreSubmission.BROWSER_BUILD_PREFIX + "player";
 
-    /// <summary>The token refusal for a difficulty with auto-fill words or holds (055_uses_word_objects.sql):
+    /// <summary>The token refusal for a difficulty with holds (055_uses_word_objects.sql):
     /// play.js keys its "play it in the desktop client" message off this exact wording.</summary>
     private const string desktop_only_error = "desktop only map";
 
@@ -383,7 +383,7 @@ public static class PlayEndpoints
         if (beatmap is null)
             return WireJson.Error(status_unprocessable, "beatmap not found or not playable");
 
-        // Auto-fill words and holds play only in the desktop client: the browser core has neither,
+        // Holds play only in the desktop client: the browser core has none,
         // so a run here would be a different game on the same board.
         if (beatmap.UsesWordObjects)
             return WireJson.Error(StatusCodes.Status409Conflict, desktop_only_error);

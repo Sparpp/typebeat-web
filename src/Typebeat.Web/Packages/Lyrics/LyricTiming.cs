@@ -127,27 +127,22 @@ public sealed class TimedUnit
 public sealed record WordHold(int Char, double StartTime, double EndTime, IReadOnlyList<double> Ticks);
 
 /// <summary>
-/// The mapper-authored objects a word carries beyond its timing (game's <c>WordObjects</c>): auto-fill
-/// (only the onsets, or the picked <see cref="TypedLetters"/>, are typed) and holds. Rated by
-/// <see cref="LyricDifficulty"/>; a map with any is desktop-only (<c>beatmaps.uses_word_objects</c>).
+/// The mapper-authored objects a word carries beyond its timing (game's <c>WordObjects</c>): holds.
+/// Rated by <see cref="LyricDifficulty"/>; a map with any is desktop-only (<c>beatmaps.uses_word_objects</c>).
 /// </summary>
 public sealed class WordObjects
 {
     public static WordObjects None { get; } = new WordObjects();
 
-    public bool AutoFill { get; init; }
-
-    public IReadOnlyList<int> TypedLetters { get; init; } = Array.Empty<int>();
-
     public IReadOnlyList<WordHold> Holds { get; init; } = Array.Empty<WordHold>();
 
-    public bool IsEmpty => !AutoFill && Holds.Count == 0 && TypedLetters.Count == 0;
+    public bool IsEmpty => Holds.Count == 0;
 
-    /// <summary>These objects for a retyped word (game's <c>WordObjects.ForText</c>): a new spelling drops holds and picks.</summary>
+    /// <summary>These objects for a retyped word (game's <c>WordObjects.ForText</c>): a new spelling drops holds.</summary>
     public WordObjects ForText(string oldText, string newText)
-        => (Holds.Count == 0 && TypedLetters.Count == 0) || string.Equals(oldText, newText, StringComparison.Ordinal)
+        => Holds.Count == 0 || string.Equals(oldText, newText, StringComparison.Ordinal)
             ? this
-            : new WordObjects { AutoFill = AutoFill };
+            : None;
 }
 
 /// <summary>Where a unit's timing came from (game's <c>TimingSource</c>).</summary>
@@ -570,20 +565,8 @@ public static class LyricTiming
 
                 wordPauses.Add(pauses);
 
-                // WORD OBJECTS, read as written (TimingJsonLoader's word loop): picks only on an
-                // auto-fill word, a hold only with numeric char/start_ms/end_ms, ticks only numbers.
-                bool autoFill = wordElement.TryGetProperty("autofill", out JsonElement autoFillEl) && autoFillEl.ValueKind == JsonValueKind.True;
-                var typedLetters = new List<int>();
-
-                if (autoFill && wordElement.TryGetProperty("autofill_letters", out JsonElement lettersEl) && lettersEl.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (JsonElement letterEl in lettersEl.EnumerateArray())
-                    {
-                        if (tryGetInt(letterEl, out int letter))
-                            typedLetters.Add(letter);
-                    }
-                }
-
+                // WORD OBJECTS, read as written (TimingJsonLoader's word loop): a hold only with
+                // numeric char/start_ms/end_ms, ticks only numbers.
                 var holds = new List<WordHold>();
 
                 if (wordElement.TryGetProperty("holds", out JsonElement holdsEl) && holdsEl.ValueKind == JsonValueKind.Array)
@@ -611,9 +594,7 @@ public static class LyricTiming
                     }
                 }
 
-                wordObjects.Add(!autoFill && holds.Count == 0 && typedLetters.Count == 0
-                    ? WordObjects.None
-                    : new WordObjects { AutoFill = autoFill, Holds = holds.ToArray(), TypedLetters = typedLetters.ToArray() });
+                wordObjects.Add(holds.Count == 0 ? WordObjects.None : new WordObjects { Holds = holds.ToArray() });
             }
         }
 

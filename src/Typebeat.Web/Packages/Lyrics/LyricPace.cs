@@ -1,4 +1,4 @@
-﻿namespace Typebeat.Web.Packages.Lyrics;
+namespace Typebeat.Web.Packages.Lyrics;
 
 /// <summary>
 /// Typing-pace statistics + star rating for a lyric map, the numbers the client's song select
@@ -492,8 +492,8 @@ public static class LyricPace
     /// <c>PerformancePoints.VERSION</c> bumps to 27 in the same change (the combo maximum a Japanese
     /// Polyglot play is clamped to).</para>
     ///
-    /// <para>v29 = WORD OBJECTS: an auto-fill word is rated on the letters typed and each hold's
-    /// release is credited. A map without them rates as at v28. pp is unchanged.</para>
+    /// <para>v29 = WORD OBJECTS: each hold's release is credited. A map without holds rates as at
+    /// v28. pp is unchanged.</para>
     ///
     /// <para>The paragraph below is now SPENT HISTORY, kept because it explains what v9 dragged
     /// along with it. It was NOT bumped for the punctuation change (backlog 59) at the time. The

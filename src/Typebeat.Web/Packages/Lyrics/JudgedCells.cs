@@ -28,9 +28,9 @@ namespace Typebeat.Web.Packages.Lyrics;
 /// </list>
 ///
 /// <para>
-/// WORD OBJECTS AND SHORTHAND (v2, <see cref="CountLine"/>): an auto-fill word, and every word under
-/// Shorthand (<c>SH</c>), keeps only its onsets or picks typed (marks and the following space complete);
-/// a usable hold adds its tail and each usable tick. Shorthand has its own pair of counts
+/// WORD OBJECTS AND SHORTHAND (v2, <see cref="CountLine"/>): every word under Shorthand (<c>SH</c>)
+/// keeps only its onsets typed (marks and spaces complete); a usable hold adds its tail and each
+/// usable tick. Shorthand has its own pair of counts
 /// (<see cref="Counts"/>), checked like Polyglot's.
 /// </para>
 ///
@@ -151,31 +151,14 @@ public static class JudgedCells
 
         // Word objects (TypingLine.build): found only when some word carries one.
         Dictionary<int, WordHold>? held = null;
-        HashSet<int>? picked = null, pickedWordCells = null;
-        (int Token, int Offset)[]? positions = null;
 
         if (units.Any(u => !u.Objects.IsEmpty))
-        {
-            positions = cellPositions(tokens, n, cellCount, defaultSources);
-            held = heldCellsOf(units, positions, typeable);
-            picked = pickedCellsOf(units, positions, typeable);
-
-            if (picked != null)
-            {
-                var pickedWords = picked.Select(i => positions[i].Token).ToHashSet();
-                pickedWordCells = Enumerable.Range(0, cellCount).Where(i => pickedWords.Contains(positions[i].Token)).ToHashSet();
-            }
-        }
+            held = heldCellsOf(units, cellPositions(tokens, n, cellCount, defaultSources), typeable);
 
         bool[] typed = (bool[])typeable.Clone();
 
         if (shorthand)
-            applyOnsetsOnly(expected, typeable, typed, groupOf, _ => true, completeSpaces: true, held, picked, pickedWordCells);
-        else if (positions is { } cellPos && units.Any(u => u.Objects.AutoFill))
-        {
-            applyOnsetsOnly(expected, typeable, typed, groupOf, i => cellPos[i].Token >= 0 && cellPos[i].Token < units.Length && units[cellPos[i].Token].Objects.AutoFill,
-                completeSpaces: false, held, picked, pickedWordCells);
-        }
+            applyOnsetsOnly(expected, typeable, typed, groupOf, held);
 
         int count = typed.Count(t => t);
 
@@ -190,16 +173,13 @@ public static class JudgedCells
     }
 
     /// <summary>
-    /// The game's onsets-only pass (<c>TypingLine.applyOnsetsOnly</c>) on the typed flags: of the cells
-    /// <paramref name="applies"/> to, only the first letter of each word and of each authored syllable
-    /// stays typed, or a word's picks; freestyle slots and held cells stay typed; marks are completed,
-    /// and spaces too (every one under Shorthand, the one after an auto-fill word otherwise).
+    /// The game's Shorthand onsets-only pass (<c>TypingLine.applyOnsetsOnly</c>) on the typed flags:
+    /// only the first letter of each word and of each authored syllable stays typed; freestyle slots
+    /// and held cells stay typed; marks and every space are completed.
     /// </summary>
-    private static void applyOnsetsOnly(char[] expected, bool[] typeable, bool[] typed, Func<int, int> groupOf, Func<int, bool> applies, bool completeSpaces,
-                                        IReadOnlyDictionary<int, WordHold>? held, ISet<int>? picked, ISet<int>? pickedWordCells)
+    private static void applyOnsetsOnly(char[] expected, bool[] typeable, bool[] typed, Func<int, int> groupOf, IReadOnlyDictionary<int, WordHold>? held)
     {
         int? lastGroup = null;
-        bool afterAppliedWord = false;
 
         for (int i = 0; i < expected.Length; i++)
         {
@@ -207,15 +187,13 @@ public static class JudgedCells
             {
                 lastGroup = null;
 
-                if ((completeSpaces || afterAppliedWord) && typeable[i])
+                if (typeable[i])
                     typed[i] = false;
 
                 continue;
             }
 
-            afterAppliedWord = applies(i);
-
-            if (!typeable[i] || !afterAppliedWord)
+            if (!typeable[i])
                 continue;
 
             bool freestyle = Typeability.IsFreestyle(expected[i]);
@@ -227,10 +205,7 @@ public static class JudgedCells
             }
 
             int group = groupOf(i);
-
-            bool onset = pickedWordCells?.Contains(i) == true
-                ? picked!.Contains(i)
-                : lastGroup == null || (group >= 0 && group != lastGroup);
+            bool onset = lastGroup == null || (group >= 0 && group != lastGroup);
 
             lastGroup = group;
 
@@ -312,26 +287,6 @@ public static class JudgedCells
         }
 
         return result;
-    }
-
-    /// <summary>The typeable cells usable picks land on (<c>TypingLine.pickedCellsOf</c>); null when there are none.</summary>
-    private static HashSet<int>? pickedCellsOf(IReadOnlyList<TimedUnit> units, (int Token, int Offset)[] positions, bool[] typeable)
-    {
-        HashSet<int>? picked = null;
-        var picks = new IReadOnlyList<int>?[units.Count];
-
-        for (int i = 0; i < typeable.Length; i++)
-        {
-            var (m, offset) = positions[i];
-
-            if (!typeable[i] || m < 0 || m >= units.Count || units[m].Objects.TypedLetters.Count == 0)
-                continue;
-
-            if ((picks[m] ??= TypedLetters.UsablePicks(units[m], Typeability.IsCell)).Contains(offset))
-                (picked ??= new HashSet<int>()).Add(i);
-        }
-
-        return picked;
     }
 
     /// <summary>Per cell, its whitespace token and offset in it; (-1, -1) for an inter-word space (<c>TypingLine.cellPositions</c>).</summary>

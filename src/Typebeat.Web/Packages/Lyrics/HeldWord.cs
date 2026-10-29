@@ -113,21 +113,4 @@ namespace Typebeat.Web.Packages.Lyrics
         /// <summary>How long before the end a release still counts as Great. Also the hand-off window.</summary>
         public static double Slack(double start, double end) => Math.Max(MIN_SLACK_MS, SLACK_FRACTION * Math.Max(1, end - start));
     }
-
-    /// <summary>Which typed-letter picks of an auto-fill word a play honours (game's <c>Gameplay/TypedLetters.cs</c>).</summary>
-    internal static class TypedLetters
-    {
-        /// <summary>The usable picks, ascending and distinct: only on an auto-fill word, inside the text, on a letter or digit cell.</summary>
-        public static IReadOnlyList<int> UsablePicks(TimedUnit unit, Func<char, bool> isCell)
-        {
-            var picks = unit.Objects.TypedLetters;
-
-            if (!unit.Objects.AutoFill || picks.Count == 0)
-                return Array.Empty<int>();
-
-            string text = unit.Text;
-
-            return picks.Where(i => i >= 0 && i < text.Length && isCell(text[i]) && char.IsLetterOrDigit(text[i])).Distinct().OrderBy(i => i).ToArray();
-        }
-    }
 }
