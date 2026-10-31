@@ -100,8 +100,8 @@ namespace Typebeat.Web.Packages.Lyrics
     /// <summary>Which of a hold's authored ticks a play honours (game's <c>Gameplay/HoldTicks.cs</c>, the members the count reads).</summary>
     internal static class HoldTicks
     {
-        /// <summary>The earliest a tick may sit: clear of the press.</summary>
-        private static double WindowStart(double start) => start + HoldTailRule.MIN_SLACK_MS;
+        /// <summary>The earliest a tick may sit: the hold's start. A head pressed after a tick still credits it.</summary>
+        private static double WindowStart(double start) => start;
 
         /// <summary>A tick must sit before this: clear of the Great release window.</summary>
         private static double WindowEnd(double start, double end) => end - HoldTailRule.Slack(start, end);
