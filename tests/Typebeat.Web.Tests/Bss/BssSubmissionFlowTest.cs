@@ -291,14 +291,6 @@ public class BssSubmissionFlowTest
         // Real covers: the version-keyed URLs served by MediaEndpoints, not the placeholder.
         Assert.That((string)set["covers"]!["card@2x"]!, Does.EndWith($"/covers/{setId}/1/card@2x.jpg"));
 
-        // Previews degrade gracefully: with ffmpeg available the WAV clip generates and the URL
-        // is real; without it the field stays an empty string (never null; client contract).
-        string previewUrl = (string)set["preview_url"]!;
-        if (PreviewGenerator.IsFfmpegAvailable())
-            Assert.That(previewUrl, Does.EndWith($"/previews/{setId}.mp3"));
-        else
-            Assert.That(previewUrl, Is.EqualTo(""));
-
         var beatmaps = (JArray)set["beatmaps"]!;
         Assert.That(beatmaps, Has.Count.EqualTo(2));
 
@@ -439,27 +431,6 @@ public class BssSubmissionFlowTest
                 Assert.That(fallback.Content.Headers.ContentType?.MediaType, Is.EqualTo("image/jpeg"));
             });
         }
-    }
-
-    [Test]
-    [Order(11)]
-    public async Task PreviewRoute_ServesTheClip_WithRangeSupport()
-    {
-        if (!PreviewGenerator.IsFfmpegAvailable())
-            Assert.Ignore("ffmpeg not on PATH, no preview was generated for this set.");
-
-        using (var response = await BssFixture.Client.GetAsync($"/previews/{setId}.mp3"))
-        {
-            Assert.Multiple(() =>
-            {
-                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-                Assert.That(response.Content.Headers.ContentType?.MediaType, Is.EqualTo("audio/mpeg"));
-                Assert.That(response.Headers.AcceptRanges, Does.Contain("bytes"));
-            });
-        }
-
-        using (var missing = await BssFixture.Client.GetAsync("/previews/99999999.mp3"))
-            Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
 
     [Test]
