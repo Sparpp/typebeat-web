@@ -400,7 +400,7 @@ public static class GateRefund
         => JsonConvert.DeserializeObject<Dictionary<string, int>>(json ?? "{}") ?? new Dictionary<string, int>();
 
     /// <summary>The stored mods jsonb, read exactly as the submit path reads a submitted stack.</summary>
-    private static List<StoredMod> ParseMods(string? json)
+    internal static List<StoredMod> ParseMods(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
             return new List<StoredMod>();

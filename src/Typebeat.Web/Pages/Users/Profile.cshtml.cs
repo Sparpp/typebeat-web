@@ -72,11 +72,8 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
     public int PlayCount { get; private set; }
     public long PlayTimeS { get; private set; }
 
-    /// <summary>Distinct ranked beatmapsets the user has submitted any score on.</summary>
-    public int MapsPlayed { get; private set; }
-
-    /// <summary>Total ranked beatmapsets in the (publicly visible) pool.</summary>
-    public int RankedMapPool { get; private set; }
+    /// <summary>The pace the user's top plays prove (<see cref="ProfileWpm"/>); null with no play to read it from.</summary>
+    public double? Wpm { get; private set; }
 
     /// <summary>Average accuracy across per-map best scores; null when there are none.</summary>
     public double? Accuracy { get; private set; }
@@ -228,7 +225,7 @@ public sealed class ProfileModel(Db db) : TypebeatPageModel
 
         (TotalScore, PlayCount, PlayTimeS) = await ProfileQueries.StatsAsync(conn, id);
 
-        (MapsPlayed, RankedMapPool) = await ProfileQueries.MapsPlayedAsync(conn, id);
+        Wpm = ProfileWpm.Average(await ProfileQueries.WpmPlaysAsync(conn, id));
 
         // Deliberately no status filter: loved plays count toward grades and accuracy (as on osu!'s profile).
         // Grade counts + accuracy from the SAME per-map-best fold (see class doc).

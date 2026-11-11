@@ -78,25 +78,23 @@ public static class ProfileQueries
             new { id });
 
     /// <summary>
-    /// Maps played out of the ranked pool: distinct ranked sets with any score by this user, over the
-    /// count of publicly-visible ranked sets (restricted mappers' sets are delisted).
+    /// The plays the stats card's WPM reads (<see cref="ProfileWpm"/>): the top
+    /// <see cref="ProfileWpm.Count"/> of the Best performance list, the very rows and order that
+    /// section shows, each with its map's target pace (its average while the backfill has not
+    /// reached it).
     /// </summary>
-    public static Task<(int, int)> MapsPlayedAsync(NpgsqlConnection conn, long id)
-        => conn.QuerySingleAsync<(int, int)>(
-            """
-            SELECT
-                (SELECT count(DISTINCT b.set_id)
-                 FROM scores sc
-                 JOIN beatmaps b    ON b.id = sc.beatmap_id
-                 JOIN beatmapsets s ON s.id = b.set_id
-                 JOIN users ow      ON ow.id = s.owner_id
-                 WHERE sc.user_id = @id AND s.status = 'ranked' AND NOT ow.restricted) AS played,
-                (SELECT count(*)
-                 FROM beatmapsets s
-                 JOIN users ow ON ow.id = s.owner_id
-                 WHERE s.status = 'ranked' AND NOT ow.restricted) AS pool
-            """,
-            new { id });
+    public static async Task<List<ProfileWpm.Play>> WpmPlaysAsync(NpgsqlConnection conn, long id)
+        => (await conn.QueryAsync<(double? MapWpm, double Accuracy, string? ModsJson)>(
+            $"""
+             SELECT coalesce(b.target_wpm, b.wpm) AS MapWpm, best.accuracy AS Accuracy, best.mods AS ModsJson
+             FROM ({ProfileScores.BestOfUser(section_columns)}) best
+             JOIN beatmaps b ON b.id = best.beatmap_id
+             JOIN beatmapsets s ON s.id = b.set_id
+             WHERE {ProfileScores.OnVisibleSet("s")}
+             ORDER BY {ProfileScores.BestOrder}
+             LIMIT {ProfileWpm.Count}
+             """,
+            new { id })).Select(r => new ProfileWpm.Play(r.MapWpm, r.Accuracy, r.ModsJson)).ToList();
 
     /// <summary>Per-grade counts and accuracy sums over the user's per-map bests (the leaderboard fold, any board status).</summary>
     public static async Task<List<(string Rank, long Count, double AccuracySum)>> GradeRowsAsync(NpgsqlConnection conn, long id)
