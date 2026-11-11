@@ -55,7 +55,7 @@ public class ProfileWpmTest
     }
 
     [Test]
-    public async Task StatsCard_ShowsTheWpm_AndNoLongerMapsPlayed()
+    public async Task StatsCard_ShowsTheWpmUnderThePp_AndNoLongerMapsPlayed()
     {
         using var response = await WebsiteFixture.Client.GetAsync($"/users/{ownerId}");
         string html = await response.Content.ReadAsStringAsync();
@@ -68,7 +68,9 @@ public class ProfileWpmTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(card, Does.Contain(">WPM</span><span class=\"stat-row__value\">114</span>"));
+            Assert.That(card, Does.Contain("<span class=\"profile-rank__wpm\""));
+            Assert.That(card, Does.Contain(">114 WPM</span>"), "under the pp, not a stat row");
+            Assert.That(card, Does.Not.Contain(">WPM</span>"));
             Assert.That(card, Does.Not.Contain("Maps played"));
         });
     }

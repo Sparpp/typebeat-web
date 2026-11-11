@@ -2430,8 +2430,10 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 
 /* Total pp, under the performance rank it is drawn from. Gold, like pp on the score rows, so the
    metric keeps one colour across the page; a size below the rank, because the rank is the
-   headline and this is what produced it. */
-.profile-rank__pp {
+   headline and this is what produced it. The WPM under it (backlog 458) is drawn the same way:
+   both say what a player's best plays add up to. */
+.profile-rank__pp,
+.profile-rank__wpm {
     font-family: var(--font-display);
     font-size: var(--text-lg);
     font-weight: 700;

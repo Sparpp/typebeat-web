@@ -410,12 +410,15 @@
                 <span class="profile-rank__label">Performance rank</span>
                 <span class="profile-rank__value">@(Model.PpRank is long ppRank ? "#" + ppRank.ToString("N0", CultureInfo.InvariantCulture) : "Unranked")</span>
                 <span class="profile-rank__pp" title="total performance points; your best play on each ranked song, weighted">@Model.TotalPp.ToString("N0", CultureInfo.InvariantCulture)pp</span>
+                @if (Model.Wpm is double wpm)
+                {
+                    <span class="profile-rank__wpm" title="the pace your top @ProfileWpm.Count plays prove: each map's hardest 30 seconds, at the play's rate, weighted by its accuracy, averaged">@wpm.ToString("N0", CultureInfo.InvariantCulture) WPM</span>
+                }
             </div>
             <div class="stat-row"><span class="stat-row__label">Score rank</span><span class="stat-row__value">@(Model.GlobalRank is long rank ? "#" + rank.ToString("N0", CultureInfo.InvariantCulture) : "Unranked")</span></div>
             <div class="stat-row"><span class="stat-row__label">Ranked score</span><span class="stat-row__value">@Model.RankedScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Total score</span><span class="stat-row__value">@Model.TotalScore.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Play count</span><span class="stat-row__value">@Model.PlayCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
-            <div class="stat-row" title="the pace your top @ProfileWpm.Count plays prove: each map's hardest 30 seconds, at the play's rate, weighted by its accuracy, averaged"><span class="stat-row__label">WPM</span><span class="stat-row__value">@(Model.Wpm is double wpm ? wpm.ToString("N0", CultureInfo.InvariantCulture) : "-")</span></div>
             <div class="stat-row"><span class="stat-row__label">First places</span><span class="stat-row__value">@Model.FirstPlaceCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row" title="how many times other players watched this player's replays; their own downloads never count"><span class="stat-row__label">Replays watched by others</span><span class="stat-row__value">@Model.ReplayViewCount.ToString("N0", CultureInfo.InvariantCulture)</span></div>
             <div class="stat-row"><span class="stat-row__label">Play time</span><span class="stat-row__value">@ProfileModel.FormatPlayTime(Model.PlayTimeS)</span></div>
