@@ -78,23 +78,26 @@ public static class ProfileQueries
             new { id });
 
     /// <summary>
-    /// The plays the stats card's WPM reads (<see cref="ProfileWpm"/>): the top
-    /// <see cref="ProfileWpm.Count"/> of the Best performance list, the very rows and order that
-    /// section shows, each with its map's target pace (its average while the backfill has not
-    /// reached it).
+    /// The plays the stats card's WPM chooses from (<see cref="ProfileWpm"/>): the user's best play
+    /// on each map's ranked board, eligible as the Best performance list is (loved sets excluded),
+    /// each with its map's target pace (its average while the backfill has not reached it). Every
+    /// map is returned: picking the fastest needs the rate a play's mods carry, which is read in C#.
     /// </summary>
     public static async Task<List<ProfileWpm.Play>> WpmPlaysAsync(NpgsqlConnection conn, long id)
-        => (await conn.QueryAsync<(double? MapWpm, double Accuracy, string? ModsJson)>(
+        => (await conn.QueryAsync<(long SetId, double? MapWpm, double Accuracy, string? ModsJson)>(
             $"""
-             SELECT coalesce(b.target_wpm, b.wpm) AS MapWpm, best.accuracy AS Accuracy, best.mods AS ModsJson
-             FROM ({ProfileScores.BestOfUser(section_columns)}) best
+             SELECT b.set_id AS SetId, coalesce(b.target_wpm, b.wpm) AS MapWpm, best.accuracy AS Accuracy, best.mods AS ModsJson
+             FROM (
+                 SELECT DISTINCT ON (sc.beatmap_id) sc.beatmap_id, sc.accuracy, sc.mods
+                 FROM scores sc
+                 WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
+                 ORDER BY sc.beatmap_id, {BeatmapLeaderboard.Order("sc")}
+             ) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE {ProfileScores.OnVisibleSet("s")}
-             ORDER BY {ProfileScores.BestOrder}
-             LIMIT {ProfileWpm.Count}
+             WHERE {ProfileScores.OnVisibleSet("s")} AND s.status <> 'loved'
              """,
-            new { id })).Select(r => new ProfileWpm.Play(r.MapWpm, r.Accuracy, r.ModsJson)).ToList();
+            new { id })).Select(r => new ProfileWpm.Play(r.SetId, r.MapWpm, r.Accuracy, r.ModsJson)).ToList();
 
     /// <summary>Per-grade counts and accuracy sums over the user's per-map bests (the leaderboard fold, any board status).</summary>
     public static async Task<List<(string Rank, long Count, double AccuracySum)>> GradeRowsAsync(NpgsqlConnection conn, long id)

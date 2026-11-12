@@ -412,7 +412,7 @@
                 <span class="profile-rank__pp" title="total performance points; your best play on each ranked song, weighted">@Model.TotalPp.ToString("N0", CultureInfo.InvariantCulture)pp</span>
                 @if (Model.Wpm is double wpm)
                 {
-                    <span class="profile-rank__wpm" title="the pace your top @ProfileWpm.Count plays prove: each map's hardest 30 seconds, at the play's rate, weighted by its accuracy, averaged">@wpm.ToString("N0", CultureInfo.InvariantCulture) WPM</span>
+                    <span class="profile-rank__wpm" title="the pace your @ProfileWpm.Count fastest songs prove, at @((ProfileWpm.AccuracyFloor * 100).ToString("N0", CultureInfo.InvariantCulture))% accuracy or better: each map's hardest 30 seconds, at the play's rate, weighted by its accuracy, averaged">@wpm.ToString("N0", CultureInfo.InvariantCulture) WPM</span>
                 }
             </div>
             <div class="stat-row"><span class="stat-row__label">Score rank</span><span class="stat-row__value">@(Model.GlobalRank is long rank ? "#" + rank.ToString("N0", CultureInfo.InvariantCulture) : "Unranked")</span></div>
