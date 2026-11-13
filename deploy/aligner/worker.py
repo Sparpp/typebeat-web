@@ -325,18 +325,25 @@ def run_job(job: Path) -> None:
     log(f"done {job.name} in {time.time() - start:.0f}s")
 
 
+# The aligner's own fetch for every model file it runs on (MMS_FA, htdemucs, QMUL), from type!beat's
+# mirror first: the same list, URLs and sha256s the players' setup scripts use. Older aligner
+# scripts have only the QMUL fetch, which is used for them.
+WARM_ALL = ("import align_lyrics as a; f = getattr(a, 'ensure_model_files', None); "
+            "print(f() if f else a.qmul_weights_path())")
+
+
 def warm_weights() -> None:
-    """Fetches the fused path's QMUL weights into TORCH_HOME before the first job needs them (best
-    effort: the first fused run fetches them itself when this fails)."""
+    """Puts the aligner's model files in TORCH_HOME before the first job needs them, each checked
+    against its full sha256 (best effort: a job fetches a missing file itself, the same way)."""
     if not version_at_least(FUSED_EVIDENCE_ALIGNER_VERSION):
         return
     try:
-        r = subprocess.run([sys.executable, "-c", "import align_lyrics; print(align_lyrics.qmul_weights_path())"],
-                           cwd=str(ALIGNER.parent), capture_output=True, text=True, timeout=600)
+        r = subprocess.run([sys.executable, "-c", WARM_ALL],
+                           cwd=str(ALIGNER.parent), capture_output=True, text=True, timeout=1800)
         detail = (r.stdout.strip() or r.stderr.strip()).splitlines()[-1:] or [""]
-        log(f"fused-evidence weights: {'ready' if r.returncode == 0 else 'not fetched'} {detail[0]}")
+        log(f"model files: {'ready' if r.returncode == 0 else 'not all fetched'} {detail[0]}")
     except Exception as e:  # noqa: BLE001
-        log(f"fused-evidence weights not fetched: {e}")
+        log(f"model files not fetched: {e}")
 
 
 def main() -> None:

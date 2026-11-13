@@ -27,9 +27,10 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
         torch==2.5.1 torchaudio==2.5.1 \
     && pip install --no-cache-dir demucs==4.0.1 soundfile pyphen num2words tqdm phonemizer
 
-# Demucs checkpoints and the fused path's QMUL weights (57 MB) land under TORCH_HOME
-# (hub/checkpoints); on the shared volume they survive image rebuilds and are fetched once (the
-# worker warms the QMUL weights at start-up), rather than being baked into every image.
+# The aligner's model files (MMS_FA, htdemucs, the fused path's QMUL weights; ~1.4 GB) land under
+# TORCH_HOME (hub/checkpoints); on the shared volume they survive image rebuilds and are fetched once
+# (the worker warms them at start-up through the aligner's own ensure_model_files, from
+# dl.typebeat.sh first), rather than being baked into every image.
 ENV PHONEMIZER_ESPEAK_LIBRARY=/usr/local/lib/libespeak-ng.so.1 \
     PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1 \
