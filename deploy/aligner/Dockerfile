@@ -25,9 +25,10 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
         torch==2.5.1 torchaudio==2.5.1 \
-    && pip install --no-cache-dir demucs==4.0.1 soundfile pyphen num2words tqdm phonemizer
+    && pip install --no-cache-dir demucs==4.0.1 soundfile pyphen num2words tqdm transformers==4.49.0 phonemizer
 
-# The aligner's model files (MMS_FA, htdemucs, the fused path's QMUL weights; ~1.4 GB) land under
+# The aligner's model files (version 12's full-mix model, 2.3 GB; MMS_FA and the rest only for a
+# fallback to version 11's engine) land under
 # TORCH_HOME (hub/checkpoints); on the shared volume they survive image rebuilds and are fetched once
 # (the worker warms them at start-up through the aligner's own ensure_model_files, from
 # dl.typebeat.sh first), rather than being baked into every image.
@@ -38,7 +39,7 @@ ENV PHONEMIZER_ESPEAK_LIBRARY=/usr/local/lib/libespeak-ng.so.1 \
 
 # The same check setup.sh's sentinel stands for, plus the fused pair: the image is unusable
 # without these, so a broken resolve fails the build here and not the first player's job.
-RUN python -c "import torch, torchaudio, demucs, soundfile, pyphen, num2words, phonemizer" \
+RUN python -c "import torch, torchaudio, demucs, soundfile, pyphen, num2words, transformers, phonemizer" \
     && python -c "from phonemizer.backend import EspeakBackend; print(EspeakBackend('en-us').phonemize(['hello'], strip=True))"
 
 WORKDIR /aligner

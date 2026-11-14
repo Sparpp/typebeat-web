@@ -55,6 +55,9 @@ POLL_S = 2.0
 # The first script versions with each flag (the game's AlignerEnvironment constants).
 VOCAL_MODE_ALIGNER_VERSION = 7
 FUSED_EVIDENCE_ALIGNER_VERSION = 10
+# Version 12 reads the full mix and only separates to write the vocals stem, which the server never
+# sends back, so its runs skip the separation.
+FULL_MIX_ALIGNER_VERSION = 12
 
 ALLOWED_ANCHORS = ("ref", "auto")
 
@@ -210,6 +213,9 @@ def build_command(job: Path, manifest: dict, audio: Path, lyrics: Path, out_dir:
     if manifest.get("vocal_mode") == "estimated" and anchors == "ref" and version_at_least(VOCAL_MODE_ALIGNER_VERSION):
         cmd += ["--vocal-mode", "estimated"]
 
+    if version_at_least(FULL_MIX_ALIGNER_VERSION):
+        cmd += ["--no-separate"]
+
     if version_at_least(FUSED_EVIDENCE_ALIGNER_VERSION):
         cmd += ["--evidence", "fused"]
         language = str(manifest.get("language") or "").strip().lower()
@@ -325,9 +331,9 @@ def run_job(job: Path) -> None:
     log(f"done {job.name} in {time.time() - start:.0f}s")
 
 
-# The aligner's own fetch for every model file it runs on (MMS_FA, htdemucs, QMUL), from type!beat's
-# mirror first: the same list, URLs and sha256s the players' setup scripts use. Older aligner
-# scripts have only the QMUL fetch, which is used for them.
+# The aligner's own fetch for the model files its install runs on (version 12: its full-mix model;
+# version 11: MMS_FA, htdemucs and QMUL), from type!beat's mirror first: the same list, URLs and
+# sha256s the players' setup scripts use. Older aligner scripts have only the QMUL fetch.
 WARM_ALL = ("import align_lyrics as a; f = getattr(a, 'ensure_model_files', None); "
             "print(f() if f else a.qmul_weights_path())")
 
