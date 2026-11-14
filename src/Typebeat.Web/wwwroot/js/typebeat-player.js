@@ -3037,8 +3037,9 @@
             if (typeof gap.blur === 'function') gap.blur();
         }
 
-        // A rejected wrong key never enters the line; the offending letter pops up beside the
-        // caret (alternating sides), falls away and fades (LyricStage.onWrongKeyRejected). The
+        // A wrong key's letter pops up beside the caret (alternating sides), falls away and fades
+        // (LyricStage.popWrongLetter): a rejected one's, and since backlog 463 a typed-through one's
+        // too (onTypoLanded), whose cell shows only the expected letter. The
         // letter is anchored ON the caret; the desktop's side offset, lift and motion are all in
         // .tb-wrongkey, in em, so they follow the lyric size.
         function popWrongKey(c) {
@@ -3281,6 +3282,10 @@
             engine.onTypoLanded = function (index, lineIndex) {
                 const now = nowMs();
                 lastTypedAt = now;
+                // The key actually pressed pops up off the caret in red, as a rejected one does
+                // (backlog 463, LyricStage.onCharJudged): the cell shows only the expected letter.
+                const typed = beatmap.lines[lineIndex].cells[index].typedChar;
+                if (typed) popWrongKey(typed);
                 if (lineIndex !== lastCurIdx || index >= shakeEnd.length) return;
                 shakeEnd[index] = now + TYPO_SHAKE_MS;
                 if (isWordGap(beatmap.lines[lineIndex].cells[index])) dotPulseEnd[index] = now + SPACE_ERROR_DOT_PULSE_MS;

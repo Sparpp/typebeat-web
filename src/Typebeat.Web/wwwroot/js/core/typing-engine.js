@@ -2106,9 +2106,9 @@
                     // the result, rather than here, because a typo the player goes back for must
                     // still earn its retype's combo normally.
                     // Neither of the two older renderer hooks fires here, and both omissions mirror
-                    // the desktop. onWrongKey is the REJECTED-key feedback (the char popping off the
-                    // caret, mirroring LyricStage.onWrongKeyRejected), which the desktop does not
-                    // play for a char it accepted into a cell. onCharJudged is this renderer's
+                    // the desktop. onWrongKey is the REJECTED-key event (LyricStage.onWrongKeyRejected);
+                    // the letter popping off the caret for a char accepted into a cell (backlog 463)
+                    // is the renderer's, off onTypoLanded below. onCharJudged is this renderer's
                     // rolling-WPM tap, and the C# pushRollingSample() sits on the ACCEPTED path only,
                     // below the branch we are in, so logging a wrong char there would drift the
                     // browser's WPM readout away from the desktop's. The typo's OWN feedback is
