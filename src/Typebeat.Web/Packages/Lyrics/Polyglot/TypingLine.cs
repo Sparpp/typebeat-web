@@ -418,7 +418,7 @@ namespace Typebeat.Web.Packages.Lyrics
         internal static double[] CellTargetsFor(TimedUnit unit, int typeableCount, Func<char, bool>? isCell = null)
             => tokenCellTargets(unit.Text, unit.StartTime, unit.EndTime, unit, typeableCount, isCell, alignSubdivisions: true);
 
-        /// <summary>When character <paramref name="charIndex"/> is due with no hold: the later of the two target eras.</summary>
+        /// <summary>When character <paramref name="charIndex"/> is due with no hold, in the current subdivision-aligned era every live play uses.</summary>
         internal static double HoldFreeCellTarget(TimedUnit unit, int charIndex, Func<char, bool> isCell)
         {
             int k = 0, j = 0;
@@ -437,9 +437,7 @@ namespace Typebeat.Web.Packages.Lyrics
             if (j >= k)
                 return unit.EndTime;
 
-            double legacy = tokenCellTargets(unit.Text, unit.StartTime, unit.EndTime, unit, k, isCell)[j];
-            double aligned = tokenCellTargets(unit.Text, unit.StartTime, unit.EndTime, unit, k, isCell, alignSubdivisions: true)[j];
-            return Math.Max(legacy, aligned);
+            return tokenCellTargets(unit.Text, unit.StartTime, unit.EndTime, unit, k, isCell, alignSubdivisions: true)[j];
         }
     }
 }

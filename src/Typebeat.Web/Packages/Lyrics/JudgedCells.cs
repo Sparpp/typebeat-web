@@ -61,7 +61,9 @@ public static class JudgedCells
     /// to the parse they read), so <see cref="Packages.JudgedCellBackfill"/> recounts every row and
     /// a submission is never refused against a count the current rules did not produce.
     /// </summary>
-    public const int VERSION = 2;
+    /// <remarks>3 (game PR 48, web PR 11): a hold tick may sit from the hold's head, and a held letter's
+    /// due time is the aligned era's alone, so some holds and ticks count that did not.</remarks>
+    public const int VERSION = 3;
 
     /// <summary>The default and Literate counts, and both again under Shorthand.</summary>
     public readonly record struct Counts(int? Cells, int? Literate, int? Shorthand, int? ShorthandLiterate);
