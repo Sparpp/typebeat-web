@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
@@ -39,6 +40,16 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
     public bool CanFilterUnplayed => CurrentUser is not null;
 
     public IReadOnlyList<BeatmapsetCardModel> Sets { get; private set; } = [];
+
+    /// <summary>
+    /// How many sets the whole search matches under every filter (all pages, not this one), shown
+    /// above the cards as "1,234 results".
+    /// </summary>
+    public int TotalCount { get; private set; }
+
+    /// <summary>"0 results", "1 result", "1,234 results", the same wording as the game's listing overlay.</summary>
+    public static string FormatResultCount(int count)
+        => $"{count.ToString("N0", CultureInfo.InvariantCulture)} {(count == 1 ? "result" : "results")}";
 
     /// <summary>Querystring link for the next page, or null when this page is the last.</summary>
     public string? NextPageUrl { get; private set; }
@@ -125,6 +136,15 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
 
             where.Append("\nAND ").Append(textWhere);
         }
+
+        // The result count, taken here: the WHERE now holds every filter and the settled text
+        // predicate (literal or typo), but not yet the paging cursor, so it counts the whole search
+        // and reads the same on every "show more" page. Same FROM and WHERE as the cards below (the
+        // card SELECT only adds a LEFT JOIN, which neither drops nor repeats a set), so the count
+        // cannot disagree with what the pages list.
+        TotalCount = await conn.ExecuteScalarAsync<int>(
+            $"SELECT count(*) FROM beatmapsets s JOIN users u ON u.id = s.owner_id\n{where}",
+            param);
 
         string orderBy;
         string? cursor = null;

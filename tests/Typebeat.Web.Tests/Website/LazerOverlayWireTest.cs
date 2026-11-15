@@ -533,6 +533,62 @@ public class LazerOverlayWireTest
         Assert.That(await searchTitlesAsync($"sort={sort}"), Is.EqualTo(expected));
     }
 
+    // ---- backlog 474: the listing's result count ----
+
+    [Test]
+    public async Task Search_TotalCountsTheWholeSearch_NotThePage()
+    {
+        // PublicSiteSeed's 60 exact fillers plus the prefix-only "Fillerless Night": 61 matches,
+        // served 50 then 11, and both pages state the search's 61.
+        var page1 = await getObjectAsync("/api/v2/beatmapsets/search?q=filler");
+        int offset = (int)page1["cursor"]!["offset"]!;
+        var page2 = await getObjectAsync($"/api/v2/beatmapsets/search?q=filler&cursor%5Boffset%5D={offset}");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((int)page1["total"]!, Is.EqualTo(61));
+            Assert.That(page1["beatmapsets"]!.Count(), Is.EqualTo(50));
+            Assert.That((int)page2["total"]!, Is.EqualTo(61));
+            Assert.That(page2["beatmapsets"]!.Count(), Is.EqualTo(11));
+            Assert.That(page2["cursor"]!.Type, Is.EqualTo(JTokenType.Null), "the last page hands out no cursor");
+        });
+    }
+
+    [TestCase("")]
+    [TestCase("s=favourites")]
+    [TestCase("s=loved")]
+    [TestCase("s=leaderboard")]
+    [TestCase("s=qualified")]
+    [TestCase("c=follows")]
+    [TestCase("l=3")]
+    [TestCase("r=S")]
+    [TestCase("played=played")]
+    [TestCase("played=unplayed")]
+    [TestCase("nsfw=false")]
+    [TestCase("nsfw=true")]
+    public async Task Search_TotalIsExactlyWhatTheFiltersList(string query)
+    {
+        // One page each, so the total must be the very sets listed: every filter narrows the count
+        // the same way it narrows the page.
+        var result = await getObjectAsync($"/api/v2/beatmapsets/search?q=title%3D{tag}&{query}");
+
+        Assert.That((int)result["total"]!, Is.EqualTo(result["beatmapsets"]!.Count()));
+    }
+
+    [Test]
+    public async Task Search_TotalFollowsTheTypoFallback()
+    {
+        // "dracla" matches nothing literally, so the typo layer answers it; the total must count
+        // that layer's matches, not the empty literal search.
+        var result = await getObjectAsync("/api/v2/beatmapsets/search?q=dracla");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result["beatmapsets"]!.Count(), Is.GreaterThan(0));
+            Assert.That((int)result["total"]!, Is.EqualTo(result["beatmapsets"]!.Count()));
+        });
+    }
+
     // ---- helpers ----
 
     private static string? mapperBearer;
