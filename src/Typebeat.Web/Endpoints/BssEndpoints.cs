@@ -41,9 +41,10 @@ namespace Typebeat.Web.Endpoints;
 ///
 /// Set/diff lifecycle conventions owned here:
 ///  - a fresh set is created with status 'hidden' and flipped to its intended published status by
-///    its first successful upload (PackageIngest): 'pending' (awaits a reviewer's rank flip) or
-///    'unranked' (creator opted out of ranking in the wizard; never leaderboard-eligible). The
-///    choice rides in on the PUT's <c>target</c> and is stored in <c>intended_status</c>;
+///    its first successful upload (PackageIngest): 'wip' (the mapper is still working on it; no
+///    board, not reviewable), 'pending' (awaits a reviewer's rank flip) or 'unranked' (creator
+///    opted out of ranking in the wizard; never leaderboard-eligible). The choice rides in on the
+///    PUT's <c>target</c> and is stored in <c>intended_status</c>;
 ///  - the same PUT carries the optional <c>explicit</c> boolean (the wizard's explicit-content
 ///    toggle, absent = false). It is a display flag only, applied immediately on create and on
 ///    every re-submission, and surfaces as the site's EXPLICIT badge;
@@ -115,6 +116,19 @@ public static class BssEndpoints
         app.MapPost("/bss/upload-sessions/{sessionId}/complete", CompleteUploadSessionAsync).RequireBearer();
     }
 
+    /// <summary>
+    /// The PUT's <c>target</c> (the client's <c>BeatmapSubmissionTarget</c>, by name) to the
+    /// <c>intended_status</c> it stores: "WIP" → 'wip', "Pending" → 'pending', "Unranked" →
+    /// 'unranked', case-insensitively. Absent or null is WIP, the request's default; any other
+    /// string is 'pending', so a future target an old server does not know still publishes.
+    /// </summary>
+    public static string IntendedStatusFor(string? target) => target?.ToLowerInvariant() switch
+    {
+        null or "" or "wip" => "wip",
+        "unranked" => "unranked",
+        _ => "pending",
+    };
+
     // ---------------------------------------------------------------------------------------------
     // PUT /bss/beatmapsets: create or re-target a set, allocate ids, return the latest manifest.
     // ---------------------------------------------------------------------------------------------
@@ -183,13 +197,12 @@ public static class BssEndpoints
                 $"A beatmap set must contain between 1 and {PackageValidator.MaxDifficulties} difficulties; this request would leave {totalDifficulties}.");
         }
 
-        // The submission wizard's target: only the "not for ranking" choice carries a distinct
-        // server state. WIP and Pending both publish to 'pending' (WIP has no separate state);
-        // Unranked publishes to 'unranked'. Recorded now, applied at the publish flip below (and
-        // immediately for an already-published re-submission).
-        string intendedStatus = string.Equals(request.Target, "Unranked", StringComparison.OrdinalIgnoreCase)
-            ? "unranked"
-            : "pending";
+        // The submission wizard's target, one server state each (backlog 476): WIP publishes to
+        // 'wip', Pending to 'pending' and Unranked to 'unranked'. Recorded now, applied at the
+        // publish flip below (and immediately for an already-published re-submission). An absent
+        // target is the request's own default, WIP (osu!'s); a target this server does not know
+        // falls back to 'pending', what every target but Unranked meant before WIP had a state.
+        string intendedStatus = IntendedStatusFor(request.Target);
 
         // The wizard's explicit-content toggle rides on the same call. Unlike intended_status it
         // needs no deferred flip: it is a pure display flag, so it applies immediately on create
@@ -220,7 +233,8 @@ public static class BssEndpoints
                     new { setId, keep });
 
                 // Apply the ranking-intent choice: always record it (so a still-hidden set publishes
-                // to the right status), and for an already-published, non-ranked set switch it now.
+                // to the right status), and for an already-published, non-ranked set switch it now,
+                // so a mapper moves a set between WIP, Pending and Unranked just by re-submitting.
                 // A 'loved' set keeps its recorded intent too: the wizard prefills Pending for it, and
                 // overwriting would put a creator-opted-out ('unranked') map in the review queue on Unlove.
                 // A 'ranked' set is never self-demoted here (reviewer-only); 'removed' is unreachable.
@@ -228,7 +242,7 @@ public static class BssEndpoints
                     """
                     UPDATE beatmapsets
                     SET intended_status = CASE WHEN status = 'loved' THEN intended_status ELSE @intendedStatus END,
-                        status = CASE WHEN status IN ('pending', 'unranked') THEN @intendedStatus ELSE status END,
+                        status = CASE WHEN status IN ('wip', 'pending', 'unranked') THEN @intendedStatus ELSE status END,
                         explicit = @isExplicit,
                         updated_at = now()
                     WHERE id = @setId

@@ -22,9 +22,10 @@ public sealed class BssPutRequest
     [JsonProperty("beatmaps_to_keep")]
     public long[] BeatmapsToKeep { get; init; } = [];
 
-    // "WIP" | "Pending" | "Unranked" on the wire. WIP/Pending both publish to 'pending' (the map
-    // still gets reviewed for ranking); "Unranked" is the creator opting out of ranking entirely,
-    // publishing to 'unranked' (browsable + playable, never leaderboard-eligible). See BssEndpoints.
+    // "WIP" | "Pending" | "Unranked" on the wire, each publishing to its own status (backlog 476):
+    // "WIP" to 'wip' (browsable + playable, no board, not reviewable until re-submitted as
+    // Pending), "Pending" to 'pending' (awaits review for ranking), "Unranked" to 'unranked' (the
+    // creator opting out of ranking entirely). See BssEndpoints.IntendedStatusFor.
     [JsonProperty("target")]
     public string Target { get; init; } = "WIP";
 

@@ -13,8 +13,11 @@ namespace Typebeat.Web.Scoring;
 /// Five of the client's seven subsections have data here: favourites (the favourites table) and the
 /// owner's own sets by status (ranked, loved, pending, graveyard). The client's "Graveyarded"
 /// subsection is this server's 'unranked' status, the same mapping the listing search's graveyard
-/// category uses. Guest and nominated have nothing behind them (one owner per set, no nomination
-/// step), so they are not served and their counts stay absent (0).
+/// category uses. Its "Pending" subsection lists 'pending' AND 'wip' sets, as osu-web's does (the
+/// client has no WIP subsection, and its listing's matching category is "Pending &amp; WIP"), so a
+/// WIP map is not missing from its own mapper's profile. Guest and nominated have nothing behind
+/// them (one owner per set, no nomination step), so they are not served and their counts stay
+/// absent (0).
 /// </para>
 ///
 /// <para>
@@ -26,9 +29,11 @@ public static class ProfileBeatmapsets
 {
     private const string favourite_where =
         "EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @id)"
-        + " AND s.status IN ('pending', 'unranked', 'ranked', 'loved') AND NOT u.restricted";
+        + " AND s.status IN ('pending', 'wip', 'unranked', 'ranked', 'loved') AND NOT u.restricted";
 
     private static string ownedWhere(string status) => $"s.owner_id = @id AND s.status = '{status}'";
+
+    private const string owned_pending_where = "s.owner_id = @id AND s.status IN ('pending', 'wip')";
 
     /// <summary>The WHERE for one subsection, or null for a type this server has no data for.</summary>
     public static string? WhereFor(string type) => type switch
@@ -36,7 +41,7 @@ public static class ProfileBeatmapsets
         "favourite" => favourite_where,
         "ranked" => ownedWhere("ranked"),
         "loved" => ownedWhere("loved"),
-        "pending" => ownedWhere("pending"),
+        "pending" => owned_pending_where,
         "graveyard" => ownedWhere("unranked"),
         _ => null,
     };
@@ -56,7 +61,7 @@ public static class ProfileBeatmapsets
                  (SELECT count(*) FROM beatmapsets s JOIN users u ON u.id = s.owner_id WHERE {favourite_where})::int AS Favourite,
                  (SELECT count(*) FROM beatmapsets s WHERE {ownedWhere("ranked")})::int AS Ranked,
                  (SELECT count(*) FROM beatmapsets s WHERE {ownedWhere("loved")})::int AS Loved,
-                 (SELECT count(*) FROM beatmapsets s WHERE {ownedWhere("pending")})::int AS Pending,
+                 (SELECT count(*) FROM beatmapsets s WHERE {owned_pending_where})::int AS Pending,
                  (SELECT count(*) FROM beatmapsets s WHERE {ownedWhere("unranked")})::int AS Graveyard
              """,
             new { id = userId }, cancellationToken: ct));

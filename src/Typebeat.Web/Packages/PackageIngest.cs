@@ -810,7 +810,7 @@ public sealed class PackageIngest(
     {
         // Only a RANKED or LOVED set can be demoted: both carry a reviewer's judgement of what the
         // map is and a live ranked board, which a gameplay change makes stale in the same way.
-        // 'pending' and 'unranked' have nothing to lose, 'hidden' is a set that has never published
+        // 'wip', 'pending' and 'unranked' have nothing to lose, 'hidden' is a set that has never published
         // (the publish latch below is what handles it), and 'removed' is a takedown, which is final
         // and never re-enters circulation. A demoted ranked set goes to 'pending' (back for review);
         // a demoted loved set goes to its own intended_status, exactly where the reviewer's Unlove
@@ -868,7 +868,7 @@ public sealed class PackageIngest(
     /// THE PUBLISH LATCH, and why the watcher notification hangs off it. The status UPDATE is
     /// guarded by <c>status = 'hidden'</c>, the pre-publish shell a set is created in
     /// (BssEndpoints' INSERT), and NO code path anywhere puts a set back into it: the only other
-    /// status writes in the repo are the BSS PUT's pending/unranked intent switch (which cannot
+    /// status writes in the repo are the BSS PUT's wip/pending/unranked intent switch (which cannot
     /// produce 'hidden'), the reviewer's pending &lt;-&gt; ranked and Love/Unlove transitions, the
     /// automatic ranked/loved demotion above (<see cref="demoteIfGameplayChangedAsync"/>, which
     /// likewise only ever writes 'pending' or a loved set's intended_status, never 'hidden'), and takedowns to 'removed', which are an admin-SQL
@@ -907,8 +907,8 @@ public sealed class PackageIngest(
 
         // Publication is never ranked: leaderboards stay locked until a map reviewer (or admin)
         // promotes the set from the website (migration 005). The published status is the creator's
-        // wizard choice: 'pending' (awaiting review) or 'unranked' (not intended for ranking),
-        // recorded on the set at PUT time (migration 012).
+        // wizard choice: 'wip' (still being worked on, migration 059), 'pending' (awaiting review)
+        // or 'unranked' (not intended for ranking), recorded on the set at PUT time (migration 012).
         int published = await conn.ExecuteAsync(
             "UPDATE beatmapsets SET status = intended_status WHERE id = @setId AND status = 'hidden'",
             new { setId });

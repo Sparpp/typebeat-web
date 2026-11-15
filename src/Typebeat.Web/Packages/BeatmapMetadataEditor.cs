@@ -34,7 +34,7 @@ public static class BeatmapMetadataEditor
             """
             SELECT title, artist, title_unicode AS titleUnicode, artist_unicode AS artistUnicode,
                    source, tags, metadata_revision AS metadataRevision, current_version AS packageRevision
-            FROM beatmapsets WHERE id=@setId AND status IN ('pending','unranked','ranked','loved') FOR UPDATE
+            FROM beatmapsets WHERE id=@setId AND status IN ('pending','wip','unranked','ranked','loved') FOR UPDATE
             """, new { setId }, tx);
         if (before is null) return Result.NotFound;
         if (before.MetadataRevision != metadataRevision || before.PackageRevision != packageRevision)

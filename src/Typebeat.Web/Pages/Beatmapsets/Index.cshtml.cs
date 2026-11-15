@@ -49,15 +49,19 @@ public sealed class ListingModel(Db db) : TypebeatPageModel
     {
         Query = (q ?? string.Empty).Trim();
         Sort = s is "plays" or "favs" ? s : "newest";
-        StatusFilter = status is "ranked" or "pending" or "unranked" or "loved" ? status : "any";
+        StatusFilter = status is "ranked" or "pending" or "wip" or "unranked" or "loved" ? status : "any";
         Unplayed = unplayed == true && CurrentUser is not null;
 
-        // Any = every publicly browsable status ('pending', 'unranked', 'ranked' and 'loved' all are;
-        // hidden and removed never list). The Ranked/Pending/Unranked/Loved pills narrow to one.
+        // Any = every publicly browsable status ('pending', 'wip', 'unranked', 'ranked' and 'loved'
+        // all are; hidden and removed never list). The Ranked/Pending/WIP/Unranked/Loved pills each
+        // narrow to exactly their own status: the site labels every status separately, so its
+        // Pending pill is not the game overlay's combined "Pending & WIP" category (s=pending on
+        // the API), which the two pills side by side already cover.
         string statusPredicate = StatusFilter switch
         {
             "ranked" => "s.status = 'ranked'",
             "pending" => "s.status = 'pending'",
+            "wip" => "s.status = 'wip'",
             "unranked" => "s.status = 'unranked'",
             "loved" => "s.status = 'loved'",
             _ => $"s.status IN {Endpoints.BeatmapsetEndpoints.PublishedSql}",

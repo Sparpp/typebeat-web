@@ -15,8 +15,8 @@ namespace Typebeat.Web.Scoring;
 /// unranked mods land), and a row never crosses between them (<see cref="OnBoard"/>).</item>
 /// <item>WHICH board a map serves is decided by its set's CURRENT status, re-read per request, never
 /// trusted from the stored flags: 'ranked' and 'loved' sets serve the ranked board, 'pending' and
-/// 'unranked' sets serve the unranked one, and anything else (hidden, removed) serves no board at
-/// all (<see cref="BoardFor"/>, which the game client's board and a play's reported standing read;
+/// 'unranked' sets serve the unranked one, and anything else (hidden, wip, removed) serves no board
+/// at all (<see cref="BoardFor"/>, which the game client's board and a play's reported standing read;
 /// the set page picks its board from its tab and decides what it renders instead on its own).
 /// A loved set's board is ranked but earns no pp: its plays store ranked with pp 0, and the game's
 /// board sends no pp for any of its rows. First places stay confined to 'ranked' sets
@@ -55,15 +55,22 @@ public static class BeatmapLeaderboard
 
     /// <summary>
     /// Which board a map serves, by its set's CURRENT status: true for the ranked board ('ranked',
-    /// 'loved'), false for the unranked one ('pending', 'unranked'), null for none (hidden, removed,
-    /// or no such beatmap). The game client makes the same decision from the wire status in
+    /// 'loved'), false for the unranked one ('pending', 'unranked'), null for none (hidden, wip,
+    /// removed, or no such beatmap). The game client makes the same decision from the wire status in
     /// <c>GlobalLeaderboardAvailability.Resolve</c>; WireCompat's LeaderboardAvailabilityParityTest
     /// pins the two together.
+    ///
+    /// <para>'wip' (backlog 476) has none on purpose: osu! gives a WIP map no leaderboard, every
+    /// shipped client already resolves BeatmapOnlineStatus.WIP to no board, and 'hidden' goes out
+    /// as the same "wip" wire string, so the client could not tell a WIP board from a hidden set's
+    /// empty one anyway. Plays on a WIP map are still stored (unranked, as on any non-ranked set)
+    /// and appear on its unranked board once the mapper submits it as Pending.</para>
     /// </summary>
     public static bool? BoardFor(string? setStatus) => setStatus switch
     {
         "ranked" or "loved" => true,
         "pending" or "unranked" => false,
+        // 'wip', 'hidden', 'removed' and anything unknown: no board.
         _ => null,
     };
 

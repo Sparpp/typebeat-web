@@ -70,11 +70,17 @@
                             aria-label="Play preview"></button>
                 }
             </div>
-            @if (canReview && Model.Set.Status is "pending" or "unranked" or "ranked" or "loved")
+            @if (canReview && Model.Set.Status is "pending" or "wip" or "unranked" or "ranked" or "loved")
             {
                 @* Reviewer-only strip, deliberately set apart from the player actions above. *@
                 <div class="review-controls">
                     <span class="review-controls__label">map review</span>
+                    @if (Model.Set.Status == "wip")
+                    {
+                        @* osu!'s rule: a WIP map is not up for review. The mapper re-submits it as
+                           Pending when it is ready, and the Rank and Respected levers appear then. *@
+                        <span class="review-controls__note">Work in progress: the mapper has to submit it as Pending before it can be ranked or marked as Respected.</span>
+                    }
                     @if (Model.Set.Status == "pending")
                     {
                         <form method="post" asp-page-handler="Rank" asp-route-id="@Model.Set.Id">
@@ -368,7 +374,16 @@
             </div>
         }
     </div>
-    @if (Model.Set.Status == "unranked")
+    @if (Model.Set.Status == "wip")
+    {
+        @* The mapper is still working on it: playable, but no board (as on osu!, and as the game
+           client shows it) until it is submitted as Pending. *@
+        <div class="empty-state">
+            <h3>Work in progress</h3>
+            <p>The mapper is still working on this map, so it has no leaderboard yet.</p>
+        </div>
+    }
+    else if (Model.Set.Status == "unranked")
     {
         @* The creator marked this map not-for-ranking; it takes plays but will never rank. *@
         <div class="empty-state">

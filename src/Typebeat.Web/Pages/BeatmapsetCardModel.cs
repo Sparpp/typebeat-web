@@ -197,12 +197,14 @@ public sealed record CardDifficulty(long Id, string Name, double Stars, double? 
 /// <summary>Status wording shared by the card partial and the set page.</summary>
 public static class BeatmapsetDisplay
 {
-    /// <summary>DB status → user-facing word ("Ranked" = live leaderboards; "Pending" = published, awaiting review).
+    /// <summary>DB status → user-facing word ("Ranked" = live leaderboards; "Pending" = published, awaiting review;
+    /// "WIP" = published, the mapper is still working on it).
     /// The 'loved' status (osu!'s Loved) is shown to players as "Respected".</summary>
     public static string StatusLabel(string status) => status switch
     {
         "ranked" => "Ranked",
         "pending" => "Pending",
+        "wip" => "WIP",
         "unranked" => "Unranked",
         "loved" => "Respected",
         "hidden" => "Hidden",
@@ -212,7 +214,7 @@ public static class BeatmapsetDisplay
 
     public static string PillClass(string status) => status switch
     {
-        "ranked" or "pending" or "unranked" or "loved" or "hidden" or "removed" => $"pill--{status}",
+        "ranked" or "pending" or "wip" or "unranked" or "loved" or "hidden" or "removed" => $"pill--{status}",
         _ => string.Empty,
     };
 }

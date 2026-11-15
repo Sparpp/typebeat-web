@@ -208,7 +208,8 @@ public static class BuddyEndpoints
         // its unranked rows (every play on such a set is stored unranked by construction). A loved
         // play's pp is 0 (loved earns none), which the bot already reads as "nothing to show". This
         // mirrors ScoreEndpoints.Leaderboard so a position reported here matches the site exactly.
-        // Hidden sets are excluded outright.
+        // Hidden sets are excluded outright, and so are WIP ones: a WIP map serves no board
+        // (BeatmapLeaderboard.BoardFor), so there is no position to announce.
         var rows = await conn.QueryAsync<RecentScoreRow>(
             """
             SELECT s.id                                             AS Id,

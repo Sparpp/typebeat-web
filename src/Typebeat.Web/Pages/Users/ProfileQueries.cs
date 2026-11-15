@@ -201,7 +201,7 @@ public static class ProfileQueries
              ) best
              JOIN beatmaps b ON b.id = best.beatmap_id
              JOIN beatmapsets s ON s.id = b.set_id
-             WHERE s.status IN ('pending', 'unranked', 'ranked', 'loved')
+             WHERE s.status IN ('pending', 'wip', 'unranked', 'ranked', 'loved')
              """,
             new { ids });
 
@@ -229,7 +229,7 @@ public static class ProfileQueries
         => (await conn.QueryAsync<BeatmapsetCardModel>(
             $"""
              {BeatmapsetCardSql.Select}
-             WHERE s.owner_id = @id AND (s.status IN ('pending', 'unranked', 'ranked', 'loved') OR @ownProfile)
+             WHERE s.owner_id = @id AND (s.status IN ('pending', 'wip', 'unranked', 'ranked', 'loved') OR @ownProfile)
                AND (s.status <> 'hidden' OR EXISTS (SELECT 1 FROM beatmaps lb WHERE lb.set_id = s.id AND lb.filename IS NOT NULL))
              ORDER BY s.submitted_at DESC, s.id DESC
              LIMIT {limit}
@@ -241,7 +241,7 @@ public static class ProfileQueries
             $"""
              {BeatmapsetCardSql.Select}
              JOIN favourites fav ON fav.set_id = s.id AND fav.user_id = @id
-             WHERE s.status IN ('pending', 'unranked', 'ranked', 'loved') AND (NOT u.restricted OR s.owner_id = @viewerId)
+             WHERE s.status IN ('pending', 'wip', 'unranked', 'ranked', 'loved') AND (NOT u.restricted OR s.owner_id = @viewerId)
              ORDER BY fav.created_at DESC, s.id DESC
              LIMIT {limit}
              """,
@@ -252,7 +252,7 @@ public static class ProfileQueries
         => conn.QuerySingleAsync<(long, long)>(
             """
             SELECT (SELECT count(*) FROM scores WHERE user_id = @id AND ranked),
-                   (SELECT count(*) FROM beatmapsets WHERE owner_id = @id AND status IN ('pending', 'unranked', 'ranked', 'loved'))
+                   (SELECT count(*) FROM beatmapsets WHERE owner_id = @id AND status IN ('pending', 'wip', 'unranked', 'ranked', 'loved'))
             """,
             new { id });
 

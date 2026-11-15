@@ -477,6 +477,13 @@ img { max-width: 100%; }
     color: var(--warn);
 }
 
+/* Published but still being worked on (backlog 476): the game's WIP orange (OsuColour's ff9966),
+   warmer than pending's amber so the two read as neighbouring steps of the same pipeline. */
+.pill--wip {
+    background: rgba(255, 153, 102, 0.16);
+    color: #ff9966;
+}
+
 .pill--hidden {
     background: rgba(233, 234, 228, 0.10);
     color: var(--text-muted);
@@ -1634,6 +1641,12 @@ a.pager-item:hover {
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-faint);
+}
+
+/* Why a WIP set offers no lever (backlog 476). */
+.review-controls__note {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
 }
 
 

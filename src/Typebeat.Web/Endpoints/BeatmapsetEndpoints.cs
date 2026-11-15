@@ -30,9 +30,12 @@ namespace Typebeat.Web.Endpoints;
 /// 'ranked' → "ranked" (reviewer-approved: leaderboards live, MatchesOnlineVersion satisfied),
 /// 'pending' → "pending" (published upload awaiting review; browsable, no leaderboards,
 /// the client's LeaderboardManager blocks non-ranked-family statuses natively),
+/// 'wip' → "wip" (published, browsable and downloadable, but the mapper marked it as still being
+/// worked on: no board on either side, and no review lever until it is re-submitted as Pending),
 /// 'unranked' → "unranked" (published, browsable and downloadable; the creator opted out of
 /// ranking in the wizard, so it never earns leaderboard rows),
-/// 'hidden' → "wip" (owner-only pre-publish state, preselects WIP in the wizard),
+/// 'hidden' → "wip" too (owner-only pre-publish state, preselects WIP in the wizard; the client
+/// shows no board for either, so sharing the wire string loses nothing it acts on),
 /// 'removed' → "graveyard" (owner-only; submission to it is blocked with a 422 in BSS).
 /// </summary>
 public static class BeatmapsetEndpoints
@@ -303,12 +306,13 @@ public static class BeatmapsetEndpoints
     }
 
     /// <summary>
-    /// True for the four PUBLISHED beatmapset statuses: 'pending' (awaiting review), 'unranked'
-    /// (creator opted out of ranking), 'ranked' and 'loved' (reviewer-marked, leaderboard but no pp).
+    /// True for the five PUBLISHED beatmapset statuses: 'pending' (awaiting review), 'wip' (the
+    /// mapper is still working on it, backlog 476), 'unranked' (creator opted out of ranking),
+    /// 'ranked' and 'loved' (reviewer-marked, leaderboard but no pp).
     /// Those are world-readable: browsable, and their package, covers and preview stream to
     /// anyone, signed in or not.
     ///
-    /// This is a SECURITY BOUNDARY, so it is an explicit allow-list of four and never a "not
+    /// This is a SECURITY BOUNDARY, so it is an explicit allow-list and never a "not
     /// hidden" test. 'hidden' is an unpublished shell (nobody's business but the owner's) and
     /// 'removed' is a takedown, whose bytes must keep 404ing for everyone but the owner: the
     /// runbook in deploy/README.md and the bounded one-day cover TTL both depend on it. A new
@@ -318,15 +322,15 @@ public static class BeatmapsetEndpoints
     /// 'unranked' reached only two of them, which owner-locked every unranked set's download,
     /// cover and preview.
     /// </summary>
-    public static bool IsPublished(string dbStatus) => dbStatus is "pending" or "unranked" or "ranked" or "loved";
+    public static bool IsPublished(string dbStatus) => dbStatus is "pending" or "wip" or "unranked" or "ranked" or "loved";
 
     /// <summary>
     /// <see cref="IsPublished"/> as a SQL list, for <c>status IN {PublishedSql}</c> filters. The two
-    /// must name the same four statuses. The listing, landing, /play, search and score-token filters
+    /// must name the same five statuses. The listing, landing, /play, search and score-token filters
     /// use it; older hand-typed copies remain elsewhere (profiles, SEO, lookup) and should move to it
     /// when touched.
     /// </summary>
-    public const string PublishedSql = "('pending', 'unranked', 'ranked', 'loved')";
+    public const string PublishedSql = "('pending', 'wip', 'unranked', 'ranked', 'loved')";
 
     /// <summary>DB status → the wire string the client's BeatmapOnlineStatus binds by name.</summary>
     public static string StatusString(string dbStatus) => dbStatus switch
@@ -334,6 +338,7 @@ public static class BeatmapsetEndpoints
         "ranked" => "ranked",
         "loved" => "loved",
         "pending" => "pending",
+        "wip" => "wip",
         "unranked" => "unranked",
         "hidden" => "wip",
         _ => "graveyard",

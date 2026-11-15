@@ -121,7 +121,7 @@ public class BssSubmissionFlowTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(set.Status, Is.EqualTo("pending"), "first successful upload publishes the set as pending (awaiting review)");
+            Assert.That(set.Status, Is.EqualTo("wip"), "first successful upload publishes the set as its wizard target, WIP (backlog 476)");
             Assert.That(set.Title, Is.EqualTo("Neon Nights"));
             Assert.That(set.Artist, Is.EqualTo("Synth Rider"));
             Assert.That(set.CoverKey, Is.EqualTo($"covers/{setId}/1"));

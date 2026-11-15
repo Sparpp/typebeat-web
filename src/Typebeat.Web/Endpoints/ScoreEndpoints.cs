@@ -724,7 +724,8 @@ public static class ScoreEndpoints
         //                             so this is "everything typed here, none of it counting"; a
         //                             set's ranked-era rows stay buried after an un-rank, which is
         //                             what the website's Unranked tab shows too.
-        //  - anything else          → no board (hidden, removed, or no such beatmap).
+        //  - anything else          → no board (hidden, wip, removed, or no such beatmap; a
+        //                             WIP map has none, as on osu! and in the game client).
         //
         // A ranked map's board is therefore byte-identical to what it was before unranked boards
         // (or loved sets) existed: an unranked row can never cross onto it, in either direction.

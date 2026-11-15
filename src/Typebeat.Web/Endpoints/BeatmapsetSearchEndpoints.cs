@@ -75,7 +75,10 @@ public static class BeatmapsetSearchEndpoints
             "leaderboard" => "s.status IN ('ranked', 'loved')",
             "ranked" => "s.status = 'ranked'",
             "loved" => "s.status = 'loved'",
-            "pending" or "wip" => "s.status = 'pending'",
+            // The client labels "pending" as "Pending & WIP" (osu!'s SearchCategory.Pending), so it
+            // keeps both; "wip" is WIP alone (backlog 476).
+            "pending" => "s.status IN ('pending', 'wip')",
+            "wip" => "s.status = 'wip'",
             "graveyard" => "s.status = 'unranked'",
             "favourites" when signedIn => $"{published} AND EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId)",
             // The viewer's own maps, including the hidden ones only they can open.

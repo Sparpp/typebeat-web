@@ -26,6 +26,7 @@ const ranked = { status: 'ranked' };
 const pending = { status: 'pending' };
 const unranked = { status: 'unranked' };
 const loved = { status: 'loved' };
+const wip = { status: 'wip' };
 const cleared = { passed: true };
 const failed = { passed: false };
 
@@ -47,7 +48,10 @@ const out = {
     lovedChecksFailed: PAGE.submitStatus(
         { ranked: false, pp: null, pp_pending: false, board: null, position: null, personal_best: false }, loved, cleared),
     checksFailed: PAGE.submitStatus(
-        { ranked: false, pp: null, pp_pending: false, board: null, position: null, personal_best: false }, ranked, cleared)
+        { ranked: false, pp: null, pp_pending: false, board: null, position: null, personal_best: false }, ranked, cleared),
+    // A WIP map serves no board (backlog 476), so no standing comes back.
+    wipMap: PAGE.submitStatus(
+        { ranked: false, pp: null, pp_pending: false, board: null, position: null, personal_best: false }, wip, cleared)
 };
 
 // Submission integrity (backlog 312): the token body, and what a refused token is said as.
