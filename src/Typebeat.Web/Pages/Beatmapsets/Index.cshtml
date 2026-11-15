@@ -121,6 +121,7 @@
             <a class="filter-pill @(Model.Unplayed ? "is-active" : "")" href="@Model.BuildUrl(unplayed: !Model.Unplayed)">Unplayed only</a>
         </div>
     }
+    <p class="listing-count" id="listing-count">@ListingModel.FormatResultCount(Model.TotalCount)</p>
 </div>
 
 @if (Model.Sets.Count > 0)

@@ -240,6 +240,64 @@ public class ListingPageTest
         });
     }
 
+    // ---- backlog 474: the result count ----
+
+    [Test]
+    public async Task ResultCount_IsTheWholeSearch_OnEveryPage()
+    {
+        // 60 exact fillers plus the prefix-only "Fillerless Night": 61 matches over two pages, and
+        // both pages state the search's 61, not their own 50 and 11.
+        string page1 = await GetHtml("/beatmapsets?q=filler");
+        var showMore = Regex.Match(page1, "href=\"(/beatmapsets\\?[^\"]*after=[^\"]*)\"");
+        Assert.That(showMore.Success, Is.True, "page 1 must link a cursor page");
+        string page2 = await GetHtml(WebUtility.HtmlDecode(showMore.Groups[1].Value));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ResultCount(page1), Is.EqualTo("61 results"));
+            Assert.That(ResultCount(page2), Is.EqualTo("61 results"));
+            Assert.That(CardIds(page1).Count + CardIds(page2).Count, Is.EqualTo(61));
+        });
+    }
+
+    [Test]
+    public async Task ResultCount_SaysOneResult_AndZeroResults()
+    {
+        string one = await GetHtml("/beatmapsets?q=Rhapsody");
+        string none = await GetHtml("/beatmapsets?q=zxqvbnrrrr");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(CardIds(one), Is.EqualTo(new[] { PublicSiteSeed.SearchSetId }));
+            Assert.That(ResultCount(one), Is.EqualTo("1 result"));
+            Assert.That(ResultCount(none), Is.EqualTo("0 results"));
+        });
+    }
+
+    [Test]
+    public async Task ResultCount_FollowsTheFilters_AndTheTypoFallback()
+    {
+        // Each one-page search: the count is exactly the cards it lists, whichever filter or match
+        // layer (the typo fallback answers "dracla", which nothing matches literally) produced them.
+        foreach (string url in new[] { "/beatmapsets?q=dracla", "/beatmapsets?q=dra", "/beatmapsets?q=dracula&s=plays", "/beatmapsets?status=pending" })
+        {
+            string html = await GetHtml(url);
+            Assert.That(html, Does.Not.Contain("show more"), $"{url} must fit one page for this check");
+            Assert.That(ResultCount(html), Is.EqualTo(ListingCount(CardIds(html).Count)), url);
+        }
+    }
+
+    [Test]
+    public void ResultCount_Wording()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(Typebeat.Web.Pages.Beatmapsets.ListingModel.FormatResultCount(0), Is.EqualTo("0 results"));
+            Assert.That(Typebeat.Web.Pages.Beatmapsets.ListingModel.FormatResultCount(1), Is.EqualTo("1 result"));
+            Assert.That(Typebeat.Web.Pages.Beatmapsets.ListingModel.FormatResultCount(1234), Is.EqualTo("1,234 results"));
+        });
+    }
+
     [Test]
     public async Task StatusFilter_NeverListsHiddenOrRemoved()
     {
@@ -330,12 +388,14 @@ public class ListingPageTest
         var seen = new List<long>();
         string url = "/beatmapsets";
         int pages = 0;
+        string? firstPageCount = null;
 
         while (true)
         {
             string page = await GetHtml(url);
             var ids = CardIds(page);
             pages++;
+            firstPageCount ??= ResultCount(page);
 
             Assert.That(ids.Intersect(seen), Is.Empty, $"cursor page {pages} must not overlap an earlier page");
             seen.AddRange(ids);
@@ -355,6 +415,7 @@ public class ListingPageTest
 
         Assert.Multiple(() =>
         {
+            Assert.That(firstPageCount, Is.EqualTo(ListingCount(totalPublic)), "the count states the whole listing, every page of it");
             Assert.That(pages, Is.GreaterThan(1), "the seed overflows one page, so the walk must take a cursor at least once");
             Assert.That(seen, Has.Count.EqualTo(totalPublic), "the cursor walk must reach every public set exactly once");
         });
@@ -373,6 +434,16 @@ public class ListingPageTest
         Assert.That(match.Success, Is.True, "no cards rendered");
         return long.Parse(match.Groups[1].Value);
     }
+
+    /// <summary>The "N results" line above the cards.</summary>
+    private static string ResultCount(string html)
+    {
+        var match = Regex.Match(html, "id=\"listing-count\">([^<]*)<");
+        Assert.That(match.Success, Is.True, "no result count rendered");
+        return WebUtility.HtmlDecode(match.Groups[1].Value);
+    }
+
+    private static string ListingCount(int count) => Typebeat.Web.Pages.Beatmapsets.ListingModel.FormatResultCount(count);
 
     private static List<long> CardIds(string html)
         => Regex.Matches(html, "data-set-id=\"(\\d+)\"").Select(m => long.Parse(m.Groups[1].Value)).ToList();

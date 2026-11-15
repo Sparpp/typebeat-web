@@ -1451,6 +1451,14 @@ img { max-width: 100%; }
 
 .listing-filters { margin-bottom: var(--space-5); }
 
+/* "1,234 results": the whole search's match count, under the filter rows and above the cards. */
+.listing-count {
+    margin-top: var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 700;
+}
+
 .filter-row {
     display: flex;
     align-items: center;
