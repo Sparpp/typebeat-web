@@ -263,7 +263,9 @@ public class ListingPageTest
     [Test]
     public async Task ResultCount_SaysOneResult_AndZeroResults()
     {
-        string one = await GetHtml("/beatmapsets?q=Rhapsody");
+        // "Bohemian Keyboard", not "Rhapsody": HousekeepingTest seeds a "Retention Rhapsody" set into the
+        // same database, so a one-word title query is only unique while that fixture has not run yet.
+        string one = await GetHtml("/beatmapsets?q=" + Uri.EscapeDataString("Bohemian Keyboard"));
         string none = await GetHtml("/beatmapsets?q=zxqvbnrrrr");
 
         Assert.Multiple(() =>
