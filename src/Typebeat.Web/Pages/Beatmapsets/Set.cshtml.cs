@@ -426,7 +426,7 @@ public sealed class SetModel(Db db, BeatmapsetReview review) : TypebeatPageModel
         string Status, bool Explicit, string Creator, bool OwnerRestricted, long OwnerId, string? CoverKey, string? PreviewUrl,
         int PlayCount, int FavouriteCount, int DownloadCount,
         DateTime SubmittedAt, DateTime UpdatedAt, bool IsFavourited, bool HasPackage, string Language,
-        bool HasPlayableDiff)
+        bool HasPlayableDiff, string Languages)
     {
         /// <summary>
         /// Whether the browser can play this set (backlog 418). Must stay equal to
@@ -445,6 +445,19 @@ public sealed class SetModel(Db db, BeatmapsetReview review) : TypebeatPageModel
         /// <summary>Display casing of the stored language, or null when the set has none yet
         /// (019_language.sql), in which case the page renders no language chip at all.</summary>
         public string? LanguageDisplay => BeatmapLanguages.DisplayName(Language);
+
+        /// <summary>
+        /// Every language of the set (backlog 472) with its display casing, in the mapper's order, for one
+        /// chip each; empty when the set has none yet. Falls back to the single <see cref="Language"/> for a
+        /// row whose list is empty while its language is not, which no writer leaves behind (both move
+        /// together, 057_languages.sql) but costs nothing to tolerate.
+        /// </summary>
+        public IReadOnlyList<(string Name, string Display)> LanguageChips
+            => (BeatmapLanguages.FromStoredList(Languages) is { Length: > 0 } list ? list : Language.Length > 0 ? [Language] : [])
+               .Select(l => (Name: l, Display: BeatmapLanguages.DisplayName(l)))
+               .Where(l => l.Display != null)
+               .Select(l => (l.Name, l.Display!))
+               .ToArray();
 
         /// <summary>Title, or its original non-romanized text when the viewer prefers that.</summary>
         public string DisplayTitle(bool preferOriginal) => MetadataDisplay.Pick(Title, TitleUnicode, preferOriginal);

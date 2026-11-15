@@ -170,7 +170,8 @@ public static class BeatmapsetEndpoints
                    s.download_count  AS downloadCount,
                    EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS hasPackage,
                    u.country_code::text AS creatorCountryCode,
-                   u.avatar_key      AS creatorAvatarKey
+                   u.avatar_key      AS creatorAvatarKey,
+                   array_to_string(s.languages, ',') AS languages
             FROM beatmapsets s
             JOIN users u ON u.id = s.owner_id
             WHERE s.id = @setId
@@ -255,6 +256,7 @@ public static class BeatmapsetEndpoints
             // Echoed so the wizard can preselect the explicit toggle when updating a set.
             Explicit = set.Explicit,
             SongLanguage = set.Language,
+            SongLanguages = BeatmapLanguages.FromStoredList(set.Languages),
             HasVocalsStem = hasVocalsStem,
             FileManifest = fileManifest,
             Description = set.Description,
@@ -368,7 +370,9 @@ public static class BeatmapsetEndpoints
         int DownloadCount,
         bool HasPackage,
         string CreatorCountryCode,
-        string? CreatorAvatarKey);
+        string? CreatorAvatarKey,
+        // backlog 472. Appended last: Dapper matches this positional record's constructor by column order.
+        string Languages);
 
     private sealed record BeatmapRow(
         long Id,

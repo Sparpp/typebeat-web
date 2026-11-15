@@ -832,13 +832,14 @@ public class BeatmapSearchQueryTest
     }
 
     [Test]
-    public void Sql_Language_IsSetScopedEquality_NotAnIlike()
+    public void Sql_Language_IsSetScopedMembership_NotAnIlike()
     {
         var (sql, param) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("lang:jp"));
 
         Assert.Multiple(() =>
         {
-            Assert.That(sql, Does.Contain("AND s.language = @op0"));
+            // Any of the set's languages (backlog 472), in the containment form the GIN index serves.
+            Assert.That(sql, Does.Contain("AND s.languages @> ARRAY[@op0]::text[]"));
             Assert.That(sql, Does.Not.Contain("ILIKE"));
             Assert.That(sql, Does.Not.Contain("EXISTS"));
             Assert.That(param["op0"], Is.EqualTo("japanese"));
@@ -852,7 +853,7 @@ public class BeatmapSearchQueryTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(sql, Does.Contain("s.language = @op0"));
+            Assert.That(sql, Does.Contain("s.languages @> ARRAY[@op0]::text[]"));
             Assert.That(param["op0"], Is.EqualTo("korean"));
             Assert.That(sql, Does.Contain("s.artist ILIKE @op1"));
             Assert.That(sql, Does.Contain("b.difficulty_rating > @op2"));

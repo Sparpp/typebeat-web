@@ -25,6 +25,9 @@ public class SongLanguageWireTest
     private static string knownChecksum = null!;
 
     private static long unknownSetId;
+
+    private static long bilingualSetId;
+    private static string bilingualChecksum = null!;
     private static long unknownBeatmapId;
     private static string unknownChecksum = null!;
 
@@ -53,6 +56,10 @@ public class SongLanguageWireTest
 
         (knownSetId, knownBeatmapId, knownChecksum) = await seedSetAsync(conn, "Kotoba no Uta", "japanese");
         (unknownSetId, unknownBeatmapId, unknownChecksum) = await seedSetAsync(conn, "Wordless Oldie", "");
+
+        // Backlog 472: English picked first, so the stored primary is Japanese. No play, so the profile
+        // sections below still see exactly the two sets above.
+        (bilingualSetId, _, bilingualChecksum) = await seedSetAsync(conn, "Two Tongues", "japanese", ["english", "japanese"], withPlay: false);
     }
 
     [OneTimeTearDown]
@@ -145,18 +152,68 @@ public class SongLanguageWireTest
         });
     }
 
+    // ---- the language list (backlog 472) ----
+
+    [Test]
+    public async Task EveryRoute_EmitsTheWholeListBesideThePrimary()
+    {
+        var lookup = (JObject)(await getObjectAsync($"/api/v2/beatmaps/lookup?checksum={bilingualChecksum}"))["beatmapset"]!;
+        var get = await getObjectAsync($"/api/v2/beatmapsets/{bilingualSetId}");
+
+        Assert.Multiple(() =>
+        {
+            foreach (var set in new[] { lookup, get })
+            {
+                Assert.That((string)set["song_language"]!, Is.EqualTo("japanese"), "song_language stays the primary old clients read");
+                Assert.That(set["song_languages"]!.ToObject<string[]>(), Is.EqualTo(new[] { "english", "japanese" }), "in the mapper's order");
+            }
+        });
+    }
+
+    [Test]
+    public async Task ASingleOrUnsetLanguage_EmitsAOneEntryOrEmptyList()
+    {
+        var known = await getObjectAsync($"/api/v2/beatmapsets/{knownSetId}");
+        var unknown = await getObjectAsync($"/api/v2/beatmapsets/{unknownSetId}");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(known["song_languages"]!.ToObject<string[]>(), Is.EqualTo(new[] { "japanese" }));
+            Assert.That(unknown["song_languages"]!.Type, Is.EqualTo(JTokenType.Array), "never null");
+            Assert.That(unknown["song_languages"]!.ToObject<string[]>(), Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task ProfileSections_EmitTheListOnTheirNestedSets()
+    {
+        var recent = await getArrayAsync($"/api/v2/users/{typistId}/scores/recent");
+
+        Assert.Multiple(() =>
+        {
+            foreach (var set in recent.Select(s => (JObject)s["beatmap"]!["beatmapset"]!))
+            {
+                string[] expected = (long)set["id"]! == knownSetId ? ["japanese"] : [];
+                Assert.That(set["song_languages"]!.ToObject<string[]>(), Is.EqualTo(expected));
+            }
+        });
+    }
+
     // ---- helpers ----
 
     /// <summary>A ranked set with one live difficulty and one ranked play of it by the typist.</summary>
-    private static async Task<(long SetId, long BeatmapId, string Checksum)> seedSetAsync(NpgsqlConnection conn, string title, string language)
+    private static async Task<(long SetId, long BeatmapId, string Checksum)> seedSetAsync(NpgsqlConnection conn, string title, string language, string[]? languageList = null, bool withPlay = true)
     {
+        // The list moves with the single primary (057_languages.sql); a single language is a one-entry list.
+        string[] languages = languageList ?? (language.Length == 0 ? [] : [language]);
+
         long setId = await conn.ExecuteScalarAsync<long>(
             """
-            INSERT INTO beatmapsets (owner_id, title, artist, language, status, submitted_at, updated_at)
-            VALUES (@ownerId, @title, 'Song Language Artist', @language, 'ranked', now() - interval '3 days', now() - interval '3 days')
+            INSERT INTO beatmapsets (owner_id, title, artist, language, languages, status, submitted_at, updated_at)
+            VALUES (@ownerId, @title, 'Song Language Artist', @language, @languages, 'ranked', now() - interval '3 days', now() - interval '3 days')
             RETURNING id
             """,
-            new { ownerId = PublicSiteSeed.MapperId, title, language });
+            new { ownerId = PublicSiteSeed.MapperId, title, language, languages });
 
         string checksum = Guid.NewGuid().ToString("N");
 
@@ -167,6 +224,9 @@ public class SongLanguageWireTest
             RETURNING id
             """,
             new { setId, checksum });
+
+        if (!withPlay)
+            return (setId, beatmapId, checksum);
 
         await conn.ExecuteAsync(
             """

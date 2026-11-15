@@ -69,6 +69,9 @@ public static class SyntheticPackage
         // Empty = the file states no language, which is exactly what every pre-task-58 client
         // wrote and what the game's encoder still writes for an "unspecified" map.
         string language = "",
+        // Backlog 472: the [Metadata] Languages: list as the game writes it (canonical names, comma
+        // separated), only for a map with more than one language. Empty = no line.
+        string languages = "",
         long? beatmapId = 1001,
         long? beatmapSetId = 1,
         string audioFilename = "audio.mp3",
@@ -121,6 +124,8 @@ public static class SyntheticPackage
         // all, which keeps existing maps' encodings byte-identical.
         if (language.Length > 0)
             sb.Append($"Language:{language}\n");
+        if (languages.Length > 0)
+            sb.Append($"Languages:{languages}\n");
 
         if (beatmapId != null)
             sb.Append($"BeatmapID: {beatmapId}\n");

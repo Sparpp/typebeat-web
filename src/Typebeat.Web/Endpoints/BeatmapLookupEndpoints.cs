@@ -121,6 +121,7 @@ public static class BeatmapLookupEndpoints
                 Explicit = row.Explicit,
                 // Fills a local Unspecified language for maps whose .osu carries no Language: line.
                 SongLanguage = row.Language,
+                SongLanguages = BeatmapLanguages.FromStoredList(row.Languages),
                 // The set-level tracked-file manifest (backlog 396); the client's UPDATE offer reads
                 // it against its local copy's own. The stem flag is what clients before it read.
                 FileManifest = fileManifest,
@@ -152,7 +153,8 @@ public static class BeatmapLookupEndpoints
                u.username         AS creator,
                bs.submitted_at    AS submittedAt,
                bs.updated_at      AS updatedAt,
-               bs.language        AS language
+               bs.language        AS language,
+               array_to_string(bs.languages, ',') AS languages
         FROM beatmaps b
         JOIN beatmapsets bs ON bs.id = b.set_id
         JOIN users u ON u.id = bs.owner_id
@@ -186,5 +188,7 @@ public static class BeatmapLookupEndpoints
         DateTime SubmittedAt,
         DateTime UpdatedAt,
         // Appended last: Dapper matches this positional record's constructor by column order.
-        string Language);
+        string Language,
+        // backlog 472, appended after it for the same reason.
+        string Languages);
 }

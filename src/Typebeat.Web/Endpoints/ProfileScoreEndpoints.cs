@@ -3,6 +3,7 @@ using Dapper;
 using Npgsql;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Data;
+using Typebeat.Web.Packages;
 using Typebeat.Web.Scoring;
 using Typebeat.Web.Wire;
 
@@ -231,7 +232,7 @@ public static class ProfileScoreEndpoints
         s.title_unicode AS TitleUnicode, s.artist_unicode AS ArtistUnicode,
         s.cover_key AS CoverKey, s.status AS Status, s.explicit AS Explicit,
         s.submitted_at AS SubmittedAt, s.updated_at AS UpdatedAt, u.username::text AS Creator,
-        s.language AS Language
+        s.language AS Language, array_to_string(s.languages, ',') AS Languages
         """;
 
     private static ProfileScoreWire toWire(ProfileScoreRow r, ScoreUserWire user, string urlBase)
@@ -283,6 +284,7 @@ public static class ProfileScoreEndpoints
         ArtistUnicode = b.ArtistUnicode,
         Explicit = b.Explicit,
         SongLanguage = b.Language,
+        SongLanguages = BeatmapLanguages.FromStoredList(b.Languages),
     };
 
     private static APIBeatmapResponse buildBeatmap(BeatmapDisplayRow b, APIBeatmapSetResponse set) => new()
@@ -332,6 +334,7 @@ public static class ProfileScoreEndpoints
         public DateTime UpdatedAt { get; set; }
         public string Creator { get; set; } = string.Empty;
         public string Language { get; set; } = string.Empty;
+        public string Languages { get; set; } = string.Empty;
     }
 
     private sealed class ProfileScoreRow : BeatmapDisplayRow
