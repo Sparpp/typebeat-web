@@ -77,9 +77,10 @@
                     <span class="review-controls__label">map review</span>
                     @if (Model.Set.Status == "wip")
                     {
-                        @* osu!'s rule: a WIP map is not up for review. The mapper re-submits it as
-                           Pending when it is ready, and the Rank and Respected levers appear then. *@
-                        <span class="review-controls__note">Work in progress: the mapper has to submit it as Pending before it can be ranked or marked as Respected.</span>
+                        @* osu-web's rule: a WIP map cannot be nominated or qualified. The mapper
+                           re-submits it as Pending when it is ready, and the Rank lever appears then.
+                           Respected stays available, as osu-web lets any not-yet-approved map be loved. *@
+                        <span class="review-controls__note">Work in progress: the mapper has to submit it as Pending before it can be ranked.</span>
                     }
                     @if (Model.Set.Status == "pending")
                     {
@@ -87,7 +88,7 @@
                             <button type="submit" class="btn btn-ghost btn-small">Rank this map</button>
                         </form>
                     }
-                    @if (Model.Set.Status is "pending" or "unranked")
+                    @if (Model.Set.Status is "pending" or "wip" or "unranked")
                     {
                         <form method="post" asp-page-handler="Love" asp-route-id="@Model.Set.Id">
                             <button type="submit" class="btn btn-ghost btn-small">Mark as Respected</button>

@@ -16,12 +16,13 @@ namespace Typebeat.Web.Social;
 /// handler only turns the <see cref="Outcome"/> into a response.
 ///
 /// <para>
-/// The review transitions are pending → ranked, ranked → pending, pending|unranked → loved and
+/// The review transitions are pending → ranked, ranked → pending, pending|wip|unranked → loved and
 /// loved → the set's intended_status (<see cref="Transition.To"/> null); there is no direct
 /// ranked ↔ loved. Hidden and removed sets are untouchable from here (takedowns stay an admin-SQL
-/// lever), and so is a 'wip' set (backlog 476): as on osu!, a map its mapper still calls a work in
-/// progress cannot be ranked (nominated) or loved until they re-submit it as Pending, so no
-/// transition lists 'wip' in its From.
+/// lever). A 'wip' set (backlog 476) follows osu-web: a map its mapper still calls a work in
+/// progress cannot be ranked (nominated or qualified) until they re-submit it as Pending, so Rank
+/// does not list 'wip' in its From, but it can be loved, since osu-web's loveable check takes any
+/// not-yet-approved state (approved &lt;= 0: pending, WIP and graveyard).
 /// </para>
 /// </summary>
 public sealed class BeatmapsetReview(
@@ -35,11 +36,11 @@ public sealed class BeatmapsetReview(
 
     public static readonly Transition Unrank = new(["ranked"], "pending", "unrank");
 
-    public static readonly Transition Love = new(["pending", "unranked"], "loved", "love");
+    public static readonly Transition Love = new(["pending", "wip", "unranked"], "loved", "love");
 
-    // Unlove returns the set to its own intended_status (pending or unranked, or wip when its
-    // mapper re-submitted it as WIP while it was ranked, before it was unranked and loved), so a
-    // loved set goes back to wherever its mapper last asked for.
+    // Unlove returns the set to its own intended_status (pending, wip or unranked: a set loved from
+    // wip keeps intended_status 'wip', so it goes back to WIP), so a loved set goes back to wherever
+    // its mapper last asked for.
     public static readonly Transition Unlove = new(["loved"], null, "unlove");
 
     public enum Outcome

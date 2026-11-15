@@ -16,7 +16,8 @@ namespace Typebeat.Web.Tests.Website;
 /// (listed, searchable, on its mapper's profile, readable by the game API), shown as a WIP pill
 /// everywhere a status shows, filtered on its own by the website and by the API's s=wip, kept in
 /// the game overlay's combined "Pending &amp; WIP" category (s=pending), and, as on osu!, serves
-/// no leaderboard and cannot be ranked or loved until its mapper submits it as Pending.
+/// no leaderboard and cannot be ranked until its mapper submits it as Pending. It can still be
+/// loved (Respected), as osu-web loves any not-yet-approved map.
 /// </summary>
 [TestFixture]
 [NonParallelizable]
@@ -241,7 +242,7 @@ public class WipStatusTest
     }
 
     [Test]
-    public async Task ReviewerSetPage_OffersNoLeverOnWip_AndSaysWhy()
+    public async Task ReviewerSetPage_OffersRespectedButNotRankOnWip_AndSaysWhy()
     {
         using var client = await signedInReviewerAsync();
 
@@ -251,24 +252,53 @@ public class WipStatusTest
         {
             Assert.That(page, Does.Contain("review-controls__note"));
             Assert.That(page, Does.Not.Contain("Rank this map"));
-            Assert.That(page, Does.Not.Contain("Mark as Respected"));
+            Assert.That(page, Does.Contain("Mark as Respected"), "osu-web lets a WIP map be loved");
         });
     }
 
-    [TestCase("Rank")]
-    [TestCase("Love")]
-    public async Task ReviewerLevers_DoNothingToAWipSet(string handler)
+    [Test]
+    public async Task RankLever_DoesNothingToAWipSet()
     {
         using var client = await signedInReviewerAsync();
 
-        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, $"/beatmapsets/{wipSetId}");
-        using (await client.PostAsync($"/beatmapsets/{wipSetId}?handler={handler}",
-                   new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = token }))) { }
+        await postReviewAsync(client, wipSetId, "Rank");
 
-        await using var conn = await dataSource.OpenConnectionAsync();
-        string? status = await conn.ExecuteScalarAsync<string>("SELECT status FROM beatmapsets WHERE id = @wipSetId", new { wipSetId });
+        Assert.That(await statusOfAsync(wipSetId), Is.EqualTo("wip"), "Rank must not move a WIP set");
+    }
 
-        Assert.That(status, Is.EqualTo("wip"), $"{handler} must not move a WIP set");
+    [Test]
+    public async Task LoveLever_RespectsAWipSet_AndUnloveReturnsItToWip()
+    {
+        // Its own set, owner and untagged title, so the shared WIP set stays WIP and neither the
+        // tag searches nor the mapper's profile assertions in this fixture ever see this one.
+        long setId;
+        await using (var conn = await dataSource.OpenConnectionAsync())
+        {
+            (setId, _) = await insertSetAsync(conn, "Respected Draft", "wip");
+            long otherMapperId = await conn.ExecuteScalarAsync<long>(
+                """
+                INSERT INTO users (username, email, password_hash, country_code)
+                VALUES ('wip love mapper', 'wip.love.mapper@example.com', 'x', 'US')
+                RETURNING id
+                """);
+            await conn.ExecuteAsync(
+                "UPDATE beatmapsets SET owner_id = @otherMapperId, title = 'wip love lever draft' WHERE id = @setId",
+                new { otherMapperId, setId });
+        }
+
+        using var client = await signedInReviewerAsync();
+
+        await postReviewAsync(client, setId, "Love");
+        string? loved = await statusOfAsync(setId);
+
+        await postReviewAsync(client, setId, "Unlove");
+        string? unloved = await statusOfAsync(setId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(loved, Is.EqualTo("loved"), "a WIP set can be loved, as on osu-web");
+            Assert.That(unloved, Is.EqualTo("wip"), "Unlove returns it to its mapper's intended WIP");
+        });
     }
 
     // ---- helpers ----
@@ -292,6 +322,19 @@ public class WipStatusTest
             new { setId, checksum = Guid.NewGuid().ToString("N") });
 
         return (setId, beatmapId);
+    }
+
+    private static async Task postReviewAsync(HttpClient client, long setId, string handler)
+    {
+        string token = await WebsiteFixture.GetAntiforgeryTokenAsync(client, $"/beatmapsets/{setId}");
+        using (await client.PostAsync($"/beatmapsets/{setId}?handler={handler}",
+                   new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = token }))) { }
+    }
+
+    private static async Task<string?> statusOfAsync(long setId)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<string>("SELECT status FROM beatmapsets WHERE id = @setId", new { setId });
     }
 
     private static async Task<HttpClient> signedInReviewerAsync()

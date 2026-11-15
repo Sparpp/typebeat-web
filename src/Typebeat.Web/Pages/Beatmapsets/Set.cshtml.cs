@@ -24,8 +24,8 @@ namespace Typebeat.Web.Pages.Beatmapsets;
 /// DeleteComment (the comments section below the lyrics, backlog 295),
 /// and the reviewer-only Rank/Unrank pair (pending ⇄ ranked; a Rank also carries the set's honest
 /// pending-era plays onto its board and prices its loved-era ones in the same request, backlog 352)
-/// and Love/Unlove pair (pending|unranked → loved → intended_status). A 'wip' set has neither:
-/// its mapper has to re-submit it as Pending first (backlog 476).
+/// and Love/Unlove pair (pending|wip|unranked → loved → intended_status). A 'wip' set cannot be
+/// ranked until its mapper re-submits it as Pending, but it can be loved, as on osu-web (backlog 476).
 /// Hidden sets are visible to their owner only. Removed sets 404 for the public but stay
 /// viewable by their owner and by admins (the owner's profile deliberately lists them, and a
 /// DMCA'd mapper deserves to see the Removed pill instead of a dead link; the download

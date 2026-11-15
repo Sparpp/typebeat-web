@@ -165,7 +165,7 @@ public sealed record BeatmapsetCardModel(
 
     /// <summary>
     /// Can this set be played in the browser right now? Every PUBLISHED set can
-    /// (<see cref="Endpoints.BeatmapsetEndpoints.IsPublished"/>: pending, unranked, ranked or loved),
+    /// (<see cref="Endpoints.BeatmapsetEndpoints.IsPublished"/>: pending, wip, unranked, ranked or loved),
     /// provided the two things /play/map/{id}/* need are present: an assembled package and a live
     /// .osu difficulty. These are exactly the conditions the /play picker filters on, so the card's
     /// play rail can never link a map the player would fail to load.
