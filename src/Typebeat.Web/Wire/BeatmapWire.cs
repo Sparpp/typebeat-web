@@ -221,6 +221,16 @@ public sealed class APIBeatmapSetResponse
     public string SongLanguage { get; init; } = string.Empty;
 
     /// <summary>
+    /// Every song language of the set (beatmapsets.languages, backlog 472): canonical BeatmapLanguages
+    /// names in the mapper's order, or empty when nothing has determined one. ADDITIVE beside
+    /// <see cref="SongLanguage"/>, which stays the set's PRIMARY language (BeatmapLanguages.Primary), so a
+    /// client that predates the list (and ignores this unknown member) keeps reading the one language it
+    /// can hold, and a new client falls back to SongLanguage when an older server sends no list.
+    /// </summary>
+    [JsonProperty("song_languages")]
+    public string[] SongLanguages { get; init; } = [];
+
+    /// <summary>
     /// Whether the set's CURRENT online version carries an isolated vocals stem file
     /// (<c>vocals.ogg</c> / <c>vocals.wav</c>, backlog 392/393). Set-level because a stem lives beside
     /// the song, not per difficulty, and every difficulty of a set downloads the same package.

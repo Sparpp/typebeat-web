@@ -326,6 +326,11 @@ public sealed class PackageIngest(
                 -- map would otherwise wipe whatever the mapper or the backfill had established.
                 -- SET expressions read the row's pre-update value, so this reads the old language.
                 language = coalesce(nullif(@language, ''), language),
+                -- The whole list (057_languages.sql), on the same "a package that states none leaves it
+                -- alone" terms, so language and languages always move together. An old client's upload
+                -- states only its single Language: line, which arrives here as a one-entry list: the
+                -- set then holds exactly what that client's own file says, the one language it knows.
+                languages = CASE WHEN cardinality(@languages::text[]) > 0 THEN @languages::text[] ELSE languages END,
                 has_video = @hasVideo,
                 bpm = @bpm,
                 current_version = @versionNo,
@@ -345,7 +350,8 @@ public sealed class PackageIngest(
                 // value from any client lands as '' (= leave whatever is stored) rather than in
                 // the column. The primary difficulty speaks for the set, exactly as it does for
                 // title/artist/source/tags.
-                language = BeatmapLanguages.Normalize(primary.Language),
+                language = BeatmapLanguages.Primary(primary.Languages),
+                languages = primary.Languages.ToArray(),
                 hasVideo = package.HasVideo,
                 bpm = primary.Bpm,
                 versionNo,

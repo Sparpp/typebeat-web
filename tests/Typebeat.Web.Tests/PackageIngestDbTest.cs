@@ -675,7 +675,48 @@ public class PackageIngestDbTest
         Assert.That(await conn.ExecuteScalarAsync<string>(
                 "SELECT language FROM beatmapsets WHERE id = @setId", new { setId }),
             Is.EqualTo("japanese"), "an upload that states no language must leave the stored one alone");
+        Assert.That(await languagesOf(conn, setId), Is.EqualTo(new[] { "japanese" }), "and the list moves with it");
+
+        // Backlog 472: a multi-language upload, as the game writes it (the primary on Language:, the whole
+        // list on Languages:), stores the list in the mapper's order and its primary as the language.
+        await ingestAsync(new (string, byte[])[]
+        {
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+                title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId,
+                language: "japanese", languages: "english,japanese", previewTime: 3500, lyrics: fixture_lyrics))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+        });
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await languageOf(conn, setId), Is.EqualTo("japanese"));
+            Assert.That(await languagesOf(conn, setId), Is.EqualTo(new[] { "english", "japanese" }));
+        });
+
+        // An upload that states no language at all leaves the whole list alone too.
+        await ingestAsync(withoutLanguage);
+
+        Assert.That(await languagesOf(conn, setId), Is.EqualTo(new[] { "english", "japanese" }));
+
+        // A client that predates the list writes only its single Language: line: the set then holds exactly
+        // the one language that client's own file states.
+        await ingestAsync(new (string, byte[])[]
+        {
+            ("map.osu", SyntheticPackage.Utf8(SyntheticPackage.OsuText(
+                title: "Neon Nights", titleUnicode: "Neon Nights", beatmapId: 1001, beatmapSetId: setId,
+                language: "japanese", previewTime: 5500, lyrics: fixture_lyrics))),
+            ("audio.mp3", SyntheticPackage.Utf8("fake audio bytes")),
+        });
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await languageOf(conn, setId), Is.EqualTo("japanese"));
+            Assert.That(await languagesOf(conn, setId), Is.EqualTo(new[] { "japanese" }));
+        });
     }
+
+    private static async Task<string[]> languagesOf(NpgsqlConnection conn, long id)
+        => await conn.ExecuteScalarAsync<string[]>("SELECT languages FROM beatmapsets WHERE id = @id", new { id }) ?? [];
 
     [Test]
     [Order(9)]
@@ -686,7 +727,7 @@ public class PackageIngestDbTest
         // English lyrics on a set the mapper has tagged 'instrumental': a deliberate disagreement.
         // The mapper wins, always.
         await conn.ExecuteAsync(
-            "UPDATE beatmapsets SET language = 'instrumental' WHERE id = @setId", new { setId });
+            "UPDATE beatmapsets SET language = 'instrumental', languages = '{instrumental}' WHERE id = @setId", new { setId });
         await conn.ExecuteAsync(
             """
             UPDATE beatmaps

@@ -418,14 +418,64 @@ public class SearchOperatorParityTest
             }
         }
 
-        // The site's half is an equality on the set's language column, which is what makes "exactly
-        // that language, and never an unset one" the expectation above.
+        // The site's half is membership in the set's language list (backlog 472), which on these one-language
+        // maps is what makes "exactly that language, and never an unset one" the expectation above. The
+        // multi-language half is pinned by AMultiLanguageMapMatchesEveryOneOfItsLanguagesOnBothSides below.
         var (sql, _) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("lang:jp"));
 
         Assert.Multiple(() =>
         {
             Assert.That(mismatches, Is.Empty, $"{mismatches.Count} mismatches, first 20:\n" + string.Join("\n", mismatches.Take(20)));
-            Assert.That(sql, Does.Match(@"AND s\.language = @\w+"), sql);
+            Assert.That(sql, Does.Match(@"AND s\.languages @> ARRAY\[@\w+\]::text\[\]"), sql);
+        });
+    }
+
+    /// <summary>
+    /// Backlog 472: a map may declare several languages, and both sides match it when EVERY language filter given
+    /// names one of them (so one filter matches any of its languages, and two find the maps declaring both). The
+    /// site's half is one containment clause per filter over the set's list; the game's is its carousel matcher on
+    /// a map holding the same list.
+    /// </summary>
+    [Test]
+    public void AMultiLanguageMapMatchesEveryOneOfItsLanguagesOnBothSides()
+    {
+        ClientLanguage[][] maps =
+        [
+            [ClientLanguage.English, ClientLanguage.Japanese],
+            [ClientLanguage.Japanese, ClientLanguage.English],
+            [ClientLanguage.Korean, ClientLanguage.English, ClientLanguage.Other],
+            [ClientLanguage.Japanese],
+            [ClientLanguage.Instrumental],
+            [],
+        ];
+
+        string[] queries = ["lang:en", "lang:jp", "lang:ko", "language:other", "lang:none", "lang:en lang:jp", "lang:ko lang:en", "lang:jp lang:ko"];
+
+        var mismatches = new List<string>();
+
+        foreach (var languages in maps)
+        {
+            var siteList = BeatmapLanguages.NormalizeList(languages.Select(l => ClientLanguageNames.ToCanonicalName(l)));
+
+            foreach (string query in queries)
+            {
+                var parsed = BeatmapSearchQuery.Parse(query);
+                var filters = parsed.TextFilters.Where(f => f.Field == FilterField.Language).Select(f => f.Value).ToArray();
+                bool site = filters.Length > 0 && filters.All(siteList.Contains);
+                bool game = GameMatches(query, new ClientBeatmap { Metadata = { Languages = languages } });
+
+                if (site != game)
+                    mismatches.Add($"{query} on [{string.Join(", ", languages)}]: the site says {site}, the game says {game}");
+            }
+        }
+
+        var (sql, _) = BeatmapSearchSql.Build(BeatmapSearchQuery.Parse("lang:en lang:jp"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(mismatches, Is.Empty, string.Join("\n", mismatches));
+            Assert.That(Regex.Matches(sql, @"s\.languages @> ARRAY\[@\w+\]::text\[\]"), Has.Count.EqualTo(2),
+                "one containment clause per language filter, ANDed");
         });
     }
 

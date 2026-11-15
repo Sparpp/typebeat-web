@@ -64,15 +64,16 @@ public static class BeatmapSearchSql
             param[name] = value;
             return name;
         }
-
         // Song language is a set property and a closed vocabulary, so it is the one text filter
-        // that compares for EQUALITY rather than ILIKE: the parser already folded the user's
+        // that compares for MEMBERSHIP rather than ILIKE: the parser already folded the user's
         // input onto a canonical name (BeatmapLanguages), so there is nothing left to match
-        // loosely, and equality is what the partial index in 019_language.sql serves. Sets whose
-        // language is still unset hold '', which no canonical name equals, so they are simply
-        // invisible to this filter.
+        // loosely. A set may declare several languages (backlog 472, 057_languages.sql) and matches
+        // when the name is ANY of them; written as array containment because that is the form the
+        // GIN index serves. Two language: filters therefore find the sets that declare both, as song
+        // select's lang: does. Sets whose language is still unset hold '{}', which contains nothing,
+        // so they are simply invisible to this filter.
         foreach (var f in query.TextFilters.Where(f => f.Field == FilterField.Language))
-            sql.Append("\nAND s.language = @").Append(Next(f.Value));
+            sql.Append("\nAND s.languages @> ARRAY[@").Append(Next(f.Value)).Append("]::text[]");
 
         // Lyrics text lives per difficulty (beatmaps.lyrics), so lyrics: joins the per-difficulty
         // EXISTS below rather than the set-scoped clauses here.

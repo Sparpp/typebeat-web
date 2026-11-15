@@ -69,7 +69,8 @@ public static class LanguageBackfill
                 // The WHERE re-check is the concurrency guard: if a submission set a real language
                 // between the SELECT above and here, this writes nothing.
                 await conn.ExecuteAsync(
-                    "UPDATE beatmapsets SET language = @language WHERE id = @setId AND language = ''",
+                    // languages moves with language (057_languages.sql): a detected language is a one-entry list.
+                    "UPDATE beatmapsets SET language = @language, languages = ARRAY[@language] WHERE id = @setId AND language = ''",
                     new { setId = row.SetId, language });
 
                 detected++;

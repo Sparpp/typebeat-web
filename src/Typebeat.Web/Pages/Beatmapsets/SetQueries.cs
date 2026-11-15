@@ -49,7 +49,9 @@ public static class SetQueries
                    s.language         AS Language,
                    -- Backlog 418: a live .osu difficulty, the card's HasPlayableDiff test (see
                    -- SetDetails.CanWebplay).
-                   EXISTS (SELECT 1 FROM beatmaps b2 WHERE b2.set_id = s.id AND b2.filename LIKE '%.osu') AS HasPlayableDiff
+                   EXISTS (SELECT 1 FROM beatmaps b2 WHERE b2.set_id = s.id AND b2.filename LIKE '%.osu') AS HasPlayableDiff,
+                   -- Backlog 472 (057_languages.sql): every language of the set, appended for the reason above.
+                   array_to_string(s.languages, ',') AS Languages
             FROM beatmapsets s
             JOIN users u ON u.id = s.owner_id
             WHERE s.id = @id

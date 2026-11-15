@@ -119,7 +119,9 @@ public static class BeatmapsetSearchEndpoints
 
         if (int.TryParse(q["l"], out int languageId) && language_ids.TryGetValue(languageId, out string? language))
         {
-            where.Append("\nAND s.language = @language");
+            // Any of the set's languages (backlog 472, 057_languages.sql), in the containment form the GIN
+            // index serves. "Unspecified" (the stored empty string) is the sets with no language at all.
+            where.Append(language.Length == 0 ? "\nAND s.languages = '{}'" : "\nAND s.languages @> ARRAY[@language]::text[]");
             param.Add("language", language);
         }
 

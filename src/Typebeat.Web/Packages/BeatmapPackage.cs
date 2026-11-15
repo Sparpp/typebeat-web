@@ -62,6 +62,15 @@ public sealed class ParsedDifficulty
     /// </summary>
     public string Language { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Every language the file states (backlog 472), canonical and normalised
+    /// (<see cref="BeatmapLanguages.NormalizeList"/>) in the mapper's order: the <c>[Metadata] Languages:</c>
+    /// list when the file has one, else the <c>Language:</c> line as a one-entry list, else empty ("not
+    /// stated", which is what every pre-task-58 client writes). When the list came from a Languages line,
+    /// <see cref="Language"/> holds its primary (<see cref="BeatmapLanguages.Primary"/>).
+    /// </summary>
+    public IReadOnlyList<string> Languages { get; init; } = [];
+
     public long? BeatmapId { get; init; }
     public long? BeatmapSetId { get; init; }
 

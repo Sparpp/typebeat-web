@@ -224,6 +224,43 @@ public class LyricParserParityTest
     }
 
     /// <summary>
+    /// Backlog 472: a map with several languages, as the game's own writer emits it (the primary on the
+    /// <c>Language:</c> line, every language on the <c>Languages:</c> line), reads to the same list and the same
+    /// primary on both sides, and a single-language file (every map before the list, and every one-language map
+    /// since) still reads as a one-entry list.
+    /// </summary>
+    [Test]
+    public void BothParsersReadTheLanguageListTheGameWrites()
+    {
+        BeatmapLanguage[][] lists =
+        [
+            [BeatmapLanguage.English, BeatmapLanguage.Japanese],
+            [BeatmapLanguage.Japanese, BeatmapLanguage.English],
+            [BeatmapLanguage.Korean, BeatmapLanguage.Russian, BeatmapLanguage.Other],
+            [BeatmapLanguage.SwissGerman, BeatmapLanguage.German],
+            [BeatmapLanguage.Japanese],
+        ];
+
+        Assert.Multiple(() =>
+        {
+            foreach (var list in lists)
+            {
+                string osu = LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", TimingJson(),
+                    language: BeatmapLanguageExtensions.PrimaryOf(list).ToCanonicalName(), languages: list.ToCanonicalList());
+
+                string name = string.Join(",", list);
+                var client = ClientDecode(osu).Metadata;
+                var server = ServerParse(osu);
+
+                Assert.That(client.Languages, Is.EqualTo(list), $"{name}: client list");
+                Assert.That(server.Languages, Is.EqualTo(list.Select(l => l.ToCanonicalName())), $"{name}: server list");
+                Assert.That(server.Language, Is.EqualTo(client.Language.ToCanonicalName()), $"{name}: the same primary");
+                Assert.That(osu.Contains("Languages:"), Is.EqualTo(list.Length > 1), $"{name}: the list line only for more than one language");
+            }
+        });
+    }
+
+    /// <summary>
     /// The type!beat keys as the game's shared spelling writes them (<c>TypeBeatOsuKeys</c>, used by
     /// both client encoders), and in the older spelling the legacy encoder wrote before the keys were
     /// shared (a space after the colon for <c>Language</c>, none for the font keys), read by both

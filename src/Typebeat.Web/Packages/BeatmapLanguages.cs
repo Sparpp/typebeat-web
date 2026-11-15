@@ -116,6 +116,88 @@ public static class BeatmapLanguages
     }
 
     /// <summary>
+    /// The separator between languages in the .osu <c>[Metadata] Languages:</c> line (backlog 472), the game's
+    /// <c>BeatmapLanguageExtensions.LIST_SEPARATOR</c>. No canonical name contains it.
+    /// </summary>
+    public const char ListSeparator = ',';
+
+    /// <summary>
+    /// Folds a list of client- or user-supplied values onto a set's stored language list (backlog 472):
+    /// each value through <see cref="Normalize"/>, unrecognised ones dropped, duplicates dropped (the first
+    /// keeps its place), and <c>instrumental</c> exclusive: a list that LEADS with it is just
+    /// <c>instrumental</c>, any other loses it. The game's <c>BeatmapLanguageExtensions.Normalise</c> applies
+    /// the same rules; tests/Typebeat.WireCompat pins the two against each other.
+    /// </summary>
+    public static IReadOnlyList<string> NormalizeList(IEnumerable<string?> values)
+    {
+        var result = new List<string>();
+
+        foreach (string? value in values)
+        {
+            string normalized = Normalize(value);
+
+            if (normalized.Length == 0 || result.Contains(normalized))
+                continue;
+
+            result.Add(normalized);
+        }
+
+        if (result.Count > 1)
+        {
+            if (result[0] == "instrumental")
+                return ["instrumental"];
+
+            result.Remove("instrumental");
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Splits a <c>Languages:</c> line value (<c>japanese,english</c>) and folds it with
+    /// <see cref="NormalizeList"/>. A single name reads as a one-entry list, so this also reads a
+    /// <c>Language:</c> line.
+    /// </summary>
+    public static IReadOnlyList<string> ParseList(string? value)
+        => string.IsNullOrWhiteSpace(value) ? [] : NormalizeList(value.Split(ListSeparator));
+
+    /// <summary>
+    /// A stored <c>beatmapsets.languages</c> list as the SELECTs read it: <c>array_to_string(languages, ',')</c>,
+    /// because Dapper matches a positional record's constructor by the reader's column types and a <c>text[]</c>
+    /// column reports <c>System.Array</c>, which no <c>string[]</c> parameter matches. Canonical names never
+    /// contain the separator, so the split is exact; an empty list reads back empty.
+    /// </summary>
+    public static string[] FromStoredList(string? joined)
+        => string.IsNullOrEmpty(joined) ? [] : joined.Split(ListSeparator);
+
+    /// <summary>
+    /// The ONE language that speaks for a multi-language set wherever a single language is still read
+    /// (<c>beatmapsets.language</c>, which the ratings, the Polyglot support rules, the SEO block and every
+    /// client that predates the list read): the first entry that is not <c>english</c>, or <c>english</c>
+    /// when it is the only one, or <see cref="Unset"/> for an empty list. The game's
+    /// <c>BeatmapLanguageExtensions.PrimaryOf</c>, rule for rule (WireCompat pins it): English is what the
+    /// game types natively, so every single-language consumer is asking about the OTHER language.
+    /// </summary>
+    public static string Primary(IReadOnlyList<string> languages)
+    {
+        string first = Unset;
+
+        foreach (string language in languages)
+        {
+            if (language.Length == 0)
+                continue;
+
+            if (language != "english")
+                return language;
+
+            if (first.Length == 0)
+                first = language;
+        }
+
+        return first;
+    }
+
+    /// <summary>
     /// Display casing for a stored value: "japanese" to "Japanese", <see cref="Unset"/> (or
     /// anything unrecognised) to null so callers can render nothing at all rather than an
     /// awkward placeholder.

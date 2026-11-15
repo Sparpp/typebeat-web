@@ -50,7 +50,8 @@ public class BuddyFeedShapeTest
         SetId = 5,
         Artist = "The Janitors",
         Title = "Mop Song",
-        Language = "en",
+        Language = "japanese",
+        LanguagesStored = "english,japanese",
         Explicit = false,
         CoverKey = "covers/5/2",
         Creator = "mapper",
@@ -93,7 +94,25 @@ public class BuddyFeedShapeTest
         {
             Assert.That(wire.Properties().Select(p => p.Name), Is.EqualTo(before.Properties().Select(p => p.Name)));
             Assert.That(JToken.DeepEquals(wire, before), Is.True, $"wire {wire}\nbefore {before}");
+
+            // Backlog 472: the list rides beside the primary as an array, and the joined column it is read
+            // from never reaches the bot.
+            Assert.That(wire["language"]!.Value<string>(), Is.EqualTo("japanese"));
+            Assert.That(wire["languages"]!.Values<string>(), Is.EqualTo(new[] { "english", "japanese" }));
+            Assert.That(wire.ContainsKey("languagesStored") || wire.ContainsKey("LanguagesStored"), Is.False);
         });
+    }
+
+    [Test]
+    public void RankedSetRow_WithNoLanguages_SendsAnEmptyList()
+    {
+        var row = setRow();
+        row.Language = "";
+        row.LanguagesStored = "";
+
+        var wire = parse(JsonConvert.SerializeObject(row, WireJson.Settings));
+
+        Assert.That(wire["languages"], Is.EqualTo(new JArray()));
     }
 
     [Test]

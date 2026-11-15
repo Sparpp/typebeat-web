@@ -617,8 +617,9 @@ public class LazerOverlayWireTest
     {
         long setId = await conn.ExecuteScalarAsync<long>(
             """
-            INSERT INTO beatmapsets (owner_id, title, artist, language, status, explicit, submitted_at, updated_at)
-            VALUES (@mapperId, @title, 'Lazer Overlay Artist', @language, @status, @explicitContent, now() - interval '3 days', now() - interval '3 days')
+            INSERT INTO beatmapsets (owner_id, title, artist, language, languages, status, explicit, submitted_at, updated_at)
+            VALUES (@mapperId, @title, 'Lazer Overlay Artist', @language, CASE WHEN @language = '' THEN '{}'::text[] ELSE ARRAY[@language] END,
+                    @status, @explicitContent, now() - interval '3 days', now() - interval '3 days')
             RETURNING id
             """,
             new { mapperId, title = $"{tag} {title}", language, status, explicitContent });

@@ -237,7 +237,7 @@ public static class BeatmapPackageParser
         string title = string.Empty, titleUnicode = string.Empty;
         string artist = string.Empty, artistUnicode = string.Empty;
         string creator = string.Empty, versionName = string.Empty;
-        string source = string.Empty, tags = string.Empty, language = string.Empty;
+        string source = string.Empty, tags = string.Empty, language = string.Empty, languages = string.Empty;
         string lyricFont = string.Empty, lyricFontFile = string.Empty;
         long? beatmapId = null, beatmapSetId = null;
         string? background = null, video = null;
@@ -288,6 +288,10 @@ public static class BeatmapPackageParser
                         // means "not stated" and never "not a language". Kept as the raw text;
                         // PackageIngest folds it onto the canonical vocabulary.
                         case "Language": language = value; break;
+                        // Every language of a multi-language map (backlog 472), canonical names joined by
+                        // commas, written by the game only when there is more than one. Authoritative over
+                        // the Language line, which then carries the primary for readers that predate it.
+                        case "Languages": languages = value; break;
                         // The mapper-chosen lyric font (backlog 291): [General] "LyricFont: <family>"
                         // and "LyricFontFile: <filename in the set>", both written by the game's
                         // encoders only when set, so absence means "no font chosen" and never "no
@@ -353,8 +357,20 @@ public static class BeatmapPackageParser
         var (lyricHeader, parsedLines) = LyricTiming.ParseSection(lyricLines,
             stripBackingVocals: formatVersion < LiteralBracketsFromVersion);
 
+        // The language list (backlog 472). A Languages line that names anything this server knows is the
+        // whole answer, and the single Language then becomes ITS primary, so everything that reads the one
+        // language (the ratings, beatmapsets.language) agrees with the list even when a hand-edited file
+        // states a different Language line. Without the line, the Language line is a one-entry list.
+        var languageList = BeatmapLanguages.ParseList(languages);
+
+        if (languageList.Count > 0)
+            language = BeatmapLanguages.Primary(languageList);
+        else
+            languageList = BeatmapLanguages.ParseList(language);
+
         return new ParsedDifficulty
         {
+            Languages = languageList,
             Filename = filename,
             ChecksumMd5 = checksumMd5,
             AudioFilename = audioFilename,

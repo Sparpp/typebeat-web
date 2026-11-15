@@ -1,6 +1,7 @@
 using Dapper;
 using Npgsql;
 using Typebeat.Web.Endpoints;
+using Typebeat.Web.Packages;
 
 namespace Typebeat.Web.Wire;
 
@@ -33,7 +34,8 @@ public static class BeatmapsetCards
                     u.username::text AS creator, s.language AS language,
                     EXISTS (SELECT 1 FROM favourites f WHERE f.set_id = s.id AND f.user_id = @viewerId) AS hasFavourited,
                     EXISTS (SELECT 1 FROM set_versions v WHERE v.set_id = s.id AND v.package_key IS NOT NULL) AS hasPackage,
-                    u.country_code::text AS creatorCountryCode, u.avatar_key AS creatorAvatarKey
+                    u.country_code::text AS creatorCountryCode, u.avatar_key AS creatorAvatarKey,
+                    array_to_string(s.languages, ',') AS languages
              {fromWhereOrder}
              """, param, cancellationToken: ct))).ToList();
 
@@ -78,6 +80,7 @@ public static class BeatmapsetCards
                 HasVideo = set.HasVideo,
                 Explicit = set.Explicit,
                 SongLanguage = set.Language,
+                SongLanguages = BeatmapLanguages.FromStoredList(set.Languages),
                 HasPackage = set.HasPackage,
                 Beatmaps = (beatmaps.GetValueOrDefault(set.Id) ?? []).Select(b => new APIBeatmapResponse
                 {
@@ -122,7 +125,9 @@ public static class BeatmapsetCards
         bool HasFavourited,
         bool HasPackage,
         string CreatorCountryCode,
-        string? CreatorAvatarKey);
+        string? CreatorAvatarKey,
+        // backlog 472. Appended last: Dapper matches this positional record's constructor by column order.
+        string Languages);
 
     private sealed record BeatmapRow(
         long SetId,
