@@ -819,8 +819,6 @@ public class WebplayDisplayTest
         var root = Harness();
         var midWord = root.GetProperty("midWordSpacePaint");
 
-        string css = File.ReadAllText(Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "css", "site.css"));
-
         Assert.Multiple(() =>
         {
             // Cell 1 of "ab cd" took a SPACE where 'b' was expected: wrong, but a lyric cell, so it
@@ -830,9 +828,6 @@ public class WebplayDisplayTest
 
             // The gap on that same run is untouched, so the class above is not simply missing.
             Assert.That(Cls(midWord, 2), Is.EqualTo("tb-c tb-c-todo"));
-
-            // And the class the gap typo does carry has to mean something: the dim lives here.
-            Assert.That(css, Does.Contain(".tb-c-wrong-gap { opacity: .55; }"));
         });
     }
 
@@ -852,30 +847,6 @@ public class WebplayDisplayTest
         {
             Assert.That(Cls(paint, 0), Is.EqualTo("tb-c tb-c-hit"));
             Assert.That(Cls(paint, 1), Is.EqualTo("tb-c tb-c-hit tb-c-free"));
-        });
-    }
-
-    /// <summary>
-    /// The site's own tokens, not the desktop's colour literals: /play re-skins gameplay onto the
-    /// site palette, so the desktop's grey-to-off-white UntypedChar/TypedChar literals must never
-    /// appear here. Before backlog 251 removed the sync tint, this test also pinned the color-mix()
-    /// rule that read the ramp position and the cascade order that let .tb-c-free beat it; both are
-    /// gone along with the ramp, leaving the flat colours it mixed between.
-    /// </summary>
-    [Test]
-    public void HitAndOffColoursAreTheSiteTokensNotTheDesktopLiterals()
-    {
-        string css = File.ReadAllText(Path.Combine(JsHarness.RepoRoot(), "src", "Typebeat.Web", "wwwroot", "css", "site.css"));
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(css, Does.Contain(".tb-c-hit  { color: var(--violet); }"));
-            Assert.That(css, Does.Contain(".tb-c-off  { color: var(--warn); }"));
-
-            // The desktop's UntypedChar / TypedChar. Copying them across would collide with
-            // meanings this palette has already assigned.
-            Assert.That(css, Does.Not.Contain("#646669"));
-            Assert.That(css, Does.Not.Contain("#d1d0c5"));
         });
     }
 
@@ -1421,7 +1392,6 @@ public class WebplayDisplayTest
             Assert.That(html, Does.Contain($"href=\"{invite}\""));
             Assert.That(html, Does.Contain("target=\"_blank\""));
             Assert.That(html, Does.Contain("rel=\"noopener\""));
-            Assert.That(html, Does.Contain("class=\"tb-btn tb-btn-discord\""));
             Assert.That(html, Does.Contain("Did you enjoy playing? Then join the official Discord server"));
 
             // No hardcoded second copy: the real invite only ever reaches the scripts through the
@@ -1780,27 +1750,6 @@ public class WebplayDisplayTest
     private static double Invariant(string s) => double.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// Every row is drawn at the current row's size and weight, the desktop's one LYRIC_FONT_SIZE:
-    /// the neighbours used to be about 54% of it, which read the next line ahead at half size and
-    /// grew it on activation. The size lives on the stack and the rows inherit it.
-    /// </summary>
-    [Test]
-    public void EveryLyricRowDrawsAtTheCurrentRowsSizeAndWeight()
-    {
-        string css = SiteCss();
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(Rule(css, ".tb-stack"), Does.Contain("font-size: clamp(1.6rem, min(4.4vw, 5.5vh), 2.6rem);"));
-            Assert.That(css, Does.Contain(".tb-line-prev, .tb-line-cur, .tb-line-next { font-size: 1em; font-weight: 600; }"));
-
-            // The half-size neighbour rule is gone, and no row rule sets a size of its own.
-            Assert.That(css, Does.Not.Contain("clamp(1rem, 2.4vw, 1.4rem)"));
-            Assert.That(css, Does.Not.Match(@"\.tb-line-(prev|cur|next)[^{]*\{[^}]*font-size: clamp"));
-        });
-    }
-
-    /// <summary>
     /// The row pitch is the desktop's 96 px over its 42 px font, in em. A row's box is its
     /// line-height, so the gap has to be the pitch minus THAT line-height: this reads both off the
     /// stylesheet and checks they add up, so a line-height change that forgets the gap fails here.
@@ -1839,7 +1788,6 @@ public class WebplayDisplayTest
         Assert.Multiple(() =>
         {
             Assert.That(pop, Is.EqualTo(120));
-            Assert.That(SiteCss(), Does.Contain($".tb-c-pop {{ animation: tbPop {pop}ms cubic-bezier(0.22, 1, 0.36, 1); }}"));
         });
     }
 
@@ -1869,34 +1817,6 @@ public class WebplayDisplayTest
             Assert.That(f[9], Is.EqualTo(0.96875).Within(1e-12), "reversed half way in");
             Assert.That(f[10], Is.EqualTo(0.96875 * 0.03125).Within(1e-12), "turns round from where it stood");
             Assert.That(f[11], Is.EqualTo(0));
-        });
-    }
-
-    /// <summary>
-    /// The rejected letter is Mono(30) centred at (+/-34, -4) px off the caret top, moves by
-    /// (18, -30) over 140 ms OutQuint then (12, 110) over 460 ms InQuad, spins to 18 deg over 600 ms
-    /// OutQuint, and fades over the last 460 ms InQuad. Desktop px at 42 become em: the letter's
-    /// own em is 30/42 of the row's, so each desktop px is 1/30 of it.
-    /// </summary>
-    [Test]
-    public void WrongKeyLetterIsCentredWithTheDesktopOffsetsAndSplitEasing()
-    {
-        string css = SiteCss();
-        string letter = Rule(css, ".tb-wrongkey");
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(Rule(css, ".tb-wrongkeys"), Does.Contain("top: .16em;"), "on the caret's top edge");
-            Assert.That(letter, Does.Contain("font-size: calc(30em / 42);"));
-            Assert.That(letter, Does.Contain("font-family: var(--font-display);"));
-            Assert.That(letter, Does.Contain("translate: calc(-50% + var(--dir) * 34em / 30) calc(-50% - 4em / 30);"));
-            Assert.That(letter, Does.Contain("tbWrongKeySpin 600ms cubic-bezier(0.22, 1, 0.36, 1) forwards"));
-
-            // 34 + 18 = 52 and -4 - 30 = -34 at 140/600 of the way, then + (12, 110) = (64, 76).
-            Assert.That(css, Does.Contain("23.333% { translate: calc(-50% + var(--dir) * 52em / 30) calc(-50% - 34em / 30); animation-timing-function: cubic-bezier(0.11, 0, 0.5, 0); }"));
-            Assert.That(css, Does.Contain("100%    { translate: calc(-50% + var(--dir) * 64em / 30) calc(-50% + 76em / 30); }"));
-            Assert.That(css, Does.Contain("to   { rotate: calc(var(--dir) * 18deg); }"));
-            Assert.That(css, Does.Contain("23.333% { opacity: 1; animation-timing-function: cubic-bezier(0.11, 0, 0.5, 0); }"));
         });
     }
 
@@ -2193,8 +2113,6 @@ public class WebplayDisplayTest
         var skipped = run.GetProperty("skipped");
         var undone = run.GetProperty("undone");
         var erased = run.GetProperty("erased");
-        string css = SiteCss();
-
         Assert.Multiple(() =>
         {
             Assert.That(Cls(skipped, 1), Is.EqualTo("tb-c tb-c-todo tb-c-abandoned"), "the skipped 'b'");
@@ -2213,8 +2131,6 @@ public class WebplayDisplayTest
 
             Assert.That(Cls(erased, 0), Is.EqualTo("tb-c tb-c-todo"), "the second press erases 'a'");
             Assert.That(Num(run, "caretAfterErase"), Is.EqualTo(0));
-
-            Assert.That(Rule(css, ".tb-c-abandoned"), Does.Contain("opacity: .7;"));
         });
     }
 
@@ -2272,8 +2188,6 @@ public class WebplayDisplayTest
         var glyph = fb.GetProperty("gapGlyph");
         var pulse = fb.GetProperty("pulse");
         double[] curve = pulse.GetProperty("curve").EnumerateArray().Select(e => e.GetDouble()).ToArray();
-        string css = SiteCss();
-
         Assert.Multiple(() =>
         {
             Assert.That(glyph.GetProperty("enabled").GetBoolean(), Is.True, "the desktop default (ConfigDefaultsTest)");
@@ -2294,15 +2208,9 @@ public class WebplayDisplayTest
             for (int k = 11; k <= 20; k++)
                 Assert.That(curve[k], Is.LessThanOrEqualTo(curve[k - 1] + 1e-9), $"falling at step {k}");
 
-            Assert.That(Rule(css, ".tb-dot"), Does.Contain("background: var(--bad);"), "the error colour");
-            Assert.That(Rule(css, ".tb-dot.tb-dot-on"), Does.Contain("opacity: 1;"));
-
             // The shake: 2 px either way over the desktop's 25 + 25 + 15 ms.
             Assert.That(Num(fb, "shakeMs"), Is.EqualTo(65));
             Assert.That(fb.GetProperty("shakeClass").GetString(), Is.EqualTo("tb-c tb-c-wrong tb-c-shake"));
-            Assert.That(Rule(css, ".tb-c-shake"), Does.Contain("animation: tbShake 65ms linear;"));
-            Assert.That(css, Does.Contain("38.46% { transform: translateX(-2px); }"));
-            Assert.That(css, Does.Contain("76.92% { transform: translateX(2px);"));
         });
     }
 

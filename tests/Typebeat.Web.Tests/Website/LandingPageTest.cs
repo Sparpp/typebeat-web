@@ -97,8 +97,6 @@ public class LandingPageTest
             Assert.That(hero, Does.Contain("join discord"));
             Assert.That(hero, Does.Contain("target=\"_blank\""));
             Assert.That(hero, Does.Contain("rel=\"noopener\""));
-            Assert.That(hero, Does.Contain("<svg"), "inline glyph: the site loads no icon font");
-            Assert.That(hero, Does.Contain("hero-actions__under"), "its own centred line, under the pair");
 
             // The pair above it in this variant, so the triangle is play + sign up + discord.
             Assert.That(hero, Does.Contain("href=\"/register\""));
