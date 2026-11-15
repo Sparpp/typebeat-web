@@ -305,6 +305,11 @@ public static class ScoreEndpoints
         // Shorthand (TypingLine.ForMods), so a stack claiming both takes the Polyglot check.
         bool shorthand = mods.Any(m => m.Acronym == ScoreSubmission.SHORTHAND_ACRONYM);
 
+        // A Spaceless play (backlog 470) is held against the map's Spaceless count. The game ignores it
+        // under Polyglot as it ignores Shorthand, and a stack claiming Shorthand too takes the Shorthand
+        // count: Shorthand already completes every space, so the game's cells are Shorthand's.
+        bool spaceless = mods.Any(m => m.Acronym == ScoreSubmission.SPACELESS_ACRONYM);
+
         if (polyglot)
         {
             if (!ScoreSubmission.PolyglotMaximumMatchesMap(maximumStatistics, polyglotSummary, literate))
@@ -316,7 +321,7 @@ public static class ScoreEndpoints
         }
         else
         {
-            int? mapJudgedCells = await ScoreSubmission.MapJudgedCellsAsync(conn, tx, tokenId, literate, shorthand);
+            int? mapJudgedCells = await ScoreSubmission.MapJudgedCellsAsync(conn, tx, tokenId, literate, shorthand, spaceless);
 
             if (!ScoreSubmission.MaximumMatchesMap(maximumStatistics, mapJudgedCells))
             {

@@ -259,6 +259,39 @@ public class ScoreSubmitIntegrityTest
     }
 
     /// <summary>
+    /// A SPACELESS play (backlog 470) is held against the map's Spaceless count, on either stream: the
+    /// default count is refused under the mod, and the mod's own count is accepted and stored unranked.
+    /// </summary>
+    [Test]
+    public async Task GameRoute_ASpacelessPlay_IsHeldAgainstTheSpacelessCount()
+    {
+        var (beatmapId, checksum) = await seedLovedMapAsync("Integrity Spaceless Count Song");
+        await countCellsAsync(beatmapId, judgedCells: 5, judgedCellsLiterate: 7, judgedCellsSpaceless: 4, judgedCellsSpacelessLiterate: 6);
+
+        // The whole map's default count, claimed by a run that never typed a space.
+        var defaultCount = await submitScoreAsync(beatmapId, checksum, totalScore: 600_000, mods: [new { acronym = "SL" }],
+            expected: HttpStatusCode.UnprocessableEntity);
+
+        var honest = await submitScoreAsync(beatmapId, checksum, totalScore: 600_000, mods: [new { acronym = "SL" }],
+            statistics: new Dictionary<string, int> { ["great"] = 4 },
+            maximumStatistics: new Dictionary<string, int> { ["great"] = 4 });
+
+        var honestLiterate = await submitScoreAsync(beatmapId, checksum, totalScore: 630_000, mods: [new { acronym = "SL" }, new { acronym = "LT" }],
+            statistics: new Dictionary<string, int> { ["great"] = 6 },
+            maximumStatistics: new Dictionary<string, int> { ["great"] = 6 });
+
+        long rows = await scoreRowsAsync(beatmapId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((string?)defaultCount["error"], Is.EqualTo("maximum_statistics does not match the beatmap"));
+            Assert.That((bool)honest["ranked"]!, Is.False, "Spaceless is unranked, so its honest play is stored off the board");
+            Assert.That((bool)honestLiterate["ranked"]!, Is.False);
+            Assert.That(rows, Is.EqualTo(2), "the refusal stored nothing");
+        });
+    }
+
+    /// <summary>
     /// A count the server cannot vouch for is not checked, so an honest play is never refused for
     /// it: a map not counted yet (the startup backfill fills it), one counted under another
     /// JudgedCells.VERSION, and one re-uploaded after the token was issued (its stored count is the
@@ -318,17 +351,19 @@ public class ScoreSubmitIntegrityTest
     // ---- helpers ----
 
     /// <summary>Stamps a seeded map's judged cell counts, as ingest or the startup backfill would.</summary>
-    private static async Task countCellsAsync(long beatmapId, int judgedCells, int judgedCellsLiterate, int version = JudgedCells.VERSION)
+    private static async Task countCellsAsync(long beatmapId, int judgedCells, int judgedCellsLiterate, int version = JudgedCells.VERSION,
+                                              int? judgedCellsSpaceless = null, int? judgedCellsSpacelessLiterate = null)
     {
         await using var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString);
         await using var conn = await dataSource.OpenConnectionAsync();
         await conn.ExecuteAsync(
             """
             UPDATE beatmaps
-            SET judged_cells = @judgedCells, judged_cells_literate = @judgedCellsLiterate, judged_cells_version = @version
+            SET judged_cells = @judgedCells, judged_cells_literate = @judgedCellsLiterate, judged_cells_version = @version,
+                judged_cells_spaceless = @judgedCellsSpaceless, judged_cells_spaceless_literate = @judgedCellsSpacelessLiterate
             WHERE id = @beatmapId
             """,
-            new { beatmapId, judgedCells, judgedCellsLiterate, version });
+            new { beatmapId, judgedCells, judgedCellsLiterate, version, judgedCellsSpaceless, judgedCellsSpacelessLiterate });
     }
 
     private static async Task<long> scoreRowsAsync(long beatmapId)

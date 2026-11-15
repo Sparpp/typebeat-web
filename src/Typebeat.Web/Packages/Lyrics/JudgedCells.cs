@@ -35,6 +35,12 @@ namespace Typebeat.Web.Packages.Lyrics;
 /// </para>
 ///
 /// <para>
+/// SPACELESS (v4, <c>SL</c>, backlog 470): every space of the stream is completed for the player
+/// (the game's <c>TypingLine.completeSpaces</c>), so it is not judged; every other cell, hold tail
+/// and tick is. Its own pair of counts again (<see cref="Counts"/>, <c>057_judged_cells_spaceless.sql</c>).
+/// </para>
+///
+/// <para>
 /// NOT <c>char_count</c>: that is a pace figure (freestyle slots excluded, default stream only), and
 /// it is pinned against the game's pace statistics, not against its converter. Polyglot changes the
 /// count too: a Polyglot play is held against its own stream instead
@@ -62,11 +68,13 @@ public static class JudgedCells
     /// a submission is never refused against a count the current rules did not produce.
     /// </summary>
     /// <remarks>3 (game PR 48, web PR 11): a hold tick may sit from the hold's head, and a held letter's
-    /// due time is the aligned era's alone, so some holds and ticks count that did not.</remarks>
-    public const int VERSION = 3;
+    /// due time is the aligned era's alone, so some holds and ticks count that did not.
+    /// 4 (backlog 470): the Spaceless pair is counted, so every row is recounted to fill it; no
+    /// existing count moves.</remarks>
+    public const int VERSION = 4;
 
-    /// <summary>The default and Literate counts, and both again under Shorthand.</summary>
-    public readonly record struct Counts(int? Cells, int? Literate, int? Shorthand, int? ShorthandLiterate);
+    /// <summary>The default and Literate counts, both again under Shorthand, and both again under Spaceless.</summary>
+    public readonly record struct Counts(int? Cells, int? Literate, int? Shorthand, int? ShorthandLiterate, int? Spaceless = null, int? SpacelessLiterate = null);
 
     /// <summary>
     /// What ingest and <see cref="Packages.JudgedCellBackfill"/> store for a parsed difficulty, or all
@@ -80,7 +88,8 @@ public static class JudgedCells
 
         var all = lines as IReadOnlyCollection<LyricLine> ?? lines.ToList();
         return new Counts(Count(all, literate: false), Count(all, literate: true),
-            Count(all, literate: false, shorthand: true), Count(all, literate: true, shorthand: true));
+            Count(all, literate: false, shorthand: true), Count(all, literate: true, shorthand: true),
+            Count(all, literate: false, spaceless: true), Count(all, literate: true, spaceless: true));
     }
 
     /// <summary>
@@ -99,13 +108,13 @@ public static class JudgedCells
         return true;
     }
 
-    /// <summary>The judged cells of the whole map, on the default or the Literate stream, with or without Shorthand.</summary>
-    public static int Count(IEnumerable<LyricLine> lines, bool literate, bool shorthand = false)
+    /// <summary>The judged cells of the whole map, on the default or the Literate stream, with or without Shorthand or Spaceless.</summary>
+    public static int Count(IEnumerable<LyricLine> lines, bool literate, bool shorthand = false, bool spaceless = false)
     {
         int total = 0;
 
         foreach (var line in lines)
-            total += CountLine(line, literate, shorthand);
+            total += CountLine(line, literate, shorthand, spaceless);
 
         return total;
     }
@@ -114,11 +123,11 @@ public static class JudgedCells
     /// One line's judgements: its cells (<see cref="CountDefault"/> or <see cref="CountLiterate"/> on a
     /// line without objects played without Shorthand), else the cells the onsets rule leaves typed
     /// plus each usable hold's tail and ticks (<c>TypingLine.build</c> with <c>wordObjects</c> on, then
-    /// <c>TypeBeatHitObject.CreateNestedHitObjects</c>).
+    /// <c>TypeBeatHitObject.CreateNestedHitObjects</c>). Under Spaceless no space is judged.
     /// </summary>
-    public static int CountLine(LyricLine line, bool literate, bool shorthand = false)
+    public static int CountLine(LyricLine line, bool literate, bool shorthand = false, bool spaceless = false)
     {
-        if (!shorthand && line.Units.All(u => u.Objects.IsEmpty))
+        if (!shorthand && !spaceless && line.Units.All(u => u.Objects.IsEmpty))
             return literate ? CountLiterate(line.RawText) : CountDefault(line.RawText);
 
         string text = line.RawText;
@@ -161,6 +170,16 @@ public static class JudgedCells
 
         if (shorthand)
             applyOnsetsOnly(expected, typeable, typed, groupOf, held);
+
+        // The game's Spaceless pass (TypingLine.completeSpaces): every space of the stream is completed.
+        if (spaceless)
+        {
+            for (int i = 0; i < expected.Length; i++)
+            {
+                if (expected[i] == ' ')
+                    typed[i] = false;
+            }
+        }
 
         int count = typed.Count(t => t);
 

@@ -125,6 +125,45 @@ public class ScoreSubmissionTest
         });
     }
 
+    /// <summary>
+    /// SPACELESS (backlog 470) judges every cell of its stream but the spaces: the default stream's
+    /// three (the hyphen's word break included), the Literate stream's two authored ones, whose
+    /// hyphen is a typed mark.
+    /// </summary>
+    [Test]
+    public void JudgedCells_SpacelessLeavesEverySpaceOut()
+    {
+        var line = new LyricLine
+        {
+            RawText = "The bad-cat sat.",
+            StartTime = 1000,
+            EndTime = 6000,
+            SingEndTime = 2300,
+            Units =
+            [
+                new TimedUnit { Text = "The", StartTime = 1000, EndTime = 1300 },
+                new TimedUnit { Text = "bad-cat", StartTime = 1300, EndTime = 1900 },
+                new TimedUnit { Text = "sat.", StartTime = 2000, EndTime = 2300 },
+            ],
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(JudgedCells.CountLine(line, literate: false), Is.EqualTo(15));
+            Assert.That(JudgedCells.CountLine(line, literate: false, spaceless: true), Is.EqualTo(12));
+            Assert.That(JudgedCells.CountLine(line, literate: true), Is.EqualTo(16));
+            Assert.That(JudgedCells.CountLine(line, literate: true, spaceless: true), Is.EqualTo(14));
+
+            // Shorthand already completes every space, so the pair counts as Shorthand alone.
+            Assert.That(JudgedCells.CountLine(line, literate: false, shorthand: true, spaceless: true),
+                Is.EqualTo(JudgedCells.CountLine(line, literate: false, shorthand: true)));
+
+            var counts = JudgedCells.ForMap([], [line]);
+            Assert.That(counts.Spaceless, Is.EqualTo(12));
+            Assert.That(counts.SpacelessLiterate, Is.EqualTo(14));
+        });
+    }
+
     [Test]
     public void MergeHitCounts_SumsKnownKeys_AndIgnoresTheRest()
     {

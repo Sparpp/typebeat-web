@@ -120,6 +120,7 @@ public class HeldPausedWordParityTest
         int plain = JudgedCells.Count(server, literate: false);
         int literate = JudgedCells.Count(server, literate: true);
         int shorthand = JudgedCells.Count(server, literate: false, shorthand: true);
+        int spaceless = JudgedCells.Count(server, literate: false, spaceless: true);
 
         Assert.Multiple(() =>
         {
@@ -129,6 +130,7 @@ public class HeldPausedWordParityTest
             Assert.That(gameMaximum(map, []), Is.EqualTo(plain), "no mods");
             Assert.That(gameMaximum(map, [new TypeBeatModLiterate()]), Is.EqualTo(literate), "LT");
             Assert.That(gameMaximum(map, [new TypeBeatModShorthand()]), Is.EqualTo(shorthand), "SH");
+            Assert.That(gameMaximum(map, [new TypeBeatModSpaceless()]), Is.EqualTo(spaceless), "SL: the holds and ticks stay, the spaces go");
         });
     }
 

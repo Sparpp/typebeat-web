@@ -195,6 +195,12 @@ public class ModInfoTest
             // Dyslexia is not Mashing: it relaxes which cell a key lands in, it does not play the
             // map for the player.
             Assert.That(ModInfo.CategoryClass("DX"), Is.Not.EqualTo(ModInfo.CategoryClass("RX")));
+
+            // Spaceless (backlog 470) is a difficulty reduction in the game, beside Shorthand.
+            Assert.That(ModInfo.Name("SL"), Is.EqualTo("Spaceless"));
+            Assert.That(ModInfo.Name("sl"), Is.EqualTo("Spaceless"));
+            Assert.That(ModInfo.CategoryClass("SL"), Is.EqualTo("reduction"));
+            Assert.That(ModInfo.CategoryClass("SL"), Is.EqualTo(ModInfo.CategoryClass("SH")));
         });
     }
 

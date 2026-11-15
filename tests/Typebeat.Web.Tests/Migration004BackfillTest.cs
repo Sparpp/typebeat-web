@@ -183,7 +183,11 @@ public class Migration004BackfillTest
             "051_hit_length.sql",
             "055_uses_word_objects.sql",
             "056_judged_cells_shorthand.sql",
+<<<<<<< HEAD
             "059_wip_status.sql",
+=======
+            "057_judged_cells_spaceless.sql",
+>>>>>>> t470-spaceless-mod
         }));
     }
 
