@@ -155,13 +155,26 @@
     // strips anything outside the typeable surface and the supported marks, and the derivation then
     // removes the marks), so every cell contributes a point, exactly as the C# does for its
     // typeable cells.
+    //
+    // A HELD cell anchors at (holdStart, i) and (holdEnd, i + 1) instead (TypingLine.
+    // rebuildSungPoints): the sweep spans its letter and its track over the hold, so the sung caret
+    // rides the travelling letter (xAt's held branch, LyricLineDisplay.HeldSungOffset). Display
+    // only, as there; and since the line's last point closes on the later of the word's end and
+    // this walk, a hold also reaches TypingLine.SweepEndTime (sweepEndTimeOf) and the pace bands'
+    // last span exactly as it does on the desktop.
     function buildSungPoints(line) {
         const points = [{ t: line.startTime, i: 0 }];
         let last = line.startTime;
         for (let i = 0; i < line.cells.length; i++) {
-            const t = Math.max(line.cells[i].target, last);
+            const cell = line.cells[i];
+            const t = Math.max(typeof cell.holdStart === 'number' ? cell.holdStart : cell.target, last);
             points.push({ t: t, i: i });
             last = t;
+            if (typeof cell.holdEnd === 'number') {
+                const end = Math.max(cell.holdEnd, last);
+                points.push({ t: end, i: i + 1 });
+                last = end;
+            }
         }
         // Close on the last word's own end, not the line's declared sung end: an editor drag of the
         // sung-end flag must not stretch or compress the caret's pace through the final character.
@@ -1242,6 +1255,190 @@
         return { alpha: Math.min(Math.max(progress * 3, 0), 1), lift: 1 - eased, scale: 0.55 + 0.45 * eased, tilt: eased };
     }
 
+    // HOLDS, the display half (LyricLineDisplay's "Hold tracks" and "The travelling letter" regions,
+    // HoldBar, and LyricStage's hold feed). A held letter opens a GAP after itself, its track, so
+    // the text after it shifts right; the track fills with the hold while the key is down, a lifted
+    // copy of the letter glides along it, and the tail's judgement flashes the bar away. The engine
+    // half (typing-engine.js's HOLDS section) is the scorer; nothing here reads back into it.
+    //
+    // The pure math below works in the desktop's own FLOAT arithmetic (Math.fround at every step
+    // the C# rounds to single precision), so WireCompat's HoldDisplayParityTest holds it against
+    // LyricLineDisplay's public statics with no tolerance. The DOM half lives in mountPlayer
+    // (layoutHolds, placeHolds, paintHold).
+    const HOLD_TRACK_LETTERS_PER_SECOND = 4;      // LyricLineDisplay.HOLD_TRACK_LETTERS_PER_SECOND
+    const HOLD_TRACK_MIN_LETTERS = 2;             // LyricLineDisplay.HOLD_TRACK_MIN_LETTERS
+    const HOLD_TRACK_MAX_LETTERS = 12;            // LyricLineDisplay.HOLD_TRACK_MAX_LETTERS
+    const HOLD_TRACK_PACED_MIN_LETTERS = 1;       // LyricLineDisplay.HOLD_TRACK_PACED_MIN_LETTERS
+    const HOLD_PACE_MIN_LETTERS_PER_SECOND = 1;   // LyricLineDisplay.HOLD_PACE_MIN_LETTERS_PER_SECOND
+    const HOLD_PACE_MAX_LETTERS_PER_SECOND = 8;   // LyricLineDisplay.HOLD_PACE_MAX_LETTERS_PER_SECOND
+    // The bar's thickness and a tick's size, in px: the desktop's sizes at its default font, as the
+    // sweep rail (3px, SWEEP_RAIL_HEIGHT) and the cue bars already are here. HOLD_TRACK_HEIGHT is
+    // the rail's plus one pixel, and a tick is half the track wide and three tracks tall.
+    const HOLD_TRACK_HEIGHT = 4;                  // LyricLineDisplay.HOLD_TRACK_HEIGHT
+    const HOLD_TICK_WIDTH = 2;                    // LyricLineDisplay.HOLD_TICK_WIDTH
+    const HOLD_TICK_HEIGHT = 12;                  // LyricLineDisplay.HOLD_TICK_HEIGHT
+    const HOLD_LIFT_FRACTION = 0.12;              // LyricLineDisplay.HOLD_LIFT_FRACTION (of the glyph row)
+    const HOLD_LIFT_SCALE = 1.1;                  // LyricLineDisplay.HOLD_LIFT_SCALE
+    const HOLD_GHOST_ALPHA = 0.18;                // LyricLineDisplay.HOLD_GHOST_ALPHA
+    const HOLD_PICK_UP_MS = 80;                   // LyricLineDisplay.HOLD_PICK_UP_MS, OutQuad
+    const HOLD_SET_DOWN_MS = 100;                 // LyricLineDisplay.HOLD_SET_DOWN_MS, InOutQuad
+    // A lifted letter's hard shadow: TypeBeatStyle.TEXT_SHADOW_OFFSET (0.08 of the font) grown by
+    // LyricLineDisplay.HOLD_LIFT_SHADOW_OFFSET_FACTOR (1.75), at hold_lift_shadow's 0.4 black. The
+    // lyric glyphs here carry no resting shadow, so the letter gains this one as it lifts and loses
+    // it as it settles, rather than deepening one it already had.
+    const HOLD_LIFT_SHADOW_EM = 0.08 * 1.75;
+    const HOLD_LIFT_SHADOW_ALPHA = 0.4;
+    const HOLD_GHOST_FADE_MS = 90;                // LyricLineDisplay.flashlight_fade_ms (applyCellAlpha's fade), OutQuint
+    const HOLD_BLUR_DURATION_MS = 200;            // HoldBar.HOLD_BLUR_DURATION_MS, OutQuad
+    const HOLD_BLUR_SIGMA = 4;                    // HoldBar.HOLD_BLUR_SIGMA, px at the default font
+    const HOLD_TICK_POP_SCALE = 1.3;              // HoldBar.TICK_POP_SCALE
+    const HOLD_TICK_POP_MS = 150;                 // HoldBar.TICK_POP_MS, OutQuint
+    const HOLD_RESULT_FLASH_MS = 300;             // HoldBar.ShowResult / ShowMissed and ShowHoldResult, OutQuint
+
+    const f32 = Math.fround;
+
+    /// Math.Clamp, NaN passing through as it does there.
+    function clampTo(value, lo, hi) {
+        return value < lo ? lo : (value > hi ? hi : value);
+    }
+
+    /// LyricLineDisplay.HoldTrackWidth, both overloads in one: a track sized so the playhead keeps
+    /// the word's pace (`lettersPerSecond`, holdPaceLettersPerSecond's) across the held letter and
+    /// its track, less the letter's own advance, clamped in the font's letter widths; with no pace
+    /// (null or omitted), the duration-only rule at HOLD_TRACK_LETTERS_PER_SECOND. Single precision
+    /// exactly where the C# is.
+    function holdTrackWidth(durationMs, refAdvance, lettersPerSecond, heldAdvance) {
+        const ref = f32(refAdvance);
+        if (typeof lettersPerSecond === 'number') {
+            const letters = f32(durationMs / 1000 * lettersPerSecond - f32(f32(heldAdvance) / ref));
+            return f32(ref * clampTo(letters, HOLD_TRACK_PACED_MIN_LETTERS, HOLD_TRACK_MAX_LETTERS));
+        }
+        return f32(ref * clampTo(f32(durationMs / 1000 * HOLD_TRACK_LETTERS_PER_SECOND), HOLD_TRACK_MIN_LETTERS, HOLD_TRACK_MAX_LETTERS));
+    }
+
+    /// LyricLineDisplay.HoldPaceLettersPerSecond: the playhead's pace into a hold, in letter widths
+    /// per second, `leadInPx` covered from the previous letter's time to the hold's start, clamped;
+    /// null without a previous letter (or a non-positive span or reference).
+    function holdPaceLettersPerSecond(holdStart, previousTime, leadInPx, refAdvance) {
+        if (typeof previousTime !== 'number' || !(holdStart > previousTime) || !(f32(refAdvance) > 0)) return null;
+        const letters = f32(f32(f32(leadInPx) / f32(refAdvance)) * 1000);
+        return clampTo(letters / (holdStart - previousTime), HOLD_PACE_MIN_LETTERS_PER_SECOND, HOLD_PACE_MAX_LETTERS_PER_SECOND);
+    }
+
+    /// Whether a cell is held at all: LyricLineDisplay.holdDurations' rule (a span on both ends, of
+    /// positive length). The duration is the hold's, end less start.
+    function holdDurationOf(cell) {
+        return typeof cell.holdStart === 'number' && typeof cell.holdEnd === 'number' ? cell.holdEnd - cell.holdStart : 0;
+    }
+
+    /// The track gap after each cell (LyricLineDisplay.measureAndLayout's hold loop, with its
+    /// private holdPaceAt): 0 except after a held cell, whose gap is holdTrackWidth at the pace into
+    /// it from the nearest earlier typeable cell (that cell's hold end or target, to this one's hold
+    /// start), the lead-in being every advance and gap between them. `advances` are the cells'
+    /// measured widths and `refAdvance` the reference letter's. Gaps fill left to right, so a later
+    /// hold's lead-in takes an earlier hold's track in. The desktop also counts an auto-completed
+    /// cell as a previous letter; the browser has no Shorthand, so no cell is ever one.
+    function holdGapsFor(cells, advances, refAdvance) {
+        const n = cells.length;
+        const gaps = new Array(n).fill(0);
+        for (let i = 0; i < n; i++) {
+            const duration = holdDurationOf(cells[i]);
+            if (!(duration > 0)) continue;
+            let pace = null;
+            for (let j = i - 1; j >= 0; j--) {
+                const previous = cells[j];
+                if (!previous.typeable) continue;
+                let leadInPx = 0;
+                for (let k = j; k < i; k++) leadInPx = f32(leadInPx + f32(f32(advances[k]) + gaps[k]));
+                const start = typeof cells[i].holdStart === 'number' ? cells[i].holdStart : cells[i].target;
+                const previousTime = typeof previous.holdEnd === 'number' ? previous.holdEnd : previous.target;
+                pace = holdPaceLettersPerSecond(start, previousTime, leadInPx, refAdvance);
+                break;
+            }
+            gaps[i] = holdTrackWidth(duration, refAdvance, pace, advances[i]);
+        }
+        return gaps;
+    }
+
+    /// LyricLineDisplay.CellLefts: each cell's left edge, and last the line's width, the running sum
+    /// of the advances plus each gap. The DOM reaches the same edges by giving each held cell's span
+    /// its gap as a right margin and measuring (layoutHolds, measureRow); this is the rule written
+    /// down, for the harness.
+    function cellLefts(advances, gaps) {
+        const left = new Array(advances.length + 1);
+        let x = 0;
+        for (let i = 0; i < advances.length; i++) {
+            left[i] = x;
+            x = f32(x + f32(advances[i]));
+            if (i < gaps.length) x = f32(x + f32(gaps[i]));
+        }
+        left[advances.length] = x;
+        return left;
+    }
+
+    /// LyricLineDisplay.HoldTravelOffset: how far along its track the lifted letter is at hold fill
+    /// `fill`.
+    function holdTravelOffset(fill, trackWidth) {
+        return f32(clampTo(f32(fill), 0, 1) * f32(trackWidth));
+    }
+
+    /// LyricLineDisplay.HeldSungOffset: the playhead's offset from a held cell's left edge at
+    /// `fraction` of the hold, sweeping evenly across the letter and its track so it stays on the
+    /// travelling letter (localXFor's held branch; xAt's here).
+    function heldSungOffset(fraction, advance, trackWidth) {
+        return f32(f32(f32(advance) + f32(trackWidth)) * clampTo(fraction, 0, 1));
+    }
+
+    /// LyricStage.holdFillAt: the held share of a hold's span at `time`. Unclamped, as there: the
+    /// bar clamps it (HoldBar.Fill), and so does the travel offset.
+    function holdFillAt(time, start, end) {
+        return f32((time - start) / Math.max(1, end - start));
+    }
+
+    /// LyricLineDisplay.addHoldBars: each usable tick's place along the track, its share of the hold
+    /// span. Empty for a held cell without ticks (and for an unheld one).
+    function holdTickFractions(cell) {
+        if (!(holdDurationOf(cell) > 0) || !cell.holdTickTimes) return [];
+        const start = cell.holdStart, span = Math.max(1, cell.holdEnd - cell.holdStart);
+        return cell.holdTickTimes.map(t => f32((t - start) / span));
+    }
+
+    /// LyricStage.onHoldTailJudged's "never opened" read: a Miss at the seal (the head never
+    /// pressed), or a Miss released at or past the hold's end (the head pressed at or after it, the
+    /// only Miss that late). That hold shows the empty miss track instead of a result.
+    function holdTailNeverOpened(type, atSeal, releaseTime, holdEnd) {
+        return type === 'Miss' && (!!atSeal || (typeof holdEnd === 'number' && releaseTime >= holdEnd));
+    }
+
+    /// LyricLineDisplay.HoldResultColour, by outcome: Great and Ok are the typed colour, Meh the
+    /// caret yellow, Miss the error red. The stylesheet maps each tone onto this page's own palette
+    /// (.tb-holdres-*), as the cell states are mapped.
+    function holdResultTone(type) {
+        return type === 'Great' || type === 'Ok' ? 'typed' : (type === 'Meh' ? 'meh' : 'miss');
+    }
+
+    /// The lifted letter's pose, 0 (at rest) to 1 (fully lifted): pickUpHeldLetter's OutQuad over
+    /// HOLD_PICK_UP_MS from `pickedAt`, then, once set down at `downAt` (null while still held),
+    /// setDownHeldLetter's InOutQuad over HOLD_SET_DOWN_MS from wherever the lift had reached. The
+    /// move, the scale and the shadow share one easing and one length on the desktop, so one number
+    /// drives all three here. Clocked off the audio clock, like every stage animation.
+    function holdLiftAt(time, pickedAt, downAt) {
+        if (typeof pickedAt !== 'number') return 0;
+        const outQuad = (p) => p * (2 - p);
+        const inOutQuad = (p) => p < 0.5 ? p * p * 2 : 1 - 2 * (1 - p) * (1 - p);
+        const liftAt = (t) => outQuad(clampTo((t - pickedAt) / HOLD_PICK_UP_MS, 0, 1));
+        if (typeof downAt !== 'number' || time < downAt) return liftAt(time);
+        return liftAt(downAt) * (1 - inOutQuad(clampTo((time - downAt) / HOLD_SET_DOWN_MS, 0, 1)));
+    }
+
+    /// The held cell's ghost factor at `time` (LyricLineDisplay.holdGhost through applyCellAlpha's
+    /// animated FadeTo): `fade` is { from, to, at }, eased OutQuint over HOLD_GHOST_FADE_MS. 1 is the
+    /// cell as it is, HOLD_GHOST_ALPHA while its letter is picked up, 0 once it is set down.
+    function holdGhostAt(fade, time) {
+        if (!fade) return 1;
+        return fade.from + (fade.to - fade.from) * outQuint(clampTo((time - fade.at) / HOLD_GHOST_FADE_MS, 0, 1));
+    }
+
     // TypeBeatKeyHandler.OnKeyDown's word-gesture resolution against the default bindings
     // (Ctrl+Backspace, Ctrl+A). The desktop's gesture container matches under
     // KeyCombinationMatchingMode.Any, so a binding is satisfied with EXTRA modifiers held: Alt, and
@@ -1470,6 +1667,58 @@
         return true;
     }
 
+    // HOLDS (TypeBeatPlayfield.KeyHandler's #region Holds). A correct press of a HELD cell opens a
+    // hold in the engine, and the PHYSICAL key behind that press is remembered: its key-up ends the
+    // hold (TypingEngine.ProcessRelease), and so does any OTHER key going down first (OnKeyDown's
+    // release ahead of routing), as its own release at that key's instant. Modifiers never end one
+    // (Shift for a capital; Windows reports AltGr as Ctrl plus Alt), and neither does a key's OS
+    // repeat. The key is identified by e.code, which a keyup reports exactly as its keydown did
+    // whatever the layout, and by e.key only where a browser leaves code empty.
+    //
+    // The state lives on the host (host.holdState, made on first use) so the router stays pure over
+    // it, exactly as the selection does. Nothing here is recorded: the browser writes no replay, and
+    // the release is simply the engine call the desktop's releaseHold makes, after advancing the
+    // engine to the release (so a hold already past its end has completed as a Great in that update,
+    // and the release finds nothing to judge). The desktop also drops the held key's queued OS-repeat
+    // TEXT when another key goes down; the browser judges e.key on the keydown itself and ignores
+    // every repeat keydown, so there is no queue to drop.
+    const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'OS']);
+
+    function physicalKeyOf(e) {
+        return (typeof e.code === 'string' && e.code) ? e.code : (typeof e.key === 'string' && e.key ? e.key : null);
+    }
+
+    function isModifierKey(e) {
+        return MODIFIER_KEYS.has(e.key) || /^(Shift|Control|Alt|Meta|OS)(Left|Right)$/.test(typeof e.code === 'string' ? e.code : '');
+    }
+
+    function holdStateOf(host) {
+        return host.holdState || (host.holdState = { key: null });
+    }
+
+    // KeyHandler.releaseHold: forget the held key, and if a hold is still down judge its release at
+    // `t` (the engine advanced there first). Returns whether a release was judged.
+    function releaseHeldKey(host, t) {
+        holdStateOf(host).key = null;
+
+        const engine = host.engine;
+
+        if (!engine || engine.activeHold === null) return false;
+
+        engine.update(t);
+        return engine.processRelease(t);
+    }
+
+    // KeyHandler.OnKeyUp: the held key going up ends its hold, at the key-up's own quantised instant.
+    // mountPlayer's keyup listener calls this; a hidden tab or a lost window focus calls
+    // releaseHeldKey directly, because the page will never see that key-up (the desktop's input
+    // manager releases every key on focus loss, which reaches the same OnKeyUp).
+    function routeKeyUp(e, host) {
+        const state = holdStateOf(host);
+
+        if (state.key !== null && physicalKeyOf(e) === state.key) releaseHeldKey(host, roundHalfEven(host.now()));
+    }
+
     // TypeBeatPlayfield's key handler (TypeBeatKeyHandler.OnKeyDown), for one keydown.
     //
     // host: {
@@ -1478,9 +1727,21 @@
     //   gaps, introTarget,      the map's skip windows (computeGaps / introSkipTarget)
     //   getSelection(), setSelection(sel),   the retype selection (backlog 182)
     //   performSkip(target)     the seek
+    //   holdState               { key }, the physical key holding the active hold (made on first use)
     // }
     function routeKeyDown(e, host) {
         const engine = host.engine;
+
+        // The press's one quantised instant (THE KEYSTROKE PROTOCOL, below), taken once so the hold
+        // release ahead of it and the press itself agree on it, as the desktop's OnKeyDown does.
+        const pressTime = roundHalfEven(host.now());
+
+        // ANOTHER KEY GOING DOWN ENDS A HOLD FIRST (OnKeyDown, ahead of the key gate and of every
+        // branch below, chords and gestures included): any non-modifier, non-repeat key that is not
+        // the held key itself releases the hold at this press's instant, before the press is routed.
+        if (engine.activeHold !== null && !e.repeat && physicalKeyOf(e) !== holdStateOf(host).key && !isModifierKey(e)) {
+            releaseHeldKey(host, pressTime);
+        }
 
         // The two word-level gestures the player owns (backlog 182), and Enter's line skip, are
         // carved out BEFORE the modifier fall-through: every other Ctrl/Alt/Meta combo is left to
@@ -1503,10 +1764,10 @@
             if (isTypingChord(e)) {
                 const chars = keyToChars(e, true);
                 if (chars) {
-                    const t = roundHalfEven(host.now());
+                    const t = pressTime;
                     engine.update(t);
                     e.preventDefault();
-                    typeChars(host, chars, t);
+                    typeChars(host, chars, t, physicalKeyOf(e));
                 }
             }
             return;
@@ -1523,7 +1784,7 @@
         //
         // A rounded time can sit up to 0.5 ms under the last tick; both engines clamp the WPM
         // clock's accrual at zero for that, and nothing else reads a backwards step.
-        const t = roundHalfEven(host.now());
+        const t = pressTime;
         engine.update(t);
 
         // Backspace, gated exactly as TypeBeatPlayfield's key handler gates it: erasing only
@@ -1646,7 +1907,7 @@
         const chars = keyToChars(e, false);
         if (chars) {
             e.preventDefault();
-            typeChars(host, chars, t);
+            typeChars(host, chars, t, physicalKeyOf(e));
         }
     }
 
@@ -1664,10 +1925,16 @@
     // fall-through to the skip overlay while a selection is live, and so does this file:
     // skipAllowed() takes the selection, so a key arriving over one is a typing key even on a line
     // that reads complete, and control has already fallen through to here.
-    function typeChars(host, chars, t) {
+    //
+    // A press that OPENS a hold remembers `key`, the physical key behind it (KeyHandler.
+    // rememberHeldKey): that key's key-up is what ends the hold.
+    function typeChars(host, chars, t, key) {
         for (const ch of chars) {
             collapseSelection(host);
+            const holdBefore = host.engine.activeHold;
             host.engine.processKey(ch, t);
+            const hold = host.engine.activeHold;
+            if (key && hold !== null && hold !== holdBefore) holdStateOf(host).key = key;
         }
     }
 
@@ -2183,6 +2450,17 @@
 
         function onKeyUp(e) {
             if (hold && isHoldKey(e)) abortHold();
+            // The held key going up ends its hold (routeKeyUp). Taken while paused too: the clock is
+            // frozen at the pause, which is the instant the desktop sees a key let go during a pause
+            // at (its input manager reports the key-up on resume, at the same gameplay time).
+            if (running && engine) routeKeyUp(e, keyHost);
+        }
+
+        // The page will never see the key-up of a key held while the tab hides or the window loses
+        // focus, so the hold it holds is released now, at the clock's instant (the desktop's input
+        // manager releases every key on focus loss, and its OnKeyUp ends the hold the same way).
+        function releaseHoldOnFocusLoss() {
+            if (running && engine) releaseHeldKey(keyHost, roundHalfEven(nowMs()));
         }
 
         // --- pause / resume (backlog 311) -------------------------------------
@@ -2268,9 +2546,9 @@
         }
 
         function onVisibilityChange() {
-            if (document.hidden) { abortHold(); maybeAutoPause(); }
+            if (document.hidden) { abortHold(); releaseHoldOnFocusLoss(); maybeAutoPause(); }
         }
-        function onBlur() { blurred = true; abortHold(); maybeAutoPause(); }
+        function onBlur() { blurred = true; abortHold(); releaseHoldOnFocusLoss(); maybeAutoPause(); }
         function onFocus() { blurred = false; }
         function onCtxStateChange() {
             const st = audioCtx ? audioCtx.state : 'closed';
@@ -2442,6 +2720,21 @@
             }
             rowObj.backingBox.textContent = '';
             rowObj.backing = [];
+            // The HOLD TRACKS (LyricLineDisplay.addHoldBars): one bar per held cell in the gap after
+            // it, and, while its letter is picked up, the lifted copy of that letter, in a layer of
+            // the row's own after the glyphs, so both ride the row's fit and paint in front of the
+            // text (the desktop's traveller sits at Depth -2, in front of the glyphs and the track).
+            // The layer is built empty with every line change; layoutHolds sizes the gaps,
+            // placeHolds lays the bars over them and paintHold draws each from holdViews.
+            if (!rowObj.holdsBox) {
+                rowObj.holdsBox = el('div', 'tb-holdbars');
+                rowObj.row.appendChild(rowObj.holdsBox);
+            }
+            rowObj.holdsBox.textContent = '';
+            rowObj.holds = [];
+            rowObj.advances = null;
+            rowObj.gaps = null;
+            rowObj.xProbe = null;
             if (!line) return;
 
             const backingWords = line.backing || [];
@@ -2482,8 +2775,95 @@
                     rowObj.dots.push({ index: i, el: dot, shown: false, scale: 1 });
                     rowObj.dotsBox.appendChild(dot);
                 }
+                // A bar for a held cell (holdDurations > 0): the track with its fill inside it, and
+                // one waiting tick per usable tick beside the track, at its share of the hold span
+                // (HoldBar.SetTicks). The ticks are siblings of the masked track, not children,
+                // because they are taller than it.
+                if (holdDurationOf(line.cells[i]) > 0) {
+                    const bar = el('div', 'tb-holdbar');
+                    const track = el('div', 'tb-holdbar-track');
+                    const fill = el('div', 'tb-holdbar-fill');
+                    track.appendChild(fill);
+                    bar.appendChild(track);
+                    const ticks = [];
+                    for (const fraction of holdTickFractions(line.cells[i])) {
+                        const tick = el('span', 'tb-holdbar-tick');
+                        tick.style.left = (fraction * 100).toFixed(4) + '%';
+                        ticks.push({ el: tick, state: '' });
+                        bar.appendChild(tick);
+                    }
+                    rowObj.holds.push({ index: i, el: bar, fill: fill, ticks: ticks, fillPct: '', barState: '', letter: null, letterState: '', pose: '', ghost: '' });
+                    rowObj.holdsBox.appendChild(bar);
+                }
             }
             rowObj.cellsBox.appendChild(frag);
+            // The x-height probe a line with holds measures its track's height off (placeHolds): a
+            // zero-width box one ex tall standing on the baseline, so its bottom is the baseline and
+            // its height the font's x-height, which is LyricLineDisplay.XHeightCentre's measurement
+            // of the 'x' glyph taken in this page's own font. It takes no room in the line.
+            if (rowObj.holds.length > 0) {
+                rowObj.xProbe = el('span', 'tb-xprobe');
+                rowObj.cellsBox.appendChild(rowObj.xProbe);
+            }
+        }
+
+        // HOLD TRACK LAYOUT (LyricLineDisplay.measureAndLayout's hold loop). Each held cell's span
+        // takes its track as a right margin, so every later cell, and with it every overlay placed
+        // off the measured offsets (the carets, the sweep, the bands, the dots and the marks), moves
+        // right by the track exactly as cellX does on the desktop. The advances are the spans' own
+        // measured widths in row-local (pre-scale) px and the reference advance is the first
+        // typeable letter's, else 0.6 of the font size, as there. Runs before the fit, which then
+        // sees the widened line, and on every relayout, since a resize changes the font size.
+        function layoutHolds(rowObj) {
+            if (!rowObj.holds || rowObj.holds.length === 0) { rowObj.advances = null; rowObj.gaps = null; return; }
+            const line = rowObj.line;
+            const s = rowObj.scale || 1;
+            const advances = rowObj.spans.map(span => span.getBoundingClientRect().width / s);
+            let refAdvance = 0;
+            for (let i = 0; i < advances.length; i++) {
+                if (line.cells[i].typeable && line.cells[i].expected !== ' ' && advances[i] > 0.1) { refAdvance = advances[i]; break; }
+            }
+            if (refAdvance <= 0.1) refAdvance = (parseFloat(getComputedStyle(rowObj.row).fontSize) || 42) * 0.6;
+            const gaps = holdGapsFor(line.cells, advances, refAdvance);
+            for (const h of rowObj.holds) rowObj.spans[h.index].style.marginRight = gaps[h.index].toFixed(3) + 'px';
+            rowObj.advances = advances;
+            rowObj.gaps = gaps;
+        }
+
+        // Each bar spans its gap (cellX + advance, gapped width) through the x-height centre, falling
+        // back to the glyph row's middle (LyricLineDisplay.measureAndLayout). A lifted letter keeps
+        // its spot along a resized track because paintHold places it off these every frame.
+        function placeHolds(rowObj) {
+            if (!rowObj.gaps) return;
+            const s = rowObj.scale || 1;
+            const base = rowObj.row.getBoundingClientRect();
+            let glyphHeight = 0;
+            for (const span of rowObj.spans) glyphHeight = Math.max(glyphHeight, span.getBoundingClientRect().height / s);
+            rowObj.glyphHeight = glyphHeight;
+            let centre = glyphHeight / 2;
+            if (rowObj.xProbe) {
+                const probe = rowObj.xProbe.getBoundingClientRect();
+                if (probe.height > 0) centre = (probe.bottom - base.top) / s - probe.height / s / 2;
+            }
+            const top = (centre - HOLD_TRACK_HEIGHT / 2).toFixed(2) + 'px';
+            const offs = rowObj.offsets;
+            for (const h of rowObj.holds) {
+                const left = offs[h.index] + rowObj.advances[h.index];
+                h.el.style.left = (isFinite(left) ? left : 0).toFixed(2) + 'px';
+                h.el.style.width = rowObj.gaps[h.index].toFixed(2) + 'px';
+                h.el.style.top = top;
+                if (h.letter) placeHeldLetter(rowObj, h);
+            }
+        }
+
+        // The lifted letter's resting box: exactly over its cell (its left edge, its advance wide,
+        // its top, the glyph row's height), so at rest it covers the glyph it copies. The top is
+        // read off the layout (offsetTop, which no running pop or shake transform moves).
+        function placeHeldLetter(rowObj, h) {
+            const left = rowObj.offsets[h.index];
+            h.letter.style.left = (isFinite(left) ? left : 0).toFixed(2) + 'px';
+            h.letter.style.top = (rowObj.cellsBox.offsetTop + rowObj.spans[h.index].offsetTop) + 'px';
+            h.letter.style.width = rowObj.advances[h.index].toFixed(2) + 'px';
         }
 
         // Centre each dot in its gap's slot, off the same measured offsets the caret and the sweep
@@ -2528,6 +2908,190 @@
                     b.el.style.transform = 'translate(-50%, ' + (riseEm * pose.lift).toFixed(4) + 'em) scale('
                         + pose.scale.toFixed(4) + ') rotate(' + (b.tilt * pose.tilt).toFixed(3) + 'deg)';
                 }
+            }
+        }
+
+        // --- holds (the display half; LyricStage's hold feed, LyricLineDisplay, HoldBar) --------
+        // What each hold has shown so far lives in holdViews, keyed 'line:cell', not on the rows:
+        // a row is rebuilt with every line change, and a set-down letter or a settled bar must
+        // survive its line scrolling up to the previous row exactly as the desktop's display keeps
+        // its own. Rows paint from it every frame (paintHold), so a rebuilt row picks each hold up
+        // where it was. A view is { barFill, travelFill, picked, down, pickedAt, downAt, ghost,
+        // barTone, barMissed, barAt, letterTone, letterAt, ticks }.
+        function holdViewOf(lineIndex, cellIndex) {
+            const key = lineIndex + ':' + cellIndex;
+            let v = holdViews.get(key);
+            if (!v) {
+                v = {
+                    barFill: 0, travelFill: 0, picked: false, down: false, pickedAt: null, downAt: null, ghost: null,
+                    barTone: '', barMissed: false, barAt: 0, letterTone: '', letterAt: 0, ticks: []
+                };
+                holdViews.set(key, v);
+            }
+            return v;
+        }
+
+        // The ghost factor's next fade starts from wherever the last one has reached.
+        function setHoldGhost(v, to, time) {
+            v.ghost = { from: holdGhostAt(v.ghost, time), to: to, at: time };
+        }
+
+        // LyricLineDisplay.SetHoldFill: the held fraction, fed every frame the hold is down and once
+        // more at its tail. The bar takes it clamped. The first fill above 0 picks the letter up (a
+        // 0 fill, as for a never-opened hold, must not), and the letter then moves with the fill
+        // until it is set down, after which no fill moves it.
+        function setHoldFill(lineIndex, cellIndex, fill, time) {
+            const v = holdViewOf(lineIndex, cellIndex);
+            v.barFill = clampTo(fill, 0, 1);
+            if (v.picked) {
+                if (v.down) return;
+            } else if (fill > 0) {
+                // pickUpHeldLetter: the copy lifts, and the real cell fades to a ghost.
+                v.picked = true;
+                v.down = false;
+                v.pickedAt = time;
+                v.downAt = null;
+                setHoldGhost(v, HOLD_GHOST_ALPHA, time);
+            } else {
+                return;
+            }
+            v.travelFill = fill;
+        }
+
+        // LyricStage.onHoldTailJudged, with LyricLineDisplay.ShowHoldResult and ShowHoldMissed under
+        // it. The fill is first settled at the release (the per-frame feed runs a frame behind). A
+        // hold that never opened ends on the empty miss track and its letter stays home; any other
+        // tail flashes its result on the bar, and the lifted letter is set down where it stopped
+        // and flashes the same result.
+        function showHoldTail(j, time) {
+            const cell = beatmap.lines[j.lineIndex].cells[j.cellIndex];
+            if (!(holdDurationOf(cell) > 0)) return;
+            const v = holdViewOf(j.lineIndex, j.cellIndex);
+            if (holdTailNeverOpened(j.type, j.atSeal, j.releaseTime, cell.holdEnd)) {
+                setHoldFill(j.lineIndex, j.cellIndex, 0, time);
+                v.barFill = 0;
+                v.barMissed = true;
+                v.barAt = time;
+                if (v.picked) {
+                    v.picked = false;
+                    v.down = false;
+                    setHoldGhost(v, 1, time);
+                }
+                return;
+            }
+            setHoldFill(j.lineIndex, j.cellIndex, holdFillAt(j.releaseTime, cell.holdStart, cell.holdEnd), time);
+            const tone = holdResultTone(j.type);
+            v.barTone = tone;
+            v.barAt = time;
+            if (!v.picked) return;
+            if (!v.down) {
+                // setDownHeldLetter: the letter settles where it stopped, and the ghost behind it
+                // vanishes.
+                v.down = true;
+                v.downAt = time;
+                setHoldGhost(v, 0, time);
+            }
+            v.letterTone = tone;
+            v.letterAt = time;
+        }
+
+        // LyricStage.onHoldTickJudged: a hit tick lights (HoldBar.LightTick), a missed one dims to
+        // the miss track (HoldBar.MissTick). A never-opened hold's neutral misses dim the same way.
+        function showHoldTick(j, time) {
+            holdViewOf(j.lineIndex, j.cellIndex).ticks[j.tickIndex] = { hit: !!j.hit, at: time };
+        }
+
+        // A one-shot CSS animation started at `at` on the audio clock, resumed mid-way on a row that
+        // was rebuilt after it began (a negative delay), so a line scrolling up keeps its settled
+        // bars settled instead of replaying them.
+        function holdAnimationDelay(at, time) {
+            return (-Math.max(0, time - at)).toFixed(1) + 'ms';
+        }
+
+        function updateHolds(time) {
+            for (const r of rows) {
+                if (!r.holds || r.holds.length === 0) continue;
+                for (const h of r.holds) paintHold(r, h, holdViews.get(r.index + ':' + h.index) || null, time);
+            }
+        }
+
+        // One held cell's bar, ticks, lifted letter and ghost, from its view. Writes only what
+        // changed, so a settled hold costs nothing per frame.
+        function paintHold(rowObj, h, v, time) {
+            const cell = rowObj.line.cells[h.index];
+            // A set-down letter that was backspaced is no longer held (LyricLineDisplay.RefreshCell):
+            // its copy goes, and the cell is itself again at once.
+            if (v && v.picked && v.down && cell.state !== 'correct') {
+                v.picked = false;
+                v.ghost = null;
+            }
+
+            // HoldBar.Fill, the held fraction as the fill's width.
+            const fillPct = v ? (v.barFill * 100).toFixed(3) + '%' : '0%';
+            if (h.fillPct !== fillPct) {
+                h.fillPct = fillPct;
+                h.fill.style.width = fillPct;
+            }
+
+            // HoldBar.ShowResult / ShowMissed: the flash and the blur away, run by the stylesheet.
+            const barState = !v ? '' : (v.barMissed ? 'missed' : (v.barTone ? v.barTone : ''));
+            if (h.barState !== barState) {
+                h.barState = barState;
+                h.el.className = 'tb-holdbar' + (barState === 'missed' ? ' tb-holdbar-missed' : (barState ? ' tb-holdbar-done tb-holdres-' + barState : ''));
+                h.el.style.setProperty('--tb-hold-delay', barState ? holdAnimationDelay(v.barAt, time) : '0ms');
+            }
+
+            for (let k = 0; k < h.ticks.length; k++) {
+                const mark = v && v.ticks[k] ? v.ticks[k] : null;
+                const state = mark ? (mark.hit ? 'hit' : 'miss') : '';
+                const tick = h.ticks[k];
+                if (tick.state === state) continue;
+                tick.state = state;
+                tick.el.className = 'tb-holdbar-tick' + (state ? ' tb-holdbar-tick-' + state : '');
+                tick.el.style.setProperty('--tb-hold-delay', state === 'hit' ? holdAnimationDelay(mark.at, time) : '0ms');
+            }
+
+            // The travelling letter: a copy of the glyph in the cell's settled colour, lifted, grown
+            // and shadowed by holdLiftAt and carried HoldTravelOffset along the track.
+            if (v && v.picked) {
+                if (!h.letter) {
+                    h.letterBase = cellClass(cell, false, false, false, false) + ' tb-held-letter';
+                    h.letter = el('span', h.letterBase);
+                    h.letter.textContent = cellText(cell, 0, h.index, false);
+                    h.letterState = '';
+                    h.pose = '';
+                    rowObj.holdsBox.appendChild(h.letter);
+                    placeHeldLetter(rowObj, h);
+                }
+                const letterState = v.letterTone || '';
+                if (h.letterState !== letterState) {
+                    h.letterState = letterState;
+                    h.letter.className = h.letterBase + (letterState ? ' tb-held-done tb-holdres-' + letterState : '');
+                    h.letter.style.setProperty('--tb-hold-delay', letterState ? holdAnimationDelay(v.letterAt, time) : '0ms');
+                }
+                const lift = holdLiftAt(time, v.pickedAt, v.downAt);
+                const x = holdTravelOffset(v.travelFill, rowObj.gaps ? rowObj.gaps[h.index] : 0);
+                const y = -(rowObj.glyphHeight || 0) * HOLD_LIFT_FRACTION * lift;
+                const pose = 'translate(' + x.toFixed(2) + 'px, ' + y.toFixed(2) + 'px) scale(' + (1 + (HOLD_LIFT_SCALE - 1) * lift).toFixed(4) + ')';
+                if (h.pose !== pose) {
+                    h.pose = pose;
+                    h.letter.style.transform = pose;
+                    h.letter.style.textShadow = lift > 0
+                        ? '0 ' + (HOLD_LIFT_SHADOW_EM * lift).toFixed(4) + 'em 0 rgba(0, 0, 0, ' + (HOLD_LIFT_SHADOW_ALPHA * lift).toFixed(3) + ')'
+                        : 'none';
+                }
+            } else if (h.letter) {
+                h.letter.remove();
+                h.letter = null;
+            }
+
+            // The real cell's ghost (holdGhost through applyCellAlpha): an inline opacity over a
+            // correct cell, whose class sets none, and cleared once the cell is itself again.
+            const ghost = v ? holdGhostAt(v.ghost, time) : 1;
+            const ghostCss = ghost >= 1 ? '' : ghost.toFixed(3);
+            if (h.ghost !== ghostCss) {
+                h.ghost = ghostCss;
+                rowObj.spans[h.index].style.opacity = ghostCss;
             }
         }
 
@@ -2625,17 +3189,25 @@
                 last = rowObj.spans[i].getBoundingClientRect();
                 offs[i] = (last.left - base.left) / s;
             }
-            offs[n] = (last.right - base.left) / s;
+            // The line's end is past a held LAST cell's track (CellLefts adds every gap, the last
+            // one included), which its span's right edge does not reach: that is margin.
+            offs[n] = (last.right - base.left) / s + (rowObj.gaps ? rowObj.gaps[n - 1] : 0);
             rowObj.offsets = offs;
         }
 
-        /// Row-local x of a fractional cell index (mirrors LyricLineDisplay.localXFor).
+        /// Row-local x of a fractional cell index (mirrors LyricLineDisplay.localXFor). A held cell's
+        /// span covers its letter and its track (LyricLineDisplay.HeldSungOffset), which is the
+        /// measured lerp to within a subpixel; the desktop's own formula is taken there.
         function xAt(rowObj, fractionalIndex) {
             const offs = rowObj.offsets;
             const max = offs.length - 1;
             const f = fractionalIndex < 0 ? 0 : (fractionalIndex > max ? max : fractionalIndex);
             const lo = Math.floor(f);
             const hi = Math.min(lo + 1, max);
+            const gaps = rowObj.gaps;
+            if (hi === lo + 1 && gaps && lo < gaps.length && gaps[lo] > 0 && rowObj.advances && lo < rowObj.advances.length) {
+                return offs[lo] + heldSungOffset(f - lo, rowObj.advances[lo], gaps[lo]);
+            }
             return offs[lo] + (offs[hi] - offs[lo]) * (f - lo);
         }
 
@@ -2655,6 +3227,7 @@
         let popEnd = [];             // per-cell audio-clock deadline for the top-tier pop
         let shakeEnd = [];           // per-cell deadline for a landed typo's shake (backlog 316)
         let dotPulseEnd = [];        // per-cell deadline for a gap dot's pulse (backlog 316)
+        let holdViews = new Map();   // what each hold has shown, 'line:cell' -> view (holdViewOf)
         let gapActive = false, gapFrom = 0, gapTo = 0;
         // The skip the chip is currently offering (its button reads this), or null for none.
         let skipTarget = null;
@@ -2681,11 +3254,14 @@
         // than sliding to its new home.
         function relayout() {
             const avail = stack.clientWidth;
+            // The hold gaps first: they widen the line the fit then shrinks.
+            for (const r of rows) layoutHolds(r);
             for (const r of rows) fitRow(r, avail);
             for (const r of rows) measureRow(r);
             for (const r of rows) placeDots(r);
             for (const r of rows) placeMarks(r);
             for (const r of rows) placeBacking(r);
+            for (const r of rows) placeHolds(r);
             caretSnap = true;
             sungSnap = true;
         }
@@ -3091,6 +3667,9 @@
             // and not the bars drawn over it.
             const awaitingAlpha = active && engine.awaitingEntry ? '0.6' : '';
             if (rowCur.cellsBox.style.opacity !== awaitingAlpha) rowCur.cellsBox.style.opacity = awaitingAlpha;
+            // The hold tracks and the lifted letters are the line's content too (the desktop adds
+            // them to the same container its glyphs fade in), so they wait at the same grey.
+            if (rowCur.holdsBox.style.opacity !== awaitingAlpha) rowCur.holdsBox.style.opacity = awaitingAlpha;
 
             // The row the vocal is on, resolved AFTER any rebuild above, since rowFor() reads the
             // stack's current focus. null while nothing is active, and null when the song is more
@@ -3107,6 +3686,11 @@
             updateSungSyllable(time, sungRow, caretIndex, shimmerTick);
             updateSweeps(time, sungRow);
             updateBacking(time);
+            // The hold down fills its track on the sweep's clock (LyricStage.Update); once it ends
+            // nothing is fed, which freezes the fill where the tail left it.
+            const held = engine.activeHold;
+            if (held !== null) setHoldFill(held.lineIndex, held.cellIndex, holdFillAt(time, held.startTime, held.endTime), time);
+            updateHolds(time);
             updateCarets(time, elapsed, active, sungRow);
             // Repainted per frame like the caret, and for the same reason: a fit or a resize moves
             // every cell offset under it.
@@ -3263,6 +3847,8 @@
             blurred = false;
             ctxInterrupted = false;
             engine = new Core.TypingEngine(beatmap);
+            // A key held over from the last run holds nothing in this one.
+            keyHost.holdState = { key: null };
             validity = makePlaybackValidity();
             // Display-only hooks. Neither reads anything back into the engine, so nothing here
             // can move a judgement or a score.
@@ -3290,6 +3876,11 @@
                 shakeEnd[index] = now + TYPO_SHAKE_MS;
                 if (isWordGap(beatmap.lines[lineIndex].cells[index])) dotPulseEnd[index] = now + SPACE_ERROR_DOT_PULSE_MS;
             };
+            // The hold parts (TypingEngine.HoldTailJudged / HoldTickJudged), which LyricStage routes
+            // to the line's display: what a fresh run has shown starts empty.
+            holdViews = new Map();
+            engine.onHoldTailJudged = function (j) { showHoldTail(j, nowMs()); };
+            engine.onHoldTickJudged = function (j) { showHoldTick(j, nowMs()); };
             concluded = false;
             lastCurIdx = -2;
             lastFrameMs = null;
@@ -3621,6 +4212,9 @@
         isWordGesture,
         spaceIsDropped,
         routeKeyDown,
+        // The hold's key-up half of the key handler (KeyHandler.OnKeyUp and releaseHold), exported
+        // beside routeKeyDown for the display harness.
+        routeKeyUp, releaseHeldKey,
         // Keystroke to characters (backlogs 309, 383), pinned by the display harness, and the fold
         // under it, held against the game's TextInputFold.Fold by WireCompat's KeyToCharParityTest.
         keyToChars,
@@ -3657,6 +4251,30 @@
         backingAnchorOf,
         backingTiltOf,
         backingPoseAt,
+        // The hold display's pure half: the track gaps, the travel, the sweep across a held cell,
+        // the fill, the ticks' places, the lift and the ghost, pinned by PlayerDisplayHarness and,
+        // against LyricLineDisplay's public statics, by WireCompat's HoldDisplayParityTest.
+        holdTrackWidth,
+        holdPaceLettersPerSecond,
+        holdDurationOf,
+        holdGapsFor,
+        cellLefts,
+        holdTravelOffset,
+        heldSungOffset,
+        holdFillAt,
+        holdTickFractions,
+        holdTailNeverOpened,
+        holdResultTone,
+        holdLiftAt,
+        holdGhostAt,
+        holdConstants: {
+            HOLD_TRACK_LETTERS_PER_SECOND, HOLD_TRACK_MIN_LETTERS, HOLD_TRACK_MAX_LETTERS,
+            HOLD_TRACK_PACED_MIN_LETTERS, HOLD_PACE_MIN_LETTERS_PER_SECOND, HOLD_PACE_MAX_LETTERS_PER_SECOND,
+            HOLD_TRACK_HEIGHT, HOLD_TICK_WIDTH, HOLD_TICK_HEIGHT,
+            HOLD_LIFT_FRACTION, HOLD_LIFT_SCALE, HOLD_GHOST_ALPHA, HOLD_PICK_UP_MS, HOLD_SET_DOWN_MS,
+            HOLD_LIFT_SHADOW_EM, HOLD_LIFT_SHADOW_ALPHA, HOLD_GHOST_FADE_MS,
+            HOLD_BLUR_DURATION_MS, HOLD_BLUR_SIGMA, HOLD_TICK_POP_SCALE, HOLD_TICK_POP_MS, HOLD_RESULT_FLASH_MS
+        },
         constants: {
             CUE_LEAD_MS, CUE_BAR_MAX_PX, CARET_DAMP_HALF_TIME, SUNG_DAMP_HALF_TIME,
             CARET_BLINK_PERIOD, LINE_SCROLL_MS, CARET_SNAP_FACTOR, PERFECT_POP_MS,
