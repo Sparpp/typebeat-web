@@ -1,6 +1,5 @@
 using System.Net;
 using Dapper;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Newtonsoft.Json.Linq;
 using Npgsql;
 using Typebeat.Web.Endpoints;
@@ -91,7 +90,9 @@ public class LanguageListSearchTest
     /// <summary>
     /// The Discord bot's ranked-set feed sends the list beside the primary (the review of 472 found it still
     /// sent only <c>beatmapsets.language</c>). The main fixture host has no TYPEBEAT_BUDDY_KEY, so this boots
-    /// a second host with one, and reads exactly the rank event this test records.
+    /// a second host with one, and reads exactly the rank event this test records. Through
+    /// <see cref="WebsiteFixture.CreateSecondaryHost"/>, so its startup sweeps never re-derive the shared
+    /// seed under the tests after this one (this host's own sweeps were what made the 472 suite order-dependent).
     /// </summary>
     [Test]
     public async Task TheBotFeedSendsEveryLanguageBesideThePrimary()
@@ -109,9 +110,8 @@ public class LanguageListSearchTest
 
         try
         {
-            using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder => builder.UseSetting("TYPEBEAT_BUDDY_KEY", key));
+            using var factory = WebsiteFixture.CreateSecondaryHost(builder => builder.UseSetting("TYPEBEAT_BUDDY_KEY", key));
             using var client = factory.CreateDefaultClient(WebsiteFixture.BaseAddress);
-            await StartupSweepHosts.AwaitAsync(factory.Services);
 
             using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v2/beatmapsets/newly-ranked?after_id={eventId - 1}&limit=1");
             request.Headers.Add(BuddyEndpoints.KEY_HEADER, key);

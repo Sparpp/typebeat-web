@@ -1,5 +1,4 @@
 using System.Net;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Mvc.Testing.Handlers;
 using Typebeat.Web.Pages;
 
@@ -54,7 +53,7 @@ public class DownloadPageTest
         await File.WriteAllBytesAsync(Path.Combine(root, "downloads", linux_file), new byte[3_145_728]);
         await File.WriteAllBytesAsync(Path.Combine(root, "downloads", macos_file), new byte[6_291_456]);
 
-        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        using var factory = WebsiteFixture.CreateSecondaryHost(builder =>
         {
             builder.UseSetting("TYPEBEAT_GAME_DOWNLOAD", windows_file);
             builder.UseSetting("TYPEBEAT_GAME_DOWNLOAD_LINUX", linux_file);
@@ -65,7 +64,6 @@ public class DownloadPageTest
         try
         {
             using var client = factory.CreateDefaultClient(WebsiteFixture.BaseAddress, new RedirectHandler());
-            await StartupSweepHosts.AwaitAsync(factory.Services);
 
             using var page = await client.GetAsync("/download");
             string html = await page.Content.ReadAsStringAsync();

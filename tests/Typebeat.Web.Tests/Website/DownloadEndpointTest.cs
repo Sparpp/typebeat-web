@@ -1,5 +1,4 @@
 using System.Net;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Mvc.Testing.Handlers;
 
 namespace Typebeat.Web.Tests.Website;
@@ -64,7 +63,7 @@ public class DownloadEndpointTest
             pkgPayload[i] = (byte)(i % 241);
         await File.WriteAllBytesAsync(Path.Combine(root, "downloads", macos_file), pkgPayload);
 
-        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        using var factory = WebsiteFixture.CreateSecondaryHost(builder =>
         {
             builder.UseSetting("TYPEBEAT_GAME_DOWNLOAD", file_name);
             builder.UseSetting("TYPEBEAT_GAME_DOWNLOAD_MACOS", macos_file);
@@ -75,7 +74,6 @@ public class DownloadEndpointTest
         try
         {
             using var client = factory.CreateDefaultClient(WebsiteFixture.BaseAddress, new RedirectHandler());
-            await StartupSweepHosts.AwaitAsync(factory.Services);
 
             using var download = await client.GetAsync("/download/game");
             byte[] body = await download.Content.ReadAsByteArrayAsync();

@@ -7,10 +7,12 @@ using Microsoft.AspNetCore.Mvc.Testing.Handlers;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Npgsql;
 using Typebeat.Web.Auth;
 using Typebeat.Web.Caching;
 using Typebeat.Web.Email;
+using Typebeat.Web.Ops;
 
 namespace Typebeat.Web.Tests.Website;
 
@@ -130,6 +132,47 @@ public class WebsiteFixture
     /// </summary>
     public static HttpClient CreateNoRedirectClient()
         => factory!.CreateDefaultClient(BaseAddress);
+
+    /// <summary>
+    /// A second in-process host on this fixture's database, for a test that needs configuration the
+    /// shared host must not have (a TYPEBEAT_BUDDY_KEY, the game download keys). The only way such a
+    /// host should be built in this namespace.
+    ///
+    /// <para>Its startup sweeps are stripped and its <see cref="StartupSweepGate"/> is handed over
+    /// already finished, which is the truth about this database: the shared host ran the whole chain
+    /// over it at boot, before anything was seeded. Every seed after that writes rows straight into
+    /// the tables on purpose, in shapes the sweeps would rewrite (<see cref="PublicSiteSeed"/>'s
+    /// Twin Peaks stars and pace, which its own .osu blobs do not produce; scores with no score
+    /// token; unset languages; unpriced scores), so a second host's sweeps read those rows as stale
+    /// and re-derive them under every test that runs later. That was the order dependence behind
+    /// backlog 472: the bot-feed test's host re-rated Twin Peaks from its synthetic .osu (2.0 and
+    /// 6.0 stars both became 0.94), counted its judged cells (so a play claiming the seeded maximum
+    /// answered 422), and Classic-marked the tokenless scores earlier fixtures had seeded (0.95x
+    /// totals, which split a tie above a profile's cumulative score rank). A host with its own
+    /// TYPEBEAT_FILE_ROOT only escapes the blob-reading sweeps; the language and pp sweeps read
+    /// nothing but the database.</para>
+    /// </summary>
+    public static WebApplicationFactory<Program> CreateSecondaryHost(Action<IWebHostBuilder> configure)
+        => new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        {
+            configure(b);
+
+            b.ConfigureTestServices(services =>
+            {
+                for (int i = services.Count - 1; i >= 0; i--)
+                {
+                    if (services[i].ServiceType == typeof(IHostedService) && services[i].ImplementationType == typeof(StartupSweeps))
+                        services.RemoveAt(i);
+                }
+
+                var gate = new StartupSweepGate();
+                gate.MarkFingerprintsCurrent();
+                gate.Finish(failedStage: null);
+
+                services.RemoveAll<StartupSweepGate>();
+                services.AddSingleton(gate);
+            });
+        });
 
     /// <summary>
     /// A fresh, unique client IP so a caller can claim its own rate-limit bucket. Sent as
