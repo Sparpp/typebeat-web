@@ -177,7 +177,7 @@ public class RateMultiplierTest
         string[] priced =
         [
             "NF", "EZ", "HR", "SD", "GK", "FL", "LT", "RE", "RH", "FC", "FT", "CL", "MU", "PG",
-            "CT", "DX", "PT", "RX", "WU", "WD", "DT", "NC", "HT", "DC",
+            "CT", "DX", "PT", "RX", "WU", "WD", "DT", "NC", "HT", "DC", "SH", "SL",
         ];
 
         Assert.Multiple(() =>

@@ -260,11 +260,18 @@ public class PackageIngestDbTest
         var judged = await conn.QuerySingleAsync<(int? Cells, int? Literate, int? Version)>(
             "SELECT judged_cells AS Cells, judged_cells_literate AS Literate, judged_cells_version AS Version FROM beatmaps WHERE id = 1001");
 
+        // 057_judged_cells_spaceless.sql (backlog 470): the same upsert writes the Spaceless pair,
+        // which is the stream's count less its spaces.
+        var spaceless = await conn.QuerySingleAsync<(int? Cells, int? Literate)>(
+            "SELECT judged_cells_spaceless AS Cells, judged_cells_spaceless_literate AS Literate FROM beatmaps WHERE id = 1001");
+
         Assert.Multiple(() =>
         {
             Assert.That(judged.Cells, Is.EqualTo(23));
             Assert.That(judged.Literate, Is.EqualTo(23));
             Assert.That(judged.Version, Is.EqualTo(JudgedCells.VERSION));
+            Assert.That(spaceless.Cells, Is.Not.Null.And.LessThan(23));
+            Assert.That(spaceless.Literate, Is.EqualTo(spaceless.Cells), "no marks, so the two streams agree here too");
         });
 
         // Blobs + assembled package + covers exist in the store.

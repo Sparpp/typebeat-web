@@ -219,15 +219,20 @@ public class JudgedCellCountParityTest
         int literate = ServerJudgedCells.Count(server, literate: true);
         int shorthand = ServerJudgedCells.Count(server, literate: false, shorthand: true);
         int shorthandLiterate = ServerJudgedCells.Count(server, literate: true, shorthand: true);
+        int spaceless = ServerJudgedCells.Count(server, literate: false, spaceless: true);
+        int spacelessLiterate = ServerJudgedCells.Count(server, literate: true, spaceless: true);
 
         // The premise: the fixture's marks make the two streams differ, so a route that read the
         // wrong column would be caught, and Shorthand types fewer cells than either.
         Assert.That(literate, Is.GreaterThan(plain));
         Assert.That(shorthand, Is.LessThan(plain));
+        Assert.That(spaceless, Is.LessThan(plain), "Spaceless judges no space");
+        Assert.That(spacelessLiterate, Is.LessThan(literate));
 
         var submittable = new TypeBeatRuleset().CreateAllMods().Where(m => !m.LocalOnly).ToArray();
 
-        Assert.That(submittable.Select(m => m.Acronym), Does.Contain("LT").And.Contain("DT").And.Contain(ScoreSubmission.SHORTHAND_ACRONYM),
+        Assert.That(submittable.Select(m => m.Acronym), Does.Contain("LT").And.Contain("DT").And.Contain(ScoreSubmission.SHORTHAND_ACRONYM)
+                                                            .And.Contain(ScoreSubmission.SPACELESS_ACRONYM),
             "the enumeration reaches the mods");
 
         Assert.Multiple(() =>
@@ -237,15 +242,17 @@ public class JudgedCellCountParityTest
             foreach (var mod in submittable)
             {
                 // What the submit route reads: Literate in the stack selects the Literate column, and
-                // Shorthand the Shorthand one.
+                // Shorthand the Shorthand one, and Spaceless the Spaceless one.
                 int expected = mod.Acronym == Typebeat.Web.Scoring.PerformancePoints.LITERATE_ACRONYM ? literate
                     : mod.Acronym == ScoreSubmission.SHORTHAND_ACRONYM ? shorthand
+                    : mod.Acronym == ScoreSubmission.SPACELESS_ACRONYM ? spaceless
                     : plain;
                 Assert.That(GameMaximum(osu, [mod]), Is.EqualTo(expected), mod.Acronym);
             }
 
             Assert.That(GameMaximum(osu, [new TypeBeatModLiterate(), new TypeBeatModDoubleTime()]), Is.EqualTo(literate), "LT+DT");
             Assert.That(GameMaximum(osu, [new TypeBeatModLiterate(), new TypeBeatModShorthand()]), Is.EqualTo(shorthandLiterate), "LT+SH");
+            Assert.That(GameMaximum(osu, [new TypeBeatModLiterate(), new TypeBeatModSpaceless()]), Is.EqualTo(spacelessLiterate), "LT+SL");
         });
     }
 

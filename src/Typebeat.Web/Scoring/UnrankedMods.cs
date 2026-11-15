@@ -19,7 +19,7 @@ namespace Typebeat.Web.Scoring;
 /// unranked BY THIS LIST. An acronym <see cref="ModMultiplier"/> does not price is
 /// unranked anyway (<see cref="ScoreSubmission.ModRanked"/>), but a new unranked mod that is given
 /// a price there and forgotten here would store ranked and land on the shared boards. Why each of
-/// the seven is here:
+/// the eight is here:
 /// </para>
 ///
 /// <list type="bullet">
@@ -36,6 +36,8 @@ namespace Typebeat.Web.Scoring;
 /// forgiven outright, so its plays must never rank.</item>
 /// <item><c>SH</c> (Shorthand): only the first letter of each word and syllable is typed and the rest
 /// completes itself. The game ships it as experimental and unranked.</item>
+/// <item><c>SL</c> (Spaceless, backlog 470): every space completes itself and the spacebar is not
+/// input, so a run never presses the key a lyric asks for once per word. Unranked in the game.</item>
 /// </list>
 ///
 /// <para>
@@ -54,7 +56,7 @@ public static class UnrankedMods
 {
     /// <summary>The acronyms themselves, compared case-insensitively as the wire spells them.</summary>
     public static readonly IReadOnlySet<string> ACRONYMS =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "RX", "WU", "WD", "CT", "DX", "PT", "SH" };
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "RX", "WU", "WD", "CT", "DX", "PT", "SH", "SL" };
 
     /// <summary>
     /// Whether this acronym is unranked at every configuration. A null, blank or unknown acronym
