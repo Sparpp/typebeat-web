@@ -477,9 +477,9 @@ public sealed class PackageIngest(
                     // the audio it points at. Compared against the snapshot above to decide
                     // whether this upload demotes a ranked set.
                     gameplayFingerprint = incomingFingerprints[diff.BeatmapId!.Value],
-                    // Whether the map carries holds (055_uses_word_objects.sql):
-                    // the browser player has neither, so /play declines such a difficulty. Rewritten
-                    // each upload, like the rest of the parsed metadata.
+                    // Whether the map carries holds (055_uses_word_objects.sql). Both players play
+                    // them since the browser gained holds; the flag stays as a fact about the map.
+                    // Rewritten each upload, like the rest of the parsed metadata.
                     usesWordObjects = diff.UsesWordObjects,
                     // How many freestyle slots the map carries (031_freestyle_cell_count.sql).
                     // Since LyricPace v21 an ADDITION to charCount rather than a subset of it, the

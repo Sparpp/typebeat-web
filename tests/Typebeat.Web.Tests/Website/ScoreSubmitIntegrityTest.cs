@@ -315,6 +315,43 @@ public class ScoreSubmitIntegrityTest
         });
     }
 
+    /// <summary>
+    /// A difficulty with HOLDS is played in the browser like any other (it used to be refused a play
+    /// token as desktop-only): the token is minted, and its claimed maximum, a Great per cell and per
+    /// hold tail plus a LargeTickHit per hold tick, is held against the map's judged cells, which count
+    /// every tail and tick exactly as the game's does. A maximum that leaves the holds out is refused.
+    /// </summary>
+    [Test]
+    public async Task BrowserRoute_AMapWithHolds_IsPlayedAndItsHoldsAreInTheMaximum()
+    {
+        var (beatmapId, _) = await seedLovedMapAsync("Integrity Browser Holds Song");
+
+        // Nine cells, two hold tails and one tick.
+        await countCellsAsync(beatmapId, judgedCells: 12, judgedCellsLiterate: 14);
+
+        await using (var dataSource = NpgsqlDataSource.Create(WebsiteFixture.ConnectionString))
+        await using (var conn = await dataSource.OpenConnectionAsync())
+            await conn.ExecuteAsync("UPDATE beatmaps SET uses_word_objects = true WHERE id = @beatmapId", new { beatmapId });
+
+        var (refused, _) = await browserSubmitAsync(beatmapId,
+            statistics: new Dictionary<string, int> { ["great"] = 9 },
+            maximumStatistics: new Dictionary<string, int> { ["great"] = 9 },
+            expected: HttpStatusCode.UnprocessableEntity);
+
+        var (played, _) = await browserSubmitAsync(beatmapId,
+            statistics: new Dictionary<string, int> { ["great"] = 10, ["meh"] = 1, ["large_tick_hit"] = 1 },
+            maximumStatistics: new Dictionary<string, int> { ["great"] = 11, ["large_tick_hit"] = 1 });
+
+        long rows = await scoreRowsAsync(beatmapId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((string?)refused["error"], Is.EqualTo("maximum_statistics does not match the beatmap"));
+            Assert.That((bool?)played["ranked"], Is.False, "a browser play is stored unranked, holds or not");
+            Assert.That(rows, Is.EqualTo(1), "the play with its holds counted is stored");
+        });
+    }
+
     // ---- helpers ----
 
     /// <summary>Stamps a seeded map's judged cell counts, as ingest or the startup backfill would.</summary>

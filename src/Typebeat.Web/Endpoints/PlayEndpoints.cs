@@ -62,10 +62,6 @@ public static class PlayEndpoints
     private const int status_unprocessable = StatusCodes.Status422UnprocessableEntity;
     private const string web_build_hash = ScoreSubmission.BROWSER_BUILD_PREFIX + "player";
 
-    /// <summary>The token refusal for a difficulty with holds (055_uses_word_objects.sql):
-    /// play.js keys its "play it in the desktop client" message off this exact wording.</summary>
-    private const string desktop_only_error = "desktop only map";
-
     /// <summary>The response header GET /play/map/{setId}/osu carries the served difficulty's
     /// stored checksum in (<c>beatmaps.checksum_md5</c>, the desktop's beatmap_hash).</summary>
     public const string ChecksumHeader = "X-Beatmap-Checksum";
@@ -356,8 +352,7 @@ public static class PlayEndpoints
             ? await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 $"""
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
-                       b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS,
-                       b.uses_word_objects AS UsesWordObjects
+                       b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.id = @beatmapId
@@ -369,8 +364,7 @@ public static class PlayEndpoints
             : await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
                 $"""
                 SELECT b.id, b.checksum_md5 AS checksumMd5, b.drain_length_s AS drainLengthS, b.skippable_s AS skippableS,
-                       b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS,
-                       b.uses_word_objects AS UsesWordObjects
+                       b.difficulty_rating AS baseStars, b.ratings::text AS ratings, b.played_duration_s AS playedDurationS
                 FROM beatmaps b
                 JOIN beatmapsets bs ON bs.id = b.set_id
                 WHERE b.set_id = @setId AND bs.status IN {BeatmapsetEndpoints.PublishedSql}
@@ -382,11 +376,6 @@ public static class PlayEndpoints
 
         if (beatmap is null)
             return WireJson.Error(status_unprocessable, "beatmap not found or not playable");
-
-        // Holds play only in the desktop client: the browser core has none,
-        // so a run here would be a different game on the same board.
-        if (beatmap.UsesWordObjects)
-            return WireJson.Error(StatusCodes.Status409Conflict, desktop_only_error);
 
         // The map the tab is holding must still be the map this difficulty IS. The player fetched
         // the .osu once, at load, and "play again" re-mints against that same text for as long as
@@ -484,8 +473,7 @@ public static class PlayEndpoints
         var beatmap = await conn.QuerySingleOrDefaultAsync<BeatmapRow>(
             """
             SELECT id, checksum_md5 AS checksumMd5, drain_length_s AS drainLengthS, skippable_s AS skippableS,
-                   difficulty_rating AS baseStars, ratings::text AS ratings, played_duration_s AS playedDurationS,
-                   uses_word_objects AS usesWordObjects
+                   difficulty_rating AS baseStars, ratings::text AS ratings, played_duration_s AS playedDurationS
             FROM beatmaps WHERE id = @beatmapId
             """,
             new { beatmapId }, tx);
@@ -914,9 +902,11 @@ public static class PlayEndpoints
     // 020_performance_points.sql addition; this player never sends rate mods, so sr_dt/sr_ht are
     // not read here).
     // Appended, never reordered: Dapper maps positional records by position (Ratings is the
-    // 034_ratings_matrix.sql addition, UsesWordObjects the 055_uses_word_objects.sql one). Every
-    // query that materialises this row must select all of its columns.
-    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS, double BaseStars, string? Ratings, double? PlayedDurationS, bool UsesWordObjects);
+    // 034_ratings_matrix.sql addition). Every query that materialises this row must select all of
+    // its columns. A map with holds (055_uses_word_objects.sql) needs no column here: the browser
+    // plays holds, and its claimed maximum is held to the map's judged cells, which count every
+    // hold's tail and ticks, exactly as the game route holds the desktop's.
+    private sealed record BeatmapRow(long Id, string ChecksumMd5, double DrainLengthS, double SkippableS, double BaseStars, string? Ratings, double? PlayedDurationS);
 
     private sealed record BuildRow(long Id, bool Blocked);
 
