@@ -47,7 +47,7 @@ public static class ProfileScores
     /// 'pending' sets are browsable, so plays on them legitimately appear.
     /// </summary>
     public static string OnVisibleSet(string set)
-        => $"{set}.status IN ('pending', 'unranked', 'ranked', 'loved')";
+        => $"{set}.status IN ('pending', 'wip', 'unranked', 'ranked', 'loved')";
 
     /// <summary>
     /// PINNED: the user's own curation (022_score_pins.sql), gated by exactly the filters the other

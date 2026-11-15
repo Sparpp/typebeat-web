@@ -111,7 +111,7 @@ public class BssUploadSessionTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(set.Status, Is.EqualTo("pending"), "a session upload publishes exactly like a direct one");
+            Assert.That(set.Status, Is.EqualTo("wip"), "a session upload publishes exactly like a direct one (to its WIP target)");
             Assert.That(set.Title, Is.EqualTo("Neon Nights"));
             Assert.That(set.CurrentVersion, Is.EqualTo(1));
             Assert.That(StoredFile($"packages/{flowSetId}/1.typb"), Does.Exist);

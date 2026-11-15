@@ -21,8 +21,8 @@ namespace Typebeat.WireCompat;
 [TestFixture]
 public class LeaderboardAvailabilityParityTest
 {
-    /// <summary>Every value <c>beatmapsets.status</c> may hold (the CHECK in 047_loved_status.sql).</summary>
-    private static readonly string[] stored_statuses = ["hidden", "pending", "unranked", "ranked", "loved", "removed"];
+    /// <summary>Every value <c>beatmapsets.status</c> may hold (the CHECK in 059_wip_status.sql).</summary>
+    private static readonly string[] stored_statuses = ["hidden", "wip", "pending", "unranked", "ranked", "loved", "removed"];
 
     [Test]
     public void ServerAndClientPickTheSameBoardForEveryStoredStatus()

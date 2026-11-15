@@ -97,8 +97,10 @@
     // server stores every browser play unranked until the browser sends a log it can audit, so
     // that is what it says. A pending or unranked map HAS a board (the unranked one the game client
     // shows), so the reason says the play does not count, not that there is nowhere for it to go.
+    // A WIP map (backlog 476) is said in words rather than as its status code.
     function notRankedReason(map, results) {
         if (!results.passed) return 'you failed this run';
+        if (map.status === 'wip') return 'this map is a work in progress, so it does not count';
         if (map.status && map.status !== 'ranked' && map.status !== 'loved') return 'this map is ' + map.status + ', so it does not count';
         return 'browser plays do not rank, only the desktop game does';
     }

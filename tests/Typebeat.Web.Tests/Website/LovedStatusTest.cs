@@ -288,7 +288,7 @@ public class LovedStatusTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(listed, Is.EquivalentTo(new[] { "pending", "unranked", "ranked", "loved" }));
+            Assert.That(listed, Is.EquivalentTo(new[] { "pending", "wip", "unranked", "ranked", "loved" }));
             foreach (string status in listed)
                 Assert.That(BeatmapsetEndpoints.IsPublished(status), Is.True, status);
             foreach (string status in new[] { "hidden", "removed" })

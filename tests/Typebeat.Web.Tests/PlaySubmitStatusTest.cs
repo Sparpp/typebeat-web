@@ -73,6 +73,10 @@ public class PlaySubmitStatusTest
         });
     }
 
+    [Test]
+    public void AWipMap_IsSaidAsAWorkInProgress_WithNoBoard()
+        => Assert.That(status("wipMap"), Is.EqualTo(("recorded, not ranked (this map is a work in progress, so it does not count) · - pp", "tb-status-muted")));
+
     /// <summary>
     /// Backlog 312's wire additions from the player's side: the token carries the page's revision
     /// and the served checksum when it has them, and leaves each off when it does not (the server
