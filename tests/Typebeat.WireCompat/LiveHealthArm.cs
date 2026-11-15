@@ -33,6 +33,11 @@ namespace Typebeat.WireCompat;
 /// <see cref="TypeBeatReplayScorer"/>'s under the live rules, and
 /// <see cref="HealthLiveParityTest"/> holds a surviving run's account against that scorer to prove
 /// it.</item>
+/// <item>A HOLD's tail and ticks take their own results the moment the engine judges them, as
+/// <c>TypeBeatPlayfield.onHoldTailJudged</c> / <c>onHoldTickJudged</c> apply them: the parts of a hold
+/// that never opened are marked combo-neutral on the score and HP-neutral on the bar first (the
+/// latter through <see cref="TypeBeatHealthFeed.OnHoldTailJudged"/> / <c>OnHoldTickJudged</c>, the
+/// calls the playfield makes), and each part is then one result, health first.</item>
 /// </list>
 ///
 /// <para>A FAILED run concludes as <c>Player.PerformFail</c> schedules it: the step that failed
@@ -50,6 +55,9 @@ internal sealed class LiveHealthArm : IDisposable
 
     private readonly TypeBeatRuleset ruleset = new TypeBeatRuleset();
     private readonly Dictionary<int, (Slot line, SortedDictionary<int, Slot> cells)> lines = new Dictionary<int, (Slot, SortedDictionary<int, Slot>)>();
+
+    /// <summary>Hold tails (tick -1) and ticks, keyed by (line, held cell, tick).</summary>
+    private readonly Dictionary<(int Line, int Cell, int Tick), Slot> holdParts = new Dictionary<(int, int, int), Slot>();
     private readonly IDisposable feed;
 
     /// <param name="playable">The playable beatmap (nested per-cell objects built), whose line
@@ -73,6 +81,12 @@ internal sealed class LiveHealthArm : IDisposable
                 cells[nested.CellIndex] = new Slot(nested);
 
             lines[lineObject.LineIndex] = (new Slot(lineObject), cells);
+
+            foreach (var nested in lineObject.NestedHitObjects)
+            {
+                if (TypeBeatResultMapping.HoldPartKey(nested) is { } key)
+                    holdParts[key] = new Slot(nested);
+            }
         }
 
         if (noFail)
@@ -91,6 +105,8 @@ internal sealed class LiveHealthArm : IDisposable
         engine.ComboRestored += onComboRestored;
         engine.WordAbandoned += onWordAbandoned;
         engine.AbandonSealed += onAbandonSealed;
+        engine.HoldTailJudged += onHoldTailJudged;
+        engine.HoldTickJudged += onHoldTickJudged;
 
         // Attached after the score seams, as the playfield attaches it.
         feed = TypeBeatHealthFeed.Attach(engine, () => Health);
@@ -170,6 +186,32 @@ internal sealed class LiveHealthArm : IDisposable
             Score.MarkComboNeutral(abandoned.LineIndex, cellIndex);
     }
 
+    /// <summary><c>TypeBeatPlayfield.onHoldTailJudged</c>: a seal Miss (head never pressed) is marked neutral first.</summary>
+    private void onHoldTailJudged(HoldTailJudgement judgement)
+    {
+        if (judgement.AtSeal)
+        {
+            Score.MarkTailComboNeutral(judgement.LineIndex, judgement.CellIndex);
+            TypeBeatHealthFeed.OnHoldTailJudged(Health, judgement);
+        }
+
+        if (holdParts.TryGetValue((judgement.LineIndex, judgement.CellIndex, -1), out var tail))
+            apply(tail, TypeBeatResultMapping.TailResult(judgement.Type));
+    }
+
+    /// <summary><c>TypeBeatPlayfield.onHoldTickJudged</c>: a never-opened hold's tick is marked neutral first.</summary>
+    private void onHoldTickJudged(HoldTickJudgement judgement)
+    {
+        if (judgement.Neutral)
+        {
+            Score.MarkTickComboNeutral(judgement.LineIndex, judgement.CellIndex, judgement.TickIndex);
+            TypeBeatHealthFeed.OnHoldTickJudged(Health, judgement);
+        }
+
+        if (holdParts.TryGetValue((judgement.LineIndex, judgement.CellIndex, judgement.TickIndex), out var tick))
+            apply(tick, TypeBeatResultMapping.TickResult(judgement.Hit));
+    }
+
     /// <summary>
     /// The account the Player would submit now: <see cref="ScoreProcessor.FailScore"/> for a failed
     /// run (rank F, passed false), <see cref="ScoreProcessor.PopulateScore"/> otherwise.
@@ -197,6 +239,8 @@ internal sealed class LiveHealthArm : IDisposable
         Engine.ComboRestored -= onComboRestored;
         Engine.WordAbandoned -= onWordAbandoned;
         Engine.AbandonSealed -= onAbandonSealed;
+        Engine.HoldTailJudged -= onHoldTailJudged;
+        Engine.HoldTickJudged -= onHoldTickJudged;
         feed.Dispose();
     }
 
