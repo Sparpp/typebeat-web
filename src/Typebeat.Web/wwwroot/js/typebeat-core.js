@@ -52,7 +52,8 @@
         WRONG_KEY_HP_DRAIN, HEALTH_EPSILON, almostBigger, FLETCHER_DRAG_GRACE_MS,
         FIRST_LINE_LEAD_MS, TypingEngine, rankFromAccuracy, rankFromStatistics,
         uncachedMaxComboPortion, maxComboPortionOf, totalScoreOf, computeScore, SHIMMER_INTERVAL_MS,
-        freestyleTick, freestyleGlyph
+        freestyleTick, freestyleGlyph, holdSlack, inHoldHandoffWindow, gradeHoldTail, usableHolds,
+        usableTicks, MIN_HOLD_MS, dotnetListSort, TICK_HEALTH_INCREASE, TICK_MISS_HEALTH_DRAIN
     } = parts;
 
     global.TypeBeatCore = {
@@ -97,7 +98,10 @@
             // against the TypeBeatHealthProcessor constant it mirrors, and the empty test's
             // epsilon against osu-framework's own Precision.DOUBLE_EPSILON.
             GREAT_HEALTH_INCREASE, OK_HEALTH_INCREASE, MEH_HEALTH_INCREASE, MISS_HEALTH_DRAIN,
-            WRONG_KEY_HP_DRAIN, HEALTH_EPSILON
+            WRONG_KEY_HP_DRAIN, HEALTH_EPSILON,
+            // HOLDS: the shortest hold a play honours (HeldWord.MIN_HOLD_MS) and a tick's two HP
+            // moves (TypeBeatHealthProcessor.TICK_HEALTH_INCREASE / TICK_MISS_HEALTH_DRAIN).
+            MIN_HOLD_MS, TICK_HEALTH_INCREASE, TICK_MISS_HEALTH_DRAIN
         },
         // Precision.AlmostBigger with its default difference, exported for the same pin.
         almostBigger,
@@ -107,6 +111,11 @@
         // computeScore's read-side memo (backlog 319), exported so a harness can hold the cached
         // answer against the loop it replaces.
         uncachedMaxComboPortion, maxComboPortionOf,
+        // HOLDS (HoldTailRule, HeldWord.UsableHolds, HoldTicks.UsableTicks): the release slack, the
+        // hand-off window and the tail grade, which the stage reads to draw a hold's release window
+        // and its outcome, and the derivations the harnesses hold against the game's. dotnetListSort
+        // is .NET's unstable List.Sort, which orders the simulated maximum run (see scoringOrderOf).
+        holdSlack, inHoldHandoffWindow, gradeHoldTail, usableHolds, usableTicks, dotnetListSort,
         // the renderer/high-level mount is attached in typebeat-player.js
     };
 })(window);

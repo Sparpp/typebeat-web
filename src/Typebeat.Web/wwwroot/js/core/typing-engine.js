@@ -10,7 +10,8 @@
 
     const {
         FREESTYLE_AUTO_CHAR, fold, syllableIndexOf, isCharTimedStretch, windowsFor, classify,
-        awardedTier, betterTier, toHitResult, ScoreProcessorMirror, HealthAccount
+        awardedTier, betterTier, toHitResult, ScoreProcessorMirror, HealthAccount,
+        inHoldHandoffWindow, gradeHoldTail
     } = parts;
 
     // ---------------------------------------------------------------------------
@@ -401,6 +402,24 @@
             this.onComboRestored = null;
             this.onFinished = null;
             this.onFailed = null;
+            // TypingEngine.HoldTailJudged / HoldTickJudged: a hold's release, or one of its ticks,
+            // was judged. Display only (the stage's tail and tick feedback): the results they carry
+            // are applied to both accounts here, in applyHoldPartResult, before either hook runs.
+            // Tail: { lineIndex, cellIndex, type, releaseTime, comboAfter, atSeal }.
+            // Tick: { lineIndex, cellIndex, tickIndex, hit, time, comboAfter, neutral }.
+            this.onHoldTailJudged = null;
+            this.onHoldTickJudged = null;
+
+            // HOLDS (TypingEngine.Holds.cs). The hold currently down, set by a correct press of a
+            // held cell (openHoldIfHeld) and cleared when its tail is judged: { lineIndex,
+            // cellIndex, startTime, endTime, pressTime }, or null. TypingEngine.ActiveHold.
+            this.activeHold = null;
+            // How many of each held cell's ticks are judged so far ('line:cell' -> count; ticks are
+            // judged in order), and which tails are judged already, so a retyped head cannot open
+            // its hold twice (TypingEngine.ticksJudged / judgedTails, cleared with the rest of the
+            // play state in resetHolds; this mirror has no reset, so the constructor is that).
+            this.ticksJudged = new Map();
+            this.judgedTails = new Set();
         }
 
         // The HP bar the HUD draws: the health account's value (HealthProcessor.Health), in [0, 1].
@@ -448,8 +467,13 @@
             return true;
         }
 
+        // TypingEngine.canSeal: the DEADLINE half of a seal (LineLifecycle.CanSeal). An open HOLD
+        // blocks the early arm: a line with a hold still down seals only at its hard deadline, so a
+        // held last letter is not cut off by the line it has just finished.
         canSeal(line, time) {
-            return time >= line.endTime && (time >= line.endTime + line.sealGraceMs || this.noTypeableUntyped(line));
+            const deadline = line.endTime + line.sealGraceMs;
+            return time >= line.endTime && (time >= deadline || this.noTypeableUntyped(line))
+                && (!this.holdOpenOn(line.index) || time >= deadline);
         }
 
         // TypingEngine.finishedEarly. EARLY FINISH (bit 4 of the second CONFIG flags word): the map's
@@ -466,8 +490,11 @@
         // already taken at the keypress) does NOT qualify, and neither does a line with no typeable
         // cell at all, so both keep the ordinary deadline. A player still typing when the line ends
         // is unaffected: finishedEarly reads no clock, so the line simply seals at its end as before.
+        //
+        // A hold still DOWN on the line keeps it from finishing early (TypingEngine.finishedEarly's
+        // holdOpenOn clause): its tail is still to be judged.
         finishedEarly(index) {
-            if (index !== this.lines.length - 1) return false;
+            if (index !== this.lines.length - 1 || this.holdOpenOn(index)) return false;
 
             let anyTypeable = false;
 
@@ -988,8 +1015,12 @@
             return tier;
         }
 
-        sealLine(idx) {
+        sealLine(idx, time) {
             const line = this.lines[idx];
+
+            // A hold still down is graded first, before the seal's break, so the surviving run
+            // counts it (TypingEngine.sealLine's closeOpenHoldAtSeal).
+            this.closeOpenHoldAtSeal(idx, time);
 
             // The cells the line really did run out of time on, as opposed to the ones a word skip
             // had already given up: the only group whose break has not been taken yet, and
@@ -1081,6 +1112,12 @@
                 if (this.onComboBroken) this.onComboBroken();
             }
 
+            // Every hold of the line never opened takes its neutral misses now, after the seal's
+            // break and before the cells' results (TypingEngine.sealLine's sealHolds, raised ahead of
+            // LineSealed). They move no combo and no HP, so the only order that matters is the
+            // engine's own: their tails' Miss count lands with the line's.
+            this.sealHolds(idx);
+
             // PASS TWO. DrawableTypeBeatHitObject.ApplySealResults: EVERY still-unjudged nested char
             // drawable of the line takes its result at seal time, in cell order, and the loop skips
             // cells that already carry one. `judged` is deliberately not the state test above: the
@@ -1163,10 +1200,13 @@
         // browser has no Dyslexia mod, so here the two coincide and the landed cell is still what is
         // recorded, because that is what the ledger means). The one place `combo` grows by a
         // keypress, so runPositions cannot fall behind it.
-        creditCombo(cellIndex) {
+        //
+        // `lineIndex` is the C#'s creditCombo(lineIndex, cellIndex) overload: a HOLD's tail and ticks
+        // credit combo on the held cell's own line, which need not be the active one by then.
+        creditCombo(cellIndex, lineIndex = this.activeLineIndex) {
             this.combo++;
             if (this.combo > this.maxCombo) this.maxCombo = this.combo;
-            this.runPositions.push({ line: this.activeLineIndex, cell: cellIndex });
+            this.runPositions.push({ line: lineIndex, cell: cellIndex });
         }
 
         // TypingEngine.breakRun. Zero the run and hand back the positions that composed it: a
@@ -1598,6 +1638,11 @@
             }
             this.lastUpdateTime = time;
 
+            // Holds settle ahead of this update's seals (TypingEngine.Update): every tick of the
+            // open hold due by now is a hit, and a hold still down at its end is a Great there.
+            this.creditTicksDueBy(time);
+            this.completeHoldsDueBy(time);
+
             // Whether the caret ends this update on a line it was not on when the update started.
             // Only the DRAG CUTOFF inside the seal loop needs it: the ordinary activation arm and
             // the snap both auto-skip where they stand, while the cutoff's auto-skip is deferred to
@@ -1617,7 +1662,7 @@
                    && this.sealPermitted(this.nextSealIndex, time)) {
                 const index = this.nextSealIndex;
 
-                this.sealLine(index);
+                this.sealLine(index, time);
                 this.nextSealIndex++;
 
                 if (this.activeLineIndex === index) {
@@ -1725,7 +1770,12 @@
         // the window scale that travels with it, and porting the shelter would add a span nothing
         // could select. The day browser play gains a mods payload, this is the second place it has
         // to arrive, right after WINDOWS.
+        //
+        // THE HAND-OFF comes first (TypingEngine.judgedDeltaFor): the letter after a held one
+        // (handsOffFrom), pressed inside its hold's release slack, is on time, whatever the span says.
         judgedDeltaFor(line, cellIndex, time) {
+            if (this.inHandoffWindow(line, cellIndex, time)) return 0;
+
             const syllable = syllableIndexOf(line, cellIndex);
 
             if (syllable >= 0 && !isCharTimedStretch(line, cellIndex)) {
@@ -1827,6 +1877,231 @@
             if (!this.rollForwardManually(time)) this.rollForwardIfFinishedEarly(time);
 
             return true;
+        }
+
+        // ---------------------------------------------------------------------------
+        // HOLDS (mirrors Gameplay/TypingEngine.Holds.cs). A correct press of a HELD cell (one with a
+        // holdStart / holdEnd, see applyWordObjects in typing-line.js) opens its hold; letting the
+        // key go judges the TAIL on how much of the hold was held (gradeHoldTail), and each of the
+        // hold's TICKS is credited while it is down. The tail and the ticks are judged objects of
+        // their own: a hit extends combo, a miss breaks it, and each takes its own osu result
+        // (applyHoldPartResult). A hold still down at its end completes as a Great there, a hand-off
+        // pressed with the hold still down ends it at the press, a head pressed at or after the
+        // hold's end misses the tail on the spot, and a line sealing with a hold down grades it as
+        // released then. A hold whose head was never pressed takes neutral misses at its seal.
+        // ---------------------------------------------------------------------------
+
+        // TypingEngine.ProcessRelease: the held key went up, so the active hold's tail is judged at
+        // `time`. False when no hold is down. The browser's key-up handler (typebeat-player.js) is
+        // the one caller, after advancing the engine to the release, exactly as the desktop's
+        // releaseHold advances it first; a hold already past its end has completed in that update.
+        //
+        // The `failed` guard is processKey's own: the desktop stops feeding a failed play outside
+        // the engine (Player), and this engine freezes instead (see update).
+        processRelease(time) {
+            if (this.failed || this.activeHold === null) return false;
+
+            const hold = this.activeHold;
+            this.judgeHoldTail(hold, time, gradeHoldTail(hold.startTime, hold.endTime, hold.pressTime, time), false);
+            return true;
+        }
+
+        // TypingEngine.openHoldIfHeld. After a correct press: opens the cell's hold if it has one
+        // still to judge, first releasing any OTHER open hold at the press. A head pressed at or
+        // after the hold's end misses its tail on the spot, and a retype of the open hold's own head
+        // leaves it as it is.
+        openHoldIfHeld(lineIndex, cellIndex, time) {
+            const cell = this.lines[lineIndex].cells[cellIndex];
+
+            if (cell.holdStart === null || cell.holdEnd === null || this.judgedTails.has(lineIndex + ':' + cellIndex)) return;
+
+            const open = this.activeHold;
+
+            if (open !== null && open.lineIndex === lineIndex && open.cellIndex === cellIndex) return;
+
+            const hold = { lineIndex: lineIndex, cellIndex: cellIndex, startTime: cell.holdStart, endTime: cell.holdEnd, pressTime: time };
+
+            this.releaseActiveHoldAt(time);
+
+            if (time >= cell.holdEnd) {
+                this.judgeHoldTail(hold, time, 'Miss', false);
+                return;
+            }
+
+            this.activeHold = hold;
+
+            // The head may be pressed after some of its ticks: those count as held.
+            this.creditTicksDueBy(time);
+        }
+
+        // TypingEngine.inHandoffWindow: whether a press of cellIndex is a hand-off inside its hold's
+        // release slack, which judgedDeltaFor judges on time.
+        inHandoffWindow(line, cellIndex, time) {
+            const held = line.cells[cellIndex].handsOffFrom;
+
+            if (held === null || held === undefined) return false;
+
+            const cell = line.cells[held];
+
+            return cell.holdStart !== null && cell.holdEnd !== null && inHoldHandoffWindow(cell.holdStart, cell.holdEnd, time);
+        }
+
+        // TypingEngine.closeHoldHandedOff: a hand-off pressed with its hold still open (no release
+        // before it) ends the hold at the press before the press is scored, exactly as the live
+        // key-down release does.
+        closeHoldHandedOff(lineIndex, cellIndex, time) {
+            const hold = this.activeHold;
+
+            if (hold !== null && hold.lineIndex === lineIndex && this.lines[lineIndex].cells[cellIndex].handsOffFrom === hold.cellIndex) {
+                this.releaseActiveHoldAt(time);
+            }
+        }
+
+        // TypingEngine.holdOpenOn: whether line `index` has a hold down, which keeps it from sealing
+        // early (canSeal, finishedEarly).
+        holdOpenOn(index) {
+            return this.activeHold !== null && this.activeHold.lineIndex === index;
+        }
+
+        // TypingEngine.completeHoldsDueBy: a hold still down at its end is Great there.
+        completeHoldsDueBy(time) {
+            const hold = this.activeHold;
+
+            if (hold !== null && time >= hold.endTime) this.judgeHoldTail(hold, hold.endTime, 'Great', false);
+        }
+
+        // TypingEngine.closeOpenHoldAtSeal: a hold still open at its line's hard seal is graded as
+        // released then, before the seal's break, so its credit lands first on every account.
+        closeOpenHoldAtSeal(lineIndex, time) {
+            if (this.activeHold !== null && this.activeHold.lineIndex === lineIndex) this.releaseActiveHoldAt(time);
+        }
+
+        // TypingEngine.releaseActiveHoldAt: grades the open hold, if any, as released at `time`
+        // (capped at its end).
+        releaseActiveHoldAt(time) {
+            const hold = this.activeHold;
+
+            if (hold === null) return;
+
+            const release = Math.min(time, hold.endTime);
+            this.judgeHoldTail(hold, release, gradeHoldTail(hold.startTime, hold.endTime, hold.pressTime, release), false);
+        }
+
+        // TypingEngine.sealHolds: as line `lineIndex` seals, every tail still unjudged was never
+        // opened, so it is a NEUTRAL Miss, its ticks neutral misses before it: the head's own miss
+        // already took the break and the drain.
+        sealHolds(lineIndex) {
+            const cells = this.lines[lineIndex].cells;
+
+            for (let i = 0; i < cells.length; i++) {
+                const end = cells[i].holdEnd;
+
+                if (end === null || this.judgedTails.has(lineIndex + ':' + i)) continue;
+
+                this.settleTicks(lineIndex, i, null);
+
+                this.judgedTails.add(lineIndex + ':' + i);
+                this.counts.Miss = (this.counts.Miss || 0) + 1;
+
+                this.applyHoldPartResult('miss', true);
+                if (this.onHoldTailJudged) this.onHoldTailJudged({ lineIndex: lineIndex, cellIndex: i, type: 'Miss', releaseTime: end, comboAfter: this.combo, atSeal: true });
+            }
+        }
+
+        // TypingEngine.judgeHoldTail. Ticks first, so their credit or break precedes the tail's. A
+        // Great, Ok or Meh tail is a hit and credits combo on the held cell's line; a Miss breaks it
+        // and, being a break that is nobody's fixable typo, ends any outstanding claim.
+        judgeHoldTail(hold, release, type, atSeal) {
+            const wasOpen = this.activeHold === hold;
+
+            if (wasOpen) this.activeHold = null;
+
+            this.settleTicks(hold.lineIndex, hold.cellIndex, wasOpen ? release : null);
+
+            this.judgedTails.add(hold.lineIndex + ':' + hold.cellIndex);
+
+            if (type === 'Great' || type === 'Ok' || type === 'Meh') {
+                this.creditCombo(hold.cellIndex, hold.lineIndex);
+            } else {
+                this.breakRun();
+                this.discardRestorableStreak();
+                if (this.onComboBroken) this.onComboBroken();
+            }
+
+            this.counts[type] = (this.counts[type] || 0) + 1;
+
+            // TypeBeatPlayfield.onHoldTailJudged -> TypeBeatResultMapping.TailResult.
+            this.applyHoldPartResult(type === 'Great' ? 'great' : type === 'Ok' ? 'ok' : type === 'Meh' ? 'meh' : 'miss', atSeal);
+            if (this.onHoldTailJudged) this.onHoldTailJudged({ lineIndex: hold.lineIndex, cellIndex: hold.cellIndex, type: type, releaseTime: release, comboAfter: this.combo, atSeal: atSeal });
+        }
+
+        // TypingEngine.creditTicksDueBy: every tick of the open hold due by `time` is a hit.
+        creditTicksDueBy(time) {
+            const hold = this.activeHold;
+
+            if (hold === null) return;
+
+            const ticks = this.lines[hold.lineIndex].cells[hold.cellIndex].holdTickTimes;
+
+            if (ticks === null) return;
+
+            for (let next = this.ticksJudged.get(hold.lineIndex + ':' + hold.cellIndex) || 0; next < ticks.length && ticks[next] <= time; next++) {
+                this.judgeTick(hold.lineIndex, hold.cellIndex, next, ticks[next], true, false, false);
+            }
+        }
+
+        // TypingEngine.settleTicks: settles a hold's remaining ticks, hits up to `heldUntil`, then
+        // misses (only the first breaks combo). With null (the hold never opened) every tick is a
+        // neutral miss.
+        settleTicks(lineIndex, cellIndex, heldUntil) {
+            const ticks = this.lines[lineIndex].cells[cellIndex].holdTickTimes;
+
+            if (ticks === null) return;
+
+            let broke = false;
+
+            for (let next = this.ticksJudged.get(lineIndex + ':' + cellIndex) || 0; next < ticks.length; next++) {
+                if (heldUntil === null) {
+                    this.judgeTick(lineIndex, cellIndex, next, ticks[next], false, true, false);
+                } else if (ticks[next] <= heldUntil) {
+                    this.judgeTick(lineIndex, cellIndex, next, ticks[next], true, false, false);
+                } else {
+                    this.judgeTick(lineIndex, cellIndex, next, ticks[next], false, false, !broke);
+                    broke = true;
+                }
+            }
+        }
+
+        // TypingEngine.judgeTick.
+        judgeTick(lineIndex, cellIndex, tickIndex, time, hit, neutral, breaks) {
+            this.ticksJudged.set(lineIndex + ':' + cellIndex, tickIndex + 1);
+
+            if (hit) {
+                this.creditCombo(cellIndex, lineIndex);
+            } else if (breaks) {
+                this.breakRun();
+                this.discardRestorableStreak();
+                if (this.onComboBroken) this.onComboBroken();
+            }
+
+            // TypeBeatPlayfield.onHoldTickJudged -> TypeBeatResultMapping.TickResult.
+            this.applyHoldPartResult(hit ? 'large_tick_hit' : 'large_tick_miss', neutral);
+            if (this.onHoldTickJudged) this.onHoldTickJudged({ lineIndex: lineIndex, cellIndex: cellIndex, tickIndex: tickIndex, hit: hit, time: time, comboAfter: this.combo, neutral: neutral });
+        }
+
+        // TypeBeatPlayfield.onHoldTailJudged / onHoldTickJudged: a hold part's ONE osu result,
+        // applied the moment the engine judges it, health first and then the score, in the Player's
+        // own order (see applyCellResult, whose FailedAtJudgement rule it shares). `neutral` is a part
+        // of a hold that never opened: marked combo- and HP-neutral before it is applied
+        // (MarkTickComboNeutral / MarkTailComboNeutral and TypeBeatHealthFeed's matching marks).
+        // The engine judges each part once, so there is no `judged` flag to keep: the tail is
+        // guarded by judgedTails and the ticks by ticksJudged.
+        applyHoldPartResult(result, neutral) {
+            const failedAtJudgement = this.healthAccount.hasFailed;
+
+            this.healthAccount.applyResult(result, neutral);
+
+            if (!failedAtJudgement) this.processor.applyHoldResult(result, neutral);
         }
 
         processKey(c, time) {
@@ -2173,6 +2448,11 @@
 
             this.consecutiveWrongKeys = 0;
 
+            // A HAND-OFF pressed with its hold still down (no release before it) ends the hold at the
+            // press, before the press is scored, exactly as the live key-down release does
+            // (TypingEngine.judgeACorrectKey's closeHoldHandedOff).
+            this.closeHoldHandedOff(this.activeLineIndex, this.caretIndex, time);
+
             // SPACES ARE UNTIMED (backlog 148), mirroring TypingEngine.ProcessKey exactly; the
             // zeroing itself is done ABOVE the match, where a typed-through gap typo can read the
             // same value. Reaching HERE on a space CELL means a SPACE was typed on it: fold is only
@@ -2343,6 +2623,11 @@
             if (this.fletcherEnabled && this.combo === 0) this.processor.breakCombo();
 
             if (this.onCharJudged) this.onCharJudged(judgedIndex, type);
+
+            // After the judgement and before the roll (TypingEngine.judgeACorrectKey): a correct
+            // press of a HELD cell opens its hold, on the line it landed on.
+            this.openHoldIfHeld(this.activeLineIndex, judgedIndex, time);
+
             this.rollForwardIfFinishedEarly(time);
             return true;
         }

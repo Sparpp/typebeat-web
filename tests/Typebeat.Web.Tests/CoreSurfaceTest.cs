@@ -34,7 +34,8 @@ public class CoreSurfaceTest
         "ACCURACY_PORTION_MAX:number", "ACCURACY_PORTION_EXPONENT:number", "freestyleTick:function",
         "freestyleGlyph:function", "constants:object", "almostBigger:function", "usableRests:function",
         "pausedWordOf:function", "tokenCellTargets:function", "uncachedMaxComboPortion:function",
-        "maxComboPortionOf:function",
+        "maxComboPortionOf:function", "holdSlack:function", "inHoldHandoffWindow:function", "gradeHoldTail:function",
+        "usableHolds:function", "usableTicks:function", "dotnetListSort:function",
     ];
 
     private static readonly string[] constants =
@@ -45,6 +46,7 @@ public class CoreSurfaceTest
         "DEFAULT_AUDIO_GAIN:number", "MAX_AUDIO_GAIN:number", "FLETCHER_DRAG_GRACE_MS:number",
         "FIRST_LINE_LEAD_MS:number", "GREAT_HEALTH_INCREASE:number", "OK_HEALTH_INCREASE:number",
         "MEH_HEALTH_INCREASE:number", "MISS_HEALTH_DRAIN:number", "WRONG_KEY_HP_DRAIN:number", "HEALTH_EPSILON:number",
+        "MIN_HOLD_MS:number", "TICK_HEALTH_INCREASE:number", "TICK_MISS_HEALTH_DRAIN:number",
     ];
 
     private static readonly Lazy<JsonElement> harness =
