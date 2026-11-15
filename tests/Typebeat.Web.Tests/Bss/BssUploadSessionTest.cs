@@ -430,7 +430,7 @@ public class BssUploadSessionTest
         await AssertCreate422Async(owner, new { kind = "full", content_type = "application/json", total_bytes = 100, sha256 = Sha256Hex(Noise(8)) }, "content_type");
         await AssertCreate422Async(owner, new { kind = "full", total_bytes = 100, sha256 = Sha256Hex(Noise(8)) }, "content_type");
         await AssertCreate422Async(owner, new { kind = "full", content_type = multipart_content_type, total_bytes = 0, sha256 = Sha256Hex(Noise(8)) }, "total_bytes");
-        await AssertCreate422Async(owner, new { kind = "full", content_type = multipart_content_type, total_bytes = BssEndpoints.MaxUploadBodyBytes + 1, sha256 = Sha256Hex(Noise(8)) }, "total_bytes");
+        await AssertCreate422Async(owner, new { kind = "full", content_type = multipart_content_type, total_bytes = BssEndpoints.MaxUploadBodyBytes + 1, sha256 = Sha256Hex(Noise(8)) }, "Beatmap is too large (100 MB). It must be 100 MB or smaller.");
         await AssertCreate422Async(owner, new { kind = "full", content_type = multipart_content_type, total_bytes = 100, sha256 = "nope" }, "sha256");
 
         // The set gate still applies to a session, exactly as it does to a direct upload.

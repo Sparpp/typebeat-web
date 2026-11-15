@@ -570,7 +570,16 @@ public static class BssEndpoints
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity, "content_type must be the multipart/form-data content type of the upload body.");
         }
 
-        if (request.TotalBytes <= 0 || request.TotalBytes > MaxUploadBodyBytes)
+        // Too large is the one rejection here a player can cause, so it reads as one (the client shows
+        // it as-is); a non-positive size is a client bug and keeps the field-level wording.
+        if (request.TotalBytes > MaxUploadBodyBytes)
+        {
+            logger.LogWarning("Set {SetId}: upload session rejected for user {UserId}, total_bytes {TotalBytes} over the limit.", setId, user.Id, request.TotalBytes);
+            return WireJson.Error(StatusCodes.Status422UnprocessableEntity,
+                $"Beatmap is too large ({megabytes(request.TotalBytes)}). It must be {megabytes(MaxUploadBodyBytes)} or smaller.");
+        }
+
+        if (request.TotalBytes <= 0)
         {
             logger.LogWarning("Set {SetId}: upload session rejected for user {UserId}, total_bytes {TotalBytes} out of range.", setId, user.Id, request.TotalBytes);
             return WireJson.Error(StatusCodes.Status422UnprocessableEntity,
@@ -785,6 +794,9 @@ public static class BssEndpoints
         };
 
     /// <summary>64 hex characters, either case (both the declared payload hash and the per-chunk header).</summary>
+    /// <summary>Bytes as binary megabytes, one decimal at most, matching the game client's wording ("104.2 MB", "100 MB").</summary>
+    private static string megabytes(long bytes) => $"{bytes / (1024.0 * 1024.0):0.#} MB";
+
     private static bool isSha256Hex(string? value)
         => value is { Length: 64 } && value.All(char.IsAsciiHexDigit);
 
