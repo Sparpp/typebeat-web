@@ -2072,4 +2072,78 @@ function rushCapTint() {
 
 out.rushCapTint = rushCapTint();
 
+// ---- holds, the display half (LyricLineDisplay's hold tracks, HoldBar, LyricStage's hold feed) ----
+// "so long", two holds: the first letter of "so" held [1000, 1500] with a tick at 1250 (handing off
+// to its 'o', due at the hold's end), and the last letter of "long" held [2600, 3000] with no ticks,
+// starting before its own target (2750) and running to the word's end. Cells: s 1000, o 1500,
+// ' ' 1800, l 2000, o 2250, n 2500, g 2750.
+const holdOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":5000}\n' +
+    '{"text":"so long","start_ms":1000,"end_ms":3000,"words":[' +
+    '{"text":"so","start_ms":1000,"end_ms":1800,"score":1,"holds":[{"char":0,"start_ms":1000,"end_ms":1500,"ticks":[1250]}]},' +
+    '{"text":"long","start_ms":2000,"end_ms":3000,"score":1,"holds":[{"char":3,"start_ms":2600,"end_ms":3000}]}]}\n';
+
+function holdDisplay() {
+    const line = build(holdOsu).lines[0];
+    const holdPoints = D.buildSungPoints(line);
+    // Every cell one 25 px advance, the reference letter too.
+    const advances = line.cells.map(() => 25);
+    const gaps = D.holdGapsFor(line.cells, advances, 25);
+    return {
+        targets: line.cells.map(c => c.target),
+        durations: line.cells.map(c => D.holdDurationOf(c)),
+        tickFractions: line.cells.map(c => D.holdTickFractions(c)),
+        sungPointTimes: holdPoints.map(p => p.t),
+        sungPointIndices: holdPoints.map(p => p.i),
+        sungProbes: [1000, 1250, 1500, 1650, 2550, 2600, 2800, 3000, 3100],
+        sungAt: [1000, 1250, 1500, 1650, 2550, 2600, 2800, 3000, 3100].map(t => D.sungPositionAt(holdPoints, t)),
+        gaps: gaps,
+        lefts: D.cellLefts(advances, gaps),
+        // HoldTrackWidth's two rules: duration alone (2 to 12 letters at 4 a second) and paced.
+        trackByDuration: [[500, 25], [100, 25], [2000, 25], [5000, 25]].map(p => D.holdTrackWidth(p[0], p[1])),
+        trackPacedNull: D.holdTrackWidth(2000, 25, null, 25),
+        trackPaced: [[500, 25, 3, 20], [2000, 20, 4, 20], [10000, 20, 8, 20]].map(p => D.holdTrackWidth(p[0], p[1], p[2], p[3])),
+        pace: [[2600, 2500, 30, 25], [2600, 2000, 60, 30], [1000, null, 30, 25], [1000, 1000, 30, 25], [3000, 1000, 10, 25], [1000, 900, 30, 0]]
+            .map(p => D.holdPaceLettersPerSecond(p[0], p[1], p[2], p[3])),
+        travel: [[0.5, 50], [-1, 50], [2, 50], [0, 50]].map(p => D.holdTravelOffset(p[0], p[1])),
+        heldSung: [[0.5, 25, 50], [1.5, 25, 50], [-0.2, 25, 50], [0, 25, 50]].map(p => D.heldSungOffset(p[0], p[1], p[2])),
+        fill: [[1250, 1000, 1500], [900, 1000, 1500], [1600, 1000, 1500], [1000, 1000, 1000.5]].map(p => D.holdFillAt(p[0], p[1], p[2])),
+        neverOpened: [['Miss', true, 0, 1500], ['Miss', false, 1500, 1500], ['Miss', false, 1499, 1500], ['Great', true, 1500, 1500], ['Meh', false, 1600, 1500]]
+            .map(p => D.holdTailNeverOpened(p[0], p[1], p[2], p[3])),
+        tones: ['Great', 'Ok', 'Meh', 'Miss'].map(D.holdResultTone),
+        // Picked up at 1000 and never set down; set down at 1100 (fully lifted); set down mid-lift at 1040.
+        liftHeld: [999, 1000, 1040, 1080, 2000].map(t => D.holdLiftAt(t, 1000, null)),
+        liftDown: [1100, 1150, 1200, 1300].map(t => D.holdLiftAt(t, 1000, 1100)),
+        liftDownEarly: [1040, 1090, 1140].map(t => D.holdLiftAt(t, 1000, 1040)),
+        liftNever: D.holdLiftAt(1000, null, null),
+        ghostNone: D.holdGhostAt(null, 1000),
+        ghost: [1000, 1045, 1090, 2000].map(t => D.holdGhostAt({ from: 1, to: D.holdConstants.HOLD_GHOST_ALPHA, at: 1000 }, t)),
+        constants: D.holdConstants,
+        engine: holdEngineRun()
+    };
+}
+
+// The engine's hold hooks, as the display reads them, over one run of the hold line: 's' pressed on
+// time and held to its end (a Great there, its tick lit on the way), the rest typed, and 'g' never
+// pressed, so the seal settles its tail as a neutral Miss the display draws as never opened.
+function holdEngineRun() {
+    const map = build(holdOsu);
+    const engine = engineFor(map);
+    const tails = [];
+    const ticks = [];
+    engine.onHoldTailJudged = j => tails.push({ cell: j.cellIndex, type: j.type, releaseTime: j.releaseTime, atSeal: j.atSeal,
+        neverOpened: D.holdTailNeverOpened(j.type, j.atSeal, j.releaseTime, map.lines[0].cells[j.cellIndex].holdEnd) });
+    engine.onHoldTickJudged = j => ticks.push({ cell: j.cellIndex, tick: j.tickIndex, hit: j.hit });
+    let openedAt1000 = null;
+    for (const [c, t] of [['s', 1000], ['o', 1500], [' ', 1800], ['l', 2000], ['o', 2250], ['n', 2500]]) {
+        engine.update(t);
+        engine.processKey(c, t);
+        if (t === 1000) openedAt1000 = engine.activeHold === null ? null : { cell: engine.activeHold.cellIndex, start: engine.activeHold.startTime, end: engine.activeHold.endTime };
+    }
+    engine.update(8000);
+    return { openedAt1000: openedAt1000, tails: tails, ticks: ticks };
+}
+
+out.holds = holdDisplay();
+
 process.stdout.write(JSON.stringify(out));

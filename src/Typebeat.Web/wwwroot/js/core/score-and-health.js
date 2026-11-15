@@ -91,6 +91,14 @@
     //      tier than the cell's standing award amends that cell's existing result in place
     //      (TypeBeatScoreProcessor.UpdateCellResult), with no combo and no HP. See updateResult.
     //
+    //   8. TypeBeatPlayfield.onHoldTailJudged / onHoldTickJudged (holds): a hold's TAIL and each of
+    //      its TICKS are judged objects of their own (TypeBeatHoldTailObject, a Great maximum, and
+    //      TypeBeatHoldTickObject, lazer's LargeTickHit / LargeTickMiss pair), resolved the moment
+    //      the engine judges them and outside TypeBeatComboFeed: a hit extends combo and a miss
+    //      breaks it, by itself. The parts of a hold that NEVER OPENED (its tail's seal Miss and its
+    //      ticks' misses) are marked combo-neutral first, because the head's own miss already took
+    //      the break (MarkTailComboNeutral / MarkTickComboNeutral). See applyHoldResult.
+    //
     // Judgement rewind (ScoreProcessor.RevertResultInternal) has no counterpart: gameplay here is
     // never rewound, and neither is the desktop client's outside replay seeking. That includes
     // PR 43's rewind resync (TypeBeatScoreProcessor.ResyncAfterRewind re-reading every amended
@@ -112,12 +120,19 @@
     //
     // MAX_RESULT_BASE_SCORE below does not move with it: the cell's maximum is still a Great, so
     // the cell stays in the accuracy fraction and pays 0 of 300 rather than quietly leaving it.
-    const HIT_BASE_SCORE = { great: 300, ok: 100, meh: 50, good: 0, miss: 0 };
+    //
+    // The two hold-tick results take the base game's own weights: large_tick_hit 30, and its miss 0.
+    const HIT_BASE_SCORE = { great: 300, ok: 100, meh: 50, good: 0, miss: 0, large_tick_hit: 30, large_tick_miss: 0 };
 
     // Every cell judgement declares MaxResult = Great (TypeBeatCharJudgement), which is what both
     // the accuracy denominator (currentMaximumBaseScore) and the combo-portion weight
     // (GetComboScoreChange) are taken from, whatever the result actually was.
     const MAX_RESULT_BASE_SCORE = 300;
+
+    // A hold tick's maximum (TypeBeatHoldTickJudgement.MaxResult = LargeTickHit): what a tick adds
+    // to the accuracy denominator and weighs in the combo portion. A hold TAIL's maximum is a Great
+    // (TypeBeatHoldTailJudgement), so it weighs MAX_RESULT_BASE_SCORE like a cell.
+    const TICK_MAX_RESULT_BASE_SCORE = 30;
 
     // ScoreProcessor.COMBO_EXPONENT.
     const COMBO_EXPONENT = 0.5;
@@ -141,7 +156,7 @@
             this.baseScore = 0;          // currentBaseScore
             this.maximumBaseScore = 0;   // currentMaximumBaseScore
             this.judgementCount = 0;     // currentAccuracyJudgementCount
-            this.counts = { great: 0, ok: 0, meh: 0, good: 0, miss: 0 }; // ScoreResultCounts
+            this.counts = { great: 0, ok: 0, meh: 0, good: 0, miss: 0, large_tick_hit: 0, large_tick_miss: 0 }; // ScoreResultCounts
             // TypeBeatScoreProcessor.comboNeutralCells: the cells whose combo consequence has
             // ALREADY been taken by hand, at the keypress that spoiled them, so the result they
             // finally resolve with must leave combo exactly as it finds it. The C# keys this by
@@ -155,6 +170,23 @@
         // take (great/ok/meh/good/miss). All five are scorable, none is a bonus, and all five
         // affect combo: the four hits increase it, a miss breaks it.
         applyResult(result, cell) {
+            this.applyJudged(result, this.comboNeutral.has(cell), MAX_RESULT_BASE_SCORE);
+        }
+
+        // TypeBeatPlayfield.onHoldTailJudged / onHoldTickJudged -> the part's ApplyResult: a hold
+        // tail ('great' / 'ok' / 'meh' / 'miss', a Great maximum) or tick ('large_tick_hit' /
+        // 'large_tick_miss', a LargeTickHit maximum). `neutral` is the part of a hold that never
+        // opened (TypeBeatScoreProcessor.MarkTailComboNeutral / MarkTickComboNeutral), which is only
+        // ever a miss: it leaves combo where it found it and is weighted by nothing, exactly as a
+        // marked seal Miss is below.
+        applyHoldResult(result, neutral) {
+            const tick = result === 'large_tick_hit' || result === 'large_tick_miss';
+            this.applyJudged(result, neutral, tick ? TICK_MAX_RESULT_BASE_SCORE : MAX_RESULT_BASE_SCORE);
+        }
+
+        // ScoreProcessor.ApplyResultInternal for one result whose judgement's maximum is worth
+        // `maxBase`, shared by the cells (applyResult) and the hold parts (applyHoldResult).
+        applyJudged(result, neutral, maxBase) {
             this.counts[result]++;
 
             // TypeBeatScoreProcessor.MarkComboNeutral / ApplyScoreChange, folded into one branch
@@ -172,16 +204,18 @@
             // miss a line seals with: the seal's one break is back-dated to the cells it misses
             // and mirrored by hand at the same seam (breakComboTo below), so no Miss result may
             // carry it a second time and wipe a run the player built past those cells.
-            const neutral = this.comboNeutral.has(cell);
+            // IncreasesCombo / BreaksCombo: every result here affects combo, and the two misses are
+            // the ones that are not hits.
+            const hit = result !== 'miss' && result !== 'large_tick_miss';
 
             if (!neutral) {
-                if (result === 'miss') this.combo = 0;
+                if (!hit) this.combo = 0;
                 else this.combo++;
 
                 if (this.combo > this.highestCombo) this.highestCombo = this.combo;
             }
 
-            this.maximumBaseScore += MAX_RESULT_BASE_SCORE;
+            this.maximumBaseScore += maxBase;
             this.judgementCount++;
             this.baseScore += HIT_BASE_SCORE[result];
 
@@ -196,9 +230,9 @@
             // which the base implementation leaves at zero: it is a character nobody typed, and
             // paying it a full combo-weighted portion because the break was taken elsewhere would
             // be paying for it twice (measured on the C# fixture as 492794 instead of 421582).
-            const weight = (neutral && result === 'miss') ? 0 : this.combo;
+            const weight = (neutral && !hit) ? 0 : this.combo;
 
-            this.comboPortion += MAX_RESULT_BASE_SCORE * Math.pow(weight, COMBO_EXPONENT);
+            this.comboPortion += maxBase * Math.pow(weight, COMBO_EXPONENT);
         }
 
         // TypeBeatScoreProcessor.UpdateCellResult -> ScoreProcessor.UpdateScoringResult (PR 43, the
@@ -327,6 +361,8 @@
     const OK_HEALTH_INCREASE = 0.025;                        // TypeBeatHealthProcessor.OK_HEALTH_INCREASE
     const MEH_HEALTH_INCREASE = 0.02;                        // TypeBeatHealthProcessor.MEH_HEALTH_INCREASE
     const MISS_HEALTH_DRAIN = 0.0225;                        // TypeBeatHealthProcessor.MISS_HEALTH_DRAIN
+    const TICK_HEALTH_INCREASE = GREAT_HEALTH_INCREASE;      // TypeBeatHealthProcessor.TICK_HEALTH_INCREASE
+    const TICK_MISS_HEALTH_DRAIN = MISS_HEALTH_DRAIN / 2;    // TypeBeatHealthProcessor.TICK_MISS_HEALTH_DRAIN
     const WRONG_KEY_HP_DRAIN = 1.0 / WRONG_KEY_FAIL_STREAK;  // TypeBeatHealthProcessor.WRONG_KEY_HP_DRAIN
     const HEALTH_EPSILON = 1e-7;                             // osu.Framework.Utils.Precision.DOUBLE_EPSILON
 
@@ -335,14 +371,17 @@
 
     // TypeBeatHealthProcessor.GetHealthIncreaseFor, keyed on the osu RESULT alone (the same five
     // keys the score mirror uses, plus null for the line container's IgnoreHit). 'good' is the
-    // unfixed typo (TypeBeatResultMapping.UNFIXED_TYPO), HP-inert because its whole cost was
-    // charged at the keypress that typed it.
+    // typo (TypeBeatResultMapping.UNFIXED_TYPO), HP-inert because its whole cost was
+    // charged at the keypress that typed it. A hold tick follows lazer's slider-tick ratios: a hit
+    // heals like a Great, a miss drains half a Miss. A hold tail takes a cell's own four.
     function healthIncreaseFor(result) {
         switch (result) {
             case 'great': return GREAT_HEALTH_INCREASE;
             case 'ok': return OK_HEALTH_INCREASE;
             case 'meh': return MEH_HEALTH_INCREASE;
             case 'miss': return -MISS_HEALTH_DRAIN;
+            case 'large_tick_hit': return TICK_HEALTH_INCREASE;
+            case 'large_tick_miss': return -TICK_MISS_HEALTH_DRAIN;
             default: return 0;
         }
     }
@@ -370,11 +409,14 @@
         }
 
         // HealthProcessor.ApplyResultInternal + CheckDefaultFailCondition. `result` is the cell's
-        // osu result key, or null for the line container a seal resolves last.
-        applyResult(result) {
+        // osu result key, or null for the line container a seal resolves last. `neutral` is a hold
+        // part marked HP-neutral (TypeBeatHealthProcessor.MarkTailHealthNeutral /
+        // MarkTickHealthNeutral, the parts of a hold that never opened): it moves nothing, and the
+        // fail test still runs, as it does for every applied result.
+        applyResult(result, neutral = false) {
             if (this.hasFailed) return;
 
-            this.set(this.value + healthIncreaseFor(result));
+            this.set(this.value + (neutral ? 0 : healthIncreaseFor(result)));
 
             if (almostBigger(0, this.value)) this.triggerFailure();
         }
@@ -453,16 +495,43 @@
     // uncachedMaxComboPortion is the loop itself, exported so a harness can hold the two equal.
     const maxComboPortionCache = new WeakMap();
 
+    //
+    // HOLDS add their tails and ticks to that run, each one combo step of its own
+    // (TypeBeatScoreProcessor.MaximumComboFor), a tail weighing a Great and a tick a LargeTickHit.
+    // Where a tick sits in the run changes what it is weighted by, so a line with ticks walks the
+    // order the game's simulation judges its objects in (line.scoringOrder, see scoringOrderOf in
+    // typing-line.js); every other line's objects all weigh the same and are walked as they come.
     function uncachedMaxComboPortion(lines) {
         let maxComboCounter = 0, maxComboPortion = 0;
+        const step = (base) => {
+            maxComboCounter++;
+            maxComboPortion += base * Math.pow(maxComboCounter, COMBO_EXPONENT);
+        };
         for (const line of lines) {
+            if (line.scoringOrder) {
+                for (const base of line.scoringOrder) step(base);
+                continue;
+            }
             for (const cell of line.cells) {
                 if (!cell.typeable) continue;
-                maxComboCounter++;
-                maxComboPortion += MAX_RESULT_BASE_SCORE * Math.pow(maxComboCounter, COMBO_EXPONENT);
+                step(MAX_RESULT_BASE_SCORE);
+                if (cell.holdEnd !== null && cell.holdEnd !== undefined) step(MAX_RESULT_BASE_SCORE);
             }
         }
         return maxComboPortion;
+    }
+
+    // The map's whole judgement denominators (ScoreProcessor's maximumAccuracyJudgementCount and
+    // maximumBaseScore): one per typeable cell at a Great, plus one per hold tail at a Great and
+    // one per hold tick at a LargeTickHit. Every cell of the default stream is typeable, which is
+    // why the cell term is totalCells.
+    function maximumJudgementsOf(beatmap) {
+        return beatmap.totalCells + (beatmap.totalHoldTails || 0) + (beatmap.totalHoldTicks || 0);
+    }
+
+    function maximumBaseScoreOf(beatmap) {
+        return MAX_RESULT_BASE_SCORE * (beatmap.totalCells + (beatmap.totalHoldTails || 0))
+            + TICK_MAX_RESULT_BASE_SCORE * (beatmap.totalHoldTicks || 0);
     }
 
     function maxComboPortionOf(engine) {
@@ -478,7 +547,7 @@
     // throw all but one field away. The same arithmetic as computeScore's totalScore, kept apart so
     // the fuzz sweep can hold the two equal after every key and frame of every run.
     function totalScoreOf(engine) {
-        const total = engine.beatmap.totalCells;
+        const total = maximumJudgementsOf(engine.beatmap);
         const processor = engine.processor;
         const maxComboPortion = maxComboPortionOf(engine);
         const comboProgress = maxComboPortion > 0 ? processor.comboPortion / maxComboPortion : 1;
@@ -489,7 +558,12 @@
 
     function computeScore(engine) {
         const beatmap = engine.beatmap;
-        const total = beatmap.totalCells;
+        const cells = beatmap.totalCells;
+        const tails = beatmap.totalHoldTails || 0;
+        const ticks = beatmap.totalHoldTicks || 0;
+
+        // Every judged object of the map: the cells, and since holds their tails and ticks.
+        const total = maximumJudgementsOf(beatmap);
 
         // The running account the play built up, judgement by judgement, wrong key by wrong key
         // (see ScoreProcessorMirror). Nothing is reconstructed here: reconstruction is precisely
@@ -500,10 +574,14 @@
         const meh = processor.counts.meh;
         const typos = processor.counts.good; // uncorrected typos (TypeBeatResultMapping.UNFIXED_TYPO)
         const miss = processor.counts.miss;
-        const judged = processor.judgementCount; // == great + ok + meh + good + miss
+        const tickHits = processor.counts.large_tick_hit;
+        const tickMisses = processor.counts.large_tick_miss;
+        const judged = processor.judgementCount; // == great + ok + meh + good + miss + both tick keys
 
-        // Whole-map accuracy (for display/completion); server overrides the submitted value.
-        const acc = total > 0 ? processor.baseScore / (MAX_RESULT_BASE_SCORE * total) : 1;
+        // Whole-map accuracy (for display/completion); server overrides the submitted value. The
+        // denominator is the map's maximum base score, a tick's 30 beside every Great's 300.
+        const maximumBaseScore = maximumBaseScoreOf(beatmap);
+        const acc = maximumBaseScore > 0 ? processor.baseScore / maximumBaseScore : 1;
 
         // The maximum combo portion, i.e. what an all-Great run of the whole map accumulates
         // (ScoreProcessor.maximumComboPortion, stored from the autoplay simulation). One nested
@@ -526,8 +604,10 @@
         // wrong is not a cell typed, so it is in the denominator and out of the numerator and costs
         // completion, and therefore rank, exactly as a miss does (backlog 126). Between backlog 124
         // and 126 `typos` was folded into `meh` and counted here, so a run typed entirely wrong read
-        // completion 1 and took an X.
-        const completion = total > 0 ? (great + ok + meh) / total : 1;
+        // completion 1 and took an X. A held tick is a hit like any other (IsHit), so it counts as
+        // typed, and every tail and tick is in the denominator (TypeBeatScoreProcessor.
+        // ComputeCompletion over the maximum statistics).
+        const completion = total > 0 ? (great + ok + meh + tickHits) / total : 1;
         const passed = engine.finished && !engine.failed;
 
         // Wrong keypresses ride along as their own key. HitResult.ComboBreak is combo-only and
@@ -545,7 +625,14 @@
         if (meh) statistics.meh = meh;
         if (typos) statistics.good = typos;
         if (miss) statistics.miss = miss;
+        if (tickHits) statistics.large_tick_hit = tickHits;
+        if (tickMisses) statistics.large_tick_miss = tickMisses;
         if (mistypes) statistics.combo_break = mistypes;
+
+        // The map's maximum, as the game's simulated run counts it: a Great per cell and per hold
+        // tail, a LargeTickHit per hold tick (the latter omitted at zero, as every key is).
+        const maximumStatistics = { great: cells + tails };
+        if (ticks) maximumStatistics.large_tick_hit = ticks;
 
         return {
             passed: passed,
@@ -563,9 +650,9 @@
             completion: completion,
             rank: passed ? rankFromStatistics(acc, { great: great, ok: ok, meh: meh, good: typos, miss: miss }) : 'F',
             statistics: statistics,
-            maximumStatistics: { great: total },
+            maximumStatistics: maximumStatistics,
             // convenience for the results screen
-            counts: { great, ok, meh, typos, miss, mistypes },
+            counts: { great, ok, meh, typos, miss, mistypes, tickHits, tickMisses },
             wpm: engine.liveWpm
         };
     }
@@ -573,9 +660,10 @@
     Object.assign(parts, {
         COMBO_PORTION_MAX, ACCURACY_PORTION_MAX, ACCURACY_PORTION_EXPONENT, ScoreProcessorMirror,
         WRONG_KEY_FAIL_STREAK, GREAT_HEALTH_INCREASE, OK_HEALTH_INCREASE, MEH_HEALTH_INCREASE,
-        MISS_HEALTH_DRAIN, WRONG_KEY_HP_DRAIN, HEALTH_EPSILON, almostBigger, HealthAccount,
+        MISS_HEALTH_DRAIN, TICK_HEALTH_INCREASE, TICK_MISS_HEALTH_DRAIN, WRONG_KEY_HP_DRAIN, HEALTH_EPSILON,
+        almostBigger, HealthAccount,
         rankFromAccuracy, rankFromStatistics, uncachedMaxComboPortion, maxComboPortionOf,
-        totalScoreOf, computeScore
+        totalScoreOf, computeScore, maximumJudgementsOf, maximumBaseScoreOf
     });
     parts.loaded.push('score-and-health.js');
 })(window.TypeBeatCoreParts = window.TypeBeatCoreParts || { loaded: [] });

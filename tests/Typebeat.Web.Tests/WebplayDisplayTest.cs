@@ -2318,4 +2318,149 @@ public class WebplayDisplayTest
             Assert.That(tint.GetProperty("rushCapPremature").GetString(), Is.EqualTo("tb-c tb-c-off"));
         });
     }
+
+    private static double?[] NullableDoubles(JsonElement e, string key)
+        => e.GetProperty(key).EnumerateArray().Select(x => x.ValueKind == JsonValueKind.Null ? (double?)null : x.GetDouble()).ToArray();
+
+    /// <summary>
+    /// HOLDS, the display half. The fixture: "so long" with the first letter of "so" held
+    /// [1000, 1500] (one tick at 1250) and the last letter of "long" held [2600, 3000], which starts
+    /// before that letter's own 2750 target. The sung polyline anchors a held cell at its hold start
+    /// and its hold END one cell on (TypingLine.rebuildSungPoints), so the playhead crosses the
+    /// letter and its track over the hold: half way through the first hold it is half way across
+    /// cell 0, and it waits on cell 6 from 2600 rather than reaching it at 2750. The tick sits at
+    /// its share of the span (LyricLineDisplay.addHoldBars), and the line's sweep still ends on the
+    /// word's end.
+    /// </summary>
+    [Test]
+    public void AHeldCellsSweepSpansItsHold()
+    {
+        var holds = Harness().GetProperty("holds");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(JsHarness.Doubles(holds, "targets"), Is.EqualTo(new[] { 1000d, 1500d, 1800d, 2000d, 2250d, 2500d, 2750d }));
+            Assert.That(JsHarness.Doubles(holds, "durations"), Is.EqualTo(new[] { 500d, 0d, 0d, 0d, 0d, 0d, 400d }));
+            Assert.That(holds.GetProperty("tickFractions")[0].EnumerateArray().Select(e => e.GetDouble()), Is.EqualTo(new[] { 0.5 }));
+            Assert.That(holds.GetProperty("tickFractions")[6].GetArrayLength(), Is.EqualTo(0), "a held cell without ticks has none");
+
+            Assert.That(JsHarness.Doubles(holds, "sungPointTimes"), Is.EqualTo(new[] { 1000d, 1000d, 1500d, 1500d, 1800d, 2000d, 2250d, 2500d, 2600d, 3000d, 3000d }));
+            Assert.That(JsHarness.Doubles(holds, "sungPointIndices"), Is.EqualTo(new[] { 0d, 0d, 1d, 1d, 2d, 3d, 4d, 5d, 6d, 7d, 7d }));
+            // Probes: 1000, 1250, 1500, 1650, 2550, 2600, 2800, 3000, 3100.
+            Assert.That(JsHarness.Doubles(holds, "sungAt"), Is.EqualTo(new[] { 0d, 0.5, 1d, 1.5, 5.5, 6d, 6.5, 7d, 7d }));
+
+            // HeldSungOffset: evenly across the letter (25) and its track (50), clamped.
+            Assert.That(JsHarness.Doubles(holds, "heldSung"), Is.EqualTo(new[] { 37.5, 75d, 0d, 0d }));
+        });
+    }
+
+    /// <summary>
+    /// The hold tracks' layout (LyricLineDisplay.measureAndLayout's hold loop): a gap after each held
+    /// cell, so the text after it moves right by the track (CellLefts). With every advance 25: the
+    /// first hold has no letter before it, so its track takes the duration rule (half a second at 4
+    /// letters a second is 2 letters, the minimum: 50); the second is paced from 'n' (25 px in 100 ms,
+    /// 10 letters a second, clamped to 8) over its 400 ms, less its own letter: 2.2 letters, 55.
+    /// HoldTrackWidth's two rules and HoldPaceLettersPerSecond's clamps and nulls are pinned on their
+    /// own beside it (and against the game's statics by WireCompat's HoldDisplayParityTest).
+    /// </summary>
+    [Test]
+    public void HoldTracksOpenAGapAfterTheHeldLetter()
+    {
+        var holds = Harness().GetProperty("holds");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(JsHarness.Doubles(holds, "gaps"), Is.EqualTo(new[] { 50d, 0d, 0d, 0d, 0d, 0d, 55d }).Within(1e-4));
+            Assert.That(JsHarness.Doubles(holds, "lefts"), Is.EqualTo(new[] { 0d, 75d, 100d, 125d, 150d, 175d, 200d, 280d }).Within(1e-4));
+
+            // Duration alone: 500 ms (2 letters), 100 ms (clamped up to 2), 2 s (8), 5 s (clamped to 12).
+            Assert.That(JsHarness.Doubles(holds, "trackByDuration"), Is.EqualTo(new[] { 50d, 50d, 200d, 300d }));
+            Assert.That(Num(holds, "trackPacedNull"), Is.EqualTo(200), "no pace is the duration rule");
+            // Paced: 1.5 letters less 0.8 clamps up to 1; 8 less 1 is 7; 80 less 1 clamps to 12.
+            Assert.That(JsHarness.Doubles(holds, "trackPaced"), Is.EqualTo(new[] { 25d, 140d, 240d }));
+            // 12 a second clamps to 8; 3.33 stays; no previous letter, a non-positive span and a zero
+            // reference are null; 0.2 a second clamps up to 1.
+            Assert.That(NullableDoubles(holds, "pace"), Is.EqualTo(new double?[] { 8, 10d / 3, null, null, 1, null }));
+        });
+    }
+
+    /// <summary>
+    /// The hold's motion: the fill (LyricStage.holdFillAt, unclamped, with the span floored at 1 ms),
+    /// the letter's travel along its track (HoldTravelOffset, clamped), the lift (OutQuad over 80 ms
+    /// to full; once set down, InOutQuad over 100 ms from wherever it had reached) and the real
+    /// cell's ghost (OutQuint over the 90 ms cell fade, to HOLD_GHOST_ALPHA). The constants are the
+    /// desktop's LyricLineDisplay and HoldBar values.
+    /// </summary>
+    [Test]
+    public void HoldFillTravelLiftAndGhostFollowTheDesktop()
+    {
+        var holds = Harness().GetProperty("holds");
+        var k = holds.GetProperty("constants");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(JsHarness.Doubles(holds, "fill"), Is.EqualTo(new[] { 0.5, -0.2, 1.2, 0d }).Within(1e-6));
+            Assert.That(JsHarness.Doubles(holds, "travel"), Is.EqualTo(new[] { 25d, 0d, 50d, 0d }));
+
+            // Probes 999, 1000, 1040, 1080, 2000 from a pick-up at 1000.
+            Assert.That(JsHarness.Doubles(holds, "liftHeld"), Is.EqualTo(new[] { 0d, 0d, 0.75, 1d, 1d }));
+            // Set down at 1100: 1100, 1150, 1200, 1300.
+            Assert.That(JsHarness.Doubles(holds, "liftDown"), Is.EqualTo(new[] { 1d, 0.5, 0d, 0d }));
+            // Set down at 1040, three quarters lifted: 1040, 1090, 1140.
+            Assert.That(JsHarness.Doubles(holds, "liftDownEarly"), Is.EqualTo(new[] { 0.75, 0.375, 0d }));
+            Assert.That(Num(holds, "liftNever"), Is.EqualTo(0));
+
+            Assert.That(Num(holds, "ghostNone"), Is.EqualTo(1));
+            // 1000, 1045 (OutQuint half way: 0.96875 of the way), 1090, 2000.
+            Assert.That(JsHarness.Doubles(holds, "ghost"), Is.EqualTo(new[] { 1d, 1 - 0.82 * 0.96875, 0.18, 0.18 }).Within(1e-9));
+
+            Assert.That(Num(k, "HOLD_TRACK_HEIGHT"), Is.EqualTo(4), "SWEEP_RAIL_HEIGHT + 1");
+            Assert.That(Num(k, "HOLD_TICK_WIDTH"), Is.EqualTo(2));
+            Assert.That(Num(k, "HOLD_TICK_HEIGHT"), Is.EqualTo(12));
+            Assert.That(Num(k, "HOLD_LIFT_FRACTION"), Is.EqualTo(0.12));
+            Assert.That(Num(k, "HOLD_LIFT_SCALE"), Is.EqualTo(1.1));
+            Assert.That(Num(k, "HOLD_GHOST_ALPHA"), Is.EqualTo(0.18));
+            Assert.That(Num(k, "HOLD_PICK_UP_MS"), Is.EqualTo(80));
+            Assert.That(Num(k, "HOLD_SET_DOWN_MS"), Is.EqualTo(100));
+            Assert.That(Num(k, "HOLD_LIFT_SHADOW_EM"), Is.EqualTo(0.08 * 1.75).Within(1e-12), "TEXT_SHADOW_OFFSET.Y x HOLD_LIFT_SHADOW_OFFSET_FACTOR");
+            Assert.That(Num(k, "HOLD_LIFT_SHADOW_ALPHA"), Is.EqualTo(0.4));
+            Assert.That(Num(k, "HOLD_GHOST_FADE_MS"), Is.EqualTo(90), "LyricLineDisplay.flashlight_fade_ms");
+            Assert.That(Num(k, "HOLD_RESULT_FLASH_MS"), Is.EqualTo(300));
+        });
+    }
+
+    /// <summary>
+    /// The tail's feedback (LyricStage.onHoldTailJudged): a Miss at the seal, or one released at or
+    /// past the hold's end, never opened, and shows the empty miss track; every other tail flashes
+    /// its result, Great and Ok in the typed colour, Meh in the caret's, Miss in the error red
+    /// (LyricLineDisplay.HoldResultColour). Driven through the engine's own hooks: 's' held to its
+    /// end completes as a Great there with its tick lit, and 'g', never pressed, is settled at the
+    /// seal as a never-opened Miss.
+    /// </summary>
+    [Test]
+    public void HoldTailsReadAsTheDesktopShowsThem()
+    {
+        var holds = Harness().GetProperty("holds");
+        var run = holds.GetProperty("engine");
+        var tails = run.GetProperty("tails").EnumerateArray().ToArray();
+        var ticks = run.GetProperty("ticks").EnumerateArray().ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(holds.GetProperty("neverOpened").EnumerateArray().Select(e => e.GetBoolean()), Is.EqualTo(new[] { true, true, false, false, false }));
+            Assert.That(JsHarness.Strings(holds, "tones"), Is.EqualTo(new[] { "typed", "typed", "meh", "miss" }));
+
+            var opened = run.GetProperty("openedAt1000");
+            Assert.That(opened.GetProperty("cell").GetInt32(), Is.EqualTo(0));
+            Assert.That(Num(opened, "start"), Is.EqualTo(1000));
+            Assert.That(Num(opened, "end"), Is.EqualTo(1500));
+
+            Assert.That(tails.Select(t => t.GetProperty("cell").GetInt32()), Is.EqualTo(new[] { 0, 6 }));
+            Assert.That(tails.Select(t => t.GetProperty("type").GetString()), Is.EqualTo(new[] { "Great", "Miss" }));
+            Assert.That(tails.Select(t => t.GetProperty("atSeal").GetBoolean()), Is.EqualTo(new[] { false, true }));
+            Assert.That(tails.Select(t => t.GetProperty("neverOpened").GetBoolean()), Is.EqualTo(new[] { false, true }));
+            Assert.That(ticks.Select(t => (t.GetProperty("cell").GetInt32(), t.GetProperty("tick").GetInt32(), t.GetProperty("hit").GetBoolean())),
+                Is.EqualTo(new[] { (0, 0, true) }));
+        });
+    }
 }

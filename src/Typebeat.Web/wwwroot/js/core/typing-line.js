@@ -77,7 +77,12 @@
             // map never loads a rest the play would ignore.
             const pauses = usableRests(tokens[m], ws, we, words[m].pauses || EMPTY_PAUSES);
 
-            units.push({ text: tokens[m], start: ws, end: we, conf: clamp(words[m].score, 0, 1), syllables: boundaries, splits: splits, pauses: pauses });
+            // The word's HOLDS ride along exactly as written (TimingJsonLoader.buildExplicitUnits
+            // copies WordObjects untouched): usableHolds decides which of them play, against the
+            // clamped word built here.
+            const holds = words[m].holds && words[m].holds.length > 0 ? words[m].holds : EMPTY_HOLDS;
+
+            units.push({ text: tokens[m], start: ws, end: we, conf: clamp(words[m].score, 0, 1), syllables: boundaries, splits: splits, pauses: pauses, holds: holds });
             prevEnd = we;
         }
         return units;
@@ -98,7 +103,7 @@
             const unitStart = start + span * (cumulative / totalWeight);
             cumulative += weights[i];
             const unitEnd = start + span * (cumulative / totalWeight);
-            units.push({ text: tokens[i], start: unitStart, end: unitEnd, conf: 1, syllables: EMPTY_BOUNDARIES, splits: EMPTY_SPLITS, pauses: EMPTY_PAUSES });
+            units.push({ text: tokens[i], start: unitStart, end: unitEnd, conf: 1, syllables: EMPTY_BOUNDARIES, splits: EMPTY_SPLITS, pauses: EMPTY_PAUSES, holds: EMPTY_HOLDS });
         }
         return units;
     }
@@ -106,6 +111,7 @@
     const EMPTY_BOUNDARIES = [];
     const EMPTY_SPLITS = [];
     const EMPTY_PAUSES = [];
+    const EMPTY_HOLDS = [];
 
     // ---------------------------------------------------------------------------
     // SyllableSegments: WHERE a subdivided word's characters are cut into syllable segments
@@ -424,7 +430,14 @@
     // the caret meets the judgement groups at the same letters instead of an index-even spread
     // drifting into unrelated ones. The browser only plays live, so it takes the rule
     // unconditionally, as it takes bit 2.
-    function tokenCellTargets(token, unitStart, unitEnd, unit, k) {
+    //
+    // `aligned` false selects the C#'s LEGACY era instead (alignSubdivisions false: cell cuts only
+    // from a VALID authored split, a paused stretch only on its own authored cut). No judgement
+    // reads it. The one reader is the simulated maximum run (scoringOrderOf), because the game's
+    // nested scoring objects are built with that era's targets (TypeBeatHitObject.
+    // CreateNestedHitObjects goes through ForMods' defaults) and sorted by them, so where a hold's
+    // ticks fall among a line's cells in the maximum is decided by those times.
+    function tokenCellTargets(token, unitStart, unitEnd, unit, k, aligned = true) {
         const ramp = new Array(Math.max(0, k)).fill(0);
 
         if (k <= 0) return ramp;
@@ -439,7 +452,7 @@
 
                 // A stretch with no authored cell cut of its own times its cells on the cut it is
                 // judged on: the stretch's own char cuts, rebased onto the stretch's text.
-                if (pc === null && pb.length > 0) {
+                if (aligned && pc === null && pb.length > 0) {
                     const splits = piece.cuts.map(c => c - piece.firstChar);
                     pc = cellCuts(token.substring(piece.firstChar, piece.firstChar + piece.charCount), splits);
                     pb = pb.slice(0, splits.length);
@@ -459,10 +472,12 @@
         // final group then owns the tail, so the boundaries past the split count are dropped.
         let cuts = null;
 
-        if (boundaries.length > 0) {
+        if (aligned && boundaries.length > 0) {
             const splits = splitsFor(token, boundaries.length + 1, unit.splits);
             cuts = cellCuts(token, splits);
             boundaries = boundaries.slice(0, splits.length);
+        } else if (!aligned && unit && isAuthoredValid(token, boundaries.length + 1, unit.splits)) {
+            cuts = cellCuts(token, unit.splits);
         }
 
         for (let j = 0; j < k; j++) ramp[j] = syllableCharTarget(unitStart, unitEnd, boundaries, k, j, cuts);
@@ -821,7 +836,9 @@
     //
     // Letter timings are IDENTICAL either way: the per-word char spread counts only isCell chars
     // (never punctuation), so the mod adds cells without moving any of the existing ones.
-    function buildCells(text, units, literate) {
+    //
+    // `aligned` is tokenCellTargets' era switch, false only for scoringOrderOf's legacy targets.
+    function buildCells(text, units, literate, aligned = true) {
         const n = text.length;
         const expected = new Array(n);
         const typeableFlags = new Array(n).fill(false);
@@ -848,7 +865,7 @@
             // effective char split (authored since backlog 181, derived too since PR 5) and an
             // authored PAUSE warp the char-to-time mapping (see tokenCellTargets, mirroring
             // TypingLine.tokenCellTargets on its aligned live era).
-            const ramp = tokenCellTargets(token, unitStart, unitEnd, unit, k);
+            const ramp = tokenCellTargets(token, unitStart, unitEnd, unit, k, aligned);
 
             let j = 0;
             for (let t = 0; t < token.length; t++) {
@@ -926,6 +943,436 @@
         }
 
         return { cells: cells, sources: sources };
+    }
+
+    // ---------------------------------------------------------------------------
+    // HOLDS (format v3 word objects, the Map Editor's held letters): which of a word's authored
+    // holds a play honours and what they put on the cells (mirrors Gameplay/HeldWord.cs,
+    // Gameplay/HoldTicks.cs, Gameplay/HoldTailRule.cs and the word-object half of
+    // TypingLine.build: heldCellsOf, cellPositions, assignHandoffs).
+    //
+    // A hold adds no syllable cut and moves no group: the word is grouped and judged exactly as
+    // without it. The HELD cell carries the span its release is graded on (holdStart, holdEnd) and
+    // the ticks credited while it is down (holdTickTimes); the next typeable cell of its word
+    // follows the hold (handsOffFrom) and is due no earlier than the hold's end, as is every later
+    // cell of the word. A hold no play could honour is ignored, never repaired. No era: holds only
+    // exist on maps no replay was ever recorded under another rule for.
+    // ---------------------------------------------------------------------------
+
+    // HoldTailRule (Gameplay/HoldTailRule.cs): a release is graded by how much of the hold was held.
+    const HOLD_MIN_SLACK_MS = 80;       // HoldTailRule.MIN_SLACK_MS
+    const HOLD_SLACK_FRACTION = 0.1;    // HoldTailRule.SLACK_FRACTION
+    const HOLD_OK_FRACTION = 0.75;      // HoldTailRule.OK_FRACTION
+    const HOLD_MEH_FRACTION = 0.5;      // HoldTailRule.MEH_FRACTION
+
+    // HoldTailRule.Slack: how long before the end a release still counts as Great. Also the
+    // hand-off window, and the end of the window a tick may sit in.
+    function holdSlack(start, end) {
+        return Math.max(HOLD_MIN_SLACK_MS, HOLD_SLACK_FRACTION * Math.max(1, end - start));
+    }
+
+    // HoldTailRule.InHandoffWindow: whether `time` is in [end - slack, end), where the letter after
+    // the held one (handsOffFrom) is judged dead on time.
+    function inHoldHandoffWindow(start, end, time) {
+        return time >= end - holdSlack(start, end) && time < end;
+    }
+
+    // HoldTailRule.Grade. Inside the slack of the end is Great; otherwise the share HELD, measured
+    // from the head's PRESS (or the hold's start, when the head was pressed before it) to the end,
+    // decides: three quarters Ok, half Meh, less a Miss. Holding past the end is never penalised.
+    function gradeHoldTail(start, end, pressed, release) {
+        if (release >= end - holdSlack(start, end)) return 'Great';
+
+        const from = Math.max(start, pressed);
+        const held = (release - from) / Math.max(1, end - from);
+
+        if (held >= HOLD_OK_FRACTION) return 'Ok';
+
+        return held >= HOLD_MEH_FRACTION ? 'Meh' : 'Miss';
+    }
+
+    // C#'s Math.Round, which rounds a midpoint to EVEN (MidpointRounding.ToEven), where
+    // JS Math.round rounds it up. HoldTicks.UsableTicks rounds every tick to whole ms through it, so
+    // a tick authored on a half millisecond has to land where the game lands it.
+    function roundHalfEven(x) {
+        const r = Math.round(x);
+        return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r;
+    }
+
+    // HoldTicks.MIN_GAP_MS is the editor's spacing rule (HoldTicks.MaxCount / Even) and decides
+    // nothing at play time, so it is not mirrored.
+
+    // HoldTicks.UsableTicks: the hold's authored ticks rounded to whole ms, inside
+    // [start, end - slack) (WindowStart / WindowEnd: clear of the Great release window), distinct
+    // and ascending. A head pressed after a tick still credits it.
+    function usableTicks(hold) {
+        const authored = hold.ticks || EMPTY_HOLDS;
+
+        if (authored.length === 0 || !isFinite(hold.start) || !isFinite(hold.end) || hold.end <= hold.start) return [];
+
+        const lo = hold.start;
+        const hi = hold.end - holdSlack(hold.start, hold.end);
+        const kept = [];
+
+        for (const tick of authored) {
+            if (!isFinite(tick)) continue;
+
+            const t = roundHalfEven(tick);
+
+            if (t >= lo && t < hi && kept.indexOf(t) < 0) kept.push(t);
+        }
+
+        return kept.sort((a, b) => a - b);
+    }
+
+    // HeldWord.MIN_HOLD_MS: the shortest hold a play honours.
+    const MIN_HOLD_MS = 100;
+
+    // TypingLine.HoldFreeCellTarget (HeldWord.LetterDueAt): when character charIndex of the word is
+    // due WITHOUT any hold, in the subdivision-aligned target era every live play uses (which
+    // tokenCellTargets takes unconditionally here). The word's end for a character past its last cell.
+    function holdFreeCellTarget(unit, charIndex) {
+        let k = 0, j = 0;
+
+        for (let i = 0; i < unit.text.length; i++) {
+            if (!isCell(unit.text[i])) continue;
+            if (i < charIndex) j++;
+            k++;
+        }
+
+        if (j >= k) return unit.end;
+
+        return tokenCellTargets(unit.text, unit.start, unit.end, unit, k)[j];
+    }
+
+    // HeldWord.ClearOfRest: a hold sits wholly inside one sung stretch of its word. A letter before
+    // the rest's cut is let go by the rest's start, a letter after it is held from the rest's end.
+    function holdClearOfRest(hold, rest) {
+        return hold.char < rest.split ? hold.end <= rest.start : hold.start >= rest.end;
+    }
+
+    // HeldWord.RestFollows: whether one of the word's rests cuts between letter charIndex and the
+    // word's next cell, which then opens a new stretch and is not handed off from a hold on it.
+    function restFollows(unit, charIndex) {
+        let next = charIndex + 1;
+
+        while (next < unit.text.length && !isCell(unit.text[next])) next++;
+
+        const rests = unit.pauses && unit.pauses.length > 0 ? usableRests(unit.text, unit.start, unit.end, unit.pauses) : EMPTY_PAUSES;
+
+        return rests.some(rest => rest.split > charIndex && rest.split <= next);
+    }
+
+    // HeldWord.CutsOf: the word's cuts as { char, time }. On a paused word, each stretch's own cuts
+    // against its own boundaries (pausedWordOf's pieces); otherwise the effective split of the word
+    // paired with its boundaries.
+    function wordCutsOf(unit, paused) {
+        const cuts = [];
+
+        if (paused) {
+            const cut = pausedWordOf(unit.text, unit.start, unit.end, unit);
+
+            if (cut !== null) {
+                for (const piece of cut.pieces) {
+                    for (let i = 0; i < piece.cuts.length && i < piece.boundaries.length; i++) cuts.push({ char: piece.cuts[i], time: piece.boundaries[i] });
+                }
+
+                return cuts;
+            }
+        }
+
+        const boundaries = unit.syllables || EMPTY_BOUNDARIES;
+        const splits = splitsFor(unit.text, boundaries.length + 1, unit.splits);
+
+        for (let i = 0; i < splits.length && i < boundaries.length; i++) cuts.push({ char: splits[i], time: boundaries[i] });
+
+        return cuts;
+    }
+
+    // HeldWord.UsableHolds: the holds of `unit` a play honours, in character order. On a cell, at
+    // least MIN_HOLD_MS long, inside the word (a first-letter hold starts with it), not overlapping
+    // an earlier one, between the word's cuts, clear of its rests, and ending strictly after its
+    // letter is due (HeldWord.EndsAfterItsLetter: the on-time press would otherwise miss its tail).
+    // The sort is stable, as LINQ's OrderBy is.
+    function usableHolds(unit) {
+        const holds = unit.holds || EMPTY_HOLDS;
+
+        if (holds.length === 0) return EMPTY_HOLDS;
+
+        const text = unit.text;
+        const rests = unit.pauses && unit.pauses.length > 0 ? usableRests(text, unit.start, unit.end, unit.pauses) : EMPTY_PAUSES;
+        const cuts = wordCutsOf(unit, rests.length > 0);
+        const kept = [];
+        let lastChar = -1;
+        let lastEnd = unit.start;
+
+        for (const hold of holds.slice().sort((a, b) => a.char - b.char)) {
+            const c = hold.char;
+            const hasNext = c + 1 < text.length;
+
+            if (c <= lastChar || c < 0 || c >= text.length || !isCell(text[c])) continue;
+
+            if (hold.end - hold.start < MIN_HOLD_MS || hold.start < lastEnd) continue;
+
+            const startOk = c === 0
+                ? Math.abs(hold.start - unit.start) < 0.5
+                : hold.start > unit.start && hold.start < unit.end;
+
+            const endOk = hasNext ? hold.end < unit.end : hold.end <= unit.end;
+
+            if (!startOk || !endOk) continue;
+
+            const cutsOk = cuts.every(cut => cut.char < c ? cut.time < hold.start
+                : cut.char === c || (cut.char === c + 1 ? cut.time >= hold.end : cut.time > hold.end));
+
+            if (!cutsOk || !rests.every(rest => holdClearOfRest(hold, rest)) || !(hold.end > holdFreeCellTarget(unit, c))) continue;
+
+            kept.push(hold);
+            lastChar = c;
+            lastEnd = hold.end;
+        }
+
+        return kept;
+    }
+
+    // TypingLine.cellPositions: per cell, its whitespace token (an index into the line's units) and
+    // its offset in that token, or { token: -1, offset: -1 } for an inter-word space.
+    function cellPositions(tokens, rawLength, cellCount, sources) {
+        const raw = new Array(rawLength);
+        for (let i = 0; i < rawLength; i++) raw[i] = { token: -1, offset: -1 };
+
+        let pos = 0;
+
+        for (let m = 0; m < tokens.length; m++) {
+            for (let t = 0; t < tokens[m].length && pos + t < rawLength; t++) raw[pos + t] = { token: m, offset: t };
+            pos += tokens[m].length + 1;
+        }
+
+        const result = new Array(cellCount);
+
+        for (let i = 0; i < cellCount; i++) {
+            const src = sources ? sources[i] : i;
+            result[i] = src >= 0 && src < rawLength ? raw[src] : { token: -1, offset: -1 };
+        }
+
+        return result;
+    }
+
+    // TypingLine.buildWords' cellWord: per cell, the whitespace token it belongs to, or -1 for a
+    // space cell (a hyphen-turned-space included) and a non-typeable one. The C# then remaps token
+    // indices onto the words that own a cell; that remap is monotonic and one to one, and the only
+    // reader here (assignHandoffs) asks whether two cells share a word, so the raw token index
+    // answers it identically.
+    function cellWordsOf(text, tokens, cells, sources) {
+        const rawWord = new Array(text.length).fill(-1);
+        let tokStart = 0;
+
+        for (let m = 0; m < tokens.length; m++) {
+            for (let t = 0; t < tokens[m].length; t++) rawWord[tokStart + t] = m;
+            tokStart += tokens[m].length + 1;
+        }
+
+        const cellWord = new Array(cells.length).fill(-1);
+
+        for (let i = 0; i < cells.length; i++) {
+            if (!cells[i].typeable || cells[i].expected === ' ') continue;
+            cellWord[i] = rawWord[sources ? sources[i] : i];
+        }
+
+        return cellWord;
+    }
+
+    // TypingLine.heldCellsOf: per cell, the usable hold on the first typeable cell of its
+    // character, as a Map from cell index; null when there are none. restsAfter collects the held
+    // cells a rest of their word follows (restFollows).
+    function heldCellsOf(units, positions, cells, restsAfter) {
+        let result = null;
+        const usable = new Array(units.length).fill(null);
+        const claimed = new Set();
+
+        for (let i = 0; i < cells.length; i++) {
+            const m = positions[i].token, offset = positions[i].offset;
+
+            if (!cells[i].typeable || m < 0 || m >= units.length || !units[m].holds || units[m].holds.length === 0) continue;
+
+            if (usable[m] === null) usable[m] = usableHolds(units[m]);
+
+            for (const hold of usable[m]) {
+                const key = m + ':' + offset;
+
+                if (hold.char === offset && !claimed.has(key)) {
+                    claimed.add(key);
+                    (result = result || new Map()).set(i, hold);
+
+                    if (restFollows(units[m], hold.char)) restsAfter.add(i);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    // TypingLine.assignHandoffs: the next typeable cell of each held cell's word follows the hold
+    // (handsOffFrom), due no earlier than its end, and later cells of the word no earlier than it.
+    // Only targets move. A held letter that ends its stretch (a rest of its word cuts straight after
+    // it) hands off to nothing: the next letter opens the stretch after the rest.
+    function assignHandoffs(cells, cellWord, restsAfter) {
+        for (let i = 0; i < cells.length; i++) {
+            const end = cells[i].holdEnd;
+
+            if (end === null || cellWord[i] < 0 || restsAfter.has(i)) continue;
+
+            let floor = null;
+
+            for (let j = i + 1; j < cells.length && cellWord[j] === cellWord[i] && cells[j].expected !== ' '; j++) {
+                if (!cells[j].typeable) continue;
+
+                if (floor === null) {
+                    cells[j].handsOffFrom = i;
+                    floor = Math.max(cells[j].target, end);
+                }
+
+                cells[j].target = Math.max(cells[j].target, floor);
+            }
+        }
+    }
+
+    // The word-object pass of TypingLine.build, run only when a unit carries an object (the C#'s
+    // `units.Any(u => !u.Objects.IsEmpty)`). Placed by the caller AFTER the syllable groups and the
+    // seal grace's boundary bump are derived, exactly where the C# runs it: a hold adds no cut, and
+    // the hand-off's later targets are not what the bump measures.
+    function applyWordObjects(text, units, cells, sources) {
+        if (!units.some(u => u.holds && u.holds.length > 0)) return;
+
+        const tokens = text.split(' ');
+        const restsAfter = new Set();
+        const held = heldCellsOf(units, cellPositions(tokens, text.length, cells.length, sources), cells, restsAfter);
+
+        if (held === null) return;
+
+        for (const [i, hold] of held) {
+            cells[i].holdStart = hold.start;
+            cells[i].holdEnd = hold.end;
+            cells[i].holdTickTimes = usableTicks(hold);
+        }
+
+        assignHandoffs(cells, cellWordsOf(text, tokens, cells, sources), restsAfter);
+    }
+
+    // List<T>.Sort(Comparison<T>) as .NET runs it (ArraySortHelper<T>.IntrospectiveSort):
+    // insertion sort up to 16 items, median-of-three quicksort partitions above that, heapsort past
+    // the depth limit. NOT STABLE, which is the whole reason it is ported rather than replaced with
+    // Array.prototype.sort: HitObject.ApplyDefaults sorts a line's nested objects through it by
+    // StartTime, so two objects at the same instant end up in whatever order this leaves them, and
+    // the simulated maximum run (scoringOrderOf) weighs each by its position. `compare` is the
+    // Comparison; the array is sorted in place.
+    function dotnetListSort(keys, compare) {
+        const swap = (i, j) => { const t = keys[i]; keys[i] = keys[j]; keys[j] = t; };
+        const swapIfGreater = (i, j) => { if (compare(keys[i], keys[j]) > 0) swap(i, j); };
+
+        function insertionSort(lo, hi) {
+            for (let i = lo; i < hi; i++) {
+                const t = keys[i + 1];
+                let j = i;
+                while (j >= lo && compare(t, keys[j]) < 0) {
+                    keys[j + 1] = keys[j];
+                    j--;
+                }
+                keys[j + 1] = t;
+            }
+        }
+
+        function downHeap(lo, i, n) {
+            const d = keys[lo + i - 1];
+            while (i <= n >> 1) {
+                let child = 2 * i;
+                if (child < n && compare(keys[lo + child - 1], keys[lo + child]) < 0) child++;
+                if (!(compare(d, keys[lo + child - 1]) < 0)) break;
+                keys[lo + i - 1] = keys[lo + child - 1];
+                i = child;
+            }
+            keys[lo + i - 1] = d;
+        }
+
+        function heapSort(lo, hi) {
+            const n = hi - lo + 1;
+            for (let i = n >> 1; i >= 1; i--) downHeap(lo, i, n);
+            for (let i = n; i > 1; i--) {
+                swap(lo, lo + i - 1);
+                downHeap(lo, 1, i - 1);
+            }
+        }
+
+        function pickPivotAndPartition(lo, hi) {
+            const middle = lo + ((hi - lo) >> 1);
+            swapIfGreater(lo, middle);
+            swapIfGreater(lo, hi);
+            swapIfGreater(middle, hi);
+            const pivot = keys[middle];
+            swap(middle, hi - 1);
+            let left = lo, right = hi - 1;
+            while (left < right) {
+                while (compare(keys[++left], pivot) < 0);
+                while (compare(pivot, keys[--right]) < 0);
+                if (left >= right) break;
+                swap(left, right);
+            }
+            if (left !== hi - 1) swap(left, hi - 1);
+            return left;
+        }
+
+        function introSort(lo, hi, depthLimit) {
+            while (hi > lo) {
+                const size = hi - lo + 1;
+                if (size <= 16) {
+                    if (size === 2) { swapIfGreater(lo, hi); return; }
+                    if (size === 3) { swapIfGreater(lo, hi - 1); swapIfGreater(lo, hi); swapIfGreater(hi - 1, hi); return; }
+                    insertionSort(lo, hi);
+                    return;
+                }
+                if (depthLimit === 0) { heapSort(lo, hi); return; }
+                depthLimit--;
+                const p = pickPivotAndPartition(lo, hi);
+                introSort(p + 1, hi, depthLimit);
+                hi = p - 1;
+            }
+        }
+
+        if (keys.length > 1) introSort(0, keys.length - 1, 2 * (Math.floor(Math.log2(keys.length)) + 1));
+        return keys;
+    }
+
+    // MaxResult base scores (ScoreProcessor.GetBaseScoreForResult): a cell's and a hold tail's
+    // Great, and a hold tick's LargeTickHit.
+    const CELL_MAX_BASE_SCORE = 300;
+    const TICK_MAX_BASE_SCORE = 30;
+
+    // The order a line's scoring objects take in the SIMULATED MAXIMUM run, as their MaxResult base
+    // scores: what ScoreProcessor.SimulateAutoplay walks (JudgementProcessor.EnumerateHitObjects,
+    // nested before parent) once HitObject.ApplyDefaults has sorted TypeBeatHitObject's nested
+    // objects by StartTime. They are created per typeable cell as its char object, then its hold
+    // ticks, then its hold tail, and the char objects carry the LEGACY era's targets (see
+    // tokenCellTargets), hand-offs applied, which is why the legacy cells are passed in beside the
+    // live ones. Only a line with a tick needs this: every other object weighs 300, and then the
+    // order decides nothing (uncachedMaxComboPortion walks the cells and tails directly).
+    function scoringOrderOf(cells, legacyCells) {
+        const objects = [];
+
+        for (let i = 0; i < cells.length; i++) {
+            if (!cells[i].typeable) continue;
+
+            objects.push({ time: legacyCells[i].target, base: CELL_MAX_BASE_SCORE });
+
+            if (cells[i].holdTickTimes !== null) {
+                for (const tick of cells[i].holdTickTimes) objects.push({ time: tick, base: TICK_MAX_BASE_SCORE });
+            }
+
+            if (cells[i].holdEnd !== null) objects.push({ time: cells[i].holdEnd, base: CELL_MAX_BASE_SCORE });
+        }
+
+        dotnetListSort(objects, (a, b) => a.time < b.time ? -1 : (a.time > b.time ? 1 : 0));
+
+        return objects.map(o => o.base);
     }
 
     // literate mirrors the desktop client's Literate mod: the cells become the authored line
@@ -1082,7 +1529,30 @@
                     } else if (Object.prototype.hasOwnProperty.call(w, 'pause')) {
                         readPause(w.pause);
                     }
-                    words.push({ text: typeof w.text === 'string' ? w.text : '', start: ws, end: we, score: score, syllables: syllables, splitChars: splitChars, pauses: pauses });
+                    // WORD OBJECTS (format v3, the Map Editor's holds): the word's `holds` array,
+                    // read AS WRITTEN, exactly as TimingJsonLoader.TryParseRawLine reads it. Which of
+                    // them a play honours is decided later, against the clamped word (usableHolds,
+                    // mirroring HeldWord.UsableHolds), never here. Each field is taken on the C#
+                    // reader's own terms: `char` a whole JSON number inside int32 (tryGetInt), the two
+                    // times JSON numbers (tryGetDouble), and a hold missing any of them is skipped;
+                    // a `ticks` entry that is not a JSON number is skipped on its own.
+                    const holds = [];
+                    if (Array.isArray(w.holds)) {
+                        for (const h of w.holds) {
+                            if (h == null || typeof h !== 'object' || Array.isArray(h)) continue;
+                            const hc = h.char, hs = h.start_ms, he = h.end_ms;
+                            if (typeof hc !== 'number' || !isFinite(hc) || Math.floor(hc) !== hc) continue;
+                            if (hc < -2147483648 || hc > 2147483647) continue;
+                            if (typeof hs !== 'number' || !isFinite(hs)) continue;
+                            if (typeof he !== 'number' || !isFinite(he)) continue;
+                            const ticks = [];
+                            if (Array.isArray(h.ticks)) {
+                                for (const t of h.ticks) if (typeof t === 'number' && isFinite(t)) ticks.push(t);
+                            }
+                            holds.push({ char: hc, start: hs, end: he, ticks: ticks });
+                        }
+                    }
+                    words.push({ text: typeof w.text === 'string' ? w.text : '', start: ws, end: we, score: score, syllables: syllables, splitChars: splitChars, pauses: pauses, holds: holds });
                 }
             }
             const sealGraceMs = isFinite(+o.seal_grace_ms) ? +o.seal_grace_ms : null;
@@ -1145,6 +1615,22 @@
             }
             grace = Math.min(grace, MAX_SEAL_GRACE_MS);
 
+            // WORD OBJECTS (holds): the held cells' spans and ticks, and the hand-off targets after
+            // them. Last, as in TypingLine.build: the groups above were cut without them and the
+            // bump above measured the targets before any hand-off moved one.
+            applyWordObjects(line.text, units, cells, flattened.sources);
+
+            // Where this line's hold ticks fall in the simulated maximum run (scoringOrderOf), which
+            // needs the legacy era's cells: built only for a line that has a tick, the one case the
+            // order can decide anything.
+            let scoringOrder = null;
+
+            if (cells.some(c => c.holdTickTimes !== null && c.holdTickTimes.length > 0)) {
+                const legacy = buildCells(line.text, units, literate, false);
+                applyWordObjects(line.text, units, legacy.cells, legacy.sources);
+                scoringOrder = scoringOrderOf(cells, legacy.cells);
+            }
+
             lines.push({
                 index: i,
                 text: line.text,
@@ -1178,7 +1664,12 @@
                 syllableMarkerCells: grouped.syllableMarkerCells,
                 // LyricLine.BackingVocals (backlog 445): fitted into the window just resolved, as
                 // TimingJsonLoader.BuildLines fits them. Display only, read by no judgement.
-                backing: fitBacking(line.backing, start, endTime)
+                backing: fitBacking(line.backing, start, endTime),
+                // The MaxResult base score of each of the line's scoring objects in the order the
+                // game's simulated maximum run judges them (scoringOrderOf), or null when every
+                // object weighs the same and the order decides nothing. Read by
+                // uncachedMaxComboPortion alone.
+                scoringOrder: scoringOrder
             });
         }
 
@@ -1198,7 +1689,13 @@
             // (gameplayStartTime). Nothing in the engine or the scorer reads it.
             audioLeadIn: parsed.audioLeadIn === undefined ? 0 : parsed.audioLeadIn,
             lines: lines,
-            totalCells: lines.reduce((n, l) => n + l.cells.length, 0)
+            totalCells: lines.reduce((n, l) => n + l.cells.length, 0),
+            // The map's hold tails and hold ticks: one TypeBeatHoldTailObject per held cell and one
+            // TypeBeatHoldTickObject per usable tick, each a judged object of its own beside the
+            // cells (a Great-maximum tail, a LargeTickHit-maximum tick), so both join the
+            // denominators computeScore divides by and the maximum_statistics it submits.
+            totalHoldTails: lines.reduce((n, l) => n + l.cells.filter(c => c.holdEnd !== null).length, 0),
+            totalHoldTicks: lines.reduce((n, l) => n + l.cells.reduce((k, c) => k + (c.holdTickTimes !== null ? c.holdTickTimes.length : 0), 0), 0)
         };
     }
 
@@ -1216,6 +1713,16 @@
             // rejected exactly as a wrong key on any other cell is. Mirrors TypingCell.IsFreestyle,
             // which is (IsTypeable && marker) and so is exactly this here.
             freestyle: isFreestyle(expected),
+            // HOLDS (TypingCell.HoldStart / HoldEnd / HoldTickTimes / HandsOffFrom, set by
+            // applyWordObjects and fixed for the life of the beatmap). A HELD cell carries the span
+            // its release is graded on and its usable tick times (an empty array for a hold with
+            // none); the hold does not move the cell's own target. handsOffFrom is the index of the
+            // held cell this one follows (the next typeable cell of its word), whose press inside
+            // the hold's release slack is judged on time. All null on every other cell.
+            holdStart: null,
+            holdEnd: null,
+            holdTickTimes: null,
+            handsOffFrom: null,
             // untyped | correct | wrong | missed | autoskip | abandoned.
             //
             // ABANDONED (CellState.Abandoned, backlog 167) is the PHANTOM state a word skip leaves
@@ -1258,7 +1765,10 @@
     Object.assign(parts, {
         CUE_LEAD_MS, isAuthoredValid, derivedSplits, splitsFor, cellCuts, segmentOf, usableRests,
         pausedWordOf, tokenCellTargets, buildSyllables, STRETCH_RUN_LENGTH, buildCharTimedStretch,
-        syllableIndexOf, isCharTimedStretch, syllableCharTarget, buildBeatmap
+        syllableIndexOf, isCharTimedStretch, syllableCharTarget, buildBeatmap,
+        holdSlack, inHoldHandoffWindow, gradeHoldTail, roundHalfEven, usableTicks, MIN_HOLD_MS,
+        holdFreeCellTarget, usableHolds, dotnetListSort, scoringOrderOf, CELL_MAX_BASE_SCORE,
+        TICK_MAX_BASE_SCORE
     });
     parts.loaded.push('typing-line.js');
 })(window.TypeBeatCoreParts = window.TypeBeatCoreParts || { loaded: [] });
