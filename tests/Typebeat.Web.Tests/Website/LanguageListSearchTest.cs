@@ -1,7 +1,9 @@
 using System.Net;
 using Dapper;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Newtonsoft.Json.Linq;
 using Npgsql;
+using Typebeat.Web.Endpoints;
 
 namespace Typebeat.Web.Tests.Website;
 
@@ -84,6 +86,55 @@ public class LanguageListSearchTest
             Assert.That(html.IndexOf("language%3Aenglish", StringComparison.Ordinal),
                 Is.LessThan(html.IndexOf("language%3Ajapanese", StringComparison.Ordinal)), "in the mapper's order");
         });
+    }
+
+    /// <summary>
+    /// The Discord bot's ranked-set feed sends the list beside the primary (the review of 472 found it still
+    /// sent only <c>beatmapsets.language</c>). The main fixture host has no TYPEBEAT_BUDDY_KEY, so this boots
+    /// a second host with one, and reads exactly the rank event this test records.
+    /// </summary>
+    [Test]
+    public async Task TheBotFeedSendsEveryLanguageBesideThePrimary()
+    {
+        const string key = "language-list-buddy-key";
+
+        long eventId;
+
+        await using (var conn = await dataSource.OpenConnectionAsync())
+        {
+            eventId = await conn.ExecuteScalarAsync<long>(
+                "INSERT INTO moderation_actions (actor_id, set_id, action) VALUES (@actor, @set, 'rank') RETURNING id",
+                new { actor = PublicSiteSeed.MapperId, set = bilingualSetId });
+        }
+
+        try
+        {
+            using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder => builder.UseSetting("TYPEBEAT_BUDDY_KEY", key));
+            using var client = factory.CreateDefaultClient(WebsiteFixture.BaseAddress);
+            await StartupSweepHosts.AwaitAsync(factory.Services);
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v2/beatmapsets/newly-ranked?after_id={eventId - 1}&limit=1");
+            request.Headers.Add(BuddyEndpoints.KEY_HEADER, key);
+
+            using var response = await client.SendAsync(request);
+            string body = await response.Content.ReadAsStringAsync();
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body);
+
+            var set = (JObject)JObject.Parse(body)["sets"]!.Single();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(set["setId"]!.Value<long>(), Is.EqualTo(bilingualSetId));
+                Assert.That(set["language"]!.Value<string>(), Is.EqualTo("japanese"), "the primary, as the bot has always read it");
+                Assert.That(set["languages"]!.Values<string>(), Is.EqualTo(new[] { "english", "japanese" }), "in the mapper's order");
+            });
+        }
+        finally
+        {
+            await using var conn = await dataSource.OpenConnectionAsync();
+            await conn.ExecuteAsync("DELETE FROM moderation_actions WHERE id = @eventId", new { eventId });
+        }
     }
 
     // ---- helpers ----

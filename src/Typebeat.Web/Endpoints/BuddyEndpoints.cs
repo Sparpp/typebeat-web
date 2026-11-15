@@ -2,6 +2,7 @@ using System.Globalization;
 using Dapper;
 using Newtonsoft.Json;
 using Typebeat.Web.Data;
+using Typebeat.Web.Packages;
 using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
@@ -79,6 +80,7 @@ public static class BuddyEndpoints
                    bs.artist                                    AS Artist,
                    bs.title                                     AS Title,
                    bs.language                                  AS Language,
+                   array_to_string(bs.languages, ',')           AS LanguagesStored,
                    bs.explicit                                  AS Explicit,
                    bs.cover_key                                 AS CoverKey,
                    owner.username                               AS Creator,
@@ -155,8 +157,25 @@ public static class BuddyEndpoints
         [JsonProperty("title")]
         public string? Title { get; set; }
 
+        /// <summary>The set's primary language (<c>beatmapsets.language</c>), as the bot has always read it.</summary>
         [JsonProperty("language")]
         public string? Language { get; set; }
+
+        /// <summary>
+        /// Every language the set declares, in the mapper's order (backlog 472). Sent BESIDE
+        /// <see cref="Language"/>, never instead of it, so a bot that only knows the single field keeps
+        /// working; empty when the set declares none.
+        /// </summary>
+        [JsonProperty("languages")]
+        public string[] Languages => BeatmapLanguages.FromStoredList(LanguagesStored);
+
+        /// <summary>
+        /// <c>beatmapsets.languages</c> joined with commas: the text[] column is read through
+        /// <c>array_to_string</c> as on every other route, and <see cref="Languages"/> splits it back.
+        /// Ignored by both serializers so the bot never sees the joined form.
+        /// </summary>
+        [JsonIgnore, System.Text.Json.Serialization.JsonIgnore]
+        public string? LanguagesStored { get; set; }
 
         [JsonProperty("explicit")]
         public bool Explicit { get; set; }
