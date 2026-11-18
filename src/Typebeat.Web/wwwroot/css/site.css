@@ -3084,22 +3084,23 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 /* ---- hold tracks (LyricLineDisplay's hold tracks, HoldBar) ----
    A held letter's track, in the gap layoutHolds opens after it (left, width and top are written by
    placeHolds: the gap, through the font's x-height centre). It fills from the left while the key is
-   down (the fill's width is written per frame), freezes on release, flashes the tail's judgement and
-   blurs away. Sizes are the desktop's at its default font, in px as the sweep rail's are here: the
+   down (the fill's width is written per frame), freezes on release, settles its held part on the
+   tail's judgement and blurs away. The held letter stays in its cell (backlog 492). Sizes are the
+   desktop's at its default font, in px as the sweep rail's are here: the
    track is HOLD_TRACK_HEIGHT (4px, the rail's 3 plus one) with HoldBar's 1px corner, a tick
    HOLD_TICK_WIDTH by HOLD_TICK_HEIGHT (2 by 12px) centred on the track at its share of the hold.
-   Colours: the fill and a lit tick are TypeBeatStyle.HoldChar, the desktop's own #6e50be (taken as
-   is, like --tb-sung, since this page has no hold colour of its own); the empty track is HoldTrack,
+   Colours: the fill and a lit tick are HoldBar.HoldFill, white (backlog 492; the editor's purple
+   HoldChar no longer fills the track); the empty track is HoldTrack,
    the desktop's AutoCompletedChar a step over its background (about 1.15:1), taken here as the same
    step over --bg-raised; a waiting tick is the untyped colour; a missed tick and a never-opened
    track settle on HoldBar.MISSED_TRACK, the error red at .45, here --bad at .45. The timings are
-   typebeat-player.js's HOLD_* constants (pinned against HoldBar's by WireCompat): 150 ms for a tick's
-   pop, 300 ms for every flash, 200 ms for the blur away, which reaches HOLD_BLUR_SIGMA (4px at the
+   typebeat-player.js's HOLD_* constants (pinned against HoldBar's by WireCompat): 300 ms for the result
+   fade and the miss track's, 200 ms for the blur away, which reaches HOLD_BLUR_SIGMA (4px at the
    desktop's 42px font, so 4/42 em here) and alpha 0. --tb-hold-delay is a negative delay paintHold
    writes, so a bar on a rebuilt row resumes its animation rather than replaying it. The cubic curves
    are the usual OutQuint and OutQuad fits. */
 .tb-holdbars {
-    --tb-hold: #6e50be;
+    --tb-hold: #fff;
     --tb-hold-track: #25272d;
     --tb-hold-missed: rgba(255, 106, 90, .45);
     position: absolute; left: 0; top: 0; width: 0; height: 1.35em; pointer-events: none; z-index: 1;
@@ -3115,61 +3116,37 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
     background: var(--text-muted);
     transform: translate(-50%, -50%);
 }
-/* HoldBar.LightTick: a white flash into the held purple, with a small pop. MissTick: the miss track. */
-.tb-holdbar-tick-hit { background: var(--tb-hold); animation: tbHoldTickPop 150ms cubic-bezier(0.22, 1, 0.36, 1) var(--tb-hold-delay, 0ms) both; }
+/* HoldBar.LightTick: a hit tick takes the fill's colour, with no flash and no pop (backlog 493).
+   MissTick: the miss track. */
+.tb-holdbar-tick-hit { background: var(--tb-hold); }
 .tb-holdbar-tick-miss { background: var(--tb-hold-missed); }
-@keyframes tbHoldTickPop {
-    from { background: #fff; transform: translate(-50%, -50%) scale(1.3); }
-    to   { background: var(--tb-hold); transform: translate(-50%, -50%) scale(1); }
-}
 /* The tail's result tone (LyricLineDisplay.HoldResultColour, typebeat-player.js's holdResultTone):
    Great and Ok the typed colour (.tb-c-hit's --violet), Meh the desktop's caret yellow (here --warn,
    which keeps it apart from a clean tail as the desktop does), Miss the error red. */
 .tb-holdres-typed { --tb-hold-res: var(--violet); }
 .tb-holdres-meh { --tb-hold-res: var(--warn); }
 .tb-holdres-miss { --tb-hold-res: var(--bad); }
-/* HoldBar.ShowResult: the track flashes the result and returns, the fill flashes white and settles on
-   the result keeping the width it froze at; ShowMissed: the fill is empty and the track goes from the
-   error red to the miss track. Either way the whole bar blurs away (HoldBar.blurAway). */
+/* HoldBar.ShowResult (backlog 493): the held part, the fill (keeping the width it froze at) and the
+   ticks it passed, fades from white to the result; the unheld rest of the track stays grey, since
+   a flash of it read as the fill snapping to full and pulling back. ShowMissed: the fill is empty
+   and the track goes from the error red to the miss track. Either way the whole bar blurs away
+   (HoldBar.blurAway). The fill and the lit ticks take the bar's --tb-hold-delay, so they fade on
+   the bar's clock. */
 .tb-holdbar-done, .tb-holdbar-missed { animation: tbHoldBlurAway 200ms cubic-bezier(0.5, 1, 0.89, 1) var(--tb-hold-delay, 0ms) both; }
-.tb-holdbar-done .tb-holdbar-track { animation: tbHoldTrackFlash 300ms cubic-bezier(0.22, 1, 0.36, 1) var(--tb-hold-delay, 0ms) both; }
-.tb-holdbar-done .tb-holdbar-fill { animation: tbHoldFillFlash 300ms cubic-bezier(0.22, 1, 0.36, 1) var(--tb-hold-delay, 0ms) both; }
+.tb-holdbar-done .tb-holdbar-fill,
+.tb-holdbar-done .tb-holdbar-tick-hit { animation: tbHoldHeldResult 300ms cubic-bezier(0.22, 1, 0.36, 1) var(--tb-hold-delay, 0ms) both; }
 .tb-holdbar-missed .tb-holdbar-track { animation: tbHoldTrackMissed 300ms cubic-bezier(0.22, 1, 0.36, 1) var(--tb-hold-delay, 0ms) both; }
 @keyframes tbHoldBlurAway {
     from { filter: blur(0); opacity: 1; }
     to   { filter: blur(calc(4em / 42)); opacity: 0; }
 }
-@keyframes tbHoldTrackFlash {
-    from { background: var(--tb-hold-res); }
-    to   { background: var(--tb-hold-track); }
-}
-@keyframes tbHoldFillFlash {
-    from { background: #fff; }
+@keyframes tbHoldHeldResult {
+    from { background: var(--tb-hold); }
     to   { background: var(--tb-hold-res); }
 }
 @keyframes tbHoldTrackMissed {
     from { background: var(--bad); }
     to   { background: var(--tb-hold-missed); }
-}
-/* The TRAVELLING LETTER (LyricLineDisplay.pickUpHeldLetter): a copy of the held glyph, made with the
-   cell's own classes so it wears the cell's settled colour, resting exactly over its cell (left and
-   width are written by placeHolds) and moved, lifted, grown and shadowed per frame by paintHold
-   (transform and text-shadow) about its own centre, as the desktop's Centre origin does. The real
-   cell behind it fades to a ghost (an inline opacity). At the tail it flashes white and settles on
-   the result tone over 300 ms (ShowHoldResult). */
-.tb-held-letter {
-    position: absolute;
-    top: 0;
-    height: 1.35em;
-    line-height: 1.35;
-    text-align: center;
-    white-space: pre;
-    transform-origin: 50% 50%;
-}
-.tb-held-done { animation: tbHeldLetterFlash 300ms cubic-bezier(0.22, 1, 0.36, 1) var(--tb-hold-delay, 0ms) both; }
-@keyframes tbHeldLetterFlash {
-    from { color: #fff; }
-    to   { color: var(--tb-hold-res); }
 }
 /* The x-height probe a line with holds is measured with (placeHolds): one ex tall on the baseline,
    no width, never seen. */

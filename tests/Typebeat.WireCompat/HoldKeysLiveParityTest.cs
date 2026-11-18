@@ -190,7 +190,7 @@ public class HoldKeysLiveParityTest
             charTimedStretch: true, flexibleLines: true, boundedRush: true, firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true,
             manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
         replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true,
-            earlyFinish: true, keyTimeJudgement: true, bestRetypeJudgement: true, stacksDisplacedClaims: true));
+            earlyFinish: true, keyTimeJudgement: true, bestRetypeJudgement: true, stacksDisplacedClaims: true, holdLeadIn: true));
 
         // Only the calls the desktop would record: a press or release the engine took, and every backspace.
         foreach (var call in calls)

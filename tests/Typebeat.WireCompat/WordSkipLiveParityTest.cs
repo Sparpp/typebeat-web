@@ -431,6 +431,7 @@ public class WordSkipLiveParityTest
             LosslessSkipReclaim = true,
             FoldsDisplacedClaim = true,
             StacksDisplacedClaims = true,
+            HoldLeadIn = true,
             FirstLineLeadIn = true,
             RushCapCostsAccuracy = true,
             InputEra2 = inputEra2,

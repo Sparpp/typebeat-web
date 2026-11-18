@@ -408,7 +408,7 @@ public class SyllableSplitParityTest
         var hitObjects = DecodeObjects(osu);
         var granularity = hitObjects.Count > 0 ? hitObjects[0].Granularity : TimingGranularity.Line;
 
-        return (granularity, hitObjects.Select(h => TypingLine.FromLyricLine(h.Line, literate, alignSubdivisionTargets: true)).ToArray());
+        return (granularity, hitObjects.Select(h => TypingLine.FromLyricLine(h.Line, literate, alignSubdivisionTargets: true, holdLeadIn: true)).ToArray());
     }
 
     /// <summary>The map as the production decoder reads it, units and all.</summary>

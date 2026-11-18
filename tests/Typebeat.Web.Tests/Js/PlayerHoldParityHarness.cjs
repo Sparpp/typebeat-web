@@ -1,10 +1,10 @@
 // Node harness for the HOLD DISPLAY parity pin: typebeat-player.js's port of the desktop's hold
-// presentation (LyricLineDisplay's hold-track statics and TypingLine's sung polyline across a held
-// cell) held against the GAME's own public statics by WireCompat's HoldDisplayParityTest, with no
-// tolerance.
+// presentation (LyricLineDisplay's hold-track statics, its SungLocalX playhead geometry, and
+// TypingLine's sung polyline across a held cell) held against the GAME's own public statics by
+// WireCompat's HoldDisplayParityTest, with no tolerance.
 //
 // The fixtures and the probes come from the C# side, as in CoreHoldsHarness.cjs: the test writes a
-// JSON file of { maps: { name: osuText }, track, paced, pace, travel, heldSung } and passes its path
+// JSON file of { maps: { name: osuText }, track, paced, pace, heldSung, sungX } and passes its path
 // as the second argument. Each map is a timing.json written through the game's own
 // LyricOsuFormat.GenerateOsu, and this harness reads that very text through parseLyricOsu and
 // buildBeatmap; the test decodes it through the game's LyricBeatmapDecoder. For each line it reports
@@ -70,8 +70,9 @@ const out = {
     track: input.track.map(p => D.holdTrackWidth(p[0], p[1])),
     paced: input.paced.map(p => D.holdTrackWidth(p[0], p[1], p[2], p[3])),
     pace: input.pace.map(p => D.holdPaceLettersPerSecond(p[0], p[1], p[2], p[3])),
-    travel: input.travel.map(p => D.holdTravelOffset(p[0], p[1])),
     heldSung: input.heldSung.map(p => D.heldSungOffset(p[0], p[1], p[2])),
+    // SungLocalX: each case is one line's edges, advances and tracks, probed at its fractions.
+    sungX: input.sungX.map(c => c.at.map(f => D.sungLocalX(f, c.lefts, c.advances, c.tracks))),
     tones: ['Great', 'Ok', 'Meh', 'Miss'].map(D.holdResultTone),
     maps: maps
 };

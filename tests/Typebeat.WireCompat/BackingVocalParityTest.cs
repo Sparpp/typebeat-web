@@ -333,7 +333,7 @@ public class BackingVocalParityTest
 
                 for (int l = 0; l < Math.Min(withBacking.Length, client.Count); l++)
                 {
-                    var cells = typebeat.Game.Rulesets.TypeBeat.Gameplay.TypingLine.FromLyricLine(client[l], literate, alignSubdivisionTargets: true).Cells;
+                    var cells = typebeat.Game.Rulesets.TypeBeat.Gameplay.TypingLine.FromLyricLine(client[l], literate, alignSubdivisionTargets: true, holdLeadIn: true).Cells;
 
                     Assert.That(withBacking[l].GetProperty("text").GetString(), Is.EqualTo(client[l].RawText), $"{arm} line {l}: browser text");
                     Assert.That(withBacking[l].GetProperty("stream").GetString(), Is.EqualTo(new string(cells.Select(c => c.Expected).ToArray())),

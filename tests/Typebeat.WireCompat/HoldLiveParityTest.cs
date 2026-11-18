@@ -38,10 +38,13 @@ namespace Typebeat.WireCompat;
 ///
 /// <para>The C# arm is fed under every LIVE era, because the browser selects none: the same CONFIG
 /// and extended CONFIG frames <see cref="EngineFuzzLiveParityTest"/> feeds (see its
-/// <c>Keystrokes</c> for the bit by bit argument). A hold needs no era bit of its own: no replay was
-/// ever recorded on a map with holds under another rule (<see cref="TypingCell.HandsOffFrom"/>), and
-/// a release travels as its own frame (<see cref="TypeBeatReplayFrame.RELEASE"/>), which
-/// <see cref="ReplayEngineFeed.Apply"/> plays through <see cref="TypingEngine.ProcessRelease"/>.</para>
+/// <c>Keystrokes</c> for the bit by bit argument). The hand-off needs no era bit of its own: it shipped
+/// with holds (<see cref="TypingCell.HandsOffFrom"/>), and a release travels as its own frame
+/// (<see cref="TypeBeatReplayFrame.RELEASE"/>), which <see cref="ReplayEngineFeed.Apply"/> plays through
+/// <see cref="TypingEngine.ProcessRelease"/>. The hold LEAD-IN (backlog 494, a held letter due at its
+/// hold's start) came after replays of hold maps existed, so it rides on bit 15 of the second word
+/// (<see cref="TypingEngine.HoldLeadIn"/>), set in the live header here and held under both eras by
+/// <see cref="HoldLeadInParityTest"/>.</para>
 ///
 /// <para>What the streams carry, and why both INPUT MODES matter, is written at the top of the
 /// harness. In short: releases at every grade, at or past the end, or never; the live key handler's
@@ -220,7 +223,7 @@ public class HoldLiveParityTest
             charTimedStretch: true, flexibleLines: true, boundedRush: true, firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true,
             manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
         replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true,
-            earlyFinish: true, keyTimeJudgement: true, bestRetypeJudgement: true, stacksDisplacedClaims: true));
+            earlyFinish: true, keyTimeJudgement: true, bestRetypeJudgement: true, stacksDisplacedClaims: true, holdLeadIn: true));
 
         foreach (var key in keys.EnumerateArray())
             replay.Frames.Add(new TypeBeatReplayFrame(key[0].GetDouble(), key[1].GetString()![0]));
@@ -265,7 +268,7 @@ public class HoldLiveParityTest
 
                 for (int i = 0; i < lines.Count && i < browserLines.GetArrayLength(); i++)
                 {
-                    var line = TypingLine.FromLyricLine(lines[i], alignSubdivisionTargets: true);
+                    var line = TypingLine.FromLyricLine(lines[i], alignSubdivisionTargets: true, holdLeadIn: true);
                     var browserLine = browserLines[i];
 
                     Assert.That(browserLine.GetProperty("endTime").GetDouble(), Is.EqualTo(line.EndTime), $"{name}[{i}]: endTime");
