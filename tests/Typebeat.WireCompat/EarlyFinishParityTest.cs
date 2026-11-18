@@ -100,6 +100,7 @@ public class EarlyFinishParityTest
         LosslessSkipReclaim = true,
         FoldsDisplacedClaim = true,
         StacksDisplacedClaims = true,
+        HoldLeadIn = true,
         FirstLineLeadIn = true,
         // Backlog 347, the first bit of the SECOND CONFIG flags word: the browser takes it unconditionally.
         RushCapCostsAccuracy = true,

@@ -2075,8 +2075,9 @@ out.rushCapTint = rushCapTint();
 // ---- holds, the display half (LyricLineDisplay's hold tracks, HoldBar, LyricStage's hold feed) ----
 // "so long", two holds: the first letter of "so" held [1000, 1500] with a tick at 1250 (handing off
 // to its 'o', due at the hold's end), and the last letter of "long" held [2600, 3000] with no ticks,
-// starting before its own target (2750) and running to the word's end. Cells: s 1000, o 1500,
-// ' ' 1800, l 2000, o 2250, n 2500, g 2750.
+// starting before the even spread's 2750 and running to the word's end, so under the hold lead-in
+// (backlog 494) the 'g' is due at 2600 and "lon" re-spread to meet it. Cells: s 1000, o 1500,
+// ' ' 1800, l 2000, o 2200, n 2400, g 2600.
 const holdOsu = OSU_HEADER +
     '{"granularity":"word","version":2,"song_end_ms":5000}\n' +
     '{"text":"so long","start_ms":1000,"end_ms":3000,"words":[' +

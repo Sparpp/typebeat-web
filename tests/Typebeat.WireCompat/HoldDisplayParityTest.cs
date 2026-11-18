@@ -146,7 +146,7 @@ public class HoldDisplayParityTest
     private static IReadOnlyList<TypingLine> typingLines(string name)
         => new FlatWorkingBeatmap(decode(name)).GetPlayableBeatmap(new TypeBeatRuleset().RulesetInfo, Array.Empty<Mod>())
                                                  .HitObjects.OfType<TypeBeatHitObject>().OrderBy(h => h.LineIndex)
-                                                 .Select(h => TypingLine.FromLyricLine(h.Line, alignSubdivisionTargets: true)).ToArray();
+                                                 .Select(h => TypingLine.FromLyricLine(h.Line, alignSubdivisionTargets: true, holdLeadIn: true)).ToArray();
 
     #endregion
 

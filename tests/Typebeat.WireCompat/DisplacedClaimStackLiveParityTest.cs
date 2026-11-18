@@ -126,6 +126,7 @@ public class DisplacedClaimStackLiveParityTest
         LosslessSkipReclaim = true,
         FoldsDisplacedClaim = true,
         StacksDisplacedClaims = true,
+        HoldLeadIn = true,
         FirstLineLeadIn = true,
         RushCapCostsAccuracy = true,
         InputEra2 = true,
@@ -150,7 +151,7 @@ public class DisplacedClaimStackLiveParityTest
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
         replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true,
-            earlyFinish: true, keyTimeJudgement: true, bestRetypeJudgement: true, stacksDisplacedClaims: stacksDisplacedClaims));
+            earlyFinish: true, keyTimeJudgement: true, bestRetypeJudgement: true, stacksDisplacedClaims: stacksDisplacedClaims, holdLeadIn: true));
 
         foreach (var step in Run(scenario).GetProperty("script").EnumerateArray())
         {

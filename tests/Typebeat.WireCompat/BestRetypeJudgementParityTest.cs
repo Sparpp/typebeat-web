@@ -131,6 +131,7 @@ public class BestRetypeJudgementParityTest
         LosslessSkipReclaim = true,
         FoldsDisplacedClaim = true,
         StacksDisplacedClaims = true,
+        HoldLeadIn = true,
         FirstLineLeadIn = true,
         RushCapCostsAccuracy = true,
         InputEra2 = true,
@@ -157,7 +158,7 @@ public class BestRetypeJudgementParityTest
             wrongInputOnWordGaps: true, strictSpaces: true, charTimedStretch: true, flexibleLines: true, boundedRush: true,
             firstCharTiming: true, backDatedSealBreak: true, losslessSkipReclaim: true, foldsDisplacedClaim: true, manualNewlines: true, newlineOnTypedLetter: true, firstLineLeadIn: true));
         replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: true, inputEra2: true, authoredSyllablesOnly: true, alignSubdivisionTargets: true,
-            earlyFinish: true, keyTimeJudgement: true, japaneseCharacterTiming: true, japaneseInputScoring: true, japaneseKanaInput: true, bestRetypeJudgement: bestRetype, stacksDisplacedClaims: true));
+            earlyFinish: true, keyTimeJudgement: true, japaneseCharacterTiming: true, japaneseInputScoring: true, japaneseKanaInput: true, bestRetypeJudgement: bestRetype, stacksDisplacedClaims: true, holdLeadIn: true));
 
         foreach (var step in Run(scenario).GetProperty("script").EnumerateArray())
         {
@@ -434,7 +435,7 @@ public class BestRetypeJudgementParityTest
         {
             foreach (string stream in new[] { "default", "literate" })
             {
-                var line = TypingLine.FromLyricLine(PausedLine(), literate: stream == "literate", alignSubdivisionTargets: true);
+                var line = TypingLine.FromLyricLine(PausedLine(), literate: stream == "literate", alignSubdivisionTargets: true, holdLeadIn: true);
                 var browser = paused.GetProperty(stream)[0];
 
                 Assert.That(browser.GetArrayLength(), Is.EqualTo(line.Cells.Count), $"{stream}: cell count");
@@ -446,13 +447,13 @@ public class BestRetypeJudgementParityTest
                 }
             }
 
-            var literate = TypingLine.FromLyricLine(PausedLine(), literate: true, alignSubdivisionTargets: true);
+            var literate = TypingLine.FromLyricLine(PausedLine(), literate: true, alignSubdivisionTargets: true, holdLeadIn: true);
             Assert.That(literate.Cells[4].Expected, Is.EqualTo('-'));
             Assert.That(literate.Cells[4].TargetTime, Is.EqualTo(1437.5), "the hyphen is timed inside its own stretch, before the rest");
             Assert.That(literate.Cells[14].Expected, Is.EqualTo(','));
             Assert.That(literate.Cells[14].TargetTime, Is.EqualTo(3600), "the comma is timed at its own stretch's start, after the rest");
 
-            var plain = TypingLine.FromLyricLine(PausedLine(), alignSubdivisionTargets: true);
+            var plain = TypingLine.FromLyricLine(PausedLine(), alignSubdivisionTargets: true, holdLeadIn: true);
             Assert.That(plain.Cells[4].Expected, Is.EqualTo(' '), "the default stream types the hyphen as a space");
             Assert.That(plain.Cells[4].TargetTime, Is.EqualTo(1437.5), "and that space keeps the hyphen's target");
         });

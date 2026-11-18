@@ -380,12 +380,12 @@ public class EngineFuzzLiveParityTest
     /// <c>bit 5 || TypingEngine.FlexibleCaretFromMod</c>. The sweep passes no mods, so the frame is
     /// the whole of the answer here.</para>
     /// </summary>
-    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true, bool manualNewlines = true, bool rushCapCostsAccuracy = true, bool inputEra2 = true, bool authoredSyllablesOnly = true, bool alignSubdivisionTargets = true, bool earlyFinish = true, bool keyTimeJudgement = true, bool bestRetypeJudgement = true, bool stacksDisplacedClaims = true)
+    private static Replay Keystrokes(JsonElement keys, bool spaceSkipsWord, bool syllableTiming = true, bool wrongInputOnWordGaps = true, bool strictSpaces = true, bool charTimedStretch = true, bool flexibleLines = true, bool boundedRush = true, bool firstCharTiming = true, bool backDatedSealBreak = true, bool losslessSkipReclaim = true, bool foldsDisplacedClaim = true, bool firstLineLeadIn = true, bool manualNewlines = true, bool rushCapCostsAccuracy = true, bool inputEra2 = true, bool authoredSyllablesOnly = true, bool alignSubdivisionTargets = true, bool earlyFinish = true, bool keyTimeJudgement = true, bool bestRetypeJudgement = true, bool stacksDisplacedClaims = true, bool holdLeadIn = true)
     {
         var replay = new Replay();
 
         replay.Frames.Add(TypeBeatReplayFrame.CreateConfigFrame(0, allowWrongInput: true, spaceSkipsWord: spaceSkipsWord, syllableTiming: syllableTiming, wrongInputOnWordGaps: wrongInputOnWordGaps, strictSpaces: strictSpaces, charTimedStretch: charTimedStretch, flexibleLines: flexibleLines, boundedRush: boundedRush, firstCharTiming: firstCharTiming, backDatedSealBreak: backDatedSealBreak, losslessSkipReclaim: losslessSkipReclaim, foldsDisplacedClaim: foldsDisplacedClaim, manualNewlines: manualNewlines, newlineOnTypedLetter: manualNewlines, firstLineLeadIn: firstLineLeadIn));
-        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: authoredSyllablesOnly, alignSubdivisionTargets: alignSubdivisionTargets, earlyFinish: earlyFinish, keyTimeJudgement: keyTimeJudgement, bestRetypeJudgement: bestRetypeJudgement, stacksDisplacedClaims: stacksDisplacedClaims));
+        replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(0, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: authoredSyllablesOnly, alignSubdivisionTargets: alignSubdivisionTargets, earlyFinish: earlyFinish, keyTimeJudgement: keyTimeJudgement, bestRetypeJudgement: bestRetypeJudgement, stacksDisplacedClaims: stacksDisplacedClaims, holdLeadIn: holdLeadIn));
 
         foreach (var key in keys.EnumerateArray())
         {
@@ -460,7 +460,7 @@ public class EngineFuzzLiveParityTest
 
                 for (int i = 0; i < lines.Length; i++)
                 {
-                    var line = TypingLine.FromLyricLine(lines[i], alignSubdivisionTargets: true);
+                    var line = TypingLine.FromLyricLine(lines[i], alignSubdivisionTargets: true, holdLeadIn: true);
                     var browserLine = browserLines[i];
 
                     // The browser plays live only, so it is held against the LIVE grouping
@@ -543,8 +543,8 @@ public class EngineFuzzLiveParityTest
     [Test]
     public void TheAuthoredSplitFixtureReallyExercisesTheAuthoredArm()
     {
-        var authored = TypingLine.FromLyricLine(Fixture("authoredSplit")[0], alignSubdivisionTargets: true);
-        var derived = TypingLine.FromLyricLine(WithoutSplits(Fixture("authoredSplit")[0]), alignSubdivisionTargets: true);
+        var authored = TypingLine.FromLyricLine(Fixture("authoredSplit")[0], alignSubdivisionTargets: true, holdLeadIn: true);
+        var derived = TypingLine.FromLyricLine(WithoutSplits(Fixture("authoredSplit")[0]), alignSubdivisionTargets: true, holdLeadIn: true);
 
         Assert.That(derived.Cells.Count, Is.EqualTo(authored.Cells.Count), "stripping the split must not change the cells themselves");
 
@@ -746,7 +746,7 @@ public class EngineFuzzLiveParityTest
 
             return TypeBeatReplayScorer.Score(map, Array.Empty<Mod>(),
                 // A stored-era arm predates backlog 363 and PR 5 too, so it clears bits 2 and 3 with bit 1.
-                Keystrokes(browserCase.GetProperty("keys"), spaceSkipsWord: false, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2, earlyFinish: inputEra2, keyTimeJudgement: inputEra2, bestRetypeJudgement: inputEra2, stacksDisplacedClaims: inputEra2),
+                Keystrokes(browserCase.GetProperty("keys"), spaceSkipsWord: false, rushCapCostsAccuracy: rushCapCostsAccuracy, inputEra2: inputEra2, authoredSyllablesOnly: inputEra2, alignSubdivisionTargets: inputEra2, earlyFinish: inputEra2, keyTimeJudgement: inputEra2, bestRetypeJudgement: inputEra2, stacksDisplacedClaims: inputEra2, holdLeadIn: inputEra2),
                 TypoRule.Deferred, ComboRestoreRule.OnFix);
         }
 
@@ -1035,8 +1035,8 @@ public class EngineFuzzLiveParityTest
 
         foreach (var original in lines)
         {
-            var paused = TypingLine.FromLyricLine(original, alignSubdivisionTargets: true);
-            var plain = TypingLine.FromLyricLine(WithoutSplits(original, keepSplits: true), alignSubdivisionTargets: true);
+            var paused = TypingLine.FromLyricLine(original, alignSubdivisionTargets: true, holdLeadIn: true);
+            var plain = TypingLine.FromLyricLine(WithoutSplits(original, keepSplits: true), alignSubdivisionTargets: true, holdLeadIn: true);
 
             Assert.That(plain.Cells.Count, Is.EqualTo(paused.Cells.Count), "stripping the pauses must not change the cells themselves");
 
@@ -1052,7 +1052,7 @@ public class EngineFuzzLiveParityTest
             }
         }
 
-        var stretchLine = TypingLine.FromLyricLine(lines[2], alignSubdivisionTargets: true);
+        var stretchLine = TypingLine.FromLyricLine(lines[2], alignSubdivisionTargets: true, holdLeadIn: true);
 
         Assert.Multiple(() =>
         {

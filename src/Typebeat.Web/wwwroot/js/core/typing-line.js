@@ -485,6 +485,71 @@
         return ramp;
     }
 
+    // TypingLine.tokenCellSegments: per typeable cell of one token, the segment tokenCellTargets
+    // spread it over, as an id unique within the token: the subdivision segment, or on a paused word
+    // the stretch's own segment, a stretch numbering its segments on from the stretch before. Every
+    // branch is tokenCellTargets' own, taken in the same order on the same inputs; only the hold
+    // lead-in reads it (leadIntoHolds), and only on a line with holds.
+    function tokenCellSegments(token, unitStart, unitEnd, unit, k, aligned) {
+        const segments = new Array(Math.max(0, k)).fill(0);
+
+        if (k <= 0) return segments;
+
+        let boundaries = (unit && unit.syllables) ? unit.syllables : EMPTY_BOUNDARIES;
+        const paused = unit ? pausedWordOf(token, unitStart, unitEnd, unit) : null;
+
+        if (paused !== null) {
+            let segmentBase = 0;
+
+            for (const piece of paused.pieces) {
+                let pb = piece.boundaries;
+                let pc = piece.cellCuts;
+
+                if (aligned && pc === null && pb.length > 0) {
+                    const splits = piece.cuts.map(c => c - piece.firstChar);
+                    pc = cellCuts(token.substring(piece.firstChar, piece.firstChar + piece.charCount), splits);
+                    pb = pb.slice(0, splits.length);
+                }
+
+                for (let j = 0; j < piece.cellCount; j++) {
+                    segments[piece.firstCell + j] = segmentBase + syllableCharSegment(pb, piece.cellCount, j, pc);
+                }
+
+                segmentBase += pb.length + 1;
+            }
+
+            return segments;
+        }
+
+        let cuts = null;
+
+        if (aligned && boundaries.length > 0) {
+            const splits = splitsFor(token, boundaries.length + 1, unit.splits);
+            cuts = cellCuts(token, splits);
+            boundaries = boundaries.slice(0, splits.length);
+        } else if (!aligned && unit && isAuthoredValid(token, boundaries.length + 1, unit.splits)) {
+            cuts = cellCuts(token, unit.splits);
+        }
+
+        for (let j = 0; j < k; j++) segments[j] = syllableCharSegment(boundaries, k, j, cuts);
+
+        return segments;
+    }
+
+    // TypingLine.syllableCharSegment: the segment syllableCharTarget spreads char j over, chosen
+    // exactly as it chooses it: 0 with no boundaries, the cut's segment with a cell cut, otherwise the
+    // char's index scaled into segment space.
+    function syllableCharSegment(boundaries, k, j, cuts) {
+        if (k <= 0 || boundaries.length === 0) return 0;
+
+        const segments = boundaries.length + 1;
+
+        if (cuts && cuts.length === segments + 1) return segmentOf(cuts, j);
+
+        const s = Math.floor(j * segments / k);
+        return s >= segments ? segments - 1 : s;
+    }
+
     function buildSyllables(text, units, lineStart, singEndTime, cells, sources) {
         const rawGroup = new Array(text.length).fill(-1);
 
@@ -838,11 +903,17 @@
     // (never punctuation), so the mod adds cells without moving any of the existing ones.
     //
     // `aligned` is tokenCellTargets' era switch, false only for scoringOrderOf's legacy targets.
+    //
+    // On a line whose words carry a hold, the same targets under the HOLD LEAD-IN era (backlog 494,
+    // see leadIntoHolds) are walked beside them through the same passes and returned per cell as
+    // `leadInTargets` (null on every other line), exactly as TypingLine.build walks its leadInTargets.
+    // The caller decides whether to play them (buildBeatmap's holdLeadIn).
     function buildCells(text, units, literate, aligned = true) {
         const n = text.length;
         const expected = new Array(n);
         const typeableFlags = new Array(n).fill(false);
         const targets = new Array(n).fill(null);
+        const leadInTargets = units.some(u => u.holds && u.holds.length > 0) ? new Array(n).fill(null) : null;
 
         // Pass 1: walk the authored text token by token (spaces delimit tokens; token m maps to
         // units[m]). Punctuation is placed but left UNTIMED, and is excluded from k, so adding a
@@ -867,6 +938,13 @@
             // TypingLine.tokenCellTargets on its aligned live era).
             const ramp = tokenCellTargets(token, unitStart, unitEnd, unit, k, aligned);
 
+            // The lead-in era's ramp: the same one with each usable hold's letter due at the hold's
+            // start. Read off the unit the hold half (heldCellsOf) reads, which a malformed count does
+            // not reach.
+            const leadInRamp = leadInTargets !== null && m < units.length && units[m].holds && units[m].holds.length > 0
+                ? leadIntoHolds(ramp, tokenCellSegments(token, unitStart, unitEnd, unit, k, aligned), token, usableHolds(units[m]))
+                : ramp;
+
             let j = 0;
             for (let t = 0; t < token.length; t++) {
                 const ch = token[t];
@@ -874,6 +952,7 @@
                 if (isCell(ch)) {
                     typeableFlags[pos] = true;
                     targets[pos] = ramp[j];
+                    if (leadInTargets !== null) leadInTargets[pos] = leadInRamp[j];
                     j++;
                 }
                 pos++;
@@ -892,6 +971,10 @@
 
                     for (const piece of paused.pieces) {
                         interpolateUntimedTargets(targets, tokenStart + piece.firstChar, piece.charCount, piece.startTime, piece.startTime, piece.endTime);
+
+                        if (leadInTargets !== null) {
+                            interpolateUntimedTargets(leadInTargets, tokenStart + piece.firstChar, piece.charCount, piece.startTime, piece.startTime, piece.endTime);
+                        }
                     }
                 }
             }
@@ -900,6 +983,7 @@
                 expected[pos] = ' '; // inter-word space cell: preceding unit's end
                 typeableFlags[pos] = true;
                 targets[pos] = unitEnd;
+                if (leadInTargets !== null) leadInTargets[pos] = unitEnd;
                 pos++;
             }
         }
@@ -914,6 +998,17 @@
         // Guard: targets non-decreasing (clamp to previous if data is inverted).
         for (let i = 1; i < n; i++) {
             if (targets[i] < targets[i - 1]) targets[i] = targets[i - 1];
+        }
+
+        // The lead-in era's targets through the same two steps, so its marks fall between its own
+        // letters and a hold starting before the letter ahead of it (data the editor refuses) cannot
+        // invert them.
+        if (leadInTargets !== null) {
+            interpolateUntimedTargets(leadInTargets, 0, n, 0);
+
+            for (let i = 1; i < n; i++) {
+                if (leadInTargets[i] < leadInTargets[i - 1]) leadInTargets[i] = leadInTargets[i - 1];
+            }
         }
 
         const cells = [];
@@ -942,7 +1037,10 @@
             }
         }
 
-        return { cells: cells, sources: sources };
+        // The lead-in targets per cell, projected exactly as the cells' own were.
+        const cellLeadIn = leadInTargets === null ? null : cells.map((_, i) => leadInTargets[sources === null ? i : sources[i]]);
+
+        return { cells: cells, sources: sources, leadInTargets: cellLeadIn };
     }
 
     // ---------------------------------------------------------------------------
@@ -955,8 +1053,15 @@
     // without it. The HELD cell carries the span its release is graded on (holdStart, holdEnd) and
     // the ticks credited while it is down (holdTickTimes); the next typeable cell of its word
     // follows the hold (handsOffFrom) and is due no earlier than the hold's end, as is every later
-    // cell of the word. A hold no play could honour is ignored, never repaired. No era: holds only
-    // exist on maps no replay was ever recorded under another rule for.
+    // cell of the word. A hold no play could honour is ignored, never repaired. The hand-off has no
+    // era: it shipped with holds.
+    //
+    // THE HOLD LEAD-IN (backlog 494) does have one. Under it the held letter is due at its hold's
+    // start and the letters leading into it are re-spread to meet it (leadIntoHolds). Replays of hold
+    // maps have been recorded since holds shipped, so the game gates it on TypingEngine.HoldLeadIn,
+    // bit 15 of the second CONFIG word, clear on every replay recorded before it. The browser writes
+    // no replay and plays only live, so it takes the rule by default; buildBeatmap's holdLeadIn is
+    // the same era flag, false only for the parity harnesses' stored-era arm.
     // ---------------------------------------------------------------------------
 
     // HoldTailRule (Gameplay/HoldTailRule.cs): a release is graded by how much of the hold was held.
@@ -1237,6 +1342,50 @@
         }
     }
 
+    // TypingLine.leadIntoHolds (backlog 494): one token's ramp with each usable hold's letter due at
+    // the hold's start, as a new array (`ramp` is left as it was). For each hold, in character order,
+    // its LEAD-IN runs from the first cell of the held cell's syllable segment (`segments`, see
+    // tokenCellSegments) up to the held cell, cut short after an earlier held cell of the same
+    // segment. A held cell that opens its lead-in is simply due at the hold's start; otherwise the
+    // lead-in is re-spread evenly, by ramp index, from its first target (never before an earlier hold
+    // of the token's end, where that hold's hand-off puts it anyway) to the hold's start, collapsing
+    // onto the first target rather than running backwards when the hold starts at or before it. The
+    // letters after a hold are the hand-off's; no group, cut or seal grace moves.
+    function leadIntoHolds(ramp, segments, token, holds) {
+        const result = ramp.slice();
+        let previousHeld = -1;
+        let previousEnd = -Infinity;
+
+        for (const hold of holds) {
+            // The held character's index among the token's ramp cells.
+            let held = 0;
+
+            for (let c = 0; c < hold.char && c < token.length; c++) {
+                if (isCell(token[c])) held++;
+            }
+
+            if (held >= result.length) continue;
+
+            let first = held;
+
+            while (first > 0 && first - 1 > previousHeld && segments[first - 1] === segments[held]) first--;
+
+            if (first === held) {
+                result[held] = hold.start;
+            } else {
+                const from = Math.max(result[first], previousEnd);
+                const to = Math.max(hold.start, from);
+
+                for (let j = first; j <= held; j++) result[j] = from + (to - from) * (j - first) / (held - first);
+            }
+
+            previousHeld = held;
+            previousEnd = hold.end;
+        }
+
+        return result;
+    }
+
     // The word-object pass of TypingLine.build, run only when a unit carries an object (the C#'s
     // `units.Any(u => !u.Objects.IsEmpty)`). Placed by the caller AFTER the syllable groups and the
     // seal grace's boundary bump are derived, exactly where the C# runs it: a hold adds no cut, and
@@ -1434,7 +1583,11 @@
         return fitted;
     }
 
-    function buildBeatmap(parsed, literate = false) {
+    // `holdLeadIn` is the hold lead-in era (TypingEngine.HoldLeadIn, backlog 494, see the HOLDS
+    // section): true, the browser's only era, a held letter is due at its hold's start; false, the
+    // even spread every game replay recorded before the era re-derives on, which only the parity
+    // harnesses ask for.
+    function buildBeatmap(parsed, literate = false, holdLeadIn = true) {
         const header = parsed.header || {};
         const songEndMs = isFinite(header.song_end_ms) ? header.song_end_ms : null;
 
@@ -1597,6 +1750,28 @@
             // keypress on a grouped cell is judged against (see TypingEngine.judgedDeltaFor).
             const grouped = buildSyllables(line.text, units, start, singEndTime, cells, flattened.sources);
 
+            // Boundary bump: a last cell on the seal boundary gets a minimum finish window.
+            let grace = sealGrace;
+            if (cells.length && cells[cells.length - 1].target >= endTime - BOUNDARY_EPSILON_MS) {
+                grace = Math.max(grace, MIN_BOUNDARY_GRACE_MS);
+            }
+            grace = Math.min(grace, MAX_SEAL_GRACE_MS);
+
+            // THE HOLD LEAD-IN (backlog 494): the lead-in era's targets, put on the cells here, after
+            // the groups and the bump above were taken from the hold-free ones (as TypingLine keeps
+            // its seal grace and groups across the era) and before the hand-off below floors them.
+            if (holdLeadIn && flattened.leadInTargets !== null) {
+                for (let c = 0; c < cells.length; c++) cells[c].target = flattened.leadInTargets[c];
+            }
+
+            // WORD OBJECTS (holds): the held cells' spans and ticks, and the hand-off targets after
+            // them. Last, as in TypingLine.build: the groups above were cut without them and the
+            // bump above measured the targets before any hand-off moved one.
+            applyWordObjects(line.text, units, cells, flattened.sources);
+
+            // Read off the cells as they are played, as TypingLine.rebuildSungPoints reads them: only
+            // the lead-in can move a line's first cell (a held first letter is due at its hold's
+            // start), never the hand-off.
             const firstTarget = cells.length ? cells[0].target : start;
             const activationTime = Math.max(start, firstTarget - CUE_LEAD_MS);
 
@@ -1607,18 +1782,6 @@
             for (const c of cells) {
                 if (c.typeable) { firstVocalTime = c.target; break; }
             }
-
-            // Boundary bump: a last cell on the seal boundary gets a minimum finish window.
-            let grace = sealGrace;
-            if (cells.length && cells[cells.length - 1].target >= endTime - BOUNDARY_EPSILON_MS) {
-                grace = Math.max(grace, MIN_BOUNDARY_GRACE_MS);
-            }
-            grace = Math.min(grace, MAX_SEAL_GRACE_MS);
-
-            // WORD OBJECTS (holds): the held cells' spans and ticks, and the hand-off targets after
-            // them. Last, as in TypingLine.build: the groups above were cut without them and the
-            // bump above measured the targets before any hand-off moved one.
-            applyWordObjects(line.text, units, cells, flattened.sources);
 
             // Where this line's hold ticks fall in the simulated maximum run (scoringOrderOf), which
             // needs the legacy era's cells: built only for a line that has a tick, the one case the
@@ -1716,7 +1879,8 @@
             // HOLDS (TypingCell.HoldStart / HoldEnd / HoldTickTimes / HandsOffFrom, set by
             // applyWordObjects and fixed for the life of the beatmap). A HELD cell carries the span
             // its release is graded on and its usable tick times (an empty array for a hold with
-            // none); the hold does not move the cell's own target. handsOffFrom is the index of the
+            // none); under the hold lead-in era (buildBeatmap's holdLeadIn, the browser's default)
+            // the cell's own target is the hold's start. handsOffFrom is the index of the
             // held cell this one follows (the next typeable cell of its word), whose press inside
             // the hold's release slack is judged on time. All null on every other cell.
             holdStart: null,

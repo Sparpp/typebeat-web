@@ -200,7 +200,7 @@ public class UnderlinePaceParityTest
 
         return decoded.HitObjects.OfType<TypeBeatHitObject>()
                       .OrderBy(h => h.LineIndex)
-                      .Select(h => TypingLine.FromLyricLine(h.Line, alignSubdivisionTargets: true))
+                      .Select(h => TypingLine.FromLyricLine(h.Line, alignSubdivisionTargets: true, holdLeadIn: true))
                       .ToArray();
     }
 
