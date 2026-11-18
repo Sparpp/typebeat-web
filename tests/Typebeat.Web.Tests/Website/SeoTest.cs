@@ -386,32 +386,6 @@ public class SeoTest
             Assert.That(html, Does.Contain(
                 "<a href=\"/login\">sign in</a> to save your scores.</p>"));
         });
-
-        // The intro sits inside the picker, above the card grid, so it hides with the picker when
-        // a run starts (play.js showStage).
-        int picker = html.IndexOf("<div id=\"tb-picker\"", StringComparison.Ordinal);
-        int stage = html.IndexOf("<div id=\"tb-stage\"", StringComparison.Ordinal);
-        Assert.That(picker, Is.GreaterThan(0));
-        Assert.That(stage, Is.GreaterThan(picker));
-        string pickerHtml = html[picker..stage];
-
-        Assert.Multiple(() =>
-        {
-            foreach (string line in new[]
-                     {
-                         "<p>Pick a map below and type the lyrics as they're sung. No download, no account.</p>",
-                         "<p>Only letters, numbers and spaces count, so don't worry about capitals or punctuation. A hyphen counts as a space. "
-                         + "You can pause (Esc), retry or quit a run, and skip long instrumental breaks. Every run ends with your score, "
-                         + "accuracy, WPM, best combo, typos and your count of Greats, Oks, Mehs and misses.</p>",
-                         "<p>Mods, rate changes and the map editor live in the desktop client.</p>",
-                         "<p>type!beat is played on a physical keyboard.</p>",
-                     })
-            {
-                Assert.That(pickerHtml, Does.Contain(line));
-                Assert.That(pickerHtml.IndexOf(line, StringComparison.Ordinal),
-                    Is.LessThan(pickerHtml.IndexOf("class=\"card-grid\"", StringComparison.Ordinal)), "above the card grid");
-            }
-        });
     }
 
     [Test]

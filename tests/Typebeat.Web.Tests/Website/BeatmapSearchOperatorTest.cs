@@ -300,7 +300,6 @@ public class BeatmapSearchOperatorTest
             Assert.That(html, Does.Contain("<code>stars&gt;4</code>"));
             Assert.That(html, Does.Contain("<code>stars&lt;=4</code>"));
             Assert.That(html, Does.Contain("<code>stars=4.07</code>"));
-            Assert.That(html, Does.Contain("<code>stars=4.06</code>"), "the rounded-display note");
         });
     }
 

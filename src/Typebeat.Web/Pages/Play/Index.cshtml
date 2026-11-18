@@ -27,13 +27,6 @@
     }
     else
     {
-        @* Inside the picker so it hides with it when a run starts (backlog 418). *@
-        <div class="play-intro">
-            <p>Pick a map below and type the lyrics as they're sung. No download, no account.</p>
-            <p>Only letters, numbers and spaces count, so don't worry about capitals or punctuation. A hyphen counts as a space. You can pause (Esc), retry or quit a run, and skip long instrumental breaks. Every run ends with your score, accuracy, WPM, best combo, typos and your count of Greats, Oks, Mehs and misses.</p>
-            <p>Mods, rate changes and the map editor live in the desktop client.</p>
-            <p>type!beat is played on a physical keyboard.</p>
-        </div>
         <div class="card-grid">
             @foreach (var set in Model.Maps)
             {

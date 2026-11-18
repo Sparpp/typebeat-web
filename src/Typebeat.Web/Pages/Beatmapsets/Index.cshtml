@@ -53,29 +53,6 @@
 <details class="search-guide" id="search-guide">
     <summary>Search filters: type <code>key:value</code> right in the box</summary>
     <div class="search-guide__body">
-        <p>
-            Mix filters with normal words. Wrap values with spaces in quotes
-            (<code>title:"night drive"</code>). Numbers take <code>&gt;</code>, <code>&lt;</code>,
-            <code>&gt;=</code>, <code>&lt;=</code> or a <code>4-6</code> range. Unknown filters are
-            treated as plain text.
-        </p>
-        <p>
-            The game's song select syntax works here too: <code>stars&gt;4</code>,
-            <code>stars&lt;=4</code>, <code>stars=4.07</code>. The operator can replace the colon
-            (<code>=</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>,
-            <code>&gt;=</code>), <code>sr</code> is short for <code>stars</code>, and
-            <code>!=</code> excludes: <code>stars!=4.07</code>, <code>artist!=queen</code>.
-        </p>
-        <p>
-            An exact number matches what you would see, the way the game matches it:
-            <code>stars=4.07</code> is any rating from 4.07 up to (not including) 4.08, and
-            <code>stars=4</code> is 4.00 up to 4.01. WPM matches the whole number shown, BPM
-            within half a beat, and <code>length=2m</code> within half a minute
-            (<code>length=1:30</code> within half a second). Cards round the rating to two decimals
-            while the game cuts it down, so a map rated 4.068 shows as 4.07 here but matches
-            <code>stars=4.06</code>. Greater and less than (<code>stars&gt;4</code>) always compare
-            the full rating.
-        </p>
         <table class="search-guide__table">
             <tbody>
                 <tr><td><code>title:</code></td><td>set title</td><td><code>title:rhapsody</code></td></tr>
