@@ -186,6 +186,7 @@ public class Migration004BackfillTest
             "057_judged_cells_spaceless.sql",
             "057_languages.sql",
             "059_wip_status.sql",
+            "060_sign_ins.sql",
         }));
     }
 

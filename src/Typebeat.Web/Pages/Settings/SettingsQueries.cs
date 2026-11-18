@@ -104,6 +104,9 @@ public static class SettingsQueries
         -- Which Google account this person signed in with is personal data (035_google_sign_in.sql),
         -- and dropping the link also frees that Google account to sign up afresh.
         DELETE FROM user_external_logins  WHERE user_id = @id;
+        -- Where the account signed in from (060_sign_ins.sql) is personal data too.
+        DELETE FROM sign_in_reviews       WHERE user_id = @id OR other_user_id = @id;
+        DELETE FROM sign_ins              WHERE user_id = @id;
 
         UPDATE reports SET reporter_id = NULL WHERE reporter_id = @id;
 

@@ -43,6 +43,9 @@ try
         "rerank-score"    => await SetScoreRanked(conn, args, ranked: true),
         "restrict-user"   => await SetUserRestricted(conn, args, restricted: true),
         "unrestrict-user" => await SetUserRestricted(conn, args, restricted: false),
+        "alts"            => await Alts(conn, args),
+        "flags"           => await Flags(conn, args),
+        "clear-flag"      => await ClearFlag(conn, args),
         "issue-token"     => await IssueToken(conn, args),
         "revoke-token"    => await RevokeToken(conn, args),
         "stats"           => await Stats(conn),
@@ -234,6 +237,23 @@ static async Task<int> SetUserRestricted(NpgsqlConnection conn, string[] args, b
             new { userId });
 
         Console.WriteLine($"restricted user '{username}' (id {userId}); unranked {unranked} score(s), revoked {revoked} token(s).");
+
+        // Accounts that already shared an address or instance with this one are queued for review
+        // now; ones that turn up later are queued by the website as they are first seen.
+        int queued = await conn.ExecuteAsync(
+            """
+            INSERT INTO sign_in_reviews (user_id, other_user_id, via)
+            SELECT DISTINCT o.user_id, @userId,
+                   CASE WHEN o.instance <> '' AND o.instance = r.instance THEN 'instance' ELSE 'ip' END
+            FROM sign_ins r
+            JOIN sign_ins o ON o.user_id <> r.user_id AND (o.ip = r.ip OR (r.instance <> '' AND o.instance = r.instance))
+            WHERE r.user_id = @userId
+            ON CONFLICT (user_id, other_user_id, via) DO NOTHING
+            """,
+            new { userId });
+
+        if (queued > 0)
+            Console.WriteLine($"queued {queued} linked account(s) for review (see: flags, alts {username}).");
     }
     else
     {
@@ -242,6 +262,136 @@ static async Task<int> SetUserRestricted(NpgsqlConnection conn, string[] args, b
     }
 
     return 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sign-in history (Auth/SignInHistory.cs, migration 060). Read-only apart from clear-flag: a shared
+// address is a lead for an operator, never a verdict, so nothing here restricts anyone.
+// ---------------------------------------------------------------------------------------------
+
+static async Task<int> Alts(NpgsqlConnection conn, string[] args)
+{
+    if (args.Length < 2)
+    {
+        Console.Error.WriteLine("usage: alts <username>");
+        return 1;
+    }
+
+    string username = args[1];
+    long? userId = await conn.QuerySingleOrDefaultAsync<long?>(
+        "SELECT id FROM users WHERE username = @username", new { username });
+
+    if (userId is null)
+    {
+        Console.Error.WriteLine($"error: no user with username '{username}'.");
+        return 1;
+    }
+
+    var seen = (await conn.QueryAsync(
+        """
+        SELECT ip, instance, user_agent AS "userAgent", first_seen AS "firstSeen", last_seen AS "lastSeen", hits
+        FROM sign_ins WHERE user_id = @userId ORDER BY last_seen DESC
+        """,
+        new { userId })).ToList();
+
+    Console.WriteLine($"{username} (id {userId}): {seen.Count} sign-in record(s)");
+    Console.WriteLine($"  {"IP",-40} {"INSTANCE",-12} {"FIRST_SEEN",-17} {"LAST_SEEN",-17} {"HITS",-6} USER_AGENT");
+
+    foreach (var r in seen)
+    {
+        string instance = (string)r.instance;
+        string shortInstance = instance.Length == 0 ? "-" : instance[..Math.Min(10, instance.Length)];
+        Console.WriteLine($"  {(string)r.ip,-40} {shortInstance,-12} {(DateTime)r.firstSeen:yyyy-MM-dd HH:mm} " +
+                          $"{(DateTime)r.lastSeen:yyyy-MM-dd HH:mm} {(int)r.hits,-6} {(string)r.userAgent}");
+    }
+
+    var linked = (await conn.QueryAsync(
+        """
+        SELECT u.id, u.username, u.restricted,
+               bool_or(r.instance <> '' AND o.instance = r.instance) AS "sharesInstance",
+               count(DISTINCT o.ip) FILTER (WHERE o.ip = r.ip) AS "sharedIps",
+               max(o.last_seen) AS "lastSeen"
+        FROM sign_ins r
+        JOIN sign_ins o ON o.user_id <> r.user_id AND (o.ip = r.ip OR (r.instance <> '' AND o.instance = r.instance))
+        JOIN users u ON u.id = o.user_id
+        WHERE r.user_id = @userId
+        GROUP BY u.id, u.username, u.restricted
+        ORDER BY "sharesInstance" DESC, "lastSeen" DESC
+        """,
+        new { userId })).ToList();
+
+    Console.WriteLine();
+
+    if (linked.Count == 0)
+    {
+        Console.WriteLine("no other account shares an address or instance with this one.");
+        return 0;
+    }
+
+    Console.WriteLine("accounts sharing an address or instance (a shared instance is the strong signal;");
+    Console.WriteLine("a shared address alone can be a household, school or carrier):");
+    Console.WriteLine($"  {"ID",-8} {"USERNAME",-24} {"RESTRICTED",-11} {"SAME_INSTANCE",-14} {"SHARED_IPS",-11} LAST_SEEN");
+
+    foreach (var r in linked)
+    {
+        Console.WriteLine($"  {(long)r.id,-8} {(string)r.username,-24} {((bool)r.restricted ? "yes" : "no"),-11} " +
+                          $"{((bool)r.sharesInstance ? "yes" : "no"),-14} {(long)r.sharedIps,-11} {(DateTime)r.lastSeen:yyyy-MM-dd HH:mm}");
+    }
+
+    return 0;
+}
+
+static async Task<int> Flags(NpgsqlConnection conn, string[] args)
+{
+    bool all = args.Length >= 2 && args[1] == "all";
+
+    var rows = (await conn.QueryAsync(
+        """
+        SELECT f.id, f.via, f.created_at AS "createdAt", f.reviewed_at AS "reviewedAt",
+               u.username AS username, u.id AS "userId", u.restricted AS restricted,
+               o.username AS "otherUsername", o.id AS "otherId"
+        FROM sign_in_reviews f
+        JOIN users u ON u.id = f.user_id
+        JOIN users o ON o.id = f.other_user_id
+        WHERE @all OR f.reviewed_at IS NULL
+        ORDER BY f.id
+        """,
+        new { all })).ToList();
+
+    if (rows.Count == 0)
+    {
+        Console.WriteLine(all ? "no reviews have been queued." : "no open reviews.");
+        return 0;
+    }
+
+    Console.WriteLine($"{"ID",-6} {"RAISED",-17} {"ACCOUNT",-32} {"SHARES",-9} {"WITH RESTRICTED",-32} STATE");
+
+    foreach (var r in rows)
+    {
+        string account = $"{(string)r.username} ({(long)r.userId}){((bool)r.restricted ? " [R]" : "")}";
+        string other = $"{(string)r.otherUsername} ({(long)r.otherId})";
+        string state = r.reviewedAt is null ? "open" : "cleared";
+        Console.WriteLine($"{(long)r.id,-6} {(DateTime)r.createdAt:yyyy-MM-dd HH:mm} {account,-32} {(string)r.via,-9} {other,-32} {state}");
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("look closer with: alts <username>; mark as looked at with: clear-flag <id>");
+    return 0;
+}
+
+static async Task<int> ClearFlag(NpgsqlConnection conn, string[] args)
+{
+    if (args.Length < 2 || !long.TryParse(args[1], out long id))
+    {
+        Console.Error.WriteLine("usage: clear-flag <id>");
+        return 1;
+    }
+
+    int changed = await conn.ExecuteAsync(
+        "UPDATE sign_in_reviews SET reviewed_at = now() WHERE id = @id AND reviewed_at IS NULL", new { id });
+
+    Console.WriteLine(changed == 1 ? $"cleared review {id}." : $"no open review with id {id}.");
+    return changed == 1 ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -484,6 +634,9 @@ static void Usage()
           rerank-score <score_id>         mark a score ranked
           restrict-user <username>        restrict a user (unranks scores, revokes tokens)
           unrestrict-user <username>      lift a user's restriction
+          alts <username>                 where an account signs in from, and who else does
+          flags [all]                     accounts queued for review (open only, unless 'all')
+          clear-flag <id>                 mark a queued review as looked at
           issue-token <username> [mins]   mint a short-lived bearer token acting as a user
           revoke-token <token_id>         revoke one issued token (the cleanup half)
           stats                           summary counts

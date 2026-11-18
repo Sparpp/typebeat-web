@@ -303,6 +303,9 @@ app.UseSessionCookieAuth();
 // rather than the bare header; handlers reuse the answer (AuthExtensions.ResolveBearerAsync).
 app.UseBearerResolution();
 
+// Where signed-in accounts are used from (Auth/SignInHistory.cs); reads the user both resolved.
+app.UseSignInHistory();
+
 // Backlog 366. AFTER the session and bearer middleware, because both read ctx.SessionUser() and
 // ctx.ResolvedBearer(): the limiter to key a signed-in caller, the cache to refuse them. Limiter
 // first, so a request the cache would answer still spends its anonymous-read budget. Then
