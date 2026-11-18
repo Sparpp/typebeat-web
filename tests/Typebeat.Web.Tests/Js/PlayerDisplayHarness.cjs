@@ -2106,19 +2106,15 @@ function holdDisplay() {
         trackPaced: [[500, 25, 3, 20], [2000, 20, 4, 20], [10000, 20, 8, 20]].map(p => D.holdTrackWidth(p[0], p[1], p[2], p[3])),
         pace: [[2600, 2500, 30, 25], [2600, 2000, 60, 30], [1000, null, 30, 25], [1000, 1000, 30, 25], [3000, 1000, 10, 25], [1000, 900, 30, 0]]
             .map(p => D.holdPaceLettersPerSecond(p[0], p[1], p[2], p[3])),
-        travel: [[0.5, 50], [-1, 50], [2, 50], [0, 50]].map(p => D.holdTravelOffset(p[0], p[1])),
         heldSung: [[0.5, 25, 50], [1.5, 25, 50], [-0.2, 25, 50], [0, 25, 50]].map(p => D.heldSungOffset(p[0], p[1], p[2])),
+        // SungLocalX on the game's HeldPlayheadTest line: "abc" with the 'b' held, advances 10, 12,
+        // 10 and a 40 px track after the 'b'; and the same line without the hold.
+        sungX: [0, 0.5, 1, 1.25, 1.5, 2, 2.5, 3].map(f => D.sungLocalX(f, [0, 10, 62, 72], [10, 12, 10], [0, 40, 0])),
+        sungXPlain: [0, 1, 1.5, 3].map(f => D.sungLocalX(f, [0, 10, 22, 32], [10, 12, 10], [0, 0, 0])),
         fill: [[1250, 1000, 1500], [900, 1000, 1500], [1600, 1000, 1500], [1000, 1000, 1000.5]].map(p => D.holdFillAt(p[0], p[1], p[2])),
         neverOpened: [['Miss', true, 0, 1500], ['Miss', false, 1500, 1500], ['Miss', false, 1499, 1500], ['Great', true, 1500, 1500], ['Meh', false, 1600, 1500]]
             .map(p => D.holdTailNeverOpened(p[0], p[1], p[2], p[3])),
         tones: ['Great', 'Ok', 'Meh', 'Miss'].map(D.holdResultTone),
-        // Picked up at 1000 and never set down; set down at 1100 (fully lifted); set down mid-lift at 1040.
-        liftHeld: [999, 1000, 1040, 1080, 2000].map(t => D.holdLiftAt(t, 1000, null)),
-        liftDown: [1100, 1150, 1200, 1300].map(t => D.holdLiftAt(t, 1000, 1100)),
-        liftDownEarly: [1040, 1090, 1140].map(t => D.holdLiftAt(t, 1000, 1040)),
-        liftNever: D.holdLiftAt(1000, null, null),
-        ghostNone: D.holdGhostAt(null, 1000),
-        ghost: [1000, 1045, 1090, 2000].map(t => D.holdGhostAt({ from: 1, to: D.holdConstants.HOLD_GHOST_ALPHA, at: 1000 }, t)),
         constants: D.holdConstants,
         engine: holdEngineRun()
     };

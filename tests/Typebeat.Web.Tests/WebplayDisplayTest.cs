@@ -2349,8 +2349,16 @@ public class WebplayDisplayTest
             // Probes: 1000, 1250, 1500, 1650, 2550, 2600, 2800, 3000, 3100.
             Assert.That(JsHarness.Doubles(holds, "sungAt"), Is.EqualTo(new[] { 0d, 0.5, 1d, 1.5, 5.75, 6d, 6.5, 7d, 7d }));
 
-            // HeldSungOffset: evenly across the letter (25) and its track (50), clamped.
-            Assert.That(JsHarness.Doubles(holds, "heldSung"), Is.EqualTo(new[] { 37.5, 75d, 0d, 0d }));
+            // HeldSungOffset (backlog 493): past the letter (25), then along its track (50) at the
+            // fill's edge, clamped.
+            Assert.That(JsHarness.Doubles(holds, "heldSung"), Is.EqualTo(new[] { 50d, 75d, 25d, 25d }));
+
+            // SungLocalX on the game's HeldPlayheadTest line ("abc", the 'b' held, advances 10, 12, 10,
+            // a 40 px track): the playhead crosses the 'b' on the way to index 1 (its right edge, 22),
+            // rides the fill edge to 62 and goes on to the 'c' without a jump. Without the hold it is
+            // the plain lerp between left edges.
+            Assert.That(JsHarness.Doubles(holds, "sungX"), Is.EqualTo(new[] { 0d, 11d, 22d, 32d, 42d, 62d, 67d, 72d }));
+            Assert.That(JsHarness.Doubles(holds, "sungXPlain"), Is.EqualTo(new[] { 0d, 10d, 16d, 32d }));
         });
     }
 
@@ -2386,14 +2394,13 @@ public class WebplayDisplayTest
     }
 
     /// <summary>
-    /// The hold's motion: the fill (LyricStage.holdFillAt, unclamped, with the span floored at 1 ms),
-    /// the letter's travel along its track (HoldTravelOffset, clamped), the lift (OutQuad over 80 ms
-    /// to full; once set down, InOutQuad over 100 ms from wherever it had reached) and the real
-    /// cell's ghost (OutQuint over the 90 ms cell fade, to HOLD_GHOST_ALPHA). The constants are the
-    /// desktop's LyricLineDisplay and HoldBar values.
+    /// The hold's fill (LyricStage.holdFillAt, unclamped, with the span floored at 1 ms) and the hold
+    /// constants the browser still carries. Since backlog 492 the held letter neither travels, lifts
+    /// nor leaves a ghost, and since 493 a lit tick neither flashes nor pops, so none of those
+    /// constants exist any more. The constants are the desktop's LyricLineDisplay and HoldBar values.
     /// </summary>
     [Test]
-    public void HoldFillTravelLiftAndGhostFollowTheDesktop()
+    public void HoldFillAndConstantsFollowTheDesktop()
     {
         var holds = Harness().GetProperty("holds");
         var k = holds.GetProperty("constants");
@@ -2401,31 +2408,10 @@ public class WebplayDisplayTest
         Assert.Multiple(() =>
         {
             Assert.That(JsHarness.Doubles(holds, "fill"), Is.EqualTo(new[] { 0.5, -0.2, 1.2, 0d }).Within(1e-6));
-            Assert.That(JsHarness.Doubles(holds, "travel"), Is.EqualTo(new[] { 25d, 0d, 50d, 0d }));
-
-            // Probes 999, 1000, 1040, 1080, 2000 from a pick-up at 1000.
-            Assert.That(JsHarness.Doubles(holds, "liftHeld"), Is.EqualTo(new[] { 0d, 0d, 0.75, 1d, 1d }));
-            // Set down at 1100: 1100, 1150, 1200, 1300.
-            Assert.That(JsHarness.Doubles(holds, "liftDown"), Is.EqualTo(new[] { 1d, 0.5, 0d, 0d }));
-            // Set down at 1040, three quarters lifted: 1040, 1090, 1140.
-            Assert.That(JsHarness.Doubles(holds, "liftDownEarly"), Is.EqualTo(new[] { 0.75, 0.375, 0d }));
-            Assert.That(Num(holds, "liftNever"), Is.EqualTo(0));
-
-            Assert.That(Num(holds, "ghostNone"), Is.EqualTo(1));
-            // 1000, 1045 (OutQuint half way: 0.96875 of the way), 1090, 2000.
-            Assert.That(JsHarness.Doubles(holds, "ghost"), Is.EqualTo(new[] { 1d, 1 - 0.82 * 0.96875, 0.18, 0.18 }).Within(1e-9));
 
             Assert.That(Num(k, "HOLD_TRACK_HEIGHT"), Is.EqualTo(4), "SWEEP_RAIL_HEIGHT + 1");
             Assert.That(Num(k, "HOLD_TICK_WIDTH"), Is.EqualTo(2));
             Assert.That(Num(k, "HOLD_TICK_HEIGHT"), Is.EqualTo(12));
-            Assert.That(Num(k, "HOLD_LIFT_FRACTION"), Is.EqualTo(0.12));
-            Assert.That(Num(k, "HOLD_LIFT_SCALE"), Is.EqualTo(1.1));
-            Assert.That(Num(k, "HOLD_GHOST_ALPHA"), Is.EqualTo(0.18));
-            Assert.That(Num(k, "HOLD_PICK_UP_MS"), Is.EqualTo(80));
-            Assert.That(Num(k, "HOLD_SET_DOWN_MS"), Is.EqualTo(100));
-            Assert.That(Num(k, "HOLD_LIFT_SHADOW_EM"), Is.EqualTo(0.08 * 1.75).Within(1e-12), "TEXT_SHADOW_OFFSET.Y x HOLD_LIFT_SHADOW_OFFSET_FACTOR");
-            Assert.That(Num(k, "HOLD_LIFT_SHADOW_ALPHA"), Is.EqualTo(0.4));
-            Assert.That(Num(k, "HOLD_GHOST_FADE_MS"), Is.EqualTo(90), "LyricLineDisplay.flashlight_fade_ms");
             Assert.That(Num(k, "HOLD_RESULT_FLASH_MS"), Is.EqualTo(300));
         });
     }

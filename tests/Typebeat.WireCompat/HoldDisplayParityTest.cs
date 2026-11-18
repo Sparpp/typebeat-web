@@ -18,8 +18,9 @@ namespace Typebeat.WireCompat;
 ///
 /// <para>What is held: the track's length (<see cref="LyricLineDisplay.HoldTrackWidth(double, float)"/>
 /// and its paced overload), the pace into a hold (<see cref="LyricLineDisplay.HoldPaceLettersPerSecond"/>),
-/// the lifted letter's travel (<see cref="LyricLineDisplay.HoldTravelOffset"/>), the playhead's offset
-/// across a held cell (<see cref="LyricLineDisplay.HeldSungOffset"/>), the tail's result colour
+/// the playhead over a held cell (<see cref="LyricLineDisplay.HeldSungOffset"/>, and the row geometry it
+/// sits in, <see cref="LyricLineDisplay.SungLocalX"/>: since backlog 493 a held letter is crossed on the
+/// way to its hold's start and its track ridden at the fill's edge), the tail's result colour
 /// (<see cref="LyricLineDisplay.HoldResultColour"/>, as the tone the stylesheet maps onto the page's
 /// palette), every hold constant the browser carries that the game makes public, and the sung
 /// polyline across held cells: <see cref="TypingLine.SungPositionAt"/> and
@@ -118,17 +119,29 @@ public class HoldDisplayParityTest
         [1000, 900, 30, 0], [1234.5, 1000.25, 47.3, 23.7], [5000, 4999.5, 1, 25], [2000, 1500, 88.88, 22.2], [900, 1000, 30, 25],
     ];
 
-    // HoldTravelOffset(fill, track).
-    private static readonly double[][] travel_probes =
-    [
-        [0.5, 50], [-1, 50], [2, 50], [0, 50], [0.3333, 55.1], [0.999, 123.4], [1.0000001, 10], [0.7, 0],
-    ];
-
     // HeldSungOffset(fraction, advance, track).
     private static readonly double[][] held_sung_probes =
     [
         [0.5, 25, 50], [1.5, 25, 50], [-0.2, 25, 50], [0.37, 23.7, 55.1], [0.999999, 21.3, 0], [1d / 3, 19.203125, 47.25],
     ];
+
+    /// <summary>
+    /// SungLocalX(fraction, lefts, advances, tracks) on a handful of lines, each probed on a grid of fractions
+    /// that takes in every cell boundary: the game's HeldPlayheadTest line ("abc", the 'b' held), the same
+    /// line without its hold, a line whose first and last cells are held (with widths that are not exact in
+    /// single precision), and two held cells side by side. Each line's lefts are its CellLefts.
+    /// </summary>
+    private static readonly (float[] Lefts, float[] Advances, float[] Tracks)[] sung_x_lines =
+    [
+        ([0, 10, 62, 72], [10, 12, 10], [0, 40, 0]),
+        ([0, 10, 22, 32], [10, 12, 10], [0, 0, 0]),
+        ([0, 78.8f, 102.5f, 125.1f, 178.3f], [23.7f, 23.7f, 22.6f, 19.2f], [55.1f, 0, 0, 34f]),
+        ([0, 21.3f, 76.4f, 98.9f, 147.4f, 166.6f], [21.3f, 22.6f, 22.5f, 19.2f, 19.2f], [0, 32.5f, 26.3f, 0, 0]),
+    ];
+
+    /// <summary>Eighths from before the line to past its end, and a few fractions that are not exact in binary.</summary>
+    private static double[] sungXFractions(int cells)
+        => Enumerable.Range(-2, cells * 8 + 5).Select(i => i / 8d).Concat([1d / 3, cells - 0.001, 0.999999]).ToArray();
 
     private static readonly Lazy<Dictionary<string, string>> osu = new Lazy<Dictionary<string, string>>(() =>
         timing.ToDictionary(kvp => kvp.Key, kvp => LyricOsuFormat.GenerateOsu("Artist", "Title", "audio.mp3", "mapper", kvp.Value)));
@@ -161,8 +174,14 @@ public class HoldDisplayParityTest
                                        + ",\"track\":" + json(track_probes)
                                        + ",\"paced\":" + json(paced_probes)
                                        + ",\"pace\":" + json(pace_probes)
-                                       + ",\"travel\":" + json(travel_probes)
-                                       + ",\"heldSung\":" + json(held_sung_probes) + "}";
+                                       + ",\"heldSung\":" + json(held_sung_probes)
+                                       + ",\"sungX\":" + JsonSerializer.Serialize(sung_x_lines.Select(l => new
+                                       {
+                                           lefts = l.Lefts.Select(v => (double)v),
+                                           advances = l.Advances.Select(v => (double)v),
+                                           tracks = l.Tracks.Select(v => (double)v),
+                                           at = sungXFractions(l.Advances.Length),
+                                       })) + "}";
         string path = Path.Combine(Path.GetTempPath(), $"typebeat-holddisplay-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, payload, new UTF8Encoding(false));
 
@@ -190,9 +209,9 @@ public class HoldDisplayParityTest
 
     /// <summary>
     /// Every hold constant the browser carries that the game makes public: the track's letters per
-    /// second and clamps, the pace clamps, the track's and a tick's sizes, the lift, the ghost, the
-    /// pick-up and set-down lengths, and <see cref="HoldBar"/>'s blur and tick pop. Float constants
-    /// compare as floats, which is what the desktop holds them in.
+    /// second and clamps, the pace clamps, the track's and a tick's sizes, and <see cref="HoldBar"/>'s blur.
+    /// The lift, the ghost, its pick-up and set-down and the tick pop went with backlogs 492 and 493 on
+    /// both sides. Float constants compare as floats, which is what the desktop holds them in.
     /// </summary>
     [Test]
     public void TheHoldConstantsAreTheDesktops()
@@ -212,23 +231,15 @@ public class HoldDisplayParityTest
             Assert.That(single("HOLD_TRACK_HEIGHT"), Is.EqualTo(LyricLineDisplay.HOLD_TRACK_HEIGHT));
             Assert.That(single("HOLD_TICK_WIDTH"), Is.EqualTo(LyricLineDisplay.HOLD_TICK_WIDTH));
             Assert.That(single("HOLD_TICK_HEIGHT"), Is.EqualTo(LyricLineDisplay.HOLD_TICK_HEIGHT));
-            Assert.That(single("HOLD_LIFT_FRACTION"), Is.EqualTo(LyricLineDisplay.HOLD_LIFT_FRACTION));
-            Assert.That(single("HOLD_LIFT_SCALE"), Is.EqualTo(LyricLineDisplay.HOLD_LIFT_SCALE));
-            Assert.That(single("HOLD_GHOST_ALPHA"), Is.EqualTo(LyricLineDisplay.HOLD_GHOST_ALPHA));
-            Assert.That(dbl("HOLD_PICK_UP_MS"), Is.EqualTo(LyricLineDisplay.HOLD_PICK_UP_MS));
-            Assert.That(dbl("HOLD_SET_DOWN_MS"), Is.EqualTo(LyricLineDisplay.HOLD_SET_DOWN_MS));
             Assert.That(dbl("HOLD_BLUR_DURATION_MS"), Is.EqualTo(HoldBar.HOLD_BLUR_DURATION_MS));
             Assert.That(single("HOLD_BLUR_SIGMA"), Is.EqualTo(HoldBar.HOLD_BLUR_SIGMA));
-            Assert.That(single("HOLD_TICK_POP_SCALE"), Is.EqualTo(HoldBar.TICK_POP_SCALE));
-            Assert.That(dbl("HOLD_TICK_POP_MS"), Is.EqualTo(HoldBar.TICK_POP_MS));
-            // The lifted shadow is TEXT_SHADOW_OFFSET grown by the (internal) lift factor of 1.75.
-            Assert.That(dbl("HOLD_LIFT_SHADOW_EM"), Is.EqualTo(TypeBeatStyle.TEXT_SHADOW_OFFSET.Y * 1.75).Within(1e-6));
         });
     }
 
     /// <summary>
-    /// The track's length, both overloads, the pace into a hold, the letter's travel and the playhead's
-    /// offset across a held cell, probe for probe against the game's statics, exactly.
+    /// The track's length, both overloads, the pace into a hold, the playhead's offset across a held cell
+    /// and its row-local x on whole lines (<see cref="LyricLineDisplay.SungLocalX"/>), probe for probe
+    /// against the game's statics, exactly.
     /// </summary>
     [Test]
     public void TheHoldStaticsAreTheDesktops()
@@ -237,8 +248,8 @@ public class HoldDisplayParityTest
         var track = root.GetProperty("track");
         var paced = root.GetProperty("paced");
         var pace = nullableDoubles(root.GetProperty("pace"));
-        var travel = root.GetProperty("travel");
         var heldSung = root.GetProperty("heldSung");
+        var sungX = root.GetProperty("sungX");
 
         Assert.Multiple(() =>
         {
@@ -264,16 +275,22 @@ public class HoldDisplayParityTest
                     $"HoldPaceLettersPerSecond({p[0]}, {previous}, {p[2]}, {p[3]})");
             }
 
-            for (int i = 0; i < travel_probes.Length; i++)
-            {
-                double[] p = travel_probes[i];
-                Assert.That(travel[i].GetDouble(), Is.EqualTo((double)LyricLineDisplay.HoldTravelOffset((float)p[0], (float)p[1])), $"HoldTravelOffset({p[0]}, {p[1]})");
-            }
-
             for (int i = 0; i < held_sung_probes.Length; i++)
             {
                 double[] p = held_sung_probes[i];
                 Assert.That(heldSung[i].GetDouble(), Is.EqualTo((double)LyricLineDisplay.HeldSungOffset(p[0], (float)p[1], (float)p[2])), $"HeldSungOffset({p[0]}, {p[1]}, {p[2]})");
+            }
+
+            for (int l = 0; l < sung_x_lines.Length; l++)
+            {
+                var (lefts, advances, tracks) = sung_x_lines[l];
+                double[] at = sungXFractions(advances.Length);
+                var browserLine = sungX[l];
+
+                Assert.That(browserLine.GetArrayLength(), Is.EqualTo(at.Length), $"SungLocalX line {l}: probe count");
+
+                for (int k = 0; k < at.Length && k < browserLine.GetArrayLength(); k++)
+                    Assert.That(browserLine[k].GetDouble(), Is.EqualTo((double)LyricLineDisplay.SungLocalX(at[k], lefts, advances, tracks)), $"SungLocalX line {l} at {at[k]}");
             }
         });
     }
