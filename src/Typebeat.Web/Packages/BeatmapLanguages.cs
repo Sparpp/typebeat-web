@@ -22,7 +22,7 @@ public static class BeatmapLanguages
 
     /// <summary>
     /// Every storable language: osu's original thirteen in their old dropdown order, then the twenty
-    /// PR 43 appended (the game's persisted ids 14 to 33, in id order). Order is display order only;
+    /// PR 43 appended (the game's persisted ids 14 to 33, in id order), then later appends (34 on). Order is display order only;
     /// nothing keys off the index, and the game's own dropdown order is a separate list
     /// (<c>BeatmapLanguageExtensions.DisplayOrder</c>).
     /// </summary>
@@ -62,6 +62,8 @@ public static class BeatmapLanguages
         "neapolitan",
         "portuguese",
         "romanian",
+        // Backlog 498: the game's persisted id 34.
+        "latin",
     ];
 
     private static readonly HashSet<string> canonical = new(All, StringComparer.Ordinal);
@@ -88,6 +90,7 @@ public static class BeatmapLanguages
         ["sv"] = "swedish", ["se"] = "swedish", ["swe"] = "swedish", ["svenska"] = "swedish",
         ["inst"] = "instrumental", ["instr"] = "instrumental", ["none"] = "instrumental", ["nolyrics"] = "instrumental",
         ["misc"] = "other", ["various"] = "other",
+        ["la"] = "latin", ["lat"] = "latin", ["latina"] = "latin",
     };
 
     /// <summary>True when <paramref name="value"/> is exactly a stored canonical name.</summary>
@@ -249,6 +252,7 @@ public static class BeatmapLanguages
         "neapolitan" => "nap",
         "portuguese" => "pt",
         "romanian" => "ro",
+        "latin" => "la",
         _ => null,
     };
 
