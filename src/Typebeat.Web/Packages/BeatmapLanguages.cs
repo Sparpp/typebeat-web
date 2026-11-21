@@ -64,6 +64,8 @@ public static class BeatmapLanguages
         "romanian",
         // Backlog 498: the game's persisted id 34.
         "latin",
+        // Backlog 500: the game's persisted id 35.
+        "arabic",
     ];
 
     private static readonly HashSet<string> canonical = new(All, StringComparer.Ordinal);
@@ -91,6 +93,8 @@ public static class BeatmapLanguages
         ["inst"] = "instrumental", ["instr"] = "instrumental", ["none"] = "instrumental", ["nolyrics"] = "instrumental",
         ["misc"] = "other", ["various"] = "other",
         ["la"] = "latin", ["lat"] = "latin", ["latina"] = "latin",
+        ["ar"] = "arabic", ["ara"] = "arabic", ["arabi"] = "arabic",
+        ["عربي"] = "arabic", ["العربية"] = "arabic",
     };
 
     /// <summary>True when <paramref name="value"/> is exactly a stored canonical name.</summary>
@@ -253,18 +257,19 @@ public static class BeatmapLanguages
         "portuguese" => "pt",
         "romanian" => "ro",
         "latin" => "la",
+        "arabic" => "ar",
         _ => null,
     };
 
     /// <summary>
     /// The tag for this language's ROMANISED text: <c>-Latn</c> appended for a language whose own
-    /// script is not Latin (Japanese, Chinese, Korean, and the Cyrillic Russian, Ukrainian,
-    /// Belarusian, Bulgarian and Serbian), the bare tag otherwise.
+    /// script is not Latin (Japanese, Chinese, Korean, the Cyrillic Russian, Ukrainian, Belarusian,
+    /// Bulgarian and Serbian, and Arabic), the bare tag otherwise.
     /// </summary>
     public static string? RomanisedLangTag(string? stored) => LangTag(stored) switch
     {
         null => null,
-        "ja" or "zh" or "ko" or "ru" or "uk" or "be" or "bg" or "sr" => LangTag(stored) + "-Latn",
+        "ja" or "zh" or "ko" or "ru" or "uk" or "be" or "bg" or "sr" or "ar" => LangTag(stored) + "-Latn",
         string tag => tag,
     };
 }
