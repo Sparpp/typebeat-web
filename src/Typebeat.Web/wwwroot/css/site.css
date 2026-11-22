@@ -1356,13 +1356,6 @@ img { max-width: 100%; }
     padding-left: 0;
 }
 
-/* set-page variant sits in the action row instead of over a cover. The base rule already handles
-   layout (relative + flex-auto); crucially it must stay positioned so the ::before disc cannot
-   escape onto the header. */
-.preview-btn--big {
-    position: relative;
-    margin: 0;
-}
 
 /* ---- Listing: search + filter rows + paging ---- */
 
@@ -1677,16 +1670,96 @@ a.pager-item:hover {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: var(--space-3);
+    gap: var(--space-1);
     margin-top: var(--space-4);
 }
 
 .set-header__actions form { margin: 0; }
 
-.fav-btn.is-on {
-    border-color: var(--violet);
+/* The set page's player actions (backlog 508): bare outline icons, no box and no words, on a
+   comfortable 40px hit area. Download is lime from the start; the rest light up on hover. */
+.icon-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 120ms ease, transform 120ms ease;
+}
+
+.icon-btn__icon {
+    position: relative;
+    width: 26px;
+    height: 26px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.icon-btn:hover,
+.icon-btn:focus-visible {
     color: var(--violet-bright);
-    box-shadow: var(--glow-violet);
+    text-decoration: none;
+}
+
+.icon-btn:active { transform: scale(0.9); }
+
+.icon-btn--accent { color: var(--violet); }
+
+.icon-btn--disabled,
+.icon-btn--disabled:hover {
+    color: var(--text-muted);
+    opacity: 0.35;
+    cursor: default;
+    transform: none;
+}
+
+.fav-heart.is-on { color: var(--violet); }
+
+.fav-heart.is-on .icon-btn__icon { fill: currentColor; }
+
+/* The preview icon keeps preview-player.js's hooks (.preview-btn, is-playing, --progress) but none
+   of the card disc's look: no disc and no glyph, just the note, with the progress ring drawn
+   around it (and only) while the clip plays. */
+.icon-btn.preview-btn {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    max-width: 40px;
+    max-height: 40px;
+    border-radius: 0;
+    background: none;
+}
+
+.icon-btn.preview-btn:hover { box-shadow: none; }
+
+.icon-btn.preview-btn::after { content: none; }
+
+.icon-btn.preview-btn::before {
+    inset: 1px;
+    background: conic-gradient(var(--violet) var(--progress, 0%), rgba(233, 234, 228, 0.14) 0);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+.icon-btn.preview-btn.is-playing { color: var(--violet); }
+
+.icon-btn.preview-btn.is-playing::before { opacity: 1; }
+
+.icon-btn.preview-btn.is-playing .icon-btn__icon {
+    width: 18px;
+    height: 18px;
 }
 
 /* Reviewer-only Rank/Unrank strip: its own labelled row under the player actions so

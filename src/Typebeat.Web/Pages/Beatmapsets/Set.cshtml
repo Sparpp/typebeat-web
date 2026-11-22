@@ -39,35 +39,56 @@
                 submitted @Model.Set.SubmittedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
                 &middot; updated @Model.Set.UpdatedAt.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
             </div>
+            @* The player actions as four bare icons (backlog 508), in this order: download (lime, the
+               one that should stand out), favourite, preview, webplay. The words live in each
+               icon's tooltip and accessible name only. *@
             <div class="set-header__actions">
                 @if (Model.Set.HasPackage)
                 {
-                    <a class="btn btn-primary btn-big" href="/beatmapsets/@Model.Set.Id/download">Download</a>
+                    <a class="icon-btn icon-btn--accent" href="/beatmapsets/@Model.Set.Id/download" title="Download" aria-label="Download">
+                        <svg class="icon-btn__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg>
+                    </a>
                 }
                 else
                 {
                     @* Pre-M3 set: live diffs but no uploaded package, a Download link would 404. *@
-                    <span class="btn btn-ghost btn-big btn-unavailable"
-                          title="This map predates website downloads, grab it from the in-game listing.">
-                        available in-game only
+                    <span class="icon-btn icon-btn--disabled" role="img"
+                          title="Available in-game only: this map predates website downloads, grab it from the in-game listing."
+                          aria-label="available in-game only">
+                        <svg class="icon-btn__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg>
                     </span>
                 }
                 @if (Model.CurrentUser is not null)
                 {
                     <form method="post" asp-page-handler="Favourite" asp-route-id="@Model.Set.Id">
-                        <button type="submit" class="btn btn-ghost fav-btn @(Model.Set.IsFavourited ? "is-on" : "")">
-                            @(Model.Set.IsFavourited ? "\u2665 Favourited" : "\u2661 Favourite")
+                        <button type="submit" class="icon-btn fav-heart @(Model.Set.IsFavourited ? "is-on" : "")"
+                                title="@(Model.Set.IsFavourited ? "Favourited" : "Favourite")"
+                                aria-label="@(Model.Set.IsFavourited ? "Favourited, click to remove" : "Favourite")"
+                                aria-pressed="@(Model.Set.IsFavourited ? "true" : "false")">
+                            <svg class="icon-btn__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20.5s-7.4-4.5-9.4-9C1.2 8.2 3.2 4.5 6.8 4.5c2.1 0 3.6 1.2 5.2 3 1.6-1.8 3.1-3 5.2-3 3.6 0 5.6 3.7 4.2 7-2 4.5-9.4 9-9.4 9z"/></svg>
                         </button>
                     </form>
                 }
                 else
                 {
-                    <a class="btn btn-ghost" href="/login" title="Sign in to favourite">&#9825; Favourite</a>
+                    <a class="icon-btn fav-heart" href="/login" title="Sign in to favourite" aria-label="Sign in to favourite">
+                        <svg class="icon-btn__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20.5s-7.4-4.5-9.4-9C1.2 8.2 3.2 4.5 6.8 4.5c2.1 0 3.6 1.2 5.2 3 1.6-1.8 3.1-3 5.2-3 3.6 0 5.6 3.7 4.2 7-2 4.5-9.4 9-9.4 9z"/></svg>
+                    </a>
                 }
                 @if (Model.Set.PreviewUrl is not null)
                 {
-                    <button type="button" class="preview-btn preview-btn--big" data-preview="@Model.Set.PreviewUrl"
-                            aria-label="Play preview"></button>
+                    @* preview-player.js drives any .preview-btn: is-playing while the clip runs, and
+                       --progress for the ring. *@
+                    <button type="button" class="icon-btn preview-btn" data-preview="@Model.Set.PreviewUrl"
+                            title="Preview" aria-label="Play preview">
+                        <svg class="icon-btn__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>
+                    </button>
+                }
+                @if (Model.Set.CanWebplay)
+                {
+                    <a class="icon-btn" href="/play?set=@Model.Set.Id" title="Play in browser" aria-label="Play in browser">
+                        <svg class="icon-btn__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 4.5v15l12.5-7.5z"/></svg>
+                    </a>
                 }
             </div>
             @if (canReview && Model.Set.Status is "pending" or "wip" or "unranked" or "ranked" or "loved")
