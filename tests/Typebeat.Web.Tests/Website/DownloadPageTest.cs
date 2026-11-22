@@ -73,23 +73,10 @@ public class DownloadPageTest
                 Assert.That(page.StatusCode, Is.EqualTo(HttpStatusCode.OK));
                 Assert.That(html, Does.Not.Contain("coming soon"));
 
-                // Windows card: download link, file name, size, requirement.
+                // Each card links its own route.
                 Assert.That(html, Does.Contain("href=\"/download/game\""));
-                Assert.That(html, Does.Contain(windows_file));
-                Assert.That(html, Does.Contain("1.5 MB"));
-                // The "+" in "Windows 10+" is HTML-encoded (&#x2B;), so match the stable prefix.
-                Assert.That(html, Does.Contain("Windows 10"));
-
-                // Linux card: its own route, file name, size.
                 Assert.That(html, Does.Contain("href=\"/download/game-linux\""));
-                Assert.That(html, Does.Contain(linux_file));
-                Assert.That(html, Does.Contain("3 MB"));
-
-                // macOS card: its own route, file name, size, requirement.
                 Assert.That(html, Does.Contain("href=\"/download/game-macos\""));
-                Assert.That(html, Does.Contain(macos_file));
-                Assert.That(html, Does.Contain("6 MB"));
-                Assert.That(html, Does.Contain("Apple Silicon"));
 
                 // Direct-mirror fallback (backlog 191): one per available card, on the direct-origin
                 // host, same root-relative route.

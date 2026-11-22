@@ -3,14 +3,6 @@
     var p = Model.Platform;
     bool featured = Model.DetectedOs == p.Os;
     string label = p.Os switch { "windows" => "Windows", "macos" => "macOS", _ => "Linux" };
-    // macOS ships as a single Apple Silicon build (see the game repo's build-macos.yml header for
-    // why there is no Intel one), and .NET 8 itself floors at macOS 12.
-    string requirement = p.Os switch
-    {
-        "windows" => "Windows 10+",
-        "macos" => "Apple Silicon · macOS 12+",
-        _ => "x86-64 · glibc 2.31+"
-    };
 }
 
 <div class="download-card card @(featured ? "download-card--featured" : "") @(p.Available ? "" : "download-card--soon")">
@@ -22,7 +14,6 @@
     @if (p.Available)
     {
         <a class="btn @(featured ? "btn-primary" : "btn-ghost") btn-big" href="@p.Href" download>Download for @label</a>
-        <p class="download-card__meta">@p.FileName &middot; @p.SizeDisplay &middot; @requirement</p>
         <p class="download-card__mirror"><a href="@DownloadModel.MirrorHref(p.Href!)" download>Download stalling? Try the direct mirror.</a></p>
     }
     else

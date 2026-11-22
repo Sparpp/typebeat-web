@@ -1,4 +1,3 @@
-using System.Globalization;
 using Typebeat.Web.Storage;
 
 namespace Typebeat.Web.Pages;
@@ -94,9 +93,5 @@ public sealed class DownloadModel(GameInstallers installers, IConfiguration conf
     public sealed record PlatformDownload(string Os, bool Available, string? FileName, long SizeBytes, string? Href)
     {
         public static PlatformDownload Unavailable(string os) => new(os, false, null, 0, null);
-
-        public string SizeDisplay => SizeBytes >= 1024 * 1024
-            ? (SizeBytes / (1024.0 * 1024.0)).ToString("0.#", CultureInfo.InvariantCulture) + " MB"
-            : (SizeBytes / 1024.0).ToString("0.#", CultureInfo.InvariantCulture) + " KB";
     }
 }
