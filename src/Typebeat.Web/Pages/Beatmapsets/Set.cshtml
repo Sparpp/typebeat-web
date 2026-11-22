@@ -553,11 +553,6 @@
         <h2>Lyrics@(Model.Diffs.Count > 1 ? $": {Model.Diff.Name}" : "")</h2>
         @if (Model.Diff.HasOriginals)
         {
-            <p class="set-lyrics__polyglot faint" data-polyglot-available>
-                <span class="set-lyrics__polyglot-mark">Polyglot available</span>:
-                shown in the original script as well as the romanisation you type. The desktop
-                client's Polyglot mod plays the original, locally (no submission, no leaderboard).
-            </p>
             <ol class="set-lyrics__lines">
                 @foreach (var (romanised, original) in Model.Diff.LyricLines)
                 {

@@ -285,8 +285,7 @@ public class PolyglotSiteTest
             Assert.That(lyrics, Does.Contain("<span class=\"set-lyrics__lead\" lang=\"ru-Latn\">and one english line</span>\n                    </li>").Or
                 .Contain("<span class=\"set-lyrics__lead\" lang=\"ru-Latn\">and one english line</span>\r\n                    </li>"));
 
-            // The marker, in the lyrics section and in the stats box.
-            Assert.That(lyrics, Does.Contain("Polyglot available"));
+            // The marker, in the stats box.
             Assert.That(html, Does.Contain("stat-row--polyglot"));
         });
     }
