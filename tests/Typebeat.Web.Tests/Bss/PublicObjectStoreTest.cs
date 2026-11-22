@@ -506,7 +506,7 @@ public class PublicObjectStoreTest
             using (var unset = await BssFixture.Client.GetAsync("/download/game-linux"))
                 Assert.That(unset.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), "an unconfigured platform still 404s");
 
-            // The page sizes the card from the bucket's copy (3 MB), not the box's (1.5 MB).
+            // The page still offers the installer (it no longer prints sizes, backlog 503).
             using (var page = await BssFixture.Client.GetAsync("/download"))
             {
                 string html = await page.Content.ReadAsStringAsync();
@@ -515,8 +515,6 @@ public class PublicObjectStoreTest
                 {
                     Assert.That(page.StatusCode, Is.EqualTo(HttpStatusCode.OK));
                     Assert.That(html, Does.Contain("href=\"/download/game\""));
-                    Assert.That(html, Does.Contain("3 MB"));
-                    Assert.That(html, Does.Not.Contain("1.5 MB"));
                 });
             }
         }
