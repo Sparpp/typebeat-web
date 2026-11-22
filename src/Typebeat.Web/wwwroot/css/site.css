@@ -314,6 +314,65 @@ img { max-width: 100%; }
     white-space: nowrap;
 }
 
+/* Account menu (backlog 505): the identity chip is the <summary> of a <details>, and the panel
+   hangs off it like the notification bell's. */
+.user-menu {
+    position: relative;
+    display: inline-flex;
+}
+
+.user-menu > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+}
+
+.user-menu > summary::-webkit-details-marker { display: none; }
+
+.user-menu[open] > .user-chip {
+    border-color: var(--violet);
+    box-shadow: var(--glow-violet);
+}
+
+.user-menu__panel {
+    position: absolute;
+    top: calc(100% + var(--space-2));
+    right: 0;
+    min-width: 168px;
+    padding: var(--space-1);
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-raised);
+    border: 1px solid var(--line-bright);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    /* .site-nav is z-index 10 and sticky; the panel has to clear the page under it. */
+    z-index: 20;
+}
+
+.user-menu__panel form { margin: 0; }
+
+.user-menu__item {
+    display: block;
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-nav);
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+
+.user-menu__item:hover,
+.user-menu__item:focus-visible {
+    background: var(--surface-2);
+    color: var(--text);
+    text-decoration: none;
+}
+
 /* ---- Footer ---- */
 
 .site-footer {
@@ -3801,6 +3860,12 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
         right: auto;
         left: 0;
         width: min(360px, calc(100vw - var(--space-4)));
+    }
+
+    /* The account menu wraps to the left edge the same way, so it opens rightwards too. */
+    .user-menu__panel {
+        right: auto;
+        left: 0;
     }
 }
 

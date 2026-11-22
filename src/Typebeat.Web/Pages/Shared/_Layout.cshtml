@@ -73,6 +73,7 @@
     <script src="~/js/card-diffs.js" asp-append-version="true" defer></script>
     <script src="~/js/follow.js" asp-append-version="true" defer></script>
     <script src="~/js/notifications.js" asp-append-version="true" defer></script>
+    <script src="~/js/user-menu.js" asp-append-version="true" defer></script>
 </head>
 <body>
 <header class="site-nav">
@@ -92,22 +93,30 @@
             @if (sessionUser is not null)
             {
                 <partial name="_NotificationBell" />
-                <a class="user-chip" href="/users/@sessionUser.Id">
-                    @if (sessionUser.AvatarKey is string avatarKey)
-                    {
-                        <img class="user-chip__avatar" src="/@avatarKey" alt="" width="26" height="26" />
-                    }
-                    else
-                    {
-                        <span class="user-chip__avatar user-chip__avatar--fallback" aria-hidden="true">@sessionUser.Username[..1]</span>
-                    }
-                    <span class="user-chip__name">@sessionUser.Username</span>
-                </a>
-                <a class="btn btn-ghost btn-small" href="/settings">settings</a>
-                <form method="post" action="/logout">
-                    @Html.AntiForgeryToken()
-                    <button type="submit" class="btn btn-ghost btn-small">sign out</button>
-                </form>
+                @* The identity chip opens the account menu (backlog 505) rather than going straight
+                   to the profile. A native <details>, so it opens and closes with no script at all;
+                   user-menu.js only adds closing on an outside click or Escape. *@
+                <details class="user-menu" data-user-menu>
+                    <summary class="user-chip" aria-label="Account menu">
+                        @if (sessionUser.AvatarKey is string avatarKey)
+                        {
+                            <img class="user-chip__avatar" src="/@avatarKey" alt="" width="26" height="26" />
+                        }
+                        else
+                        {
+                            <span class="user-chip__avatar user-chip__avatar--fallback" aria-hidden="true">@sessionUser.Username[..1]</span>
+                        }
+                        <span class="user-chip__name">@sessionUser.Username</span>
+                    </summary>
+                    <div class="user-menu__panel">
+                        <a class="user-menu__item" href="/users/@sessionUser.Id">profile</a>
+                        <a class="user-menu__item" href="/settings">settings</a>
+                        <form method="post" action="/logout">
+                            @Html.AntiForgeryToken()
+                            <button type="submit" class="user-menu__item">sign out</button>
+                        </form>
+                    </div>
+                </details>
             }
             else
             {
