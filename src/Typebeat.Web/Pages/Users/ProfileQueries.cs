@@ -90,7 +90,7 @@ public static class ProfileQueries
              FROM (
                  SELECT DISTINCT ON (sc.beatmap_id) sc.beatmap_id, sc.accuracy, sc.mods
                  FROM scores sc
-                 WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
+                 WHERE sc.user_id = @id AND {BeatmapLeaderboard.PlayQualifies("sc", "true")}
                  ORDER BY sc.beatmap_id, {BeatmapLeaderboard.Order("sc")}
              ) best
              JOIN beatmaps b ON b.id = best.beatmap_id
@@ -107,7 +107,7 @@ public static class ProfileQueries
             FROM (
                 SELECT DISTINCT ON (sc.beatmap_id) sc.rank, sc.accuracy
                 FROM scores sc
-                WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
+                WHERE sc.user_id = @id AND {BeatmapLeaderboard.PlayQualifies("sc", "true")}
                 ORDER BY sc.beatmap_id, {BeatmapLeaderboard.Order("sc")}
             ) best
             GROUP BY best.rank

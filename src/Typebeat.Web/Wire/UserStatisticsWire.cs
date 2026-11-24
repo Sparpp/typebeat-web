@@ -95,7 +95,7 @@ public static class UserStatisticsWire
                 FROM (
                     SELECT DISTINCT ON (sc.beatmap_id) sc.rank, sc.accuracy
                     FROM scores sc
-                    WHERE sc.user_id = @userId AND {BeatmapLeaderboard.OnBoard("sc", "true")}
+                    WHERE sc.user_id = @userId AND {BeatmapLeaderboard.PlayQualifies("sc", "true")}
                     ORDER BY sc.beatmap_id, {BeatmapLeaderboard.Order("sc")}
                 ) best
                 GROUP BY best.rank

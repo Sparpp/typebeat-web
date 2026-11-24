@@ -46,16 +46,19 @@ public static class PpRanking
     /// a restricted or deleted account all drop out of every pp surface at once:
     ///
     /// <list type="bullet">
-    /// <item>the play is on its map's RANKED board (<see cref="BeatmapLeaderboard.OnBoard"/>: it
-    /// passed and its stored <c>ranked</c> flag is set);</item>
+    /// <item>the play qualifies for its map's RANKED board (<see cref="BeatmapLeaderboard.PlayQualifies"/>:
+    /// it passed and its stored <c>ranked</c> flag is set);</item>
     /// <item>its set is CURRENTLY <c>'ranked'</c>, re-read per request rather than trusted from the
     /// stored flag, so un-ranking a set takes effect with no recompute;</item>
     /// <item>it was priced above zero. Per docs/pp.md a custom-rate play is pp-INELIGIBLE (it still
     /// ranks on the score boards), and a not-yet-priced row is stored 0, so both are excluded by
     /// the same predicate;</item>
     /// <item>the account is LISTED: not restricted, not deleted. This is the global-ranking
-    /// delisting rule, deliberately absent from <see cref="BeatmapLeaderboard"/> (per-map boards
-    /// keep restricted players' rows; global rankings do not).</item>
+    /// delisting rule, WIDER than the per-map boards' (<see cref="BeatmapLeaderboard.PlayerListed"/>
+    /// drops restricted accounts only; a deleted account's anonymised rows stay on map boards but
+    /// earn no rank here). It is applied through the <c>users</c> join below, which is why this
+    /// query uses the play half of the board rule rather than <see cref="BeatmapLeaderboard.OnBoard"/>
+    /// and its second look-up of the same row.</item>
     /// </list>
     ///
     /// <para>
@@ -75,7 +78,7 @@ public static class PpRanking
          JOIN beatmaps b ON b.id = s.beatmap_id
          JOIN beatmapsets bs ON bs.id = b.set_id
          JOIN users u ON u.id = s.user_id
-         WHERE {BeatmapLeaderboard.OnBoard("s", "true")}
+         WHERE {BeatmapLeaderboard.PlayQualifies("s", "true")}
            AND bs.status = 'ranked'
            AND s.pp > 0
            AND NOT u.restricted AND u.deleted_at IS NULL

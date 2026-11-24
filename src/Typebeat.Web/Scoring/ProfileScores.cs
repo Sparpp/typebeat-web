@@ -77,7 +77,8 @@ public static class ProfileScores
     /// equivalence this comment exists to promise.
     ///
     /// <para>
-    /// Eligibility is <see cref="BeatmapLeaderboard.OnBoard"/> on the ranked board, deliberately
+    /// Eligibility is <see cref="BeatmapLeaderboard.PlayQualifies"/> on the ranked board (the play
+    /// half of the board rule; the profile itself 404s for a restricted account), deliberately
     /// WIDER than <see cref="PpRanking.EligiblePlaysSql"/>: a play worth 0pp (custom rate, or not
     /// yet priced) is still your best play on that song and still belongs in the list, it just
     /// sorts to the tail. Restricting to <c>pp &gt; 0</c> here would hide plays the player can
@@ -114,7 +115,7 @@ public static class ProfileScores
          FROM scores sc
          JOIN beatmaps bm ON bm.id = sc.beatmap_id
          JOIN beatmapsets bms ON bms.id = bm.set_id
-         WHERE sc.user_id = @id AND {BeatmapLeaderboard.OnBoard("sc", "true")}
+         WHERE sc.user_id = @id AND {BeatmapLeaderboard.PlayQualifies("sc", "true")}
            AND bms.status <> 'loved'
          ORDER BY bm.set_id, sc.pp DESC, {BeatmapLeaderboard.Order("sc")}
          """;

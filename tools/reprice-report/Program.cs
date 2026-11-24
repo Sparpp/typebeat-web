@@ -329,7 +329,7 @@ internal static class RepriceCli
                  JOIN beatmaps b ON b.id = s.beatmap_id
                  JOIN beatmapsets bs ON bs.id = b.set_id
                  JOIN users u ON u.id = s.user_id
-                 WHERE {BeatmapLeaderboard.OnBoard("s", "true")}
+                 WHERE {BeatmapLeaderboard.PlayQualifies("s", "true")}
                    AND bs.status = 'ranked'
                    AND NOT u.restricted AND u.deleted_at IS NULL
                  """,

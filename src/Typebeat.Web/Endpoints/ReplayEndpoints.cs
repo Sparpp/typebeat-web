@@ -25,7 +25,8 @@ namespace Typebeat.Web.Endpoints;
 ///    score for another one later. See <see cref="recordedHashAsync"/> for replays stored before
 ///    the hash existed.
 ///  - GET /api/v2/scores/{scoreId}/replay: public (leaderboards are public), streams the stored
-///    bytes back verbatim as application/octet-stream, 404 when nothing is stored. This is the
+///    bytes back verbatim as application/octet-stream, 404 when nothing is stored or the score's
+///    player is restricted (their rows are on no board). This is the
 ///    ONLY path that serves replay bytes anywhere (the game client's watch-replay action and the
 ///    website's "replay" / "Download" links all come here), so it is also where a view is counted
 ///    for the profile's "Replays watched by others": see <see cref="countViewAsync"/>. The wire
@@ -218,9 +219,18 @@ public static class ReplayEndpoints
         await using var conn = await db.OpenAsync(ctx.RequestAborted);
 
         // The owner comes back with the key because the view counter needs it: "watched by others"
-        // is decided here, where the requester is known, and nowhere else.
+        // is decided here, where the requester is known, and nowhere else. A RESTRICTED player's
+        // replay is "not found" like their profile and their board rows
+        // (BeatmapLeaderboard.PlayerListed), read per request so unrestricting serves it again.
+        // No owner exemption: a restricted account cannot authenticate to ask for it.
         var row = await conn.QuerySingleOrDefaultAsync<(string? Key, long OwnerId)?>(
-            "SELECT replay_key AS Key, user_id AS OwnerId FROM scores WHERE id = @scoreId", new { scoreId });
+            """
+            SELECT sc.replay_key AS Key, sc.user_id AS OwnerId
+            FROM scores sc
+            JOIN users u ON u.id = sc.user_id
+            WHERE sc.id = @scoreId AND NOT u.restricted
+            """,
+            new { scoreId });
 
         if (row is not { Key: string key })
             return WireJson.Error(StatusCodes.Status404NotFound, "not found");

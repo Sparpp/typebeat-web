@@ -12,7 +12,18 @@ namespace Typebeat.Web.Scoring;
 /// <list type="bullet">
 /// <item>A play is ON a board when it PASSED and its stored <c>ranked</c> flag matches the board:
 /// every map serves a ranked board and an unranked one (the latter is where non-default rates and
-/// unranked mods land), and a row never crosses between them (<see cref="OnBoard"/>).</item>
+/// unranked mods land), and a row never crosses between them (<see cref="PlayQualifies"/>).</item>
+/// <item>...and its player is LISTED: a RESTRICTED account's plays are on no board, ranked or
+/// unranked (<see cref="PlayerListed"/>; <see cref="OnBoard"/> is the two together). This is
+/// decided at READ time from <c>users.restricted</c>, never stored on the score rows, so restricting
+/// someone takes every one of their rows off every board at once (each board re-reads it; a cached
+/// copy, such as the game client's memoised slice, ages out on its own short TTL), and unrestricting puts them
+/// back as they were, with nothing to recompute. It moves every surface built from these fragments
+/// together: the boards themselves, their participant counts, the caller's own position and the
+/// standing a submit reports (nobody is counted behind a restricted row), and first places (the
+/// best LISTED player on a map holds its #1). Deleted accounts are NOT delisted: account deletion
+/// anonymises the row (<c>deleted_{id}</c>, 007_account_settings.sql) and deliberately keeps its
+/// scores, so they stay on the boards under that name.</item>
 /// <item>WHICH board a map serves is decided by its set's CURRENT status, re-read per request, never
 /// trusted from the stored flags: 'ranked' and 'loved' sets serve the ranked board, 'pending' and
 /// 'unranked' sets serve the unranked one, and anything else (hidden, wip, removed) serves no board
@@ -29,12 +40,15 @@ namespace Typebeat.Web.Scoring;
 /// </list>
 ///
 /// <para>
-/// NOT a rule, deliberately recorded because it surprises people: a board does NOT delist restricted
-/// or deleted accounts, though the global rankings (<see cref="GlobalRanking"/>,
-/// <see cref="PpRanking"/>) do. A restricted player keeps whatever board positions they held. First
-/// places match that, because they are defined as "the board's rank-1 row is yours" and nothing
-/// else. If boards should start delisting them, the fix is one predicate HERE plus the join it
-/// needs, and every board (game client, set page, first places) moves together.
+/// WHICH FRAGMENT TO USE. A query that reads OTHER players' rows (a board, a count of one, a
+/// position on one, first places) uses <see cref="OnBoard"/>, which carries the listing rule with
+/// it, so a new board cannot forget it. A query already pinned to ONE player whose surface is
+/// itself gated on that player being visible (the profile's sections and grade counts, the
+/// statistics the user payload carries, all of which 404 for a restricted account) uses
+/// <see cref="PlayQualifies"/> alone: the account check there is the gate's job, and repeating it
+/// per row would only add a lookup. <see cref="PpRanking"/> also uses <see cref="PlayQualifies"/>,
+/// because it already joins <c>users</c> for the global rankings' own, wider, delisting rule
+/// (restricted AND deleted).
 /// </para>
 ///
 /// <para>
@@ -46,12 +60,31 @@ namespace Typebeat.Web.Scoring;
 public static class BeatmapLeaderboard
 {
     /// <summary>
-    /// A play is on a board: it passed, and its ranked flag matches the board being read.
+    /// A play is on a board: it qualifies (<see cref="PlayQualifies"/>) and its player is listed
+    /// (<see cref="PlayerListed"/>). The fragment for every query that reads other players' rows.
     /// <paramref name="board"/> defaults to the <c>@wantRanked</c> parameter the two per-map board
     /// queries bind; pass <c>"true"</c> for "the ranked board" outright.
     /// </summary>
     public static string OnBoard(string score, string board = "@wantRanked")
+        => $"{PlayQualifies(score, board)} AND {PlayerListed(score)}";
+
+    /// <summary>
+    /// The PLAY half of <see cref="OnBoard"/>: it passed, and its ranked flag matches the board
+    /// being read. Says nothing about the account; use it alone only where the account is already
+    /// settled (see the class summary).
+    /// </summary>
+    public static string PlayQualifies(string score, string board = "@wantRanked")
         => $"{score}.passed AND {score}.ranked = {board}";
+
+    /// <summary>
+    /// The PLAYER half of <see cref="OnBoard"/>: the row's account is not restricted. A
+    /// self-contained anti-join on <c>users</c>' primary key rather than a join the caller has to
+    /// add, so it drops into any query (several board queries already join <c>users u</c> for
+    /// display, and others join nothing) without a second alias to keep apart. Read every time,
+    /// never stored, so unrestricting an account restores its rows with no data change.
+    /// </summary>
+    public static string PlayerListed(string score)
+        => $"NOT EXISTS (SELECT 1 FROM users board_delisted WHERE board_delisted.id = {score}.user_id AND board_delisted.restricted)";
 
     /// <summary>
     /// Which board a map serves, by its set's CURRENT status: true for the ranked board ('ranked',
@@ -115,6 +148,14 @@ public static class BeatmapLeaderboard
     /// </para>
     ///
     /// <para>
+    /// The fold reads <see cref="OnBoard"/>, listing rule included, so a restricted player's row is
+    /// never a map's top row and the best LISTED player there holds the #1 instead, exactly as the
+    /// board shows it. The candidate-map pruning only needs the play half
+    /// (<see cref="PlayQualifies"/>): it is about <c>@id</c>'s own plays, and a restricted
+    /// <c>@id</c> holds nothing anyway because the fold drops their rows.
+    /// </para>
+    ///
+    /// <para>
     /// COMPUTED ON READ, no table and no migration: the candidate maps are pruned to the ones the
     /// user has a board-eligible play on (they cannot hold #1 anywhere else), and each map's top row
     /// is an index-order read of <c>ix_scores_leaderboard (beatmap_id, ranked, total_score DESC)</c>,
@@ -140,7 +181,7 @@ public static class BeatmapLeaderboard
                AND bset.status = 'ranked'
                AND sc.beatmap_id IN (
                    SELECT mine.beatmap_id FROM scores mine
-                   WHERE mine.user_id = @id AND {OnBoard("mine", "true")}
+                   WHERE mine.user_id = @id AND {PlayQualifies("mine", "true")}
                )
              ORDER BY sc.beatmap_id, {Order("sc")}
          ) board

@@ -3,6 +3,7 @@ using Dapper;
 using Newtonsoft.Json;
 using Typebeat.Web.Data;
 using Typebeat.Web.Packages;
+using Typebeat.Web.Scoring;
 using Typebeat.Web.Wire;
 
 namespace Typebeat.Web.Endpoints;
@@ -230,7 +231,7 @@ public static class BuddyEndpoints
         // Hidden sets are excluded outright, and so are WIP ones: a WIP map serves no board
         // (BeatmapLeaderboard.BoardFor), so there is no position to announce.
         var rows = await conn.QueryAsync<RecentScoreRow>(
-            """
+            $"""
             SELECT s.id                                             AS Id,
                    s.user_id                                        AS UserId,
                    u.username                                       AS Username,
@@ -262,7 +263,8 @@ public static class BuddyEndpoints
                    s.ended_at                                       AS EndedAt,
                    (s.replay_key IS NOT NULL)                       AS HasReplay,
                    -- Current position on the map's board: one plus the number of OTHER players
-                   -- whose best on that board beats this score.
+                   -- whose best on that board beats this score. A restricted player is on no
+                   -- board (BeatmapLeaderboard.PlayerListed), so is not counted ahead of anyone.
                    (SELECT count(*) + 1
                       FROM (SELECT o.user_id, max(o.total_score) AS best
                               FROM scores o
@@ -272,6 +274,7 @@ public static class BuddyEndpoints
                                AND o.passed
                                AND o.ranked = (obs.status IN ('ranked', 'loved'))
                                AND o.user_id <> s.user_id
+                               AND {BeatmapLeaderboard.PlayerListed("o")}
                              GROUP BY o.user_id) peers
                      WHERE peers.best > s.total_score)              AS Position,
                    -- Is this the player's own best on this board? Distinguishes a genuine

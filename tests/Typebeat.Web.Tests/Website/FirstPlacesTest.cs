@@ -12,8 +12,8 @@ namespace Typebeat.Web.Tests.Website;
 /// The definition under test is deliberately not a formula of its own: a first place is "the map
 /// board's rank-1 row is yours", so the tie-break case asserts against the BOARD ITSELF (the set
 /// page's podium) rather than against a hardcoded winner, and the restricted-rival case asserts that
-/// the profile and the board agree even where that is unflattering (boards do not delist restricted
-/// accounts today, see <c>BeatmapLeaderboard</c>).
+/// the profile and the board agree when the board delists a restricted account (backlog 500, see
+/// <c>BeatmapLeaderboard.PlayerListed</c>): the best listed player inherits the #1.
 ///
 /// Every test seeds its own throwaway users, and its own beatmaps inside two shared sets, so no test
 /// can move another's counts. Scores stay in a low band on purpose: a user's cumulative ranked score
@@ -188,7 +188,7 @@ public class FirstPlacesTest
     }
 
     [Test]
-    public async Task RestrictedRivalAtTheTop_KeepsTheFirstPlace_ExactlyAsTheBoardShows()
+    public async Task RestrictedRivalAtTheTop_HandsTheFirstPlaceToTheBestListedPlayer_UntilUnrestricted()
     {
         long holder = await SeedUserAsync("clean");
         long banned = await SeedUserAsync("banned", restricted: true);
@@ -202,21 +202,32 @@ public class FirstPlacesTest
 
         using var bannedProfile = await WebsiteFixture.Client.GetAsync($"/users/{banned}");
 
+        // Unrestricting is a read-time change: nothing is recomputed, the next view simply sees the
+        // restored row back on top.
+        await SetRestrictedAsync(banned, false);
+
+        long restoredTop = await BoardTopUserAsync(rankedSetId, map);
+        string holderAfter = await ProfileAsync(WebsiteFixture.Client, holder);
+        string bannedAfter = await ProfileAsync(WebsiteFixture.Client, banned);
+
         Assert.Multiple(() =>
         {
-            // Boards do NOT delist restricted accounts (the global rankings do). First places are
-            // defined as "the board's rank-1 row is yours", so they inherit that, unflattering as it
-            // is: the honest player behind a restricted score holds no first place, which is exactly
-            // what the map page shows. If boards start delisting, BeatmapLeaderboard is the one
-            // place to change and this expectation flips with it.
-            Assert.That(boardTop, Is.EqualTo(banned), "precondition: the board still ranks the restricted score first");
+            // Boards delist restricted accounts (BeatmapLeaderboard.PlayerListed), and first places
+            // are "the board's rank-1 row is yours", so the honest player behind a restricted score
+            // holds the #1, exactly as the map page shows.
+            Assert.That(boardTop, Is.EqualTo(holder), "the board ranks the best LISTED player first");
 
-            Assert.That(HasSection(html), Is.False);
-            Assert.That(StatCount(html), Is.Zero);
+            Assert.That(FirstPlacesSection(html), Does.Contain("65,110"));
+            Assert.That(StatCount(html), Is.EqualTo(1));
 
-            // And the restricted holder's own profile is unreachable, so the first place is listed
-            // nowhere at all.
+            // The restricted holder's own profile is unreachable, as before.
             Assert.That(bannedProfile.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+            Assert.That(restoredTop, Is.EqualTo(banned), "unrestricting puts the higher score back on top");
+            Assert.That(HasSection(holderAfter), Is.False, "and takes the inherited #1 back off the holder");
+            Assert.That(StatCount(holderAfter), Is.Zero);
+            Assert.That(FirstPlacesSection(bannedAfter), Does.Contain("65,220"));
+            Assert.That(StatCount(bannedAfter), Is.EqualTo(1));
         });
     }
 
@@ -362,6 +373,17 @@ public class FirstPlacesTest
         await using var conn = Db();
         await conn.OpenAsync();
         return await InsertUserAsync(conn, $"fp {label} " + Guid.NewGuid().ToString("N")[..6], restricted);
+    }
+
+    private static async Task SetRestrictedAsync(long userId, bool restricted)
+    {
+        await using (var conn = Db())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync("UPDATE users SET restricted = @restricted WHERE id = @userId", new { restricted, userId });
+        }
+
+        await WebsiteFixture.EvictAllAsync();
     }
 
     private static async Task<long> InsertUserAsync(NpgsqlConnection conn, string username, bool restricted = false)
