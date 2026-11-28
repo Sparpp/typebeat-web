@@ -215,7 +215,7 @@ public static class ModMultiplier
             // room: the fattest reachable ranked stack is DT@2.00 (1.46) x FL x LT x HR x FC x
             // RE = 1.932449211, and x 0.95 only shrinks it.
             "CL" => 0.95,
-            // Mobile (backlog 503): the second SYNTHETIC SYSTEM MARK, which /play/submit writes on a
+            // Mobile (backlog 513): the second SYNTHETIC SYSTEM MARK, which /play/submit writes on a
             // browser play when at least one of its keys came through a phone's on-screen keyboard.
             // Exactly 1.0x, so it changes no number: the browser route bounds its total against the
             // no-mod ceiling as before, and a ceiling re-derived from a stored MB row's mods (the

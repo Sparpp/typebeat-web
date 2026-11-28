@@ -507,7 +507,7 @@ public class PlayHistoryTest
     }
 
     /// <summary>
-    /// Backlog 503: a browser play the player flags <c>mobile</c> (a key came through the phone's
+    /// Backlog 513: a browser play the player flags <c>mobile</c> (a key came through the phone's
     /// on-screen keyboard) is stored with the synthetic Mobile mark, <c>[{"acronym":"MB"}]</c>; one
     /// flagged false, or carrying no flag at all (an older page), is stored with no mods, as every
     /// browser play was before. The mark is a note and nothing else: the three rows agree on

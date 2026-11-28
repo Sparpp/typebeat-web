@@ -1921,7 +1921,7 @@
         }
     }
 
-    // SOFT KEYBOARDS (backlog 501). A phone opens its on-screen keyboard only for a focused text
+    // SOFT KEYBOARDS (backlog 511). A phone opens its on-screen keyboard only for a focused text
     // field, and an IME (Gboard and most Android keyboards) reports its keys as keydowns with
     // keyCode 229 and key 'Unidentified', so the keydown path above types nothing for them. The
     // player therefore owns a hidden text field on touch devices, and turns what the keyboard does
@@ -1989,7 +1989,7 @@
     // key of the same change therefore ends it at this same instant, which is what a player
     // pressing them in that order would have done.
     //
-    // THE MOBILE MARK (backlog 503). Any key that reaches this router sets host.softKeyed, which
+    // THE MOBILE MARK (backlog 513). Any key that reaches this router sets host.softKeyed, which
     // mountPlayer clears at the start of every run (begin(), so a retry starts clean) and copies
     // onto the results as `mobile`; play.js sends it with /play/submit, and the server then stores
     // the run with the synthetic "MB" (Mobile) mod. It is a visible note only: it reads nothing back
@@ -2076,7 +2076,7 @@
     //    unplayed. A passed run judges every cell, so there the two are the same number.
     //  - The map's metadata: title and artist, stars, difficulty name, mapper and the play date.
     //    Anything the host did not hand over (a deep link has no stars, say) is left out, not faked.
-    //  - The mods row (backlog 503). A browser play selects no mod, so the only badge it can carry
+    //  - The mods row (backlog 513). A browser play selects no mod, so the only badge it can carry
     //    is the synthetic Mobile mark ("MB"), shown when a key of the run came through the
     //    on-screen keyboard (results.mobile). It is drawn in the site's own badge markup
     //    (Pages/Shared/_ModIcons.cshtml: mod-icons / mod-icon mod-icon--{category}, the name as the
@@ -2562,7 +2562,7 @@
             if (running && engine) releaseHeldKey(keyHost, roundHalfEven(nowMs()));
         }
 
-        // --- soft keyboards (backlog 501, see SOFT_INPUT_SENTINEL above) ----------------------
+        // --- soft keyboards (backlog 511, see SOFT_INPUT_SENTINEL above) ----------------------
         // Only a TOUCH device gets the field: a coarse primary pointer, or a touch seen on the
         // player. Until then nothing below exists (the field is made on the first play that wants
         // it), so a desktop with a mouse runs exactly the keydown path it always did.
@@ -3966,7 +3966,7 @@
             const results = Core.computeScore(engine);
             // The veto's verdict rides on the results; play.js declines to submit a false one.
             results.playbackValid = validity.valid;
-            // Whether any key of this run came through the on-screen keyboard (backlog 503): the
+            // Whether any key of this run came through the on-screen keyboard (backlog 513): the
             // card shows the Mobile badge for it, and play.js sends it so the row is stored marked.
             results.mobile = !!keyHost.softKeyed;
             pendingResults = results;
@@ -4056,7 +4056,7 @@
             engine = new Core.TypingEngine(beatmap);
             // A key held over from the last run holds nothing in this one.
             keyHost.holdState = { key: null };
-            // Nor does the last run's on-screen keyboard mark this one (backlog 503, routeSoftKeys).
+            // Nor does the last run's on-screen keyboard mark this one (backlog 513, routeSoftKeys).
             keyHost.softKeyed = false;
             validity = makePlaybackValidity();
             // Display-only hooks. Neither reads anything back into the engine, so nothing here
@@ -4118,7 +4118,7 @@
             window.removeEventListener('resize', onResize);
             window.addEventListener('resize', onResize);
             startLoops();
-            // On a touch device, focus the soft keyboard's field (backlog 501).
+            // On a touch device, focus the soft keyboard's field (backlog 511).
             startSoftInput();
         }
 
@@ -4428,7 +4428,7 @@
         // The hold's key-up half of the key handler (KeyHandler.OnKeyUp and releaseHold), exported
         // beside routeKeyDown for the display harness.
         routeKeyUp, releaseHeldKey,
-        // The soft-keyboard input path (backlog 501), pinned by PlayerSoftKeysHarness.
+        // The soft-keyboard input path (backlog 511), pinned by PlayerSoftKeysHarness.
         SOFT_INPUT_SENTINEL,
         SOFT_HOLD_KEY,
         isImeKeyDown,
@@ -4463,7 +4463,7 @@
         // fold, the combo out of its maximum, a failed run's judged accuracy and the metadata.
         resultCells,
         resultMetaHtml,
-        // The card's mods row (backlog 503): the Mobile mark, in the site's badge markup.
+        // The card's mods row (backlog 513): the Mobile mark, in the site's badge markup.
         resultModsHtml,
         MOBILE_MOD,
         // The freestyle colour the stage paints (backlog 384), pure, pinned by WireCompat.

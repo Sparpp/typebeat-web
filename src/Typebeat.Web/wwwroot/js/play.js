@@ -118,7 +118,7 @@
         return body;
     }
 
-    // The /play/submit body for a finished run. `mobile` (backlog 503) is the player's
+    // The /play/submit body for a finished run. `mobile` (backlog 513) is the player's
     // results.mobile, true when at least one key of the run came through the on-screen keyboard;
     // the server then stores the row with the synthetic Mobile mod ("MB"), a visible note priced
     // at 1.0x. It is sent only when true, so a physical-keyboard run's body is exactly what it was.

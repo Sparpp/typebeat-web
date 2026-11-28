@@ -12,7 +12,7 @@ namespace Typebeat.Web.Tests.Website;
 /// The definition under test is deliberately not a formula of its own: a first place is "the map
 /// board's rank-1 row is yours", so the tie-break case asserts against the BOARD ITSELF (the set
 /// page's podium) rather than against a hardcoded winner, and the restricted-rival case asserts that
-/// the profile and the board agree when the board delists a restricted account (backlog 500, see
+/// the profile and the board agree when the board delists a restricted account (backlog 510, see
 /// <c>BeatmapLeaderboard.PlayerListed</c>): the best listed player inherits the #1.
 ///
 /// Every test seeds its own throwaway users, and its own beatmaps inside two shared sets, so no test

@@ -77,7 +77,7 @@ public static class ModInfo
         // that is not the one that was ranked. Mirrors the game's base ModClassic.Name ("Classic"),
         // so a marked board row reads the same in both places.
         "CL" => "Classic",
-        // The synthetic Mobile mark (backlog 503): a browser play typed, at least in part, through a
+        // The synthetic Mobile mark (backlog 513): a browser play typed, at least in part, through a
         // phone's on-screen keyboard. Mirrors the game's TypeBeatModMobile.Name.
         "MB" => "Mobile",
         _ => acronym ?? string.Empty,

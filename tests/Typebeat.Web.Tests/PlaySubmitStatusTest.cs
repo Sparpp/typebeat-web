@@ -119,7 +119,7 @@ public class PlaySubmitStatusTest
     }
 
     /// <summary>
-    /// Backlog 503: a run the player marked mobile (a key came through the on-screen keyboard) is
+    /// Backlog 513: a run the player marked mobile (a key came through the on-screen keyboard) is
     /// submitted with <c>mobile: true</c>, which the server stores as the "MB" Mobile mark. Any other
     /// run's body is exactly the old one, with no <c>mobile</c> key at all.
     /// </summary>

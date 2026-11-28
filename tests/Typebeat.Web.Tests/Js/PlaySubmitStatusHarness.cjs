@@ -62,7 +62,7 @@ out.refusedStaleMap = PAGE.tokenFailureStatus('invalid or missing beatmap_hash')
 out.refusedOther = PAGE.tokenFailureStatus(null);
 out.playbackInvalid = PAGE.PLAYBACK_INVALID_STATUS;
 
-// The submit body (backlog 503): `mobile` rides along only when the run was marked.
+// The submit body (backlog 513): `mobile` rides along only when the run was marked.
 const run = { passed: true, totalScore: 1234, maxCombo: 5, statistics: { great: 5 }, maximumStatistics: { great: 5 } };
 out.submitBodyMobile = PAGE.submitBody(42, Object.assign({ mobile: true }, run));
 out.submitBodyPhysical = PAGE.submitBody(42, Object.assign({ mobile: false }, run));

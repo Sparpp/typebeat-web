@@ -222,7 +222,7 @@ public class ModInfoTest
     public void Mobile_IsTheSecondSyntheticSystemMark()
     {
         // The "MB" mark /play/submit writes on a browser play typed through a phone's on-screen
-        // keyboard (backlog 503): "Mobile" (the game's TypeBeatModMobile.Name), on the neutral badge
+        // keyboard (backlog 513): "Mobile" (the game's TypeBeatModMobile.Name), on the neutral badge
         // like Classic, and it reaches a score row's badge through the stored mods blob.
         var badge = ScoreMods.Parse("[{\"acronym\":\"MB\"}]").Single();
 

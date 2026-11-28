@@ -11,7 +11,7 @@ using Typebeat.Web.Scoring;
 namespace Typebeat.Web.Tests.Website;
 
 /// <summary>
-/// Backlog 500: a RESTRICTED player's plays are on no beatmap board (<see cref="BeatmapLeaderboard.PlayerListed"/>).
+/// Backlog 510: a RESTRICTED player's plays are on no beatmap board (<see cref="BeatmapLeaderboard.PlayerListed"/>).
 /// Every surface built from the board fragments drops them together (the game client's board, its
 /// participant count and the caller's position, the set page's board, the standing a submit
 /// reports), and the per-score surfaces (the /scores/{id} permalink, the replay download) treat

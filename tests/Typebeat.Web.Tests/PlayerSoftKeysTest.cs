@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Typebeat.Web.Tests;
 
 /// <summary>
-/// /play on a phone (backlog 501). Js/PlayerSoftKeysHarness.cjs mounts the real player over a fake
+/// /play on a phone (backlog 511). Js/PlayerSoftKeysHarness.cjs mounts the real player over a fake
 /// DOM and drives the hidden text field it owns on a touch device, logging every engine call. The
 /// stakes are the shared leaderboards: a soft key must reach the engine exactly as the physical key
 /// would (same router, same quantised instant), once, and a physical key whose text also lands in
@@ -289,7 +289,7 @@ public class PlayerSoftKeysTest
     }
 
     /// <summary>
-    /// Backlog 503: a key routed through the soft path marks the run, which reaches onFinish as
+    /// Backlog 513: a key routed through the soft path marks the run, which reaches onFinish as
     /// <c>results.mobile</c> (play.js sends it, the server stores the "MB" Mobile mark) and draws the
     /// badge on the results card. A run typed on physical keys alone is not marked, on a touch
     /// device or a desktop, and a retry (from the results card, or mid-play from the pause card)

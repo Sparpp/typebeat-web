@@ -601,7 +601,7 @@ public class PerformancePointsParityTest
                          // The synthetic Classic mark (backlog 398): a score played on a version
                          // that is not the ranked one, paid 5 percent less on both sides.
                          (new TypeBeatModClassic(), 0.95, "Classic (CL), the version mark"),
-                         // The synthetic Mobile mark (backlog 503): a browser play typed on a
+                         // The synthetic Mobile mark (backlog 513): a browser play typed on a
                          // phone's on-screen keyboard, a note that changes no number on either side.
                          (new TypeBeatModMobile(), 1.00, "Mobile (MB), the on-screen keyboard mark, NEUTRAL"),
                      })

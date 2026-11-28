@@ -554,7 +554,7 @@ public static class PlayEndpoints
         string rank = passed ? recomputed.Rank : "F";
         var endedAt = DateTimeOffset.UtcNow;
 
-        // The stored mod stack (backlog 503): empty, or the synthetic Mobile mark when the player
+        // The stored mod stack (backlog 513): empty, or the synthetic Mobile mark when the player
         // says at least one key of the run came through a phone's on-screen keyboard. The mark is a
         // VISIBLE NOTE only. It is priced at exactly 1.0x on every table (ModMultiplier, both pp
         // tables), so it moves no bound above and no number below, and it changes nothing about
@@ -906,7 +906,7 @@ public static class PlayEndpoints
     // The caller's standing on a board and the hit_counts merge are ScoreSubmission's, shared with
     // ScoreEndpoints; the board rules themselves come from BeatmapLeaderboard.
 
-    // ---- the stored mod stack (backlog 503) ----
+    // ---- the stored mod stack (backlog 513) ----
 
     /// <summary>
     /// The synthetic acronym a browser play typed through a phone's on-screen keyboard is stored
@@ -992,7 +992,7 @@ public static class PlayEndpoints
         public Dictionary<string, int>? MaximumStatistics { get; set; }
 
         /// <summary>
-        /// Backlog 503: at least one key of the run came through the player's on-screen keyboard
+        /// Backlog 513: at least one key of the run came through the player's on-screen keyboard
         /// path. Absent (an older cached page) reads as false. Stores the Mobile mark and nothing else.
         /// </summary>
         [JsonProperty("mobile")]

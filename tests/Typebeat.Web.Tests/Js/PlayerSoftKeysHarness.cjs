@@ -1,4 +1,4 @@
-// Node harness for /play's SOFT-KEYBOARD input path (backlog 501). It MOUNTS the real player
+// Node harness for /play's SOFT-KEYBOARD input path (backlog 511). It MOUNTS the real player
 // (typebeat-player.js's mountPlayer) over a minimal fake DOM, a fake AudioContext and fake timers,
 // as PlayerPauseHarness.cjs does, and drives the hidden text field the player owns on a touch
 // device: plain input events, an IME's 229 keydown followed by its input, a multi-character
@@ -391,7 +391,7 @@ out.ime = {
     };
     out.softHold = {
         softHoldKey: D.SOFT_HOLD_KEY,
-        // Backlog 503: nothing has come through the soft router yet, and an empty change routes
+        // Backlog 513: nothing has come through the soft router yet, and an empty change routes
         // nothing, so neither marks the host.
         markedBefore: host.softKeyed === true,
         markedByEmpty: (D.routeSoftKeys([], host), host.softKeyed === true),
@@ -653,7 +653,7 @@ out.holds = {
     fieldBlur: holdRun(function () { new FakeElement('button').focus(); })
 };
 
-// ---- 6. the Mobile mark (backlog 503): results.mobile, per run --------------------------------
+// ---- 6. the Mobile mark (backlog 513): results.mobile, per run --------------------------------
 // A run with at least one soft key concludes with results.mobile true; a run typed on physical keys
 // alone concludes false, on a desktop and on a touch device alike; and a retry, from the results
 // card or mid-play from the pause card, starts the next run unmarked.

@@ -564,7 +564,7 @@ public class PerformancePointsTest
     }
 
     /// <summary>
-    /// The synthetic Mobile mark (backlog 503) changes NO number: 1.0x on the pp table, 1.0x on the
+    /// The synthetic Mobile mark (backlog 513) changes NO number: 1.0x on the pp table, 1.0x on the
     /// score side, so the total-score ceiling of a marked row is the no-mod ceiling, and it composes
     /// with a priced mark as a no-op. Stacked with Classic because a single-mod check passes for any
     /// neutral arm, while a stray factor would show in the product.
