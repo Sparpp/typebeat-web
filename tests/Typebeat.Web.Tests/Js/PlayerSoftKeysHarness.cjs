@@ -192,6 +192,8 @@ class FakeAudioContext {
     decodeAudioData(bytes, ok) { ok({ duration: 60, numberOfChannels: 1, getChannelData() { return new Float32Array(1); } }); }
 }
 global.window.AudioContext = FakeAudioContext;
+// The hold display measures a glyph through it; the fake DOM has no layout, so it reads the default.
+global.getComputedStyle = function () { return { fontSize: '42px' }; };
 
 // 16 ms frames; the audio clock moves only while 'running'. A fractional step keeps the clock off
 // whole milliseconds, so the quantisation is actually exercised.
@@ -355,7 +357,9 @@ out.ime = {
     enter: D.isImeKeyDown(key('Enter', { code: 'Enter', keyCode: 13 }))
 };
 
-// ---- pure: a soft key is a tap (the hold it opens is released at the same instant) -----------
+// ---- pure: a soft key's hold stays down until the next key press -----------------------------
+// A stub engine that opens a hold on every 'o', driven through routeSoftKeys and the physical
+// router at a clock the host sets, so each call's quantised instant is visible.
 (function () {
     const calls = [];
     const engine = {
@@ -370,13 +374,35 @@ out.ime = {
     };
     const host = {
         engine: engine,
-        now() { return 1300.5; },
+        clock: 0,
+        now() { return host.clock; },
         gaps: [], introTarget: null,
         getSelection() { return null; }, setSelection() {}, performSkip() {}
     };
-    // The hold-opening key comes LAST, so only its own tap release (not a following key) can let it go.
-    D.routeSoftKeys(['l', 'o'], host);
-    out.tap = { calls: calls.filter(c => c.fn !== 'update'), heldKeyAfter: host.holdState ? host.holdState.key : null, holdOpenAfter: engine.activeHold !== null };
+    const step = (t, fn) => {
+        host.clock = t;
+        const before = calls.filter(c => c.fn !== 'update').length;
+        fn();
+        return {
+            calls: calls.filter(c => c.fn !== 'update').slice(before),
+            heldKey: host.holdState ? host.holdState.key : null,
+            holdOpen: engine.activeHold !== null
+        };
+    };
+    out.softHold = {
+        softHoldKey: D.SOFT_HOLD_KEY,
+        // The hold-opening key comes last: nothing lets it go.
+        opened: step(1300.5, () => D.routeSoftKeys(['l', 'o'], host)),
+        // The SAME letter again is still the next press: it ends the hold first, at its own instant.
+        sameLetter: step(1450.5, () => D.routeSoftKeys(['o'], host)),
+        // Two keys in one change: the 'v' ends the hold already down, at the change's instant, and
+        // the hold the 'o' then opens stays down.
+        inOneChange: step(1600.5, () => D.routeSoftKeys(['v', 'o'], host)),
+        // A physical key's key-up never ends a soft hold, even the key that types the same letter.
+        physicalKeyUp: step(1700.5, () => D.routeKeyUp(key('o', { code: 'KeyO' }), host)),
+        // A physical key going down does, at its instant.
+        physicalDown: step(1750.5, () => D.routeKeyDown(key('v', { code: 'KeyV' }), host))
+    };
 })();
 
 // ---- 1. the desktop: no coarse pointer and no touch, so no field, and the keydown path as before --
@@ -570,5 +596,56 @@ out.ime = {
     };
     delete global.window.visualViewport;
 })();
+
+// ---- 5. soft holds on a real map, through the mounted player ------------------------------------
+// "so long" (PlayerDisplayHarness.cjs's hold map): the 's' of "so" held [1000, 1500], handing off to
+// its 'o', due at 1500. Each run types the 's' as a soft key at ~1000, then ends the hold its own way.
+const holdOsu = OSU_HEADER +
+    '{"granularity":"word","version":2,"song_end_ms":5000}\n' +
+    '{"text":"so long","start_ms":1000,"end_ms":3000,"words":[' +
+    '{"text":"so","start_ms":1000,"end_ms":1800,"score":1,"holds":[{"char":0,"start_ms":1000,"end_ms":1500,"ticks":[1250]}]},' +
+    '{"text":"long","start_ms":2000,"end_ms":3000,"score":1,"holds":[{"char":3,"start_ms":2600,"end_ms":3000}]}]}\n';
+
+function holdRun(then) {
+    setCoarse(true);
+    const run = mount(holdOsu, 'click');
+    const tails = [];
+    const onTail = run.api.engine.onHoldTailJudged;
+    run.api.engine.onHoldTailJudged = function (j) { tails.push({ type: j.type, releaseTime: j.releaseTime }); return onTail.apply(this, arguments); };
+    advanceClockTo(run.api, 1000.3);
+    const tPress = expectedTime(run.api);
+    edit(run, S + 's', 'insertText');
+    const heldAfterPress = run.api.engine.activeHold !== null;
+    advanceClockTo(run.api, 1200.4);
+    const tEnd = expectedTime(run.api);
+    const extra = then(run) || {};
+    const result = Object.assign({
+        tPress, tEnd, heldAfterPress,
+        calls: run.calls,
+        tails,
+        holdOpenAfter: run.api.engine.activeHold !== null
+    }, extra);
+    run.api.destroy();
+    return result;
+}
+
+out.holds = {
+    // No further press: the hold completes as a Great at its own end, with no release call.
+    completesAtEnd: holdRun(function (run) { advanceClockTo(run.api, 1600); }),
+    // The next soft key (the hand-off 'o') ends it first, at that press's instant.
+    nextSoftKey: holdRun(function (run) { edit(run, S + 'o', 'insertText'); }),
+    // An IME's 229 keydown is a key press too: it ends the hold at the keydown's instant.
+    imeKeydown: holdRun(function (run) { keydown(run, key('Unidentified', { keyCode: 229 })); }),
+    // Pausing lets it go at the pause instant, and the resumed run has nothing left to release.
+    pause: holdRun(function (run) {
+        docListeners.fire('keydown', key('Escape', { code: 'Escape' }));
+        const pausedWithHold = run.api.engine.activeHold !== null;
+        findByClass(run.container, 'tb-pause-resume').click();
+        advanceClockTo(run.api, 1600);
+        return { pausedWithHold, paused: run.api.paused };
+    }),
+    // The field losing focus during play (another element taking it) lets it go at that instant.
+    fieldBlur: holdRun(function () { new FakeElement('button').focus(); })
+};
 
 process.stdout.write(JSON.stringify(out));

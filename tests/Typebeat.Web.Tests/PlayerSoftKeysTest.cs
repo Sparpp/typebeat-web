@@ -72,17 +72,71 @@ public class PlayerSoftKeysTest
     }
 
     /// <summary>
-    /// An on-screen key has no meaningful key-up, so each is a tap: a hold it opens is released at
-    /// the press's own quantised instant (1300.5 rounds half to even), and no held key is left behind.
+    /// An on-screen key has no meaningful key-up, so a hold a soft key opens stays DOWN until the next
+    /// key press of any kind ends it at that press's quantised instant (x.5 rounds half to even): the
+    /// same letter typed again, the first key of a later multi-key change, or a physical key going
+    /// down. A physical key-up never ends it, even the one for the same letter.
     /// </summary>
     [Test]
-    public void ASoftKey_IsATap_ReleasingAnyHoldItOpensAtTheSameInstant()
+    public void ASoftKeysHold_StaysDownUntilTheNextKeyPress()
+    {
+        string softKey = str("softHold", "softHoldKey")!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(calls(at("softHold", "opened", "calls")), Is.EqualTo(new[] { "key:l@1300", "key:o@1300" }));
+            Assert.That(flag("softHold", "opened", "holdOpen"), Is.True);
+            Assert.That(str("softHold", "opened", "heldKey"), Is.EqualTo(softKey));
+
+            Assert.That(calls(at("softHold", "sameLetter", "calls")), Is.EqualTo(new[] { "release:@1450", "key:o@1450" }));
+            Assert.That(flag("softHold", "sameLetter", "holdOpen"), Is.True, "the new 'o' opens its own");
+
+            Assert.That(calls(at("softHold", "inOneChange", "calls")), Is.EqualTo(new[] { "release:@1600", "key:v@1600", "key:o@1600" }));
+            Assert.That(flag("softHold", "inOneChange", "holdOpen"), Is.True);
+
+            Assert.That(at("softHold", "physicalKeyUp", "calls").GetArrayLength(), Is.Zero);
+            Assert.That(flag("softHold", "physicalKeyUp", "holdOpen"), Is.True);
+
+            Assert.That(calls(at("softHold", "physicalDown", "calls")), Is.EqualTo(new[] { "release:@1750", "key:v@1750" }));
+            Assert.That(at("softHold", "physicalDown", "heldKey").ValueKind, Is.EqualTo(JsonValueKind.Null));
+        });
+    }
+
+    /// <summary>
+    /// The same rule on a real map through the mounted player ('s' held [1000, 1500]): with no further
+    /// press the hold completes as a Great at its end with no release call; otherwise exactly one
+    /// release lands at the instant of whatever ends it (the next soft key, an IME's 229 keydown, a
+    /// pause, the field losing focus), graded on how much was held (40 percent here, a Miss).
+    /// </summary>
+    [Test]
+    public void ASoftHold_CompletesAtItsEnd_OrEndsOnceAtWhatEndsIt()
     {
         Assert.Multiple(() =>
         {
-            Assert.That(calls(at("tap", "calls")), Is.EqualTo(new[] { "key:l@1300", "key:o@1300", "release:@1300" }));
-            Assert.That(at("tap", "heldKeyAfter").ValueKind, Is.EqualTo(JsonValueKind.Null));
-            Assert.That(flag("tap", "holdOpenAfter"), Is.False);
+            var end = at("holds", "completesAtEnd");
+            double tPress = end.GetProperty("tPress").GetDouble();
+            Assert.That(end.GetProperty("heldAfterPress").GetBoolean(), Is.True);
+            Assert.That(calls(end.GetProperty("calls")), Is.EqualTo(new[] { "processKey:s@" + tPress }));
+            Assert.That(end.GetProperty("tails")[0].GetProperty("type").GetString(), Is.EqualTo("Great"));
+            Assert.That(end.GetProperty("tails")[0].GetProperty("releaseTime").GetDouble(), Is.EqualTo(1500));
+            Assert.That(end.GetProperty("holdOpenAfter").GetBoolean(), Is.False);
+
+            foreach (string how in new[] { "nextSoftKey", "imeKeydown", "pause", "fieldBlur" })
+            {
+                var r = at("holds", how);
+                double t0 = r.GetProperty("tPress").GetDouble();
+                double t1 = r.GetProperty("tEnd").GetDouble();
+                var expected = new List<string> { "processKey:s@" + t0, "processRelease:@" + t1 };
+                if (how == "nextSoftKey") expected.Add("processKey:o@" + t1);
+                Assert.That(calls(r.GetProperty("calls")), Is.EqualTo(expected), how);
+                Assert.That(r.GetProperty("tails").GetArrayLength(), Is.EqualTo(1), how);
+                Assert.That(r.GetProperty("tails")[0].GetProperty("releaseTime").GetDouble(), Is.EqualTo(t1), how);
+                Assert.That(r.GetProperty("tails")[0].GetProperty("type").GetString(), Is.EqualTo("Miss"), how);
+                Assert.That(r.GetProperty("holdOpenAfter").GetBoolean(), Is.False, how);
+            }
+
+            Assert.That(flag("holds", "pause", "pausedWithHold"), Is.False, "released before the clock froze");
+            Assert.That(flag("holds", "pause", "paused"), Is.False, "resumed");
         });
     }
 

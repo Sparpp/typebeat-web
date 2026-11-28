@@ -1977,10 +1977,17 @@
         };
     }
 
+    // The held-key identity a hold opened by a soft key is remembered under. An on-screen key has no
+    // meaningful key-up, so such a hold stays down until the NEXT key press of any kind (soft, IME or
+    // physical: routeKeyDown's release-first, which this identity always satisfies, even for the same
+    // letter typed again), or completes at its own end in the engine's update. No browser reports
+    // this as a key or a code, so no physical key-up can ever end it.
+    const SOFT_HOLD_KEY = 'tb-soft-key';
+
     // Route the keys of one field change, all at the one instant `host.now()` reads now: each is
-    // routeKeyDown's press and then, because an on-screen key has no meaningful key-up, its
-    // release at the SAME instant (routeKeyUp), so a hold a soft key opens is let go at once and
-    // no hold is ever left waiting on a key-up that will not come.
+    // one routeKeyDown press, and a hold that press opens is re-keyed to SOFT_HOLD_KEY. The next
+    // key of the same change therefore ends it at this same instant, which is what a player
+    // pressing them in that order would have done.
     function routeSoftKeys(keys, host) {
         if (!keys || keys.length === 0) return;
         const t = host.now();
@@ -1998,8 +2005,11 @@
         };
         for (const key of keys) {
             const e = softKeyEvent(key);
+            const engine = host.engine;
+            const holdBefore = engine ? engine.activeHold : null;
             routeKeyDown(e, at);
-            routeKeyUp(e, at);
+            const hold = engine ? engine.activeHold : null;
+            if (hold !== null && hold !== holdBefore) holdStateOf(host).key = SOFT_HOLD_KEY;
         }
     }
 
@@ -2613,6 +2623,8 @@
 
         function blurSoftField() {
             if (!softField) return;
+            // Also when the field had no focus to lose, so no blur event will come.
+            releaseSoftHold();
             softOwned = false;
             softComposing = false;
             softRefocusing = true;
@@ -2689,8 +2701,22 @@
             softSyncTimer = setTimeout(function () { softSyncTimer = 0; onSoftInput(null); }, 0);
         }
 
+        // THE SOFT KEYBOARD'S FOCUS LOSS. A hold a soft key opened (SOFT_HOLD_KEY) has no key-up to
+        // wait for, so whatever takes the keyboard away from the run lets it go, as the physical
+        // path's releaseHoldOnFocusLoss does: at the clock's instant while the run is live, and simply
+        // forgotten once it is not (a quit or retry discards the run, a concluded one has judged it).
+        function releaseSoftHold() {
+            const state = holdStateOf(keyHost);
+            if (state.key !== SOFT_HOLD_KEY) return;
+            if (running && engine) releaseHeldKey(keyHost, roundHalfEven(nowMs()));
+            else state.key = null;
+        }
+
+        // Every blur of the field, ours included (blurSoftField on quit, conclude and destroy, the
+        // tap's blur-and-refocus, the pause card taking focus), ends a soft hold first.
         function onSoftBlur() {
             softOwned = false;
+            releaseSoftHold();
             if (softRefocusing || !running || paused) return;
             setTimeout(function () {
                 if (softField && running && !paused && document.activeElement !== softField) focusSoftField(false);
@@ -2742,6 +2768,9 @@
             if (!running || paused || !engine || engine.failed || engine.finished) return false;
             const wall = performance.now();
             if (pauseCooldownActive(lastPauseWall, wall)) return false;
+            // A soft hold is let go at the pause instant, ahead of the clock freezing (a physical
+            // key's own key-up lands at that same frozen instant).
+            if (softField) releaseSoftHold();
             paused = true;
             lastPauseWall = wall;
             stopLoops();
@@ -4371,6 +4400,7 @@
         routeKeyUp, releaseHeldKey,
         // The soft-keyboard input path (backlog 501), pinned by PlayerSoftKeysHarness.
         SOFT_INPUT_SENTINEL,
+        SOFT_HOLD_KEY,
         isImeKeyDown,
         softKeysFor,
         routeSoftKeys,
