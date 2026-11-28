@@ -46,7 +46,8 @@ namespace Typebeat.WireCompat;
 /// its per-language verdict has a pin of its own.</item>
 /// <item>Classic (<c>CL</c>) is a mark the SERVER appends to a stored score; the client never
 /// prices a live score with it, so its calculator leaves it at 1.0 while the server bounds a
-/// marked row at 0.95.</item>
+/// marked row at 0.95. Mobile (<c>MB</c>, backlog 503) is the other server-written mark and is NOT
+/// a difference: 1.0 on both sides.</item>
 /// <item>Wind Up and Wind Down are priced on a rate ramp whose endpoints the server does not
 /// store, so the server allows the most any ramp could pay, which is at or above the client's
 /// price. Both are unranked on both sides.</item>
@@ -156,6 +157,18 @@ public class ScoreMultiplierParityTest
             var classic = allMods().Single(m => m.Acronym == "CL");
             Assert.That(calc.CalculateFor(new[] { classic }), Is.EqualTo(1.0).Within(1e-12));
             Assert.That(ServerMultiplier.For("CL", null), Is.EqualTo(0.95).Within(1e-12));
+
+            // The Mobile mark (backlog 503): swept above like any flat mod, and stated here because
+            // the sweep would also pass if the server fell back to some other neutral answer. It is
+            // exactly 1.0 on both sides, KNOWN to the server (not the 2.0x unknown allowance), and
+            // ranked on both sides, so it never unranks a play by itself.
+            var mobile = allMods().Single(m => m.Acronym == "MB");
+            Assert.That(mobile, Is.InstanceOf<TypeBeatModMobile>());
+            Assert.That(calc.CalculateFor(new[] { mobile }), Is.EqualTo(1.0));
+            Assert.That(ServerMultiplier.For("MB", null), Is.EqualTo(1.0));
+            Assert.That(ServerMultiplier.IsKnown("MB"), Is.True);
+            Assert.That(ServerSubmission.ModRanked("MB"), Is.EqualTo(mobile.Ranked).And.True);
+            Assert.That(ServerMultiplier.MaxForStack([("MB", null)]), Is.EqualTo(1.0));
         });
     }
 

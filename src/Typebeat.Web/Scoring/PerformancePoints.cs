@@ -1129,9 +1129,11 @@ public static class PerformancePoints
                 // The synthetic Classic mark (backlog 398, see classic_multiplier): the play was on
                 // a version of the map that is not the one that was ranked.
                 "CL" => classic_multiplier,
-                // SD / GK / MU are explicitly 1.0, matching their score multipliers. Anything else
-                // (including a mod a newer client ships before this table learns it) is neutral:
-                // an unknown mod must never silently inflate or deflate a ranking.
+                // SD / GK / MU are explicitly 1.0, matching their score multipliers, and so is the
+                // synthetic "MB" Mobile mark (backlog 503), which /play/submit writes on a browser
+                // play typed through a phone's on-screen keyboard and which changes no number.
+                // Anything else (including a mod a newer client ships before this table learns it)
+                // is neutral: an unknown mod must never silently inflate or deflate a ranking.
                 _ => 1.0,
             };
         }

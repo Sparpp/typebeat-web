@@ -261,14 +261,14 @@ function mount(osu, startBy) {
     global.document.activeElement = null;
     timers.clear();
     rafQueue = new Map();
-    const log = { finishes: 0 };
+    const log = { finishes: 0, results: [] };
     const container = new FakeElement('div');
     const api = TB.mountPlayer(container, {
         osuText: osu,
         audioArrayBuffer: new ArrayBuffer(8),
         title: 't',
         artist: 'a',
-        onFinish() { log.finishes++; }
+        onFinish(results) { log.finishes++; log.results.push(results); }
     });
     const root = container.children[0];
     if (startBy === 'touch') root._listeners.fire('pointerdown', { pointerType: 'touch' });
@@ -391,8 +391,13 @@ out.ime = {
     };
     out.softHold = {
         softHoldKey: D.SOFT_HOLD_KEY,
+        // Backlog 503: nothing has come through the soft router yet, and an empty change routes
+        // nothing, so neither marks the host.
+        markedBefore: host.softKeyed === true,
+        markedByEmpty: (D.routeSoftKeys([], host), host.softKeyed === true),
         // The hold-opening key comes last: nothing lets it go.
         opened: step(1300.5, () => D.routeSoftKeys(['l', 'o'], host)),
+        markedAfter: host.softKeyed === true,
         // The SAME letter again is still the next press: it ends the hold first, at its own instant.
         sameLetter: step(1450.5, () => D.routeSoftKeys(['o'], host)),
         // Two keys in one change: the 'v' ends the hold already down, at the change's instant, and
@@ -647,5 +652,80 @@ out.holds = {
     // The field losing focus during play (another element taking it) lets it go at that instant.
     fieldBlur: holdRun(function () { new FakeElement('button').focus(); })
 };
+
+// ---- 6. the Mobile mark (backlog 503): results.mobile, per run --------------------------------
+// A run with at least one soft key concludes with results.mobile true; a run typed on physical keys
+// alone concludes false, on a desktop and on a touch device alike; and a retry, from the results
+// card or mid-play from the pause card, starts the next run unmarked.
+function typePhysical(run, keys) {
+    for (const [k, t] of keys) {
+        advanceClockTo(run.api, t);
+        const code = k === ' ' ? 'Space' : 'Key' + k.toUpperCase();
+        keydown(run, key(k, { code: code, keyCode: k.charCodeAt(0) }));
+        keyup(run, key(k, { code: code, keyCode: k.charCodeAt(0) }));
+    }
+}
+
+function finish(run) {
+    const before = run.log.finishes;
+    let guard = 0;
+    while (run.log.finishes === before && guard++ < 2000) advance(16);
+    const results = run.log.results[run.log.results.length - 1];
+    return {
+        finished: run.log.finishes > before,
+        mobile: results ? results.mobile : null,
+        // Cells landed, so a run is known to have been typed rather than left to fail.
+        landed: results ? results.counts.great + results.counts.ok + results.counts.meh : 0,
+        modsRow: !!findByClass(run.container, 'tb-result-mods'),
+        modsHtml: (findByClass(run.container, 'tb-result-mods') || {}).innerHTML || null
+    };
+}
+
+const abcdPhysical = [['a', 1000.3], ['b', 1500.3], [' ', 2000.3], ['c', 2000.6], ['d', 2500.3]];
+
+out.mark = (function () {
+    const r = {};
+
+    // A touch device: one soft key, the rest physical. Then "play again" from the results card and
+    // physical keys only: the retried run is not marked.
+    setCoarse(true);
+    let run = mount(abcdOsu, 'click');
+    advanceClockTo(run.api, 1000.3);
+    edit(run, S + 'a', 'insertText');
+    typePhysical(run, abcdPhysical.slice(1));
+    r.softThenPhysical = finish(run);
+    findByClass(run.container, 'tb-result-again').click();
+    typePhysical(run, abcdPhysical);
+    r.retryFromResults = finish(run);
+    run.api.destroy();
+
+    // A touch device typed on physical keys alone (a phone with a hardware keyboard).
+    setCoarse(true);
+    run = mount(abcdOsu, 'click');
+    typePhysical(run, abcdPhysical);
+    r.touchPhysicalOnly = finish(run);
+    run.api.destroy();
+
+    // A desktop: no field at all, physical keys only.
+    setCoarse(false);
+    run = mount(abcdOsu, 'key');
+    typePhysical(run, abcdPhysical);
+    r.desktop = finish(run);
+    run.api.destroy();
+
+    // A mid-play retry: a soft key, then pause and retry from the pause card, then physical keys.
+    setCoarse(true);
+    run = mount(abcdOsu, 'click');
+    advanceClockTo(run.api, 1000.3);
+    edit(run, S + 'a', 'insertText');
+    docListeners.fire('keydown', key('Escape', { code: 'Escape' }));
+    findByClass(run.container, 'tb-pause-retry').click();
+    typePhysical(run, abcdPhysical);
+    r.retryMidPlay = finish(run);
+    r.retryMidPlayFinishes = run.log.finishes;
+    run.api.destroy();
+
+    return r;
+})();
 
 process.stdout.write(JSON.stringify(out));

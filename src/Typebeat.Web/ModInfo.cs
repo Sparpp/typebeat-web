@@ -24,7 +24,10 @@ public static class ModInfo
         // Classic ("CL", backlog 398) is a SYNTHETIC SYSTEM MARK the server appends, not a mod
         // anyone selects, and the game types its base ModClassic as ModType.Conversion, which is
         // the bucket the four colours here do not have (the Fletcher note below). So it takes the
-        // neutral badge, exactly as the Conversion "FT"/"DX" rows already do.
+        // neutral badge, exactly as the Conversion "FT"/"DX" rows already do. Mobile ("MB", backlog
+        // 503), the other server-written mark, is a game ModType.System mod and takes the same
+        // neutral badge: it says how the keys were typed, not that the play was made easier or
+        // harder.
         _ => "other",
     };
 
@@ -74,6 +77,9 @@ public static class ModInfo
         // that is not the one that was ranked. Mirrors the game's base ModClassic.Name ("Classic"),
         // so a marked board row reads the same in both places.
         "CL" => "Classic",
+        // The synthetic Mobile mark (backlog 503): a browser play typed, at least in part, through a
+        // phone's on-screen keyboard. Mirrors the game's TypeBeatModMobile.Name.
+        "MB" => "Mobile",
         _ => acronym ?? string.Empty,
     };
 }

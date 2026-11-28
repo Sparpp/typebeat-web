@@ -219,6 +219,28 @@ public class ModInfoTest
     }
 
     [Test]
+    public void Mobile_IsTheSecondSyntheticSystemMark()
+    {
+        // The "MB" mark /play/submit writes on a browser play typed through a phone's on-screen
+        // keyboard (backlog 503): "Mobile" (the game's TypeBeatModMobile.Name), on the neutral badge
+        // like Classic, and it reaches a score row's badge through the stored mods blob.
+        var badge = ScoreMods.Parse("[{\"acronym\":\"MB\"}]").Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ModInfo.Name("MB"), Is.EqualTo("Mobile"));
+            Assert.That(ModInfo.Name("mb"), Is.EqualTo("Mobile"));
+            Assert.That(ModInfo.CategoryClass("MB"), Is.EqualTo("other"));
+            Assert.That(ModInfo.CategoryClass("MB"), Is.EqualTo(ModInfo.CategoryClass("CL")));
+
+            Assert.That(badge.Acronym, Is.EqualTo("MB"));
+            Assert.That(badge.Rate, Is.Null, "not a rate mod, so no rate pill");
+            Assert.That(badge.Title, Is.EqualTo("Mobile"));
+            Assert.That(badge.CategoryClass, Is.EqualTo("other"));
+        });
+    }
+
+    [Test]
     public void UnknownAcronym_StillFallsBackGracefully()
     {
         Assert.That(ModInfo.CategoryClass("ZZ"), Is.EqualTo("other"));

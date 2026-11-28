@@ -564,6 +564,35 @@ public class PerformancePointsTest
     }
 
     /// <summary>
+    /// The synthetic Mobile mark (backlog 503) changes NO number: 1.0x on the pp table, 1.0x on the
+    /// score side, so the total-score ceiling of a marked row is the no-mod ceiling, and it composes
+    /// with a priced mark as a no-op. Stacked with Classic because a single-mod check passes for any
+    /// neutral arm, while a stray factor would show in the product.
+    /// </summary>
+    [Test]
+    public void ModMultiplier_MobileIsNeutralEverywhere()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("MB", null)], 300), Is.EqualTo(1.0));
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("mb", null)], 300), Is.EqualTo(1.0));
+            Assert.That(PerformancePoints.ModMultiplier([new ScoreMod("MB", null), new ScoreMod("CL", null)], 300),
+                Is.EqualTo(PerformancePoints.ModMultiplier([new ScoreMod("CL", null)], 300)));
+
+            Assert.That(ModMultiplier.For("MB", null), Is.EqualTo(1.0));
+            Assert.That(ModMultiplier.IsKnown("MB"), Is.True, "priced, so it is not the 2.0x unknown allowance");
+            Assert.That(ModMultiplier.MaxForStack([("MB", null)]), Is.EqualTo(1.0));
+            Assert.That(ModMultiplier.MaxForStack([("MB", null), ("CL", null)]), Is.EqualTo(0.95).Within(1e-12));
+            Assert.That(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([("MB", null)])),
+                Is.EqualTo(ModMultiplier.TotalScoreCeiling(1_000_000, ModMultiplier.MaxForStack([]))),
+                "a marked row's ceiling is the no-mod ceiling");
+
+            Assert.That(ScoreSubmission.ModRanked("MB"), Is.True, "the mark never unranks anything by itself");
+            Assert.That(UnrankedMods.ACRONYMS, Does.Not.Contain("MB"));
+        });
+    }
+
+    /// <summary>
     /// LITERATE CONTRIBUTES NOTHING HERE (backlog 144), and that is the whole point rather than an
     /// omission: it is a CONVERSION mod, so it is priced through the rating of the map it converts
     /// (the matrix's literate stream, <see cref="PerformancePoints.StarsFor"/>) and a flat multiplier

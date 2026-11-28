@@ -1988,8 +1988,15 @@
     // one routeKeyDown press, and a hold that press opens is re-keyed to SOFT_HOLD_KEY. The next
     // key of the same change therefore ends it at this same instant, which is what a player
     // pressing them in that order would have done.
+    //
+    // THE MOBILE MARK (backlog 503). Any key that reaches this router sets host.softKeyed, which
+    // mountPlayer clears at the start of every run (begin(), so a retry starts clean) and copies
+    // onto the results as `mobile`; play.js sends it with /play/submit, and the server then stores
+    // the run with the synthetic "MB" (Mobile) mod. It is a visible note only: it reads nothing back
+    // into the engine, and the server prices it at 1.0x everywhere.
     function routeSoftKeys(keys, host) {
         if (!keys || keys.length === 0) return;
+        host.softKeyed = true;
         const t = host.now();
         holdStateOf(host);
         const at = {
@@ -2069,7 +2076,14 @@
     //    unplayed. A passed run judges every cell, so there the two are the same number.
     //  - The map's metadata: title and artist, stars, difficulty name, mapper and the play date.
     //    Anything the host did not hand over (a deep link has no stars, say) is left out, not faked.
-    // Every browser play is nomod, so there is no mods cell.
+    //  - The mods row (backlog 503). A browser play selects no mod, so the only badge it can carry
+    //    is the synthetic Mobile mark ("MB"), shown when a key of the run came through the
+    //    on-screen keyboard (results.mobile). It is drawn in the site's own badge markup
+    //    (Pages/Shared/_ModIcons.cshtml: mod-icons / mod-icon mod-icon--{category}, the name as the
+    //    tooltip), with ModInfo's name and neutral category, so the card reads like the score row
+    //    the server stores for it.
+    const MOBILE_MOD = Object.freeze({ acronym: 'MB', name: 'Mobile', category: 'other' });
+
     const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
         'September', 'October', 'November', 'December'];
 
@@ -2109,6 +2123,7 @@
                 { key: 'meh', label: 'meh', value: String(counts.meh) },
                 { key: 'miss', label: 'miss', value: String(counts.miss + counts.typos) }
             ],
+            mods: results.mobile === true ? [MOBILE_MOD] : [],
             meta: {
                 title: m.title || '',
                 artist: m.artist || '',
@@ -2128,6 +2143,14 @@
             + (meta.artist ? `<div class="tb-result-meta-artist">${escapeHtml(meta.artist)}</div>` : '')
             + (detail ? `<div class="tb-result-meta-detail">${detail}</div>` : '')
             + (meta.played ? `<div class="tb-result-meta-played">${escapeHtml(meta.played)}</div>` : '');
+    }
+
+    // The card's mods row in the site's badge markup (see MOBILE_MOD above), or '' for none.
+    function resultModsHtml(mods) {
+        if (!mods || mods.length === 0) return '';
+        return '<span class="mod-icons">'
+            + mods.map(m => `<span class="mod-icon mod-icon--${escapeHtml(m.category)}" title="${escapeHtml(m.name)}">${escapeHtml(m.acronym)}</span>`).join('')
+            + '</span>';
     }
 
     // ---- the playback-validity veto (backlog 312) ------------------------------
@@ -3943,6 +3966,9 @@
             const results = Core.computeScore(engine);
             // The veto's verdict rides on the results; play.js declines to submit a false one.
             results.playbackValid = validity.valid;
+            // Whether any key of this run came through the on-screen keyboard (backlog 503): the
+            // card shows the Mobile badge for it, and play.js sends it so the row is stored marked.
+            results.mobile = !!keyHost.softKeyed;
             pendingResults = results;
             root.classList.add(failed ? 'tb-failing' : 'tb-concluded');
             if (failed) startFailWindDown();
@@ -4030,6 +4056,8 @@
             engine = new Core.TypingEngine(beatmap);
             // A key held over from the last run holds nothing in this one.
             keyHost.holdState = { key: null };
+            // Nor does the last run's on-screen keyboard mark this one (backlog 503, routeSoftKeys).
+            keyHost.softKeyed = false;
             validity = makePlaybackValidity();
             // Display-only hooks. Neither reads anything back into the engine, so nothing here
             // can move a judgement or a score.
@@ -4137,6 +4165,8 @@
             const info = el('div', 'tb-result-meta');
             info.innerHTML = resultMetaHtml(cells.meta);
             card.appendChild(info);
+            const modsHtml = resultModsHtml(cells.mods);
+            if (modsHtml) card.appendChild(el('div', 'tb-result-mods', modsHtml));
             const grid = el('div', 'tb-result-grid');
             grid.innerHTML = cells.stats.map(statCellOf).join('');
             card.appendChild(grid);
@@ -4433,6 +4463,9 @@
         // fold, the combo out of its maximum, a failed run's judged accuracy and the metadata.
         resultCells,
         resultMetaHtml,
+        // The card's mods row (backlog 503): the Mobile mark, in the site's badge markup.
+        resultModsHtml,
+        MOBILE_MOD,
         // The freestyle colour the stage paints (backlog 384), pure, pinned by WireCompat.
         freestyleColourOf,
         // The backing vocals' places, tilts and pop-up poses (backlog 445), pure, pinned by

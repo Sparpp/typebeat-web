@@ -517,9 +517,10 @@ public static class PlayEndpoints
         // legally remove (see PlayTimeGate).
         //
         // The rate is pinned at 1.0 rather than read from anything: the browser player ships no mod
-        // UI and this endpoint stores a hardcoded empty mod stack ('[]'::jsonb, below), so there is
-        // no speed_change to honour and nothing a caller could claim one through. If the web player
-        // ever gains rate mods, this and the stored stack move together.
+        // UI and this endpoint stores a fixed mod stack (StoredModsJson below: empty, or the 1.0x
+        // Mobile mark, neither a rate mod), so there is no speed_change to honour and nothing a
+        // caller could claim one through. If the web player ever gains rate mods, this and the
+        // stored stack move together.
         const double rate = 1.0;
 
         double elapsedSeconds = (DateTimeOffset.UtcNow - token.CreatedAt).TotalSeconds;
@@ -553,15 +554,23 @@ public static class PlayEndpoints
         string rank = passed ? recomputed.Rank : "F";
         var endedAt = DateTimeOffset.UtcNow;
 
+        // The stored mod stack (backlog 503): empty, or the synthetic Mobile mark when the player
+        // says at least one key of the run came through a phone's on-screen keyboard. The mark is a
+        // VISIBLE NOTE only. It is priced at exactly 1.0x on every table (ModMultiplier, both pp
+        // tables), so it moves no bound above and no number below, and it changes nothing about
+        // ranking: the play is unranked by the rule above, whatever the flag says. Nothing here
+        // can verify the flag either, which is fine for the same reason (it buys nothing).
+        IReadOnlyList<ScoreMod> storedMods = StoredMods(submission.Mobile);
+
         // Performance points (docs/pp.md). A browser play is never ranked (above), so this is the
         // formula's refusal, (null, settled), stored as pp 0 at the current version. The call is kept
-        // so the row is written exactly as any other refused play is. The browser player stores a
-        // hardcoded empty mod stack (below), so if /play is ever ranked again it reads the matrix's
-        // none/plain/1.00 cell, which is PENDING on a row PaceBackfill has not swept; a 'loved' set
-        // must then still be refused a price, as on the game's route.
+        // so the row is written exactly as any other refused play is. The stack priced is the stack
+        // stored (below): empty, or the 1.0x Mobile mark, so if /play is ever ranked again it reads
+        // the matrix's none/plain/1.00 cell, which is PENDING on a row PaceBackfill has not swept; a
+        // 'loved' set must then still be refused a price, as on the game's route.
         var (pp, ppSettled) = PerformancePoints.ForScore(
             ranked,
-            mods: [],
+            mods: storedMods,
             PerformancePoints.CountNotes(statistics),
             storedAccuracy,
             storedMaxCombo,
@@ -578,7 +587,7 @@ public static class PlayEndpoints
                  pp, pp_version)
             VALUES
                 (@userId, @beatmapId, 0, @totalScore, @accuracy, @completion, @maxCombo, @rank, @passed,
-                 @ranked, @preserve, '[]'::jsonb, CAST(@statistics AS jsonb), CAST(@maximumStatistics AS jsonb),
+                 @ranked, @preserve, CAST(@mods AS jsonb), CAST(@statistics AS jsonb), CAST(@maximumStatistics AS jsonb),
                  @buildId, @startedAt, @endedAt, @pp, @ppVersion)
             RETURNING id
             """,
@@ -598,6 +607,7 @@ public static class PlayEndpoints
                 passed,
                 ranked,
                 preserve = passed,
+                mods = StoredModsJson(submission.Mobile),
                 statistics = JsonConvert.SerializeObject(statistics),
                 maximumStatistics = JsonConvert.SerializeObject(maximumStatistics),
                 buildId = token.BuildId,
@@ -896,6 +906,29 @@ public static class PlayEndpoints
     // The caller's standing on a board and the hit_counts merge are ScoreSubmission's, shared with
     // ScoreEndpoints; the board rules themselves come from BeatmapLeaderboard.
 
+    // ---- the stored mod stack (backlog 503) ----
+
+    /// <summary>
+    /// The synthetic acronym a browser play typed through a phone's on-screen keyboard is stored
+    /// with: the game's <c>TypeBeatModMobile</c> ("Mobile", a <c>ModType.System</c> mark nobody can
+    /// select), priced at exactly 1.0x by <see cref="ModMultiplier"/> and both pp tables.
+    /// </summary>
+    public const string MobileAcronym = "MB";
+
+    private static readonly IReadOnlyList<ScoreMod> mobile_stack = [new ScoreMod(MobileAcronym, null)];
+
+    /// <summary>The mod stack a /play row is stored with: the Mobile mark when <paramref name="mobile"/>, else none.</summary>
+    public static IReadOnlyList<ScoreMod> StoredMods(bool mobile) => mobile ? mobile_stack : [];
+
+    /// <summary>
+    /// <see cref="StoredMods"/> as the <c>scores.mods</c> jsonb, in the wire shape every reader
+    /// parses (<see cref="ScoreMods.Parse"/>, the game's APIMod): <c>[{"acronym":"MB"}]</c> or
+    /// <c>[]</c>. <c>SetRankClassicMark</c> extends an array in place, so a later Classic mark sits
+    /// beside it as <c>[{"acronym":"MB"},{"acronym":"CL"}]</c>.
+    /// </summary>
+    public static string StoredModsJson(bool mobile)
+        => mobile ? "[{\"acronym\":\"" + MobileAcronym + "\"}]" : "[]";
+
     // ---- Dapper row shapes ----
 
     // Appended, never reordered: Dapper maps positional records by position (BaseStars is the
@@ -957,5 +990,12 @@ public static class PlayEndpoints
 
         [JsonProperty("maximumStatistics")]
         public Dictionary<string, int>? MaximumStatistics { get; set; }
+
+        /// <summary>
+        /// Backlog 503: at least one key of the run came through the player's on-screen keyboard
+        /// path. Absent (an older cached page) reads as false. Stores the Mobile mark and nothing else.
+        /// </summary>
+        [JsonProperty("mobile")]
+        public bool Mobile { get; set; }
     }
 }

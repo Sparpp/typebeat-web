@@ -675,7 +675,9 @@ function typeAbcd(run) {
     for (const [at, k] of plan) { advanceClockTo(run.api, at); keydown(k); }
 }
 
-function sansValidity(json) { const o = JSON.parse(json); delete o.playbackValid; return JSON.stringify(o); }
+// The player's own annotations on top of computeScore: the playback veto's verdict, and (backlog
+// 503) whether a key came through the on-screen keyboard. Neither is a score figure.
+function sansValidity(json) { const o = JSON.parse(json); delete o.playbackValid; delete o.mobile; return JSON.stringify(o); }
 
 function rootOf(run) { return findByClass(run.container, 'tb-player'); }
 

@@ -287,4 +287,46 @@ public class PlayerSoftKeysTest
             Assert.That(num("touch", "viewportListenersAfterDestroy"), Is.Zero);
         });
     }
+
+    /// <summary>
+    /// Backlog 503: a key routed through the soft path marks the run, which reaches onFinish as
+    /// <c>results.mobile</c> (play.js sends it, the server stores the "MB" Mobile mark) and draws the
+    /// badge on the results card. A run typed on physical keys alone is not marked, on a touch
+    /// device or a desktop, and a retry (from the results card, or mid-play from the pause card)
+    /// starts unmarked. Every run here lands all five cells, so none is a vacuous empty run.
+    /// </summary>
+    [Test]
+    public void ASoftKey_MarksTheRunMobile_AndARetryStartsUnmarked()
+    {
+        Assert.Multiple(() =>
+        {
+            // The router itself: marked by a key, never by an empty change.
+            Assert.That(flag("softHold", "markedBefore"), Is.False);
+            Assert.That(flag("softHold", "markedByEmpty"), Is.False);
+            Assert.That(flag("softHold", "markedAfter"), Is.True);
+
+            foreach (string run in new[] { "softThenPhysical", "retryFromResults", "touchPhysicalOnly", "desktop", "retryMidPlay" })
+            {
+                Assert.That(flag("mark", run, "finished"), Is.True, run + " concludes");
+                Assert.That(num("mark", run, "landed"), Is.EqualTo(5), run + " is really typed");
+            }
+
+            Assert.That(flag("mark", "softThenPhysical", "mobile"), Is.True, "one soft key marks the run");
+            Assert.That(flag("mark", "softThenPhysical", "modsRow"), Is.True);
+            Assert.That(str("mark", "softThenPhysical", "modsHtml"),
+                Is.EqualTo("<span class=\"mod-icons\"><span class=\"mod-icon mod-icon--other\" title=\"Mobile\">MB</span></span>"),
+                "the site's own badge markup (_ModIcons.cshtml) with ModInfo's name and category");
+            Assert.That(ModInfo.Name("MB"), Is.EqualTo("Mobile"), "the card and the stored row's badge agree");
+            Assert.That(ModInfo.CategoryClass("MB"), Is.EqualTo("other"));
+
+            Assert.That(flag("mark", "retryFromResults", "mobile"), Is.False, "play again starts unmarked");
+            Assert.That(flag("mark", "touchPhysicalOnly", "mobile"), Is.False, "a touch device typed on physical keys is not mobile");
+            Assert.That(flag("mark", "desktop", "mobile"), Is.False);
+            Assert.That(flag("mark", "retryMidPlay", "mobile"), Is.False, "a mid-play retry drops the discarded run's mark");
+            Assert.That(num("mark", "retryMidPlayFinishes"), Is.EqualTo(1), "the discarded run never reached onFinish");
+
+            foreach (string run in new[] { "retryFromResults", "touchPhysicalOnly", "desktop", "retryMidPlay" })
+                Assert.That(flag("mark", run, "modsRow"), Is.False, run + " draws no mods row");
+        });
+    }
 }

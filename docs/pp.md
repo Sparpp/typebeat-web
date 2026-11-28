@@ -255,6 +255,11 @@ stored `ranked = false` and therefore earn no pp.
   penalty only partially catches. The 0.5x score multiplier stays score-side only; mirroring it
   in pp would double-punish on top of the miss term.
 * **SD / MU**: × 1.0 (no effect, matching their score multipliers).
+* **MB** (Mobile, backlog 503): × 1.0, and × 1.0 on the score side too. The second SYNTHETIC
+  SYSTEM MARK: `/play/submit` writes it on a browser play when at least one key of the run came
+  through a phone's on-screen keyboard. It is a visible note and changes no number (a browser play
+  is unranked by its own route and refused a price anyway), so it carries no arm in either mirror
+  and falls to the neutral default like SD and MU.
 
 ```
 FL(notes) = max(1.0, 1 + 0.02 + 0.06·log10(notes/100))

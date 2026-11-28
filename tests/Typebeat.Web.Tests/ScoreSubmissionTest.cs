@@ -16,8 +16,8 @@ public class ScoreSubmissionTest
     {
         Assert.Multiple(() =>
         {
-            // Every ranked acronym the client can send, the retired FT and the server's CL mark too.
-            foreach (string acronym in new[] { "EZ", "NF", "HT", "DC", "HR", "SD", "DT", "NC", "FL", "LT", "RE", "FC", "GK", "MU", "FT", "CL", "RH" })
+            // Every ranked acronym the client can send, the retired FT and the server's CL and MB marks too.
+            foreach (string acronym in new[] { "EZ", "NF", "HT", "DC", "HR", "SD", "DT", "NC", "FL", "LT", "RE", "FC", "GK", "MU", "FT", "CL", "MB", "RH" })
             {
                 Assert.That(ScoreSubmission.ModRanked(acronym), Is.True, acronym);
                 Assert.That(ScoreSubmission.ModRanked(acronym.ToLowerInvariant()), Is.True, acronym.ToLowerInvariant());

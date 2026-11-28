@@ -115,7 +115,7 @@ public static class ModMultiplier
     /// does not know is stored UNRANKED on every path, because the 2.0x allowance above sits over
     /// every honest stack the client can assemble, so a perfect run plus one invented acronym
     /// would otherwise board at twice its worth. Every acronym the ruleset can submit is listed
-    /// below, the retired "RH" and "FT" and the server-appended "CL" included, and WireCompat's
+    /// below, the retired "RH" and "FT" and the server-written "CL" and "MB" included, and WireCompat's
     /// ScoreMultiplierParityTest holds that against the game's mod list.
     /// </summary>
     public static bool IsKnown(string? acronym) => priceOf(acronym, null) is not null;
@@ -215,6 +215,15 @@ public static class ModMultiplier
             // room: the fattest reachable ranked stack is DT@2.00 (1.46) x FL x LT x HR x FC x
             // RE = 1.932449211, and x 0.95 only shrinks it.
             "CL" => 0.95,
+            // Mobile (backlog 503): the second SYNTHETIC SYSTEM MARK, which /play/submit writes on a
+            // browser play when at least one of its keys came through a phone's on-screen keyboard.
+            // Exactly 1.0x, so it changes no number: the browser route bounds its total against the
+            // no-mod ceiling as before, and a ceiling re-derived from a stored MB row's mods (the
+            // recalc tool, the sweeps) is the same no-mod ceiling rather than the 2.0x an unlisted
+            // acronym would be allowed. Listing it also makes it KNOWN, and it is not in the deny
+            // list (UnrankedMods), matching the game's TypeBeatModMobile.Ranked = true: the mark
+            // never unranks anything by itself. A browser play is unranked by its own route.
+            "MB" => 1.0,
             "MU" => 1.0,
             // Polyglot (PR 43): RANKED at exactly the 1.0x the game's calculator gives it, on every
             // map but a Chinese or Korean one, where it stays local only and is refused before it is

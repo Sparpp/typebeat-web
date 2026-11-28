@@ -3518,6 +3518,8 @@ a.pill:hover { text-decoration: none; filter: brightness(1.2); }
 .tb-result-meta-title { font-weight: 700; }
 .tb-result-meta-artist, .tb-result-meta-detail { font-size: var(--text-sm); color: var(--text-muted); }
 .tb-result-meta-played { font-size: var(--text-xs); color: var(--text-muted); }
+/* The card's mods row (backlog 503): the Mobile mark, in the score rows' own .mod-icon badges. */
+.tb-result-mods { display: flex; justify-content: center; }
 
 /* The first-clear Discord nudge: one row between the numbers and the submit line. Centred and
    column-stacked so it reads as a single aside rather than competing with .tb-result-actions

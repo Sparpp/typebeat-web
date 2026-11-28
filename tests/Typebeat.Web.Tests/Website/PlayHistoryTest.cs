@@ -506,16 +506,73 @@ public class PlayHistoryTest
         });
     }
 
+    /// <summary>
+    /// Backlog 503: a browser play the player flags <c>mobile</c> (a key came through the phone's
+    /// on-screen keyboard) is stored with the synthetic Mobile mark, <c>[{"acronym":"MB"}]</c>; one
+    /// flagged false, or carrying no flag at all (an older page), is stored with no mods, as every
+    /// browser play was before. The mark is a note and nothing else: the three rows agree on
+    /// everything else the route writes and answers (unranked, settled at pp 0, the same total, the
+    /// same response).
+    /// </summary>
+    [Test]
+    public async Task BrowserSubmit_MobileFlag_StoresTheMobileMark_AndChangesNothingElse()
+    {
+        await WebsiteFixture.SeedUserAsync("submit mobile", "submit.mobile@example.com", "submitmobile-123456", verified: true);
+
+        var (client, _) = WebsiteFixture.CreateBrowser();
+        await WebsiteFixture.LoginAndVerifyAsync(client, "submit mobile", "submitmobile-123456");
+        string csrf = await browserCsrfAsync(client);
+
+        var (markedResponse, markedId) = await browserPlayAsync(client, csrf, PublicSiteSeed.CoveredSetId, beatmapId, totalScore: 90_000, mobile: true);
+        var (plainResponse, plainId) = await browserPlayAsync(client, csrf, PublicSiteSeed.CoveredSetId, beatmapId, totalScore: 90_000, mobile: false);
+        var (olderResponse, olderId) = await browserPlayAsync(client, csrf, PublicSiteSeed.CoveredSetId, beatmapId, totalScore: 90_000);
+
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        async Task<(string Mods, bool Ranked, long Total, double Pp, int PpVersion)> rowAsync(long id)
+            => await conn.QuerySingleAsync<(string, bool, long, double, int)>(
+                "SELECT mods::text, ranked, total_score, pp::double precision, pp_version FROM scores WHERE id = @id",
+                new { id });
+
+        var marked = await rowAsync(markedId);
+        var plain = await rowAsync(plainId);
+        var older = await rowAsync(olderId);
+
+        var markedMods = ScoreMods.Parse(marked.Mods);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(JToken.Parse(marked.Mods), Is.EqualTo(JToken.Parse("[{\"acronym\":\"MB\"}]")).Using<JToken>(JToken.DeepEquals));
+            Assert.That(markedMods.Select(m => m.Acronym), Is.EqualTo(new[] { "MB" }));
+            Assert.That(markedMods.Single().Title, Is.EqualTo("Mobile"), "the score rows' badge tooltip");
+
+            Assert.That(JToken.Parse(plain.Mods), Is.EqualTo(new JArray()).Using<JToken>(JToken.DeepEquals), "flagged false: no mods");
+            Assert.That(JToken.Parse(older.Mods), Is.EqualTo(new JArray()).Using<JToken>(JToken.DeepEquals), "no flag at all: no mods");
+
+            foreach (var (name, row) in new[] { ("marked", marked), ("plain", plain), ("older", older) })
+            {
+                Assert.That(row.Ranked, Is.False, name);
+                Assert.That(row.Total, Is.EqualTo(90_000), name + ": the 1.0x mark moves no bound and no total");
+                Assert.That(row.Pp, Is.Zero, name);
+                Assert.That(row.PpVersion, Is.EqualTo(PerformancePoints.VERSION), name + ": settled");
+            }
+
+            // The response is the same document for all three.
+            Assert.That(JToken.DeepEquals(markedResponse, plainResponse), Is.True, $"{markedResponse} vs {plainResponse}");
+            Assert.That(JToken.DeepEquals(markedResponse, olderResponse), Is.True, $"{markedResponse} vs {olderResponse}");
+        });
+    }
+
     // ---- helpers ----
 
     /// <summary>A token for the named difficulty, backdated past the play-time gate, then submitted.
     /// Returns the response and the stored score id.</summary>
     private static async Task<(JObject Response, long ScoreId)> browserPlayAsync(
-        HttpClient client, string csrf, long setId, long diffId, long totalScore, bool passed = true)
+        HttpClient client, string csrf, long setId, long diffId, long totalScore, bool passed = true, bool? mobile = null)
     {
         long tokenId = await browserTokenAsync(client, csrf, setId, diffId);
         await backdateTokenAsync(tokenId, 300);
-        var response = await browserSubmitAsync(client, csrf, tokenId, totalScore, passed);
+        var response = await browserSubmitAsync(client, csrf, tokenId, totalScore, passed, mobile);
 
         await using var conn = await dataSource.OpenConnectionAsync();
         long scoreId = await conn.ExecuteScalarAsync<long>("SELECT score_id FROM score_tokens WHERE id = @tokenId", new { tokenId });
@@ -700,19 +757,26 @@ public class PlayHistoryTest
         return (long)JObject.Parse(await response.Content.ReadAsStringAsync())["id"]!;
     }
 
-    private static async Task<JObject> browserSubmitAsync(HttpClient client, string csrf, long tokenId, long totalScore = 100_000, bool passed = true)
+    /// <summary>POST /play/submit with the player's body. <paramref name="mobile"/> null leaves the
+    /// key off entirely, as an older cached page (and play.js on a physical-keyboard run) sends it.</summary>
+    private static async Task<JObject> browserSubmitAsync(HttpClient client, string csrf, long tokenId, long totalScore = 100_000, bool passed = true, bool? mobile = null)
     {
+        var body = new JObject
+        {
+            ["token"] = tokenId,
+            ["passed"] = passed,
+            ["totalScore"] = totalScore,
+            ["maxCombo"] = 10,
+            ["statistics"] = new JObject { ["great"] = 10 },
+            ["maximumStatistics"] = new JObject { ["great"] = 10 },
+        };
+
+        if (mobile is bool flagged)
+            body["mobile"] = flagged;
+
         using var request = new HttpRequestMessage(HttpMethod.Post, "/play/submit");
         request.Headers.Add("X-CSRF-TOKEN", csrf);
-        request.Content = new StringContent(JsonConvert.SerializeObject(new
-        {
-            token = tokenId,
-            passed,
-            totalScore,
-            maxCombo = 10,
-            statistics = new Dictionary<string, int> { ["great"] = 10 },
-            maximumStatistics = new Dictionary<string, int> { ["great"] = 10 },
-        }), Encoding.UTF8, "application/json");
+        request.Content = new StringContent(body.ToString(Formatting.None), Encoding.UTF8, "application/json");
 
         using var response = await client.SendAsync(request);
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), "play submit");

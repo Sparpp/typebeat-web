@@ -118,6 +118,23 @@
         return body;
     }
 
+    // The /play/submit body for a finished run. `mobile` (backlog 503) is the player's
+    // results.mobile, true when at least one key of the run came through the on-screen keyboard;
+    // the server then stores the row with the synthetic Mobile mod ("MB"), a visible note priced
+    // at 1.0x. It is sent only when true, so a physical-keyboard run's body is exactly what it was.
+    function submitBody(token, results) {
+        const body = {
+            token: token,
+            passed: results.passed,
+            totalScore: results.totalScore,
+            maxCombo: results.maxCombo,
+            statistics: results.statistics,
+            maximumStatistics: results.maximumStatistics
+        };
+        if (results.mobile === true) body.mobile = true;
+        return body;
+    }
+
     // What the player is told when no token could be minted, keyed off the server's error wording
     // (the desktop's two refusals, ScoreEndpoints.CreateToken). Both are fixed by a RELOAD: the
     // page then carries the current scripts and fetches the current map.
@@ -142,7 +159,8 @@
     // window.TYPEBEAT_PLAY, which is the server-rendered page config read above.
     window.TypeBeatPlayPage = {
         takeDiscordNudge: takeDiscordNudge, DISCORD_NUDGE_KEY: DISCORD_NUDGE_KEY, submitStatus: submitStatus,
-        tokenBody: tokenBody, tokenFailureStatus: tokenFailureStatus, PLAYBACK_INVALID_STATUS: PLAYBACK_INVALID_STATUS
+        tokenBody: tokenBody, tokenFailureStatus: tokenFailureStatus, PLAYBACK_INVALID_STATUS: PLAYBACK_INVALID_STATUS,
+        submitBody: submitBody
     };
 
     const picker = document.getElementById('tb-picker');
@@ -199,15 +217,7 @@
     }
 
     async function submitScore(token, results) {
-        const body = {
-            token: token,
-            passed: results.passed,
-            totalScore: results.totalScore,
-            maxCombo: results.maxCombo,
-            statistics: results.statistics,
-            maximumStatistics: results.maximumStatistics
-        };
-        return postJson('/play/submit', body);
+        return postJson('/play/submit', submitBody(token, results));
     }
 
     // ---- the difficulty step ------------------------------------------------

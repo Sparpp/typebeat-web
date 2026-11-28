@@ -117,4 +117,27 @@ public class PlaySubmitStatusTest
             Assert.That(status("playbackInvalid").Text, Does.StartWith("score not submitted: audio playback"));
         });
     }
+
+    /// <summary>
+    /// Backlog 503: a run the player marked mobile (a key came through the on-screen keyboard) is
+    /// submitted with <c>mobile: true</c>, which the server stores as the "MB" Mobile mark. Any other
+    /// run's body is exactly the old one, with no <c>mobile</c> key at all.
+    /// </summary>
+    [Test]
+    public void TheSubmitBody_CarriesMobile_OnlyForAMarkedRun()
+    {
+        var mobile = root.GetProperty("submitBodyMobile");
+        string[] baseKeys = ["token", "passed", "totalScore", "maxCombo", "statistics", "maximumStatistics"];
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(mobile.GetProperty("mobile").GetBoolean(), Is.True);
+            Assert.That(mobile.GetProperty("token").GetInt64(), Is.EqualTo(42));
+            Assert.That(mobile.GetProperty("totalScore").GetInt64(), Is.EqualTo(1234));
+            Assert.That(mobile.EnumerateObject().Select(p => p.Name), Is.EquivalentTo(baseKeys.Append("mobile")));
+
+            foreach (string name in new[] { "submitBodyPhysical", "submitBodyUnflagged" })
+                Assert.That(root.GetProperty(name).EnumerateObject().Select(p => p.Name), Is.EquivalentTo(baseKeys), name);
+        });
+    }
 }
