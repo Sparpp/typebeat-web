@@ -30,6 +30,10 @@
         }
     }
 
+    // Other scripts stop the preview through this, e.g. /play when it opens a map, so the clip
+    // does not keep playing under the song (the picker that holds its button is hidden by then).
+    window.TypebeatPreview = { stop: stop };
+
     document.addEventListener('click', function (e) {
         var btn = e.target.closest ? e.target.closest('.preview-btn') : null;
         if (!btn || !btn.dataset.preview)

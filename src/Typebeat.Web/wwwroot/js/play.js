@@ -165,6 +165,9 @@
     }
 
     function showStage() {
+        // A card's preview clip started from the picker would otherwise keep playing under the
+        // map's own audio: hiding the picker hides its button but not the site-wide <audio>.
+        if (window.TypebeatPreview) window.TypebeatPreview.stop();
         picker.hidden = true;
         stageWrap.hidden = false;
     }
