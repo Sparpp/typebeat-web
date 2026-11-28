@@ -1921,6 +1921,88 @@
         }
     }
 
+    // SOFT KEYBOARDS (backlog 501). A phone opens its on-screen keyboard only for a focused text
+    // field, and an IME (Gboard and most Android keyboards) reports its keys as keydowns with
+    // keyCode 229 and key 'Unidentified', so the keydown path above types nothing for them. The
+    // player therefore owns a hidden text field on touch devices, and turns what the keyboard does
+    // to that field into SYNTHETIC keydowns for routeKeyDown: the same router, the same gates, the
+    // same quantised instant, so a soft key is judged exactly as the physical key would have been.
+    //
+    // The field is kept holding one SENTINEL character, so a backspace still has something to
+    // delete (and so still fires) when the player has typed nothing since the last reset. Each
+    // change is read as a diff against the value last seen: every character removed is one
+    // Backspace, every character added one key ('\n' is Enter), all at the event's one instant,
+    // which is how a predictive insert of a whole word becomes one press per letter.
+    const SOFT_INPUT_SENTINEL = '\u200B';
+
+    // The keydowns the keydown path cannot read: an IME's keyCode 229, or a key with no usable
+    // name. Everything else is a physical (or physical-looking) key that routeKeyDown has already
+    // routed, and any text it puts into the field must not be typed a second time.
+    function isImeKeyDown(e) {
+        return !!e.isComposing || e.keyCode === 229 || typeof e.key !== 'string' || e.key === ''
+            || e.key === 'Unidentified' || e.key === 'Process';
+    }
+
+    function isHighSurrogate(code) { return code >= 0xd800 && code <= 0xdbff; }
+
+    // The keys that turn the field's `prev` value into `next`: a Backspace per code point removed
+    // past the common prefix, then one key per code point added ('\n' is Enter, '\r' nothing).
+    // The prefix never splits a surrogate pair, so an emoji is removed or added whole (and is then
+    // inert, as foldTyped makes it).
+    function softKeysFor(prev, next) {
+        const a = typeof prev === 'string' ? prev : '';
+        const b = typeof next === 'string' ? next : '';
+        const n = Math.min(a.length, b.length);
+        let p = 0;
+        while (p < n && a.charCodeAt(p) === b.charCodeAt(p)) p++;
+        if (p > 0 && (p < a.length || p < b.length) && isHighSurrogate(a.charCodeAt(p - 1))) p--;
+
+        const keys = [];
+        for (let i = Array.from(a.slice(p)).length; i > 0; i--) keys.push('Backspace');
+        for (const c of b.slice(p)) {
+            if (c === '\r') continue;
+            keys.push(c === '\n' ? 'Enter' : c);
+        }
+        return keys;
+    }
+
+    // A soft key as the keydown routeKeyDown reads: no code (so no positional digit and no Space
+    // code; the character itself is the key), no modifiers, never a repeat.
+    function softKeyEvent(key) {
+        return {
+            key: key, code: '', keyCode: 0, repeat: false, isComposing: false,
+            ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, soft: true,
+            preventDefault: function () {},
+            getModifierState: function () { return false; }
+        };
+    }
+
+    // Route the keys of one field change, all at the one instant `host.now()` reads now: each is
+    // routeKeyDown's press and then, because an on-screen key has no meaningful key-up, its
+    // release at the SAME instant (routeKeyUp), so a hold a soft key opens is let go at once and
+    // no hold is ever left waiting on a key-up that will not come.
+    function routeSoftKeys(keys, host) {
+        if (!keys || keys.length === 0) return;
+        const t = host.now();
+        holdStateOf(host);
+        const at = {
+            get engine() { return host.engine; },
+            now: function () { return t; },
+            gaps: host.gaps,
+            introTarget: host.introTarget,
+            getSelection: function () { return host.getSelection(); },
+            setSelection: function (s) { host.setSelection(s); },
+            performSkip: function (target) { host.performSkip(target); },
+            get holdState() { return holdStateOf(host); },
+            set holdState(v) { host.holdState = v; }
+        };
+        for (const key of keys) {
+            const e = softKeyEvent(key);
+            routeKeyDown(e, at);
+            routeKeyUp(e, at);
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // DOM helpers.
     // ---------------------------------------------------------------------------
@@ -2370,6 +2452,7 @@
             removeCardKeys();
             window.removeEventListener('resize', onResize);
             removeStartKey();
+            stopSoftInput();
             cleanupAudio();
             if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
         }
@@ -2446,6 +2529,199 @@
             if (running && engine) releaseHeldKey(keyHost, roundHalfEven(nowMs()));
         }
 
+        // --- soft keyboards (backlog 501, see SOFT_INPUT_SENTINEL above) ----------------------
+        // Only a TOUCH device gets the field: a coarse primary pointer, or a touch seen on the
+        // player. Until then nothing below exists (the field is made on the first play that wants
+        // it), so a desktop with a mouse runs exactly the keydown path it always did.
+        let touchSeen = false;
+        let softField = null;           // the hidden text field, made on first use
+        let softPrev = SOFT_INPUT_SENTINEL; // the field's value as last read
+        let softComposing = false;      // an IME composition is open: the field is not reset under it
+        let softOwned = false;          // the keydown in progress was routed by the keydown path
+        let softRefocusing = false;     // our own blur ahead of a refocus, not a focus loss
+        let softSyncTimer = 0;
+        let softViewportFrame = 0;
+        let softViewport = null;        // the visualViewport listened to, if any
+
+        // An input type that is not typing: a paste, a drop, a cut or an undo is never a keypress.
+        const SOFT_IGNORED_INPUT_RE = /^(?:insertFromPaste|insertFromPasteAsQuotation|insertFromDrop|insertFromYank|deleteByCut|deleteByDrag|historyUndo|historyRedo)$/;
+
+        function softInputWanted() {
+            if (touchSeen) return true;
+            try { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); } catch (e) { return false; }
+        }
+
+        function onRootPointerDown(e) { if (e && (e.pointerType === 'touch' || e.pointerType === 'pen')) touchSeen = true; }
+        function onRootTouchStart() { touchSeen = true; }
+
+        // A tap on the player during play (re)opens the keyboard: a field that is already focused
+        // is blurred first, because focusing it again would not bring a dismissed keyboard back.
+        function onRootClick() {
+            if (!softField || !running || paused) return;
+            focusSoftField(true);
+        }
+
+        function softGameLive() {
+            return running && !!engine && !paused && !!audioCtx && audioCtx.state === 'running';
+        }
+
+        function ensureSoftField() {
+            if (softField) return softField;
+            const f = document.createElement('input');
+            f.className = 'tb-soft-input';
+            f.type = 'text';
+            for (const [k, v] of [['autocomplete', 'off'], ['autocorrect', 'off'], ['autocapitalize', 'off'],
+                ['spellcheck', 'false'], ['inputmode', 'text'], ['enterkeyhint', 'enter'], ['aria-label', 'type the lyrics']]) {
+                f.setAttribute(k, v);
+            }
+            f.spellcheck = false;
+            // Focusable but invisible, and in the middle of the player rather than offscreen, so a
+            // browser that scrolls the focused field into view above the keyboard brings the lyric
+            // with it. 16px stops iOS from zooming the page on focus.
+            f.style.cssText = 'position:absolute;left:50%;top:50%;width:1px;height:1px;margin:0;padding:0;border:0;'
+                + 'opacity:0;font-size:16px;color:transparent;background:transparent;caret-color:transparent;'
+                + 'outline:none;pointer-events:none;';
+            f.value = SOFT_INPUT_SENTINEL;
+            f.addEventListener('keydown', onSoftKeyDown);
+            f.addEventListener('keyup', onSoftKeyUp);
+            f.addEventListener('beforeinput', onSoftBeforeInput);
+            f.addEventListener('input', onSoftInput);
+            f.addEventListener('compositionstart', onSoftCompositionStart);
+            f.addEventListener('compositionend', onSoftCompositionEnd);
+            f.addEventListener('blur', onSoftBlur);
+            root.appendChild(f);
+            softField = f;
+            return f;
+        }
+
+        function resetSoftField() {
+            if (!softField) return;
+            if (softField.value !== SOFT_INPUT_SENTINEL) softField.value = SOFT_INPUT_SENTINEL;
+            softPrev = SOFT_INPUT_SENTINEL;
+            try { softField.setSelectionRange(SOFT_INPUT_SENTINEL.length, SOFT_INPUT_SENTINEL.length); } catch (e) {}
+        }
+
+        function focusSoftField(reopen) {
+            if (!softField) return;
+            if (reopen && document.activeElement === softField) {
+                softRefocusing = true;
+                try { softField.blur(); } catch (e) {}
+                softRefocusing = false;
+            }
+            try { softField.focus(); } catch (e) {}
+        }
+
+        function blurSoftField() {
+            if (!softField) return;
+            softOwned = false;
+            softComposing = false;
+            softRefocusing = true;
+            try { softField.blur(); } catch (e) {}
+            softRefocusing = false;
+            resetSoftField();
+        }
+
+        // begin() and resume() call this, inside the gesture that started the play where there is
+        // one (iOS opens the keyboard only for a focus taken in a user gesture).
+        function startSoftInput() {
+            if (!softInputWanted()) return;
+            ensureSoftField();
+            softOwned = false;
+            softComposing = false;
+            resetSoftField();
+            focusSoftField(false);
+            const vv = window.visualViewport;
+            if (vv && softViewport !== vv && vv.addEventListener) {
+                vv.addEventListener('resize', onSoftViewportChange);
+                vv.addEventListener('scroll', onSoftViewportChange);
+                softViewport = vv;
+            }
+        }
+
+        function stopSoftInput() {
+            if (softSyncTimer) { clearTimeout(softSyncTimer); softSyncTimer = 0; }
+            if (softViewportFrame) { cancelAnimationFrame(softViewportFrame); softViewportFrame = 0; }
+            if (softViewport && softViewport.removeEventListener) {
+                softViewport.removeEventListener('resize', onSoftViewportChange);
+                softViewport.removeEventListener('scroll', onSoftViewportChange);
+            }
+            softViewport = null;
+            if (softField) {
+                blurSoftField();
+                softField.remove();
+                softField = null;
+            }
+        }
+
+        // THE NO-DOUBLE-COUNT RULE. The document's keydown listener (onKeyDown) runs first, in the
+        // capture phase; by the time the key reaches the field it has been routed. A key the
+        // keydown path can read (anything but an IME's 229 or a nameless key), or one it acted on
+        // (preventDefault, e.g. the spacebar typed under an IME), OWNS whatever text it puts into
+        // the field until its key-up, and that text is swallowed rather than typed again.
+        function onSoftKeyDown(e) { softOwned = !isImeKeyDown(e) || !!e.defaultPrevented; }
+        function onSoftKeyUp() { softOwned = false; }
+
+        function onSoftBeforeInput(e) {
+            if (!e || !e.cancelable) return;
+            if (softOwned || (typeof e.inputType === 'string' && SOFT_IGNORED_INPUT_RE.test(e.inputType))) e.preventDefault();
+        }
+
+        // Read the field: its change since softPrev becomes presses (unless it is owned by a
+        // routed keydown, is not typing, or arrives while no play is live), and the field is put
+        // back to the sentinel unless a composition is still open under it.
+        function onSoftInput(e) {
+            if (!softField) return;
+            const value = softField.value;
+            const ignored = softOwned || !softGameLive()
+                || (!!e && typeof e.inputType === 'string' && SOFT_IGNORED_INPUT_RE.test(e.inputType));
+            if (!ignored) routeSoftKeys(softKeysFor(softPrev, value), keyHost);
+            softPrev = value;
+            if (!softComposing) resetSoftField();
+        }
+
+        function onSoftCompositionStart() { softComposing = true; }
+
+        // Some browsers fire the composition's last input after compositionend, so the read and
+        // the reset are deferred a task: an input in between reads (and resets) for itself.
+        function onSoftCompositionEnd() {
+            softComposing = false;
+            if (softSyncTimer) clearTimeout(softSyncTimer);
+            softSyncTimer = setTimeout(function () { softSyncTimer = 0; onSoftInput(null); }, 0);
+        }
+
+        function onSoftBlur() {
+            softOwned = false;
+            if (softRefocusing || !running || paused) return;
+            setTimeout(function () {
+                if (softField && running && !paused && document.activeElement !== softField) focusSoftField(false);
+            }, 0);
+        }
+
+        // The keyboard covers the bottom of the layout viewport without resizing it on most
+        // phones; when the visual viewport moves or shrinks, scroll the current lyric row back into
+        // the part of the page still showing.
+        function onSoftViewportChange() {
+            if (softViewportFrame) return;
+            softViewportFrame = requestAnimationFrame(function () {
+                softViewportFrame = 0;
+                keepLyricInView();
+            });
+        }
+
+        function keepLyricInView() {
+            const vv = window.visualViewport;
+            if (!vv || !running || !softField || typeof window.scrollBy !== 'function') return;
+            const r = rowCur.row.getBoundingClientRect();
+            const top = vv.offsetTop;
+            const bottom = vv.offsetTop + vv.height;
+            if (!(r.bottom > r.top) || (r.top >= top && r.bottom <= bottom)) return;
+            window.scrollBy(0, (r.top + r.bottom) / 2 - (top + bottom) / 2);
+        }
+
+        root.addEventListener('pointerdown', onRootPointerDown);
+        root.addEventListener('touchstart', onRootTouchStart, { passive: true });
+        root.addEventListener('click', onRootClick);
+
         // --- pause / resume (backlog 311) -------------------------------------
         function startLoops() {
             stopLoops();
@@ -2486,6 +2762,8 @@
             lastFrameMs = null;
             try { const p = audioCtx.resume(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
             startLoops();
+            // The pause card took focus; give it back to the soft keyboard's field.
+            if (softField) startSoftInput();
         }
 
         // Mid-play retry: the run is DISCARDED (never concluded, so onFinish never runs) and begin()
@@ -2513,6 +2791,7 @@
             abortHold();
             stopLoops();
             detachRunListeners();
+            blurSoftField();
             cleanupAudio();
             showStartGate('press space to start');
         }
@@ -3629,6 +3908,8 @@
             abortHold();
             stopLoops();
             detachRunListeners();
+            // The keyboard goes down with the run, so the results card is not hidden under it.
+            blurSoftField();
             const failed = !!engine.failed;
             const results = Core.computeScore(engine);
             // The veto's verdict rides on the results; play.js declines to submit a false one.
@@ -3780,6 +4061,8 @@
             window.removeEventListener('resize', onResize);
             window.addEventListener('resize', onResize);
             startLoops();
+            // On a touch device, focus the soft keyboard's field (backlog 501).
+            startSoftInput();
         }
 
         function showStartGate(label) {
@@ -4086,6 +4369,11 @@
         // The hold's key-up half of the key handler (KeyHandler.OnKeyUp and releaseHold), exported
         // beside routeKeyDown for the display harness.
         routeKeyUp, releaseHeldKey,
+        // The soft-keyboard input path (backlog 501), pinned by PlayerSoftKeysHarness.
+        SOFT_INPUT_SENTINEL,
+        isImeKeyDown,
+        softKeysFor,
+        routeSoftKeys,
         // Keystroke to characters (backlogs 309, 383), pinned by the display harness, and the fold
         // under it, held against the game's TextInputFold.Fold by WireCompat's KeyToCharParityTest.
         keyToChars,
